@@ -15,8 +15,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from shapely.geometry import Polygon
-from mpf.simulators.base_env import BaseEnv
-from mpf.simulators.tools import create_checkpoints_from_simple_path, check_collision_ship
+from fw.simulators.base_env import BaseEnv
+from fw.simulators.tools import create_checkpoints_from_simple_path, check_collision_ship
 
 
 def add_noise(action, noise_level=0.1) -> np.ndarray:

@@ -1,10 +1,10 @@
-from mpf.trainer import Trainer
-from mpf.env_factory import get as get_environment
-from mpf.stop_condition import StopCondition, Criterion
-from mpf.env_factory import py_sim_env_name, fh_sim_env_name, lunar_env_name
+from fw.trainer import Trainer
+from fw.env_factory import get as get_environment
+from fw.stop_condition import StopCondition, Criterion
+from fw.env_factory import py_sim_env_name, fh_sim_env_name, lunar_env_name
 
 
-if __name__ == "__main__" or __name__ == "mpf.main":
+if __name__ == "__main__" or __name__ == "fw.main":
     action = "train"
 
     # Define simulator inputs
