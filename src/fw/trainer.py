@@ -4,9 +4,9 @@ import importlib
 
 from enum import Enum
 from pathlib import Path
-from mpf.agent import Agent
-from mpf.agent import PolicyStrategy
-from mpf.config import get_config_parameters, get_hyperparameters
+from fw.agent import Agent
+from fw.agent import PolicyStrategy
+from fw.config import get_config_parameters, get_hyperparameters
 from contextlib import contextmanager
 
 # logging.basicConfig(level=logging.INFO)  # Configure logging once, possibly in main script.
@@ -68,8 +68,8 @@ def find_existing_filename(class_name: str, directory: str = ".") -> str:
         file_path = os.path.join(directory, filename)
         if os.path.isfile(file_path):
             return filename  # Match found in the given directory
-        elif os.path.isfile(f"mpf/{file_path}"):
-            return f"mpf/{filename}"  # Match found in the 'mpf/' subdirectory
+        elif os.path.isfile(f"fw/{file_path}"):
+            return f"fw/{filename}"  # Match found in the 'fw/' subdirectory
 
     raise FileNotFoundError(
         f"No file found for class '{class_name}' in {directory}. "
@@ -102,7 +102,7 @@ class Trainer:
         # Dynamically load the scheduler based on its name
         try:
             scheduler_file = Path(find_existing_filename(scheduler_type))
-            scheduler_module = importlib.import_module(f"mpf.{scheduler_file.stem}")
+            scheduler_module = importlib.import_module(f"fw.{scheduler_file.stem}")
             scheduler_class = getattr(scheduler_module, scheduler_type)
             scheduler = scheduler_class(self._agent, self._envs)
         except ModuleNotFoundError:

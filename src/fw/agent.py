@@ -6,9 +6,9 @@ import matplotlib.patches as patches
 from pathlib import Path
 from gymnasium import Env
 from enum import auto, Enum
-from mpf.config import PPO_POLICY_NAME
-from mpf.policies.ppo_model import PPOModel
-from mpf.stop_condition import StopCondition
+from fw.config import PPO_POLICY_NAME
+from fw.policies.ppo_model import PPOModel
+from fw.stop_condition import StopCondition
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
 
