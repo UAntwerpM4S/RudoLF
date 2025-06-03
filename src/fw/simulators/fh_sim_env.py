@@ -2,7 +2,7 @@ import copy
 import importlib
 import numpy as np
 
-from mpf.simulators.py_sim_env import PySimEnv
+from fw.simulators.py_sim_env import PySimEnv
 
 
 class FhSimEnv(PySimEnv):
@@ -33,7 +33,7 @@ class FhSimEnv(PySimEnv):
         super().__init__(render_mode, time_step, max_steps, verbose, target_pos, ship_pos, wind, current)
 
         try:
-            fh_wrapper_module = importlib.import_module('mpf.simulators.fh_sim_wrapper')
+            fh_wrapper_module = importlib.import_module('fw.simulators.fh_sim_wrapper')
             fh_wrapper_class = getattr(fh_wrapper_module, "FhSimWrapper")
             self._fh_sim = fh_wrapper_class()
         except ModuleNotFoundError:

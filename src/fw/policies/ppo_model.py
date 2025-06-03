@@ -8,8 +8,8 @@ import numpy as np
 
 from typing import Optional
 from gymnasium.vector import SyncVectorEnv
-from mpf.stop_condition import StopCondition
-from mpf.policies.ppo_policy import PPOPolicy
+from fw.stop_condition import StopCondition
+from fw.policies.ppo_policy import PPOPolicy
 
 
 class PPOModel:

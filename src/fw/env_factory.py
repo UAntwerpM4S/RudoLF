@@ -1,8 +1,8 @@
 import types
 
-from mpf.simulators.py_sim_env import PySimEnv
-from mpf.simulators.fh_sim_env import FhSimEnv
-from mpf.simulators.lunar_lander import LunarLander
+from fw.simulators.py_sim_env import PySimEnv
+from fw.simulators.fh_sim_env import FhSimEnv
+from fw.simulators.lunar_lander import LunarLander
 
 
 class EnvironmentRegistryError(Exception):

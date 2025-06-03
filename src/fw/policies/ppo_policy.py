@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from mpf.policies.actor_critic_network import ActorCriticNetwork
+from fw.policies.actor_critic_network import ActorCriticNetwork
 
 
 def get_device(device: str = "auto") -> torch.device:

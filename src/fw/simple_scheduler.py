@@ -2,8 +2,8 @@ import time
 import logging
 import traceback
 
-from mpf.agent import PolicyStrategy
-from mpf.base_scheduler import BaseScheduler
+from fw.agent import PolicyStrategy
+from fw.base_scheduler import BaseScheduler
 
 
 class SimpleScheduler(BaseScheduler):
