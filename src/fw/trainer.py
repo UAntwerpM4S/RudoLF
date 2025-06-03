@@ -68,8 +68,8 @@ def find_existing_filename(class_name: str, directory: str = ".") -> str:
         file_path = os.path.join(directory, filename)
         if os.path.isfile(file_path):
             return filename  # Match found in the given directory
-        elif os.path.isfile(f"mpf/{file_path}"):
-            return f"mpf/{filename}"  # Match found in the 'mpf/' subdirectory
+        elif os.path.isfile(f"fw/{file_path}"):
+            return f"fw/{filename}"  # Match found in the 'fw/' subdirectory
 
     raise FileNotFoundError(
         f"No file found for class '{class_name}' in {directory}. "
