@@ -535,4 +535,7 @@ class Agent:
         Returns:
             The environment object.
         """
-        return self._model.get_env()
+        try:
+            return self._model.get_env().envs[0].unwrapped
+        except AttributeError:
+            return self._model.get_env()
