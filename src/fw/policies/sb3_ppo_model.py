@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import gymnasium as gym
 
-from typing import Optional
+from typing import Optional, Callable
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
@@ -16,9 +16,18 @@ from stable_baselines3 import PPO
 
 class SB3PPOModel(BaseModel):
     """
-    Proximal Policy Optimization (PPO) Model for reinforcement learning.
+    SB3PPOModel integrates the Stable-Baselines3 implementation of Proximal Policy Optimization (PPO)
+    into a custom training framework based on the BaseModel interface.
 
-    This class handles the training, evaluation, and policy management for PPO-based reinforcement learning agents.
+    It wraps an SB3 PPO agent and provides standardized methods for environment setup, policy prediction,
+    and training with callbacks, logging, and evaluation support. This class is fully compliant with the
+    BaseModel API, enabling interchangeable use with other reinforcement learning models in the framework.
+
+    Attributes:
+        ppo (stable_baselines3.PPO): The underlying SB3 PPO model.
+        env (gym.Env): The main training environment (vectorized).
+        eval_env (gym.Env): The evaluation environment.
+        max_nbr_iterations (int): Maximum number of training steps.
     """
 
     def __init__(
@@ -37,122 +46,118 @@ class SB3PPOModel(BaseModel):
         max_nbr_iterations: int = 125000,
         batch_size: int = 64,
         device: str = "cpu",
+        model_dir: str = "models",
+        log_dir: str = "logs",
+        results_dir: str = "results",
+        tensorboard_log: Optional[str] = "logs/tensorboard",
+        verbose: bool = True,
     ):
         """
-        Initialize PPOModel with environment and hyperparameters.
-
-        This initializes the PPO model with the specified environment and learning parameters.
+        Initialize the SB3PPOModel with a specified environment and PPO hyperparameters.
 
         Args:
-            environment (gym.Env): Gym-like environment for training.
-            eval_frequency (int): Frequency of evaluation during training.
-            learning_rate (float, optional): Learning rate for the optimizer (default: 3e-4).
-            clip_range (float, optional): Clipping range for PPO loss (default: 0.2).
-            value_loss_coef (float, optional): Coefficient for value loss in total loss (default: 0.5).
-            max_grad_norm (float, optional): Maximum gradient norm for clipping (default: 0.5).
-            gamma (float, optional): Discount factor for rewards (default: 0.99).
-            gae_lambda (float, optional): GAE parameter (default: 0.95).
-            entropy_coef (float, optional): Coefficient for entropy bonus (default: 0.01).
-            num_epochs (int, optional): Number of epochs for training on collected data (default: 10).
-            normalize (bool, optional): Whether to normalize the rewards between [-1,1] (default: False).
-            max_nbr_iterations (int, optional): Maximum number of steps that is allowed before aborting (default: 125000).
-            batch_size (int, optional): Size of the (mini) batches (default: 64).
-            device (str, optional): Device for computation ('cpu' or 'cuda') (default: 'cpu').
+            environment (gym.Env): The base environment used for training.
+            eval_frequency (int): Frequency (in steps) to evaluate and log model performance.
+            learning_rate (float): Learning rate for the policy optimizer.
+            clip_range (float): PPO clipping range for policy updates.
+            value_loss_coef (float): Coefficient for the value loss term.
+            max_grad_norm (float): Maximum allowed norm for gradient clipping.
+            gamma (float): Discount factor for future rewards.
+            gae_lambda (float): Lambda parameter for Generalized Advantage Estimation.
+            entropy_coef (float): Coefficient for the policy entropy bonus.
+            num_epochs (int): Number of optimization epochs per update.
+            normalize (bool): Whether to normalize rewards during training.
+            max_nbr_iterations (int): Total number of training steps.
+            batch_size (int): Minibatch size for training.
+            device (str): Device used for computation ('cpu' or 'cuda').
         """
         super().__init__(environment, eval_frequency, learning_rate, clip_range, value_loss_coef, max_grad_norm, gamma,
                          gae_lambda, entropy_coef, num_epochs, normalize, max_nbr_iterations, batch_size, device)
 
+        self.model_dir = model_dir
+        self.log_dir = log_dir
+        self.results_dir = results_dir
+        self.tensorboard_log = tensorboard_log
+        self.verbose = verbose
         self.n_envs = 1
-        self.verbose = True
-        self.model = None
-        self.env = environment
+
+        self.env = None
         self.eval_env = None
 
-        # Create directories for saving models and logs
-        os.makedirs("models", exist_ok=True)
-        os.makedirs("logs", exist_ok=True)
-        os.makedirs("results", exist_ok=True)
+        os.makedirs(self.model_dir, exist_ok=True)
+        os.makedirs(self.log_dir, exist_ok=True)
+        os.makedirs(self.results_dir, exist_ok=True)
 
-        # Set random seed for reproducibility
         set_random_seed(42)
-
         self.setup_environments()
 
         policy_kwargs = dict(
-            net_arch=[256, 256, 128],  # Neural network architecture
+            net_arch=[256, 256, 128],
             activation_fn=torch.nn.ReLU
         )
 
         self.ppo = PPO(
-                "MlpPolicy",
-                self.env,
-                learning_rate=3e-4,
-                n_steps=2048,
-                batch_size=64,
-                n_epochs=10,
-                gamma=0.99,
-                gae_lambda=0.95,
-                clip_range=0.2,
-                clip_range_vf=None,
-                ent_coef=0.01,
-                vf_coef=0.5,
-                max_grad_norm=0.5,
-                policy_kwargs=policy_kwargs,
-                verbose=self.verbose,
-                device="cpu",
-                tensorboard_log="logs/tensorboard/")
+            "MlpPolicy",
+            self.env,
+            learning_rate=self.learning_rate,
+            n_steps=2048,  # could be exposed as a hyperparameter if needed
+            batch_size=self.batch_size,
+            n_epochs=self.num_epochs,
+            gamma=self.gamma,
+            gae_lambda=self.gae_lambda,
+            clip_range=self.clip_range,
+            clip_range_vf=None,
+            ent_coef=self.entropy_coef,
+            vf_coef=self.value_loss_coef,
+            max_grad_norm=self.max_grad_norm,
+            policy_kwargs=policy_kwargs,
+            verbose=int(self.verbose),
+            device=self.device,
+            tensorboard_log=self.tensorboard_log
+        )
 
 
-    def create_env(self):
+    def create_env(self) -> gym.Env:
         """
-        Create a copy of the environment for parallel runs.
+        Create a fresh copy of the base environment.
 
         Returns:
-            gym.Env: A new instance of the environment.
+            gym.Env: A deep copy of the original environment. If the environment supports randomization,
+                     a random initial configuration is applied.
         """
         env = copy.deepcopy(self.get_env())
-
-        # Optionally randomize the environment's initial state
         if hasattr(env, "randomize"):
             env.randomize()
-
         return env
 
 
-    def make_env(self, rank, seed=0):   # render_mode=None, wind=False, current=False):
+    def make_env(self, rank: int, seed: int = 0) -> Callable[[], gym.Env]:
         """
-        Utility function for multiprocessing env creation.
-        """
+        Factory method for creating seeded, monitored environments for vectorized execution.
 
+        Args:
+            rank (int): Unique index used to differentiate environments.
+            seed (int): Seed for reproducibility.
+
+        Returns:
+            Callable[[], gym.Env]: A function that creates the environment instance.
+        """
         def _init():
             env = self.create_env()
             env.seed(seed + rank)
-            env = Monitor(env, f"logs/env_{rank}")
-            return env
+            return Monitor(env, os.path.join(self.log_dir, f"env_{rank}"))
 
         set_random_seed(seed)
         return _init
 
 
-    def setup_environments(self, wind=False, current=False):
+    def setup_environments(self):
         """
-        Setup training and evaluation environments.
+        Set up the vectorized training environment and evaluation environment.
         """
         print(f"Setting up {self.n_envs} parallel environments...")
 
-        # Create evaluation environment
-        self.eval_env = Monitor(
-            self.create_env(),
-            "logs/eval_env"
-        )
-
-        # Create vectorized training environment
-        # if self.n_envs > 1:
-        #     self.env = SubprocVecEnv([
-        #         self.make_env(i, wind=wind, current=current)
-        #         for i in range(self.n_envs)
-        #     ])
-        # else:
+        self.eval_env = Monitor(self.create_env(), os.path.join(self.log_dir, "eval_env"))
         self.env = DummyVecEnv([
             lambda: Monitor(self.create_env(), "logs/env_0")
         ])
@@ -162,58 +167,54 @@ class SB3PPOModel(BaseModel):
 
     def predict(self, state: np.ndarray) -> tuple:
         """
-        Predict an action for a given state using the policy.
+        Predict an action for a given observation using the current policy.
 
         Args:
-            state (np.ndarray): Current state as a NumPy array.
+            state (np.ndarray): Current observation from the environment.
 
         Returns:
-            tuple: A tuple containing the predicted action and log probability.
+            tuple: A tuple (action, None), where action is the predicted action. Log-probabilities are not returned.
         """
         return self.ppo.predict(state, deterministic=True)
-        # return actions, None, states
 
 
     def learn(
         self,
         stop_condition: Optional[StopCondition] = None,
-        num_envs: int = 1,  # Number of parallel environments
-        callback: Optional[callable] = None,
+        num_envs: int = 1,
+        callback: Optional[Callable] = None,
         log_interval: int = 1,
         tb_log_name: str = "OnPolicyAlgorithm",
         reset_num_timesteps: bool = True,
         progress_bar: bool = False,
     ):
         """
-        Train the policy using multiple parallel environments.
-
-        This method runs the training loop for the specified number of timesteps using parallel environments.
-        It collects experience from the environments, updates the policy, logs training metrics, and saves
-        model checkpoints at regular intervals.
+        Train the PPO agent using Stable-Baselines3 with evaluation callbacks and logging.
 
         Args:
-            stop_condition (StopCondition): Condition that defines when training should stop.
-            num_envs (int): Number of parallel environments. Default is 1.
-            callback (callable, optional): The callback handler for custom actions during training.
-            log_interval (int): The interval at which to log training information. Default is 1.
-            tb_log_name (str): The name of the tensorboard log file. Default is "OnPolicyAlgorithm".
-            reset_num_timesteps (bool): Whether to reset the number of timesteps after each training run.
-                Default is True.
-            progress_bar (bool): Whether to display a progress bar. Default is False.
+            stop_condition (StopCondition, optional): Optional custom stop condition (not currently used).
+            num_envs (int): Number of parallel environments (currently fixed at 1).
+            callback (callable, optional): Optional additional training callback.
+            log_interval (int): Frequency (in episodes) of logging to the console.
+            tb_log_name (str): TensorBoard logging directory name.
+            reset_num_timesteps (bool): Whether to reset the timestep counter between runs.
+            progress_bar (bool): Whether to display a progress bar during training.
 
+        Notes:
+            The model is saved both during training (if performance improves) and after training is completed.
         """
-        print(f"Starting training for {self.max_nbr_iterations} timesteps...")
+        if self.verbose:
+            print(f"Starting training for {self.max_nbr_iterations} timesteps...")
 
-        # Create callback for evaluation and early stopping
         stop_callback = StopTrainingOnRewardThreshold(
-            reward_threshold=100000.8,  # Stop when average reward reaches 0.8
+            reward_threshold=100000.8,  # Could also be parameterized
             verbose=1
         )
 
         eval_callback = EvalCallback(
             self.env,
-            best_model_save_path=f"models/best_ppo",
-            log_path="logs/eval",
+            best_model_save_path=os.path.join(self.model_dir, "best_ppo"),
+            log_path=os.path.join(self.log_dir, "eval"),
             eval_freq=10000, # self.eval_frequency,
             deterministic=True,
             render=False,
@@ -221,7 +222,6 @@ class SB3PPOModel(BaseModel):
             verbose=1
         )
 
-        # Train the model
         self.ppo.learn(
             total_timesteps=600000, # self.max_nbr_iterations,
             callback=eval_callback,
@@ -229,7 +229,7 @@ class SB3PPOModel(BaseModel):
             progress_bar=True
         )
 
-        # Save the final model
-        model_path = f"models/final_ppo_{self.max_nbr_iterations}"
-        self.ppo.save(model_path)
+        final_model_path = os.path.join(self.model_dir, f"final_ppo_{self.max_nbr_iterations}")
+        self.ppo.save(final_model_path)
+
         print(f"Training completed! Final model saved to {model_path}")
