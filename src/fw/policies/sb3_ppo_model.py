@@ -81,7 +81,7 @@ class SB3PPOModel(BaseModel):
         self.verbose = verbose
         self.n_envs = 1
 
-        self.env = None
+        self.env = environment
         self.eval_env = None
 
         os.makedirs(self.model_dir, exist_ok=True)
@@ -223,13 +223,39 @@ class SB3PPOModel(BaseModel):
         )
 
         self.ppo.learn(
-            total_timesteps=600000, # self.max_nbr_iterations,
+            total_timesteps=120000, # self.max_nbr_iterations,
             callback=eval_callback,
             log_interval=10,
             progress_bar=True
         )
 
         final_model_path = os.path.join(self.model_dir, f"final_ppo_{self.max_nbr_iterations}")
-        self.ppo.save(final_model_path)
+        self.save_policy(final_model_path)
 
-        print(f"Training completed! Final model saved to {model_path}")
+        print(f"Training completed! Final model saved to {final_model_path}")
+
+
+    def load_policy(self, policy_file_name: str) -> None:
+        """
+        Load a trained model's policy.
+
+        Args:
+            policy_file_name (str): Name of the policy file to load.
+
+        Raises:
+            RuntimeError: If no model is created or the policy fails to load.
+        """
+        self.ppo = PPO.load(policy_file_name)
+
+
+    def save_policy(self, policy_file_name: str) -> None:
+        """
+        Save the trained model's policy.
+
+        Args:
+            policy_file_name (str): Name of the policy file to save.
+
+        Raises:
+            RuntimeError: If no model is created or the policy fails to save.
+        """
+        self.ppo.save(policy_file_name)
