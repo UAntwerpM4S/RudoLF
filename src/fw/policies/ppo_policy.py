@@ -1,7 +1,12 @@
+import os
 import torch
+import zipfile
+import tempfile
 import numpy as np
 
 from fw.policies.actor_critic_network import ActorCriticNetwork
+
+POLICY_FILE_NAME = 'policy.pth'
 
 
 def get_device(device: str = "auto") -> torch.device:
@@ -76,13 +81,20 @@ class PPOPolicy:
         Args:
             filename (str): The path to the file where the model should be saved.
         """
-        torch.save(
-            {
-                "model_state_dict": self.network.state_dict(),
-                "data": self._get_constructor_parameters(),
-            },
-            filename,
-        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Paths for temp files
+            params_path = os.path.join(tmp_dir, POLICY_FILE_NAME)
+
+            torch.save(
+                {
+                    "model_state_dict": self.network.state_dict(),
+                    "data": self._get_constructor_parameters(),
+                },
+                params_path,
+			)
+
+            with zipfile.ZipFile(".".join([filename, "zip"]), 'w') as zip_file:
+                zip_file.write(params_path, arcname=POLICY_FILE_NAME)
 
 
     @classmethod
@@ -102,7 +114,9 @@ class PPOPolicy:
         device = get_device(device)
 
         try:
-            saved_variables = torch.load(filename, map_location=device, weights_only=False)
+            with zipfile.ZipFile(".".join([filename, "zip"]), 'r') as zip_file:
+                with zip_file.open(POLICY_FILE_NAME) as policy_file:
+                    saved_variables = torch.load(policy_file, map_location=device, weights_only=False)
         except (FileNotFoundError, KeyError) as e:
             raise RuntimeError(f"Failed to load model: {e}")
 

@@ -108,7 +108,7 @@ class Agent:
             raise RuntimeError(f"Unknown {self._model_type} policy type.")
 
         if policy_file_name:
-            if Path(policy_file_name).exists():
+            if Path(".".join([policy_file_name, "zip"])).exists():
                 print(f"Reusing {policy_file_name}.")
                 self._model.load_policy(policy_file_name)
             else:
