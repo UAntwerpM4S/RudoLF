@@ -460,20 +460,12 @@ class PPOModel(BaseModel):
 
                 # Save checkpoint every 'self.eval_frequency' iterations
                 if iteration > 0 and iteration % self.eval_frequency == 0:
-                    torch.save({
-                        'iteration': iteration,
-                        'model_state_dict': self.policy.network.state_dict(),
-                        'optimizer_state_dict': self.optimizer.state_dict(),
-                    }, f'ppo_checkpoint_{iteration}.pt')
+                    self.policy.save(f'ppo_checkpoint_{iteration}')
 
             iteration += 1
 
         # Save final checkpoint
-        torch.save({
-            'iteration': last_save_index if last_save_index > 0 else stopping_condition.max_time_steps,
-            'model_state_dict': self.policy.network.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-        }, f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}.pt')
+        self.policy.save(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
 
         # Dump training metrics to CSV
         self.dump_metrics_to_csv("training_metrics.csv", training_metrics)
