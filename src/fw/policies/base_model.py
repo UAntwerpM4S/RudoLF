@@ -131,6 +131,13 @@ class BaseModel(ABC):
         raise NotImplementedError
 
 
+    def set_policy_eval(self):
+        """
+        Set policy in eval mode.
+        """
+        pass
+
+
     def get_env(self) -> gym.Env:
         """
         Get the training environment.
