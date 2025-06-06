@@ -82,7 +82,7 @@ class SB3PPOModel(BaseModel):
         self.n_envs = 1
 
         self.env = environment
-        self.eval_env = None
+        self.eval_env = environment
 
         os.makedirs(self.model_dir, exist_ok=True)
         os.makedirs(self.log_dir, exist_ok=True)
@@ -98,7 +98,7 @@ class SB3PPOModel(BaseModel):
 
         self.ppo = PPO(
             "MlpPolicy",
-            self.env,
+            self.eval_env,
             learning_rate=self.learning_rate,
             n_steps=2048,  # could be exposed as a hyperparameter if needed
             batch_size=self.batch_size,
@@ -157,8 +157,7 @@ class SB3PPOModel(BaseModel):
         """
         print(f"Setting up {self.n_envs} parallel environments...")
 
-        self.eval_env = Monitor(self.create_env(), os.path.join(self.log_dir, "eval_env"))
-        self.env = DummyVecEnv([
+        self.eval_env = DummyVecEnv([
             lambda: Monitor(self.create_env(), "logs/env_0")
         ])
 
@@ -212,7 +211,7 @@ class SB3PPOModel(BaseModel):
         )
 
         eval_callback = EvalCallback(
-            self.env,
+            self.eval_env,
             best_model_save_path=os.path.join(self.model_dir, "best_ppo"),
             log_path=os.path.join(self.log_dir, "eval"),
             eval_freq=10000, # self.eval_frequency,

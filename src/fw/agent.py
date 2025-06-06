@@ -228,11 +228,7 @@ class Agent:
 
         print(f"\nRunning {num_episodes} episodes...")
 
-        try:
-            self._model.policy.network.eval()
-        except AttributeError:
-            pass
-
+        self.model.set_policy_eval()
         env = self.get_env()
 
         if hasattr(env, "ship_pos"):
@@ -513,7 +509,4 @@ class Agent:
         Returns:
             The environment object.
         """
-        try:
-            return self._model.get_env().envs[0].unwrapped
-        except AttributeError:
-            return self._model.get_env()
+        return self._model.get_env()

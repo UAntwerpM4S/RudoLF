@@ -100,12 +100,12 @@ class PPOModel(BaseModel):
                          gae_lambda, entropy_coef, num_epochs, normalize, max_nbr_iterations, batch_size, device)
 
         # Handle discrete and continuous action spaces
-        if isinstance(environment.action_space, gym.spaces.Discrete):
-            self.output_dim = environment.action_space.n
+        if isinstance(self.action_space, gym.spaces.Discrete):
+            self.output_dim = self.action_space.n
         else:
-            self.output_dim = environment.action_space.shape[0]
+            self.output_dim = self.action_space.shape[0]
 
-        self.input_dim = environment.observation_space.shape[0]
+        self.input_dim = self.observation_space.shape[0]
         self.policy = PPOPolicy(self.input_dim, self.output_dim, device)
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
 
@@ -215,7 +215,7 @@ class PPOModel(BaseModel):
                 dist = torch.distributions.Normal(action_mean, action_std)
 
                 # Adjust actions if action space is continuous
-                if isinstance(self.env.action_space, gym.spaces.Box):
+                if isinstance(self.action_space, gym.spaces.Box):
                     raw_actions = torch.atanh(mb_actions.clamp(-0.99, 0.99))
                 else:
                     raw_actions = mb_actions
@@ -533,3 +533,10 @@ class PPOModel(BaseModel):
             self.policy.save(policy_file_name)
         except Exception as e:
             raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
+
+
+    def set_policy_eval(self):
+        """
+        Set policy in eval mode.
+        """
+        self.policy.network.eval()
