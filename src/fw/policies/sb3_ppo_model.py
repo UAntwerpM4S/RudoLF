@@ -24,8 +24,8 @@ class SB3PPOModel(BaseModel):
 
     Attributes:
         ppo (stable_baselines3.PPO): The underlying SB3 PPO model.
-        env (gym.Env): The main training environment (vectorized).
-        eval_env (gym.Env): The evaluation environment.
+        env (gym.Env): The input environment.
+        train_env (gym.Env): The training environment (can be vectorized).
         max_nbr_iterations (int): Maximum number of training steps.
     """
 
@@ -84,7 +84,7 @@ class SB3PPOModel(BaseModel):
         os.makedirs(self.log_dir, exist_ok=True)
         os.makedirs(self.results_dir, exist_ok=True)
 
-        self.eval_env = DummyVecEnv([lambda: Monitor(self.create_env(), "logs/env_0")])
+        self.train_env = DummyVecEnv([lambda: Monitor(self.create_env(), "logs/env_0")])
 
         policy_kwargs = dict(
             net_arch=[256, 256, 128],
@@ -93,7 +93,7 @@ class SB3PPOModel(BaseModel):
 
         self.ppo = PPO(
             "MlpPolicy",
-            self.eval_env,
+            self.train_env,
             learning_rate=self.learning_rate,
             n_steps=2048,  # could be exposed as a hyperparameter if needed
             batch_size=self.batch_size,
@@ -164,8 +164,7 @@ class SB3PPOModel(BaseModel):
         Notes:
             The model is saved both during training (if performance improves) and after training is completed.
         """
-        if self.verbose:
-            print(f"Starting training for {self.max_nbr_iterations} timesteps...")
+        print(f"Starting training for {self.max_nbr_iterations} time steps...")
 
         stop_callback = StopTrainingOnRewardThreshold(
             reward_threshold=100000.8,  # Could also be parameterized
@@ -173,7 +172,7 @@ class SB3PPOModel(BaseModel):
         )
 
         eval_callback = EvalCallback(
-            self.eval_env,
+            self.train_env,
             best_model_save_path=os.path.join(self.model_dir, "best_ppo"),
             log_path=os.path.join(self.log_dir, "eval"),
             eval_freq=10000, # self.eval_frequency,
