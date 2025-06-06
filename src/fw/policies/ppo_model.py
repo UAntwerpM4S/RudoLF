@@ -501,3 +501,35 @@ class PPOModel(BaseModel):
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(training_metrics)
+
+
+    def load_policy(self, policy_file_name: str) -> None:
+        """
+        Load a trained model's policy.
+
+        Args:
+            policy_file_name (str): Name of the policy file to load.
+
+        Raises:
+            RuntimeError: If no model is created or the policy fails to load.
+        """
+        try:
+            self.policy = self.policy.load(policy_file_name, self.device)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
+
+
+    def save_policy(self, policy_file_name: str) -> None:
+        """
+        Save the trained model's policy.
+
+        Args:
+            policy_file_name (str): Name of the policy file to save.
+
+        Raises:
+            RuntimeError: If no model is created or the policy fails to save.
+        """
+        try:
+            self.policy.save(policy_file_name)
+        except Exception as e:
+            raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e

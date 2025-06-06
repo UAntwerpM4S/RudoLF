@@ -111,6 +111,26 @@ class BaseModel(ABC):
         pass
 
 
+    def save_policy(self, policy_file_name: str):
+        """
+        Optional: Save the model to a file.
+
+        Args:
+            policy_file_name (str): Name of the policy file to save.
+        """
+        raise NotImplementedError
+
+
+    def load_policy(self, policy_file_name: str):
+        """
+        Optional: Load the model from a file.
+
+        Args:
+            policy_file_name (str): Name of the policy file to load.
+        """
+        raise NotImplementedError
+
+
     def get_env(self) -> gym.Env:
         """
         Get the training environment.
