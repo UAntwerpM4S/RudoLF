@@ -8,7 +8,6 @@ from typing import Optional, Callable
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
-from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3 import PPO
@@ -74,22 +73,18 @@ class SB3PPOModel(BaseModel):
         super().__init__(environment, eval_frequency, learning_rate, clip_range, value_loss_coef, max_grad_norm, gamma,
                          gae_lambda, entropy_coef, num_epochs, normalize, max_nbr_iterations, batch_size, device)
 
-        self.model_dir = model_dir
         self.log_dir = log_dir
+        self.model_dir = model_dir
         self.results_dir = results_dir
         self.tensorboard_log = tensorboard_log
         self.verbose = verbose
         self.n_envs = 1
 
-        self.env = environment
-        self.eval_env = environment
-
         os.makedirs(self.model_dir, exist_ok=True)
         os.makedirs(self.log_dir, exist_ok=True)
         os.makedirs(self.results_dir, exist_ok=True)
 
-        set_random_seed(42)
-        self.setup_environments()
+        self.eval_env = DummyVecEnv([lambda: Monitor(self.create_env(), "logs/env_0")])
 
         policy_kwargs = dict(
             net_arch=[256, 256, 128],
@@ -129,39 +124,6 @@ class SB3PPOModel(BaseModel):
         if hasattr(env, "randomize"):
             env.randomize()
         return env
-
-
-    def make_env(self, rank: int, seed: int = 0) -> Callable[[], gym.Env]:
-        """
-        Factory method for creating seeded, monitored environments for vectorized execution.
-
-        Args:
-            rank (int): Unique index used to differentiate environments.
-            seed (int): Seed for reproducibility.
-
-        Returns:
-            Callable[[], gym.Env]: A function that creates the environment instance.
-        """
-        def _init():
-            env = self.create_env()
-            env.seed(seed + rank)
-            return Monitor(env, os.path.join(self.log_dir, f"env_{rank}"))
-
-        set_random_seed(seed)
-        return _init
-
-
-    def setup_environments(self):
-        """
-        Set up the vectorized training environment and evaluation environment.
-        """
-        print(f"Setting up {self.n_envs} parallel environments...")
-
-        self.eval_env = DummyVecEnv([
-            lambda: Monitor(self.create_env(), "logs/env_0")
-        ])
-
-        print("Environments setup complete!")
 
 
     def predict(self, state: np.ndarray) -> tuple:
