@@ -29,7 +29,7 @@ class BaseModel(ABC):
         entropy_coef: float = 0.01,
         num_epochs: int = 10,
         normalize: bool = False,
-        max_nbr_iterations: int = 175000,
+        max_nbr_iterations: int = 200000,
         batch_size: int = 64,
         device: str = "cpu",
     ):
