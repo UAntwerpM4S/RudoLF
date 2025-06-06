@@ -8,6 +8,7 @@ from gymnasium import Env
 from enum import auto, Enum
 from fw.config import PPO_POLICY_NAME
 from fw.policies.ppo_model import PPOModel
+from fw.policies.base_model import BaseModel
 from fw.stop_condition import StopCondition
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
@@ -54,6 +55,17 @@ class Agent:
             str: The model type.
         """
         return self._model_type
+
+
+    @property
+    def model(self) -> BaseModel:
+        """
+        Get the model that is used by the agent.
+
+        Returns:
+            BaseModel: The model.
+        """
+        return self._model
 
 
     def set_environment(self, env: Env, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,

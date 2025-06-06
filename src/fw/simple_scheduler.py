@@ -97,7 +97,7 @@ class SimpleScheduler(BaseScheduler):
                 if self._previous_env_name:
                     try:
                         save_name = f"{self.current_env}_{self.agent.model_type}_policy"
-                        self.agent.save_policy(save_name)
+                        self.agent.model.save_policy(save_name)
                     except Exception as e:
                         self._previous_env_name = None
                         raise RuntimeError("Failed to save the policy.") from e
