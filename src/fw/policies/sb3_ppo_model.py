@@ -205,7 +205,7 @@ class SB3PPOModel(BaseModel):
         Raises:
             RuntimeError: If no model is created or the policy fails to load.
         """
-        self.ppo = PPO.load(policy_file_name)
+        self.ppo = PPO.load(policy_file_name, device=self.device)
 
 
     def save_policy(self, policy_file_name: str) -> None:
