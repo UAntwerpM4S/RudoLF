@@ -117,7 +117,8 @@ class Agent:
                                    entropy_coef=self._hyperparameters["entropy_coef"],
                                    num_epochs=self._hyperparameters["num_epochs"],
                                    batch_size=self._hyperparameters["batch_size"],
-                                   device=self._hyperparameters["device"])
+                                   device=self._hyperparameters["device"],
+                                   verbose=True)
         else:
             raise RuntimeError(f"Unknown {self._model_type} policy type.")
 
