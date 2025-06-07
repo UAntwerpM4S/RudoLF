@@ -9,10 +9,11 @@ import numpy as np
 from typing import Optional
 from gymnasium.vector import SyncVectorEnv
 from fw.stop_condition import StopCondition
+from fw.policies.base_model import BaseModel
 from fw.policies.ppo_policy import PPOPolicy
 
 
-class PPOModel:
+class PPOModel(BaseModel):
     """
     Proximal Policy Optimization (PPO) Model for reinforcement learning.
 
@@ -70,7 +71,7 @@ class PPOModel:
         entropy_coef: float = 0.01,
         num_epochs: int = 10,
         normalize: bool = False,
-        max_nbr_iterations: int = 125000,
+        max_nbr_iterations: int = 200000,
         batch_size: int = 64,
         device: str = "cpu",
     ):
@@ -95,32 +96,18 @@ class PPOModel:
             batch_size (int, optional): Size of the (mini) batches (default: 64).
             device (str, optional): Device for computation ('cpu' or 'cuda') (default: 'cpu').
         """
-        self.env = environment
-        self.gamma = gamma
-        self.gae_lambda = gae_lambda
-        self.device = torch.device(device)
+        super().__init__(environment, eval_frequency, learning_rate, clip_range, value_loss_coef, max_grad_norm, gamma,
+                         gae_lambda, entropy_coef, num_epochs, normalize, max_nbr_iterations, batch_size, device)
 
         # Handle discrete and continuous action spaces
-        if isinstance(environment.action_space, gym.spaces.Discrete):
-            self.output_dim = environment.action_space.n
+        if isinstance(self.action_space, gym.spaces.Discrete):
+            self.output_dim = self.action_space.n
         else:
-            self.output_dim = environment.action_space.shape[0]
+            self.output_dim = self.action_space.shape[0]
 
-        self.input_dim = environment.observation_space.shape[0]
+        self.input_dim = self.observation_space.shape[0]
         self.policy = PPOPolicy(self.input_dim, self.output_dim, device)
-        self.optimizer = optim.Adam(self.policy.network.parameters(), lr=learning_rate)
-
-        self.clip_range = clip_range
-        self.value_loss_coef = value_loss_coef
-        self.max_grad_norm = max_grad_norm
-        self.entropy_coef = entropy_coef
-        self.num_epochs = num_epochs
-        self.normalize = normalize
-        self.max_nbr_iterations = max_nbr_iterations
-        self.batch_size = batch_size
-
-        # Training parameters
-        self.eval_frequency = eval_frequency
+        self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
 
         self.reward_mean = 0.0
         self.reward_var = 1.0
@@ -228,7 +215,7 @@ class PPOModel:
                 dist = torch.distributions.Normal(action_mean, action_std)
 
                 # Adjust actions if action space is continuous
-                if isinstance(self.env.action_space, gym.spaces.Box):
+                if isinstance(self.action_space, gym.spaces.Box):
                     raw_actions = torch.atanh(mb_actions.clamp(-0.99, 0.99))
                 else:
                     raw_actions = mb_actions
@@ -473,20 +460,12 @@ class PPOModel:
 
                 # Save checkpoint every 'self.eval_frequency' iterations
                 if iteration > 0 and iteration % self.eval_frequency == 0:
-                    torch.save({
-                        'iteration': iteration,
-                        'model_state_dict': self.policy.network.state_dict(),
-                        'optimizer_state_dict': self.optimizer.state_dict(),
-                    }, f'ppo_checkpoint_{iteration}.pt')
+                    self.policy.save(f'ppo_checkpoint_{iteration}')
 
             iteration += 1
 
         # Save final checkpoint
-        torch.save({
-            'iteration': last_save_index if last_save_index > 0 else stopping_condition.max_time_steps,
-            'model_state_dict': self.policy.network.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-        }, f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}.pt')
+        self.policy.save(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
 
         # Dump training metrics to CSV
         self.dump_metrics_to_csv("training_metrics.csv", training_metrics)
@@ -516,15 +495,40 @@ class PPOModel:
             writer.writerows(training_metrics)
 
 
-    def get_env(self) -> gym.Env:
+    def load_policy(self, policy_file_name: str) -> None:
         """
-        Get the training environment.
+        Load a trained model's policy.
 
-        This method returns the current training environment, which is used
-        during policy training.
+        Args:
+            policy_file_name (str): Name of the policy file to load.
 
-        Returns:
-            gym.Env: The training environment instance.
-
+        Raises:
+            RuntimeError: If no model is created or the policy fails to load.
         """
-        return self.env
+        try:
+            self.policy = self.policy.load(policy_file_name, self.device)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
+
+
+    def save_policy(self, policy_file_name: str) -> None:
+        """
+        Save the trained model's policy.
+
+        Args:
+            policy_file_name (str): Name of the policy file to save.
+
+        Raises:
+            RuntimeError: If no model is created or the policy fails to save.
+        """
+        try:
+            self.policy.save(policy_file_name)
+        except Exception as e:
+            raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
+
+
+    def set_policy_eval(self):
+        """
+        Set policy in eval mode.
+        """
+        self.policy.network.eval()
