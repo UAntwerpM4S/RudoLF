@@ -41,8 +41,6 @@ class SB3PPOModel(BaseModel):
         gae_lambda: float = 0.95,
         entropy_coef: float = 0.01,
         num_epochs: int = 10,
-        normalize: bool = False,
-        max_nbr_iterations: int = 125000,
         batch_size: int = 64,
         device: str = "cpu",
         model_dir: str = "models",
@@ -70,8 +68,10 @@ class SB3PPOModel(BaseModel):
             batch_size (int): Minibatch size for training.
             device (str): Device used for computation ('cpu' or 'cuda').
         """
-        super().__init__(environment, eval_frequency, learning_rate, clip_range, value_loss_coef, max_grad_norm, gamma,
-                         gae_lambda, entropy_coef, num_epochs, normalize, max_nbr_iterations, batch_size, device)
+        super().__init__(environment=environment, eval_frequency=eval_frequency, learning_rate=learning_rate,
+                         clip_range=clip_range, value_loss_coef=value_loss_coef, max_grad_norm=max_grad_norm,
+                         gamma=gamma, gae_lambda=gae_lambda, entropy_coef=entropy_coef, num_epochs=num_epochs,
+                         batch_size=batch_size, device=device)
 
         self.log_dir = log_dir
         self.model_dir = model_dir
