@@ -8,6 +8,7 @@ from gymnasium import Env
 from enum import auto, Enum
 from fw.config import PPO_POLICY_NAME
 from fw.policies.ppo_model import PPOModel
+from fw.policies.base_model import BaseModel
 from fw.stop_condition import StopCondition
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
@@ -56,6 +57,17 @@ class Agent:
         return self._model_type
 
 
+    @property
+    def model(self) -> BaseModel:
+        """
+        Get the model that is used by the agent.
+
+        Returns:
+            BaseModel: The model.
+        """
+        return self._model
+
+
     def set_environment(self, env: Env, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
                         other_env_name: str = None) -> None:
         """
@@ -73,7 +85,7 @@ class Agent:
 
         if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._model:
             policy_file_name = f'{self.get_env().type_name}_{self._model_type}_policy'
-            self.save_policy(policy_file_name)
+            self._model.save_policy(policy_file_name)
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
             policy_file_name = f'{other_env_name}_{self._model_type}_policy'
 
@@ -96,49 +108,11 @@ class Agent:
             raise RuntimeError(f"Unknown {self._model_type} policy type.")
 
         if policy_file_name:
-            if Path(policy_file_name).exists():
+            if Path(".".join([policy_file_name, "zip"])).exists():
                 print(f"Reusing {policy_file_name}.")
-                self.load_policy(policy_file_name)
+                self._model.load_policy(policy_file_name)
             else:
                 raise RuntimeError(f"The policy file {policy_file_name} does not exist.")
-
-
-    def load_policy(self, policy_file_name: str) -> None:
-        """
-        Load a trained model's policy.
-
-        Args:
-            policy_file_name (str): Name of the policy file to load.
-
-        Raises:
-            RuntimeError: If no model is created or the policy fails to load.
-        """
-        if not self._model:
-            raise RuntimeError("No model has been created yet!")
-
-        try:
-            self._model.policy = self._model.policy.load(policy_file_name, self._hyperparameters["device"])
-        except Exception as e:
-            raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
-
-
-    def save_policy(self, policy_file_name: str) -> None:
-        """
-        Save the trained model's policy.
-
-        Args:
-            policy_file_name (str): Name of the policy file to save.
-
-        Raises:
-            RuntimeError: If no model is created or the policy fails to save.
-        """
-        if not self._model:
-            raise RuntimeError("No model has been created yet!")
-
-        try:
-            self._model.policy.save(policy_file_name)
-        except Exception as e:
-            raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
 
 
     def train(self, stop_condition: StopCondition) -> None:
@@ -254,7 +228,7 @@ class Agent:
 
         print(f"\nRunning {num_episodes} episodes...")
 
-        self._model.policy.network.eval()
+        self.model.set_policy_eval()
         env = self.get_env()
 
         if hasattr(env, "ship_pos"):

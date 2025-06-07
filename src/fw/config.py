@@ -21,7 +21,7 @@ DEFAULT_HYPERPARAMETERS = {
         'num_envs': 1,
         'num_epochs': 10,
         'normalize': False,
-        'max_nbr_iterations': 175000,
+        'max_nbr_iterations': 200000,
         'batch_size': 64,
         'device': "cpu"
     }
