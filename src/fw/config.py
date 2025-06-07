@@ -1,4 +1,5 @@
 PPO_POLICY_NAME = "PPO"
+SB3_PPO_POLICY_NAME = "SB3_PPO"
 
 
 """
@@ -22,6 +23,21 @@ DEFAULT_HYPERPARAMETERS = {
         'num_epochs': 10,
         'normalize': False,
         'max_nbr_iterations': 200000,
+        'batch_size': 64,
+        'device': "cpu"
+    },
+    SB3_PPO_POLICY_NAME: {
+        'learning_rate': 3e-4,
+        'gamma': 0.99,
+        'gae_lambda': 0.95,
+        'entropy_coef': 0.01,
+        'value_loss_coef': 0.5,
+        'max_grad_norm': 0.5,
+        'clip_range': 0.2,
+        'eval_frequency': 100,
+        'num_envs': 1,
+        'num_epochs': 10,
+        'normalize': False,
         'batch_size': 64,
         'device': "cpu"
     }

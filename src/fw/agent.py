@@ -6,12 +6,13 @@ import matplotlib.patches as patches
 from pathlib import Path
 from gymnasium import Env
 from enum import auto, Enum
-from fw.config import PPO_POLICY_NAME
-from fw.policies.ppo_model import PPOModel
-from fw.policies.base_model import BaseModel
-from fw.stop_condition import StopCondition
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
+from fw.config import PPO_POLICY_NAME, SB3_PPO_POLICY_NAME
+from fw.policies.sb3_ppo_model import SB3PPOModel
+from fw.policies.base_model import BaseModel
+from fw.stop_condition import StopCondition
+from fw.policies.ppo_model import PPOModel
 
 
 class PolicyStrategy(Enum):
@@ -102,6 +103,19 @@ class Agent:
                                    num_epochs=self._hyperparameters["num_epochs"],
                                    normalize=self._hyperparameters["normalize"],
                                    max_nbr_iterations=self._hyperparameters["max_nbr_iterations"],
+                                   batch_size=self._hyperparameters["batch_size"],
+                                   device=self._hyperparameters["device"])
+        elif SB3_PPO_POLICY_NAME == self._model_type:
+            self._model = SB3PPOModel(environment=env,
+                                   eval_frequency=self._hyperparameters["eval_frequency"],
+                                   learning_rate=self._hyperparameters["learning_rate"],
+                                   clip_range=self._hyperparameters["clip_range"],
+                                   value_loss_coef=self._hyperparameters["value_loss_coef"],
+                                   max_grad_norm=self._hyperparameters["max_grad_norm"],
+                                   gamma=self._hyperparameters["gamma"],
+                                   gae_lambda=self._hyperparameters["gae_lambda"],
+                                   entropy_coef=self._hyperparameters["entropy_coef"],
+                                   num_epochs=self._hyperparameters["num_epochs"],
                                    batch_size=self._hyperparameters["batch_size"],
                                    device=self._hyperparameters["device"])
         else:
