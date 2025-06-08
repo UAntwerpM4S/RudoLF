@@ -121,7 +121,6 @@ class Agent:
         # Start training
         self._model.learn(
             stop_condition=stop_condition,
-            tb_log_name="agent_training"
         )
 
         # Cleanup the environment

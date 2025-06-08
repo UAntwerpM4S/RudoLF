@@ -2,8 +2,8 @@ import torch
 import numpy as np
 import gymnasium as gym
 
+from typing import Optional
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, Any
 from fw.stop_condition import StopCondition
 
 
@@ -86,22 +86,12 @@ class BaseModel(ABC):
     def learn(
         self,
         stop_condition: Optional[StopCondition] = None,
-        callback: Optional[Callable[..., Any]] = None,
-        log_interval: int = 1,
-        tb_log_name: str = "OnPolicyAlgorithm",
-        reset_num_timesteps: bool = True,
-        progress_bar: bool = False,
     ):
         """
         Train the model using collected experiences.
 
         Args:
             stop_condition (StopCondition, optional): A stopping criterion to terminate training early.
-            callback (callable, optional): Optional callback function called during training.
-            log_interval (int, optional): How often to log training statistics. Default is 1.
-            tb_log_name (str, optional): Name used for logging (e.g., for TensorBoard). Default is "OnPolicyAlgorithm".
-            reset_num_timesteps (bool, optional): Whether to reset timestep count at start. Default is True.
-            progress_bar (bool, optional): Show a progress bar during training. Default is False.
         """
         pass
 
