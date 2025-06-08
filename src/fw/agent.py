@@ -251,11 +251,7 @@ class Agent:
 
                 while not done:
                     # Select action
-                    prediction = self._model.predict(state)
-                    if len(prediction) == 3:
-                        action, _, _ = prediction
-                    else:
-                        action, _ = prediction
+                    action, _ = self._model.predict(state)
 
                     # Take step in environment
                     state, reward, terminated, truncated, _ = env.step(action)
