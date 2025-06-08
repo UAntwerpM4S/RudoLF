@@ -1,5 +1,5 @@
 PPO_POLICY_NAME = "PPO"
-SB3_PPO_POLICY_NAME = "SB3_PPO"
+PPO2_POLICY_NAME = "PPO2"
 
 
 """
@@ -26,7 +26,7 @@ DEFAULT_HYPERPARAMETERS = {
         'batch_size': 64,
         'device': "cpu"
     },
-    SB3_PPO_POLICY_NAME: {
+    PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,
         'gamma': 0.99,
         'gae_lambda': 0.95,

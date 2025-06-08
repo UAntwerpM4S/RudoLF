@@ -8,10 +8,10 @@ from gymnasium import Env
 from enum import auto, Enum
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
-from fw.config import PPO_POLICY_NAME, SB3_PPO_POLICY_NAME
-from fw.policies.sb3_ppo_model import SB3PPOModel
-from fw.policies.base_model import BaseModel
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
 from fw.stop_condition import StopCondition
+from fw.policies.base_model import BaseModel
+from fw.policies.ppo2_model import PPO2Model
 from fw.policies.ppo_model import PPOModel
 
 
@@ -92,8 +92,8 @@ class Agent:
 
         if PPO_POLICY_NAME == self._model_type:
             self._model = PPOModel(environment=env, **self._hyperparameters)
-        elif SB3_PPO_POLICY_NAME == self._model_type:
-            self._model = SB3PPOModel(environment=env, **self._hyperparameters)
+        elif PPO2_POLICY_NAME == self._model_type:
+            self._model = PPO2Model(environment=env, **self._hyperparameters)
         else:
             raise RuntimeError(f"Unknown {self._model_type} policy type.")
 
