@@ -91,34 +91,9 @@ class Agent:
             policy_file_name = f'{other_env_name}_{self._model_type}_policy'
 
         if PPO_POLICY_NAME == self._model_type:
-            self._model = PPOModel(environment=env,
-                                   eval_frequency=self._hyperparameters["eval_frequency"],
-                                   learning_rate=self._hyperparameters["learning_rate"],
-                                   clip_range=self._hyperparameters["clip_range"],
-                                   value_loss_coef=self._hyperparameters["value_loss_coef"],
-                                   max_grad_norm=self._hyperparameters["max_grad_norm"],
-                                   gamma=self._hyperparameters["gamma"],
-                                   gae_lambda=self._hyperparameters["gae_lambda"],
-                                   entropy_coef=self._hyperparameters["entropy_coef"],
-                                   num_epochs=self._hyperparameters["num_epochs"],
-                                   normalize=self._hyperparameters["normalize"],
-                                   max_nbr_iterations=self._hyperparameters["max_nbr_iterations"],
-                                   batch_size=self._hyperparameters["batch_size"],
-                                   device=self._hyperparameters["device"])
+            self._model = PPOModel(environment=env, **self._hyperparameters)
         elif SB3_PPO_POLICY_NAME == self._model_type:
-            self._model = SB3PPOModel(environment=env,
-                                   eval_frequency=self._hyperparameters["eval_frequency"],
-                                   learning_rate=self._hyperparameters["learning_rate"],
-                                   clip_range=self._hyperparameters["clip_range"],
-                                   value_loss_coef=self._hyperparameters["value_loss_coef"],
-                                   max_grad_norm=self._hyperparameters["max_grad_norm"],
-                                   gamma=self._hyperparameters["gamma"],
-                                   gae_lambda=self._hyperparameters["gae_lambda"],
-                                   entropy_coef=self._hyperparameters["entropy_coef"],
-                                   num_epochs=self._hyperparameters["num_epochs"],
-                                   batch_size=self._hyperparameters["batch_size"],
-                                   device=self._hyperparameters["device"],
-                                   verbose=True)
+            self._model = SB3PPOModel(environment=env, **self._hyperparameters)
         else:
             raise RuntimeError(f"Unknown {self._model_type} policy type.")
 
@@ -146,7 +121,6 @@ class Agent:
         # Start training
         self._model.learn(
             stop_condition=stop_condition,
-            num_envs=self._hyperparameters["num_envs"],
             tb_log_name="agent_training"
         )
 
