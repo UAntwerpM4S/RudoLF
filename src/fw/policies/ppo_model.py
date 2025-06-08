@@ -7,7 +7,7 @@ import torch.optim as optim
 import gymnasium as gym
 import numpy as np
 
-from typing import Optional
+from typing import Optional, Tuple
 from gymnasium.vector import SyncVectorEnv
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
@@ -121,7 +121,7 @@ class PPOModel(BaseModel):
         return (rewards - self.reward_mean) / (np.sqrt(self.reward_var) + 1e-8)
 
 
-    def predict(self, state: np.ndarray) -> tuple:
+    def predict(self, state: np.ndarray) -> Tuple:
         """
         Predict an action for a given state using the policy.
 
@@ -129,7 +129,7 @@ class PPOModel(BaseModel):
             state (np.ndarray): Current state as a NumPy array.
 
         Returns:
-            tuple: A tuple containing the predicted action and log probability.
+            Tuple: A tuple containing the predicted action and log probability.
         """
         actions, log_probs, _ = self.policy.predict(state)
         return actions[0], log_probs.item()

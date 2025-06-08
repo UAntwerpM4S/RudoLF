@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import gymnasium as gym
 
-from typing import Optional
+from typing import Optional, Tuple
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
@@ -115,7 +115,7 @@ class SB3PPOModel(BaseModel):
         return env
 
 
-    def predict(self, state: np.ndarray) -> tuple:
+    def predict(self, state: np.ndarray) -> Tuple:
         """
         Predict an action for a given observation using the current policy.
 
@@ -123,7 +123,7 @@ class SB3PPOModel(BaseModel):
             state (np.ndarray): Current observation from the environment.
 
         Returns:
-            tuple: A tuple (action, None), where action is the predicted action. Log-probabilities are not returned.
+            Tuple: A tuple (action, None), where action is the predicted action. Log-probabilities are not returned.
         """
         action, _ = self.ppo.predict(state, deterministic=True)
         return action, 0.0
