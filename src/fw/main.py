@@ -13,7 +13,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             # get_environment(fh_sim_env_name)]
 
     # Create a Trainer and pass on a list of agents that you want to train
-    trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+    trainer = Trainer(SB3_PPO_POLICY_NAME, envs, "SimpleScheduler")
 
     if "train" == action:
         configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.01, patience=3, max_time_steps=600),
