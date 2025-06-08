@@ -458,7 +458,6 @@ class PPOModel(BaseModel):
             training_metrics (list): A list of dictionaries containing the training metrics.
 
         """
-        os.makedirs(self.model_dir, exist_ok=True)
         filepath = os.path.join(self.model_dir, csv_filename)
 
         with open(filepath, mode="w", newline="") as file:
