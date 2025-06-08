@@ -32,6 +32,7 @@ class SB3PPOModel(BaseModel):
     def __init__(
         self,
         environment: gym.Env,
+        num_envs: 1,
         eval_frequency: int,
         learning_rate: float = 3e-4,
         clip_range: float = 0.2,
@@ -53,32 +54,35 @@ class SB3PPOModel(BaseModel):
         Initialize the SB3PPOModel with a specified environment and PPO hyperparameters.
 
         Args:
-            environment (gym.Env): The base environment used for training.
+            environment (gym.Env): The environment used for training.
+            num_envs (int): The number of training environments (for parallel training).
             eval_frequency (int): Frequency (in steps) to evaluate and log model performance.
             learning_rate (float): Learning rate for the policy optimizer.
             clip_range (float): PPO clipping range for policy updates.
-            value_loss_coef (float): Coefficient for the value loss term.
+            value_loss_coef (float): Coefficient for the value function loss.
             max_grad_norm (float): Maximum allowed norm for gradient clipping.
             gamma (float): Discount factor for future rewards.
-            gae_lambda (float): Lambda parameter for Generalized Advantage Estimation.
-            entropy_coef (float): Coefficient for the policy entropy bonus.
-            num_epochs (int): Number of optimization epochs per update.
-            normalize (bool): Whether to normalize rewards during training.
-            max_nbr_iterations (int): Total number of training steps.
-            batch_size (int): Minibatch size for training.
-            device (str): Device used for computation ('cpu' or 'cuda').
+            gae_lambda (float): Lambda parameter for Generalized Advantage Estimation (GAE).
+            entropy_coef (float): Coefficient for entropy regularization.
+            num_epochs (int): Number of epochs per policy update.
+            batch_size (int): Size of mini-batches used during training.
+            device (str): Device to run computations on ("cpu" or "cuda").
+            model_dir (str): Directory path to save trained models.
+            log_dir (str): Directory path to store training logs.
+            results_dir (str): Directory path to store evaluation results.
+            tensorboard_log (Optional[str]): Directory for TensorBoard logging, if enabled.
+            verbose (bool): If True, prints training progress and debug information.
         """
-        super().__init__(environment=environment, eval_frequency=eval_frequency, learning_rate=learning_rate,
-                         clip_range=clip_range, value_loss_coef=value_loss_coef, max_grad_norm=max_grad_norm,
-                         gamma=gamma, gae_lambda=gae_lambda, entropy_coef=entropy_coef, num_epochs=num_epochs,
-                         batch_size=batch_size, device=device)
+        super().__init__(environment=environment, num_envs=num_envs, eval_frequency=eval_frequency,
+                         learning_rate=learning_rate, clip_range=clip_range, value_loss_coef=value_loss_coef,
+                         max_grad_norm=max_grad_norm, gamma=gamma, gae_lambda=gae_lambda, entropy_coef=entropy_coef,
+                         num_epochs=num_epochs, batch_size=batch_size, device=device)
 
         self.log_dir = log_dir
         self.model_dir = model_dir
         self.results_dir = results_dir
         self.tensorboard_log = tensorboard_log
         self.verbose = verbose
-        self.n_envs = 1
 
         os.makedirs(self.model_dir, exist_ok=True)
         os.makedirs(self.log_dir, exist_ok=True)
@@ -142,7 +146,6 @@ class SB3PPOModel(BaseModel):
     def learn(
         self,
         stop_condition: Optional[StopCondition] = None,
-        num_envs: int = 1,
         callback: Optional[Callable] = None,
         log_interval: int = 1,
         tb_log_name: str = "OnPolicyAlgorithm",
@@ -164,7 +167,7 @@ class SB3PPOModel(BaseModel):
         Notes:
             The model is saved both during training (if performance improves) and after training is completed.
         """
-        print(f"Starting training for {self.max_nbr_iterations} time steps...")
+        print(f"Starting training for {120000} time steps...")
 
         stop_callback = StopTrainingOnRewardThreshold(
             reward_threshold=100000.8,  # Could also be parameterized
@@ -189,7 +192,7 @@ class SB3PPOModel(BaseModel):
             progress_bar=True
         )
 
-        final_model_path = os.path.join(self.model_dir, f"final_ppo_{self.max_nbr_iterations}")
+        final_model_path = os.path.join(self.model_dir, f"final_ppo_{120000}")
         self.save_policy(final_model_path)
 
         print(f"Training completed! Final model saved to {final_model_path}")

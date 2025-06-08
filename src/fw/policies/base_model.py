@@ -19,6 +19,7 @@ class BaseModel(ABC):
     def __init__(
         self,
         environment: gym.Env,
+        num_envs: 1,
         eval_frequency: int,
         learning_rate: float = 3e-4,
         clip_range: float = 0.2,
@@ -28,8 +29,6 @@ class BaseModel(ABC):
         gae_lambda: float = 0.95,
         entropy_coef: float = 0.01,
         num_epochs: int = 10,
-        normalize: bool = False,
-        max_nbr_iterations: int = 200000,
         batch_size: int = 64,
         device: str = "cpu",
     ):
@@ -38,6 +37,7 @@ class BaseModel(ABC):
 
         Args:
             environment (gym.Env): The training environment.
+            num_envs (int): The number of training environments (for parallel training).
             eval_frequency (int): Number of training iterations between evaluations.
             learning_rate (float, optional): Learning rate for the optimizer. Default is 3e-4.
             clip_range (float, optional): PPO clipping range. Default is 0.2.
@@ -47,12 +47,11 @@ class BaseModel(ABC):
             gae_lambda (float, optional): Lambda for Generalized Advantage Estimation. Default is 0.95.
             entropy_coef (float, optional): Coefficient for entropy bonus. Default is 0.01.
             num_epochs (int, optional): Number of training epochs per update. Default is 10.
-            normalize (bool, optional): If True, normalize rewards to [-1, 1]. Default is False.
-            max_nbr_iterations (int, optional): Maximum number of training iterations before stopping. Default is 175000.
             batch_size (int, optional): Mini-batch size. Default is 64.
             device (str, optional): Device for training, either 'cpu' or 'cuda'. Default is 'cpu'.
         """
         self.env = environment
+        self.num_envs = num_envs
         self.observation_space = environment.observation_space
         self.action_space = environment.action_space
 
@@ -65,8 +64,6 @@ class BaseModel(ABC):
         self.gae_lambda = gae_lambda
         self.entropy_coef = entropy_coef
         self.num_epochs = num_epochs
-        self.normalize = normalize
-        self.max_nbr_iterations = max_nbr_iterations
         self.batch_size = batch_size
         self.device = torch.device(device)
 
@@ -89,7 +86,6 @@ class BaseModel(ABC):
     def learn(
         self,
         stop_condition: Optional[StopCondition] = None,
-        num_envs: int = 1,
         callback: Optional[Callable[..., Any]] = None,
         log_interval: int = 1,
         tb_log_name: str = "OnPolicyAlgorithm",

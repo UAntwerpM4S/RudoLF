@@ -61,6 +61,7 @@ class PPOModel(BaseModel):
     def __init__(
         self,
         environment: gym.Env,
+        num_envs: 1,
         eval_frequency: int,
         learning_rate: float = 3e-4,
         clip_range: float = 0.2,
@@ -82,6 +83,7 @@ class PPOModel(BaseModel):
 
         Args:
             environment (gym.Env): Gym-like environment for training.
+            num_envs (int): The number of training environments (for parallel training).
             eval_frequency (int): Frequency of evaluation during training.
             learning_rate (float, optional): Learning rate for the optimizer (default: 3e-4).
             clip_range (float, optional): Clipping range for PPO loss (default: 0.2).
@@ -96,8 +98,10 @@ class PPOModel(BaseModel):
             batch_size (int, optional): Size of the (mini) batches (default: 64).
             device (str, optional): Device for computation ('cpu' or 'cuda') (default: 'cpu').
         """
-        super().__init__(environment, eval_frequency, learning_rate, clip_range, value_loss_coef, max_grad_norm, gamma,
-                         gae_lambda, entropy_coef, num_epochs, normalize, max_nbr_iterations, batch_size, device)
+        super().__init__(environment=environment, num_envs=num_envs, eval_frequency=eval_frequency,
+                         learning_rate=learning_rate, clip_range=clip_range, value_loss_coef=value_loss_coef,
+                         max_grad_norm=max_grad_norm, gamma=gamma, gae_lambda=gae_lambda, entropy_coef=entropy_coef,
+                         num_epochs=num_epochs, batch_size=batch_size, device=device)
 
         # Handle discrete and continuous action spaces
         if isinstance(self.action_space, gym.spaces.Discrete):
@@ -108,6 +112,8 @@ class PPOModel(BaseModel):
         self.input_dim = self.observation_space.shape[0]
         self.policy = PPOPolicy(self.input_dim, self.output_dim, device)
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
+        self.normalize = normalize
+        self.max_nbr_iterations = max_nbr_iterations
 
         self.reward_mean = 0.0
         self.reward_var = 1.0
@@ -385,7 +391,6 @@ class PPOModel(BaseModel):
     def learn(
         self,
         stop_condition: Optional[StopCondition] = None,
-        num_envs: int = 1,  # Number of parallel environments
         callback: Optional[callable] = None,
         log_interval: int = 1,
         tb_log_name: str = "OnPolicyAlgorithm",
@@ -401,7 +406,6 @@ class PPOModel(BaseModel):
 
         Args:
             stop_condition (StopCondition): Condition that defines when training should stop.
-            num_envs (int): Number of parallel environments. Default is 1.
             callback (callable, optional): The callback handler for custom actions during training.
             log_interval (int): The interval at which to log training information. Default is 1.
             tb_log_name (str): The name of the tensorboard log file. Default is "OnPolicyAlgorithm".
@@ -410,7 +414,7 @@ class PPOModel(BaseModel):
             progress_bar (bool): Whether to display a progress bar. Default is False.
 
         """
-        print(f"Starting training with {num_envs} parallel environments on a '{self.device}' device")
+        print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
 
         iteration = 0
         last_save_index = 0
@@ -426,7 +430,7 @@ class PPOModel(BaseModel):
             total_advantage = 0
 
             # Collect batch data from multiple parallel environments
-            batch_data = self.run_parallel_episodes(num_envs)
+            batch_data = self.run_parallel_episodes(self.num_envs)
 
             for episode_result in batch_data:
                 episode_data.append(episode_result)
@@ -437,8 +441,8 @@ class PPOModel(BaseModel):
             loss = self.train(episode_data)
 
             # Log results
-            mean_reward = total_reward / num_envs
-            mean_advantage = total_advantage / num_envs
+            mean_reward = total_reward / self.num_envs
+            mean_advantage = total_advantage / self.num_envs
 
             training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
 

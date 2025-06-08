@@ -37,9 +37,13 @@ DEFAULT_HYPERPARAMETERS = {
         'eval_frequency': 100,
         'num_envs': 1,
         'num_epochs': 10,
-        'normalize': False,
         'batch_size': 64,
-        'device': "cpu"
+        'device': "cpu",
+        'model_dir': "models",
+        'log_dir': "logs",
+        'results_dir': "results",
+        'tensorboard_log': "logs/tensorboard",
+        'verbose': True
     }
 }
 
