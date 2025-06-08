@@ -30,74 +30,49 @@ class SB3PPOModel(BaseModel):
 
     def __init__(
         self,
-        environment: gym.Env,
-        num_envs: 1,
-        eval_frequency: int,
-        learning_rate: float = 3e-4,
-        clip_range: float = 0.2,
-        value_loss_coef: float = 0.5,
-        max_grad_norm: float = 0.5,
-        gamma: float = 0.99,
-        gae_lambda: float = 0.95,
-        entropy_coef: float = 0.01,
+        *args,
         total_time_steps = 200000,
         log_interval = 10,
         n_steps: int = 2048,
-        batch_size: int = 64,
-        num_epochs: int = 10,
         reward_threshold: float = 100000.8,
-        device: str = "cpu",
-        model_dir: str = "models",
         log_dir: str = "logs",
-        results_dir: str = "results",
         tensorboard_log: Optional[str] = "logs/tensorboard",
         verbose: bool = True,
+        **kwargs,
     ):
         """
-        Initialize the SB3PPOModel with a specified environment and PPO hyperparameters.
+        Initialize the SB3PPOModel with environment and Stable-Baselines3-specific settings.
+
+        This constructor wraps the SB3 PPO model and adds extended configuration options
+        such as total training steps, logging intervals, and TensorBoard support.
 
         Args:
-            environment (gym.Env): The environment used for training.
-            num_envs (int): The number of training environments (for parallel training).
-            eval_frequency (int): Frequency (in steps) to evaluate and log model performance.
-            learning_rate (float): Learning rate for the policy optimizer.
-            clip_range (float): PPO clipping range for policy updates.
-            value_loss_coef (float): Coefficient for the value function loss.
-            max_grad_norm (float): Maximum allowed norm for gradient clipping.
-            gamma (float): Discount factor for future rewards.
-            gae_lambda (float): Lambda parameter for Generalized Advantage Estimation (GAE).
-            entropy_coef (float): Coefficient for entropy regularization.
-            total_time_steps (int): Total number of steps to perform during training.
-            log_interval (int): The interval used for logging.
-            n_steps (int): The number of steps to run for each environment per update.
-            batch_size (int): Size of mini-batches used during training.
-            num_epochs (int): Number of epochs per policy update.
-            reward_threshold (float): Minimum expected reward per episode to stop training.
-            device (str): Device to run computations on ("cpu" or "cuda").
-            model_dir (str): Directory path to save trained models.
-            log_dir (str): Directory path to store training logs.
-            results_dir (str): Directory path to store evaluation results.
-            tensorboard_log (Optional[str]): Directory for TensorBoard logging, if enabled.
-            verbose (bool): If True, prints training progress and debug information.
+            *args: Positional arguments forwarded to the BaseModel constructor.
+            total_time_steps (int, optional): Total number of environment steps for training.
+                Defaults to 200000.
+            log_interval (int, optional): Number of updates between logging to stdout.
+                Defaults to 10.
+            n_steps (int, optional): Number of steps to run for each environment per policy update.
+                Corresponds to `n_steps` in SB3 PPO. Defaults to 2048.
+            reward_threshold (float, optional): Reward threshold to stop training early if exceeded.
+                Used with `StopTrainingOnRewardThreshold` callback. Defaults to 100000.8.
+            log_dir (str, optional): Directory where evaluation logs and intermediate results are stored.
+                Defaults to "logs".
+            tensorboard_log (Optional[str], optional): Path to log TensorBoard summaries, or None to disable.
+                Defaults to "logs/tensorboard".
+            verbose (bool, optional): Verbosity flag; if True, enables console output during training.
+                Defaults to True.
+            **kwargs: Additional keyword arguments passed to the BaseModel constructor.
         """
-        super().__init__(environment=environment, num_envs=num_envs, eval_frequency=eval_frequency,
-                         learning_rate=learning_rate, clip_range=clip_range, value_loss_coef=value_loss_coef,
-                         max_grad_norm=max_grad_norm, gamma=gamma, gae_lambda=gae_lambda, entropy_coef=entropy_coef,
-                         num_epochs=num_epochs, batch_size=batch_size, device=device)
+        super().__init__(*args, **kwargs)
 
         self.total_time_steps = total_time_steps
         self.log_interval = log_interval
         self.n_steps = n_steps
         self.reward_threshold = reward_threshold
         self.log_dir = log_dir
-        self.model_dir = model_dir
-        self.results_dir = results_dir
         self.tensorboard_log = tensorboard_log
         self.verbose = verbose
-
-        os.makedirs(self.model_dir, exist_ok=True)
-        os.makedirs(self.log_dir, exist_ok=True)
-        os.makedirs(self.results_dir, exist_ok=True)
 
         self.train_env = DummyVecEnv([lambda: Monitor(self.create_env(), "logs/env_0")])
 
@@ -116,7 +91,6 @@ class SB3PPOModel(BaseModel):
             gamma=self.gamma,
             gae_lambda=self.gae_lambda,
             clip_range=self.clip_range,
-            clip_range_vf=None,
             ent_coef=self.entropy_coef,
             vf_coef=self.value_loss_coef,
             max_grad_norm=self.max_grad_norm,
@@ -135,7 +109,7 @@ class SB3PPOModel(BaseModel):
             gym.Env: A deep copy of the original environment. If the environment supports randomization,
                      a random initial configuration is applied.
         """
-        env = copy.deepcopy(self.get_env())
+        env = copy.deepcopy(self.env)
         if hasattr(env, "randomize"):
             env.randomize()
         return env
@@ -151,7 +125,8 @@ class SB3PPOModel(BaseModel):
         Returns:
             tuple: A tuple (action, None), where action is the predicted action. Log-probabilities are not returned.
         """
-        return self.ppo.predict(state, deterministic=True)
+        action, _ = self.ppo.predict(state, deterministic=True)
+        return action, 0.0
 
 
     def learn(
@@ -176,11 +151,10 @@ class SB3PPOModel(BaseModel):
 
         eval_callback = EvalCallback(
             self.train_env,
-            best_model_save_path=os.path.join(self.model_dir, "best_ppo"),
-            log_path=os.path.join(self.log_dir, "eval"),
+            best_model_save_path=os.path.join(self.model_dir, "best_model"),
+            log_path=os.path.join(self.model_dir, "logs"),
             eval_freq=self.eval_frequency,
             deterministic=True,
-            render=False,
             callback_on_new_best=stop_callback,
             verbose=int(self.verbose),
         )
@@ -222,3 +196,8 @@ class SB3PPOModel(BaseModel):
             RuntimeError: If no model is created or the policy fails to save.
         """
         self.ppo.save(policy_file_name)
+
+
+    def set_policy_eval(self):
+        """Set policy in evaluation mode."""
+        self.ppo.policy.eval()
