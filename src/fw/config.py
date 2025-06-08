@@ -45,7 +45,6 @@ DEFAULT_HYPERPARAMETERS = {
         'device': "cpu",
         'model_dir': "models",
         'log_dir': "logs",
-        'results_dir': "results",
         'tensorboard_log': "logs/tensorboard",
         'verbose': True
     }
