@@ -132,8 +132,8 @@ class PPOModel(BaseModel):
         new_mean = self.reward_mean + delta * batch_count / tot_count
         m_a = self.reward_var * self.reward_count
         m_b = batch_var * batch_count
-        M2 = m_a + m_b + delta ** 2 * self.reward_count * batch_count / tot_count
-        new_var = M2 / tot_count
+        m2 = m_a + m_b + delta ** 2 * self.reward_count * batch_count / tot_count
+        new_var = m2 / tot_count
 
         self.reward_mean = new_mean
         self.reward_var = new_var

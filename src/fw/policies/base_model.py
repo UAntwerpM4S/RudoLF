@@ -97,7 +97,6 @@ class BaseModel(ABC):
 
         Args:
             stop_condition (StopCondition, optional): A stopping criterion to terminate training early.
-            num_envs (int, optional): Number of parallel environments. Default is 1.
             callback (callable, optional): Optional callback function called during training.
             log_interval (int, optional): How often to log training statistics. Default is 1.
             tb_log_name (str, optional): Name used for logging (e.g., for TensorBoard). Default is "OnPolicyAlgorithm".

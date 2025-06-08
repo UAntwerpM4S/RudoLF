@@ -26,7 +26,6 @@ class SB3PPOModel(BaseModel):
         ppo (stable_baselines3.PPO): The underlying SB3 PPO model.
         env (gym.Env): The input environment.
         train_env (gym.Env): The training environment (can be vectorized).
-        max_nbr_iterations (int): Maximum number of training steps.
     """
 
     def __init__(
@@ -157,7 +156,6 @@ class SB3PPOModel(BaseModel):
 
         Args:
             stop_condition (StopCondition, optional): Optional custom stop condition (not currently used).
-            num_envs (int): Number of parallel environments (currently fixed at 1).
             callback (callable, optional): Optional additional training callback.
             log_interval (int): Frequency (in episodes) of logging to the console.
             tb_log_name (str): TensorBoard logging directory name.
