@@ -391,11 +391,6 @@ class PPOModel(BaseModel):
     def learn(
         self,
         stop_condition: Optional[StopCondition] = None,
-        callback: Optional[callable] = None,
-        log_interval: int = 1,
-        tb_log_name: str = "OnPolicyAlgorithm",
-        reset_num_timesteps: bool = True,
-        progress_bar: bool = False,
     ):
         """
         Train the policy using multiple parallel environments.
@@ -406,12 +401,6 @@ class PPOModel(BaseModel):
 
         Args:
             stop_condition (StopCondition): Condition that defines when training should stop.
-            callback (callable, optional): The callback handler for custom actions during training.
-            log_interval (int): The interval at which to log training information. Default is 1.
-            tb_log_name (str): The name of the tensorboard log file. Default is "OnPolicyAlgorithm".
-            reset_num_timesteps (bool): Whether to reset the number of timesteps after each training run.
-                Default is True.
-            progress_bar (bool): Whether to display a progress bar. Default is False.
 
         """
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")

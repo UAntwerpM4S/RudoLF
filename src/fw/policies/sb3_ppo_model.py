@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import gymnasium as gym
 
-from typing import Optional, Callable
+from typing import Optional
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
@@ -145,22 +145,12 @@ class SB3PPOModel(BaseModel):
     def learn(
         self,
         stop_condition: Optional[StopCondition] = None,
-        callback: Optional[Callable] = None,
-        log_interval: int = 1,
-        tb_log_name: str = "OnPolicyAlgorithm",
-        reset_num_timesteps: bool = True,
-        progress_bar: bool = False,
     ):
         """
         Train the PPO agent using Stable-Baselines3 with evaluation callbacks and logging.
 
         Args:
             stop_condition (StopCondition, optional): Optional custom stop condition (not currently used).
-            callback (callable, optional): Optional additional training callback.
-            log_interval (int): Frequency (in episodes) of logging to the console.
-            tb_log_name (str): TensorBoard logging directory name.
-            reset_num_timesteps (bool): Whether to reset the timestep counter between runs.
-            progress_bar (bool): Whether to display a progress bar during training.
 
         Notes:
             The model is saved both during training (if performance improves) and after training is completed.
@@ -169,18 +159,18 @@ class SB3PPOModel(BaseModel):
 
         stop_callback = StopTrainingOnRewardThreshold(
             reward_threshold=100000.8,  # Could also be parameterized
-            verbose=1
+            verbose=int(self.verbose)
         )
 
         eval_callback = EvalCallback(
             self.train_env,
             best_model_save_path=os.path.join(self.model_dir, "best_ppo"),
             log_path=os.path.join(self.log_dir, "eval"),
-            eval_freq=10000, # self.eval_frequency,
+            eval_freq=self.eval_frequency,
             deterministic=True,
             render=False,
             callback_on_new_best=stop_callback,
-            verbose=1
+            verbose=int(self.verbose)
         )
 
         self.ppo.learn(

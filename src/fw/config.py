@@ -34,7 +34,7 @@ DEFAULT_HYPERPARAMETERS = {
         'value_loss_coef': 0.5,
         'max_grad_norm': 0.5,
         'clip_range': 0.2,
-        'eval_frequency': 100,
+        'eval_frequency': 10000,
         'num_envs': 1,
         'num_epochs': 10,
         'batch_size': 64,
