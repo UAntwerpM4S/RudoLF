@@ -13,7 +13,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3 import PPO
 
 
-class SB3PPOModel(BaseModel):
+class PPO2Model(BaseModel):
     """
     SB3PPOModel integrates the Stable-Baselines3 implementation of Proximal Policy Optimization (PPO)
     into a custom training framework based on the BaseModel interface.
@@ -199,5 +199,7 @@ class SB3PPOModel(BaseModel):
 
 
     def set_policy_eval(self):
-        """Set policy in evaluation mode."""
+        """
+        Set policy in evaluation mode.
+        """
         self.ppo.policy.eval()

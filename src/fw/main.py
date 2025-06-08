@@ -1,7 +1,7 @@
 from fw.trainer import Trainer
 from fw.env_factory import get as get_environment
 from fw.stop_condition import StopCondition, Criterion
-from fw.config import PPO_POLICY_NAME, SB3_PPO_POLICY_NAME
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
 from fw.env_factory import py_sim_env_name, fh_sim_env_name, lunar_env_name
 
 
