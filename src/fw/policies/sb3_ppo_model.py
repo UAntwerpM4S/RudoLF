@@ -40,8 +40,12 @@ class SB3PPOModel(BaseModel):
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
         entropy_coef: float = 0.01,
-        num_epochs: int = 10,
+        total_time_steps = 200000,
+        log_interval = 10,
+        n_steps: int = 2048,
         batch_size: int = 64,
+        num_epochs: int = 10,
+        reward_threshold: float = 100000.8,
         device: str = "cpu",
         model_dir: str = "models",
         log_dir: str = "logs",
@@ -63,8 +67,12 @@ class SB3PPOModel(BaseModel):
             gamma (float): Discount factor for future rewards.
             gae_lambda (float): Lambda parameter for Generalized Advantage Estimation (GAE).
             entropy_coef (float): Coefficient for entropy regularization.
-            num_epochs (int): Number of epochs per policy update.
+            total_time_steps (int): Total number of steps to perform during training.
+            log_interval (int): The interval used for logging.
+            n_steps (int): The number of steps to run for each environment per update.
             batch_size (int): Size of mini-batches used during training.
+            num_epochs (int): Number of epochs per policy update.
+            reward_threshold (float): Minimum expected reward per episode to stop training.
             device (str): Device to run computations on ("cpu" or "cuda").
             model_dir (str): Directory path to save trained models.
             log_dir (str): Directory path to store training logs.
@@ -77,6 +85,10 @@ class SB3PPOModel(BaseModel):
                          max_grad_norm=max_grad_norm, gamma=gamma, gae_lambda=gae_lambda, entropy_coef=entropy_coef,
                          num_epochs=num_epochs, batch_size=batch_size, device=device)
 
+        self.total_time_steps = total_time_steps
+        self.log_interval = log_interval
+        self.n_steps = n_steps
+        self.reward_threshold = reward_threshold
         self.log_dir = log_dir
         self.model_dir = model_dir
         self.results_dir = results_dir
@@ -95,10 +107,10 @@ class SB3PPOModel(BaseModel):
         )
 
         self.ppo = PPO(
-            "MlpPolicy",
-            self.train_env,
+            policy="MlpPolicy",
+            env=self.train_env,
             learning_rate=self.learning_rate,
-            n_steps=2048,  # could be exposed as a hyperparameter if needed
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             n_epochs=self.num_epochs,
             gamma=self.gamma,
@@ -155,11 +167,11 @@ class SB3PPOModel(BaseModel):
         Notes:
             The model is saved both during training (if performance improves) and after training is completed.
         """
-        print(f"Starting training for {120000} time steps...")
+        print(f"Starting training for {self.total_time_steps} time steps...")
 
         stop_callback = StopTrainingOnRewardThreshold(
-            reward_threshold=100000.8,  # Could also be parameterized
-            verbose=int(self.verbose)
+            reward_threshold=self.reward_threshold,
+            verbose=int(self.verbose),
         )
 
         eval_callback = EvalCallback(
@@ -170,17 +182,17 @@ class SB3PPOModel(BaseModel):
             deterministic=True,
             render=False,
             callback_on_new_best=stop_callback,
-            verbose=int(self.verbose)
+            verbose=int(self.verbose),
         )
 
         self.ppo.learn(
-            total_timesteps=120000, # self.max_nbr_iterations,
+            total_timesteps=self.total_time_steps, # self.max_nbr_iterations,
             callback=eval_callback,
-            log_interval=10,
-            progress_bar=True
+            log_interval=self.log_interval,
+            progress_bar=True,
         )
 
-        final_model_path = os.path.join(self.model_dir, f"final_ppo_{120000}")
+        final_model_path = os.path.join(self.model_dir, f"final_ppo_{self.total_time_steps}")
         self.save_policy(final_model_path)
 
         print(f"Training completed! Final model saved to {final_model_path}")
