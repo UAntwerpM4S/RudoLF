@@ -100,8 +100,10 @@ class Agent:
 
         if policy_file_name:
             full_policy_file_name = ".".join([policy_file_name, "zip"])
+            if self.model.model_dir:
+                full_policy_file_name = os.path.join(self.model.model_dir, full_policy_file_name)
 
-            if Path(os.path.join(self.model.model_dir, full_policy_file_name)).exists():
+            if Path(full_policy_file_name).exists():
                 print(f"Reusing {policy_file_name}.")
                 self._model.load_policy(policy_file_name)
             else:
