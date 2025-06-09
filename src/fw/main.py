@@ -1,6 +1,7 @@
 from fw.trainer import Trainer
 from fw.env_factory import get as get_environment
 from fw.stop_condition import StopCondition, Criterion
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
 from fw.env_factory import py_sim_env_name, fh_sim_env_name, lunar_env_name
 
 
@@ -12,7 +13,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             # get_environment(fh_sim_env_name)]
 
     # Create a Trainer and pass on a list of agents that you want to train
-    trainer = Trainer("PPO", envs, "SimpleScheduler")
+    trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
 
     if "train" == action:
         configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.01, patience=3, max_time_steps=600),
