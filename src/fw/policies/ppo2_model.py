@@ -166,7 +166,7 @@ class PPO2Model(BaseModel):
             progress_bar=True,
         )
 
-        final_model_path = os.path.join(self.model_dir, f"final_ppo_{self.total_time_steps}")
+        final_model_path = f"final_ppo_{self.total_time_steps}"
         self.save_policy(final_model_path)
 
         print(f"Training completed! Final model saved to {final_model_path}")
@@ -182,6 +182,9 @@ class PPO2Model(BaseModel):
         Raises:
             RuntimeError: If no model is created or the policy fails to load.
         """
+        if self.model_dir:
+            policy_file_name = os.path.join(self.model_dir, policy_file_name)
+
         self.ppo = PPO.load(policy_file_name, device=self.device)
 
 
@@ -195,6 +198,9 @@ class PPO2Model(BaseModel):
         Raises:
             RuntimeError: If no model is created or the policy fails to save.
         """
+        if self.model_dir:
+            policy_file_name = os.path.join(self.model_dir, policy_file_name)
+
         self.ppo.save(policy_file_name)
 
 
