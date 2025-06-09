@@ -15,7 +15,7 @@ from stable_baselines3 import PPO
 
 class PPO2Model(BaseModel):
     """
-    SB3PPOModel integrates the Stable-Baselines3 implementation of Proximal Policy Optimization (PPO)
+    PPO2Model integrates the Stable-Baselines3 implementation of Proximal Policy Optimization (PPO)
     into a custom training framework based on the BaseModel interface.
 
     It wraps an SB3 PPO agent and provides standardized methods for environment setup, policy prediction,
@@ -41,7 +41,7 @@ class PPO2Model(BaseModel):
         **kwargs,
     ):
         """
-        Initialize the SB3PPOModel with environment and Stable-Baselines3-specific settings.
+        Initialize the PPO2Model with environment and Stable-Baselines3-specific settings.
 
         This constructor wraps the SB3 PPO model and adds extended configuration options
         such as total training steps, logging intervals, and TensorBoard support.
@@ -151,7 +151,7 @@ class PPO2Model(BaseModel):
 
         eval_callback = EvalCallback(
             self.train_env,
-            best_model_save_path=os.path.join(self.model_dir, "best_model"),
+            best_model_save_path=self.model_dir,
             log_path=self.log_dir,
             eval_freq=self.eval_frequency,
             deterministic=True,
