@@ -126,7 +126,7 @@ class PPO2Model(BaseModel):
             Tuple: A tuple (action, None), where action is the predicted action. Log-probabilities are not returned.
         """
         action, _ = self.ppo.predict(state, deterministic=True)
-        return action, 0.0
+        return action, None
 
 
     def learn(
