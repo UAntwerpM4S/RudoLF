@@ -152,7 +152,7 @@ class PPO2Model(BaseModel):
         eval_callback = EvalCallback(
             self.train_env,
             best_model_save_path=os.path.join(self.model_dir, "best_model"),
-            log_path=os.path.join(self.log_dir, "logs"),
+            log_path=self.log_dir,
             eval_freq=self.eval_frequency,
             deterministic=True,
             callback_on_new_best=stop_callback,
