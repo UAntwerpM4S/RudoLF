@@ -1,3 +1,4 @@
+import os
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,12 +7,13 @@ import matplotlib.patches as patches
 from pathlib import Path
 from gymnasium import Env
 from enum import auto, Enum
-from fw.config import PPO_POLICY_NAME
-from fw.policies.ppo_model import PPOModel
-from fw.policies.base_model import BaseModel
-from fw.stop_condition import StopCondition
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+from fw.stop_condition import StopCondition
+from fw.policies.base_model import BaseModel
+from fw.policies.ppo2_model import PPO2Model
+from fw.policies.ppo_model import PPOModel
 
 
 class PolicyStrategy(Enum):
@@ -90,25 +92,18 @@ class Agent:
             policy_file_name = f'{other_env_name}_{self._model_type}_policy'
 
         if PPO_POLICY_NAME == self._model_type:
-            self._model = PPOModel(environment=env,
-                                   eval_frequency=self._hyperparameters["eval_frequency"],
-                                   learning_rate=self._hyperparameters["learning_rate"],
-                                   clip_range=self._hyperparameters["clip_range"],
-                                   value_loss_coef=self._hyperparameters["value_loss_coef"],
-                                   max_grad_norm=self._hyperparameters["max_grad_norm"],
-                                   gamma=self._hyperparameters["gamma"],
-                                   gae_lambda=self._hyperparameters["gae_lambda"],
-                                   entropy_coef=self._hyperparameters["entropy_coef"],
-                                   num_epochs=self._hyperparameters["num_epochs"],
-                                   normalize=self._hyperparameters["normalize"],
-                                   max_nbr_iterations=self._hyperparameters["max_nbr_iterations"],
-                                   batch_size=self._hyperparameters["batch_size"],
-                                   device=self._hyperparameters["device"])
+            self._model = PPOModel(environment=env, **self._hyperparameters)
+        elif PPO2_POLICY_NAME == self._model_type:
+            self._model = PPO2Model(environment=env, **self._hyperparameters)
         else:
             raise RuntimeError(f"Unknown {self._model_type} policy type.")
 
         if policy_file_name:
-            if Path(".".join([policy_file_name, "zip"])).exists():
+            full_policy_file_name = ".".join([policy_file_name, "zip"])
+            if self.model.model_dir:
+                full_policy_file_name = os.path.join(self.model.model_dir, full_policy_file_name)
+
+            if Path(full_policy_file_name).exists():
                 print(f"Reusing {policy_file_name}.")
                 self._model.load_policy(policy_file_name)
             else:
@@ -131,8 +126,6 @@ class Agent:
         # Start training
         self._model.learn(
             stop_condition=stop_condition,
-            num_envs=self._hyperparameters["num_envs"],
-            tb_log_name="agent_training"
         )
 
         # Cleanup the environment
@@ -263,11 +256,7 @@ class Agent:
 
                 while not done:
                     # Select action
-                    prediction = self._model.predict(state)
-                    if len(prediction) == 3:
-                        action, _, _ = prediction
-                    else:
-                        action, _ = prediction
+                    action, _ = self._model.predict(state)
 
                     # Take step in environment
                     state, reward, terminated, truncated, _ = env.step(action)

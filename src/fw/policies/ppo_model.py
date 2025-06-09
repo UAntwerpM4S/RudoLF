@@ -1,3 +1,4 @@
+import os
 import csv
 import copy
 import torch
@@ -6,7 +7,7 @@ import torch.optim as optim
 import gymnasium as gym
 import numpy as np
 
-from typing import Optional
+from typing import Optional, Tuple
 from gymnasium.vector import SyncVectorEnv
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
@@ -60,44 +61,26 @@ class PPOModel(BaseModel):
 
     def __init__(
         self,
-        environment: gym.Env,
-        eval_frequency: int,
-        learning_rate: float = 3e-4,
-        clip_range: float = 0.2,
-        value_loss_coef: float = 0.5,
-        max_grad_norm: float = 0.5,
-        gamma: float = 0.99,
-        gae_lambda: float = 0.95,
-        entropy_coef: float = 0.01,
-        num_epochs: int = 10,
-        normalize: bool = False,
+        *args,
         max_nbr_iterations: int = 200000,
-        batch_size: int = 64,
-        device: str = "cpu",
+        normalize: bool = False,
+        **kwargs
     ):
         """
-        Initialize PPOModel with environment and hyperparameters.
+        Initialize PPOModel with environment and training hyperparameters.
 
-        This initializes the PPO model with the specified environment and learning parameters.
+        This constructor passes core arguments to the BaseModel and adds two specific options
+        for training behavior: maximum number of iterations and reward normalization.
 
         Args:
-            environment (gym.Env): Gym-like environment for training.
-            eval_frequency (int): Frequency of evaluation during training.
-            learning_rate (float, optional): Learning rate for the optimizer (default: 3e-4).
-            clip_range (float, optional): Clipping range for PPO loss (default: 0.2).
-            value_loss_coef (float, optional): Coefficient for value loss in total loss (default: 0.5).
-            max_grad_norm (float, optional): Maximum gradient norm for clipping (default: 0.5).
-            gamma (float, optional): Discount factor for rewards (default: 0.99).
-            gae_lambda (float, optional): GAE parameter (default: 0.95).
-            entropy_coef (float, optional): Coefficient for entropy bonus (default: 0.01).
-            num_epochs (int, optional): Number of epochs for training on collected data (default: 10).
-            normalize (bool, optional): Whether to normalize the rewards between [-1,1] (default: False).
-            max_nbr_iterations (int, optional): Maximum number of steps that is allowed before aborting (default: 125000).
-            batch_size (int, optional): Size of the (mini) batches (default: 64).
-            device (str, optional): Device for computation ('cpu' or 'cuda') (default: 'cpu').
+            *args: Positional arguments passed to the BaseModel initializer.
+            max_nbr_iterations (int, optional): The maximum number of environment steps before terminating training.
+                Used as a safeguard to prevent infinite loops. Defaults to 200000.
+            normalize (bool, optional): Whether to normalize rewards using running statistics.
+                Helps stabilize learning when reward scales vary significantly. Defaults to False.
+            **kwargs: Keyword arguments passed to the BaseModel initializer.
         """
-        super().__init__(environment, eval_frequency, learning_rate, clip_range, value_loss_coef, max_grad_norm, gamma,
-                         gae_lambda, entropy_coef, num_epochs, normalize, max_nbr_iterations, batch_size, device)
+        super().__init__(*args, **kwargs)
 
         # Handle discrete and continuous action spaces
         if isinstance(self.action_space, gym.spaces.Discrete):
@@ -106,8 +89,10 @@ class PPOModel(BaseModel):
             self.output_dim = self.action_space.shape[0]
 
         self.input_dim = self.observation_space.shape[0]
-        self.policy = PPOPolicy(self.input_dim, self.output_dim, device)
+        self.policy = PPOPolicy(self.input_dim, self.output_dim, self.device)
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
+        self.normalize = normalize
+        self.max_nbr_iterations = max_nbr_iterations
 
         self.reward_mean = 0.0
         self.reward_var = 1.0
@@ -126,8 +111,8 @@ class PPOModel(BaseModel):
         new_mean = self.reward_mean + delta * batch_count / tot_count
         m_a = self.reward_var * self.reward_count
         m_b = batch_var * batch_count
-        M2 = m_a + m_b + delta ** 2 * self.reward_count * batch_count / tot_count
-        new_var = M2 / tot_count
+        m2 = m_a + m_b + delta ** 2 * self.reward_count * batch_count / tot_count
+        new_var = m2 / tot_count
 
         self.reward_mean = new_mean
         self.reward_var = new_var
@@ -136,7 +121,7 @@ class PPOModel(BaseModel):
         return (rewards - self.reward_mean) / (np.sqrt(self.reward_var) + 1e-8)
 
 
-    def predict(self, state: np.ndarray) -> tuple:
+    def predict(self, state: np.ndarray) -> Tuple:
         """
         Predict an action for a given state using the policy.
 
@@ -144,10 +129,10 @@ class PPOModel(BaseModel):
             state (np.ndarray): Current state as a NumPy array.
 
         Returns:
-            tuple: A tuple containing the predicted action and log probability.
+            Tuple: A tuple containing the predicted action and log probability.
         """
-        actions, log_probs, values = self.policy.predict(state)
-        return actions[0], log_probs.item(), values.item()
+        actions, log_probs, _ = self.policy.predict(state)
+        return actions[0], log_probs.item()
 
 
     def train(self, all_episodes_data) -> float:
@@ -167,6 +152,9 @@ class PPOModel(BaseModel):
         Returns:
             float: Average loss value after training.
         """
+        if not all_episodes_data:
+            return float('nan')
+
         self.policy.network.train()
 
         # Concatenate all episode data into single arrays for batch processing
@@ -255,7 +243,7 @@ class PPOModel(BaseModel):
         Returns:
             gym.Env: A new instance of the environment.
         """
-        env = copy.deepcopy(self.get_env())
+        env = copy.deepcopy(self.env)
 
         # Optionally randomize the environment's initial state
         if hasattr(env, "randomize"):
@@ -385,12 +373,6 @@ class PPOModel(BaseModel):
     def learn(
         self,
         stop_condition: Optional[StopCondition] = None,
-        num_envs: int = 1,  # Number of parallel environments
-        callback: Optional[callable] = None,
-        log_interval: int = 1,
-        tb_log_name: str = "OnPolicyAlgorithm",
-        reset_num_timesteps: bool = True,
-        progress_bar: bool = False,
     ):
         """
         Train the policy using multiple parallel environments.
@@ -401,23 +383,14 @@ class PPOModel(BaseModel):
 
         Args:
             stop_condition (StopCondition): Condition that defines when training should stop.
-            num_envs (int): Number of parallel environments. Default is 1.
-            callback (callable, optional): The callback handler for custom actions during training.
-            log_interval (int): The interval at which to log training information. Default is 1.
-            tb_log_name (str): The name of the tensorboard log file. Default is "OnPolicyAlgorithm".
-            reset_num_timesteps (bool): Whether to reset the number of timesteps after each training run.
-                Default is True.
-            progress_bar (bool): Whether to display a progress bar. Default is False.
-
         """
-        print(f"Starting training with {num_envs} parallel environments on a '{self.device}' device")
+        print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
 
-        iteration = 0
         last_save_index = 0
         training_metrics = []
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
-        while True:
+        for iteration in range(stopping_condition.max_time_steps):
             self.policy.network.eval()
 
             # Prepare batch for training
@@ -426,7 +399,7 @@ class PPOModel(BaseModel):
             total_advantage = 0
 
             # Collect batch data from multiple parallel environments
-            batch_data = self.run_parallel_episodes(num_envs)
+            batch_data = self.run_parallel_episodes(self.num_envs)
 
             for episode_result in batch_data:
                 episode_data.append(episode_result)
@@ -437,8 +410,8 @@ class PPOModel(BaseModel):
             loss = self.train(episode_data)
 
             # Log results
-            mean_reward = total_reward / num_envs
-            mean_advantage = total_advantage / num_envs
+            mean_reward = total_reward / self.num_envs
+            mean_advantage = total_advantage / self.num_envs
 
             training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
 
@@ -460,12 +433,10 @@ class PPOModel(BaseModel):
 
                 # Save checkpoint every 'self.eval_frequency' iterations
                 if iteration > 0 and iteration % self.eval_frequency == 0:
-                    self.policy.save(f'ppo_checkpoint_{iteration}')
-
-            iteration += 1
+                    self.save_policy(f"ppo_checkpoint_{iteration}")
 
         # Save final checkpoint
-        self.policy.save(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
+        self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
 
         # Dump training metrics to CSV
         self.dump_metrics_to_csv("training_metrics.csv", training_metrics)
@@ -473,8 +444,7 @@ class PPOModel(BaseModel):
         print("Training completed!")
 
 
-    @staticmethod
-    def dump_metrics_to_csv(csv_filename, training_metrics):
+    def dump_metrics_to_csv(self, csv_filename, training_metrics):
         """
         Save training metrics to a CSV file.
 
@@ -486,7 +456,9 @@ class PPOModel(BaseModel):
             training_metrics (list): A list of dictionaries containing the training metrics.
 
         """
-        with open(csv_filename, mode="w", newline="") as file:
+        filepath = os.path.join(self.model_dir, csv_filename)
+
+        with open(filepath, mode="w", newline="") as file:
             # Get all possible keys (assuming all dicts have the same structure)
             fieldnames = training_metrics[0].keys()
 
@@ -506,6 +478,9 @@ class PPOModel(BaseModel):
             RuntimeError: If no model is created or the policy fails to load.
         """
         try:
+            if self.model_dir:
+                policy_file_name = os.path.join(self.model_dir, policy_file_name)
+
             self.policy = self.policy.load(policy_file_name, self.device)
         except Exception as e:
             raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
@@ -522,6 +497,9 @@ class PPOModel(BaseModel):
             RuntimeError: If no model is created or the policy fails to save.
         """
         try:
+            if self.model_dir:
+                policy_file_name = os.path.join(self.model_dir, policy_file_name)
+
             self.policy.save(policy_file_name)
         except Exception as e:
             raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
@@ -529,6 +507,6 @@ class PPOModel(BaseModel):
 
     def set_policy_eval(self):
         """
-        Set policy in eval mode.
+        Set policy in evaluation mode.
         """
         self.policy.network.eval()
