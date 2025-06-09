@@ -1,3 +1,4 @@
+import os
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
@@ -98,7 +99,9 @@ class Agent:
             raise RuntimeError(f"Unknown {self._model_type} policy type.")
 
         if policy_file_name:
-            if Path(".".join([policy_file_name, "zip"])).exists():
+            full_policy_file_name = ".".join([policy_file_name, "zip"])
+
+            if Path(os.path.join(self.model.model_dir, full_policy_file_name)).exists():
                 print(f"Reusing {policy_file_name}.")
                 self._model.load_policy(policy_file_name)
             else:
