@@ -160,7 +160,7 @@ class PPO2Model(BaseModel):
         )
 
         self.ppo.learn(
-            total_timesteps=self.total_time_steps, # self.max_nbr_iterations,
+            total_timesteps=self.total_time_steps,
             callback=eval_callback,
             log_interval=self.log_interval,
             progress_bar=True,
