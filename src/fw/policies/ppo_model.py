@@ -433,12 +433,10 @@ class PPOModel(BaseModel):
 
                 # Save checkpoint every 'self.eval_frequency' iterations
                 if iteration > 0 and iteration % self.eval_frequency == 0:
-                    checkpoint_path = f"ppo_checkpoint_{iteration}"
-                    self.save_policy(checkpoint_path)
+                    self.save_policy(f"ppo_checkpoint_{iteration}")
 
         # Save final checkpoint
-        final_path = f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}'
-        self.save_policy(final_path)
+        self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
 
         # Dump training metrics to CSV
         self.dump_metrics_to_csv("training_metrics.csv", training_metrics)
