@@ -1,4 +1,3 @@
-import os
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
@@ -86,7 +85,7 @@ class Agent:
         policy_file_name = None
 
         if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._model:
-            policy_file_name = os.path.join(self.model.model_dir, f'{self.get_env().type_name}_{self._model_type}_policy')
+            policy_file_name = f'{self.get_env().type_name}_{self._model_type}_policy'
             self._model.save_policy(policy_file_name)
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
             policy_file_name = f'{other_env_name}_{self._model_type}_policy'

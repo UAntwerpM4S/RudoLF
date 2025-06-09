@@ -433,11 +433,11 @@ class PPOModel(BaseModel):
 
                 # Save checkpoint every 'self.eval_frequency' iterations
                 if iteration > 0 and iteration % self.eval_frequency == 0:
-                    checkpoint_path = os.path.join(self.model_dir, f"ppo_checkpoint_{iteration}")
+                    checkpoint_path = f"ppo_checkpoint_{iteration}"
                     self.save_policy(checkpoint_path)
 
         # Save final checkpoint
-        final_path = os.path.join(self.model_dir, f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
+        final_path = f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}'
         self.save_policy(final_path)
 
         # Dump training metrics to CSV
@@ -480,6 +480,9 @@ class PPOModel(BaseModel):
             RuntimeError: If no model is created or the policy fails to load.
         """
         try:
+            if self.model_dir:
+                policy_file_name = os.path.join(self.model_dir, policy_file_name)
+
             self.policy = self.policy.load(policy_file_name, self.device)
         except Exception as e:
             raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
@@ -496,6 +499,9 @@ class PPOModel(BaseModel):
             RuntimeError: If no model is created or the policy fails to save.
         """
         try:
+            if self.model_dir:
+                policy_file_name = os.path.join(self.model_dir, policy_file_name)
+
             self.policy.save(policy_file_name)
         except Exception as e:
             raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
