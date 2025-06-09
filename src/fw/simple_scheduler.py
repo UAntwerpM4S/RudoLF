@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 import traceback
@@ -96,7 +97,7 @@ class SimpleScheduler(BaseScheduler):
 
                 if self._previous_env_name:
                     try:
-                        save_name = f"{self.current_env}_{self.agent.model_type}_policy"
+                        save_name = os.path.join(self.agent.model.model_dir, f"{self.current_env}_{self.agent.model_type}_policy")
                         self.agent.model.save_policy(save_name)
                     except Exception as e:
                         self._previous_env_name = None

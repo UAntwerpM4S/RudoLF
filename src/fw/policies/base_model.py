@@ -51,6 +51,7 @@ class BaseModel(ABC):
             num_epochs (int, optional): Number of training epochs per update. Default is 10.
             batch_size (int, optional): Mini-batch size. Default is 64.
             device (str, optional): Device for training, either 'cpu' or 'cuda'. Default is 'cpu'.
+            model_dir (str, optional): Folder in which the generated models are saved.
         """
         if device not in ("cpu", "cuda"):
             raise ValueError("device must be 'cpu' or 'cuda'")
