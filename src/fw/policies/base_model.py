@@ -77,7 +77,8 @@ class BaseModel(ABC):
         self.device = torch.device(device)
         self.model_dir = model_dir
 
-        os.makedirs(self.model_dir, exist_ok=True)
+        if self.model_dir:
+            os.makedirs(self.model_dir, exist_ok=True)
 
 
     @abstractmethod
