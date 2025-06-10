@@ -12,7 +12,7 @@ from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from fw.policies.ppo_policy import PPOPolicy
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 
 
 class PPOModel(BaseModel):
@@ -245,13 +245,13 @@ class PPOModel(BaseModel):
         return np.mean(loss_per_epoch)
 
 
-    def make_env(self, rank):
+    def make_env(self):
         """
         Utility function for multiprocessing env creation.
         """
 
         def _init():
-            return Monitor(self.create_env(), f"logs/env_{rank}")
+            return Monitor(self.create_env())
 
         return _init
 
@@ -305,8 +305,10 @@ class PPOModel(BaseModel):
             raise ValueError("num_envs must be greater than 0.")
 
         # Create vectorized environments
-        env_fns = [lambda: self.create_env() for _ in range(num_envs)]  # Clone environment
-        vec_env = SubprocVecEnv(env_fns)  # Sync execution across environments
+        if self.num_envs > 1:
+            vec_env = SubprocVecEnv([self.make_env() for _ in range(self.num_envs)])
+        else:
+            vec_env = DummyVecEnv([lambda: Monitor(self.create_env())])
 
         # Reset all environments
         states = vec_env.reset()
