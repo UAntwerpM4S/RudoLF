@@ -456,7 +456,14 @@ class Agent:
 
                 # Adjust layout and save
                 plt.tight_layout()
-                plt.savefig(f'trajectory.png', bbox_inches='tight', dpi=300)
+
+                trajectory_file_name = (
+                    f'{self.model.model_dir}/trajectory.png'
+                    if self.model.model_dir
+                    else 'trajectory.png'
+                )
+
+                plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
                 plt.show()
 
                 print(f"\nPath and error visualization saved as 'trajectory.png'")
