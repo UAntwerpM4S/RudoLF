@@ -75,9 +75,9 @@ class PPO2Model(BaseModel):
         self.verbose = verbose
 
         if self.num_envs > 1:
-            self.train_env = SubprocVecEnv([self.make_env(i) for i in range(self.num_envs)])
+            train_env = SubprocVecEnv([self.make_env(i) for i in range(self.num_envs)])
         else:
-            self.train_env = DummyVecEnv([lambda: Monitor(self.create_env(), "logs/env_0")])
+            train_env = DummyVecEnv([lambda: Monitor(self.create_env(), "logs/env_0")])
 
         policy_kwargs = dict(
             net_arch=[256, 256, 128],
@@ -86,7 +86,7 @@ class PPO2Model(BaseModel):
 
         self.ppo = PPO(
             policy="MlpPolicy",
-            env=self.train_env,
+            env=train_env,
             learning_rate=self.learning_rate,
             n_steps=self.n_steps,
             batch_size=self.batch_size,
@@ -163,8 +163,10 @@ class PPO2Model(BaseModel):
             verbose=int(self.verbose),
         )
 
+        eval_env = Monitor(self.create_env(), "logs/eval_env")
+
         eval_callback = EvalCallback(
-            self.train_env,
+            eval_env,
             best_model_save_path=self.model_dir,
             log_path=self.log_dir,
             eval_freq=self.eval_frequency,
