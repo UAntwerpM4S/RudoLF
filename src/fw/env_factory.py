@@ -245,7 +245,7 @@ py_sim_env_name = "PySimEnv"
 fh_sim_env_name = "FhSimEnv"
 lunar_env_name = "LunarLander"
 
-# Create and register the available environments
-py_sim_environment = get(py_sim_env_name, configuration=[])
-fh_sim_environment = get(fh_sim_env_name, configuration=[])
-lunar_environment = get(lunar_env_name, configuration=[])
+def initialize_all_environments():
+    get(py_sim_env_name, configuration=[])
+    get(fh_sim_env_name, configuration=[])
+    get(lunar_env_name, configuration=[])

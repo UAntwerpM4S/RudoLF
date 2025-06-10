@@ -8,7 +8,7 @@ from typing import Optional, Tuple
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3 import PPO
 
@@ -74,7 +74,10 @@ class PPO2Model(BaseModel):
         self.tensorboard_log = tensorboard_log
         self.verbose = verbose
 
-        self.train_env = DummyVecEnv([lambda: Monitor(self.create_env(), "logs/env_0")])
+        if self.num_envs > 1:
+            self.train_env = SubprocVecEnv([self.make_env(i) for i in range(self.num_envs)])
+        else:
+            self.train_env = DummyVecEnv([lambda: Monitor(self.create_env(), "logs/env_0")])
 
         policy_kwargs = dict(
             net_arch=[256, 256, 128],
@@ -99,6 +102,17 @@ class PPO2Model(BaseModel):
             device=self.device,
             tensorboard_log=self.tensorboard_log
         )
+
+
+    def make_env(self, rank):
+        """
+        Utility function for multiprocessing env creation.
+        """
+
+        def _init():
+            return Monitor(self.create_env(), f"logs/env_{rank}")
+
+        return _init
 
 
     def create_env(self) -> gym.Env:

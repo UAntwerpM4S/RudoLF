@@ -8,10 +8,11 @@ import gymnasium as gym
 import numpy as np
 
 from typing import Optional, Tuple
-from gymnasium.vector import SyncVectorEnv
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from fw.policies.ppo_policy import PPOPolicy
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
 
 class PPOModel(BaseModel):
@@ -100,6 +101,14 @@ class PPOModel(BaseModel):
 
 
     def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
+        """Normalize rewards using running statistics (Welford's algorithm).
+
+        Args:
+            rewards: Raw rewards array of shape (batch_size,).
+
+        Returns:
+            Normalized rewards with zero mean and unit variance.
+        """
         # Welford's algorithm for running stats
         batch_mean = np.mean(rewards)
         batch_var = np.var(rewards)
@@ -236,6 +245,17 @@ class PPOModel(BaseModel):
         return np.mean(loss_per_epoch)
 
 
+    def make_env(self, rank):
+        """
+        Utility function for multiprocessing env creation.
+        """
+
+        def _init():
+            return Monitor(self.create_env(), f"logs/env_{rank}")
+
+        return _init
+
+
     def create_env(self):
         """
         Create a copy of the environment for parallel runs.
@@ -286,10 +306,10 @@ class PPOModel(BaseModel):
 
         # Create vectorized environments
         env_fns = [lambda: self.create_env() for _ in range(num_envs)]  # Clone environment
-        vec_env = SyncVectorEnv(env_fns)  # Sync execution across environments
+        vec_env = SubprocVecEnv(env_fns)  # Sync execution across environments
 
         # Reset all environments
-        states, _ = vec_env.reset()
+        states = vec_env.reset()
         envs_done = np.zeros(num_envs, dtype=bool)
 
         # Storage for episode data
@@ -301,14 +321,14 @@ class PPOModel(BaseModel):
             actions, log_probs, values = self.policy.predict(states)
 
             # Step all environments
-            next_states, rewards, terminations, truncations, _ = vec_env.step(actions)
-            envs_done = np.logical_or(envs_done, np.logical_or(terminations, truncations))
+            next_states, rewards, terminations, _ = vec_env.step(actions)
+            envs_done = np.logical_or(envs_done, terminations)
 
             # Store episode data
             collected_data["states"].append(states)
             collected_data["actions"].append(actions)
             collected_data["rewards"].append(rewards)
-            collected_data["dones"].append(np.logical_or(terminations, truncations))
+            collected_data["dones"].append(terminations)
             collected_data["values"].append(values)
             collected_data["log_probs"].append(log_probs)
 
