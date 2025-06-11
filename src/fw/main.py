@@ -1,12 +1,23 @@
-from fw.trainer import Trainer
-from fw.env_factory import get as get_environment
-from fw.stop_condition import StopCondition, Criterion
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
-from fw.env_factory import py_sim_env_name, fh_sim_env_name, lunar_env_name
-
-
 if __name__ == "__main__" or __name__ == "fw.main":
+    import multiprocessing
+    multiprocessing.set_start_method("spawn", force=True)
+
+    from fw.trainer import Trainer
+    from fw.stop_condition import StopCondition, Criterion
+    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+    from fw.env_factory import (
+        get as get_environment,
+        py_sim_env_name,
+        fh_sim_env_name,
+        lunar_env_name,
+        initialize_all_environments
+    )
+
+
     action = "train"
+
+    # Ensure all environments are registered once
+    initialize_all_environments()
 
     # Define simulator inputs
     envs = [get_environment(py_sim_env_name)]
