@@ -99,7 +99,7 @@ class Agent:
             raise RuntimeError(f"Unknown {self._model_type} policy type.")
 
         if policy_file_name:
-            full_policy_file_name = ".".join([policy_file_name, "zip"])
+            full_policy_file_name = f"{policy_file_name}.zip"
             if self.model.model_dir:
                 full_policy_file_name = os.path.join(self.model.model_dir, full_policy_file_name)
 

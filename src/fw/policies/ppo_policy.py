@@ -93,7 +93,7 @@ class PPOPolicy:
                 params_path,
 			)
 
-            with zipfile.ZipFile(".".join([filename, "zip"]), 'w') as zip_file:
+            with zipfile.ZipFile(f"{filename}.zip", 'w') as zip_file:
                 zip_file.write(params_path, arcname=POLICY_FILE_NAME)
 
 
@@ -114,7 +114,7 @@ class PPOPolicy:
         device = get_device(device)
 
         try:
-            with zipfile.ZipFile(".".join([filename, "zip"]), 'r') as zip_file:
+            with zipfile.ZipFile(f"{filename}.zip", 'r') as zip_file:
                 with zip_file.open(POLICY_FILE_NAME) as policy_file:
                     saved_variables = torch.load(policy_file, map_location=device, weights_only=False)
         except (FileNotFoundError, KeyError) as e:
