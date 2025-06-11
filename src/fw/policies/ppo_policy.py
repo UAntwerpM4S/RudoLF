@@ -4,6 +4,7 @@ import zipfile
 import tempfile
 import numpy as np
 
+from typing import Tuple
 from fw.policies.actor_critic_network import ActorCriticNetwork
 
 POLICY_FILE_NAME = 'policy.pth'
@@ -93,7 +94,7 @@ class PPOPolicy:
                 params_path,
 			)
 
-            with zipfile.ZipFile(".".join([filename, "zip"]), 'w') as zip_file:
+            with zipfile.ZipFile(f"{filename}.zip", 'w') as zip_file:
                 zip_file.write(params_path, arcname=POLICY_FILE_NAME)
 
 
@@ -114,7 +115,7 @@ class PPOPolicy:
         device = get_device(device)
 
         try:
-            with zipfile.ZipFile(".".join([filename, "zip"]), 'r') as zip_file:
+            with zipfile.ZipFile(f"{filename}.zip", 'r') as zip_file:
                 with zip_file.open(POLICY_FILE_NAME) as policy_file:
                     saved_variables = torch.load(policy_file, map_location=device, weights_only=False)
         except (FileNotFoundError, KeyError) as e:
@@ -160,14 +161,14 @@ class PPOPolicy:
         return log_probs.sum(dim=-1)  # Sum across the action dimensions
 
 
-    def _predict(self, state: torch.Tensor) -> tuple:
+    def _predict(self, state: torch.Tensor) -> Tuple:
         """Predict the action and log probability for a given state.
 
         Args:
             state (torch.Tensor): The input state tensor.
 
         Returns:
-            tuple: A tuple containing:
+            Tuple: A tuple containing:
                 - action (torch.Tensor): The predicted action.
                 - log_prob (torch.Tensor): The log probability of the action.
                 - value (torch.Tensor): The predicted value for the state.
@@ -187,14 +188,14 @@ class PPOPolicy:
         return action, log_prob, value.squeeze(-1)  # Return action, log_prob, and value (squeezed)
 
 
-    def predict(self, state: np.ndarray) -> tuple:
+    def predict(self, state: np.ndarray) -> Tuple:
         """Predict an action for a given state.
 
         Args:
             state (np.ndarray): The input state as a NumPy array or a tensor.
 
         Returns:
-            tuple: A tuple containing:
+            Tuple: A tuple containing:
                 - action (np.ndarray): The predicted action.
                 - log_prob (np.ndarray): The log probability of the action.
                 - value (np.ndarray): The predicted value for the state.

@@ -99,7 +99,7 @@ class Agent:
             raise RuntimeError(f"Unknown {self._model_type} policy type.")
 
         if policy_file_name:
-            full_policy_file_name = ".".join([policy_file_name, "zip"])
+            full_policy_file_name = f"{policy_file_name}.zip"
             if self.model.model_dir:
                 full_policy_file_name = os.path.join(self.model.model_dir, full_policy_file_name)
 
@@ -456,7 +456,14 @@ class Agent:
 
                 # Adjust layout and save
                 plt.tight_layout()
-                plt.savefig(f'trajectory.png', bbox_inches='tight', dpi=300)
+
+                trajectory_file_name = (
+                    f'{self.model.model_dir}/trajectory.png'
+                    if self.model.model_dir
+                    else 'trajectory.png'
+                )
+
+                plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
                 plt.show()
 
                 print(f"\nPath and error visualization saved as 'trajectory.png'")
