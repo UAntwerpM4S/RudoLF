@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from typing import Tuple
+
 
 class ActorCriticNetwork(nn.Module):
     """Actor-Critic neural network with shared feature extractor.
@@ -43,14 +45,14 @@ class ActorCriticNetwork(nn.Module):
         self.critic = nn.Linear(128, 1)
 
 
-    def forward(self, state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Computes the forward pass.
 
         Args:
             state (torch.Tensor): Input state tensor of shape (batch_size, input_dim).
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 - action_mean (torch.Tensor): Mean of the action distribution (after tanh activation).
                 - action_std (torch.Tensor): Standard deviation of the action distribution.
                 - state_value (torch.Tensor): Estimated value of the input state.
