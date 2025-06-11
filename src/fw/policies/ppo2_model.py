@@ -23,9 +23,8 @@ class PPO2Model(BaseModel):
     BaseModel API, enabling interchangeable use with other reinforcement learning models in the framework.
 
     Attributes:
-        ppo (stable_baselines3.PPO): The underlying SB3 PPO model.
         env (gym.Env): The input environment.
-        train_env (gym.Env): The training environment (can be vectorized).
+        ppo (stable_baselines3.PPO): The underlying SB3 PPO model.
     """
 
     def __init__(
