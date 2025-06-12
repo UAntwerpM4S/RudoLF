@@ -1,6 +1,7 @@
 import os
 import copy
 import torch
+import warnings
 import numpy as np
 import gymnasium as gym
 
@@ -11,6 +12,7 @@ from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, Ev
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3 import PPO
+warnings.filterwarnings("ignore")
 
 
 class PPO2Model(BaseModel):
