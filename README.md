@@ -1,5 +1,8 @@
-# DDSHIP
-Data Driven Smart Shipping project WP3
+# RudoLF
+Multi-paradigm Reinforcement Learning Framework
+
+![RudoLF Logo](docs/logo.png)
+
 
 #### The following project folder is composed of a Gazebo simulator and two python simulator (discrete and continuous env) used to train an agent for autonomous mavigation.
 
