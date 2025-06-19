@@ -35,7 +35,7 @@ class FhSimEnv(PySimEnv):
         try:
             fh_wrapper_module = importlib.import_module('fw.simulators.fh_sim_wrapper')
             fh_wrapper_class = getattr(fh_wrapper_module, "FhSimWrapper")
-            self._fh_sim = fh_wrapper_class()
+            self._fh_sim = fh_wrapper_class(self)
         except ModuleNotFoundError:
             self._fh_sim = None
 
@@ -62,6 +62,34 @@ class FhSimEnv(PySimEnv):
                 setattr(new_instance, key, copy.deepcopy(value, memo))  # Deep copy all other attributes
 
         return new_instance
+
+
+    def _reduce_path(self, path, start_pos):
+        """Reduces the path to start from the point closest to the given start position.
+
+        This method finds the point in the path that is closest to `start_pos`, then slices
+        the path so that it begins just after that point and continues to the original end.
+        The `start_pos` itself is not added to the returned path.
+
+        Args:
+            path (list of np.ndarray or array-like): The original path as a list of coordinate points.
+            start_pos (np.ndarray or array-like): The new starting position to align the path with.
+
+        Returns:
+            list of np.ndarray: The reduced path starting after the closest point to `start_pos`.
+
+        Note:
+            - If `start_pos` is not on the path, the method finds the closest match and starts from there.
+            - The point closest to `start_pos` is **excluded** from the result.
+        """
+        # Find index of the point on the path closest to start_pos
+        distances = [np.linalg.norm(p - start_pos) for p in path]
+        closest_index = np.argmin(distances)
+
+        # Slice the path from following point to the end
+        reduced_path = path[closest_index+1:]
+
+        return reduced_path
 
 
     @property
