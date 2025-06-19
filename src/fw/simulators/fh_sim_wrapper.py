@@ -35,12 +35,13 @@ class FhSimWrapper:
         _ship_interface: The ship interface instance.
     """
 
-    def __init__(self, library_path=None, config_path=None, exercise_path=None, output_path=None):
+    def __init__(self, fh_simulator, library_path=None, config_path=None, exercise_path=None, output_path=None):
         """
         Initialize the FhSimWrapper instance.
 
         Sets flags for math model initialization and tracks the initialization state.
         """
+        self.fh_simulator = fh_simulator
         self.library_path = library_path or os.path.join(simexe_path, 'exe/installed')
         self.config_path = config_path or os.path.join(simexe_path, 'config/simXdrive.config.xml')
         self.exercise_path = exercise_path or os.path.join(simexe_path, 'database/areas/ScheldeSaeftinge_23_002/invoer/tra/DDShip_scenario2_windnocurrent.tab')
@@ -82,6 +83,11 @@ class FhSimWrapper:
             config.ClearConnections()
 
             exercise = Exercise(self.exercise_path, config)
+            ship_config = exercise.getShipConfig()
+
+            x_pos = float(self.fh_simulator.ship_pos[0])
+            y_pos = float(self.fh_simulator.ship_pos[1])
+            ship_config.setInitialPosition(x_pos, y_pos)
 
             # Initialize the math model and enable the bridge
             self._math_model = MathModel()

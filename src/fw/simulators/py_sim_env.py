@@ -147,6 +147,7 @@ class PySimEnv(BaseEnv):
         except FileNotFoundError:
             raise FileNotFoundError("The file 'trajectory_points_no_scale.csv' could not be found.")
 
+        path = self._reduce_path(path, self.initial_ship_pos)
         path = create_checkpoints_from_simple_path(path, self.CHECKPOINTS_DISTANCE)
         path.insert(0, (self.ship_pos[0], self.ship_pos[1]))  # Insert new tuple at index 0
         checkpoints = [{'pos': np.array(point, dtype=np.float32), 'radius': 1.0} for point in path]
@@ -181,6 +182,29 @@ class PySimEnv(BaseEnv):
 
         # Ship state [x, y, heading, surge_velocity, sway_velocity, yaw_rate]
         self.state = np.array([self.ship_pos[0], self.ship_pos[1], 0.0, 0.0, 0.0, 0.0])
+
+
+    def _reduce_path(self, path, start_pos):
+        """Reduces the path to start from the closest point to the given start position.
+
+        This method searches the provided path for the point that is closest to `start_pos`
+        and returns a sub-path starting from that point to the end. The first point of the
+        reduced path is replaced by `start_pos` itself. If reduction is not performed, the
+        original path is returned as-is.
+
+        Args:
+            path (list of array-like): The original path as a list of 2D or 3D coordinates.
+            start_pos (array-like): The new start position to align the path with.
+
+        Returns:
+            list of array-like: The reduced path starting at `start_pos` and ending at the
+            original target.
+
+        Note:
+            This stub implementation does not perform any reduction and returns the path
+            unchanged. Override this method to apply actual reduction logic.
+        """
+        return path  # don't reduce, return the original path
 
 
     def _apply_pi_controller(self, target_action):
