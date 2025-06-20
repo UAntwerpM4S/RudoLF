@@ -19,34 +19,34 @@ def create_checkpoints_from_simple_path(points, max_distance):
     """
     # Convert to numpy array if not already
     points = np.array(points)
-    
+
     # Check if array is empty
     if points.size == 0:
         return []
-    
+
     final_checkpoints = [tuple(points[0])]  # Start with the first point
-    
+
     for i in range(1, len(points)):
         current_point = np.array(final_checkpoints[-1])
         next_point = points[i]
-        
+
         # Calculate vector between points
         segment_vector = next_point - current_point
         segment_length = np.linalg.norm(segment_vector)
-        
+
         if segment_length > max_distance:
             # Calculate how many intermediate points we need
             num_segments = int(np.ceil(segment_length / max_distance))
-            
+
             # Create evenly spaced intermediate points
             for j in range(1, num_segments):
                 fraction = j / num_segments
                 intermediate_point = current_point + fraction * segment_vector
                 final_checkpoints.append(tuple(intermediate_point))
-        
+
         # Add the next point
         final_checkpoints.append(tuple(next_point))
-    
+
     return final_checkpoints
 
 
