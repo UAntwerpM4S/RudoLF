@@ -24,7 +24,8 @@ DEFAULT_HYPERPARAMETERS = {
         'normalize': False,
         'max_nbr_iterations': 200000,
         'batch_size': 64,
-        'device': "cpu"
+        'device': "cpu",
+        'model_dir': "models"
     },
     PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,
