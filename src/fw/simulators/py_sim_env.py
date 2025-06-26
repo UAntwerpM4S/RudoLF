@@ -78,6 +78,8 @@ class PySimEnv(BaseEnv):
     MAX_SURGE_VELOCITY = 5.0
     MAX_SWAY_VELOCITY = 2.0
     MAX_YAW_RATE = 0.5
+    MAX_RUDDER_RATE = 0.06  # Maximum change in rudder angle per time step
+    MAX_THRUST_RATE = 0.05  # Maximum change in thrust per time step
     CHECKPOINTS_DISTANCE = 350
 
     MIN_GRID_POS = -11700
@@ -92,6 +94,7 @@ class PySimEnv(BaseEnv):
 
         # Environment parameters
         self.time_step = time_step
+        self.step_env = 0
         self.max_steps = max_steps
         self.current_action = [0.0, 0.0]
         self.verbose = verbose
@@ -102,7 +105,7 @@ class PySimEnv(BaseEnv):
         self.cross_error = 0.0
         self.desired_heading = 0.0
 
-        # Environmental effects 
+        # Environmental effects
         self.radians_current = np.radians(180)
         self.current_direction = np.array([np.cos(self.radians_current), np.sin(self.radians_current)])
         self.current_strength = 0.35
@@ -123,12 +126,18 @@ class PySimEnv(BaseEnv):
         self.thrust_error_sum = 0.0
         self.previous_rudder_target = 0.0
         self.previous_thrust_target = 0.0
-        
+        self.previous_rudder_error = 0.0
+        self.previous_thrust_error = 0.0
+        self.filtered_rudder_derivative = 0.0
+        self.filtered_thrust_derivative = 0.0
+
         # PI controller gains
-        self.rudder_kp = 0.5  # Proportional gain for rudder
-        self.rudder_ki = 0.3  # Integral gain for rudder
-        self.thrust_kp = 0.3  # Proportional gain for thrust
-        self.thrust_ki = 0.05  # Integral gain for thrust
+        self.rudder_kp = 0.2  # Proportional gain for rudder
+        self.rudder_ki = 0.1  # Integral gain for rudder
+        self.thrust_kp = 0.2  # Proportional gain for thrust
+        self.thrust_ki = 0.02  # Integral gain for thrust
+        self.rudder_kd = 0.15  # Helps dampen oscillations
+        self.thrust_kd = 0.05  # Less derivative for thrust
 
         self.max_dist = np.sqrt(2) * self.MAX_GRID_POS
 
@@ -209,33 +218,91 @@ class PySimEnv(BaseEnv):
 
     def _apply_pi_controller(self, target_action):
         """
-        Apply PI controller to smooth the actions.
+        Apply advanced PID controller with dead zone and derivative filtering.
         """
         target_rudder = target_action[0]
         target_thrust = target_action[1]
-        
+
+        # Initialize if needed
+        if not hasattr(self, 'previous_rudder_error'):
+            self.previous_rudder_error = 0.0
+            self.previous_thrust_error = 0.0
+            self.filtered_rudder_derivative = 0.0
+            self.filtered_thrust_derivative = 0.0
+
+        # Dead zone for small changes (reduces chattering)
+        rudder_deadzone = 0.5
+        thrust_deadzone = 0.5
+
+        if abs(target_rudder - self.previous_rudder_target) < rudder_deadzone:
+            target_rudder = self.previous_rudder_target
+        if abs(target_thrust - self.previous_thrust_target) < thrust_deadzone:
+            target_thrust = self.previous_thrust_target
+
         # Calculate errors
         rudder_error = target_rudder - self.previous_rudder_target
         thrust_error = target_thrust - self.previous_thrust_target
-        
-        # Update error sums
-        self.rudder_error_sum += rudder_error
-        self.thrust_error_sum += thrust_error
-        
-        self.rudder_error_sum = np.clip(self.rudder_error_sum, -1.0, 1.0)
-        self.thrust_error_sum = np.clip(self.thrust_error_sum, -1.0, 1.0)
-        rudder_output = self.rudder_kp * rudder_error + self.rudder_ki * self.rudder_error_sum
-        thrust_output = self.thrust_kp * thrust_error + self.thrust_ki * self.thrust_error_sum
-        
+
+        # Calculate raw derivatives
+        rudder_derivative_raw = (rudder_error - self.previous_rudder_error) / self.time_step
+        thrust_derivative_raw = (thrust_error - self.previous_thrust_error) / self.time_step
+
+        # Apply low-pass filter to derivatives (reduces noise)
+        derivative_filter_alpha = 0.2
+        self.filtered_rudder_derivative = (
+            derivative_filter_alpha * rudder_derivative_raw +
+            (1 - derivative_filter_alpha) * self.filtered_rudder_derivative
+        )
+        self.filtered_thrust_derivative = (
+            derivative_filter_alpha * thrust_derivative_raw +
+            (1 - derivative_filter_alpha) * self.filtered_thrust_derivative
+        )
+
+        # Update integral terms with conditional integration
+        # Only integrate if we're not saturated
+        if abs(self.previous_rudder_target) < 0.95:  # Not at limits
+            self.rudder_error_sum += rudder_error * self.time_step
+        if abs(self.previous_thrust_target) < 0.95:
+            self.thrust_error_sum += thrust_error * self.time_step
+
+        # Apply anti-windup
+        self.rudder_error_sum = np.clip(self.rudder_error_sum, -0.5, 0.5)  # Tighter bounds
+        self.thrust_error_sum = np.clip(self.thrust_error_sum, -0.5, 0.5)
+
+        # Calculate PID outputs
+        rudder_output = (
+            self.rudder_kp * rudder_error +
+            self.rudder_ki * self.rudder_error_sum +
+            self.rudder_kd * self.filtered_rudder_derivative
+        )
+
+        thrust_output = (
+            self.thrust_kp * thrust_error +
+            self.thrust_ki * self.thrust_error_sum +
+            self.thrust_kd * self.filtered_thrust_derivative
+        )
+
+        # Apply rate limiting (prevents sudden jumps)
+        max_rudder_rate = 0.1  # Maximum change per timestep
+        max_thrust_rate = 0.15
+
+        rudder_output = np.clip(rudder_output, -max_rudder_rate, max_rudder_rate)
+        thrust_output = np.clip(thrust_output, -max_thrust_rate, max_thrust_rate)
+
         # Compute smoothed actions
         smoothed_rudder = self.previous_rudder_target + rudder_output
         smoothed_thrust = self.previous_thrust_target + thrust_output
+
+        # Apply output limits
         smoothed_rudder = np.clip(smoothed_rudder, -1.0, 1.0)
         smoothed_thrust = np.clip(smoothed_thrust, -1.0, 1.0)
-        
+
+        # Store for next iteration
+        self.previous_rudder_error = rudder_error
+        self.previous_thrust_error = thrust_error
         self.previous_rudder_target = smoothed_rudder
         self.previous_thrust_target = smoothed_thrust
-        
+
         return np.array([smoothed_rudder, smoothed_thrust])
 
 
@@ -398,6 +465,8 @@ class PySimEnv(BaseEnv):
 
         self.step_count = 0
         self.current_checkpoint = 1
+        self.step_env = 0
+        self.stuck_steps = 0
 
         self.ship_pos = copy.deepcopy(self.initial_ship_pos)
         self.previous_ship_pos = [0.0, 0.0]
@@ -408,6 +477,16 @@ class PySimEnv(BaseEnv):
         self.ship_angle = np.arctan2(direction_vector[1], direction_vector[0])  # Angle in radians
         # Set the initial state
         self.state = np.array([self.ship_pos[0], self.ship_pos[1], self.ship_angle, 0.0, 0.0, 0.0])
+        self.rudder_error_sum = 0.0
+        self.thrust_error_sum = 0.0
+        self.previous_rudder_error = 0.0
+        self.previous_thrust_error = 0.0
+        self.previous_rudder_target = 0.0
+        self.previous_thrust_target = 0.0
+
+        if hasattr(self, 'filtered_rudder_derivative'):
+            self.filtered_rudder_derivative = 0.0
+            self.filtered_thrust_derivative = 0.0
 
         return self._get_obs(), {}
 
@@ -443,6 +522,7 @@ class PySimEnv(BaseEnv):
         direction_to_checkpoint = current_checkpoint_pos - self.ship_pos
         desired_heading = np.arctan2(direction_to_checkpoint[1], direction_to_checkpoint[0])
         heading_error = (desired_heading - self.state[2] + np.pi) % (2 * np.pi) - np.pi
+        self.heading_error = heading_error
 
         # Concatenate normalized observations
         obs = np.concatenate([
@@ -499,22 +579,46 @@ class PySimEnv(BaseEnv):
 
     def _update_ship_dynamics(self, action, alpha=0.2):
         """Update ship dynamics with improved physics and environmental effects."""
-        # Smooth action application
-        smoothed_action = self._apply_pi_controller(action)
+        # Initialize current_action if it doesn't exist
+        if not hasattr(self, 'current_action'):
+            self.current_action = [0.0, 0.0]
 
-        #smoothed_action = action
+        # Apply time constraints to action changes
+        target_rudder = action[0]
+        target_thrust = abs(action[1])
 
-        #turning_smooth = alpha * smoothed_action[0] + (1 - alpha) * self.current_action[0]
-        #thrust_smooth = alpha * smoothed_action[1] + (1 - alpha) * self.current_action[1]
-        #smoothed_action = [turning_smooth, thrust_smooth]
+        # Calculate desired change
+        rudder_change = target_rudder - self.current_action[0]
+        thrust_change = target_thrust - self.current_action[1]
 
-        #self.current_action = [turning_smooth, thrust_smooth]
+        # Limit the rate of change
+        #rudder_change = np.sign(rudder_change)
+        if abs(rudder_change) > self.MAX_RUDDER_RATE:
+            #rudder_change = np.sign(rudder_change)
+            rudder_change = np.sign(rudder_change) * self.MAX_RUDDER_RATE
+
+        if abs(thrust_change) > self.MAX_THRUST_RATE:
+            thrust_change = np.sign(thrust_change) * self.MAX_THRUST_RATE
+
+        # Apply gradual change
+        gradual_rudder = self.current_action[0] + rudder_change
+        gradual_thrust = self.current_action[1] + thrust_change
+
+        # Apply your existing logic with gradual actions
+        if abs(target_rudder - self.current_action[0]) > 0.2:
+            smoothed_action = [gradual_rudder, gradual_thrust]
+        else:
+            smoothed_action = [self.current_action[0], gradual_thrust]
+
+        # Update current action
+        print(smoothed_action)
+        smoothed_action = self._apply_pi_controller(smoothed_action)
+        print(smoothed_action)
+        print('--------------')
+
         self.current_action = [smoothed_action[0], smoothed_action[1]]
 
-        # Convert actions to forces
-        #delta_r = np.radians(turning_smooth * 40)
-        #t = thrust_smooth * 60
-        delta_r = np.radians(smoothed_action[0] * 40)
+        delta_r = np.radians(smoothed_action[0] * 60)
         t = smoothed_action[1] * 60
 
         # Current state
@@ -582,6 +686,7 @@ class PySimEnv(BaseEnv):
 
         # Update ship position
         self.ship_pos = self.state[:2]
+        self.step_env += 1
 
 
     @staticmethod
@@ -612,9 +717,21 @@ class PySimEnv(BaseEnv):
         return self._distance_from_point_to_line(point, line_seg_start, line_seg_end) <= threshold
 
 
+    @staticmethod
+    def _calculate_heading_error(target_heading, current_heading):
+        """Calculate heading error with dead zone."""
+        error = (target_heading - current_heading + np.pi) % (2 * np.pi) - np.pi
+
+        # Dead zone of 5 degrees
+        dead_zone = np.radians(5)
+        if abs(error) < dead_zone:
+            return 0.0
+
+        return error
+
+
     def _calculate_reward(self):
         """Calculate reward with improved shaping and penalties."""
-        reward = 0.0
         done = False
 
         # Distance reward with better scaling
@@ -622,24 +739,34 @@ class PySimEnv(BaseEnv):
         prev_distance = np.linalg.norm(self.previous_ship_pos - self.target_pos)
         distance_delta = prev_distance - current_distance
         distance_reward = self.REWARD_DISTANCE_SCALE * np.tanh(distance_delta)
-        #reward += distance_reward
 
-        # Heading alignment reward
+        # Heading alignment with dead zone
         self.desired_heading = np.arctan2(
             self.checkpoints[self.current_checkpoint]['pos'][1] - self.ship_pos[1],
             self.checkpoints[self.current_checkpoint]['pos'][0] - self.ship_pos[0]
         )
-        heading_diff = abs(self.state[2] - self.desired_heading) % (2 * np.pi)
-        heading_reward = np.cos(heading_diff)
-        reward += heading_reward
+        heading_error = self._calculate_heading_error(self.desired_heading, self.state[2])
+        heading_reward = np.exp(-abs(heading_error))  # Exponential decay for smooth reward
 
         # Cross-track error penalty
         line_start = self.checkpoints[self.current_checkpoint - 1]['pos']
         line_end = self.checkpoints[self.current_checkpoint]['pos']
         cross_error = self._distance_from_point_to_line(self.ship_pos, line_start, line_end)
-        cross_error_penalty = -np.tanh(cross_error / self.CROSS_TRACK_ERROR_PENALTY_SCALE)  # Normalized and smooth
-        reward += cross_error_penalty
+        cross_error_penalty = -0.5 * np.tanh(cross_error / self.CROSS_TRACK_ERROR_PENALTY_SCALE)
         self.cross_error = cross_error
+
+        # Action smoothness penalties
+        rudder_penalty = -0.2 * abs(self.current_action[0])
+        # rudder_change_penalty = -0.5 * abs(self.current_action[0] - self.previous_rudder_target)
+        # thrust_change_penalty = -0.1 * abs(self.current_action[1] - self.previous_thrust_target)
+
+        # Combine rewards with weights
+        reward = (
+            0.3 * distance_reward +
+            0.3 * heading_reward +
+            0.2 * cross_error_penalty
+            + 0.2 * rudder_penalty # + rudder_change_penalty + thrust_change_penalty)
+        )
 
         # Checkpoint reward with progression scaling
         checkpoint_pos = self.checkpoints[self.current_checkpoint]['pos']
@@ -653,10 +780,11 @@ class PySimEnv(BaseEnv):
 
         # Movement reward to prevent getting stuck
         movement = np.linalg.norm(self.ship_pos - self.previous_ship_pos)
-        if movement < 0.1:
+        if movement < 0.07:
             self.stuck_steps += 1
-            if self.stuck_steps > 20:
-                reward -= 1
+
+            if self.stuck_steps > 40:
+                reward -= 0.6
         #        done = True
         else:
             self.stuck_steps = 0
@@ -680,6 +808,7 @@ class PySimEnv(BaseEnv):
             if self._distance_from_point_to_line(self.ship_pos, self.checkpoints[self.current_checkpoint]['perpendicular_line'][0], self.checkpoints[self.current_checkpoint]['perpendicular_line'][1]) <= 2:
                 self.current_checkpoint += 1
                 self.step_count = 0
+
                 if self.current_checkpoint == len(self.checkpoints)-1:
                     done = True
 
