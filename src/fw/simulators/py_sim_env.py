@@ -611,10 +611,10 @@ class PySimEnv(BaseEnv):
             smoothed_action = [self.current_action[0], gradual_thrust]
 
         # Update current action
-        print(smoothed_action)
+        # print(smoothed_action)
         smoothed_action = self._apply_pi_controller(smoothed_action)
-        print(smoothed_action)
-        print('--------------')
+        # print(smoothed_action)
+        # print('--------------')
 
         self.current_action = [smoothed_action[0], smoothed_action[1]]
 
