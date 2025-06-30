@@ -14,6 +14,7 @@ import gymnasium as gym
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
+from functools import lru_cache
 from shapely.geometry import Polygon
 from typing import Tuple, Optional, Dict
 from fw.simulators.base_env import BaseEnv
@@ -71,6 +72,7 @@ class PySimEnv(BaseEnv):
     MAX_SURGE_VELOCITY = 5.0
     MAX_SWAY_VELOCITY = 2.0
     MAX_YAW_RATE = 0.5
+    YAW_RATE_DAMPING = 0.1
     MAX_RUDDER_RATE = 0.06  # Maximum change in rudder angle per time step
     MAX_THRUST_RATE = 0.05  # Maximum change in thrust per time step
     CHECKPOINTS_DISTANCE = 350
@@ -88,6 +90,9 @@ class PySimEnv(BaseEnv):
     RUDDER_DEAD_ZONE = 0.5
     THRUST_DEAD_ZONE = 0.5
     DERIVATIVE_FILTER_ALPHA = 0.2
+    MAX_RUDDER_RATE_CHANGE = 0.1
+    MAX_THRUST_RATE_CHANGE = 0.15
+    ANTI_WINDUP_THRESHOLD = 0.95
 
     # Rendering constants
     MAX_FIG_WIDTH = 1200
@@ -136,6 +141,13 @@ class PySimEnv(BaseEnv):
             dtype=np.float32
         )
         self.observation_space = self._initialize_observation_space()
+
+        self.reward_weights = {
+            'distance': 0.3,
+            'heading': 0.3,
+            'cross_track': 0.2,
+            'rudder': 0.2
+        }
 
         # Rendering
         self.initialize_plots = True
@@ -293,13 +305,13 @@ class PySimEnv(BaseEnv):
         )
 
         # Update integral terms with anti-windup
-        if abs(self.previous_rudder_target) < 0.95:
+        if abs(self.previous_rudder_target) < self.ANTI_WINDUP_THRESHOLD:
             self.rudder_error_sum = np.clip(
                 self.rudder_error_sum + rudder_error * self.time_step,
                 -0.5, 0.5
             )
 
-        if abs(self.previous_thrust_target) < 0.95:
+        if abs(self.previous_thrust_target) < self.ANTI_WINDUP_THRESHOLD:
             self.thrust_error_sum = np.clip(
                 self.thrust_error_sum + thrust_error * self.time_step,
                 -0.5, 0.5
@@ -319,11 +331,8 @@ class PySimEnv(BaseEnv):
         )
 
         # Apply rate limiting (prevents sudden jumps)
-        max_rudder_rate = 0.1  # Maximum change per timestep
-        max_thrust_rate = 0.15
-
-        rudder_output = np.clip(rudder_output, -max_rudder_rate, max_rudder_rate)
-        thrust_output = np.clip(thrust_output, -max_thrust_rate, max_thrust_rate)
+        rudder_output = np.clip(rudder_output, -self.MAX_RUDDER_RATE_CHANGE, self.MAX_RUDDER_RATE_CHANGE)
+        thrust_output = np.clip(thrust_output, -self.MAX_THRUST_RATE_CHANGE, self.MAX_THRUST_RATE_CHANGE)
 
         new_rudder = np.clip(self.previous_rudder_target + rudder_output, -1.0, 1.0)
         new_thrust = np.clip(self.previous_thrust_target + thrust_output, -1.0, 1.0)
@@ -476,7 +485,7 @@ class PySimEnv(BaseEnv):
             high=self.randomization_scale,
             size=self.initial_ship_pos.shape
         )
-        self.initial_ship_pos += perturbation
+        self.initial_ship_pos = np.clip(self.initial_ship_pos + perturbation, self.MIN_GRID_POS, self.MAX_GRID_POS)
 
 
     def reset(self, seed: Optional[int] = None, **kwargs) -> Tuple[np.ndarray, Dict]:
@@ -699,38 +708,36 @@ class PySimEnv(BaseEnv):
         # Update dynamics (simplified 3DOF model)
         du = self.k_t * t + self.xu * u + wind_effect[0] + current_effect[0]
         dv = self.k_v * sin_delta_r + self.yv * v + wind_effect[1] + current_effect[1]
-        dr = self.k_r * delta_r + self.nr * r + self.yv_r * v + v * u / self.l - 0.1 * r
+        dr = self.k_r * delta_r + self.nr * r + self.yv_r * v + v * u / self.l - self.YAW_RATE_DAMPING * r
 
         # Update state with limits
-        u = np.clip(u + du * self.time_step, self.MIN_SURGE_VELOCITY, self.MAX_SURGE_VELOCITY)
-        v = np.clip(v + dv * self.time_step, self.MIN_SWAY_VELOCITY, self.MAX_SWAY_VELOCITY)
-        r = np.clip(r + dr * self.time_step, self.MIN_YAW_RATE, self.MAX_YAW_RATE)  # Update yaw rate with limits
+        new_u = np.clip(u + du * self.time_step, self.MIN_SURGE_VELOCITY, self.MAX_SURGE_VELOCITY)
+        new_v = np.clip(v + dv * self.time_step, self.MIN_SWAY_VELOCITY, self.MAX_SWAY_VELOCITY)
+        new_r = np.clip(r + dr * self.time_step, self.MIN_YAW_RATE, self.MAX_YAW_RATE)  # Update yaw rate with limits
 
         # Update position and heading
-        dx = u * cos_psi - v * sin_psi
-        dy = u * sin_psi + v * cos_psi
-        dpsi = r
+        dx = new_u * cos_psi - new_v * sin_psi
+        dy = new_u * sin_psi + new_v * cos_psi
+        dpsi = new_r
 
         # Store previous state and update
         self.previous_ship_pos = copy.deepcopy(self.ship_pos)
         self.previous_heading = self.state[2]
 
+        new_x = np.clip(self.state[0] + dx * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
+        new_y = np.clip(self.state[1] + dy * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
+        new_heading = self.state[2] + dpsi * self.time_step # % (2 * np.pi)
+
         # Update state
-        self.state[0] = np.clip(self.state[0] + dx * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
-        self.state[1] = np.clip(self.state[1] + dy * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
-        self.state[2] += dpsi * self.time_step
-        self.state[3] = u
-        self.state[4] = v
-        self.state[5] = r
+        self.state = np.array([new_x, new_y, new_heading, new_u, new_v, new_r])
 
         # Update ship position
         self.ship_pos = self.state[:2]
 
 
     @staticmethod
-    def _distance_from_point_to_line(point: np.ndarray,
-                                     line_seg_start: np.ndarray,
-                                     line_seg_end: np.ndarray) -> float:
+    @lru_cache(maxsize=128)
+    def _distance_from_point_to_line_cached(point: tuple, line_seg_start: tuple, line_seg_end: tuple) -> float:
         """Calculate perpendicular distance from point to line segment.
 
         Args:
@@ -741,6 +748,10 @@ class PySimEnv(BaseEnv):
         Returns:
             float: Perpendicular distance from point to line
         """
+        point = np.array(point)
+        line_seg_start = np.array(line_seg_start)
+        line_seg_end = np.array(line_seg_end)
+
         line_vec = line_seg_end - line_seg_start
         point_vec = point - line_seg_start
 
@@ -752,6 +763,13 @@ class PySimEnv(BaseEnv):
         projected_point = line_seg_start + projection_scalar * line_vec
 
         return np.linalg.norm(point - projected_point)
+
+
+    def _distance_from_point_to_line(self, point: np.ndarray,
+                                     line_start: np.ndarray,
+                                     line_end: np.ndarray) -> float:
+        """Calculate distance with caching wrapper."""
+        return self._distance_from_point_to_line_cached(tuple(point), tuple(line_start), tuple(line_end))
 
 
     @staticmethod
@@ -797,9 +815,11 @@ class PySimEnv(BaseEnv):
         heading_reward = np.exp(-abs(heading_error))
 
         # Cross-track error penalty
-        line_start = self.checkpoints[self.current_checkpoint - 1]['pos']
-        line_end = self.checkpoints[self.current_checkpoint]['pos']
-        cross_error = self._distance_from_point_to_line(self.ship_pos, line_start, line_end)
+        cross_error = self._distance_from_point_to_line(
+            self.ship_pos,
+            self.checkpoints[self.current_checkpoint - 1]['pos'],
+            self.checkpoints[self.current_checkpoint]['pos']
+        )
         cross_error_penalty = -0.5 * np.tanh(cross_error / self.CROSS_TRACK_ERROR_PENALTY_SCALE)
         self.cross_error = cross_error
 
@@ -810,10 +830,10 @@ class PySimEnv(BaseEnv):
 
         # Combined reward
         reward = (
-            0.3 * distance_reward +
-            0.3 * heading_reward +
-            0.2 * cross_error_penalty +
-            0.2 * rudder_penalty # + rudder_change_penalty + thrust_change_penalty
+                self.reward_weights['distance'] * distance_reward +
+                self.reward_weights['heading'] * heading_reward +
+                self.reward_weights['cross_track'] * cross_error_penalty +
+                self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
         )
 
         # Checkpoint progression
@@ -852,7 +872,7 @@ class PySimEnv(BaseEnv):
 
         if (self.current_checkpoint < len(self.checkpoints)-1 and
             self._distance_from_point_to_line(
-                self.ship_pos, 
+                self.ship_pos,
                 self.checkpoints[self.current_checkpoint]['perpendicular_line'][0],
                 self.checkpoints[self.current_checkpoint]['perpendicular_line'][1]) <= 2):
             self.current_checkpoint += 1
