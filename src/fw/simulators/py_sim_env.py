@@ -155,7 +155,7 @@ class PySimEnv(BaseEnv):
 
     def _initialize_state(self, ship_pos: Optional[np.ndarray]) -> None:
         """Initialize the ship's state variables."""
-        self.initial_ship_pos = np.array(ship_pos, dtype=np.float32) if ship_pos else np.array([5.0, 5.0])
+        self.initial_ship_pos = np.array(ship_pos, dtype=np.float32) if ship_pos else np.array([5.0, 5.0], dtype=np.float32)
         self.ship_pos = copy.deepcopy(self.initial_ship_pos)
         self.previous_ship_pos = np.zeros(2)
         self.previous_heading = 0.0
@@ -163,8 +163,8 @@ class PySimEnv(BaseEnv):
         self.ship_velocity = 0.0
         self.randomization_scale = 1.0
         self.max_dist = np.sqrt(2) * self.MAX_GRID_POS
-        self.state = np.array([self.ship_pos[0], self.ship_pos[1], 0.0, 0.0, 0.0, 0.0])
-        self.current_action = np.array([0.0, 0.0])
+        self.state = np.array([self.ship_pos[0], self.ship_pos[1], 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        self.current_action = np.array([0.0, 0.0], dtype=np.float32)
 
 
     def _initialize_control_parameters(self) -> None:
@@ -189,10 +189,10 @@ class PySimEnv(BaseEnv):
 
         # Environmental effects
         self.radians_current = np.radians(180)
-        self.current_direction = np.array([np.cos(self.radians_current), np.sin(self.radians_current)])
+        self.current_direction = np.array([np.cos(self.radians_current), np.sin(self.radians_current)], dtype=np.float32)
         self.current_strength = 0.35
         self.radians_wind = np.radians(90)
-        self.wind_direction = np.array([np.cos(self.radians_wind), np.sin(self.radians_wind)])
+        self.wind_direction = np.array([np.cos(self.radians_wind), np.sin(self.radians_wind)], dtype=np.float32)
         self.wind_strength = 0.35
 
 
@@ -502,6 +502,8 @@ class PySimEnv(BaseEnv):
         """
         super().reset(seed=seed)
 
+        self.env_specific_reset()
+
         self.ship_pos = copy.deepcopy(self.initial_ship_pos)
         self.previous_ship_pos = np.zeros(2)
         self.ship_velocity = 0.0
@@ -672,7 +674,7 @@ class PySimEnv(BaseEnv):
         # Apply PID controller and update current action
         # smoothed_action = self._apply_pi_controller(smoothed_action)
 
-        self.current_action = np.array([smoothed_action[0], smoothed_action[1]])
+        self.current_action = np.array([smoothed_action[0], smoothed_action[1]], dtype=np.float32)
 
         # Convert to physical values
         delta_r = np.radians(smoothed_action[0] * 60)
@@ -761,9 +763,11 @@ class PySimEnv(BaseEnv):
             # If the two points defining the line are identical, return the distance to this point
             return np.linalg.norm(point - line_seg_start)
 
+        # Projection of the point onto the line
         projection_scalar = np.dot(point_vec, line_vec) / line_mag_squared
         projected_point = line_seg_start + projection_scalar * line_vec
 
+        # Distance from the point to the projected point on the infinite line
         return np.linalg.norm(point - projected_point)
 
 
