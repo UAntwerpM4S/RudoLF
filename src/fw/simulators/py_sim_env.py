@@ -223,10 +223,7 @@ class PySimEnv(BaseEnv):
         checkpoints = [{'pos': np.array(point, dtype=np.float32), 'radius': 1.0} for point in path]
         lines = calculate_perpendicular_lines(checkpoints, 50)
 
-        self.checkpoints = [
-            {**checkpoint, 'perpendicular_line': line} 
-            for checkpoint, line in zip(checkpoints, lines)
-        ]
+        self.checkpoints = [{**checkpoint, 'perpendicular_line': line} for checkpoint, line in zip(checkpoints, lines)]
         self.target_pos = np.array(self.checkpoints[-1]['pos'], dtype=np.float32)
         self.current_checkpoint = 1
         self.step_count = 0
@@ -360,7 +357,7 @@ class PySimEnv(BaseEnv):
             gym.spaces.Box: The observation space definition
         """
         # Base observations
-        base_low = np.array([
+        base_low=np.array([
             self.MIN_GRID_POS,          # Ship position x
             self.MIN_GRID_POS,          # Ship position y
             -np.pi,                     # Ship heading
@@ -376,7 +373,7 @@ class PySimEnv(BaseEnv):
             -1.0,                       # Thrust
         ], dtype=np.float32)
 
-        base_high = np.array([
+        base_high=np.array([
             self.MAX_GRID_POS,          # Ship position x
             self.MAX_GRID_POS,          # Ship position y
             np.pi,                      # Ship heading
@@ -758,8 +755,10 @@ class PySimEnv(BaseEnv):
         line_vec = line_seg_end - line_seg_start
         point_vec = point - line_seg_start
 
+        # Line magnitude squared (to avoid division by zero)
         line_mag_squared = np.dot(line_vec, line_vec)
         if line_mag_squared == 0:
+            # If the two points defining the line are identical, return the distance to this point
             return np.linalg.norm(point - line_seg_start)
 
         projection_scalar = np.dot(point_vec, line_vec) / line_mag_squared
