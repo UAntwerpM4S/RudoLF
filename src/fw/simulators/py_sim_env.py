@@ -14,29 +14,26 @@ import gymnasium as gym
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
+from functools import lru_cache
 from shapely.geometry import Polygon
+from typing import Tuple, Optional, Dict
 from fw.simulators.base_env import BaseEnv
 from fw.simulators.tools import create_checkpoints_from_simple_path, check_collision_ship
 
 
-def add_noise(action, noise_level=0.1) -> np.ndarray:
-    """Add noise to the action for more realism."""
-    return np.clip(action + np.random.normal(0, noise_level, action.shape), -1, 1)
-
-
-def calculate_perpendicular_lines(checkpoints, line_length=100.0):
+def calculate_perpendicular_lines(checkpoints: list, line_length: float = 100.0) -> list:
     """
-    Calculate the perpendicular lines at each checkpoint using the smoothed tangent direction.
+    Calculate perpendicular lines at each checkpoint using smoothed tangent direction.
 
     Args:
-        checkpoints: List of dictionaries containing checkpoint positions and radii.
-        line_length: Length of the perpendicular lines.
+        checkpoints: List of dicts containing checkpoint positions and radii
+        line_length: Length of perpendicular lines
 
     Returns:
-        List of tuples containing start and end points of perpendicular lines.
+        list: Tuples of (start_point, end_point) for each perpendicular line
     """
 
-    def smooth_tangent(check_points, index):
+    def smooth_tangent(check_points: list, index: int) -> np.ndarray:
         """Calculate the tangent at checkpoint `i` by averaging vectors to neighbors."""
         if index == 0:  # Start of the path
             tangent = check_points[index + 1]['pos'] - check_points[index]['pos']
@@ -47,126 +44,192 @@ def calculate_perpendicular_lines(checkpoints, line_length=100.0):
             to_prev = check_points[index]['pos'] - check_points[index - 1]['pos']
             tangent = to_next + to_prev  # Average direction
 
-        if np.all(tangent == 0):
-            return tangent
-
-        return tangent / np.linalg.norm(tangent)
+        return tangent / np.linalg.norm(tangent) if np.any(tangent != 0) else tangent
 
 
     lines = []  # to store start and end points of perpendicular lines
     for i in range(len(checkpoints)):
         # Get the perpendicular direction using the smoothed tangent at the current checkpoint
         smoothed_tangent = smooth_tangent(checkpoints, i)
-        perpendicular_direction = np.array([-smoothed_tangent[1], smoothed_tangent[0]])
+        perpendicular = np.array([-smoothed_tangent[1], smoothed_tangent[0]])
 
         # Calculate the start and end points of the perpendicular line at the checkpoint
         midpoint = np.array(checkpoints[i]['pos'])
-        start_point = midpoint + perpendicular_direction * (line_length / 2)
-        end_point = midpoint - perpendicular_direction * (line_length / 2)
-
+        start_point = midpoint + perpendicular * (line_length / 2)
+        end_point = midpoint - perpendicular * (line_length / 2)
         lines.append((start_point, end_point))
 
     return lines
 
 
 class PySimEnv(BaseEnv):
-    """Improved custom Python Simulator environment for ship navigation."""
+    """Custom Python Simulator environment for ship navigation with improved physics."""
 
+    # Physical limits
     MIN_SURGE_VELOCITY = 0.0
     MIN_SWAY_VELOCITY = -2.0
     MIN_YAW_RATE = -0.5
     MAX_SURGE_VELOCITY = 5.0
     MAX_SWAY_VELOCITY = 2.0
     MAX_YAW_RATE = 0.5
+    YAW_RATE_DAMPING = 0.1
+    MAX_RUDDER_RATE = 0.06  # Maximum change in rudder angle per time step
+    MAX_THRUST_RATE = 0.05  # Maximum change in thrust per time step
     CHECKPOINTS_DISTANCE = 350
-
     MIN_GRID_POS = -11700
     MAX_GRID_POS = 14500
 
-    # Class-level constants
+    # Reward parameters
     REWARD_DISTANCE_SCALE = 2.0
     CROSS_TRACK_ERROR_PENALTY_SCALE = 50.0
+    MAX_STEPS_PENALTY = -15
+    COLLISION_PENALTY = -10
+    SUCCESS_REWARD = 50.0
 
-    def __init__(self, render_mode=None, time_step=0.1, max_steps=1500, verbose=None, target_pos=None, ship_pos=None, wind=False, current=False):
+    # Control parameters
+    RUDDER_DEAD_ZONE = 0.5
+    THRUST_DEAD_ZONE = 0.5
+    DERIVATIVE_FILTER_ALPHA = 0.2
+    MAX_RUDDER_RATE_CHANGE = 0.1
+    MAX_THRUST_RATE_CHANGE = 0.15
+    ANTI_WINDUP_THRESHOLD = 0.95
+
+    # Rendering constants
+    MAX_FIG_WIDTH = 1200
+    MAX_FIG_HEIGHT = 900
+    DPI = 100
+
+    def __init__(self,
+                 render_mode: Optional[str] = None, 
+                 time_step: float = 0.1, 
+                 max_steps: int = 1500, 
+                 verbose: Optional[bool] = None,
+                 target_pos: Optional[np.ndarray] = None,
+                 ship_pos: Optional[np.ndarray] = None,
+                 wind: bool = False,
+                 current: bool = False):
+        """Initialize the ship navigation environment.
+
+        Args:
+            render_mode: Either None or 'human' for visualization
+            time_step: Simulation time step in seconds
+            max_steps: Maximum steps per episode
+            verbose: Whether to print debug information
+            target_pos: Optional target position
+            ship_pos: Optional initial ship position
+            wind: Whether to enable wind effects
+            current: Whether to enable current effects
+        """
         super().__init__(render_mode)
 
         # Environment parameters
         self.time_step = time_step
         self.max_steps = max_steps
-        self.current_action = [0.0, 0.0]
         self.verbose = verbose
-        self.step_count = 0
-        self.stuck_steps = 0
         self.wind = wind
         self.current = current
-        self.cross_error = 0.0
-        self.desired_heading = 0.0
 
-        # Environmental effects 
+        # Initialize state
+        self._initialize_state(ship_pos)
+        self._initialize_control_parameters()
+        self._load_environment_data()
+
+        # Gym spaces
+        self.action_space = gym.spaces.Box(
+            low=np.array([-1, -1], dtype=np.float32),
+            high=np.array([1, 1], dtype=np.float32),
+            dtype=np.float32
+        )
+        self.observation_space = self._initialize_observation_space()
+
+        self.reward_weights = {
+            'distance': 0.3,
+            'heading': 0.3,
+            'cross_track': 0.2,
+            'rudder': 0.2
+        }
+
+        # Rendering
+        self.initialize_plots = True
+
+
+    def _initialize_state(self, ship_pos: Optional[np.ndarray]) -> None:
+        """Initialize the ship's state variables."""
+        self.initial_ship_pos = np.array(ship_pos, dtype=np.float32) if ship_pos else np.array([5.0, 5.0])
+        self.ship_pos = copy.deepcopy(self.initial_ship_pos)
+        self.previous_ship_pos = np.zeros(2)
+        self.previous_heading = 0.0
+        self.ship_angle = 0.0
+        self.ship_velocity = 0.0
+        self.randomization_scale = 1.0
+        self.max_dist = np.sqrt(2) * self.MAX_GRID_POS
+        self.state = np.array([self.ship_pos[0], self.ship_pos[1], 0.0, 0.0, 0.0, 0.0])
+        self.current_action = np.array([0.0, 0.0])
+
+
+    def _initialize_control_parameters(self) -> None:
+        """Initialize PID controller and related parameters."""
+        # PID gains
+        self.rudder_kp = 0.2   # Proportional gain for rudder
+        self.rudder_ki = 0.1   # Integral gain for rudder
+        self.rudder_kd = 0.15  # Helps dampen oscillations
+        self.thrust_kp = 0.2   # Proportional gain for thrust
+        self.thrust_ki = 0.02  # Integral gain for thrust
+        self.thrust_kd = 0.05  # Less derivative for thrust
+
+        # Error terms
+        self.rudder_error_sum = 0.0
+        self.thrust_error_sum = 0.0
+        self.previous_rudder_error = 0.0
+        self.previous_thrust_error = 0.0
+        self.previous_rudder_target = 0.0
+        self.previous_thrust_target = 0.0
+        self.filtered_rudder_derivative = 0.0
+        self.filtered_thrust_derivative = 0.0
+
+        # Environmental effects
         self.radians_current = np.radians(180)
         self.current_direction = np.array([np.cos(self.radians_current), np.sin(self.radians_current)])
         self.current_strength = 0.35
         self.radians_wind = np.radians(90)
         self.wind_direction = np.array([np.cos(self.radians_wind), np.sin(self.radians_wind)])
-        self.wind_strength = .35
+        self.wind_strength = 0.35
 
-        # Ship state initialization
-        self.initial_ship_pos = np.array(ship_pos, dtype=np.float32) if ship_pos else np.array([5.0, 5.0], dtype=np.float32)
-        self.ship_pos = copy.deepcopy(self.initial_ship_pos)
-        self.previous_ship_pos = [0.0, 0.0]
-        self.previous_heading = 0.0
-        self.ship_angle = 0.0
-        self.ship_velocity = 0.0
-        self.randomization_scale = 1    # Scale for randomization
 
-        self.rudder_error_sum = 0.0
-        self.thrust_error_sum = 0.0
-        self.previous_rudder_target = 0.0
-        self.previous_thrust_target = 0.0
-        
-        # PI controller gains
-        self.rudder_kp = 0.5  # Proportional gain for rudder
-        self.rudder_ki = 0.3  # Integral gain for rudder
-        self.thrust_kp = 0.3  # Proportional gain for thrust
-        self.thrust_ki = 0.05  # Integral gain for thrust
-
-        self.max_dist = np.sqrt(2) * self.MAX_GRID_POS
-
-        # Environment setup
-        self.checkpoints = []
-        self.current_checkpoint = 1
-        # self.target_pos = np.array(target_pos, dtype=np.float32)
-
+    def _load_environment_data(self) -> None:
+        """Load obstacles, paths and initialize checkpoints."""
         csv_input_dir = os.path.dirname(os.path.abspath(__file__))
-        self._load_obstacles_and_paths(csv_input_dir)
 
-        # Path and checkpoints initialization
         try:
-            path = np.loadtxt(os.path.join(csv_input_dir, 'trajectory_points_no_scale.csv'), delimiter=',',
-                              skiprows=1)
-        except FileNotFoundError:
-            raise FileNotFoundError("The file 'trajectory_points_no_scale.csv' could not be found.")
+            self.obstacles = np.loadtxt(
+                os.path.join(csv_input_dir, 'env_Sche_250cm_no_scale.csv'),
+                delimiter=',', skiprows=1).reshape(-1, 2)
+            self.polygon_shape = Polygon(self.obstacles)
+
+            self.overall = np.loadtxt(
+                os.path.join(csv_input_dir, 'env_Sche_no_scale.csv'),
+                delimiter=',', skiprows=1).reshape(-1, 2)
+
+            path = np.loadtxt(
+                os.path.join(csv_input_dir, 'trajectory_points_no_scale.csv'),
+                delimiter=',', skiprows=1)
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"Required data file not found: {str(e)}")
 
         path = self._reduce_path(path, self.initial_ship_pos)
         path = create_checkpoints_from_simple_path(path, self.CHECKPOINTS_DISTANCE)
         path.insert(0, (self.ship_pos[0], self.ship_pos[1]))  # Insert new tuple at index 0
+
         checkpoints = [{'pos': np.array(point, dtype=np.float32), 'radius': 1.0} for point in path]
-
-        # Calculate perpendicular lines
         lines = calculate_perpendicular_lines(checkpoints, 50)
-        self.checkpoints = [
-            {**checkpoint, 'perpendicular_line': line} for checkpoint, line in zip(checkpoints, lines)
-        ]
+
+        self.checkpoints = [{**checkpoint, 'perpendicular_line': line} for checkpoint, line in zip(checkpoints, lines)]
         self.target_pos = np.array(self.checkpoints[-1]['pos'], dtype=np.float32)
-
-        # Action and observation spaces
-        self.action_space = gym.spaces.Box(low=np.array([-1, -1], dtype=np.float32),
-                                           high=np.array([1, 1], dtype=np.float32),
-                                           dtype=np.float32)
-        self.observation_space = self._initialize_observation_space()
-
-        # Rendering setup
-        self.initialize_plots = True
+        self.current_checkpoint = 1
+        self.step_count = 0
+        self.stuck_steps = 0
+        self.cross_error = 0.0
+        self.desired_heading = 0.0
 
         # Hydrodynamic coefficients
         self.xu = -0.02  # Surge damping
@@ -180,11 +243,8 @@ class PySimEnv(BaseEnv):
         self.k_r = 0.039   # Rudder coefficient
         self.k_v = 0.03 # Sway coefficient
 
-        # Ship state [x, y, heading, surge_velocity, sway_velocity, yaw_rate]
-        self.state = np.array([self.ship_pos[0], self.ship_pos[1], 0.0, 0.0, 0.0, 0.0])
 
-
-    def _reduce_path(self, path, start_pos):
+    def _reduce_path(self, path: np.ndarray, start_pos: np.ndarray) -> np.ndarray:
         """Reduces the path to start from the closest point to the given start position.
 
         This method searches the provided path for the point that is closest to `start_pos`
@@ -193,85 +253,110 @@ class PySimEnv(BaseEnv):
         original path is returned as-is.
 
         Args:
-            path (list of array-like): The original path as a list of 2D or 3D coordinates.
-            start_pos (array-like): The new start position to align the path with.
+            path: Original path as array of coordinates
+            start_pos: New start position to align path with
 
         Returns:
-            list of array-like: The reduced path starting at `start_pos` and ending at the
-            original target.
+            np.ndarray: Reduced path starting at closest point to start_pos
 
         Note:
             This stub implementation does not perform any reduction and returns the path
             unchanged. Override this method to apply actual reduction logic.
         """
-        return path  # don't reduce, return the original path
+        return path  # Implementation note: Currently returns original path
 
 
-    def _apply_pi_controller(self, target_action):
+    def _apply_pi_controller(self, target_action: np.ndarray) -> np.ndarray:
+        """Apply advanced PID controller with dead zone and derivative filtering.
+
+        Args:
+            target_action: Array of [target_rudder, target_thrust] values in [-1, 1]
+
+        Returns:
+            np.ndarray: Smoothed action array [rudder, thrust] with rate limiting
         """
-        Apply PI controller to smooth the actions.
-        """
-        target_rudder = target_action[0]
-        target_thrust = target_action[1]
-        
+        target_rudder, target_thrust = target_action[0], abs(target_action[1])
+
+        # Dead zone for small changes
+        if abs(target_rudder - self.previous_rudder_target) < self.RUDDER_DEAD_ZONE:
+            target_rudder = self.previous_rudder_target
+
+        if abs(target_thrust - self.previous_thrust_target) < self.THRUST_DEAD_ZONE:
+            target_thrust = self.previous_thrust_target
+
         # Calculate errors
         rudder_error = target_rudder - self.previous_rudder_target
         thrust_error = target_thrust - self.previous_thrust_target
-        
-        # Update error sums
-        self.rudder_error_sum += rudder_error
-        self.thrust_error_sum += thrust_error
-        
-        self.rudder_error_sum = np.clip(self.rudder_error_sum, -1.0, 1.0)
-        self.thrust_error_sum = np.clip(self.thrust_error_sum, -1.0, 1.0)
-        rudder_output = self.rudder_kp * rudder_error + self.rudder_ki * self.rudder_error_sum
-        thrust_output = self.thrust_kp * thrust_error + self.thrust_ki * self.thrust_error_sum
-        
-        # Compute smoothed actions
-        smoothed_rudder = self.previous_rudder_target + rudder_output
-        smoothed_thrust = self.previous_thrust_target + thrust_output
-        smoothed_rudder = np.clip(smoothed_rudder, -1.0, 1.0)
-        smoothed_thrust = np.clip(smoothed_thrust, -1.0, 1.0)
-        
-        self.previous_rudder_target = smoothed_rudder
-        self.previous_thrust_target = smoothed_thrust
-        
-        return np.array([smoothed_rudder, smoothed_thrust])
+
+        # Calculate and filter derivatives
+        rudder_derivative = (rudder_error - self.previous_rudder_error) / self.time_step
+        thrust_derivative = (thrust_error - self.previous_thrust_error) / self.time_step
+
+        self.filtered_rudder_derivative = (
+                self.DERIVATIVE_FILTER_ALPHA * rudder_derivative +
+                (1 - self.DERIVATIVE_FILTER_ALPHA) * self.filtered_rudder_derivative
+        )
+        self.filtered_thrust_derivative = (
+                self.DERIVATIVE_FILTER_ALPHA * thrust_derivative +
+                (1 - self.DERIVATIVE_FILTER_ALPHA) * self.filtered_thrust_derivative
+        )
+
+        # Update integral terms with anti-windup
+        if abs(self.previous_rudder_target) < self.ANTI_WINDUP_THRESHOLD:
+            self.rudder_error_sum = np.clip(
+                self.rudder_error_sum + rudder_error * self.time_step,
+                -0.5, 0.5
+            )
+
+        if abs(self.previous_thrust_target) < self.ANTI_WINDUP_THRESHOLD:
+            self.thrust_error_sum = np.clip(
+                self.thrust_error_sum + thrust_error * self.time_step,
+                -0.5, 0.5
+            )
+
+        # Calculate PID outputs
+        rudder_output = (
+                self.rudder_kp * rudder_error +
+                self.rudder_ki * self.rudder_error_sum +
+                self.rudder_kd * self.filtered_rudder_derivative
+        )
+
+        thrust_output = (
+                self.thrust_kp * thrust_error +
+                self.thrust_ki * self.thrust_error_sum +
+                self.thrust_kd * self.filtered_thrust_derivative
+        )
+
+        # Apply rate limiting (prevents sudden jumps)
+        rudder_output = np.clip(rudder_output, -self.MAX_RUDDER_RATE_CHANGE, self.MAX_RUDDER_RATE_CHANGE)
+        thrust_output = np.clip(thrust_output, -self.MAX_THRUST_RATE_CHANGE, self.MAX_THRUST_RATE_CHANGE)
+
+        new_rudder = np.clip(self.previous_rudder_target + rudder_output, -1.0, 1.0)
+        new_thrust = np.clip(self.previous_thrust_target + thrust_output, -1.0, 1.0)
+
+        # Update state
+        self.previous_rudder_error = rudder_error
+        self.previous_thrust_error = thrust_error
+        self.previous_rudder_target = new_rudder
+        self.previous_thrust_target = new_thrust
+
+        return np.array([new_rudder, new_thrust], dtype=np.float32)
 
 
-    def _load_obstacles_and_paths(self, csv_input_dir):
-        """Load obstacle and path data from CSV files."""
-        try:
-            self.obstacles = np.loadtxt(os.path.join(csv_input_dir, 'env_Sche_250cm_no_scale.csv'), delimiter=',',
-                                        skiprows=1).reshape(-1, 2)
-            self.polygon_shape = Polygon(self.obstacles)
+    def _initialize_observation_space(self) -> gym.spaces.Box:
+        """Initialize and return the observation space for the environment.
 
-        except FileNotFoundError:
-            raise FileNotFoundError("The file 'env_Sche_250cm_no_scale.csv' could not be found.")
+        Observation space includes:
+        - Normalized ship position, heading, velocities
+        - Distances to current and next checkpoints
+        - Cross-track and heading errors
+        - Current control actions
+        - Optional wind/current parameters if enabled
 
-        try:
-            self.overall = np.loadtxt(os.path.join(csv_input_dir, 'env_Sche_no_scale.csv'), delimiter=',',
-                                      skiprows=1).reshape(-1, 2)
-        except FileNotFoundError:
-            raise FileNotFoundError("The file 'env_Sche_no_scale.csv' could not be found.")
-
-
-    def _initialize_observation_space(self):
+        Returns:
+            gym.spaces.Box: The observation space definition
         """
-        Observation space for path-following:
-            - Ship position (x, y): [0, MAX_GRID_POS]
-            - Ship heading: [-pi, pi]
-            - Surge velocity (u): [0, 5 m/s]
-            - Sway velocity (v): [-2, 2 m/s]
-            - Yaw rate (r): [-0.5, 0.5 m/s]
-            - Distance to current checkpoint: [0, MAX_GRID_POS]
-            - Distance to checkpoint+1 (if available): [0, MAX_GRID_POS]
-            - Distance to checkpoint+2 (if available): [0, MAX_GRID_POS]
-            - Cross-track error: [0, MAX_GRID_POS]
-            - Heading error: [-pi, pi]
-            - Rudder angle: [-1, 1]
-            - Thrust: [-1, 1]
-        """
+        # Base observations
         base_low=np.array([
             self.MIN_GRID_POS,          # Ship position x
             self.MIN_GRID_POS,          # Ship position y
@@ -304,25 +389,20 @@ class PySimEnv(BaseEnv):
             1.0,                        # Thrust
         ], dtype=np.float32)
 
+        # Add wind/current if enabled
         if self.wind:
-            # Add wind parameters: direction and strength
-            wind_low = np.array([-1.0, -1.0], dtype=np.float32)  # Normalized wind direction components
-            wind_high = np.array([1.0, 1.0], dtype=np.float32)   # Normalized wind direction components
-            base_low = np.concatenate([base_low, wind_low])
-            base_high = np.concatenate([base_high, wind_high])
+            wind_low = np.array([-1.0, -1.0], dtype=np.float32)
+            wind_high = np.array([1.0, 1.0], dtype=np.float32)
+            base_low = np.hstack([base_low, wind_low])
+            base_high = np.hstack([base_high, wind_high])
 
         if self.current:
-            # Add current parameters: direction and strength
-            current_low = np.array([-1.0, -1.0], dtype=np.float32)  # Normalized current direction components
-            current_high = np.array([1.0, 1.0], dtype=np.float32)   # Normalized current direction components
-            base_low = np.concatenate([base_low, current_low])
-            base_high = np.concatenate([base_high, current_high])
+            current_low = np.array([-1.0, -1.0], dtype=np.float32)
+            current_high = np.array([1.0, 1.0], dtype=np.float32)
+            base_low = np.hstack([base_low, current_low])
+            base_high = np.hstack([base_high, current_high])
 
-        return gym.spaces.Box(
-            low=base_low,
-            high=base_high,
-            dtype=np.float32
-        )
+        return gym.spaces.Box(low=base_low, high=base_high, dtype=np.float32)
 
 
     def _initialize_rendering(self):
@@ -331,14 +411,18 @@ class PySimEnv(BaseEnv):
 
         # self.fig, self.ax = plt.subplots(figsize=(18,15))
         # Create a temporary Tkinter root window to get screen dimensions
-        root = tk.Tk()
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
-        root.destroy()  # Close the temporary Tkinter window
+        try:
+            root = tk.Tk()
+            screen_width = root.winfo_screenwidth()
+            screen_height = root.winfo_screenheight()
+            root.destroy()  # Close the temporary Tkinter window
+        except tk.TclError:
+            screen_width, screen_height = self.MAX_FIG_WIDTH, self.MAX_FIG_HEIGHT   # Fallback
 
         # Define figure dimensions (ensure it fits within screen)
-        fig_width, fig_height = min(1200, screen_width), min(900, screen_height)
-        dpi = 100  # Adjust as needed
+        fig_width = min(self.MAX_FIG_WIDTH, screen_width)
+        fig_height = min(self.MAX_FIG_HEIGHT, screen_height)
+        dpi = self.DPI
 
         # Create figure
         self.fig, self.ax = plt.subplots(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
@@ -372,36 +456,54 @@ class PySimEnv(BaseEnv):
         self.ax.legend()
 
 
-    def randomize(self, randomization_scale=None):
-        """Randomizes the initial conditions of the environment, including the ship's position.
+    @staticmethod
+    def _normalize(val, min_val, max_val):
+        return 2 * (val - min_val) / (max_val - min_val) - 1
+
+
+    def randomize(self, randomization_scale: Optional[float] = None):
+        """Randomize the ship's initial position within specified bounds.
 
         Args:
-            randomization_scale (float, optional): The scale of the randomization applied to the ship's position.
-                If not provided, the default value will be used.
+            randomization_scale: Maximum absolute value for position
+                randomization. If None, uses the class's default scale.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: If randomization_scale is not positive
         """
         if randomization_scale is not None:
+            if randomization_scale <= 0:
+                raise ValueError("randomization_scale must be positive")
+
             self.randomization_scale = randomization_scale
 
-        # Apply random perturbation to the ship position
-        self.ship_pos += np.random.uniform(
+        perturbation = np.random.uniform(
             low=-self.randomization_scale,
             high=self.randomization_scale,
-            size=self.ship_pos.shape,
+            size=self.initial_ship_pos.shape
         )
+        self.initial_ship_pos = np.clip(self.initial_ship_pos + perturbation, self.MIN_GRID_POS, self.MAX_GRID_POS)
 
 
-    def reset(self, seed=None, **kwargs):
-        """Reset the environment to its initial state."""
+    def reset(self, seed: Optional[int] = None, **kwargs) -> Tuple[np.ndarray, Dict]:
+        """Reset the environment to its initial state.
+
+        Args:
+            seed: Optional seed for random number generation
+            kwargs: Additional arguments
+
+        Returns:
+            tuple: (observation, info) where:
+                observation: Initial observation
+                info: Additional information dictionary
+        """
         super().reset(seed=seed)
 
-        self.env_specific_reset()
-
-        self.step_count = 0
-        self.current_checkpoint = 1
-
         self.ship_pos = copy.deepcopy(self.initial_ship_pos)
-        self.previous_ship_pos = [0.0, 0.0]
-        self.ship_angle = 0.0
+        self.previous_ship_pos = np.zeros(2)
         self.ship_velocity = 0.0
 
         direction_vector = self.checkpoints[1]['pos'] - self.ship_pos
@@ -409,42 +511,71 @@ class PySimEnv(BaseEnv):
         # Set the initial state
         self.state = np.array([self.ship_pos[0], self.ship_pos[1], self.ship_angle, 0.0, 0.0, 0.0])
 
+        # Reset control parameters
+        self.rudder_error_sum = 0.0
+        self.thrust_error_sum = 0.0
+        self.previous_rudder_error = 0.0
+        self.previous_thrust_error = 0.0
+        self.previous_rudder_target = 0.0
+        self.previous_thrust_target = 0.0
+        self.filtered_rudder_derivative = 0.0
+        self.filtered_thrust_derivative = 0.0
+
+        self.step_count = 0
+        self.current_checkpoint = 1
+        self.stuck_steps = 0
+
         return self._get_obs(), {}
 
 
-    def _get_obs(self):
-        """Return normalized observation for the current state."""
-        # Normalize positions to [-1, 1]
-        norm_pos = 2 * (self.ship_pos - self.MIN_GRID_POS) / (self.MAX_GRID_POS - self.MIN_GRID_POS) - 1
+    def _get_obs(self) -> np.ndarray:
+        """Construct and return the normalized observation vector.
+
+        Returns:
+            np.ndarray: Normalized observation array containing:
+            - Position (normalized to [-1,1] in grid)
+            - Heading (normalized to [-1,1] in radians)
+            - Velocities (normalized to [-1,1] relative to max)
+            - Distances to current and next checkpoints (normalized)
+            - Cross-track and heading errors (normalized)
+            - Current control actions
+            - Optional wind/current observations
+        """
+        # Normalize positions
+        norm_pos = self._normalize(self.ship_pos, self.MIN_GRID_POS, self.MAX_GRID_POS)
 
         # Normalize velocities
-        norm_velocities = np.array([np.clip(self.state[3] / self.MAX_SURGE_VELOCITY, -1, 1), np.clip(self.state[4] / (self.MAX_SWAY_VELOCITY/2), -1, 1), np.clip(self.state[5] / self.MAX_YAW_RATE, -1, 1)])
+        norm_velocities = np.array([
+            np.clip(self.state[3] / self.MAX_SURGE_VELOCITY, -1, 1),
+            np.clip(self.state[4] / (self.MAX_SWAY_VELOCITY/2), -1, 1),
+            np.clip(self.state[5] / self.MAX_YAW_RATE, -1, 1)
+        ])
 
-        # Calculate distances and normalize
+        # Checkpoint distances
         current_checkpoint_pos = self.checkpoints[self.current_checkpoint]['pos']
         distance_to_checkpoint = np.linalg.norm(self.ship_pos - current_checkpoint_pos)
         norm_distance = distance_to_checkpoint / self.max_dist
 
-        # Calculate and normalize distances to next checkpoints
+        # Next checkpoint distances
         norm_next_distances = np.zeros(2)
-        if self.current_checkpoint + 1 < len(self.checkpoints):
-            next_checkpoint_pos = self.checkpoints[self.current_checkpoint + 1]['pos']
-            norm_next_distances[0] = np.linalg.norm(self.ship_pos - next_checkpoint_pos) / self.max_dist
-        if self.current_checkpoint + 2 < len(self.checkpoints):
-            next_next_checkpoint_pos = self.checkpoints[self.current_checkpoint + 2]['pos']
-            norm_next_distances[1] = np.linalg.norm(self.ship_pos - next_next_checkpoint_pos) / self.max_dist
+        for i in range(1, 3):
+            if self.current_checkpoint + i < len(self.checkpoints):
+                next_pos = self.checkpoints[self.current_checkpoint + i]['pos']
+                norm_next_distances[i-1] = np.linalg.norm(self.ship_pos - next_pos) / self.max_dist
 
-        # Calculate cross-track error and heading error
-        previous_checkpoint_pos = self.checkpoints[self.current_checkpoint - 1]['pos']
+        # Cross-track error
+        prev_checkpoint_pos = self.checkpoints[self.current_checkpoint - 1]['pos']
         cross_track_error = self._distance_from_point_to_line(
-            self.ship_pos, previous_checkpoint_pos, current_checkpoint_pos)
+            self.ship_pos, prev_checkpoint_pos, current_checkpoint_pos)
         norm_cross_error = cross_track_error / (self.CHECKPOINTS_DISTANCE / 2)
 
+        # Heading error
         direction_to_checkpoint = current_checkpoint_pos - self.ship_pos
         desired_heading = np.arctan2(direction_to_checkpoint[1], direction_to_checkpoint[0])
         heading_error = (desired_heading - self.state[2] + np.pi) % (2 * np.pi) - np.pi
+        self.heading_error = heading_error
 
-        # Concatenate normalized observations
+        # Build observation
         obs = np.concatenate([
             norm_pos,                               # Normalized position
             [self.state[2] / np.pi],                # Normalized heading
@@ -456,192 +587,258 @@ class PySimEnv(BaseEnv):
             self.current_action,                    # Current action
         ], dtype=np.float32)
 
-        # Add wind observations if enabled
+        # Add environmental observations if enabled
         if self.wind:
-            wind_obs = np.array([
-                self.wind_direction[0] * self.wind_strength,
-                self.wind_direction[1] * self.wind_strength
-            ], dtype=np.float32)
-            obs = np.concatenate([obs, wind_obs])
+            obs = np.concatenate([
+                obs,
+                np.array([
+                    self.wind_direction[0] * self.wind_strength,
+                    self.wind_direction[1] * self.wind_strength
+                ], dtype=np.float32)
+            ])
 
-        # Add current observations if enabled
         if self.current:
-            current_obs = np.array([
-                self.current_direction[0] * self.current_strength,
-                self.current_direction[1] * self.current_strength
-            ], dtype=np.float32)
-            obs = np.concatenate([obs, current_obs])
+            obs = np.concatenate([
+                obs,
+                np.array([
+                    self.current_direction[0] * self.current_strength,
+                    self.current_direction[1] * self.current_strength
+                ], dtype=np.float32)
+            ])
 
         return obs
 
 
-    def step(self, action):
-        """Execute one timestep within the environment."""
-        action = np.array(action) if not np.isscalar(action) else np.array([action, 0.0])
-        # action = add_noise(action)
+    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+        """Execute one environment timestep.
 
-        # Update ship dynamics and calculate the reward
+        Args:
+            action: Array-like with [rudder, thrust] commands in [-1, 1]
+
+        Returns:
+            tuple: (observation, reward, terminated, truncated, info)
+        """
+        action = np.asarray(action, dtype=np.float32)
+        if action.shape != (2,):
+            raise ValueError(f"Action must be shape (2,), got {action.shape}")
+
+        # Update dynamics and get reward
         self._update_ship_dynamics(action)
-        reward, done = self._calculate_reward()
+        reward, terminated = self._calculate_reward()
 
-        # Increment step count and check for maximum steps
+        # Step limit check
         self.step_count += 1
         if self.step_count >= self.max_steps:
-            reward = -15
-            done = True
+            reward += self.MAX_STEPS_PENALTY
+            terminated = True
 
+        # Collision check
         if not check_collision_ship(self.ship_pos, self.polygon_shape):
-            reward = -10
-            done = True
+            reward += self.COLLISION_PENALTY
+            terminated = True
 
-        return self._get_obs(), reward, done, False, {}
+        return self._get_obs(), reward, terminated, False, {}
 
 
-    def _update_ship_dynamics(self, action, alpha=0.2):
-        """Update ship dynamics with improved physics and environmental effects."""
-        # Smooth action application
-        smoothed_action = self._apply_pi_controller(action)
+    def _update_ship_dynamics(self, action: np.ndarray, alpha: float = 0.2) -> None:
+        """Update ship state based on actions and environmental effects.
 
-        #smoothed_action = action
+        Args:
+            action: Array of [rudder, thrust] commands
+            alpha: Smoothing factor for action changes
+        """
+        # Apply rate limiting to action changes
+        target_rudder, target_thrust = action[0], abs(action[1])
 
-        #turning_smooth = alpha * smoothed_action[0] + (1 - alpha) * self.current_action[0]
-        #thrust_smooth = alpha * smoothed_action[1] + (1 - alpha) * self.current_action[1]
-        #smoothed_action = [turning_smooth, thrust_smooth]
+        rudder_change = target_rudder - self.current_action[0]
+        thrust_change = target_thrust - self.current_action[1]
 
-        #self.current_action = [turning_smooth, thrust_smooth]
-        self.current_action = [smoothed_action[0], smoothed_action[1]]
+        if abs(rudder_change) > self.MAX_RUDDER_RATE:
+            rudder_change = np.sign(rudder_change) * self.MAX_RUDDER_RATE
 
-        # Convert actions to forces
-        #delta_r = np.radians(turning_smooth * 40)
-        #t = thrust_smooth * 60
-        delta_r = np.radians(smoothed_action[0] * 40)
+        if abs(thrust_change) > self.MAX_THRUST_RATE:
+            thrust_change = np.sign(thrust_change) * self.MAX_THRUST_RATE
+
+        # Apply gradual change
+        gradual_rudder = self.current_action[0] + rudder_change
+        gradual_thrust = self.current_action[1] + thrust_change
+
+        # Smooth actions
+        if abs(target_rudder - self.current_action[0]) > 0.2:
+            smoothed_action = [gradual_rudder, gradual_thrust]
+        else:
+            smoothed_action = [self.current_action[0], gradual_thrust]
+
+        # Apply PID controller and update current action
+        # smoothed_action = self._apply_pi_controller(smoothed_action)
+
+        self.current_action = np.array([smoothed_action[0], smoothed_action[1]])
+
+        # Convert to physical values
+        delta_r = np.radians(smoothed_action[0] * 60)
         t = smoothed_action[1] * 60
 
         # Current state
         x, y, psi, u, v, r = self.state
 
-        # Transform wind effects into ship's coordinate system
-        relative_wind_angle = self.radians_wind - psi
-        wind_effect = np.array([
-            self.wind_strength * np.cos(relative_wind_angle),  # Longitudinal component
-            self.wind_strength * np.sin(relative_wind_angle)   # Lateral component
-        ])
+        # Environmental effects in ship coordinates
+        if self.wind:
+            relative_wind_angle = self.radians_wind - psi
+            wind_effect = np.array([
+                self.wind_strength * np.cos(relative_wind_angle),
+                self.wind_strength * np.sin(relative_wind_angle)
+            ])
+        else:
+            wind_effect = np.zeros(2)
 
-        # Transform current effects into ship's coordinate system
-        relative_current_angle = self.radians_current - psi
-        current_effect = np.array([
-            self.current_strength * np.cos(relative_current_angle),  # Longitudinal component
-            self.current_strength * np.sin(relative_current_angle)   # Lateral component
-        ])
+        if self.current:
+            relative_current_angle = self.radians_current - psi
+            current_effect = np.array([
+                self.current_strength * np.cos(relative_current_angle),
+                self.current_strength * np.sin(relative_current_angle)
+            ])
+        else:
+            current_effect = np.zeros(2)
 
         # Precompute reusable values
         sin_delta_r = np.sin(delta_r)
         cos_psi = np.cos(psi)
         sin_psi = np.sin(psi)
 
-        # Update dynamics with environmental effects
-        # Wind
-        if self.wind and not self.current:
-            du = self.k_t * t + self.xu * u + wind_effect[0]
-            dv = self.k_v * sin_delta_r + self.yv * v + wind_effect[1]
-        # Current
-        elif self.current and not self.wind:
-            du = self.k_t * t + self.xu * u + current_effect[0]
-            dv = self.k_v * sin_delta_r + self.yv * v + current_effect[1]
-        # Both
-        elif self.current and self.wind:
-            du = self.k_t * t + self.xu * u + current_effect[0] + wind_effect[0]
-            dv = self.k_v * sin_delta_r + self.yv * v + current_effect[1] + wind_effect[1]
-        # Neither
-        else:
-            du = self.k_t * t + self.xu * u
-            dv = self.k_v * sin_delta_r + self.yv * v
-        #dr = self.k_r * delta_r + self.nr * v / self.l
-        dr = self.k_r * delta_r + self.nr * r + self.yv_r * v + v * u / self.l - 0.1 * r
+        # Update dynamics (simplified 3DOF model)
+        du = self.k_t * t + self.xu * u + wind_effect[0] + current_effect[0]
+        dv = self.k_v * sin_delta_r + self.yv * v + wind_effect[1] + current_effect[1]
+        dr = self.k_r * delta_r + self.nr * r + self.yv_r * v + v * u / self.l - self.YAW_RATE_DAMPING * r
 
-        u = np.clip(u + du * self.time_step, self.MIN_SURGE_VELOCITY, self.MAX_SURGE_VELOCITY)
-        v = np.clip(v + dv * self.time_step, self.MIN_SWAY_VELOCITY, self.MAX_SWAY_VELOCITY)
-        r = np.clip(r + dr * self.time_step, self.MIN_YAW_RATE, self.MAX_YAW_RATE)  # Update yaw rate with limits
+        # Update state with limits
+        new_u = np.clip(u + du * self.time_step, self.MIN_SURGE_VELOCITY, self.MAX_SURGE_VELOCITY)
+        new_v = np.clip(v + dv * self.time_step, self.MIN_SWAY_VELOCITY, self.MAX_SWAY_VELOCITY)
+        new_r = np.clip(r + dr * self.time_step, self.MIN_YAW_RATE, self.MAX_YAW_RATE)  # Update yaw rate with limits
 
         # Update position and heading
-        dx = u * cos_psi - v * sin_psi
-        dy = u * sin_psi + v * cos_psi
-        dpsi = r
+        dx = new_u * cos_psi - new_v * sin_psi
+        dy = new_u * sin_psi + new_v * cos_psi
+        dpsi = new_r
 
         # Store previous state and update
         self.previous_ship_pos = copy.deepcopy(self.ship_pos)
         self.previous_heading = self.state[2]
 
+        new_x = np.clip(self.state[0] + dx * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
+        new_y = np.clip(self.state[1] + dy * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
+        new_heading = self.state[2] + dpsi * self.time_step # % (2 * np.pi)
+
         # Update state
-        self.state[0] = np.clip(self.state[0] + dx * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
-        self.state[1] = np.clip(self.state[1] + dy * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
-        self.state[2] += dpsi * self.time_step
-        self.state[3] = u
-        self.state[4] = v
-        self.state[5] = r
+        self.state = np.array([new_x, new_y, new_heading, new_u, new_v, new_r])
 
         # Update ship position
         self.ship_pos = self.state[:2]
 
 
     @staticmethod
-    def _distance_from_point_to_line(point, line_seg_start, line_seg_end):
-        """    Calculate the perpendicular distance from point P to the line segment defined by A and B.    """
+    @lru_cache(maxsize=128)
+    def _distance_from_point_to_line_cached(point: tuple, line_seg_start: tuple, line_seg_end: tuple) -> float:
+        """Calculate perpendicular distance from point to line segment.
+
+        Args:
+            point: Point coordinates [x,y]
+            line_seg_start: Line segment start point [x,y]
+            line_seg_end: Line segment end point [x,y]
+
+        Returns:
+            float: Perpendicular distance from point to line
+        """
+        point = np.array(point)
+        line_seg_start = np.array(line_seg_start)
+        line_seg_end = np.array(line_seg_end)
+
         line_vec = line_seg_end - line_seg_start
         point_vec = point - line_seg_start
 
         # Line magnitude squared (to avoid division by zero)
         line_mag_squared = np.dot(line_vec, line_vec)
         if line_mag_squared == 0:
-           # If the two points defining the line are identical, return the distance to this point
-           return np.linalg.norm(point - line_seg_start)
+            # If the two points defining the line are identical, return the distance to this point
+            return np.linalg.norm(point - line_seg_start)
 
-        # Projection of the point onto the line
         projection_scalar = np.dot(point_vec, line_vec) / line_mag_squared
         projected_point = line_seg_start + projection_scalar * line_vec
 
-        # Distance from the point to the projected point on the infinite line
         return np.linalg.norm(point - projected_point)
 
 
-    def _is_object_within_distance_of_line(self, point, line_seg_start, line_seg_end, threshold):
+    def _distance_from_point_to_line(self, point: np.ndarray,
+                                     line_start: np.ndarray,
+                                     line_end: np.ndarray) -> float:
+        """Calculate distance with caching wrapper."""
+        return self._distance_from_point_to_line_cached(tuple(point), tuple(line_start), tuple(line_end))
+
+
+    @staticmethod
+    def _calculate_heading_error(target_heading: float,
+                                 current_heading: float,
+                                 dead_zone_deg: float = 5.0) -> float:
+        """Calculate heading error with dead zone handling.
+
+        Args:
+            target_heading: Desired heading in radians
+            current_heading: Current heading in radians
+            dead_zone_deg: Angular dead zone in degrees
+
+        Returns:
+            float: Heading error in radians, 0 if within dead zone
         """
-        Checks if the object's path from P_prev to P_curr comes within 'distance' of the line segment A-B.
+        error = (target_heading - current_heading + np.pi) % (2 * np.pi) - np.pi
+        dead_zone = np.radians(dead_zone_deg)
+
+        return 0.0 if abs(error) < dead_zone else error
+
+
+    def _calculate_reward(self) -> Tuple[float, bool]:
+        """Calculate reward and termination conditions.
+
+        Returns:
+            tuple: (reward, done) where:
+                reward: Calculated reward value
+                done: True if episode should terminate
         """
-        # If the distance is less than or equal to the threshold, return True
-        return self._distance_from_point_to_line(point, line_seg_start, line_seg_end) <= threshold
-
-
-    def _calculate_reward(self):
-        """Calculate reward with improved shaping and penalties."""
-        reward = 0.0
-        done = False
-
-        # Distance reward with better scaling
+        # Distance reward
         current_distance = np.linalg.norm(self.ship_pos - self.target_pos)
         prev_distance = np.linalg.norm(self.previous_ship_pos - self.target_pos)
         distance_delta = prev_distance - current_distance
         distance_reward = self.REWARD_DISTANCE_SCALE * np.tanh(distance_delta)
-        #reward += distance_reward
 
-        # Heading alignment reward
+        # Heading alignment
         self.desired_heading = np.arctan2(
             self.checkpoints[self.current_checkpoint]['pos'][1] - self.ship_pos[1],
             self.checkpoints[self.current_checkpoint]['pos'][0] - self.ship_pos[0]
         )
-        heading_diff = abs(self.state[2] - self.desired_heading) % (2 * np.pi)
-        heading_reward = np.cos(heading_diff)
-        reward += heading_reward
+        heading_error = self._calculate_heading_error(self.desired_heading, self.state[2])
+        heading_reward = np.exp(-abs(heading_error))
 
         # Cross-track error penalty
-        line_start = self.checkpoints[self.current_checkpoint - 1]['pos']
-        line_end = self.checkpoints[self.current_checkpoint]['pos']
-        cross_error = self._distance_from_point_to_line(self.ship_pos, line_start, line_end)
-        cross_error_penalty = -np.tanh(cross_error / self.CROSS_TRACK_ERROR_PENALTY_SCALE)  # Normalized and smooth
-        reward += cross_error_penalty
+        cross_error = self._distance_from_point_to_line(
+            self.ship_pos,
+            self.checkpoints[self.current_checkpoint - 1]['pos'],
+            self.checkpoints[self.current_checkpoint]['pos']
+        )
+        cross_error_penalty = -0.5 * np.tanh(cross_error / self.CROSS_TRACK_ERROR_PENALTY_SCALE)
         self.cross_error = cross_error
 
-        # Checkpoint reward with progression scaling
+        # Action penalties
+        rudder_penalty = -0.2 * abs(self.current_action[0])
+        # rudder_change_penalty = -0.5 * abs(self.current_action[0] - self.previous_rudder_target)
+        # thrust_change_penalty = -0.1 * abs(self.current_action[1] - self.previous_thrust_target)
+
+        # Combined reward
+        reward = (
+                self.reward_weights['distance'] * distance_reward +
+                self.reward_weights['heading'] * heading_reward +
+                self.reward_weights['cross_track'] * cross_error_penalty +
+                self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
+        )
+
+        # Checkpoint progression
         checkpoint_pos = self.checkpoints[self.current_checkpoint]['pos']
         distance_to_checkpoint = np.linalg.norm(self.ship_pos - checkpoint_pos)
         checkpoint_scale = (self.current_checkpoint / len(self.checkpoints)) * 10
@@ -651,23 +848,22 @@ class PySimEnv(BaseEnv):
             self.current_checkpoint += 1
             self.step_count = 0
 
-        # Movement reward to prevent getting stuck
+        # Movement check
         movement = np.linalg.norm(self.ship_pos - self.previous_ship_pos)
-        if movement < 0.1:
+        if movement < 0.07:
             self.stuck_steps += 1
-            if self.stuck_steps > 20:
-                reward -= 1
-        #        done = True
+            if self.stuck_steps > 40:
+                reward -= 0.6
         else:
             self.stuck_steps = 0
 
-        # Success reward
+        # Termination conditions
+        done = False
         if current_distance < 7.0 or self.current_checkpoint == len(self.checkpoints)-1:
             done = True
-            reward += 50.0
+            reward += self.SUCCESS_REWARD
             print("Target reached!")
 
-        # Termination conditions
         if cross_error > self.CHECKPOINTS_DISTANCE * 2:
             done = True
             reward -= 1
@@ -676,12 +872,16 @@ class PySimEnv(BaseEnv):
             done = True
             reward -= 1
 
-        if self.current_checkpoint < len(self.checkpoints)-1:
-            if self._distance_from_point_to_line(self.ship_pos, self.checkpoints[self.current_checkpoint]['perpendicular_line'][0], self.checkpoints[self.current_checkpoint]['perpendicular_line'][1]) <= 2:
-                self.current_checkpoint += 1
-                self.step_count = 0
-                if self.current_checkpoint == len(self.checkpoints)-1:
-                    done = True
+        if (self.current_checkpoint < len(self.checkpoints)-1 and
+            self._distance_from_point_to_line(
+                self.ship_pos,
+                self.checkpoints[self.current_checkpoint]['perpendicular_line'][0],
+                self.checkpoints[self.current_checkpoint]['perpendicular_line'][1]) <= 2):
+            self.current_checkpoint += 1
+            self.step_count = 0
+
+            if self.current_checkpoint == len(self.checkpoints)-1:
+                done = True
 
         return reward, done
 
@@ -696,13 +896,17 @@ class PySimEnv(BaseEnv):
             for i in range(len(path_points) - 1):
                 start_point = path_points[i]
                 end_point = path_points[i + 1]
-                self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]], 'g-', label='Path' if i == 0 else "")  # Green lines for the path
+                self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
+                             'g-', label='Path' if i == 0 else "")  # Green lines for the path
+
             for i, checkpoint in enumerate(self.checkpoints):
-                check = patches.Circle((checkpoint['pos'][0], checkpoint['pos'][1]), 10, color='black', alpha=0.3)
+                check = patches.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
+                                       10, color='black', alpha=0.3)
                 self.ax.add_patch(check)
                 start_point = checkpoint['perpendicular_line'][0]
                 end_point = checkpoint['perpendicular_line'][1]
-                self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]], 'g-', label='Path' if i == 0 else "")  # Green lines for the path
+                self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
+                             'g-', label='Path' if i == 0 else "")  # Green lines for the path
 
         # Draw the target location (if necessary)
         self.target_plot.set_data(self.target_pos[0:1], self.target_pos[1:2])
@@ -713,8 +917,10 @@ class PySimEnv(BaseEnv):
         #     self.ax.add_patch(rect)
 
         # Add the polygon to the plot
-        polygon_patch = patches.Polygon(self.obstacles, closed=True, edgecolor='r', facecolor='none', lw=2, label='Waterway')
-        western_scheldt = patches.Polygon(self.overall, closed=True, edgecolor='brown', facecolor='none', lw=2, label='Western Scheldt')
+        polygon_patch = patches.Polygon(self.obstacles, closed=True, edgecolor='r', facecolor='none',
+                                        lw=2, label='Waterway')
+        western_scheldt = patches.Polygon(self.overall, closed=True, edgecolor='brown', facecolor='none',
+                                          lw=2, label='Western Scheldt')
         self.ax.add_patch(polygon_patch)
         self.ax.add_patch(western_scheldt)
 
