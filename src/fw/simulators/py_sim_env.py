@@ -471,6 +471,9 @@ class PySimEnv(BaseEnv):
             randomization_scale: Maximum absolute value for position
                 randomization. If None, uses the class's default scale.
 
+        Returns:
+            None
+
         Raises:
             ValueError: If randomization_scale is not positive
         """
