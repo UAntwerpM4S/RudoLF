@@ -20,19 +20,6 @@ from fw.simulators.base_env import BaseEnv
 from fw.simulators.tools import create_checkpoints_from_simple_path, check_collision_ship
 
 
-def add_noise(action: np.ndarray, noise_level: float = 0.1) -> np.ndarray:
-    """Add noise to the action for more realism.
-
-    Args:
-        action: Input action vector
-        noise_level: Standard deviation of Gaussian noise
-
-    Returns:
-        np.ndarray: Noisy action clipped to [-1, 1]
-    """
-    return np.clip(action + np.random.normal(0, noise_level, action.shape), -1, 1)
-
-
 def calculate_perpendicular_lines(checkpoints: list, line_length: float = 100.0) -> list:
     """
     Calculate perpendicular lines at each checkpoint using smoothed tangent direction.
@@ -98,17 +85,16 @@ class PySimEnv(BaseEnv):
     SUCCESS_REWARD = 50.0
 
     # Control parameters
-    RUDDER_DEADZONE = 0.5
-    THRUST_DEADZONE = 0.5
+    RUDDER_DEAD_ZONE = 0.5
+    THRUST_DEAD_ZONE = 0.5
     DERIVATIVE_FILTER_ALPHA = 0.2
-    HEADING_ERROR_DEADZONE_DEG = 5.0
 
     # Rendering constants
     MAX_FIG_WIDTH = 1200
     MAX_FIG_HEIGHT = 900
     DPI = 100
 
-    def __init__(self, 
+    def __init__(self,
                  render_mode: Optional[str] = None, 
                  time_step: float = 0.1, 
                  max_steps: int = 1500, 
@@ -166,6 +152,7 @@ class PySimEnv(BaseEnv):
         self.randomization_scale = 1.0
         self.max_dist = np.sqrt(2) * self.MAX_GRID_POS
         self.state = np.array([self.ship_pos[0], self.ship_pos[1], 0.0, 0.0, 0.0, 0.0])
+        self.current_action = np.array([0.0, 0.0])
 
 
     def _initialize_control_parameters(self) -> None:
@@ -187,7 +174,6 @@ class PySimEnv(BaseEnv):
         self.previous_thrust_target = 0.0
         self.filtered_rudder_derivative = 0.0
         self.filtered_thrust_derivative = 0.0
-        self.current_action = np.array([0.0, 0.0])
 
         # Environmental effects
         self.radians_current = np.radians(180)
@@ -283,10 +269,10 @@ class PySimEnv(BaseEnv):
         target_rudder, target_thrust = target_action[0], abs(target_action[1])
 
         # Dead zone for small changes
-        if abs(target_rudder - self.previous_rudder_target) < self.RUDDER_DEADZONE:
+        if abs(target_rudder - self.previous_rudder_target) < self.RUDDER_DEAD_ZONE:
             target_rudder = self.previous_rudder_target
 
-        if abs(target_thrust - self.previous_thrust_target) < self.THRUST_DEADZONE:
+        if abs(target_thrust - self.previous_thrust_target) < self.THRUST_DEAD_ZONE:
             target_thrust = self.previous_thrust_target
 
         # Calculate errors
@@ -294,16 +280,16 @@ class PySimEnv(BaseEnv):
         thrust_error = target_thrust - self.previous_thrust_target
 
         # Calculate and filter derivatives
-        rudder_derivative_raw = (rudder_error - self.previous_rudder_error) / self.time_step
-        thrust_derivative_raw = (thrust_error - self.previous_thrust_error) / self.time_step
+        rudder_derivative = (rudder_error - self.previous_rudder_error) / self.time_step
+        thrust_derivative = (thrust_error - self.previous_thrust_error) / self.time_step
 
         self.filtered_rudder_derivative = (
-            self.DERIVATIVE_FILTER_ALPHA * rudder_derivative_raw +
-            (1 - self.DERIVATIVE_FILTER_ALPHA) * self.filtered_rudder_derivative
+                self.DERIVATIVE_FILTER_ALPHA * rudder_derivative +
+                (1 - self.DERIVATIVE_FILTER_ALPHA) * self.filtered_rudder_derivative
         )
         self.filtered_thrust_derivative = (
-            self.DERIVATIVE_FILTER_ALPHA * thrust_derivative_raw +
-            (1 - self.DERIVATIVE_FILTER_ALPHA) * self.filtered_thrust_derivative
+                self.DERIVATIVE_FILTER_ALPHA * thrust_derivative +
+                (1 - self.DERIVATIVE_FILTER_ALPHA) * self.filtered_thrust_derivative
         )
 
         # Update integral terms with anti-windup
@@ -321,15 +307,15 @@ class PySimEnv(BaseEnv):
 
         # Calculate PID outputs
         rudder_output = (
-            self.rudder_kp * rudder_error +
-            self.rudder_ki * self.rudder_error_sum +
-            self.rudder_kd * self.filtered_rudder_derivative
+                self.rudder_kp * rudder_error +
+                self.rudder_ki * self.rudder_error_sum +
+                self.rudder_kd * self.filtered_rudder_derivative
         )
 
         thrust_output = (
-            self.thrust_kp * thrust_error +
-            self.thrust_ki * self.thrust_error_sum +
-            self.thrust_kd * self.filtered_thrust_derivative
+                self.thrust_kp * thrust_error +
+                self.thrust_ki * self.thrust_error_sum +
+                self.thrust_kd * self.filtered_thrust_derivative
         )
 
         # Apply rate limiting (prevents sudden jumps)
@@ -339,20 +325,16 @@ class PySimEnv(BaseEnv):
         rudder_output = np.clip(rudder_output, -max_rudder_rate, max_rudder_rate)
         thrust_output = np.clip(thrust_output, -max_thrust_rate, max_thrust_rate)
 
-        # Compute smoothed actions
-        smoothed_rudder = self.previous_rudder_target + rudder_output
-        smoothed_thrust = self.previous_thrust_target + thrust_output
+        new_rudder = np.clip(self.previous_rudder_target + rudder_output, -1.0, 1.0)
+        new_thrust = np.clip(self.previous_thrust_target + thrust_output, -1.0, 1.0)
 
-        # Apply output limits and store state
-        smoothed_rudder = np.clip(smoothed_rudder, -1.0, 1.0)
-        smoothed_thrust = np.clip(smoothed_thrust, -1.0, 1.0)
-
+        # Update state
         self.previous_rudder_error = rudder_error
         self.previous_thrust_error = thrust_error
-        self.previous_rudder_target = smoothed_rudder
-        self.previous_thrust_target = smoothed_thrust
+        self.previous_rudder_target = new_rudder
+        self.previous_thrust_target = new_thrust
 
-        return np.array([smoothed_rudder, smoothed_thrust])
+        return np.array([new_rudder, new_thrust], dtype=np.float32)
 
 
     def _initialize_observation_space(self) -> gym.spaces.Box:
@@ -403,14 +385,16 @@ class PySimEnv(BaseEnv):
 
         # Add wind/current if enabled
         if self.wind:
-            wind_obs = np.array([-1.0, -1.0], dtype=np.float32)
-            base_low = np.hstack([base_low, wind_obs])
-            base_high = np.hstack([base_high, -wind_obs])
+            wind_low = np.array([-1.0, -1.0], dtype=np.float32)
+            wind_high = np.array([1.0, 1.0], dtype=np.float32)
+            base_low = np.hstack([base_low, wind_low])
+            base_high = np.hstack([base_high, wind_high])
 
         if self.current:
-            current_obs = np.array([-1.0, -1.0], dtype=np.float32)
-            base_low = np.hstack([base_low, current_obs])
-            base_high = np.hstack([base_high, -current_obs])
+            current_low = np.array([-1.0, -1.0], dtype=np.float32)
+            current_high = np.array([1.0, 1.0], dtype=np.float32)
+            base_low = np.hstack([base_low, current_low])
+            base_high = np.hstack([base_high, current_high])
 
         return gym.spaces.Box(low=base_low, high=base_high, dtype=np.float32)
 
@@ -421,14 +405,18 @@ class PySimEnv(BaseEnv):
 
         # self.fig, self.ax = plt.subplots(figsize=(18,15))
         # Create a temporary Tkinter root window to get screen dimensions
-        root = tk.Tk()
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
-        root.destroy()  # Close the temporary Tkinter window
+        try:
+            root = tk.Tk()
+            screen_width = root.winfo_screenwidth()
+            screen_height = root.winfo_screenheight()
+            root.destroy()  # Close the temporary Tkinter window
+        except tk.TclError:
+            screen_width, screen_height = self.MAX_FIG_WIDTH, self.MAX_FIG_HEIGHT   # Fallback
 
         # Define figure dimensions (ensure it fits within screen)
-        fig_width, fig_height = min(1200, screen_width), min(900, screen_height)
-        dpi = 100  # Adjust as needed
+        fig_width = min(self.MAX_FIG_WIDTH, screen_width)
+        fig_height = min(self.MAX_FIG_HEIGHT, screen_height)
+        dpi = self.DPI
 
         # Create figure
         self.fig, self.ax = plt.subplots(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
@@ -462,6 +450,11 @@ class PySimEnv(BaseEnv):
         self.ax.legend()
 
 
+    @staticmethod
+    def _normalize(val, min_val, max_val):
+        return 2 * (val - min_val) / (max_val - min_val) - 1
+
+
     def randomize(self, randomization_scale: Optional[float] = None):
         """Randomize the ship's initial position within specified bounds.
 
@@ -478,12 +471,12 @@ class PySimEnv(BaseEnv):
 
             self.randomization_scale = randomization_scale
 
-        # Apply random perturbation to the ship position
-        self.ship_pos += np.random.uniform(
+        perturbation = np.random.uniform(
             low=-self.randomization_scale,
             high=self.randomization_scale,
-            size=self.ship_pos.shape,
+            size=self.initial_ship_pos.shape
         )
+        self.initial_ship_pos += perturbation
 
 
     def reset(self, seed: Optional[int] = None, **kwargs) -> Tuple[np.ndarray, Dict]:
@@ -502,7 +495,6 @@ class PySimEnv(BaseEnv):
 
         self.ship_pos = copy.deepcopy(self.initial_ship_pos)
         self.previous_ship_pos = np.zeros(2)
-        self.ship_angle = 0.0
         self.ship_velocity = 0.0
 
         direction_vector = self.checkpoints[1]['pos'] - self.ship_pos
@@ -541,7 +533,7 @@ class PySimEnv(BaseEnv):
             - Optional wind/current observations
         """
         # Normalize positions
-        norm_pos = 2 * (self.ship_pos - self.MIN_GRID_POS) / (self.MAX_GRID_POS - self.MIN_GRID_POS) - 1
+        norm_pos = self._normalize(self.ship_pos, self.MIN_GRID_POS, self.MAX_GRID_POS)
 
         # Normalize velocities
         norm_velocities = np.array([
@@ -628,12 +620,12 @@ class PySimEnv(BaseEnv):
         # Step limit check
         self.step_count += 1
         if self.step_count >= self.max_steps:
-            reward = self.MAX_STEPS_PENALTY
+            reward += self.MAX_STEPS_PENALTY
             terminated = True
 
         # Collision check
         if not check_collision_ship(self.ship_pos, self.polygon_shape):
-            reward = self.COLLISION_PENALTY
+            reward += self.COLLISION_PENALTY
             terminated = True
 
         return self._get_obs(), reward, terminated, False, {}
@@ -670,6 +662,7 @@ class PySimEnv(BaseEnv):
 
         # Apply PID controller and update current action
         # smoothed_action = self._apply_pi_controller(smoothed_action)
+
         self.current_action = np.array([smoothed_action[0], smoothed_action[1]])
 
         # Convert to physical values
@@ -735,9 +728,9 @@ class PySimEnv(BaseEnv):
 
 
     @staticmethod
-    def _distance_from_point_to_line(point: np.ndarray, 
-                                   line_seg_start: np.ndarray, 
-                                   line_seg_end: np.ndarray) -> float:
+    def _distance_from_point_to_line(point: np.ndarray,
+                                     line_seg_start: np.ndarray,
+                                     line_seg_end: np.ndarray) -> float:
         """Calculate perpendicular distance from point to line segment.
 
         Args:
@@ -762,9 +755,9 @@ class PySimEnv(BaseEnv):
 
 
     @staticmethod
-    def _calculate_heading_error(target_heading: float, 
-                                current_heading: float, 
-                                dead_zone_deg: float = 5.0) -> float:
+    def _calculate_heading_error(target_heading: float,
+                                 current_heading: float,
+                                 dead_zone_deg: float = 5.0) -> float:
         """Calculate heading error with dead zone handling.
 
         Args:
@@ -777,6 +770,7 @@ class PySimEnv(BaseEnv):
         """
         error = (target_heading - current_heading + np.pi) % (2 * np.pi) - np.pi
         dead_zone = np.radians(dead_zone_deg)
+
         return 0.0 if abs(error) < dead_zone else error
 
 
@@ -880,14 +874,17 @@ class PySimEnv(BaseEnv):
             for i in range(len(path_points) - 1):
                 start_point = path_points[i]
                 end_point = path_points[i + 1]
-                self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]], 'g-', label='Path' if i == 0 else "")  # Green lines for the path
+                self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
+                             'g-', label='Path' if i == 0 else "")  # Green lines for the path
 
             for i, checkpoint in enumerate(self.checkpoints):
-                check = patches.Circle((checkpoint['pos'][0], checkpoint['pos'][1]), 10, color='black', alpha=0.3)
+                check = patches.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
+                                       10, color='black', alpha=0.3)
                 self.ax.add_patch(check)
                 start_point = checkpoint['perpendicular_line'][0]
                 end_point = checkpoint['perpendicular_line'][1]
-                self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]], 'g-', label='Path' if i == 0 else "")  # Green lines for the path
+                self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
+                             'g-', label='Path' if i == 0 else "")  # Green lines for the path
 
         # Draw the target location (if necessary)
         self.target_plot.set_data(self.target_pos[0:1], self.target_pos[1:2])
@@ -898,8 +895,10 @@ class PySimEnv(BaseEnv):
         #     self.ax.add_patch(rect)
 
         # Add the polygon to the plot
-        polygon_patch = patches.Polygon(self.obstacles, closed=True, edgecolor='r', facecolor='none', lw=2, label='Waterway')
-        western_scheldt = patches.Polygon(self.overall, closed=True, edgecolor='brown', facecolor='none', lw=2, label='Western Scheldt')
+        polygon_patch = patches.Polygon(self.obstacles, closed=True, edgecolor='r', facecolor='none',
+                                        lw=2, label='Waterway')
+        western_scheldt = patches.Polygon(self.overall, closed=True, edgecolor='brown', facecolor='none',
+                                          lw=2, label='Western Scheldt')
         self.ax.add_patch(polygon_patch)
         self.ax.add_patch(western_scheldt)
 
