@@ -126,7 +126,7 @@ class FhSimEnv(PySimEnv):
         self._fh_sim.reset()
 
 
-    def _update_ship_dynamics(self, action, alpha=0.3):
+    def _update_ship_dynamics(self, action):
         """
         Update the ship's dynamics based on the provided action.
 
@@ -136,25 +136,19 @@ class FhSimEnv(PySimEnv):
         Args:
             action (tuple): A tuple containing two values (turning, thrust) that determine
                             the rudder angle and thrust power, respectively.
-            alpha (float, optional): Smoothing factor for action application. Defaults to 0.3.
         """
-        # Clip the action values to ensure they're within the valid range [-1, 1].
-        turning_smooth = alpha * action[0] + (1 - alpha) * self.current_action[0]
-        thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.current_action[1]
-        self.current_action = [turning_smooth, thrust_smooth]
-
         # Save the current ship position as the previous position for tracking.
         self.previous_ship_pos = copy.deepcopy(self.ship_pos)
         self.previous_heading = np.radians(self._fh_sim.ship_interface.getShipHeading())
 
         # Update rudder controls based on the turning action.
         for rudder in self._fh_sim.ship_interface.getRudderControls():
-            rudder.setControlValue(float(-1.0*turning_smooth)) # this is to compensate for opposite behaviour of the Python environment
+            rudder.setControlValue(float(-1.0*action[0])) # this is to compensate for opposite behaviour of the Python environment
                                                         # in Python: -1 is turn right ; 1 is turn left
                                                         # FH sim: -1 is turn left ; 1 is turn right
         # Update propeller controls based on the thrust action.
         for propeller in self._fh_sim.ship_interface.getPropellerControls():
-            propeller.setEngineLeverValue(float(thrust_smooth))
+            propeller.setEngineLeverValue(float(action[1]))
 
         # Simulate the ship's dynamics for a fixed period.
         self._fh_sim.math_model.simulateSeconds(self.time_step)
