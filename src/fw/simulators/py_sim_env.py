@@ -625,7 +625,8 @@ class PySimEnv(BaseEnv):
             raise ValueError(f"Action must be shape (2,), got {action.shape}")
 
         # Update dynamics and get reward
-        self._update_ship_dynamics(action)
+        smoothened_action = self._smoothen_action(action)
+        self._update_ship_dynamics(smoothened_action)
         reward, terminated = self._calculate_reward()
 
         # Step limit check
@@ -642,43 +643,49 @@ class PySimEnv(BaseEnv):
         return self._get_obs(), reward, terminated, False, {}
 
 
-    def _update_ship_dynamics(self, action: np.ndarray, alpha: float = 0.2) -> None:
-        """Update ship state based on actions and environmental effects.
+    def _smoothen_action(self, action: np.ndarray):
+        """Smoothen the action to prevent erratic behaviour of the ship.
 
         Args:
             action: Array of [rudder, thrust] commands
-            alpha: Smoothing factor for action changes
         """
         # Apply rate limiting to action changes
         target_rudder, target_thrust = action[0], abs(action[1])
+        current_rudder, current_thrust = self.current_action
 
-        rudder_change = target_rudder - self.current_action[0]
-        thrust_change = target_thrust - self.current_action[1]
-
+        # Calculate and limit rudder change
+        rudder_change = target_rudder - current_rudder
         if abs(rudder_change) > self.MAX_RUDDER_RATE:
             rudder_change = np.sign(rudder_change) * self.MAX_RUDDER_RATE
 
+        # Calculate and limit thrust change
+        thrust_change = target_thrust - current_thrust
         if abs(thrust_change) > self.MAX_THRUST_RATE:
             thrust_change = np.sign(thrust_change) * self.MAX_THRUST_RATE
 
-        # Apply gradual change
-        gradual_rudder = self.current_action[0] + rudder_change
-        gradual_thrust = self.current_action[1] + thrust_change
+        # Apply gradual changes
+        gradual_rudder = current_rudder + rudder_change
+        gradual_thrust = current_thrust + thrust_change
 
         # Smooth actions
-        if abs(target_rudder - self.current_action[0]) > 0.2:
-            smoothed_action = [gradual_rudder, gradual_thrust]
-        else:
-            smoothed_action = [self.current_action[0], gradual_thrust]
+        final_rudder = gradual_rudder if abs(target_rudder - current_rudder) > 0.2 else current_rudder
 
         # Apply PID controller and update current action
         # smoothed_action = self._apply_pi_controller(smoothed_action)
 
-        self.current_action = np.array([smoothed_action[0], smoothed_action[1]], dtype=np.float32)
+        self.current_action = np.array([final_rudder, gradual_thrust], dtype=np.float32)
+        return self.current_action
 
+
+    def _update_ship_dynamics(self, action: np.ndarray) -> None:
+        """Update ship state based on actions and environmental effects.
+
+        Args:
+            action: Array of [rudder, thrust] commands
+        """
         # Convert to physical values
-        delta_r = np.radians(smoothed_action[0] * 60)
-        t = smoothed_action[1] * 60
+        delta_r = np.radians(action[0] * 60)
+        t = action[1] * 60
 
         # Current state
         x, y, psi, u, v, r = self.state
