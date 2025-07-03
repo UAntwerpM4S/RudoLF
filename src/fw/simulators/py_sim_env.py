@@ -36,28 +36,28 @@ def calculate_perpendicular_lines(checkpoints: list, line_length: float = 100.0)
     def smooth_tangent(check_points: list, index: int) -> np.ndarray:
         """Calculate the tangent at checkpoint `i` by averaging vectors to neighbors."""
         if index == 0:  # Start of the path
-            tangent = check_points[index + 1]['pos'] - check_points[index]['pos']
+            tangent = check_points[1]['pos'] - check_points[0]['pos']
         elif index == len(check_points) - 1:  # End of the path
-            tangent = check_points[index]['pos'] - check_points[index - 1]['pos']
-        else:  # Middle of the path
-            to_next = check_points[index + 1]['pos'] - check_points[index]['pos']
-            to_prev = check_points[index]['pos'] - check_points[index - 1]['pos']
-            tangent = to_next + to_prev  # Average direction
-
-        return tangent / np.linalg.norm(tangent) if np.any(tangent != 0) else tangent
+            tangent = check_points[-1]['pos'] - check_points[-2]['pos']
+        else:   # Middle of the path
+            tangent = (
+                check_points[index + 1]['pos'] - check_points[index]['pos'] +
+                check_points[index]['pos'] - check_points[index - 1]['pos']
+            )   # Average direction
+        norm = np.linalg.norm(tangent)
+        return tangent / norm if norm != 0 else tangent
 
 
     lines = []  # to store start and end points of perpendicular lines
-    for i in range(len(checkpoints)):
+    for i, checkpoint in enumerate(checkpoints):
         # Get the perpendicular direction using the smoothed tangent at the current checkpoint
         smoothed_tangent = smooth_tangent(checkpoints, i)
         perpendicular = np.array([-smoothed_tangent[1], smoothed_tangent[0]])
 
         # Calculate the start and end points of the perpendicular line at the checkpoint
-        midpoint = np.array(checkpoints[i]['pos'])
-        start_point = midpoint + perpendicular * (line_length / 2)
-        end_point = midpoint - perpendicular * (line_length / 2)
-        lines.append((start_point, end_point))
+        midpoint = checkpoint['pos']
+        offset = perpendicular * (line_length / 2)
+        lines.append((midpoint + offset, midpoint - offset))
 
     return lines
 
@@ -157,14 +157,14 @@ class PySimEnv(BaseEnv):
         """Initialize the ship's state variables."""
         self.initial_ship_pos = np.array(ship_pos, dtype=np.float32) if ship_pos else np.array([5.0, 5.0], dtype=np.float32)
         self.ship_pos = copy.deepcopy(self.initial_ship_pos)
-        self.previous_ship_pos = np.zeros(2)
+        self.previous_ship_pos = np.zeros(2, dtype=np.float32)
         self.previous_heading = 0.0
         self.ship_angle = 0.0
         self.ship_velocity = 0.0
         self.randomization_scale = 1.0
         self.max_dist = np.sqrt(2) * self.MAX_GRID_POS
-        self.state = np.array([self.ship_pos[0], self.ship_pos[1], 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
-        self.current_action = np.array([0.0, 0.0], dtype=np.float32)
+        self.state = np.array([*self.ship_pos, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        self.current_action = np.zeros(2, dtype=np.float32)
 
 
     def _initialize_control_parameters(self) -> None:
@@ -198,33 +198,44 @@ class PySimEnv(BaseEnv):
 
     def _load_environment_data(self) -> None:
         """Load obstacles, paths and initialize checkpoints."""
-        csv_input_dir = os.path.dirname(os.path.abspath(__file__))
+        base_path = os.path.dirname(os.path.abspath(__file__))
 
         try:
             self.obstacles = np.loadtxt(
-                os.path.join(csv_input_dir, 'env_Sche_250cm_no_scale.csv'),
-                delimiter=',', skiprows=1).reshape(-1, 2)
+                os.path.join(base_path, 'env_Sche_250cm_no_scale.csv'),
+                delimiter=',', skiprows=1
+            )
             self.polygon_shape = Polygon(self.obstacles)
 
             self.overall = np.loadtxt(
-                os.path.join(csv_input_dir, 'env_Sche_no_scale.csv'),
-                delimiter=',', skiprows=1).reshape(-1, 2)
+                os.path.join(base_path, 'env_Sche_no_scale.csv'),
+                delimiter=',', skiprows=1
+            )
 
             path = np.loadtxt(
-                os.path.join(csv_input_dir, 'trajectory_points_no_scale.csv'),
-                delimiter=',', skiprows=1)
+                os.path.join(base_path, 'trajectory_points_no_scale.csv'),
+                delimiter=',', skiprows=1
+            )
         except FileNotFoundError as e:
-            raise FileNotFoundError(f"Required data file not found: {str(e)}")
+            raise FileNotFoundError(f"Missing required environment file: {e}")
+
+        # Optional: fail if obstacle/overall/path is not 2D with 2 columns
+        if self.obstacles.ndim != 2 or self.obstacles.shape[1] != 2:
+            raise ValueError("Obstacles data must be a 2D array with shape (N, 2)")
+        if self.overall.ndim != 2 or self.overall.shape[1] != 2:
+            raise ValueError("Overall map data must be a 2D array with shape (N, 2)")
+        if path.ndim != 2 or path.shape[1] != 2:
+            raise ValueError("Path data must be a 2D array with shape (N, 2)")
 
         path = self._reduce_path(path, self.initial_ship_pos)
         path = create_checkpoints_from_simple_path(path, self.CHECKPOINTS_DISTANCE)
-        path.insert(0, (self.ship_pos[0], self.ship_pos[1]))  # Insert new tuple at index 0
+        path = np.insert(path, 0, self.ship_pos, axis=0)  # Safely insert initial ship position
 
         checkpoints = [{'pos': np.array(point, dtype=np.float32), 'radius': 1.0} for point in path]
-        lines = calculate_perpendicular_lines(checkpoints, 50)
+        lines = calculate_perpendicular_lines(checkpoints, line_length=50)
 
         self.checkpoints = [{**checkpoint, 'perpendicular_line': line} for checkpoint, line in zip(checkpoints, lines)]
-        self.target_pos = np.array(self.checkpoints[-1]['pos'], dtype=np.float32)
+        self.target_pos = self.checkpoints[-1]['pos']
         self.current_checkpoint = 1
         self.step_count = 0
         self.stuck_steps = 0
@@ -505,13 +516,13 @@ class PySimEnv(BaseEnv):
         self.env_specific_reset()
 
         self.ship_pos = copy.deepcopy(self.initial_ship_pos)
-        self.previous_ship_pos = np.zeros(2)
+        self.previous_ship_pos = np.zeros(2, dtype=np.float32)
         self.ship_velocity = 0.0
 
         direction_vector = self.checkpoints[1]['pos'] - self.ship_pos
         self.ship_angle = np.arctan2(direction_vector[1], direction_vector[0])  # Angle in radians
         # Set the initial state
-        self.state = np.array([self.ship_pos[0], self.ship_pos[1], self.ship_angle, 0.0, 0.0, 0.0])
+        self.state = np.array([*self.ship_pos, self.ship_angle, 0.0, 0.0, 0.0], dtype=np.float32)
 
         # Reset control parameters
         self.rudder_error_sum = 0.0
@@ -551,7 +562,7 @@ class PySimEnv(BaseEnv):
             np.clip(self.state[3] / self.MAX_SURGE_VELOCITY, -1, 1),
             np.clip(self.state[4] / (self.MAX_SWAY_VELOCITY/2), -1, 1),
             np.clip(self.state[5] / self.MAX_YAW_RATE, -1, 1)
-        ])
+        ], dtype=np.float32)
 
         # Checkpoint distances
         current_checkpoint_pos = self.checkpoints[self.current_checkpoint]['pos']
@@ -559,10 +570,11 @@ class PySimEnv(BaseEnv):
         norm_distance = distance_to_checkpoint / self.max_dist
 
         # Next checkpoint distances
-        norm_next_distances = np.zeros(2)
+        norm_next_distances = np.zeros(2, dtype=np.float32)
         for i in range(1, 3):
-            if self.current_checkpoint + i < len(self.checkpoints):
-                next_pos = self.checkpoints[self.current_checkpoint + i]['pos']
+            idx = self.current_checkpoint + i
+            if idx < len(self.checkpoints):
+                next_pos = self.checkpoints[idx]['pos']
                 norm_next_distances[i-1] = np.linalg.norm(self.ship_pos - next_pos) / self.max_dist
 
         # Cross-track error
@@ -578,7 +590,7 @@ class PySimEnv(BaseEnv):
         self.heading_error = heading_error
 
         # Build observation
-        obs = np.concatenate([
+        obs = np.hstack([
             norm_pos,                               # Normalized position
             [self.state[2] / np.pi],                # Normalized heading
             norm_velocities,                        # Normalized velocities
@@ -587,28 +599,16 @@ class PySimEnv(BaseEnv):
             [norm_cross_error],                     # Normalized cross-track error
             [heading_error / np.pi],                # Normalized heading error
             self.current_action,                    # Current action
-        ], dtype=np.float32)
+        ])
 
         # Add environmental observations if enabled
         if self.wind:
-            obs = np.concatenate([
-                obs,
-                np.array([
-                    self.wind_direction[0] * self.wind_strength,
-                    self.wind_direction[1] * self.wind_strength
-                ], dtype=np.float32)
-            ])
+            obs = np.hstack([obs, self.wind_direction * self.wind_strength])
 
         if self.current:
-            obs = np.concatenate([
-                obs,
-                np.array([
-                    self.current_direction[0] * self.current_strength,
-                    self.current_direction[1] * self.current_strength
-                ], dtype=np.float32)
-            ])
+            obs = np.hstack([obs, self.current_direction * self.current_strength])
 
-        return obs
+        return obs.astype(np.float32)
 
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
@@ -691,23 +691,21 @@ class PySimEnv(BaseEnv):
         x, y, psi, u, v, r = self.state
 
         # Environmental effects in ship coordinates
+        wind_effect = np.zeros(2, dtype=np.float32)
         if self.wind:
             relative_wind_angle = self.radians_wind - psi
             wind_effect = np.array([
                 self.wind_strength * np.cos(relative_wind_angle),
                 self.wind_strength * np.sin(relative_wind_angle)
-            ])
-        else:
-            wind_effect = np.zeros(2)
+            ], dtype=np.float32)
 
+        current_effect = np.zeros(2, dtype=np.float32)
         if self.current:
             relative_current_angle = self.radians_current - psi
             current_effect = np.array([
                 self.current_strength * np.cos(relative_current_angle),
                 self.current_strength * np.sin(relative_current_angle)
-            ])
-        else:
-            current_effect = np.zeros(2)
+            ], dtype=np.float32)
 
         # Precompute reusable values
         sin_delta_r = np.sin(delta_r)
@@ -738,14 +736,14 @@ class PySimEnv(BaseEnv):
         new_heading = self.state[2] + dpsi * self.time_step # % (2 * np.pi)
 
         # Update state
-        self.state = np.array([new_x, new_y, new_heading, new_u, new_v, new_r])
+        self.state = np.array([new_x, new_y, new_heading, new_u, new_v, new_r], dtype=np.float32)
 
         # Update ship position
         self.ship_pos = self.state[:2]
 
 
     @staticmethod
-    @lru_cache(maxsize=128)
+    @lru_cache(maxsize=1024)
     def _distance_from_point_to_line_cached(point: tuple, line_seg_start: tuple, line_seg_end: tuple) -> float:
         """Calculate perpendicular distance from point to line segment.
 
@@ -813,26 +811,22 @@ class PySimEnv(BaseEnv):
                 reward: Calculated reward value
                 done: True if episode should terminate
         """
+        checkpoint_pos = self.checkpoints[self.current_checkpoint]['pos']
+        prev_checkpoint_pos = self.checkpoints[self.current_checkpoint - 1]['pos']
+
         # Distance reward
         current_distance = np.linalg.norm(self.ship_pos - self.target_pos)
         prev_distance = np.linalg.norm(self.previous_ship_pos - self.target_pos)
-        distance_delta = prev_distance - current_distance
-        distance_reward = self.REWARD_DISTANCE_SCALE * np.tanh(distance_delta)
+        distance_reward = self.REWARD_DISTANCE_SCALE * np.tanh(prev_distance - current_distance)
 
         # Heading alignment
-        self.desired_heading = np.arctan2(
-            self.checkpoints[self.current_checkpoint]['pos'][1] - self.ship_pos[1],
-            self.checkpoints[self.current_checkpoint]['pos'][0] - self.ship_pos[0]
-        )
+        direction = checkpoint_pos - self.ship_pos
+        self.desired_heading = np.arctan2(direction[1], direction[0])
         heading_error = self._calculate_heading_error(self.desired_heading, self.state[2])
         heading_reward = np.exp(-abs(heading_error))
 
         # Cross-track error penalty
-        cross_error = self._distance_from_point_to_line(
-            self.ship_pos,
-            self.checkpoints[self.current_checkpoint - 1]['pos'],
-            self.checkpoints[self.current_checkpoint]['pos']
-        )
+        cross_error = self._distance_from_point_to_line(self.ship_pos, prev_checkpoint_pos, checkpoint_pos)
         cross_error_penalty = -0.5 * np.tanh(cross_error / self.CROSS_TRACK_ERROR_PENALTY_SCALE)
         self.cross_error = cross_error
 
@@ -850,12 +844,8 @@ class PySimEnv(BaseEnv):
         )
 
         # Checkpoint progression
-        checkpoint_pos = self.checkpoints[self.current_checkpoint]['pos']
-        distance_to_checkpoint = np.linalg.norm(self.ship_pos - checkpoint_pos)
-        checkpoint_scale = (self.current_checkpoint / len(self.checkpoints)) * 10
-
-        if distance_to_checkpoint < 5.0:
-            reward += checkpoint_scale
+        if np.linalg.norm(self.ship_pos - checkpoint_pos) < 5.0:
+            reward += (self.current_checkpoint / len(self.checkpoints)) * 10
             self.current_checkpoint += 1
             self.step_count = 0
 
@@ -870,7 +860,7 @@ class PySimEnv(BaseEnv):
 
         # Termination conditions
         done = False
-        if current_distance < 7.0 or self.current_checkpoint == len(self.checkpoints)-1:
+        if current_distance < 7.0 or self.current_checkpoint >= len(self.checkpoints)-1:
             done = True
             reward += self.SUCCESS_REWARD
             print("Target reached!")
