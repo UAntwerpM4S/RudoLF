@@ -126,7 +126,7 @@ class FhSimEnv(PySimEnv):
         self._fh_sim.reset()
 
 
-    def _update_ship_dynamics(self, action):
+    def _update_ship_dynamics(self, action: np.ndarray) -> None:
         """
         Update the ship's dynamics based on the provided action.
 
@@ -134,8 +134,8 @@ class FhSimEnv(PySimEnv):
         and ensures the ship remains within the environment's bounds.
 
         Args:
-            action (tuple): A tuple containing two values (turning, thrust) that determine
-                            the rudder angle and thrust power, respectively.
+            action: An array containing two values (turning, thrust) that determine
+                    the rudder angle and thrust power, respectively.
         """
         # Save the current ship position as the previous position for tracking.
         self.previous_ship_pos = copy.deepcopy(self.ship_pos)
