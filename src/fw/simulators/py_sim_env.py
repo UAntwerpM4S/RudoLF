@@ -862,11 +862,11 @@ class PySimEnv(BaseEnv):
             reward += self.SUCCESS_REWARD
             print("Target reached!")
 
-        if cross_error > self.CHECKPOINTS_DISTANCE * 2:
+        if not done and cross_error > self.CHECKPOINTS_DISTANCE * 2:
             done = True
             reward -= 1
 
-        if abs(self.state[2] - self.previous_heading) > np.pi/2:
+        if not done and abs(self.state[2] - self.previous_heading) > np.pi/2:
             done = True
             reward -= 1
 
@@ -878,8 +878,9 @@ class PySimEnv(BaseEnv):
             self.current_checkpoint += 1
             self.step_count = 0
 
-            if self.current_checkpoint == len(self.checkpoints)-1:
+            if not done and self.current_checkpoint >= len(self.checkpoints)-1:
                 done = True
+                print("Target passed!")
 
         return reward, done
 
