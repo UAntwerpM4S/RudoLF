@@ -1,5 +1,7 @@
 import gymnasium as gym
 
+from typing import Optional
+
 
 class BaseEnv(gym.Env):
     """
@@ -45,7 +47,7 @@ class BaseEnv(gym.Env):
         return type(self).__name__
 
 
-    def randomize(self, randomization_scale=None):
+    def randomize(self, randomization_scale: Optional[float] = None):
         """
         Apply domain randomization to the environment.
 

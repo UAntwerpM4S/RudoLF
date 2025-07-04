@@ -2,6 +2,7 @@ import copy
 import importlib
 import numpy as np
 
+from typing import Optional
 from fw.simulators.py_sim_env import PySimEnv
 
 
@@ -64,7 +65,7 @@ class FhSimEnv(PySimEnv):
         return new_instance
 
 
-    def _reduce_path(self, path, start_pos):
+    def _reduce_path(self, path: np.ndarray, start_pos: np.ndarray) -> np.ndarray:
         """Reduces the path to start from the point closest to the given start position.
 
         This method finds the point in the path that is closest to `start_pos`, then slices
@@ -103,7 +104,7 @@ class FhSimEnv(PySimEnv):
         return self._fh_sim
 
 
-    def randomize(self, randomization_scale=None):
+    def randomize(self, randomization_scale: Optional[float] = None):
         """
         Randomize the environment's initial conditions.
 
