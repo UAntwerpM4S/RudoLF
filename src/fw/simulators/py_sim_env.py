@@ -584,7 +584,6 @@ class PySimEnv(BaseEnv):
         direction_to_checkpoint = current_checkpoint_pos - self.ship_pos
         desired_heading = np.arctan2(direction_to_checkpoint[1], direction_to_checkpoint[0])
         heading_error = (desired_heading - self.state[2] + np.pi) % (2 * np.pi) - np.pi
-        self.heading_error = heading_error
 
         # Build observation
         obs = np.hstack([
