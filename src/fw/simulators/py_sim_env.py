@@ -7,7 +7,6 @@ except ImportError:
     matplotlib.use('Agg')  # Use non-interactive backend as fallback
 
 import os
-import copy
 import numpy as np
 import tkinter as tk
 import gymnasium as gym
@@ -156,11 +155,10 @@ class PySimEnv(BaseEnv):
     def _initialize_state(self, ship_pos: Optional[np.ndarray]) -> None:
         """Initialize the ship's state variables."""
         self.initial_ship_pos = np.array(ship_pos, dtype=np.float32) if ship_pos else np.array([5.0, 5.0], dtype=np.float32)
-        self.ship_pos = copy.deepcopy(self.initial_ship_pos)
+        self.ship_pos = np.copy(self.initial_ship_pos)
         self.previous_ship_pos = np.zeros(2, dtype=np.float32)
         self.previous_heading = 0.0
         self.ship_angle = 0.0
-        self.ship_velocity = 0.0
         self.randomization_scale = 1.0
         self.max_dist = np.sqrt(2) * self.MAX_GRID_POS
         self.state = np.array([*self.ship_pos, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
@@ -515,11 +513,11 @@ class PySimEnv(BaseEnv):
 
         self.env_specific_reset()
 
-        self.ship_pos = copy.deepcopy(self.initial_ship_pos)
+        self.ship_pos = np.copy(self.initial_ship_pos)
         self.previous_ship_pos = np.zeros(2, dtype=np.float32)
-        self.ship_velocity = 0.0
+        self.current_checkpoint = 1
 
-        direction_vector = self.checkpoints[1]['pos'] - self.ship_pos
+        direction_vector = self.checkpoints[self.current_checkpoint]['pos'] - self.ship_pos
         self.ship_angle = np.arctan2(direction_vector[1], direction_vector[0])  # Angle in radians
         # Set the initial state
         self.state = np.array([*self.ship_pos, self.ship_angle, 0.0, 0.0, 0.0], dtype=np.float32)
@@ -535,7 +533,6 @@ class PySimEnv(BaseEnv):
         self.filtered_thrust_derivative = 0.0
 
         self.step_count = 0
-        self.current_checkpoint = 1
         self.stuck_steps = 0
 
         return self._get_obs(), {}
@@ -728,7 +725,7 @@ class PySimEnv(BaseEnv):
         dpsi = new_r
 
         # Store previous state and update
-        self.previous_ship_pos = copy.deepcopy(self.ship_pos)
+        self.previous_ship_pos = np.copy(self.ship_pos)
         self.previous_heading = self.state[2]
 
         new_x = np.clip(self.state[0] + dx * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
@@ -963,7 +960,7 @@ class PySimEnv(BaseEnv):
         heading_y = self.ship_pos[1] + np.sin(self.state[2]) * heading_line_length
         self.heading_line.set_data([self.ship_pos[0], heading_x], [self.ship_pos[1], heading_y])
 
-        if hasattr(self.ax, "draw_artist") and hasattr(self.fig.canvas, "blit"):
+        if hasattr(self.fig.canvas, "blit"):
             self.ax.draw_artist(self.ship_plotC)
             self.ax.draw_artist(self.heading_line)
             self.fig.canvas.blit(self.ax.bbox)
