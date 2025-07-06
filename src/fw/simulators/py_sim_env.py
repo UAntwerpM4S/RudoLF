@@ -584,7 +584,6 @@ class PySimEnv(BaseEnv):
         direction_to_checkpoint = current_checkpoint_pos - self.ship_pos
         desired_heading = np.arctan2(direction_to_checkpoint[1], direction_to_checkpoint[0])
         heading_error = (desired_heading - self.state[2] + np.pi) % (2 * np.pi) - np.pi
-        self.heading_error = heading_error
 
         # Build observation
         obs = np.hstack([
@@ -862,11 +861,11 @@ class PySimEnv(BaseEnv):
             reward += self.SUCCESS_REWARD
             print("Target reached!")
 
-        if cross_error > self.CHECKPOINTS_DISTANCE * 2:
+        if not done and cross_error > self.CHECKPOINTS_DISTANCE * 2:
             done = True
             reward -= 1
 
-        if abs(self.state[2] - self.previous_heading) > np.pi/2:
+        if not done and abs(self.state[2] - self.previous_heading) > np.pi/2:
             done = True
             reward -= 1
 
@@ -878,8 +877,9 @@ class PySimEnv(BaseEnv):
             self.current_checkpoint += 1
             self.step_count = 0
 
-            if self.current_checkpoint == len(self.checkpoints)-1:
+            if not done and self.current_checkpoint >= len(self.checkpoints)-1:
                 done = True
+                print("Target passed!")
 
         return reward, done
 
