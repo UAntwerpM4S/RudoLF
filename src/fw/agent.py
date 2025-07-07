@@ -1,5 +1,4 @@
 import os
-import copy
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -240,14 +239,14 @@ class Agent:
                 done = False
                 steps = 0
 
-                start_pos = copy.deepcopy(env.ship_pos)
+                start_pos = np.copy(env.ship_pos)
 
                 # Store heading errors for this episode
                 cross_errors = []
                 heading_errors = []
                 rudder_actions = []
                 thrust_actions = []
-                path_positions = [env.ship_pos.copy()]  # Store initial position
+                path_positions = [np.copy(env.ship_pos)]  # Store initial position
                 cross_errors.append(env.cross_error)  # Store initial cross-track error
 
                 # Calculate initial heading error relative to desired path
@@ -263,7 +262,7 @@ class Agent:
                     done = terminated or truncated
 
                     # Store current position and errors
-                    path_positions.append(env.ship_pos.copy())
+                    path_positions.append(np.copy(env.ship_pos))
                     if env.current_checkpoint >= 2:
                         cross_errors.append(env.cross_error)
                     heading_error = self.compute_heading_error(env)
