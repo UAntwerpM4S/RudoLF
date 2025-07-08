@@ -22,6 +22,8 @@ class PPOModel(BaseModel):
     This class handles the training, evaluation, and policy management for PPO-based reinforcement learning agents.
     """
 
+    MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20
+
     @staticmethod
     def compute_gae(
         rewards: np.ndarray,
@@ -410,6 +412,8 @@ class PPOModel(BaseModel):
 
         last_save_index = 0
         training_metrics = []
+        best_mean_reward = float('-inf')
+        best_policy_file = f"Best_{self.env.type_name}_PPO_policy"
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
         for iteration in range(stopping_condition.max_time_steps):
@@ -436,6 +440,11 @@ class PPOModel(BaseModel):
             mean_advantage = total_advantage / self.num_envs
 
             training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
+
+            # Save best policy so far
+            if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:
+                best_mean_reward = mean_reward
+                self.save_policy(best_policy_file)
 
             should_stop, reason = stopping_condition.should_stop(
                 current_step=iteration,
@@ -478,6 +487,10 @@ class PPOModel(BaseModel):
             training_metrics (list): A list of dictionaries containing the training metrics.
 
         """
+        if not training_metrics:
+            print("Warning: No training metrics to write.")
+            return
+
         filepath = os.path.join(self.model_dir, csv_filename)
 
         with open(filepath, mode="w", newline="") as file:
