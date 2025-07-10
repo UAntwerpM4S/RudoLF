@@ -980,8 +980,8 @@ class PySimEnv(BaseEnv):
 
     def render(self):
         """Render the environment and visualize the ship's movement."""
-        # if self.render_mode != 'human':
-        #     return
+        if self.render_mode != 'human':
+            return
 
         if self.initialize_plots and not hasattr(self, "ship_plotC"):
             self._initialize_rendering()
@@ -1014,5 +1014,5 @@ class PySimEnv(BaseEnv):
 
     def close(self):
         """Close the environment."""
-        # if self.render_mode == 'human':
-        plt.close()
+        if self.render_mode == 'human':
+            plt.close()
