@@ -817,10 +817,10 @@ class PySimEnv(BaseEnv):
         """
         prev_checkpoint_pos = self.checkpoints[self.checkpoint_index - 1]['pos']
         current_checkpoint = self.checkpoints[self.checkpoint_index]
-        checkpoint_pos = current_checkpoint['pos']
+        current_checkpoint_pos = current_checkpoint['pos']
 
         # === Path Following Reward ===
-        path_vec = checkpoint_pos - prev_checkpoint_pos
+        path_vec = current_checkpoint_pos - prev_checkpoint_pos
         path_length = np.linalg.norm(path_vec)
         path_unit = path_vec / path_length
 
@@ -852,13 +852,13 @@ class PySimEnv(BaseEnv):
         path_following_reward = forward_reward + path_alignment_reward + path_deviation_penalty
 
         # === Heading Alignment ===
-        direction_vec = checkpoint_pos - self.ship_pos
+        direction_vec = current_checkpoint_pos - self.ship_pos
         self.desired_heading = np.arctan2(direction_vec[1], direction_vec[0])
         heading_error = self._calculate_heading_error(self.desired_heading, self.state[2])
         heading_alignment_reward = np.exp(-abs(heading_error))
 
         # === Cross-Track Penalty ===
-        cross_track_error = self._distance_from_point_to_line(self.ship_pos, prev_checkpoint_pos, checkpoint_pos)
+        cross_track_error = self._distance_from_point_to_line(self.ship_pos, prev_checkpoint_pos, current_checkpoint_pos)
         cross_track_penalty = -0.5 * np.tanh(cross_track_error / self.CROSS_TRACK_ERROR_PENALTY_SCALE)
         self.cross_error = cross_track_error
 
@@ -876,7 +876,7 @@ class PySimEnv(BaseEnv):
         )
 
         # === Checkpoint Handling ===
-        if np.linalg.norm(self.ship_pos - checkpoint_pos) < 5.0:
+        if np.linalg.norm(self.ship_pos - current_checkpoint_pos) < 5.0:
             reward += (self.checkpoint_index / len(self.checkpoints)) * 10
             self.checkpoint_index += 1
             self.step_count = 0
