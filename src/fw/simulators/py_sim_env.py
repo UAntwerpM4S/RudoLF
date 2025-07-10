@@ -837,7 +837,6 @@ class PySimEnv(BaseEnv):
         # Velocity alignment with path
         velocity = self.ship_pos - self.previous_ship_pos
         velocity_norm = np.linalg.norm(velocity)
-
         if velocity_norm > 1e-3:
             velocity_unit = velocity / velocity_norm
             path_alignment_reward = self.REWARD_DIRECTION_SCALE * np.dot(velocity_unit, path_unit)
@@ -921,7 +920,7 @@ class PySimEnv(BaseEnv):
 
             if not done and self.checkpoint_index >= len(self.checkpoints) - 1:
                 done = True
-                print("Target passed!")
+                # print("Target passed!")
 
         return reward, done
 
