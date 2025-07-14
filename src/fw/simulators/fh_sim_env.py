@@ -25,7 +25,7 @@ class FhSimEnv(PySimEnv):
                  verbose: Optional[bool] = None,
                  ship_pos: Optional[np.ndarray] = None,
                  target_pos: Optional[np.ndarray] = None,
-                 target_area_size: float = 15.0,
+                 target_area_size: float = 7.0,
                  wind: bool = False,
                  current: bool = False):
         """
