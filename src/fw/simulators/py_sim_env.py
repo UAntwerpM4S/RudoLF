@@ -925,7 +925,7 @@ class PySimEnv(BaseEnv):
             self.checkpoint_index += 1
             self.step_count = 0
 
-            if not done and reached_target_checkpoint:
+            if not done and self.checkpoint_index >= len(self.checkpoints):
                 done = True
                 # print(f"Target passed at distance: {target_distance:.2f}")
 
