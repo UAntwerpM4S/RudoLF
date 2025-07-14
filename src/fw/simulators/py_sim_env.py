@@ -921,7 +921,7 @@ class PySimEnv(BaseEnv):
                 done = True
 
         # Fallback checkpoint detection using perpendicular line
-        if self._is_near_perpendicular_line() and not reached_target_checkpoint:
+        if self._is_near_perpendicular_line(self.checkpoints[self.current_checkpoint]) and not reached_target_checkpoint:
             self.checkpoint_index += 1
             self.step_count = 0
 
