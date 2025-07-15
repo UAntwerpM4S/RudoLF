@@ -25,7 +25,6 @@ class FhSimEnv(PySimEnv):
                  verbose: Optional[bool] = None,
                  ship_pos: Optional[np.ndarray] = None,
                  target_pos: Optional[np.ndarray] = None,
-                 target_area_size: float = 7.0,
                  wind: bool = False,
                  current: bool = False):
         """
@@ -38,11 +37,10 @@ class FhSimEnv(PySimEnv):
             verbose (bool, optional): Whether to enable verbose logging. Defaults to None.
             ship_pos (tuple, optional): The initial position (x, y) of the ship. Defaults to None.
             target_pos (tuple, optional): The target position (x, y) for the ship. Defaults to None.
-            target_area_size (float, optional): target area size. Defaults to 15.0.
             wind (bool, optional): Whether to enable wind effects. Defaults to False.
             current (bool, optional): Whether to enable current effects. Defaults to False.
         """
-        super().__init__(render_mode, time_step, max_steps, verbose, ship_pos, target_pos, target_area_size, wind, current)
+        super().__init__(render_mode, time_step, max_steps, verbose, ship_pos, target_pos, wind, current)
 
         try:
             fh_wrapper_module = importlib.import_module('fw.simulators.fh_sim_wrapper')

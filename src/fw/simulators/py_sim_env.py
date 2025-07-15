@@ -88,6 +88,8 @@ class PySimEnv(BaseEnv):
     MAX_STEPS_PENALTY = -15
     COLLISION_PENALTY = -10
     SUCCESS_REWARD = 50.0
+    CHECKPOINT_AREA_SIZE = 5.0
+    TARGET_AREA_SIZE = 7.0
 
     # Control parameters
     RUDDER_DEAD_ZONE = 0.5
@@ -109,7 +111,6 @@ class PySimEnv(BaseEnv):
                  verbose: Optional[bool] = None,
                  ship_pos: Optional[np.ndarray] = None,
                  target_pos: Optional[np.ndarray] = None,
-                 target_area_size: float = 7.0,
                  wind: bool = False,
                  current: bool = False):
         """Initialize the ship navigation environment.
@@ -121,7 +122,6 @@ class PySimEnv(BaseEnv):
             verbose: Whether to print debug information
             ship_pos: Optional initial ship position
             target_pos: Optional target position
-            target_area_size: target area size
             wind: Whether to enable wind effects
             current: Whether to enable current effects
         """
@@ -133,7 +133,6 @@ class PySimEnv(BaseEnv):
         self.verbose = verbose
         self.wind = wind
         self.current = current
-        self.target_area_size = target_area_size
 
         # Initialize state
         self._initialize_state(ship_pos)
@@ -236,7 +235,9 @@ class PySimEnv(BaseEnv):
         path = create_checkpoints_from_simple_path(path, self.CHECKPOINTS_DISTANCE)
         path = np.insert(path, 0, self.ship_pos, axis=0)  # Safely insert initial ship position
 
-        checkpoints = [{'pos': np.array(point, dtype=np.float32), 'radius': 1.0} for point in path]
+        checkpoints = [{'pos': np.array(point, dtype=np.float32), 'radius': self.CHECKPOINT_AREA_SIZE, 'reward': (i / len(path)) * 10} for i, point in enumerate(path)]
+        checkpoints[-1]['radius'] = self.TARGET_AREA_SIZE
+        checkpoints[-1]['reward'] = self.SUCCESS_REWARD
         lines = calculate_perpendicular_lines(checkpoints, line_length=50)
 
         self.checkpoints = [{**checkpoint, 'perpendicular_line': line} for checkpoint, line in zip(checkpoints, lines)]
@@ -636,12 +637,12 @@ class PySimEnv(BaseEnv):
 
         # Step limit check
         self.step_count += 1
-        if self.step_count >= self.max_steps:
+        if not terminated and self.step_count >= self.max_steps:
             reward += self.MAX_STEPS_PENALTY
             terminated = True
 
         # Collision check
-        if not check_collision_ship(self.ship_pos, self.polygon_shape):
+        if not terminated and not check_collision_ship(self.ship_pos, self.polygon_shape):
             reward += self.COLLISION_PENALTY
             terminated = True
 
@@ -878,12 +879,6 @@ class PySimEnv(BaseEnv):
                 self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
         )
 
-        # === Checkpoint Handling ===
-        if np.linalg.norm(self.ship_pos - current_checkpoint_pos) < 5.0:
-            reward += (self.checkpoint_index / len(self.checkpoints)) * 10
-            self.checkpoint_index += 1
-            self.step_count = 0
-
         # === Stuck Penalty ===
         movement = np.linalg.norm(self.ship_pos - self.previous_ship_pos)
         if movement < 0.07:
@@ -894,22 +889,10 @@ class PySimEnv(BaseEnv):
             self.stuck_steps = 0
 
         # === Termination and Reward Shaping ===
-        target_distance = np.linalg.norm(self.ship_pos - self.target_pos)
-        reached_target_checkpoint = self.checkpoint_index >= len(self.checkpoints)
-        in_target_area = target_distance <= self.target_area_size
-        done = False
 
-        # Determine if target was reached
-        if in_target_area or reached_target_checkpoint:
-            reward += self.SUCCESS_REWARD
-            done = True
-            print(f"Target REACHED at distance: {target_distance:.2f}")
-        else:
-            # Apply shaped reward if within last few checkpoints
-            if self._is_in_shaping_window():
-                decay = self.DECAY_SCALE * (target_distance - self.target_area_size) / max(self.target_area_size, 1e-6)
-                shaped_reward = self.SUCCESS_REWARD * np.exp(-decay)
-                reward += shaped_reward
+        # Determine if checkpoint (waypoint or target) was reached
+        checkpoint_reward, done = self._is_checkpoint_reached_or_passed(current_checkpoint)
+        reward += checkpoint_reward
 
         # Early termination conditions
         if not done:
@@ -921,21 +904,44 @@ class PySimEnv(BaseEnv):
                 done = True
 
         # Fallback checkpoint detection using perpendicular line
-        if self._is_near_perpendicular_line(current_checkpoint) and not reached_target_checkpoint:
+        if self._is_near_perpendicular_line(current_checkpoint) and self.checkpoint_index < len(self.checkpoints):
+            if self.checkpoint_index == len(self.checkpoints) - 1:
+                distance = np.linalg.norm(self.ship_pos - current_checkpoint['pos'])
+                print(f"Passed TARGET at distance: {distance:.2f}")
+
+                if (distance <= 7.0):
+                    print(f"Current checkpoint pos: {current_checkpoint['pos']} ; radius: {current_checkpoint['radius']} ; reward: {current_checkpoint['reward']}  --  ship distance: {np.linalg.norm(self.ship_pos - current_checkpoint['pos'])}")
+                    print(f"Index: {self.checkpoint_index} ; current checkpoint pos: {current_checkpoint['pos']} ; radius: {current_checkpoint['radius']} ; reward: {current_checkpoint['reward']}  --  ship position: {self.ship_pos}")
+
             self.checkpoint_index += 1
             self.step_count = 0
 
-            if not done and self.checkpoint_index >= len(self.checkpoints):
-                done = True
-                # print(f"Target passed at distance: {target_distance:.2f}")
+        done |= self.checkpoint_index >= len(self.checkpoints)
 
         return reward, done
 
 
-    # Helper methods (to be added to the class)
-    def _is_in_shaping_window(self):
-        """Check if current checkpoint is within reward shaping window"""
-        return self.checkpoint_index >= max(0, len(self.checkpoints) - self.SHAPING_WINDOW)
+    def _is_checkpoint_reached_or_passed(self, current_checkpoint):
+        """Check if current checkpoint is reached or passed"""
+        checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint['pos'])
+
+        if (
+                checkpoint_distance <= current_checkpoint['radius'] and
+                self.checkpoint_index < len(self.checkpoints)
+        ):
+            reward = current_checkpoint['reward']
+            if self.checkpoint_index == len(self.checkpoints) - 1:
+                print("Target reached!")
+            self.checkpoint_index += 1
+            self.step_count = 0
+        else:
+            # Apply shaped reward if within last few checkpoints
+            if self.checkpoint_index >= max(0, len(self.checkpoints) - self.SHAPING_WINDOW):
+                target_area_size = self.checkpoints[-1]['radius']
+                decay = self.DECAY_SCALE * (checkpoint_distance - target_area_size) / max(target_area_size, 1e-6)
+                reward = self.checkpoints[-1]['reward'] * np.exp(-decay)
+
+        return reward, self.checkpoint_index >= len(self.checkpoints)
 
 
     def _is_near_perpendicular_line(self, checkpoint):
