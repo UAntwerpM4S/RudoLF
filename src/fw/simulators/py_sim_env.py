@@ -924,6 +924,7 @@ class PySimEnv(BaseEnv):
     def _is_checkpoint_reached_or_passed(self, current_checkpoint):
         """Check if current checkpoint is reached or passed"""
         checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint['pos'])
+        reward = np.float32(0.0)
 
         if (
                 checkpoint_distance <= current_checkpoint['radius'] and
