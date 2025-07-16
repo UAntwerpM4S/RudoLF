@@ -85,8 +85,7 @@ class PySimEnv(BaseEnv):
     REWARD_DIRECTION_SCALE = 1.0
     PENALTY_DISTANCE_SCALE = 1.0
     CROSS_TRACK_ERROR_PENALTY_SCALE = 50.0
-    MAX_STEPS_PENALTY = -15
-    COLLISION_PENALTY = -10
+    EARLY_TERMINATION_PENALTY = -15
     SUCCESS_REWARD = 50.0
     CHECKPOINT_AREA_SIZE = 5.0
     TARGET_AREA_SIZE = 7.0
@@ -633,18 +632,10 @@ class PySimEnv(BaseEnv):
         # Update dynamics and get reward
         smoothened_action = self._smoothen_action(action)
         self._update_ship_dynamics(smoothened_action)
-        reward, terminated = self._calculate_reward()
-
-        # Step limit check
         self.step_count += 1
-        if not terminated and self.step_count >= self.max_steps:
-            reward = self.MAX_STEPS_PENALTY
-            terminated = True
 
-        # Collision check
-        if not terminated and not check_collision_ship(self.ship_pos, self.polygon_shape):
-            reward = self.COLLISION_PENALTY
-            terminated = True
+        # Reward shaping
+        reward, terminated = self._calculate_reward()
 
         return self._get_obs(), reward, terminated, False, {}
 
@@ -835,8 +826,8 @@ class PySimEnv(BaseEnv):
         proj_prev = np.dot(rel_prev, path_unit)
         proj_now = np.dot(rel_now, path_unit)
 
-        # Normalized forward progress
-        progress_ratio = (proj_now - proj_prev) / path_length
+        # Normalized forward progress (clipped)
+        progress_ratio = np.clip((proj_now - proj_prev) / path_length, -2.0, 2.0)
         forward_reward = self.REWARD_DISTANCE_SCALE * np.tanh(progress_ratio)
 
         # Velocity alignment with path
@@ -888,52 +879,50 @@ class PySimEnv(BaseEnv):
         else:
             self.stuck_steps = 0
 
-        # === Termination and Reward Shaping ===
-
-        # Determine if checkpoint (waypoint or target) was reached
-        done = False
+        # === Checkpoint and target rewarding ===
         reward += self._is_checkpoint_reached_or_passed(current_checkpoint)
 
-        # Early termination conditions
+        done = False
+        heading_change = abs(self._calculate_heading_error(self.previous_heading, self.state[2]))
+
+        # === Early termination condition checks ===
         if (
-                cross_track_error > 2.0 * self.CHECKPOINTS_DISTANCE or
-                abs(self.state[2] - self.previous_heading) > np.pi / 2.0
-           ):
-            reward -= 1.0
+                cross_track_error > 2.0 * self.CHECKPOINTS_DISTANCE or          # cross-track error check
+                not check_collision_ship(self.ship_pos, self.polygon_shape) or  # collision check
+                self.step_count >= self.max_steps or                            # max step-count check
+                heading_change > np.pi / 2.0                                    # heading error check
+        ):
+            reward = self.EARLY_TERMINATION_PENALTY
             done = True
 
+        # === Normal Termination ===
         done |= self.checkpoint_index >= len(self.checkpoints)
 
         return reward, done
 
 
-    def _is_checkpoint_reached_or_passed(self, current_checkpoint):
-        """Check if current checkpoint is reached or passed"""
-        reward = np.float32(0.0)
-        checkpoint_reached_or_passed = False
+    def _is_checkpoint_reached_or_passed(self, current_checkpoint) -> float:
+        """Check if current checkpoint is reached or passed and return shaped reward."""
         checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint['pos'])
+        reward = np.float32(0.0)
 
-        if (checkpoint_distance <= current_checkpoint['radius']):
-            if self.checkpoint_index == len(self.checkpoints) - 1:
-                print(f"Target REACHED at distance {checkpoint_distance}")
-            # else:
-            #     print(f"Checkpoint {self.checkpoint_index} reached")    # REACHED at distance {checkpoint_distance}")
+        if checkpoint_distance <= current_checkpoint['radius']:
+            if self.checkpoint_index == len(self.checkpoints) - 1 # and self.verbose:
+                print(f"Target REACHED at distance {checkpoint_distance:.2f}")
             reward = current_checkpoint['reward']
-            checkpoint_reached_or_passed = True
-        elif (self._is_near_perpendicular_line(current_checkpoint)):
-            if self.checkpoint_index == len(self.checkpoints) - 1:
-                print(f"Target passed at distance {checkpoint_distance}")
-            # else:
-            #     print(f"Checkpoint {self.checkpoint_index} passed")     # at distance {checkpoint_distance}")
-            checkpoint_reached_or_passed = True
+            self.checkpoint_index += 1
+            self.step_count = 0
+
+        elif self._is_near_perpendicular_line(current_checkpoint):
+            if self.checkpoint_index == len(self.checkpoints) - 1 # and self.verbose:
+                print(f"Target passed at distance {checkpoint_distance:.2f}")
+            self.checkpoint_index += 1
+            self.step_count = 0
+
         elif self.checkpoint_index >= max(0, len(self.checkpoints) - self.SHAPING_WINDOW):
             target_area_size = self.checkpoints[-1]['radius']
             decay = self.DECAY_SCALE * (checkpoint_distance - target_area_size) / max(target_area_size, 1e-6)
             reward = self.checkpoints[-1]['reward'] * np.exp(-decay)
-
-        if checkpoint_reached_or_passed:
-            self.checkpoint_index += 1
-            self.step_count = 0
 
         return reward
 
