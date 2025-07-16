@@ -79,11 +79,16 @@ class PySimEnv(BaseEnv):
     MAX_GRID_POS = 14500
 
     # Reward parameters
+    SHAPING_WINDOW = 5
+    DECAY_SCALE = 1.0
     REWARD_DISTANCE_SCALE = 2.0
+    REWARD_DIRECTION_SCALE = 1.0
+    PENALTY_DISTANCE_SCALE = 1.0
     CROSS_TRACK_ERROR_PENALTY_SCALE = 50.0
-    MAX_STEPS_PENALTY = -15
-    COLLISION_PENALTY = -10
+    EARLY_TERMINATION_PENALTY = -15
     SUCCESS_REWARD = 50.0
+    CHECKPOINT_AREA_SIZE = 5.0
+    TARGET_AREA_SIZE = 7.0
 
     # Control parameters
     RUDDER_DEAD_ZONE = 0.5
@@ -99,12 +104,12 @@ class PySimEnv(BaseEnv):
     DPI = 100
 
     def __init__(self,
-                 render_mode: Optional[str] = None, 
-                 time_step: float = 0.1, 
-                 max_steps: int = 1500, 
+                 render_mode: Optional[str] = None,
+                 time_step: float = 0.1,
+                 max_steps: int = 1500,
                  verbose: Optional[bool] = None,
-                 target_pos: Optional[np.ndarray] = None,
                  ship_pos: Optional[np.ndarray] = None,
+                 target_pos: Optional[np.ndarray] = None,
                  wind: bool = False,
                  current: bool = False):
         """Initialize the ship navigation environment.
@@ -114,8 +119,8 @@ class PySimEnv(BaseEnv):
             time_step: Simulation time step in seconds
             max_steps: Maximum steps per episode
             verbose: Whether to print debug information
-            target_pos: Optional target position
             ship_pos: Optional initial ship position
+            target_pos: Optional target position
             wind: Whether to enable wind effects
             current: Whether to enable current effects
         """
@@ -195,46 +200,65 @@ class PySimEnv(BaseEnv):
 
 
     def _load_environment_data(self) -> None:
-        """Load obstacles, paths and initialize checkpoints."""
+        """Loads static environment data including obstacles, map outlines, and trajectory checkpoints.
+
+        This method performs the following steps:
+        1. Loads CSV files containing obstacle, overall map, and trajectory point coordinates.
+        2. Validates that each dataset has the expected 2D shape with two columns.
+        3. Reduces and transforms the trajectory path into evenly spaced checkpoints.
+        4. Calculates perpendicular guidance lines for each checkpoint.
+        5. Initializes internal state such as checkpoints, target position, and navigation counters.
+
+        Raises:
+            FileNotFoundError: If any required CSV file is missing.
+            ValueError: If any loaded file does not have the expected shape.
+            RuntimeError: If any other error occurs while reading the files.
+        """
         base_path = os.path.dirname(os.path.abspath(__file__))
 
-        try:
-            self.obstacles = np.loadtxt(
-                os.path.join(base_path, 'env_Sche_250cm_no_scale.csv'),
-                delimiter=',', skiprows=1
-            )
-            self.polygon_shape = Polygon(self.obstacles)
+        def load_csv(name: str) -> np.ndarray:
+            try:
+                data = np.loadtxt(os.path.join(base_path, name), delimiter=',', skiprows=1)
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Missing required environment file: {name}")
+            except Exception as e:
+                raise RuntimeError(f"Failed to load {name}: {e}")
+            if data.ndim != 2 or data.shape[1] != 2:
+                raise ValueError(f"{name} must be a 2D array with shape (N, 2)")
+            return data
 
-            self.overall = np.loadtxt(
-                os.path.join(base_path, 'env_Sche_no_scale.csv'),
-                delimiter=',', skiprows=1
-            )
+        # Load and validate environment components
+        self.obstacles = load_csv('env_Sche_250cm_no_scale.csv')
+        self.polygon_shape = Polygon(self.obstacles)
+        self.overall = load_csv('env_Sche_no_scale.csv')
+        path = load_csv('trajectory_points_no_scale.csv')
 
-            path = np.loadtxt(
-                os.path.join(base_path, 'trajectory_points_no_scale.csv'),
-                delimiter=',', skiprows=1
-            )
-        except FileNotFoundError as e:
-            raise FileNotFoundError(f"Missing required environment file: {e}")
-
-        # Optional: fail if obstacle/overall/path is not 2D with 2 columns
-        if self.obstacles.ndim != 2 or self.obstacles.shape[1] != 2:
-            raise ValueError("Obstacles data must be a 2D array with shape (N, 2)")
-        if self.overall.ndim != 2 or self.overall.shape[1] != 2:
-            raise ValueError("Overall map data must be a 2D array with shape (N, 2)")
-        if path.ndim != 2 or path.shape[1] != 2:
-            raise ValueError("Path data must be a 2D array with shape (N, 2)")
-
+        # Preprocess the trajectory path
         path = self._reduce_path(path, self.initial_ship_pos)
         path = create_checkpoints_from_simple_path(path, self.CHECKPOINTS_DISTANCE)
-        path = np.insert(path, 0, self.ship_pos, axis=0)  # Safely insert initial ship position
+        path = np.insert(path, 0, self.ship_pos, axis=0)  # Start with current ship position
 
-        checkpoints = [{'pos': np.array(point, dtype=np.float32), 'radius': 1.0} for point in path]
+        # Generate checkpoint data
+        checkpoints = [
+            {
+                'pos': np.array(point, dtype=np.float32),
+                'radius': self.CHECKPOINT_AREA_SIZE,
+                'reward': (i / len(path)) * 10
+            }
+            for i, point in enumerate(path)
+        ]
+
+        # Set target properties
+        checkpoints[-1]['radius'] = self.TARGET_AREA_SIZE
+        checkpoints[-1]['reward'] = self.SUCCESS_REWARD
+
+        # Add perpendicular lines to checkpoints
         lines = calculate_perpendicular_lines(checkpoints, line_length=50)
-
         self.checkpoints = [{**checkpoint, 'perpendicular_line': line} for checkpoint, line in zip(checkpoints, lines)]
+
+        # Initialize environment state
         self.target_pos = self.checkpoints[-1]['pos']
-        self.current_checkpoint = 1
+        self.checkpoint_index = 1
         self.step_count = 0
         self.stuck_steps = 0
         self.cross_error = 0.0
@@ -515,9 +539,9 @@ class PySimEnv(BaseEnv):
 
         self.ship_pos = np.copy(self.initial_ship_pos)
         self.previous_ship_pos = np.zeros(2, dtype=np.float32)
-        self.current_checkpoint = 1
+        self.checkpoint_index = 1
 
-        direction_vector = self.checkpoints[self.current_checkpoint]['pos'] - self.ship_pos
+        direction_vector = self.checkpoints[self.checkpoint_index]['pos'] - self.ship_pos
         self.ship_angle = np.arctan2(direction_vector[1], direction_vector[0])  # Angle in radians
         # Set the initial state
         self.state = np.array([*self.ship_pos, self.ship_angle, 0.0, 0.0, 0.0], dtype=np.float32)
@@ -561,21 +585,23 @@ class PySimEnv(BaseEnv):
             np.clip(self.state[5] / self.MAX_YAW_RATE, -1, 1)
         ], dtype=np.float32)
 
+        checkpoint_idx = self.checkpoint_index if self.checkpoint_index < len(self.checkpoints) else len(self.checkpoints) - 1
+
         # Checkpoint distances
-        current_checkpoint_pos = self.checkpoints[self.current_checkpoint]['pos']
+        current_checkpoint_pos = self.checkpoints[checkpoint_idx]['pos']
         distance_to_checkpoint = np.linalg.norm(self.ship_pos - current_checkpoint_pos)
         norm_distance = distance_to_checkpoint / self.max_dist
 
         # Next checkpoint distances
         norm_next_distances = np.zeros(2, dtype=np.float32)
         for i in range(1, 3):
-            idx = self.current_checkpoint + i
+            idx = checkpoint_idx + i
             if idx < len(self.checkpoints):
                 next_pos = self.checkpoints[idx]['pos']
                 norm_next_distances[i-1] = np.linalg.norm(self.ship_pos - next_pos) / self.max_dist
 
         # Cross-track error
-        prev_checkpoint_pos = self.checkpoints[self.current_checkpoint - 1]['pos']
+        prev_checkpoint_pos = self.checkpoints[checkpoint_idx - 1]['pos']
         cross_track_error = self._distance_from_point_to_line(
             self.ship_pos, prev_checkpoint_pos, current_checkpoint_pos)
         norm_cross_error = cross_track_error / (self.CHECKPOINTS_DISTANCE / 2)
@@ -623,18 +649,10 @@ class PySimEnv(BaseEnv):
         # Update dynamics and get reward
         smoothened_action = self._smoothen_action(action)
         self._update_ship_dynamics(smoothened_action)
-        reward, terminated = self._calculate_reward()
-
-        # Step limit check
         self.step_count += 1
-        if self.step_count >= self.max_steps:
-            reward += self.MAX_STEPS_PENALTY
-            terminated = True
 
-        # Collision check
-        if not check_collision_ship(self.ship_pos, self.polygon_shape):
-            reward += self.COLLISION_PENALTY
-            terminated = True
+        # Reward shaping
+        reward, terminated = self._calculate_reward()
 
         return self._get_obs(), reward, terminated, False, {}
 
@@ -669,7 +687,10 @@ class PySimEnv(BaseEnv):
         # Apply PID controller and update current action
         # smoothed_action = self._apply_pi_controller(smoothed_action)
 
+        self.previous_rudder_target = self.current_action[0]
+        self.previous_thrust_target = self.current_action[1]
         self.current_action = np.array([final_rudder, gradual_thrust], dtype=np.float32)
+
         return self.current_action
 
 
@@ -807,45 +828,66 @@ class PySimEnv(BaseEnv):
                 reward: Calculated reward value
                 done: True if episode should terminate
         """
-        checkpoint_pos = self.checkpoints[self.current_checkpoint]['pos']
-        prev_checkpoint_pos = self.checkpoints[self.current_checkpoint - 1]['pos']
+        prev_checkpoint_pos = self.checkpoints[self.checkpoint_index - 1]['pos']
+        current_checkpoint = self.checkpoints[self.checkpoint_index]
+        current_checkpoint_pos = current_checkpoint['pos']
 
-        # Distance reward
-        current_distance = np.linalg.norm(self.ship_pos - self.target_pos)
-        prev_distance = np.linalg.norm(self.previous_ship_pos - self.target_pos)
-        distance_reward = self.REWARD_DISTANCE_SCALE * np.tanh(prev_distance - current_distance)
+        # === Path Following Reward ===
+        path_vec = current_checkpoint_pos - prev_checkpoint_pos
+        path_length = np.linalg.norm(path_vec)
+        path_unit = path_vec / path_length
 
-        # Heading alignment
-        direction = checkpoint_pos - self.ship_pos
-        self.desired_heading = np.arctan2(direction[1], direction[0])
+        rel_prev = self.previous_ship_pos - prev_checkpoint_pos
+        rel_now = self.ship_pos - prev_checkpoint_pos
+
+        proj_prev = np.dot(rel_prev, path_unit)
+        proj_now = np.dot(rel_now, path_unit)
+
+        # Normalized forward progress (clipped)
+        progress_ratio = np.clip((proj_now - proj_prev) / path_length, -2.0, 2.0)
+        forward_reward = self.REWARD_DISTANCE_SCALE * np.tanh(progress_ratio)
+
+        # Velocity alignment with path
+        velocity = self.ship_pos - self.previous_ship_pos
+        velocity_norm = np.linalg.norm(velocity)
+        if velocity_norm > 1e-3:
+            velocity_unit = velocity / velocity_norm
+            path_alignment_reward = self.REWARD_DIRECTION_SCALE * np.dot(velocity_unit, path_unit)
+        else:
+            path_alignment_reward = 0.0
+
+        # Perpendicular distance penalty
+        perp_vector = rel_now - proj_now * path_unit
+        perp_dist = np.linalg.norm(perp_vector)
+        path_deviation_penalty = -self.PENALTY_DISTANCE_SCALE * np.tanh(perp_dist)
+
+        path_following_reward = forward_reward + path_alignment_reward + path_deviation_penalty
+
+        # === Heading Alignment ===
+        direction_vec = current_checkpoint_pos - self.ship_pos
+        self.desired_heading = np.arctan2(direction_vec[1], direction_vec[0])
         heading_error = self._calculate_heading_error(self.desired_heading, self.state[2])
-        heading_reward = np.exp(-abs(heading_error))
+        heading_alignment_reward = np.exp(-abs(heading_error))
 
-        # Cross-track error penalty
-        cross_error = self._distance_from_point_to_line(self.ship_pos, prev_checkpoint_pos, checkpoint_pos)
-        cross_error_penalty = -0.5 * np.tanh(cross_error / self.CROSS_TRACK_ERROR_PENALTY_SCALE)
-        self.cross_error = cross_error
+        # === Cross-Track Penalty ===
+        cross_track_error = self._distance_from_point_to_line(self.ship_pos, prev_checkpoint_pos, current_checkpoint_pos)
+        cross_track_penalty = -0.5 * np.tanh(cross_track_error / self.CROSS_TRACK_ERROR_PENALTY_SCALE)
+        self.cross_error = cross_track_error
 
-        # Action penalties
+        # === Action Penalties ===
         rudder_penalty = -0.2 * abs(self.current_action[0])
         # rudder_change_penalty = -0.5 * abs(self.current_action[0] - self.previous_rudder_target)
         # thrust_change_penalty = -0.1 * abs(self.current_action[1] - self.previous_thrust_target)
 
-        # Combined reward
+        # === Combined Reward ===
         reward = (
-                self.reward_weights['distance'] * distance_reward +
-                self.reward_weights['heading'] * heading_reward +
-                self.reward_weights['cross_track'] * cross_error_penalty +
-                self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
+                self.reward_weights['distance'] * np.clip(path_following_reward, -1, 1) +
+                self.reward_weights['heading'] * np.clip(heading_alignment_reward, 0, 1) +
+                self.reward_weights['cross_track'] * np.clip(cross_track_penalty, -1, 0) +
+                self.reward_weights['rudder'] * np.clip(rudder_penalty, -0.5, 0)    # + rudder_change_penalty + thrust_change_penalty
         )
 
-        # Checkpoint progression
-        if np.linalg.norm(self.ship_pos - checkpoint_pos) < 5.0:
-            reward += (self.current_checkpoint / len(self.checkpoints)) * 10
-            self.current_checkpoint += 1
-            self.step_count = 0
-
-        # Movement check
+        # === Stuck Penalty ===
         movement = np.linalg.norm(self.ship_pos - self.previous_ship_pos)
         if movement < 0.07:
             self.stuck_steps += 1
@@ -854,34 +896,58 @@ class PySimEnv(BaseEnv):
         else:
             self.stuck_steps = 0
 
-        # Termination conditions
+        # === Checkpoint and target rewarding ===
+        reward += self._is_checkpoint_reached_or_passed(current_checkpoint)
+
         done = False
-        if current_distance < 7.0 or self.current_checkpoint >= len(self.checkpoints)-1:
+        heading_change = abs(self._calculate_heading_error(self.previous_heading, self.state[2]))
+
+        # === Early termination condition checks ===
+        if (
+                cross_track_error > 2.0 * self.CHECKPOINTS_DISTANCE or          # cross-track error check
+                not check_collision_ship(self.ship_pos, self.polygon_shape) or  # collision check
+                self.step_count >= self.max_steps or                            # max step-count check
+                heading_change > np.pi / 2.0                                    # heading error check
+        ):
+            reward = self.EARLY_TERMINATION_PENALTY
             done = True
-            reward += self.SUCCESS_REWARD
-            print("Target reached!")
 
-        if not done and cross_error > self.CHECKPOINTS_DISTANCE * 2:
-            done = True
-            reward -= 1
-
-        if not done and abs(self.state[2] - self.previous_heading) > np.pi/2:
-            done = True
-            reward -= 1
-
-        if (self.current_checkpoint < len(self.checkpoints)-1 and
-            self._distance_from_point_to_line(
-                self.ship_pos,
-                self.checkpoints[self.current_checkpoint]['perpendicular_line'][0],
-                self.checkpoints[self.current_checkpoint]['perpendicular_line'][1]) <= 2):
-            self.current_checkpoint += 1
-            self.step_count = 0
-
-            if not done and self.current_checkpoint >= len(self.checkpoints)-1:
-                done = True
-                print("Target passed!")
+        # === Normal Termination ===
+        done |= self.checkpoint_index >= len(self.checkpoints)
 
         return reward, done
+
+
+    def _is_checkpoint_reached_or_passed(self, current_checkpoint) -> float:
+        """Check if current checkpoint is reached or passed and return shaped reward."""
+        checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint['pos'])
+        reward = np.float32(0.0)
+
+        if checkpoint_distance <= current_checkpoint['radius']:
+            if self.checkpoint_index == len(self.checkpoints) - 1: # and self.verbose:
+                print(f"Target REACHED at distance {checkpoint_distance:.2f}")
+            reward = current_checkpoint['reward']
+            self.checkpoint_index += 1
+            self.step_count = 0
+
+        elif self._is_near_perpendicular_line(current_checkpoint):
+            if self.checkpoint_index == len(self.checkpoints) - 1: # and self.verbose:
+                print(f"Target passed at distance {checkpoint_distance:.2f}")
+            self.checkpoint_index += 1
+            self.step_count = 0
+
+        elif self.checkpoint_index >= max(0, len(self.checkpoints) - self.SHAPING_WINDOW):
+            target_area_size = self.checkpoints[-1]['radius']
+            decay = self.DECAY_SCALE * (checkpoint_distance - target_area_size) / max(target_area_size, 1e-6)
+            reward = self.checkpoints[-1]['reward'] * np.exp(-decay)
+
+        return reward
+
+
+    def _is_near_perpendicular_line(self, checkpoint):
+        """Check if ship is close enough to checkpoint's perpendicular line"""
+        line_start, line_end = checkpoint['perpendicular_line']
+        return self._distance_from_point_to_line(self.ship_pos, line_start, line_end) <= 2.0
 
 
     def _draw_fixed_landmarks(self):
