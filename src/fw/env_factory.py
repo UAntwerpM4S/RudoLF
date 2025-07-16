@@ -224,7 +224,7 @@ class FhSimEnvironment(BaseEnvironment):
         # self._env = DummyVecEnv([lambda: Monitor(FhSimEnv(render_mode='human', max_steps=1200, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = FhSimEnv(time_step=0.6, max_steps=40000, ship_pos=ship_pos, target_pos=target_pos)
+        self._env = FhSimEnv(time_step=0.4, max_steps=65000, ship_pos=ship_pos, target_pos=target_pos)
 
 
 class LunarEnvironment(BaseEnvironment):

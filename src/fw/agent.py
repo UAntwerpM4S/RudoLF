@@ -138,8 +138,8 @@ class Agent:
         Compute heading error relative to desired path direction
         """
         # Get current checkpoint index and position
-        curr_checkpoint = env.checkpoints[env.current_checkpoint]
-        next_checkpoint = env.checkpoints[min(env.current_checkpoint + 1, len(env.checkpoints) - 1)]
+        curr_checkpoint = env.checkpoints[env.checkpoint_index]
+        next_checkpoint = env.checkpoints[min(env.checkpoint_index + 1, len(env.checkpoints) - 1)]
 
         # Calculate desired heading (angle of path segment)
         desired_heading = np.arctan2(
@@ -263,7 +263,7 @@ class Agent:
 
                     # Store current position and errors
                     path_positions.append(np.copy(env.ship_pos))
-                    if env.current_checkpoint >= 2:
+                    if env.checkpoint_index >= 2:
                         cross_errors.append(env.cross_error)
                     heading_error = self.compute_heading_error(env)
                     heading_errors.append(heading_error)
