@@ -200,46 +200,63 @@ class PySimEnv(BaseEnv):
 
 
     def _load_environment_data(self) -> None:
-        """Load obstacles, paths and initialize checkpoints."""
+        """Loads static environment data including obstacles, map outlines, and trajectory checkpoints.
+
+        This method performs the following steps:
+        1. Loads CSV files containing obstacle, overall map, and trajectory point coordinates.
+        2. Validates that each dataset has the expected 2D shape with two columns.
+        3. Reduces and transforms the trajectory path into evenly spaced checkpoints.
+        4. Calculates perpendicular guidance lines for each checkpoint.
+        5. Initializes internal state such as checkpoints, target position, and navigation counters.
+
+        Raises:
+            FileNotFoundError: If any required CSV file is missing.
+            ValueError: If any loaded file does not have the expected shape.
+            RuntimeError: If any other error occurs while reading the files.
+        """
         base_path = os.path.dirname(os.path.abspath(__file__))
 
-        try:
-            self.obstacles = np.loadtxt(
-                os.path.join(base_path, 'env_Sche_250cm_no_scale.csv'),
-                delimiter=',', skiprows=1
-            )
-            self.polygon_shape = Polygon(self.obstacles)
+        def load_csv(name: str) -> np.ndarray:
+            try:
+                data = np.loadtxt(os.path.join(base_path, name), delimiter=',', skiprows=1)
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Missing required environment file: {name}")
+            except Exception as e:
+                raise RuntimeError(f"Failed to load {name}: {e}")
+            if data.ndim != 2 or data.shape[1] != 2:
+                raise ValueError(f"{name} must be a 2D array with shape (N, 2)")
+            return data
 
-            self.overall = np.loadtxt(
-                os.path.join(base_path, 'env_Sche_no_scale.csv'),
-                delimiter=',', skiprows=1
-            )
+        # Load and validate environment components
+        self.obstacles = load_csv('env_Sche_250cm_no_scale.csv')
+        self.polygon_shape = Polygon(self.obstacles)
+        self.overall = load_csv('env_Sche_no_scale.csv')
+        path = load_csv('trajectory_points_no_scale.csv')
 
-            path = np.loadtxt(
-                os.path.join(base_path, 'trajectory_points_no_scale.csv'),
-                delimiter=',', skiprows=1
-            )
-        except FileNotFoundError as e:
-            raise FileNotFoundError(f"Missing required environment file: {e}")
-
-        # Optional: fail if obstacle/overall/path is not 2D with 2 columns
-        if self.obstacles.ndim != 2 or self.obstacles.shape[1] != 2:
-            raise ValueError("Obstacles data must be a 2D array with shape (N, 2)")
-        if self.overall.ndim != 2 or self.overall.shape[1] != 2:
-            raise ValueError("Overall map data must be a 2D array with shape (N, 2)")
-        if path.ndim != 2 or path.shape[1] != 2:
-            raise ValueError("Path data must be a 2D array with shape (N, 2)")
-
+        # Preprocess the trajectory path
         path = self._reduce_path(path, self.initial_ship_pos)
         path = create_checkpoints_from_simple_path(path, self.CHECKPOINTS_DISTANCE)
-        path = np.insert(path, 0, self.ship_pos, axis=0)  # Safely insert initial ship position
+        path = np.insert(path, 0, self.ship_pos, axis=0)  # Start with current ship position
 
-        checkpoints = [{'pos': np.array(point, dtype=np.float32), 'radius': self.CHECKPOINT_AREA_SIZE, 'reward': (i / len(path)) * 10} for i, point in enumerate(path)]
+        # Generate checkpoint data
+        checkpoints = [
+            {
+                'pos': np.array(point, dtype=np.float32),
+                'radius': self.CHECKPOINT_AREA_SIZE,
+                'reward': (i / len(path)) * 10
+            }
+            for i, point in enumerate(path)
+        ]
+
+        # Set target properties
         checkpoints[-1]['radius'] = self.TARGET_AREA_SIZE
         checkpoints[-1]['reward'] = self.SUCCESS_REWARD
-        lines = calculate_perpendicular_lines(checkpoints, line_length=50)
 
+        # Add perpendicular lines to checkpoints
+        lines = calculate_perpendicular_lines(checkpoints, line_length=50)
         self.checkpoints = [{**checkpoint, 'perpendicular_line': line} for checkpoint, line in zip(checkpoints, lines)]
+
+        # Initialize environment state
         self.target_pos = self.checkpoints[-1]['pos']
         self.checkpoint_index = 1
         self.step_count = 0
@@ -864,10 +881,10 @@ class PySimEnv(BaseEnv):
 
         # === Combined Reward ===
         reward = (
-                self.reward_weights['distance'] * path_following_reward +
-                self.reward_weights['heading'] * heading_alignment_reward +
-                self.reward_weights['cross_track'] * cross_track_penalty +
-                self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
+                self.reward_weights['distance'] * np.clip(path_following_reward, -1, 1) +
+                self.reward_weights['heading'] * np.clip(heading_alignment_reward, 0, 1) +
+                self.reward_weights['cross_track'] * np.clip(cross_track_penalty, -1, 0) +
+                self.reward_weights['rudder'] * np.clip(rudder_penalty, -0.5, 0)    # + rudder_change_penalty + thrust_change_penalty
         )
 
         # === Stuck Penalty ===
