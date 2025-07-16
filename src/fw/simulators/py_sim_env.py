@@ -881,10 +881,10 @@ class PySimEnv(BaseEnv):
 
         # === Combined Reward ===
         reward = (
-                self.reward_weights['distance'] * np.clip(path_following_reward, -1, 1) +
-                self.reward_weights['heading'] * np.clip(heading_alignment_reward, 0, 1) +
-                self.reward_weights['cross_track'] * np.clip(cross_track_penalty, -1, 0) +
-                self.reward_weights['rudder'] * np.clip(rudder_penalty, -0.5, 0)    # + rudder_change_penalty + thrust_change_penalty
+                self.reward_weights['distance'] * path_following_reward +
+                self.reward_weights['heading'] * heading_alignment_reward +
+                self.reward_weights['cross_track'] * cross_track_penalty +
+                self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
         )
 
         # === Stuck Penalty ===
