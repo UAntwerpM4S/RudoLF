@@ -545,6 +545,7 @@ class PySimEnv(BaseEnv):
         self.ship_angle = np.arctan2(direction_vector[1], direction_vector[0])  # Angle in radians
         # Set the initial state
         self.state = np.array([*self.ship_pos, self.ship_angle, 0.0, 0.0, 0.0], dtype=np.float32)
+        self.current_action = np.zeros(2, dtype=np.float32)
 
         # Reset control parameters
         self.rudder_error_sum = 0.0
@@ -687,11 +688,7 @@ class PySimEnv(BaseEnv):
         # Apply PID controller and update current action
         # smoothed_action = self._apply_pi_controller(smoothed_action)
 
-        self.previous_rudder_target = self.current_action[0]
-        self.previous_thrust_target = self.current_action[1]
-        self.current_action = np.array([final_rudder, gradual_thrust], dtype=np.float32)
-
-        return self.current_action
+        return np.array([final_rudder, gradual_thrust], dtype=np.float32)
 
 
     def _update_ship_dynamics(self, action: np.ndarray) -> None:
@@ -700,6 +697,11 @@ class PySimEnv(BaseEnv):
         Args:
             action: Array of [rudder, thrust] commands
         """
+        self.previous_rudder_target = self.current_action[0]
+        self.previous_thrust_target = self.current_action[1]
+
+        self.current_action = action
+
         # Convert to physical values
         delta_r = np.radians(action[0] * 60)
         t = action[1] * 60
