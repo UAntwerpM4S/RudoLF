@@ -539,6 +539,7 @@ class PySimEnv(BaseEnv):
 
         self.ship_pos = np.copy(self.initial_ship_pos)
         self.previous_ship_pos = np.zeros(2, dtype=np.float32)
+        self.previous_heading = 0.0
         self.checkpoint_index = 1
 
         direction_vector = self.checkpoints[self.checkpoint_index]['pos'] - self.ship_pos
@@ -559,6 +560,8 @@ class PySimEnv(BaseEnv):
 
         self.step_count = 0
         self.stuck_steps = 0
+        self.cross_error = 0.0
+        self.desired_heading = 0.0
 
         return self._get_obs(), {}
 
