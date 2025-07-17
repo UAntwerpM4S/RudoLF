@@ -136,6 +136,22 @@ class FhSimEnv(PySimEnv):
         self._fh_sim.reset()
 
 
+    def _smoothen_action(self, action: np.ndarray):
+        """Smoothen the action to prevent erratic behaviour of the ship.
+
+        Args:
+            action: Array of [rudder, thrust] commands
+        """
+        # Apply rate limiting to action changes
+        alpha = 0.3
+
+        # Smooth action application
+        turning_smooth = alpha * action[0] + (1 - alpha) * self.current_action[0]
+        thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.current_action[1]
+
+        return np.array([turning_smooth, thrust_smooth], dtype=np.float32)
+
+
     def _update_ship_dynamics(self, action: np.ndarray) -> None:
         """
         Update the ship's dynamics based on the provided action.
