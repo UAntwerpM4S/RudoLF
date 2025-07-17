@@ -261,23 +261,23 @@ class Agent:
                     state, reward, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
 
-                    # Store current position and errors
-                    path_positions.append(np.copy(env.ship_pos))
-                    if env.checkpoint_index >= 2:
-                        cross_errors.append(env.cross_error)
-                    heading_error = self.compute_heading_error(env)
-                    heading_errors.append(heading_error)
-                    rudder_actions.append(env.current_action[0])
-                    thrust_actions.append(env.current_action[1])
+                    if not done:
+                        # Store current position and errors
+                        path_positions.append(np.copy(env.ship_pos))
+                        if env.checkpoint_index >= 2:
+                            cross_errors.append(env.cross_error)
+                        heading_error = self.compute_heading_error(env)
+                        heading_errors.append(heading_error)
+                        rudder_actions.append(env.current_action[0])
+                        thrust_actions.append(env.current_action[1])
 
-                    episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
-                    steps += 1
+                        episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
+                        steps += 1
 
-                    # Uncomment for animated evaluation
-                    if live_animation:
-                        env.render()
-
-                    if done:
+                        # Uncomment for animated evaluation
+                        if live_animation:
+                            env.render()
+                    else:
                         print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
                         break
 

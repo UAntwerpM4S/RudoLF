@@ -136,26 +136,6 @@ class FhSimEnv(PySimEnv):
         self._fh_sim.reset()
 
 
-    def _smoothen_action(self, action: np.ndarray):
-        """Smoothen the action to prevent erratic behaviour of the ship.
-
-        Args:
-            action: Array of [rudder, thrust] commands
-        """
-        # Apply rate limiting to action changes
-        alpha = 0.3
-
-        # Smooth action application
-        turning_smooth = alpha * action[0] + (1 - alpha) * self.current_action[0]
-        thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.current_action[1]
-
-        self.previous_rudder_target = self.current_action[0]
-        self.previous_thrust_target = self.current_action[1]
-        self.current_action = np.array([turning_smooth, thrust_smooth], dtype=np.float32)
-
-        return self.current_action
-
-
     def _update_ship_dynamics(self, action: np.ndarray) -> None:
         """
         Update the ship's dynamics based on the provided action.
@@ -170,6 +150,10 @@ class FhSimEnv(PySimEnv):
         # Save the current ship position as the previous position for tracking.
         self.previous_ship_pos = np.copy(self.ship_pos)
         self.previous_heading = np.radians(self._fh_sim.ship_interface.getShipHeading())
+        self.previous_rudder_target = self.current_action[0]
+        self.previous_thrust_target = self.current_action[1]
+
+        self.current_action = action
 
         # Update rudder controls based on the turning action.
         for rudder in self._fh_sim.ship_interface.getRudderControls():
