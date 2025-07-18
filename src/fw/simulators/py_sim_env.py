@@ -79,7 +79,7 @@ class PySimEnv(BaseEnv):
     MAX_GRID_POS = 14500
 
     # Reward parameters
-    SHAPING_WINDOW = 5
+    SHAPING_WINDOW = 3
     DECAY_SCALE = 1.0
     REWARD_DISTANCE_SCALE = 2.0
     REWARD_DIRECTION_SCALE = 1.0
@@ -150,7 +150,8 @@ class PySimEnv(BaseEnv):
             'distance': 0.3,
             'heading': 0.3,
             'cross_track': 0.2,
-            'rudder': 0.2
+            'rudder': 0.2,
+            'terminal': 0.2
         }
 
         # Rendering
@@ -942,9 +943,20 @@ class PySimEnv(BaseEnv):
             self.step_count = 0
 
         elif self.checkpoint_index >= max(0, len(self.checkpoints) - self.SHAPING_WINDOW):
-            target_area_size = self.checkpoints[-1]['radius']
-            decay = self.DECAY_SCALE * (checkpoint_distance - target_area_size) / max(target_area_size, 1e-6)
-            reward = self.checkpoints[-1]['reward'] * np.exp(-decay)
+            # target_area_size = self.checkpoints[-1]['radius']
+            # decay = self.DECAY_SCALE * (checkpoint_distance - target_area_size) / max(target_area_size, 1e-6)
+            # reward += self.checkpoints[-1]['reward'] * np.exp(-decay)
+
+            target_radius = self.checkpoints[-1]['radius']
+            target_reward = self.checkpoints[-1]['reward']  # usually 50.0
+
+            # --- Sharper decay ---
+            decay_scale = 0.3  # Tune this value (e.g., 0.1 for tighter, 0.3 for moderate)
+            decay = (checkpoint_distance - target_radius) / (max(target_radius, 1e-6) * decay_scale)
+            shaping = target_reward * np.exp(-decay)
+
+            # --- Scaled shaping contribution ---
+            reward += self.reward_weights.get('terminal', 0.2) * shaping
 
         return reward
 
