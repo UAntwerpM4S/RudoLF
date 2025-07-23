@@ -162,7 +162,13 @@ class Trainer:
             gym_env = env.gym_env
             try:
                 with self.render(gym_env):
-                    self._agent.set_environment(env=gym_env, policy_strategy=PolicyStrategy.REUSE_OTHER_POLICY, other_env_name=gym_env.type_name)
+                    policy_name = f"Best_{gym_env.type_name}" if self._config[
+                        "visualize_best_trained"] else gym_env.type_name
+                    self._agent.set_environment(
+                        env=gym_env,
+                        policy_strategy=PolicyStrategy.REUSE_OTHER_POLICY,
+                        other_env_name=policy_name,
+                    )
                     self._agent.visualize_trained_model(num_episodes=1, live_animation=self._config["live_animation"])
             except RuntimeError as e:
                 print(f"Could not visualize {gym_env.type_name}. {e}")

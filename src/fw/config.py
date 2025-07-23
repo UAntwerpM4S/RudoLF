@@ -52,7 +52,8 @@ DEFAULT_HYPERPARAMETERS = {
 }
 
 CONFIG_PARAMETERS = {
-    'live_animation': False
+    'live_animation': False,
+    'visualize_best_trained': True
 }
 
 
