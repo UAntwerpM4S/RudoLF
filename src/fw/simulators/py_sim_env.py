@@ -867,7 +867,7 @@ class PySimEnv(BaseEnv):
         perp_dist = np.linalg.norm(perp_vector)
         path_deviation_penalty = -self.PENALTY_DISTANCE_SCALE * np.tanh(perp_dist)
 
-        path_following_reward = forward_reward + path_alignment_reward + path_deviation_penalty
+        # path_following_reward = forward_reward + path_alignment_reward + path_deviation_penalty
 
         # === Heading Alignment ===
         direction_vec = current_checkpoint_pos - self.ship_pos
@@ -887,10 +887,12 @@ class PySimEnv(BaseEnv):
 
         # === Combined Reward ===
         reward = (
-                self.reward_weights['distance'] * path_following_reward +
-                self.reward_weights['heading'] * heading_alignment_reward +
-                self.reward_weights['cross_track'] * cross_track_penalty +
-                self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
+                0.5 * forward_reward +
+                0.1 * path_alignment_reward +
+                0.4 * path_deviation_penalty +
+                0.3 * heading_alignment_reward +
+                0.1 * cross_track_penalty +
+                0.05 * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
         )
 
         # === Stuck Penalty ===
