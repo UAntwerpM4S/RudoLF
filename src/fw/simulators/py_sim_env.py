@@ -147,10 +147,12 @@ class PySimEnv(BaseEnv):
         self.observation_space = self._initialize_observation_space()
 
         self.reward_weights = {
-            'distance': 0.3,
+            'forward': 0.5,
+            'alignment': 0.1,
+            'deviation': 0.4,
             'heading': 0.3,
-            'cross_track': 0.2,
-            'rudder': 0.2,
+            'cross_track': 0.1,
+            'rudder': 0.05,
             'terminal': 0.2
         }
 
@@ -867,8 +869,6 @@ class PySimEnv(BaseEnv):
         perp_dist = np.linalg.norm(perp_vector)
         path_deviation_penalty = -self.PENALTY_DISTANCE_SCALE * np.tanh(perp_dist)
 
-        path_following_reward = forward_reward + path_alignment_reward + path_deviation_penalty
-
         # === Heading Alignment ===
         direction_vec = current_checkpoint_pos - self.ship_pos
         self.desired_heading = np.arctan2(direction_vec[1], direction_vec[0])
@@ -887,7 +887,9 @@ class PySimEnv(BaseEnv):
 
         # === Combined Reward ===
         reward = (
-                self.reward_weights['distance'] * path_following_reward +
+                self.reward_weights['forward'] * forward_reward +
+                self.reward_weights['alignment'] * path_alignment_reward +
+                self.reward_weights['deviation'] * path_deviation_penalty +
                 self.reward_weights['heading'] * heading_alignment_reward +
                 self.reward_weights['cross_track'] * cross_track_penalty +
                 self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
@@ -956,7 +958,7 @@ class PySimEnv(BaseEnv):
             shaping = target_reward * np.exp(-decay)
 
             # --- Scaled shaping contribution ---
-            reward += self.reward_weights.get('terminal', 0.2) * shaping
+            reward += self.reward_weights['terminal'] * shaping
 
         return reward
 
