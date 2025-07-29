@@ -147,10 +147,12 @@ class PySimEnv(BaseEnv):
         self.observation_space = self._initialize_observation_space()
 
         self.reward_weights = {
-            'distance': 0.3,
+            'forward': 0.5,
+            'alignment': 0.1,
+            'deviation': 0.4,
             'heading': 0.3,
-            'cross_track': 0.2,
-            'rudder': 0.2,
+            'cross_track': 0.1,
+            'rudder': 0.05,
             'terminal': 0.2
         }
 
@@ -887,12 +889,12 @@ class PySimEnv(BaseEnv):
 
         # === Combined Reward ===
         reward = (
-                0.5 * forward_reward +
-                0.1 * path_alignment_reward +
-                0.4 * path_deviation_penalty +
-                0.3 * heading_alignment_reward +
-                0.1 * cross_track_penalty +
-                0.05 * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
+                self.reward_weights['forward'] * forward_reward +
+                self.reward_weights['alignment'] * path_alignment_reward +
+                self.reward_weights['deviation'] * path_deviation_penalty +
+                self.reward_weights['heading'] * heading_alignment_reward +
+                self.reward_weights['cross_track'] * cross_track_penalty +
+                self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
         )
 
         # === Stuck Penalty ===
@@ -958,7 +960,7 @@ class PySimEnv(BaseEnv):
             shaping = target_reward * np.exp(-decay)
 
             # --- Scaled shaping contribution ---
-            reward += self.reward_weights.get('terminal', 0.2) * shaping
+            reward += self.reward_weights['terminal'] * shaping
 
         return reward
 
