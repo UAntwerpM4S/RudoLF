@@ -99,20 +99,6 @@ def is_ship_heading_correct(checkpoint, state):
     return False  # No intersection or in the wrong direction
 
 
-def check_collision_ship(ship_position, polygon):
-    """
-    Check if the ship makes contact with any edge of the polygon.
-    """
-    x, y = ship_position
-    min_x, min_y, max_x, max_y = polygon.bounds
-
-    # Combine bounding box checks
-    if not (min_x <= x <= max_x and min_y <= y <= max_y):
-        return False
-
-    return polygon.contains(Point(ship_position))
-
-
 def is_within_obstacle(point, obstacles, safety_margin=3):
     """Check if a point is within any circular obstacle with an added safety margin."""
     return any(np.linalg.norm(point - obs['pos']) < obs['radius'] + safety_margin for obs in obstacles)
