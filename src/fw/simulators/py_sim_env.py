@@ -869,8 +869,6 @@ class PySimEnv(BaseEnv):
         perp_dist = np.linalg.norm(perp_vector)
         path_deviation_penalty = -self.PENALTY_DISTANCE_SCALE * np.tanh(perp_dist)
 
-        # path_following_reward = forward_reward + path_alignment_reward + path_deviation_penalty
-
         # === Heading Alignment ===
         direction_vec = current_checkpoint_pos - self.ship_pos
         self.desired_heading = np.arctan2(direction_vec[1], direction_vec[0])
