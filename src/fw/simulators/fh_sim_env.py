@@ -153,9 +153,7 @@ class FhSimEnv(PySimEnv):
 
 
     def _has_enough_keel_clearance(self, depth_threshold=0.5):
-        keel_clearance = self._fh_sim.ship_interface.getKeelClearance()
-        print(f"Keel clearance: {keel_clearance}")
-        return keel_clearance >= depth_threshold
+        return self._fh_sim.ship_interface.getKeelClearance() >= depth_threshold
 
 
     def _update_ship_dynamics(self, action: np.ndarray) -> None:
