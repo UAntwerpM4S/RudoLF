@@ -35,6 +35,8 @@ class FhSimWrapper:
         _ship_interface: The ship interface instance.
     """
 
+    SNAPSHOT_WINDOW = 100000
+
     def __init__(self, start_pos, library_path=None, config_path=None, exercise_path=None, output_path=None):
         """
         Initialize the FhSimWrapper instance.
@@ -142,10 +144,14 @@ class FhSimWrapper:
             time_point (float): The time point to rewind to, in seconds. Defaults to 0.25.
         """
         if self.initialize_math_model:
-            self._initialize_math_model()
+            self._initialize_math_model(snapshot_window=self.SNAPSHOT_WINDOW, snapshot_frequency=5000)
         else:
             if time_point < 0.25:
                 raise RuntimeError("The time point should be larger than or equal to 0.25")
+
+            simulation_time = self._math_model.getSimInterface().getSimulationTime()
+            if simulation_time > self.SNAPSHOT_WINDOW:
+                print(f"Completely rewinding to 0 will not be possible, total simulation time = {simulation_time}")
 
             self._math_model.SimulateRewindTo(time_point)
 
