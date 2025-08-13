@@ -14,10 +14,11 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from functools import lru_cache
+from shapely.geometry import Point
 from shapely.geometry import Polygon
 from typing import Tuple, Optional, Dict
 from fw.simulators.base_env import BaseEnv
-from fw.simulators.tools import create_checkpoints_from_simple_path, check_collision_ship
+from fw.simulators.tools import create_checkpoints_from_simple_path
 
 
 def calculate_perpendicular_lines(checkpoints: list, line_length: float = 100.0) -> list:
@@ -278,6 +279,27 @@ class PySimEnv(BaseEnv):
         self.k_t = 0.05  # Thrust coefficient
         self.k_r = 0.039   # Rudder coefficient
         self.k_v = 0.03 # Sway coefficient
+
+
+    def _has_enough_keel_clearance(self, depth_threshold=0.5):
+        return True
+
+
+    def _ship_in_open_water(self, ship_position, polygon):
+        """
+        Check if the ship makes contact with any edge of the polygon.
+        """
+        x, y = ship_position
+        min_x, min_y, max_x, max_y = polygon.bounds
+
+        # Combine bounding box checks
+        if not (min_x <= x <= max_x and min_y <= y <= max_y):
+            return False
+
+        contains = polygon.contains(Point(ship_position))
+        deep_enough = self._has_enough_keel_clearance()
+
+        return contains and deep_enough
 
 
     def _reduce_path(self, path: np.ndarray, start_pos: np.ndarray) -> np.ndarray:
@@ -912,10 +934,10 @@ class PySimEnv(BaseEnv):
 
         # === Early termination condition checks ===
         if (
-                cross_track_error > 2.0 * self.CHECKPOINTS_DISTANCE or          # cross-track error check
-                not check_collision_ship(self.ship_pos, self.polygon_shape) or  # collision check
-                self.step_count >= self.max_steps or                            # max step-count check
-                heading_change > np.pi / 2.0                                    # heading error check
+                cross_track_error > 2.0 * self.CHECKPOINTS_DISTANCE or              # cross-track error check
+                not self._ship_in_open_water(self.ship_pos, self.polygon_shape) or  # collision check
+                self.step_count >= self.max_steps or                                # max step-count check
+                heading_change > np.pi / 2.0                                        # heading error check
         ):
             reward = self.EARLY_TERMINATION_PENALTY
             done = True
