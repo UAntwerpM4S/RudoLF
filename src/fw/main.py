@@ -27,7 +27,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
     trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
 
     if "train" == action:
-        configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=0.362, patience=4, max_time_steps=1200),
+        configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.NBR_POLICY_UPDATES, max_time_steps=1600),
                          fh_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=0.145, patience=3, max_time_steps=1400),
                          lunar_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD_AND_LOSS, target_reward=0.20, target_loss=0.8, patience=1, max_time_steps=300)}
         metrics = trainer.train(configuration)

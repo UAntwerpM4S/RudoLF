@@ -84,6 +84,7 @@ class PySimEnv(BaseEnv):
     DECAY_SCALE = 1.0
     REWARD_DISTANCE_SCALE = 2.0
     REWARD_DIRECTION_SCALE = 1.0
+    REWARD_SPEED_SCALE = 1.0
     PENALTY_DISTANCE_SCALE = 1.0
     CROSS_TRACK_ERROR_PENALTY_SCALE = 50.0
     EARLY_TERMINATION_PENALTY = -15
@@ -95,7 +96,7 @@ class PySimEnv(BaseEnv):
     RUDDER_DEAD_ZONE = 0.5
     THRUST_DEAD_ZONE = 0.5
     DERIVATIVE_FILTER_ALPHA = 0.2
-    MAX_RUDDER_RATE_CHANGE = 0.1
+    MAX_RUDDER_RATE_CHANGE = 0.35
     MAX_THRUST_RATE_CHANGE = 0.15
     ANTI_WINDUP_THRESHOLD = 0.95
 
@@ -153,6 +154,7 @@ class PySimEnv(BaseEnv):
             'deviation': 0.4,
             'heading': 0.3,
             'cross_track': 0.1,
+            'speed': 0.2,
             'rudder': 0.05,
             'terminal': 0.2
         }
@@ -177,21 +179,21 @@ class PySimEnv(BaseEnv):
     def _initialize_control_parameters(self) -> None:
         """Initialize PID controller and related parameters."""
         # PID gains
-        self.rudder_kp = 0.2   # Proportional gain for rudder
-        self.rudder_ki = 0.1   # Integral gain for rudder
-        self.rudder_kd = 0.15  # Helps dampen oscillations
+        self.heading_kp = 0.2   # Proportional gain for heading
+        self.heading_ki = 0.1   # Integral gain for heading
+        self.heading_kd = 0.15  # Helps dampen oscillations
         self.thrust_kp = 0.2   # Proportional gain for thrust
         self.thrust_ki = 0.02  # Integral gain for thrust
         self.thrust_kd = 0.05  # Less derivative for thrust
 
         # Error terms
-        self.rudder_error_sum = 0.0
+        self.heading_error_sum = 0.0
         self.thrust_error_sum = 0.0
-        self.previous_rudder_error = 0.0
+        self.previous_heading_error = 0.0
         self.previous_thrust_error = 0.0
-        self.previous_rudder_target = 0.0
+        self.previous_heading_target = 0.0
         self.previous_thrust_target = 0.0
-        self.filtered_rudder_derivative = 0.0
+        self.filtered_heading_derivative = 0.0
         self.filtered_thrust_derivative = 0.0
 
         # Environmental effects
@@ -324,81 +326,49 @@ class PySimEnv(BaseEnv):
         return path  # Implementation note: Currently returns original path
 
 
-    def _apply_pi_controller(self, target_action: np.ndarray) -> np.ndarray:
-        """Apply advanced PID controller with dead zone and derivative filtering.
+    def _apply_pid_controller(self, desired_heading: float, current_heading: float) -> float:
+        """
+        PID controller converting desired heading and speed into rudder and thrust.
 
         Args:
-            target_action: Array of [target_rudder, target_thrust] values in [-1, 1]
+            desired_heading: Target heading (radians)
+            current_heading: Current heading (radians)
 
         Returns:
-            np.ndarray: Smoothed action array [rudder, thrust] with rate limiting
+            np.ndarray: [rudder, thrust] commands in [-1, 1]
         """
-        target_rudder, target_thrust = target_action[0], abs(target_action[1])
+        # --- Heading error (wrap to [-pi, pi]) ---
+        heading_error = desired_heading - current_heading
+        heading_error = (heading_error + np.pi) % (2 * np.pi) - np.pi
 
-        # Dead zone for small changes
-        if abs(target_rudder - self.previous_rudder_target) < self.RUDDER_DEAD_ZONE:
-            target_rudder = self.previous_rudder_target
+        # --- Derivative terms ---
+        heading_derivative = (heading_error - self.previous_heading_error) / self.time_step
 
-        if abs(target_thrust - self.previous_thrust_target) < self.THRUST_DEAD_ZONE:
-            target_thrust = self.previous_thrust_target
-
-        # Calculate errors
-        rudder_error = target_rudder - self.previous_rudder_target
-        thrust_error = target_thrust - self.previous_thrust_target
-
-        # Calculate and filter derivatives
-        rudder_derivative = (rudder_error - self.previous_rudder_error) / self.time_step
-        thrust_derivative = (thrust_error - self.previous_thrust_error) / self.time_step
-
-        self.filtered_rudder_derivative = (
-                self.DERIVATIVE_FILTER_ALPHA * rudder_derivative +
-                (1 - self.DERIVATIVE_FILTER_ALPHA) * self.filtered_rudder_derivative
-        )
-        self.filtered_thrust_derivative = (
-                self.DERIVATIVE_FILTER_ALPHA * thrust_derivative +
-                (1 - self.DERIVATIVE_FILTER_ALPHA) * self.filtered_thrust_derivative
+        # Filter derivatives
+        self.filtered_heading_derivative = (
+                self.DERIVATIVE_FILTER_ALPHA * heading_derivative +
+                (1 - self.DERIVATIVE_FILTER_ALPHA) * self.filtered_heading_derivative
         )
 
-        # Update integral terms with anti-windup
-        if abs(self.previous_rudder_target) < self.ANTI_WINDUP_THRESHOLD:
-            self.rudder_error_sum = np.clip(
-                self.rudder_error_sum + rudder_error * self.time_step,
+        # --- Integrals with anti-windup ---
+        if abs(heading_error) < self.ANTI_WINDUP_THRESHOLD:
+            self.heading_error_sum = np.clip(
+                self.heading_error_sum + heading_error * self.time_step,
                 -0.5, 0.5
             )
 
-        if abs(self.previous_thrust_target) < self.ANTI_WINDUP_THRESHOLD:
-            self.thrust_error_sum = np.clip(
-                self.thrust_error_sum + thrust_error * self.time_step,
-                -0.5, 0.5
-            )
-
-        # Calculate PID outputs
-        rudder_output = (
-                self.rudder_kp * rudder_error +
-                self.rudder_ki * self.rudder_error_sum +
-                self.rudder_kd * self.filtered_rudder_derivative
+        # --- PID outputs ---
+        heading_output = (
+                self.heading_kp * heading_error +
+                self.heading_ki * self.heading_error_sum +
+                self.heading_kd * self.filtered_heading_derivative
         )
 
-        thrust_output = (
-                self.thrust_kp * thrust_error +
-                self.thrust_ki * self.thrust_error_sum +
-                self.thrust_kd * self.filtered_thrust_derivative
-        )
+        # --- Update state ---
+        self.previous_heading_error = heading_error
 
-        # Apply rate limiting (prevents sudden jumps)
-        rudder_output = np.clip(rudder_output, -self.MAX_RUDDER_RATE_CHANGE, self.MAX_RUDDER_RATE_CHANGE)
-        thrust_output = np.clip(thrust_output, -self.MAX_THRUST_RATE_CHANGE, self.MAX_THRUST_RATE_CHANGE)
-
-        new_rudder = np.clip(self.previous_rudder_target + rudder_output, -1.0, 1.0)
-        new_thrust = np.clip(self.previous_thrust_target + thrust_output, -1.0, 1.0)
-
-        # Update state
-        self.previous_rudder_error = rudder_error
-        self.previous_thrust_error = thrust_error
-        self.previous_rudder_target = new_rudder
-        self.previous_thrust_target = new_thrust
-
-        return np.array([new_rudder, new_thrust], dtype=np.float32)
+        # --- Clip rate of change if desired ---
+        return np.clip(heading_output, -self.MAX_RUDDER_RATE_CHANGE, self.MAX_RUDDER_RATE_CHANGE)
 
 
     def _initialize_observation_space(self) -> gym.spaces.Box:
@@ -574,13 +544,13 @@ class PySimEnv(BaseEnv):
         self.current_action = np.zeros(2, dtype=np.float32)
 
         # Reset control parameters
-        self.rudder_error_sum = 0.0
+        self.heading_error_sum = 0.0
         self.thrust_error_sum = 0.0
-        self.previous_rudder_error = 0.0
+        self.previous_heading_error = 0.0
         self.previous_thrust_error = 0.0
-        self.previous_rudder_target = 0.0
+        self.previous_heading_target = 0.0
         self.previous_thrust_target = 0.0
-        self.filtered_rudder_derivative = 0.0
+        self.filtered_heading_derivative = 0.0
         self.filtered_thrust_derivative = 0.0
 
         self.step_count = 0
@@ -675,9 +645,23 @@ class PySimEnv(BaseEnv):
         if action.shape != (2,):
             raise ValueError(f"Action must be shape (2,), got {action.shape}")
 
+        max_delta_heading = np.pi / 18.0
+        v_min = 0.1
+        v_max = 1.0
+
+        direction_vec = self.checkpoints[self.checkpoint_index]['pos'] - self.ship_pos
+        checkpoint_direction = np.arctan2(direction_vec[1], direction_vec[0])
+        desired_heading = checkpoint_direction + action[0] * max_delta_heading
+        desired_heading = (desired_heading + np.pi) % (2.0 * np.pi) - np.pi
+
+        # alpha = 0.2
+        # smoothed_thrust = alpha * abs(action[1]) + (1 - alpha) * self.current_action[1]
+
+        desired_speed = ((action[1] + 1.0) / 2.0) * (v_max - v_min) + v_min
+
         # Update dynamics and get reward
-        smoothened_action = self._smoothen_action(action)
-        self._update_ship_dynamics(smoothened_action)
+        action_after_PID = self._apply_pid_controller(desired_heading, self.state[2])
+        self._update_ship_dynamics([action_after_PID, desired_speed])
         self.step_count += 1
 
         # Reward shaping
@@ -714,7 +698,7 @@ class PySimEnv(BaseEnv):
         final_rudder = gradual_rudder if abs(target_rudder - current_rudder) > 0.2 else current_rudder
 
         # Apply PID controller and update current action
-        # smoothed_action = self._apply_pi_controller(smoothed_action)
+        # smoothed_action = self._apply_pid_controller(smoothed_action)
 
         return np.array([final_rudder, gradual_thrust], dtype=np.float32)
 
@@ -725,7 +709,7 @@ class PySimEnv(BaseEnv):
         Args:
             action: Array of [rudder, thrust] commands
         """
-        self.previous_rudder_target = self.current_action[0]
+        self.previous_heading_target = self.current_action[0]
         self.previous_thrust_target = self.current_action[1]
 
         self.current_action = action
@@ -880,11 +864,23 @@ class PySimEnv(BaseEnv):
         # Velocity alignment with path
         velocity = self.ship_pos - self.previous_ship_pos
         velocity_norm = np.linalg.norm(velocity)
+
         if velocity_norm > 1e-3:
             velocity_unit = velocity / velocity_norm
+
+            # Pure directional alignment (cosine similarity, -1..1)
             path_alignment_reward = self.REWARD_DIRECTION_SCALE * np.dot(velocity_unit, path_unit)
+
+            # Forward velocity reward (scaled by actual speed along path)
+            forward_velocity = np.dot(velocity, path_unit)  # signed scalar
+            velocity_reward = self.REWARD_SPEED_SCALE * forward_velocity
+
+            # Encourage not being too slow
+            if velocity_norm < 0.2: # * self.v_max:
+                velocity_reward -= 0.2  # or tune
         else:
             path_alignment_reward = 0.0
+            velocity_reward = 0.0
 
         # Perpendicular distance penalty
         perp_vector = rel_now - proj_now * path_unit
@@ -914,6 +910,7 @@ class PySimEnv(BaseEnv):
                 self.reward_weights['deviation'] * path_deviation_penalty +
                 self.reward_weights['heading'] * heading_alignment_reward +
                 self.reward_weights['cross_track'] * cross_track_penalty +
+                self.reward_weights['speed'] * velocity_reward +
                 self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
         )
 
