@@ -10,7 +10,7 @@ from fw.policies.actor_critic_network import ActorCriticNetwork
 POLICY_FILE_NAME = 'policy.pth'
 
 
-def get_device(device: str = "auto") -> torch.device:
+def get_device(device_str: str = "auto") -> torch.device:
     """Retrieve the PyTorch device to be used for computations.
 
     Args:
@@ -21,12 +21,15 @@ def get_device(device: str = "auto") -> torch.device:
         torch.device: The appropriate PyTorch device.
 
     """
-    # Default to CUDA if device is 'auto'
-    if device == "auto":
-        device = "cuda"
 
-    # Convert the device string to a torch.device object
-    device = torch.device(device)
+
+    # Default to CUDA if device is 'auto'
+    if device_str == "auto":
+        device = torch.device("cuda")
+    else:
+        device = torch.device(device_str)
+
+ 
 
     # If CUDA is requested but not available, fallback to CPU
     if device.type == torch.device("cuda").type and not torch.cuda.is_available():
@@ -99,7 +102,7 @@ class PPOPolicy:
 
 
     @classmethod
-    def load(cls, filename: str, device: str = "cpu") -> "PPOPolicy":
+    def load(cls, filename: str, device_str: str = "cpu") -> "PPOPolicy":
         """Load a PPOPolicy model from a file.
 
         Args:
@@ -112,7 +115,7 @@ class PPOPolicy:
         Raises:
             RuntimeError: If the model file is corrupted or the device doesn't match.
         """
-        device = get_device(device)
+        device = get_device(device_str)
 
         try:
             with zipfile.ZipFile(f"{filename}.zip", 'r') as zip_file:
@@ -188,7 +191,8 @@ class PPOPolicy:
         return action, log_prob, value.squeeze(-1)  # Return action, log_prob, and value (squeezed)
 
 
-    def predict(self, state: np.ndarray) -> Tuple:
+    from typing import Union
+    def predict(self, state: Union[np.ndarray, torch.Tensor]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Predict an action for a given state.
 
         Args:

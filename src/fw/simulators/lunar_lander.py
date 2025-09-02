@@ -388,6 +388,7 @@ class LunarLander(BaseEnv, EzPickle):
                 restitution=0.0,
             ),  # 0.99 bouncy
         )
+        assert self.lander is not None
         self.lander.color1 = (128, 102, 230)
         self.lander.color2 = (77, 77, 128)
 
