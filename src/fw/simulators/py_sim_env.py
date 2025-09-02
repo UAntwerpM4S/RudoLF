@@ -491,6 +491,7 @@ class PySimEnv(BaseEnv):
 
         # Set window position based on the backend
         try:
+            assert manager is not None
             if backend in {"TkAgg"} and hasattr(manager, "window"):
                 manager.window.wm_geometry(f"+0+0")  # Move to top-left
             elif backend in {"QtAgg", "Qt5Agg"} and hasattr(manager, "window"):
@@ -791,7 +792,7 @@ class PySimEnv(BaseEnv):
 
     @staticmethod
     @lru_cache(maxsize=1024)
-    def _distance_from_point_to_line_cached(point: tuple, line_seg_start: tuple, line_seg_end: tuple) -> float:
+    def _distance_from_point_to_line_cached(point_tuple: tuple, line_seg_start_tuple: tuple, line_seg_end_tuple: tuple) -> float:
         """Calculate perpendicular distance from point to line segment.
 
         Args:
@@ -802,9 +803,9 @@ class PySimEnv(BaseEnv):
         Returns:
             float: Perpendicular distance from point to line
         """
-        point = np.array(point)
-        line_seg_start = np.array(line_seg_start)
-        line_seg_end = np.array(line_seg_end)
+        point = np.array(point_tuple)
+        line_seg_start = np.array(line_seg_start_tuple)
+        line_seg_end = np.array(line_seg_end_tuple)
 
         line_vec = line_seg_end - line_seg_start
         point_vec = point - line_seg_start
@@ -813,14 +814,14 @@ class PySimEnv(BaseEnv):
         line_mag_squared = np.dot(line_vec, line_vec)
         if line_mag_squared == 0:
             # If the two points defining the line are identical, return the distance to this point
-            return np.linalg.norm(point - line_seg_start)
+            return float(np.linalg.norm(point - line_seg_start))
 
         # Projection of the point onto the line
         projection_scalar = np.dot(point_vec, line_vec) / line_mag_squared
         projected_point = line_seg_start + projection_scalar * line_vec
 
         # Distance from the point to the projected point on the infinite line
-        return np.linalg.norm(point - projected_point)
+        return float(np.linalg.norm(point - projected_point))
 
 
     def _distance_from_point_to_line(self, point: np.ndarray,
@@ -982,7 +983,7 @@ class PySimEnv(BaseEnv):
             # --- Scaled shaping contribution ---
             reward += self.reward_weights['terminal'] * shaping
 
-        return reward
+        return float(reward)
 
 
     def _is_near_perpendicular_line(self, checkpoint):
