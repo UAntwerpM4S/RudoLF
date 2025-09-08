@@ -25,7 +25,7 @@ DEFAULT_HYPERPARAMETERS = {
         'max_nbr_iterations': 200000,
         'batch_size': 64,
         'device': "cpu",
-        'model_dir': "models"
+        'model_dir': "models",
     },
     PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,
@@ -52,7 +52,7 @@ DEFAULT_HYPERPARAMETERS = {
 }
 
 CONFIG_PARAMETERS = {
-    'live_animation': False,
+    'live_animation': True,
     'visualize_best_trained': False
 }
 
