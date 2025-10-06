@@ -451,7 +451,7 @@ class PPOModel(BaseModel):
             mean_reward = total_reward / self.num_envs
             mean_advantage = total_advantage / self.num_envs
 
-            training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
+            training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward, 'entropy_coef': self.entropy_coef})
 
             # Save best policy so far
             if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:
@@ -472,7 +472,7 @@ class PPOModel(BaseModel):
 
             # Log evaluation results periodically
             if iteration % self.eval_frequency == 0:
-                print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
+                print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}, EntropyCoef: {self.entropy_coef:.5f}")
 
                 # Save checkpoint every 'self.eval_frequency' iterations
                 if iteration > 0 and iteration % self.eval_frequency == 0:
