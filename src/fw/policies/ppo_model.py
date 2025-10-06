@@ -399,7 +399,7 @@ class PPOModel(BaseModel):
         stop_condition: Optional[StopCondition] = None,
     ):
         """
-        Train the policy using multiple parallel environments.
+        Train the policy using multiple parallel environments with entropy annealing.
 
         This method runs the training loop for the specified number of timesteps using parallel environments.
         It collects experience from the environments, updates the policy, logs training metrics, and saves
@@ -416,7 +416,19 @@ class PPOModel(BaseModel):
         best_policy_file = f"Best_{self.env.type_name}_PPO_policy"
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
-        for iteration in range(stopping_condition.max_time_steps):
+        # --- Exploration control (entropy annealing) ---
+        initial_entropy_coef = self.entropy_coef
+        final_entropy_coef = 0.001
+        decay_fraction = 0.6
+        total_iterations = stopping_condition.max_time_steps
+        decay_steps = max(int(total_iterations * decay_fraction), 1)  # avoid division by zero
+
+        for iteration in range(total_iterations):
+            # --- Linearly decay entropy coefficient ---
+            progress = min(iteration / decay_steps, 1.0)
+            self.entropy_coef = (1 - progress) * initial_entropy_coef + progress * final_entropy_coef
+
+            # Switch to eval mode while collecting data
             self.policy.network.eval()
 
             # Prepare batch for training
