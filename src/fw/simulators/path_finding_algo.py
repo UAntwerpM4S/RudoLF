@@ -132,7 +132,7 @@ def genetic_algorithm(start, target, safe_polygon, population_size=50, generatio
         if generation % 1000 == 0:
             print("{}/{}".format(generation, generations))
         # Evaluate fitness
-        fitness_scores = [fitness_function(path, safe_polygon) for path in population]
+        fitness_scores: list = [fitness_function(path, safe_polygon) for path in population]
         
         # Print best fitness in the current generation
         #print(f"Generation {generation + 1}: Best Fitness = {min(fitness_scores):.2f}")
