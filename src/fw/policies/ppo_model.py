@@ -401,7 +401,7 @@ class PPOModel(BaseModel):
         stop_condition: Optional[StopCondition] = None,
     ):
         """
-        Train the policy using multiple parallel environments with entropy annealing.
+        Train the policy using multiple parallel environments.
 
         This method runs the training loop for the specified number of timesteps using parallel environments.
         It collects experience from the environments, updates the policy, logs training metrics, and saves
@@ -418,18 +418,7 @@ class PPOModel(BaseModel):
         best_policy_file = f"Best_{self.env.type_name}_PPO_policy"
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
-        # --- Exploration control (entropy annealing) ---
-        initial_entropy_coef = self.entropy_coef
-        final_entropy_coef = 0.001
-        decay_fraction = 0.6
-        total_iterations = stopping_condition.max_time_steps
-        decay_steps = max(int(total_iterations * decay_fraction), 1)  # avoid division by zero
-
-        for iteration in range(total_iterations):
-            # --- Linearly decay entropy coefficient ---
-            progress = min(iteration / decay_steps, 1.0)
-            self.entropy_coef = (1 - progress) * initial_entropy_coef + progress * final_entropy_coef
-
+        for iteration in range(stopping_condition.max_time_steps):
             # Switch to eval mode while collecting data
             self.policy.network.eval()
 
@@ -453,7 +442,7 @@ class PPOModel(BaseModel):
             mean_reward = total_reward / self.num_envs
             mean_advantage = total_advantage / self.num_envs
 
-            training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward, 'entropy_coef': self.entropy_coef})
+            training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
 
             # Save best policy so far
             if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:
@@ -474,7 +463,7 @@ class PPOModel(BaseModel):
 
             # Log evaluation results periodically
             if iteration % self.eval_frequency == 0:
-                print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}, EntropyCoef: {self.entropy_coef:.5f}")
+                print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
 
                 # Save checkpoint every 'self.eval_frequency' iterations
                 if iteration > 0 and iteration % self.eval_frequency == 0:
