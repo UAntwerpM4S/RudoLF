@@ -14,6 +14,7 @@ from stable_baselines3.common.monitor import Monitor
 
 from fw.policies.memory_buffer import MemoryBuffer
 from fw.policies.lstm_policy import LstmPolicy, get_device
+from fw.policies.ppo_model import PPOModel
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 
@@ -39,349 +40,249 @@ PPO_EPOCHS = 4
 MINI_BATCH = 4
 
 
-class LstmModel(BaseModel):
+class LstmModel(PPOModel):
     """
     Recurrent PPO-like training harness using episodic buffer and LSTM policy.
     """
 
-    def __init__(self, *args, max_nbr_iterations: int = 200000, normalize: bool = False, **kwargs):
+    def __init__(self, *args, lstm_hidden_size: int = 128, **kwargs):
+        # Force single environment for Phase 1
+        if 'num_envs' in kwargs and kwargs['num_envs'] != 1:
+            print("Warning: Phase1LSTMPPOModel only supports num_envs=1. Forcing to 1.")
+        kwargs['num_envs'] = 1
+
         super().__init__(*args, **kwargs)
 
-        # Only continuous actions supported here
-        if isinstance(self.action_space, gym.spaces.Discrete):
-            raise NotImplementedError("This recurrent implementation supports continuous actions only.")
-        else:
-            self.output_dim = int(self.action_space.shape[0])
+        self.lstm_hidden_size = lstm_hidden_size
 
-        self.input_dim = int(self.observation_space.shape[0])
-        self.device = get_device("auto")
-        self.policy = LstmPolicy(self.input_dim, self.output_dim, device=self.device.type)
-        # Memory holds episodes of variable length
-        self.memory = MemoryBuffer(capacity=5000)
-        self.optimizer = optim.Adam(self.policy.network.parameters(), lr=LEARNING_RATE, eps=1e-5)
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=EPISODES, eta_min=1e-6)
-        self.normalize = normalize
-        self.max_nbr_iterations = max_nbr_iterations
+        # Replace with LSTM policy
+        self.policy = LstmPolicy(
+            self.input_dim,
+            self.output_dim,
+            self.device.type,
+            lstm_hidden_size
+        )
+        self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
 
-        # Running reward stats
-        self.reward_mean = 0.0
-        self.reward_var = 1.0
-        self.reward_count = 1e-4
+    def run_parallel_episodes(self, num_envs: int):
+        """Phase 1: Only support single environment"""
+        if num_envs != 1:
+            raise ValueError("Phase1LSTMPPOModel only supports single environment. Use num_envs=1")
 
-    @staticmethod
-    def compute_gae(
-            rewards: torch.Tensor,
-            values: torch.Tensor,
-            masks: torch.Tensor,
-            gamma: float = 0.99,
-            tau: float = 0.95
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Compute Generalized Advantage Estimation (GAE).
+        # Single episode collection using LSTM
+        env = self.create_env()
+        state = env.reset()
+        if isinstance(state, tuple):
+            state = state[0]  # Handle gymnasium tuple return
 
-        Args:
-            rewards: Tensor of rewards (batch_size, seq_len)
-            values: Tensor of value estimates (batch_size, seq_len)
-            masks: Tensor of episode masks (batch_size, seq_len)
-            gamma: Discount factor
-            tau: GAE parameter
+        states, actions, rewards, dones, values, log_probs = [], [], [], [], [], []
 
-        Returns:
-            returns: Discounted returns
-            advantages: GAE advantages
-        """
-        batch_size, seq_len = rewards.shape
+        for step in range(self.max_nbr_iterations):
+            # Collect current state
+            states.append(state)
 
-        returns = torch.zeros_like(rewards)
-        advantages = torch.zeros_like(rewards)
+            # Get action from policy (will handle LSTM internally)
+            # For now, we'll use single-step prediction to test
+            action, log_prob, value = self.policy.predict(state)
 
-        gae = 0
-        for t in reversed(range(seq_len)):
-            if t == seq_len - 1:
-                next_value = 0
-            else:
-                next_value = values[:, t + 1]
+            # Step environment
+            next_state, reward, done, truncated, info = env.step(action[0])
+            done = done or truncated
 
-            delta = rewards[:, t] + gamma * next_value * masks[:, t] - values[:, t]
-            gae = delta + gamma * tau * masks[:, t] * gae
-            advantages[:, t] = gae
-            returns[:, t] = advantages[:, t] + values[:, t]
+            # Store data
+            actions.append(action[0])
+            rewards.append(reward)
+            dones.append(done)
+            values.append(value[0])
+            log_probs.append(log_prob[0])
 
-        return returns, advantages
+            if done:
+                break
 
-    def predict(self, state: np.ndarray, hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, deterministic: bool = False):
-        actions, log_probs, values, new_hidden = self.policy.predict(state, hidden, deterministic)
-        # Return in format used previously: action vector (1d), scalar log_prob, and new_hidden
-        if isinstance(actions, np.ndarray) and actions.ndim > 1 and actions.shape[0] == 1:
-            action_out = actions[0]
-        else:
-            action_out = actions
-        # log_probs may be array or scalar
-        if isinstance(log_probs, np.ndarray) and log_probs.size > 0:
-            lp = float(np.asarray(log_probs).flat[0])
-        else:
-            lp = float(log_probs)
-        return action_out, lp, new_hidden
+            state = next_state
 
-    def train(self) -> float:
-        """
-        Single training pass over samples from the episodic buffer.
-        """
+        env.close()
+
+        # Convert to numpy arrays
+        episode_data = {
+            'states': np.array(states),
+            'actions': np.array(actions),
+            'rewards': np.array(rewards),
+            'dones': np.array(dones),
+            'values': np.array(values),
+            'log_probs': np.array(log_probs)
+        }
+
+        # Compute advantages and returns (using your existing method)
+        next_value = 0.0  # Terminal state
+        episode_data['advantages'] = self.compute_gae(
+            episode_data['rewards'],
+            episode_data['values'],
+            episode_data['dones'],
+            next_value,
+            self.gamma,
+            self.gae_lambda
+        )
+        episode_data['returns'] = episode_data['advantages'] + episode_data['values']
+
+        return [episode_data]  # Return as list for compatibility
+
+    def train(self, all_episodes_data) -> float:
+        """LSTM-compatible training that uses the original PPO logic"""
+        if not all_episodes_data:
+            return float('nan')
+
         self.policy.network.train()
-        # Sample batch from memory
-        batch = self.memory.sample(BATCH_SIZE)
 
-        observations = batch['observations'].to(self.device)
-        actions = batch['actions'].to(self.device)
-        old_rewards = batch['rewards'].to(self.device)
-        masks = batch['masks'].to(self.device)
+        # Concatenate all episode data into single arrays for batch processing
+        all_states = np.concatenate([ep['states'] for ep in all_episodes_data])
+        all_actions = np.concatenate([ep['actions'] for ep in all_episodes_data])
+        all_advantages = np.concatenate([ep['advantages'] for ep in all_episodes_data])
+        all_old_log_probs = np.concatenate([ep['log_probs'] for ep in all_episodes_data])
+        all_returns = np.concatenate([ep['returns'] for ep in all_episodes_data])
 
-        batch_size, seq_len = old_rewards.shape
+        # Convert data to tensors
+        states = torch.as_tensor(all_states, dtype=torch.float32).to(self.device)
+        actions = torch.as_tensor(all_actions, dtype=torch.float32).to(self.device)
+        advantages = torch.as_tensor(all_advantages, dtype=torch.float32).to(self.device)
+        old_log_probs = torch.as_tensor(all_old_log_probs, dtype=torch.float32).to(self.device)
+        returns = torch.as_tensor(all_returns, dtype=torch.float32).to(self.device)
 
-        # Compute returns and advantages using GAE
-        with torch.no_grad():
-            # Get new value estimates - ensure proper dimensions
-            hidden = self.policy.network.init_hidden(batch_size, self.device)
+        if advantages.numel() <= 1:
+            print(f"[Warning] Very short trajectory detected. Length: {advantages.numel()}")
+            return float('nan')
 
-            # Forward pass through the network
-            action_mean, action_std, new_values, _ = self.policy.network(observations, hidden)
+        # Normalize advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-            # Remove the last dimension if present and ensure correct shape
-            if new_values.dim() == 3:
-                new_values = new_values.squeeze(-1)  # (batch_size, seq_len, 1) -> (batch_size, seq_len)
+        # Train over multiple epochs
+        batch_size = states.shape[0]
+        minibatch_size = self.batch_size
 
-            # Ensure new_values has the same shape as old_rewards
-            if new_values.shape != old_rewards.shape:
-                print(f"Shape mismatch: new_values {new_values.shape}, old_rewards {old_rewards.shape}")
-                # Use the minimum sequence length
-                min_seq_len = min(new_values.shape[1], old_rewards.shape[1])
-                new_values_trunc = new_values[:, :min_seq_len]
-                old_rewards_trunc = old_rewards[:, :min_seq_len]
-                masks_trunc = masks[:, :min_seq_len]
-            else:
-                new_values_trunc = new_values
-                old_rewards_trunc = old_rewards
-                masks_trunc = masks
+        loss_per_epoch = []
 
-            returns, advantages = self.compute_gae(old_rewards_trunc, new_values_trunc, masks_trunc, GAMMA, TAU)
+        for _ in range(self.num_epochs):
+            # Shuffle indices
+            indices = torch.randperm(batch_size)
 
-            # Normalize advantages
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+            for start in range(0, batch_size, minibatch_size):
+                end = start + minibatch_size
+                mb_idx = indices[start:end]
 
-        # Policy update
-        actor_loss_total = 0
-        critic_loss_total = 0
-        entropy_loss_total = 0
+                mb_states = states[mb_idx]
+                mb_actions = actions[mb_idx]
+                mb_old_log_probs = old_log_probs[mb_idx]
+                mb_returns = returns[mb_idx]
+                mb_advantages = advantages[mb_idx]
 
-        # Reset hidden state for forward pass
-        hidden = self.policy.network.init_hidden(batch_size, self.device)
-
-        # Forward pass through agent
-        action_mean, action_std, pred_values, _ = self.policy.network(observations, hidden)
-
-        # Remove the last dimension if present and ensure correct shape
-        if pred_values.dim() == 3:
-            pred_values = pred_values.squeeze(-1)  # (batch_size, seq_len, 1) -> (batch_size, seq_len)
-
-        # Ensure pred_values has correct shape
-        if pred_values.shape != returns.shape:
-            print(f"Shape mismatch in policy forward: pred_values {pred_values.shape}, returns {returns.shape}")
-            # Truncate to match sequence length
-            min_seq_len = min(pred_values.shape[1], returns.shape[1])
-            pred_values_trunc = pred_values[:, :min_seq_len]
-            returns_trunc = returns[:, :min_seq_len]
-            advantages_trunc = advantages[:, :min_seq_len]
-            actions_trunc = actions[:, :min_seq_len]
-            action_mean_trunc = action_mean[:, :min_seq_len]
-            action_std_trunc = action_std[:, :min_seq_len]
-        else:
-            pred_values_trunc = pred_values
-            returns_trunc = returns
-            advantages_trunc = advantages
-            actions_trunc = actions
-            action_mean_trunc = action_mean
-            action_std_trunc = action_std
-
-        # Create action distribution
-        action_dist = torch.distributions.Normal(action_mean_trunc, action_std_trunc)
-
-        # Compute log probabilities of taken actions
-        log_probs = action_dist.log_prob(actions_trunc).sum(dim=-1)
-
-        # Actor loss (policy gradient)
-        actor_loss = -(log_probs * advantages_trunc.detach()).mean()
-
-        # Critic loss (value function)
-        critic_loss = F.mse_loss(pred_values_trunc, returns_trunc.detach())
-
-        # Entropy loss for exploration
-        entropy = action_dist.entropy().sum(dim=-1).mean()
-        entropy_loss = -ENTROPY_COEF * entropy
-
-        # Total loss
-        total_loss = actor_loss + VALUE_LOSS_COEF * critic_loss + entropy_loss
-
-        # Backward pass
-        self.optimizer.zero_grad()
-        total_loss.backward()
-
-        # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(self.policy.network.parameters(), MAX_GRAD_NORM)
-
-        self.optimizer.step()
-
-        # Log losses for debugging
-        actor_loss_total += actor_loss.item()
-        critic_loss_total += critic_loss.item()
-        entropy_loss_total += entropy_loss.item()
-
-        return total_loss.item()
-
-    def make_env(self):
-        def _init():
-            return Monitor(self.create_env())
-
-        return _init
-
-    def create_env(self) -> gym.Env:
-        env = copy.deepcopy(self.env)
-        if hasattr(env, "randomize"):
-            env.randomize()
-        return env
-
-    @staticmethod
-    def find_first_true(bool_array: np.ndarray) -> int:
-        true_indices = np.where(bool_array)[0]
-        return int(true_indices[0]) if true_indices.size > 0 else -1
-
-    def learn(self, stop_condition: Optional[StopCondition] = None) -> None:
-        # Tracking metrics
-        episode_lengths = deque(maxlen=100)
-        success_rate = deque(maxlen=100)
-
-        # Create save directory
-        save_dir = "checkpoints"
-        os.makedirs(save_dir, exist_ok=True)
-
-        print("Starting training...")
-
-        for episode in range(EPISODES):
-            episode_start_time = time.time()
-
-            # Reset environment and agent
-            obs, _ = self.env.reset()
-            hidden = self.policy.network.init_hidden(1, self.device)
-
-            # Episode data collection
-            episode_obs = []
-            episode_actions = []
-            episode_rewards = []
-            episode_values = []
-            episode_log_probs = []
-
-            total_reward = 0
-            step_count = 0
-            reward = 0
-
-            for step in range(MAX_STEPS_PER_EPISODE):
-                action_np, log_prob, value, new_hidden = self.policy.predict(obs, hidden)
-
-                # Store episode data - ensure proper dimensions
-                episode_obs.append(obs.flatten())
-                episode_actions.append(action_np.flatten())
-                episode_values.append(float(value))
-                episode_log_probs.append(float(log_prob))
-
-                # Take environment step
-                next_obs, reward, done, truncated, _ = self.env.step(
-                    action_np[0] if hasattr(action_np, '__len__') and len(action_np) > 0 else action_np)
-
-                episode_rewards.append(float(reward))
-                total_reward += reward
-                step_count += 1
-
-                # Update for next iteration
-                obs = next_obs
-                hidden = new_hidden
-
-                if done:
-                    break
-
-            # Calculate episode statistics
-            episode_length = step_count
-            is_success = self.env._has_reached_target() if hasattr(self.env, '_has_reached_target') else (reward > 0)
-
-            # Convert to numpy arrays with proper shapes
-            episode_data = {
-                'observations': np.array(episode_obs),
-                'actions': np.array(episode_actions),
-                'rewards': np.array(episode_rewards),
-                'values': np.array(episode_values),
-                'log_probs': np.array(episode_log_probs)
-            }
-            self.memory.push(episode_data)
-
-            # Update tracking metrics
-            episode_rewards.append(total_reward)
-            episode_lengths.append(episode_length)
-            success_rate.append(1.0 if is_success else 0.0)
-
-            # Perform learning update
-            if (episode + 1) % UPDATE_FREQUENCY == 0 and len(self.memory) >= BATCH_SIZE:
-                self.train()
-
-            # Logging and saving
-            if (episode + 1) % LOG_INTERVAL == 0:
-                avg_reward = np.mean(episode_rewards)
-                avg_length = np.mean(episode_lengths)
-                avg_success = np.mean(success_rate)
-                episode_time = time.time() - episode_start_time
-
-                print(
-                    f'Episode {episode + 1}/{EPISODES} | '
-                    f'Avg Reward: {avg_reward:.2f} | '
-                    f'Avg Length: {avg_length:.1f} | '
-                    f'Success Rate: {avg_success:.3f} | '
-                    f'Episode Time: {episode_time:.2f}s | '
-                    f'LR: {self.scheduler.get_last_lr()[0]:.6f}'
+                # 🛠️ FIX: Handle LSTM output - ignore hidden state during training
+                # For Phase 1, we treat each state independently (like original PPO)
+                action_mean, action_std, state_values, _ = self.policy.network(
+                    mb_states,
+                    None  # No hidden state for independent transitions
                 )
 
-            if (episode + 1) % SAVE_INTERVAL == 0:
-                pass
-                # save_checkpoint(agent, optimizer, episode, save_dir)
+                # The rest is exactly the same as original PPO
+                dist = torch.distributions.Normal(action_mean, action_std)
 
-            # Update learning rate
-            self.scheduler.step()
+                # Adjust actions if action space is continuous
+                if isinstance(self.action_space, gym.spaces.Box):
+                    raw_actions = torch.atanh(mb_actions.clamp(-0.99, 0.99))
+                else:
+                    raw_actions = mb_actions
 
-        # Final save
-        # save_checkpoint(agent, optimizer, EPISODES - 1, save_dir, final=True)
-        print("Training completed!")
+                log_probs = self.policy.calc_log_probs(dist, raw_actions, mb_actions)
 
-    def dump_metrics_to_csv(self, csv_filename: str, training_metrics: list) -> None:
-        if not training_metrics:
-            print("Warning: No training metrics to write.")
-            return
-        filepath = os.path.join(self.model_dir, csv_filename)
-        import csv
+                # PPO clipped loss
+                ratios = torch.exp(log_probs - mb_old_log_probs)
+                surrogate_1 = ratios * mb_advantages
+                surrogate_2 = torch.clamp(ratios, 1.0 - self.clip_range, 1.0 + self.clip_range) * mb_advantages
+                policy_loss = -torch.min(surrogate_1, surrogate_2).mean()
 
-        with open(filepath, mode="w", newline="") as file:
-            fieldnames = training_metrics[0].keys()
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(training_metrics)
+                # Value loss
+                value_loss = torch.nn.functional.mse_loss(state_values.squeeze(-1), mb_returns)
+                entropy = dist.entropy().sum(dim=-1).mean()
 
-    def load_policy(self, policy_file_name: str) -> None:
-        if self.model_dir:
-            policy_file_name = os.path.join(self.model_dir, policy_file_name)
-        self.policy = self.policy.load(policy_file_name, self.device.type)
-        print(f"Loaded policy {policy_file_name}")
+                # Total loss
+                loss = policy_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy
 
-    def save_policy(self, policy_file_name: str) -> None:
-        if self.model_dir:
-            policy_file_name = os.path.join(self.model_dir, policy_file_name)
-        self.policy.save(policy_file_name)
-        print(f"Saved policy {policy_file_name}")
+                # Optimize
+                self.optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy.network.parameters(), self.max_grad_norm)
+                self.optimizer.step()
 
-    def set_policy_eval(self) -> None:
-        self.policy.network.eval()
-        print("Policy set to evaluation mode.")
+                loss_per_epoch.append(loss.detach().cpu().item())
+
+        # Return mean loss over all updates
+        return float(np.mean(loss_per_epoch))
+
+    # def train(self, all_episodes_data) -> float:
+    #     """Proper LSTM training that maintains temporal dependencies"""
+    #     if not all_episodes_data:
+    #         return float('nan')
+    #
+    #     self.policy.network.train()
+    #
+    #     loss_per_epoch = []
+    #
+    #     # Train over multiple epochs
+    #     for _ in range(self.num_epochs):
+    #         # Shuffle episodes for each epoch
+    #         episode_indices = torch.randperm(len(all_episodes_data))
+    #
+    #         for ep_idx in episode_indices:
+    #             episode = all_episodes_data[ep_idx]
+    #
+    #             # Process each episode as a sequence
+    #             states = torch.as_tensor(episode['states'], dtype=torch.float32).to(self.device)
+    #             actions = torch.as_tensor(episode['actions'], dtype=torch.float32).to(self.device)
+    #             advantages = torch.as_tensor(episode['advantages'], dtype=torch.float32).to(self.device)
+    #             old_log_probs = torch.as_tensor(episode['log_probs'], dtype=torch.float32).to(self.device)
+    #             returns = torch.as_tensor(episode['returns'], dtype=torch.float32).to(self.device)
+    #
+    #             if len(states) <= 1:
+    #                 continue
+    #
+    #             # Normalize advantages for this episode
+    #             ep_advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    #
+    #             # Process the entire episode sequence through LSTM
+    #             # This maintains proper temporal dependencies
+    #             action_mean, action_std, state_values, _ = self.policy.network(
+    #                 states.unsqueeze(1),  # Add sequence dimension: (seq_len, 1, features)
+    #                 None  # Let LSTM start with initial hidden state
+    #             )
+    #
+    #             # Calculate losses (same as original PPO)
+    #             dist = torch.distributions.Normal(action_mean, action_std)
+    #
+    #             if isinstance(self.action_space, gym.spaces.Box):
+    #                 raw_actions = torch.atanh(actions.clamp(-0.99, 0.99))
+    #             else:
+    #                 raw_actions = actions
+    #
+    #             log_probs = self.policy.calc_log_probs(dist, raw_actions, actions)
+    #
+    #             # PPO clipped loss
+    #             ratios = torch.exp(log_probs - old_log_probs)
+    #             surrogate_1 = ratios * ep_advantages
+    #             surrogate_2 = torch.clamp(ratios, 1.0 - self.clip_range, 1.0 + self.clip_range) * ep_advantages
+    #             policy_loss = -torch.min(surrogate_1, surrogate_2).mean()
+    #
+    #             # Value loss
+    #             value_loss = torch.nn.functional.mse_loss(state_values.squeeze(-1), returns)
+    #             entropy = dist.entropy().sum(dim=-1).mean()
+    #
+    #             # Total loss
+    #             loss = policy_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy
+    #
+    #             # Optimize
+    #             self.optimizer.zero_grad()
+    #             loss.backward()
+    #             torch.nn.utils.clip_grad_norm_(self.policy.network.parameters(), self.max_grad_norm)
+    #             self.optimizer.step()
+    #
+    #             loss_per_epoch.append(loss.detach().cpu().item())
+    #
+    #     return float(np.mean(loss_per_epoch)) if loss_per_epoch else float('nan')
