@@ -419,7 +419,6 @@ class PPOModel(BaseModel):
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
         for iteration in range(stopping_condition.max_time_steps):
-            # Switch to eval mode while collecting data
             self.policy.network.eval()
 
             # Prepare batch for training
