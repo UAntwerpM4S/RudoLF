@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from fw.policies.lstm_network import LstmNetwork
+from fw.policies.ppo_policy import PPOPolicy
 
 POLICY_FILE_NAME = "policy.pth"
 
@@ -19,149 +20,76 @@ def get_device(device_str: str = "auto") -> torch.device:
     return torch.device(device_str)
 
 
-class LstmPolicy:
+class LstmPolicy(PPOPolicy):
     """
     Policy wrapper around LstmNetwork with convenient save/load and predict utilities.
     """
 
-    def __init__(self, input_dim: int, output_dim: int, device: str = "auto"):
-        self.input_dim = int(input_dim)
-        self.output_dim = int(output_dim)
-        self.device = get_device(device)
-        # keep network defaults for other hyperparams (could be extended)
-        self.network = LstmNetwork(obs_dim=self.input_dim, action_dim=self.output_dim).to(self.device)
-        self._hidden_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+    def __init__(self, input_dim: int, output_dim: int, device: str = "cpu",
+                 lstm_hidden_size: int = 128):
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.device = torch.device(device)
+        self.lstm_hidden_size = lstm_hidden_size
 
-    def _get_constructor_parameters(self) -> Dict[str, Any]:
+        # Use LSTM network
+        self.network = LstmNetwork(input_dim, output_dim, lstm_hidden_size).to(self.device)
+        self.optimizer = None  # Will be set by the model
+
+    def _get_constructor_parameters(self) -> dict:
         return {
-            "input_dim": int(self.input_dim),
-            "output_dim": int(self.output_dim),
+            "input_dim": self.input_dim,
+            "output_dim": self.output_dim,
             "device": self.device.type,
+            "lstm_hidden_size": self.lstm_hidden_size
         }
 
-    def reset_hidden(self, batch_size: int = 1) -> None:
-        self._hidden_state = self.network.init_hidden(batch_size, self.device)
-
-    def save(self, filename: str) -> None:
-        """Save model into a single zip file."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            params_path = os.path.join(tmp_dir, POLICY_FILE_NAME)
-            torch.save(
-                {
-                    "model_state_dict": self.network.state_dict(),
-                    "meta": self._get_constructor_parameters(),
-                },
-                params_path,
-            )
-            # ensure .zip extension for convenience
-            zip_path = f"{filename}.zip" if not filename.endswith(".zip") else filename
-            with zipfile.ZipFile(zip_path, "w") as z:
-                z.write(params_path, arcname=POLICY_FILE_NAME)
-
-    @classmethod
-    def load(cls, filename: str, device_str: str = "auto") -> "LstmPolicy":
-        device = get_device(device_str)
-        zip_path = f"{filename}.zip" if not filename.endswith(".zip") else filename
-        try:
-            with zipfile.ZipFile(zip_path, "r") as z:
-                with z.open(POLICY_FILE_NAME) as f:
-                    saved = torch.load(f, map_location=device)
-        except Exception as e:
-            raise RuntimeError(f"Failed to load model from {zip_path}: {e}")
-
-        meta = saved.get("meta", {})
-        # fallback: try to infer sizes from state_dict
-        if not meta:
-            sd = saved["model_state_dict"]
-            input_dim = sd["input_fc.weight"].shape[1]
-            output_dim = sd["actor_out.weight"].shape[0]
-            meta = {"input_dim": int(input_dim), "output_dim": int(output_dim), "device": device.type}
-
-        model = cls(int(meta["input_dim"]), int(meta["output_dim"]), device.type)
-        model.network.load_state_dict(saved["model_state_dict"])
-        model.network.to(device)
-        return model
-
-    @staticmethod
-    def calc_log_probs(
-        dist: torch.distributions.Normal,
-        actions: torch.Tensor,
-    ) -> torch.Tensor:
-        """Calculate the log probabilities of actions with an adjustment for tanh squashing.
-
-        Args:
-            dist (torch.distributions.Normal): The normal distribution of actions.
-            actions (torch.Tensor): The unbounded sampled actions from the distribution.
-
-        Returns:
-            torch.Tensor: The log probabilities of the actions.
+    def predict_single_episode(self, states: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        return dist.log_prob(actions).sum(dim=-1)
-
-
-    def _predict(self,
-                 state: torch.Tensor,
-                 hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-                 deterministic: bool = False) -> Tuple:
-        """Predict the action and log probability for a given state.
-
-        Args:
-            state (torch.Tensor): The input state tensor.
-            hidden: LSTM hidden state tuple (h, c) or None
-            deterministic: If True, return mean action without sampling
-
-        Returns:
-            Tuple: A tuple containing:
-                - action (torch.Tensor): The predicted action.
-                - log_prob (torch.Tensor): The log probability of the action.
-                - value (torch.Tensor): The predicted value for the state.
+        Predict for a complete episode (single environment)
+        Returns: actions, log_probs, values for the entire episode
         """
-        action_mean, action_std, value, new_hidden = self.network(state, hidden)  # Get network outputs (mean, std, value)
+        states_tensor = torch.FloatTensor(states).to(self.device)
 
-        # Create action distribution
-        action_dist = torch.distributions.Normal(action_mean, action_std)
+        # Run through LSTM sequentially to maintain proper hidden states
+        actions, log_probs, values = [], [], []
+        hidden = None
 
-        # Sample action
-        if deterministic:
-            raw_action = action_mean
-        else:
-            raw_action = action_dist.sample()
+        for t in range(len(states)):
+            # Single step prediction
+            state_step = states_tensor[t:t + 1].unsqueeze(1)  # (1, 1, features)
 
-        # Clip actions to valid range [-1, 1]
-        action = torch.clamp(raw_action, -1.0, 1.0)
+            with torch.no_grad():
+                action_mean, action_std, value, hidden = self.network(state_step, hidden)
 
-        # Compute log probability of the squashed action
-        log_prob = self.calc_log_probs(action_dist, action)
+                # Sample action
+                dist = torch.distributions.Normal(action_mean, action_std)
+                raw_action = dist.rsample()
+                action = torch.tanh(raw_action)
+                log_prob = self.calc_log_probs(dist, raw_action, action)
 
-        return action, log_prob, value.squeeze(-1), new_hidden  # Return action, log_prob, and value (squeezed)
+            actions.append(action.cpu().numpy()[0])
+            log_probs.append(log_prob.cpu().numpy()[0])
+            values.append(value.cpu().numpy()[0, 0])
 
+        return np.array(actions), np.array(log_probs), np.array(values)
 
-    from typing import Union
-    def predict(self,
-                state: Union[np.ndarray, torch.Tensor],
-                hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-                deterministic: bool = False) -> Tuple:
-        """Predict an action for a given state.
-
-        Args:
-            state (np.ndarray): The input state as a NumPy array or a tensor.
-            hidden: LSTM hidden state tuple (h, c) or None
-            deterministic: If True, return mean action without sampling
-
-        Returns:
-            Tuple: A tuple containing:
-                - action (np.ndarray): The predicted action.
-                - log_prob (np.ndarray): The log probability of the action.
-                - value (np.ndarray): The predicted value for the state.
-        """
+    # Keep the original predict method for compatibility with existing code
+    def predict(self, state: np.ndarray):
+        """Single step prediction for compatibility"""
         if not isinstance(state, torch.Tensor):
-            state = torch.FloatTensor(state).to(self.device)  # Convert to tensor if necessary
+            state = torch.FloatTensor(state).to(self.device)
 
-        # Add batch dimension if input is from a single environment
         if state.ndim == 1:
             state = state.unsqueeze(0)
 
-        with torch.no_grad():  # Disable gradient computation for inference
-            action, log_prob, value, new_hidden = self._predict(state, hidden, deterministic)
+        with torch.no_grad():
+            # Use None hidden state for single step (starts fresh each time)
+            action_mean, action_std, value, _ = self.network(state.unsqueeze(1), None)
 
-        return action.cpu().numpy(), log_prob.cpu().numpy(), value.cpu().numpy(), new_hidden  # Move to CPU and return as NumPy arrays
+            dist = torch.distributions.Normal(action_mean, action_std)
+            raw_action = dist.rsample()
+            action = torch.tanh(raw_action)
+            log_prob = self.calc_log_probs(dist, raw_action, action)
+
+        return action.cpu().numpy(), log_prob.cpu().numpy(), value.squeeze(-1).cpu().numpy()
