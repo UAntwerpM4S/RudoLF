@@ -14,7 +14,7 @@ def get_device(device_str: str = "auto") -> torch.device:
     """Retrieve the PyTorch device to be used for computations.
 
     Args:
-        device (str, optional): The device to use. Options are 'auto', 'cuda', or 'cpu'.
+        device_str (str, optional): The device to use. Options are 'auto', 'cuda', or 'cpu'.
             If 'auto', defaults to using GPU ('cuda') if available, otherwise falls back to CPU.
 
     Returns:
@@ -107,7 +107,7 @@ class PPOPolicy:
 
         Args:
             filename (str): The path to the file from which the model should be loaded.
-            device (str, optional): The device to load the model onto ('cpu', 'cuda', or 'auto'). Default is 'cpu'.
+            device_str (str, optional): The device to load the model onto ('cpu', 'cuda', or 'auto'). Default is 'cpu'.
 
         Returns:
             PPOPolicy: The loaded PPOPolicy instance.
