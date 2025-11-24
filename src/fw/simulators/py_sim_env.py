@@ -167,7 +167,6 @@ class PySimEnv(BaseEnv):
         self.ship_pos = np.copy(self.initial_ship_pos)
         self.previous_ship_pos = np.zeros(2, dtype=np.float32)
         self.previous_heading = 0.0
-        self.ship_angle = 0.0
         self.randomization_scale = 1.0
         self.max_dist = np.sqrt(2) * self.MAX_GRID_POS
         self.state = np.array([*self.ship_pos, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
@@ -569,9 +568,9 @@ class PySimEnv(BaseEnv):
         self.checkpoint_index = 1
 
         direction_vector = self.checkpoints[self.checkpoint_index]['pos'] - self.ship_pos
-        self.ship_angle = np.arctan2(direction_vector[1], direction_vector[0])  # Angle in radians
+        ship_angle = np.arctan2(direction_vector[1], direction_vector[0])  # Angle in radians
         # Set the initial state
-        self.state = np.array([*self.ship_pos, self.ship_angle, 0.0, 0.0, 0.0], dtype=np.float32)
+        self.state = np.array([*self.ship_pos, ship_angle, 0.0, 0.0, 0.0], dtype=np.float32)
         self.current_action = np.zeros(2, dtype=np.float32)
 
         # Reset control parameters
