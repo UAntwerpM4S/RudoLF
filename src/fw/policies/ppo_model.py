@@ -8,7 +8,6 @@ import gymnasium as gym
 import numpy as np
 
 from typing import Optional, Tuple
-from torch import device as TorchDevice
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from fw.policies.ppo_policy import PPOPolicy
@@ -93,7 +92,6 @@ class PPOModel(BaseModel):
             self.output_dim = self.action_space.shape[0]
 
         self.input_dim = self.observation_space.shape[0]
-        self.device: TorchDevice  # type annotation for device
         self.policy = PPOPolicy(self.input_dim, self.output_dim, self.device)
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         self.normalize = normalize
@@ -246,7 +244,7 @@ class PPOModel(BaseModel):
                 loss_per_epoch.append(loss.detach().cpu().item())
 
         # Return mean loss over all updates
-        return float(np.mean(loss_per_epoch))
+        return np.mean(loss_per_epoch)
 
 
     def make_env(self):
@@ -542,7 +540,7 @@ class PPOModel(BaseModel):
             raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
 
 
-    def set_policy_eval(self) -> None:
+    def set_policy_eval(self):
         """
         Set policy in evaluation mode.
         """
