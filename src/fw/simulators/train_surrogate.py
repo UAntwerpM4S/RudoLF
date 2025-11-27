@@ -14,6 +14,7 @@ from fw.simulators.utils import load_checkpoint, data_path, get_device, save_che
 def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> float:
     model.eval()
     total_loss = 0.0
+
     with torch.no_grad():
         for X, Y in loader:
             X = X.to(device)
@@ -21,6 +22,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -
             pred = model(X)
             loss = F.mse_loss(pred, Y, reduction="mean")
             total_loss += loss.item() * X.size(0)
+
     return total_loss / len(loader.dataset)
 
 
@@ -43,6 +45,7 @@ def make_dataloaders(train_file, val_file, test_file, batch_size=256, num_worker
 def set_seed(seed: int = 42):
     torch.manual_seed(seed)
     np.random.seed(seed)
+
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
@@ -82,8 +85,8 @@ def main(argv=None):
         output_dim=output_dim,
         hidden_sizes=tuple(args.hidden_sizes),
         activation=torch.nn.ReLU,
+        use_batch_norm=args.batchnorm,
         dropout=args.dropout,
-        use_batchnorm=args.batchnorm,
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)

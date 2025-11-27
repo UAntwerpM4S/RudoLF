@@ -7,25 +7,11 @@ using the standalone dataset generator + any ship simulator
 (Python class implementing reset(), step(), and .state).
 """
 
+import os
 import argparse
 import numpy as np
-import os
 
-from sim_dataset_generator import (
-    collect_supervised_dataset,
-)
-
-
-# ================================================================
-# ENV FACTORY
-# ================================================================
-def make_env():
-    """
-    Your environment factory.
-    Replace PySimEnv with another sim implementation if desired.
-    """
-    from py_sim_env import PySimEnv
-    return PySimEnv(render_mode=None)
+from sim_dataset_generator import collect_supervised_dataset
 
 
 # ================================================================
@@ -40,7 +26,6 @@ def split_and_save(X, Y, save_prefix, train=0.8, val=0.1):
 
     N_train = int(train * N)
     N_val = int(val * N)
-    N_test = N - N_train - N_val
 
     idx_train = idx[:N_train]
     idx_val = idx[N_train:N_train + N_val]
@@ -102,11 +87,13 @@ def main():
     # ============================================================
     # Run selected mode
     # ============================================================
-    nbr_samples = 0
     X = None
     Y = None
+    nbr_samples = 0
+
     if args.mode == "one_step":
         print(f"[One_step] Generating {args.samples} samples (max. horizon={args.horizon}s)...")
+
         X, Y, nbr_samples = collect_supervised_dataset(
             N_samples=args.samples,
             horizon_seconds=args.horizon,
