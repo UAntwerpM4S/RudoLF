@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from py_sim_env import PySimEnv
-from shapely.geometry import Polygon
 
 
 def plot_xy_points_and_trajectories(env, xy, trajectories):
@@ -72,6 +71,7 @@ def collect_supervised_dataset(
     xy = env.sample_point_in_river(N_samples)
     x0 = xy[:, 0]
     y0 = xy[:, 1]
+
     N_samples = len(xy)
     trajectories = []
     counter = 0
@@ -81,19 +81,17 @@ def collect_supervised_dataset(
         obs, _ = env.reset()
 
         rng = np.random.default_rng()
-        env.state[-4:] = rng.uniform(low=[-np.pi, 0.0, -2.0, -0.5],
-                                     high=[np.pi, 5.0, 2.0, 0.5])
+        env.state[-4:] = rng.uniform(low=[-np.pi, 0.0, -2.0, -0.5], high=[np.pi, 5.0, 2.0, 0.5])
 
         initial_state = env.state.copy()
+        initial_pos = env.ship_pos.copy()
 
         action = rng.uniform(-1, 1, size=2).astype(np.float32)
-
         duration = rng.uniform(low=[dt], high=[horizon_seconds])[0]
         steps_per_episode = int(duration / dt)
 
         # --- Start storing trajectory ---
-        traj = []
-        traj.append(env.ship_pos.copy())
+        traj = [env.ship_pos.copy()]
 
         for _ in range(steps_per_episode):
             if env._ship_in_open_water(env.ship_pos):
@@ -106,10 +104,20 @@ def collect_supervised_dataset(
         trajectories.append(traj)
 
         if env._ship_in_open_water(env.ship_pos):
-            final_state = env.state.copy()
+            # Calculate delta X and delta Y
+            delta_x = env.state[0] - initial_pos[0]
+            delta_y = env.state[1] - initial_pos[1]
+
+            # Create modified final state with delta X and delta Y instead of absolute positions
+            # Assuming state structure: [x, y, heading, velocity, angular_velocity, ...]
+            # Replace the first two elements (x, y) with delta_x, delta_y
+            modified_final_state = env.state.copy()
+            modified_final_state[0] = delta_x  # Replace x with delta_x
+            modified_final_state[1] = delta_y  # Replace y with delta_y
+
             counter += 1
             X_inputs.append(np.concatenate([initial_state, action], axis=0))
-            Y_outputs.append(final_state)
+            Y_outputs.append(modified_final_state)
 
     X = np.vstack(X_inputs).astype(np.float32)
     Y = np.vstack(Y_outputs).astype(np.float32)

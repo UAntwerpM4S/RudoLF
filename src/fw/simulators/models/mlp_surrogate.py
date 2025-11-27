@@ -1,6 +1,6 @@
-# mlp_surrogate.py
 import torch
 import torch.nn as nn
+
 from typing import Sequence
 
 
@@ -20,16 +20,17 @@ class SurrogateMLP(nn.Module):
         output_dim: int = 6,
         hidden_sizes: Sequence[int] = (128, 128, 128),
         activation: nn.Module = nn.ReLU,
+        use_batch_norm: bool = False,
         dropout: float = 0.0,
-        use_batchnorm: bool = False,
     ):
         super().__init__()
 
         layers = []
         prev = input_dim
+
         for h in hidden_sizes:
             layers.append(nn.Linear(prev, h))
-            if use_batchnorm:
+            if use_batch_norm:
                 layers.append(nn.BatchNorm1d(h))
             layers.append(activation())
             if dropout and dropout > 0.0:

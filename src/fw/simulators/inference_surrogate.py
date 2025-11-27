@@ -1,7 +1,6 @@
-# inference_surrogate.py
 import torch
 import numpy as np
-from pathlib import Path
+
 from models.mlp_surrogate import SurrogateMLP
 
 
@@ -27,8 +26,8 @@ class SurrogatePredictor:
             input_dim=self.input_dim,
             output_dim=self.output_dim,
             hidden_sizes=tuple(ckpt["hidden_sizes"]),
+            use_batch_norm=ckpt["use_batchnorm"],
             dropout=ckpt["dropout"],
-            use_batchnorm=ckpt["use_batchnorm"],
         ).to(self.device)
 
         self.model.load_state_dict(ckpt["model_state_dict"])
