@@ -131,70 +131,72 @@ def collect_supervised_dataset(
 
             # Initialize the math model and enable the bridge
             _math_model = MathModel()
-            _math_model.Initialize(config, exercise)
-            print(f"Math model initialized!  --  starting simulation at {start_pos}")
-            _math_model.enableBridge()
+            if _math_model.Initialize(config, exercise):
+                print(f"Math model initialized!  --  starting simulation at {start_pos}")
+                _math_model.enableBridge()
 
-            # Get the ship interface
-            _ship_interface = _math_model.getShipInterface(0)
+                # Get the ship interface
+                _ship_interface = _math_model.getShipInterface(0)
 
-            env.initial_ship_pos = start_pos
-            obs, _ = env.reset()
+                env.initial_ship_pos = start_pos
+                obs, _ = env.reset()
 
-            rng = np.random.default_rng()
-            env.state[-4:] = rng.uniform(low=[-np.pi, 0.0, -2.0, -0.5], high=[np.pi, 5.0, 2.0, 0.5])
+                rng = np.random.default_rng()
+                env.state[-4:] = rng.uniform(low=[-np.pi, 0.0, -2.0, -0.5], high=[np.pi, 5.0, 2.0, 0.5])
 
-            initial_state = env.state.copy()
-            initial_pos = env.ship_pos.copy()
-            new_ship_pos = env.ship_pos.copy()
+                initial_state = env.state.copy()
+                initial_pos = env.ship_pos.copy()
+                new_ship_pos = env.ship_pos.copy()
 
-            action = rng.uniform(-1, 1, size=2).astype(np.float32)
+                action = rng.uniform(-1, 1, size=2).astype(np.float32)
 
-            duration = rng.uniform(low=[dt], high=[horizon_seconds])[0]
-            steps_per_episode = int(duration / dt)
+                duration = rng.uniform(low=[dt], high=[horizon_seconds])[0]
+                steps_per_episode = int(duration / dt)
 
-            # --- Start storing trajectory ---
-            traj = [env.ship_pos.copy()]
+                # --- Start storing trajectory ---
+                traj = [env.ship_pos.copy()]
 
-            for _ in range(steps_per_episode):
+                for _ in range(steps_per_episode):
+                    if env._ship_in_open_water(new_ship_pos) and _ship_interface.getKeelClearance() >= 5.0:
+                        # Update rudder controls based on the turning action.
+                        for rudder in _ship_interface.getRudderControls():
+                            rudder.setControlValue(float(
+                                -1.0 * action[0]))  # this is to compensate for opposite behaviour of the Python environment
+                            # in Python: -1 is turn right ; 1 is turn left
+                            # FH sim: -1 is turn left ; 1 is turn right
+                        # Update propeller controls based on the thrust action.
+                        for propeller in _ship_interface.getPropellerControls():
+                            propeller.setEngineLeverValue(float(action[1]))
+
+                        # Simulate the ship's dynamics for a fixed period.
+                        _math_model.simulateSeconds(dt)
+
+                        # Retrieve the updated ship position from the ship interface.
+                        new_ship_pos = (_ship_interface.getShipPosition().x, _ship_interface.getShipPosition().y)
+                        traj.append(new_ship_pos)
+                    else:
+                        break
+
+                traj = np.array(traj)  # shape (T, 2)
+                trajectories.append(traj)
+
                 if env._ship_in_open_water(new_ship_pos) and _ship_interface.getKeelClearance() >= 5.0:
-                    # Update rudder controls based on the turning action.
-                    for rudder in _ship_interface.getRudderControls():
-                        rudder.setControlValue(float(
-                            -1.0 * action[0]))  # this is to compensate for opposite behaviour of the Python environment
-                        # in Python: -1 is turn right ; 1 is turn left
-                        # FH sim: -1 is turn left ; 1 is turn right
-                    # Update propeller controls based on the thrust action.
-                    for propeller in _ship_interface.getPropellerControls():
-                        propeller.setEngineLeverValue(float(action[1]))
+                    # Calculate delta X and delta Y
+                    delta_x = env.state[0] - initial_pos[0]
+                    delta_y = env.state[1] - initial_pos[1]
 
-                    # Simulate the ship's dynamics for a fixed period.
-                    _math_model.simulateSeconds(dt)
+                    # Create modified final state with delta X and delta Y instead of absolute positions
+                    # Assuming state structure: [x, y, heading, velocity, angular_velocity, ...]
+                    # Replace the first two elements (x, y) with delta_x, delta_y
+                    modified_final_state = env.state.copy()
+                    modified_final_state[0] = delta_x  # Replace x with delta_x
+                    modified_final_state[1] = delta_y  # Replace y with delta_y
 
-                    # Retrieve the updated ship position from the ship interface.
-                    new_ship_pos = (_ship_interface.getShipPosition().x, _ship_interface.getShipPosition().y)
-                    traj.append(new_ship_pos)
-                else:
-                    break
-
-            traj = np.array(traj)  # shape (T, 2)
-            trajectories.append(traj)
-
-            if env._ship_in_open_water(new_ship_pos) and _ship_interface.getKeelClearance() >= 5.0:
-                # Calculate delta X and delta Y
-                delta_x = env.state[0] - initial_pos[0]
-                delta_y = env.state[1] - initial_pos[1]
-
-                # Create modified final state with delta X and delta Y instead of absolute positions
-                # Assuming state structure: [x, y, heading, velocity, angular_velocity, ...]
-                # Replace the first two elements (x, y) with delta_x, delta_y
-                modified_final_state = env.state.copy()
-                modified_final_state[0] = delta_x  # Replace x with delta_x
-                modified_final_state[1] = delta_y  # Replace y with delta_y
-
-                counter += 1
-                X_inputs.append(np.concatenate([initial_state, action], axis=0))
-                Y_outputs.append(modified_final_state)
+                    counter += 1
+                    X_inputs.append(np.concatenate([initial_state, action], axis=0))
+                    Y_outputs.append(modified_final_state)
+            else:
+                print("MathModel initialization failed!")
         except SimException as e:
             print('Simulation failed: ' + e.ToString())
         except Exception as exc:
@@ -203,6 +205,7 @@ def collect_supervised_dataset(
             if not _math_model is None:
                 _math_model.Terminate()
                 _math_model.Dispose()
+
 
     X = np.vstack(X_inputs).astype(np.float32)
     Y = np.vstack(Y_outputs).astype(np.float32)
