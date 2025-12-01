@@ -124,10 +124,13 @@ def collect_supervised_dataset(
             ship_config = exercise.getShipConfig()
 
             start_pos = np.array([x0[n], y0[n]], dtype=np.float32)
+            rng = np.random.default_rng()
 
             x_pos = float(start_pos[0])
             y_pos = float(start_pos[1])
             ship_config.setInitialPosition(x_pos, y_pos)
+            ship_config.setInitialPropellerRps(float(rng.uniform(low=[0.3], high=[5.5])[0]))
+            ship_config.setInitialRudderAngle(float(rng.uniform(low=[-30.0], high=[30.0])[0]))
 
             # Initialize the math model and enable the bridge
             _math_model = MathModel()
@@ -141,7 +144,6 @@ def collect_supervised_dataset(
                 env.initial_ship_pos = start_pos
                 obs, _ = env.reset()
 
-                rng = np.random.default_rng()
                 env.state[-4:] = rng.uniform(low=[-np.pi, 0.0, -2.0, -0.5], high=[np.pi, 5.0, 2.0, 0.5])
 
                 initial_state = env.state.copy()
@@ -150,7 +152,7 @@ def collect_supervised_dataset(
 
                 action = rng.uniform(-1, 1, size=2).astype(np.float32)
 
-                duration = rng.uniform(low=[dt], high=[horizon_seconds])[0]
+                duration = rng.uniform(low=[5.0*dt], high=[horizon_seconds])[0]
                 steps_per_episode = int(duration / dt)
 
                 # --- Start storing trajectory ---
@@ -205,6 +207,14 @@ def collect_supervised_dataset(
             if not _math_model is None:
                 _math_model.Terminate()
                 _math_model.Dispose()
+
+                for item in os.listdir(output_path):
+                    if item == "math_model.log":
+                        continue  # skip this file
+
+                    p = os.path.join(output_path, item)
+                    if os.path.isfile(p):
+                        os.remove(p)
 
 
     X = np.vstack(X_inputs).astype(np.float32)
