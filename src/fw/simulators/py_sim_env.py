@@ -52,8 +52,8 @@ def calculate_perpendicular_lines(checkpoints: List[dict], line_length: float = 
     lines: List[Tuple[np.ndarray, np.ndarray]] = []
     for i, cp in enumerate(checkpoints):
         pos = np.asarray(cp["pos"], dtype=np.float32)
-        tangent = smooth_tangent(checkpoints, i)
-        perp = np.array([-tangent[1], tangent[0]], dtype=np.float32)
+        smth_tangent = smooth_tangent(checkpoints, i)
+        perp = np.array([-smth_tangent[1], smth_tangent[0]], dtype=np.float32)
         offset = perp * (line_length / 2.0)
         lines.append((pos + offset, pos - offset))
     return lines
@@ -151,7 +151,7 @@ class PySimEnv(BaseEnv):
         self._initialize_control_parameters()
 
         # Load environment static data and build checkpoints/polygons
-        self._load_environment_data()
+        self._load_environment_data(target_pos)
 
         # Gym spaces
         self.action_space = gym.spaces.Box(
@@ -228,7 +228,7 @@ class PySimEnv(BaseEnv):
     # -----------------------
     # Environment data loaders
     # -----------------------
-    def _load_environment_data(self) -> None:
+    def _load_environment_data(self, target_pos: np.ndarray) -> None:
         """
         Load static environment CSVs, build checkpoints, polygon shapes, and initialize
         path/target-related state.
@@ -241,15 +241,15 @@ class PySimEnv(BaseEnv):
         base_path = os.path.dirname(os.path.abspath(__file__))
 
         def load_csv_strict(name: str) -> np.ndarray:
-            path = os.path.join(base_path, name)
+            csv_path = os.path.join(base_path, name)
             try:
-                data = np.loadtxt(path, delimiter=",", skiprows=1)
+                data = np.loadtxt(csv_path, delimiter=",", skiprows=1)
             except FileNotFoundError:
-                raise FileNotFoundError(f"Missing required environment file: {path}")
+                raise FileNotFoundError(f"Missing required environment file: {csv_path}")
             except Exception as exc:
-                raise RuntimeError(f"Failed to load {path}: {exc}")
+                raise RuntimeError(f"Failed to load {csv_path}: {exc}")
             if data.ndim != 2 or data.shape[1] != 2:
-                raise ValueError(f"{path} must be a 2D array with shape (N, 2)")
+                raise ValueError(f"{csv_path} must be a 2D array with shape (N, 2)")
             return data
 
         # Load obstacles and overall map shapes
@@ -289,7 +289,7 @@ class PySimEnv(BaseEnv):
         self.checkpoints = [{**cp, "perpendicular_line": line} for cp, line in zip(checkpoints, lines)]
 
         # Navigation and counters
-        self.target_pos = self.checkpoints[-1]["pos"] if self.checkpoints else np.copy(target_pos)
+        self.target_pos = self.checkpoints[-1]["pos"] if self.checkpoints else np.array(target_pos, dtype=np.float32)
         self.checkpoint_index = 1
         self.step_count = 0
         self.stuck_steps = 0
@@ -309,7 +309,7 @@ class PySimEnv(BaseEnv):
     # -----------------------
     # Utility & math helpers
     # -----------------------
-    def sample_point_in_river(self, N: int = 1, max_tries: int = 20000) -> np.ndarray:
+    def sample_point_in_river(self, nbr_samples: int = 1, max_tries: int = 20000) -> np.ndarray:
         """
         Sample N random points INSIDE the river polygon using rejection sampling.
 
@@ -323,7 +323,7 @@ class PySimEnv(BaseEnv):
 
         rng = np.random.default_rng()  # truly random
 
-        while len(samples) < N and tries < max_tries:
+        while len(samples) < nbr_samples and tries < max_tries:
             tries += 1
             x = rng.uniform(minx, maxx)
             y = rng.uniform(miny, maxy)
@@ -331,8 +331,8 @@ class PySimEnv(BaseEnv):
             if self._ship_in_open_water(np.array([x, y])):
                 samples.append((x, y))
 
-        if len(samples) < N:
-            print( f"Warning: Only generated {len(samples)} points out of requested {N} " 
+        if len(samples) < nbr_samples:
+            print( f"Warning: Only generated {len(samples)} points out of requested {nbr_samples} " 
                    f"(polygon may be thin or max_tries reached)." )
 
         return np.array(samples, dtype=np.float32)
@@ -366,7 +366,7 @@ class PySimEnv(BaseEnv):
     def _reduce_path(self, path: np.ndarray, start_pos: np.ndarray) -> np.ndarray:
         """
         Reduce path to start at the point closest to start_pos.
-        Currently a pass-through returning the original path (preserves behavior).
+        Currently, a pass-through returning the original path (preserves behavior).
         """
         # Implementation intentionally left as originally was: returns input path.
         return path
@@ -405,7 +405,7 @@ class PySimEnv(BaseEnv):
     @staticmethod
     def _calculate_heading_error(target_heading: float, current_heading: float, dead_zone_deg: float = 5.0) -> float:
         """
-        Calculate smallest angular error between target and current heading, with a dead zone.
+        Calculate the smallest angular error between target and current heading, with a dead zone.
 
         Args:
             target_heading: desired heading in radians
@@ -953,7 +953,7 @@ class PySimEnv(BaseEnv):
                     manager.window.setGeometry(0, 0, fig_width, fig_height)
                 elif backend == "GTK3Agg" and hasattr(manager, "window"):
                     manager.window.move(0, 0)
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             # Keep behavior identical; do not raise on rendering setup failure
             pass
 
@@ -1003,7 +1003,7 @@ class PySimEnv(BaseEnv):
             self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
 
     def render(self) -> None:
-        """Render environment if render_mode == 'human' (preserve original behavior)."""
+        """Render environment if render_mode == 'human'."""
         if self.render_mode != "human":
             return
 
@@ -1016,13 +1016,18 @@ class PySimEnv(BaseEnv):
             self.fig.canvas.mpl_connect("draw_event", self._on_draw)
             plt.show(block=False)
 
+        canvas = self.fig.canvas
+
+        # --- Helper: safe execution without aborting the simulation ---
+        def _safe(callable_obj):
+            try:
+                callable_obj()
+            except (RuntimeError, AttributeError, TypeError, ValueError):
+                pass
+
         # Restore background for blit optimization when available
         if hasattr(self, "background"):
-            try:
-                self.fig.canvas.restore_region(self.background)
-            except Exception:
-                # fallback to full redraw below if restore_region fails
-                pass
+            _safe(lambda: canvas.restore_region(self.background))
 
         # Update ship and heading graphics
         heading_line_length = 30.0
@@ -1039,24 +1044,17 @@ class PySimEnv(BaseEnv):
                 self.fig.canvas.blit(self.ax.bbox)
             else:
                 self.fig.canvas.draw()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, ValueError):
             # Fallback to safe full redraw
-            try:
-                self.fig.canvas.draw()
-            except Exception:
-                # Don't let rendering errors propagate into simulation logic
-                pass
+            _safe(self.fig.canvas.draw)
 
-        # Flush GUI events if available
-        try:
-            self.fig.canvas.flush_events()
-        except Exception:
-            pass
+        # Flush pending GUI events without breaking the simulation
+        _safe(canvas.flush_events)
 
     def close(self) -> None:
         """Close rendering windows when environment is done."""
-        if self.render_mode == "human":
+        if self.render_mode == "human" and hasattr(self, "fig"):
             try:
-                plt.close()
-            except Exception:
+                plt.close(self.fig)
+            except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass
