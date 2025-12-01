@@ -93,13 +93,15 @@ class FhSimWrapper:
 
             # Initialize the math model and enable the bridge
             self._math_model = MathModel()
-            self._math_model.Initialize(config, exercise)
-            print("Math model initialized!")
-            self._math_model.enableBridge()
+            if self._math_model.Initialize(config, exercise):
+                print("Math model initialized!")
+                self._math_model.enableBridge()
 
-            # Get the ship interface
-            self._ship_interface = self._math_model.getShipInterface(0)
-            self.math_model_initialized = True
+                # Get the ship interface
+                self._ship_interface = self._math_model.getShipInterface(0)
+                self.math_model_initialized = True
+            else:
+                print("Math model initialization failed!")
         except SimException as e:
             self.math_model_initialized = False
             raise RuntimeError(f"{e.ToString()}")
