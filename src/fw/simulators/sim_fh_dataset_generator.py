@@ -218,7 +218,7 @@ def collect_supervised_dataset(
 
         if n > 0 and n % 500 == 0:
             store_data = np.hstack([X_inputs, Y_outputs])  # shape: (N_samples, 8 + 6 = 14)
-            np.savetxt(output_file + f"_{n}", store_data, delimiter=",", fmt="%.6f")
+            np.savetxt(f"ship_dynamics_dataset_{n}.csv", store_data, delimiter=",", fmt="%.6f")
 
     X = np.vstack(X_inputs).astype(np.float32)
     Y = np.vstack(Y_outputs).astype(np.float32)
