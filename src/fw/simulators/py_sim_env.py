@@ -41,7 +41,7 @@ def calculate_perpendicular_lines(checkpoints: List[dict], line_length: float = 
             tangent = check_points[-1]['pos'] - check_points[-2]['pos']
         else:
             # Average forward and backward differences to smooth
-            tangent = (
+            tangent = 0.5 * (
                 check_points[index + 1]['pos'] - check_points[index]['pos'] +
                 check_points[index]['pos'] - check_points[index - 1]['pos']
             )   # Average direction
