@@ -11,7 +11,7 @@ import os
 import argparse
 import numpy as np
 
-from sim_fh_dataset_generator import collect_supervised_dataset
+from sim_fh_dataset_generator import load_supervised_dataset, collect_supervised_dataset
 
 
 # ================================================================
@@ -99,6 +99,8 @@ def main():
             horizon_seconds=args.horizon,
             output_file=args.save,
         )
+
+        # X, Y, nbr_samples = load_supervised_dataset("fh_data.csv")
 
     print(f"Saved dataset to {args.save} ({nbr_samples} samples)")
 
