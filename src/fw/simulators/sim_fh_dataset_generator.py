@@ -86,6 +86,64 @@ def plot_xy_points_and_trajectories(env, xy, trajectories):
     finally:
         plt.close('all')
 
+def load_supervised_dataset(file_name):
+    """
+    Load the supervised dataset from CSV instead of running simulations.
+    The CSV layout is assumed to be:
+
+        col 0:  start_x
+        col 1:  start_y
+        col 2:  heading
+        col 3:  surge
+        col 4:  sway
+        col 5:  yaw
+        col 6:  rudder_action
+        col 7:  thrust_action
+        col 8:  delta_x
+        col 9:  delta_y
+        col10:  out_heading
+        col11:  out_surge
+        col12:  out_sway
+        col13:  out_yaw
+
+    Returns:
+        X, Y, counter
+        (same shapes as collect_supervised_dataset)
+    """
+
+    data = np.loadtxt(file_name, delimiter=",")
+
+    # --- Extract components from the CSV ---
+    xy = data[:, 0:2]                      # (N,2) start positions
+    initial_states = data[:, 2:8]          # (N,6) heading, surge, sway, yaw, rudder_action, thrust_action
+    actions = data[:, 6:8]                 # last 2 of the above
+    Y_outputs = data[:, 8:14]              # (N,6)
+
+    # X = [initial_state(6) + actions(2)] = (N,8)
+    X_inputs = np.hstack([initial_states[:, 0:6], actions])
+
+    X = X_inputs.astype(np.float32)
+    Y = Y_outputs.astype(np.float32)
+    counter = X.shape[0]
+
+    # --- Build dummy trajectories for plotting ---
+    # (the original collect function plots actual dynamic paths,
+    #  but here we only load data, so we plot simple 2-point lines)
+    trajectories = []
+    for i in range(counter):
+        start = xy[i].astype(float)
+        delta = data[i, 8:10].astype(float)
+        end = start + delta
+        traj = np.vstack([start, end])  # guaranteed (2,2)
+        trajectories.append(traj)
+
+    # Use a dummy env with polygon to reuse the plotting function
+    env = PySimEnv(render_mode=None, time_step=0.1, wind=False, current=False)
+    # env.reset()
+    plot_xy_points_and_trajectories(env, xy, trajectories)
+
+    return X, Y, counter
+
 def collect_supervised_dataset(
     N_samples=5000,
     horizon_seconds=3.0,
@@ -114,7 +172,7 @@ def collect_supervised_dataset(
             # Configure the math model
             config = Config(config_path)
             config.SetOutputDir(output_path)
-            config.SetRewindEnabled(True)
+            config.SetRewindEnabled(False)
             config.SetRewindConfig(10000,
                                    5)  # First parameter is the maximum snapshot window in [s], second parameter is the snapshot frequency in [s]
             config.SetMathModelFrequency(10.0)  # Math model frequency in Hz
@@ -144,12 +202,18 @@ def collect_supervised_dataset(
                 env.initial_ship_pos = start_pos
                 obs, _ = env.reset()
 
-                env.state[-4:] = rng.uniform(low=[-np.pi, 0.0, -2.0, -0.5], high=[np.pi, 5.0, 2.0, 0.5])
+                initial_pos = env.ship_pos.copy()
+                initial_velocity_over_ground = _ship_interface.getShipVelocityOverGround()
 
                 initial_state = env.state.copy()
-                initial_pos = env.ship_pos.copy()
-                new_ship_pos = env.ship_pos.copy()
+                initial_state[0] = initial_pos[0]
+                initial_state[1] = initial_pos[1]
+                initial_state[2] = np.radians(_ship_interface.getShipHeading())
+                initial_state[3] = initial_velocity_over_ground.x
+                initial_state[4] = initial_velocity_over_ground.y
+                initial_state[5] = _ship_interface.getShipYawRate()
 
+                new_ship_pos = env.ship_pos.copy()
                 action = rng.uniform(-1, 1, size=2).astype(np.float32)
 
                 duration = rng.uniform(low=[5.0*dt], high=[horizon_seconds])[0]
@@ -184,15 +248,17 @@ def collect_supervised_dataset(
 
                 if env._ship_in_open_water(new_ship_pos) and _ship_interface.getKeelClearance() >= 5.0:
                     # Calculate delta X and delta Y
-                    delta_x = env.state[0] - initial_pos[0]
-                    delta_y = env.state[1] - initial_pos[1]
+                    delta_x = _ship_interface.getShipPosition().x - initial_pos[0]
+                    delta_y = _ship_interface.getShipPosition().y - initial_pos[1]
+                    velocity_over_ground = _ship_interface.getShipVelocityOverGround()
 
-                    # Create modified final state with delta X and delta Y instead of absolute positions
-                    # Assuming state structure: [x, y, heading, velocity, angular_velocity, ...]
-                    # Replace the first two elements (x, y) with delta_x, delta_y
                     modified_final_state = env.state.copy()
                     modified_final_state[0] = delta_x  # Replace x with delta_x
                     modified_final_state[1] = delta_y  # Replace y with delta_y
+                    modified_final_state[2] = np.radians(_ship_interface.getShipHeading())
+                    modified_final_state[3] = velocity_over_ground.x
+                    modified_final_state[4] = velocity_over_ground.y
+                    modified_final_state[5] = _ship_interface.getShipYawRate()
 
                     counter += 1
                     X_inputs.append(np.concatenate([initial_state, action], axis=0))
@@ -216,9 +282,9 @@ def collect_supervised_dataset(
                     if os.path.isfile(p):
                         os.remove(p)
 
-        if n > 0 and n % 500 == 0:
+        if n > 0 and n % 200 == 0:
             store_data = np.hstack([X_inputs, Y_outputs])  # shape: (N_samples, 8 + 6 = 14)
-            np.savetxt(f"ship_dynamics_dataset_{n}.csv", store_data, delimiter=",", fmt="%.6f")
+            np.savetxt(f"data/ship_dynamics_dataset_{n}.csv", store_data, delimiter=",", fmt="%.6f")
 
     X = np.vstack(X_inputs).astype(np.float32)
     Y = np.vstack(Y_outputs).astype(np.float32)
