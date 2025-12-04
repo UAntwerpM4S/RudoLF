@@ -1,8 +1,37 @@
 import os
 import sys
+import time
+import shutil
 import logging
+import traceback
+import concurrent
 import numpy as np
-import matplotlib.pyplot as plt
+import multiprocessing
+
+from pathlib import Path
+from functools import partial
+from typing import Optional, Tuple
+from matplotlib import pyplot as plt
+from dataclasses import dataclass, field
+from fw.simulators.py_sim_env import PySimEnv
+from concurrent.futures import ThreadPoolExecutor
+
+# Constants for magic numbers
+DEFAULT_MATH_MODEL_FREQUENCY = 10.0  # Hz
+MIN_KEEL_CLEARANCE = 2.0
+TIMEOUT_SECONDS = 60.0
+
+# Try to import simulation modules early
+SIM_AVAILABLE = False
+Config = Exercise = MathModel = SimException = None
+
+try:
+    from sim import Config, Exercise, MathModel, SimException
+
+    SIM_AVAILABLE = True
+except ImportError:
+    # Will be imported later with sys.path modification
+    pass
 
 try:
     simexe_path = os.environ['SIMEXE_REPO_FOLDER']
@@ -14,27 +43,58 @@ try:
 except OSError:
     user_login = ""
 
-# Configure logging
+# Configure global logging
 try:
-    logfile = os.path.join('C:/Users', user_login, 'Desktop', 'testExercise', 'results', 'math_model.log')
-    logging.basicConfig(filename=logfile, level=logging.INFO, format='%(levelname)s: %(message)s')
-except FileNotFoundError:
+    logfile = Path('C:/Users') / user_login / 'Desktop' / 'testExercise' / 'results' / 'math_model.log'
+    logging.basicConfig(filename=str(logfile), level=logging.INFO, format='%(levelname)s: %(message)s')
+except (FileNotFoundError, OSError):
     logfile = None
 
-library_path = os.path.join(simexe_path, 'exe/installed')
-config_path = os.path.join(simexe_path, 'config/simXdrive.config.xml')
-exercise_path = os.path.join(simexe_path, 'database/areas/ScheldeSaeftinge_23_002/invoer/tra/DDShip_scenario2_windnocurrent.tab')
-output_path = os.path.join('C:/Users', user_login, 'Desktop', 'testExercise', 'results')
-sys.path.append(library_path)
 
-logfile = os.path.join(output_path, 'math_model.log')
-logging.basicConfig(filename=logfile, level=logging.INFO, format='%(levelname)s: %(message)s')
-
-from py_sim_env import PySimEnv
-from sim import Config, Exercise, MathModel, SimException
+@dataclass
+class SimConfig:
+    """Configuration for simulation environment."""
+    lib_path: str = ""
+    config_path: str = ""
+    timeout_seconds: float = TIMEOUT_SECONDS
 
 
-def plot_xy_points_and_trajectories(env, xy, trajectories):
+@dataclass
+class SimOutput:
+    """Container for simulation results."""
+    status: str = ""
+    time_seconds: float = 0.0
+    x_input: Optional[np.ndarray] = None
+    y_output: Optional[np.ndarray] = None
+    trajectory: Optional[np.ndarray] = None
+    info: Optional[dict] = field(default_factory=dict)
+
+
+@dataclass
+class SimSetup:
+    """Setup parameters for individual simulation run."""
+    exercise_path: str = ""
+    output_path: str = ""
+    x_pos: float = 0.0
+    y_pos: float = 0.0
+    dt: float = 0.1
+    horizon_seconds: float = 3.0
+    output: SimOutput = field(default_factory=SimOutput)
+
+
+def plot_xy_points_and_trajectories(env: PySimEnv, xy: np.ndarray, trajectories: list) -> None:
+    """
+    Plot river polygon with start points and trajectories.
+
+    Assumes env has:
+    - polygon_shape attribute with exterior.xy
+    - checkpoints attribute (optional)
+
+    Args:
+        env: PySimEnv instance with river polygon
+        xy: Array of start positions (N, 2)
+        trajectories: List of trajectory arrays
+    """
     try:
         fig, ax = plt.subplots(figsize=(10, 10))
 
@@ -62,7 +122,7 @@ def plot_xy_points_and_trajectories(env, xy, trajectories):
                 linestyle="-",
                 linewidth=1.0,
                 alpha=0.35,
-                color="green",       # ← VERY DIFFERENT COLOR
+                color="green",
             )
 
         # --- Optional checkpoints ---
@@ -86,11 +146,12 @@ def plot_xy_points_and_trajectories(env, xy, trajectories):
     finally:
         plt.close('all')
 
-def load_supervised_dataset(file_name):
+
+def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int]:
     """
     Load the supervised dataset from CSV instead of running simulations.
-    The CSV layout is assumed to be:
 
+    The CSV layout is assumed to be:
         col 0:  start_x
         col 1:  start_y
         col 2:  heading
@@ -107,206 +168,355 @@ def load_supervised_dataset(file_name):
         col13:  out_yaw
 
     Returns:
-        X, Y, counter
-        (same shapes as collect_supervised_dataset)
+        Tuple of (x_inputs, y_outputs, counter)
     """
-
     data = np.loadtxt(file_name, delimiter=",")
 
     # --- Extract components from the CSV ---
-    xy = data[:, 0:2]                      # (N,2) start positions
-    initial_states = data[:, 2:8]          # (N,6) heading, surge, sway, yaw, rudder_action, thrust_action
-    actions = data[:, 6:8]                 # last 2 of the above
-    Y_outputs = data[:, 8:14]              # (N,6)
+    xy = data[:, 0:2]  # (N,2) start positions
+    initial_states = data[:, 2:8]  # (N,6) heading, surge, sway, yaw, rudder_action, thrust_action
+    actions = data[:, 6:8]  # last 2 of the above
+    y_outputs = data[:, 8:14]  # (N,6)
 
     # X = [initial_state(6) + actions(2)] = (N,8)
-    X_inputs = np.hstack([initial_states[:, 0:6], actions])
+    x_inputs = np.hstack([initial_states[:, 0:6], actions])
 
-    X = X_inputs.astype(np.float32)
-    Y = Y_outputs.astype(np.float32)
-    counter = X.shape[0]
+    x_values = x_inputs.astype(np.float32)
+    y_values = y_outputs.astype(np.float32)
+    counter = x_values.shape[0]
 
     # --- Build dummy trajectories for plotting ---
-    # (the original collect function plots actual dynamic paths,
-    #  but here we only load data, so we plot simple 2-point lines)
     trajectories = []
     for i in range(counter):
         start = xy[i].astype(float)
         delta = data[i, 8:10].astype(float)
         end = start + delta
-        traj = np.vstack([start, end])  # guaranteed (2,2)
-        trajectories.append(traj)
+        trajectories.append(np.vstack([start, end]))
 
     # Use a dummy env with polygon to reuse the plotting function
     env = PySimEnv(render_mode=None, time_step=0.1, wind=False, current=False)
-    # env.reset()
     plot_xy_points_and_trajectories(env, xy, trajectories)
 
-    return X, Y, counter
+    return x_values, y_values, counter
+
+
+def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
+    """
+    Run a single simulation with given configuration and setup.
+
+    Note: Each simulation runs in its own subprocess to avoid
+    simulator concurrency issues.
+    """
+    # Import simulation modules if not already available
+    if not SIM_AVAILABLE:
+        sys.path.append(sim_config.lib_path)
+        from sim import Config, Exercise, MathModel, SimException
+
+    output_path = Path(sim_setup.output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    logfile_path = output_path / 'math_model.log'
+    logging.basicConfig(filename=str(logfile_path), level=logging.INFO,
+                        format='%(levelname)s: %(message)s')
+
+    env = PySimEnv(render_mode=None, time_step=sim_setup.dt, wind=False, current=False)
+
+    sim_setup.output.status = "PASSED"
+    sim_setup.output.time_seconds = -1.0
+
+    time_started = time.time()
+
+    _math_model = None
+    _ship_interface = None
+
+    try:
+        # Configure the math model
+        config = Config(sim_config.config_path)
+        config.SetOutputDir(str(sim_setup.output_path))
+        config.SetRewindEnabled(False)
+        config.SetMathModelFrequency(DEFAULT_MATH_MODEL_FREQUENCY)
+        config.ClearConnections()
+
+        exercise = Exercise(sim_setup.exercise_path, config)
+        ship_config = exercise.getShipConfig()
+        rng = np.random.default_rng()
+
+        ship_config.setInitialPosition(sim_setup.x_pos, sim_setup.y_pos)
+        ship_config.setInitialPropellerRps(rng.uniform(low=[0.3], high=[5.5])[0])
+        ship_config.setInitialRudderAngle(rng.uniform(low=[-30.0], high=[30.0])[0])
+
+        # Initialize the math model and enable the bridge
+        _math_model = MathModel()
+        if not _math_model.Initialize(config, exercise):
+            error_msg = "MathModel initialization failed!"
+            print(error_msg)
+            sim_setup.output.status = "FAILED"
+            sim_setup.output.info['error'] = error_msg
+            return sim_setup
+
+        pos_info = f"[{sim_setup.x_pos:10.3f} {sim_setup.y_pos:10.3f}]"
+        print(f"Math model initialized! Starting simulation at {pos_info}")
+
+        _math_model.enableBridge()
+        _math_model.simulateSeconds(0.125)  # initialize velocities (surge, sway, yaw)
+
+        # Get the ship interface
+        _ship_interface = _math_model.getShipInterface(0)
+        initial_velocity_over_ground = _ship_interface.getShipVelocityOverGround()
+
+        initial_state = np.array([
+            sim_setup.x_pos,
+            sim_setup.y_pos,
+            np.radians(_ship_interface.getShipHeading()),
+            initial_velocity_over_ground.x,
+            initial_velocity_over_ground.y,
+            _ship_interface.getShipYawRate()
+        ], dtype=float)
+
+        action = rng.uniform(-1, 1, size=2).astype(np.float32)
+        duration = rng.uniform(low=[5.0 * sim_setup.dt], high=[sim_setup.horizon_seconds])[0]
+        steps_per_episode = int(duration / sim_setup.dt)
+
+        # --- Start storing trajectory ---
+        new_ship_pos = np.array([sim_setup.x_pos, sim_setup.y_pos], dtype=np.float32)
+        traj = [new_ship_pos.copy()]
+
+        for _ in range(steps_per_episode):
+            if env._ship_in_open_water(new_ship_pos) and _ship_interface.getKeelClearance() >= MIN_KEEL_CLEARANCE:
+                # Update rudder controls based on the turning action
+                for rudder in _ship_interface.getRudderControls():
+                    # Compensate for opposite behaviour between Python env and FH sim
+                    rudder.setControlValue(float(-1.0 * action[0]))
+
+                # Update propeller controls based on the thrust action
+                for propeller in _ship_interface.getPropellerControls():
+                    propeller.setEngineLeverValue(float(action[1]))
+
+                # Simulate the ship's dynamics for a fixed period
+                _math_model.simulateSeconds(sim_setup.dt)
+
+                # Retrieve the updated ship position
+                new_ship_pos = np.array([
+                    _ship_interface.getShipPosition().x,
+                    _ship_interface.getShipPosition().y
+                ], dtype=np.float32)
+                traj.append(new_ship_pos.copy())
+            else:
+                break
+
+        sim_setup.output.trajectory = np.array(traj)  # shape (T, 2)
+
+        if not env._ship_in_open_water(new_ship_pos) or _ship_interface.getKeelClearance() < 1.0:
+            error_msg = "Ship not in open water!"
+            sim_setup.output.status = "FAILED"
+            sim_setup.output.info['error'] = error_msg
+            return sim_setup
+
+        # Calculate delta X and delta Y
+        delta_x = _ship_interface.getShipPosition().x - sim_setup.x_pos
+        delta_y = _ship_interface.getShipPosition().y - sim_setup.y_pos
+        velocity_over_ground = _ship_interface.getShipVelocityOverGround()
+
+        final_state = np.array([
+            delta_x,
+            delta_y,
+            np.radians(_ship_interface.getShipHeading()),
+            velocity_over_ground.x,
+            velocity_over_ground.y,
+            _ship_interface.getShipYawRate(),
+        ], dtype=float)
+
+        sim_setup.output.x_input = np.concatenate([initial_state, action], axis=0)
+        sim_setup.output.y_output = final_state
+
+    except (SimException, Exception) as e:
+        error_msg = f"Simulation failed: {e}"
+        print(error_msg)
+        tb = traceback.extract_tb(e.__traceback__)
+        if tb:
+            filename, line_number, function_name, text = tb[-1]
+            traceback_info = f"Exception occurred at {filename}, line {line_number} in {function_name}"
+        else:
+            traceback_info = "No traceback available"
+
+        sim_setup.output.status = "FAILED"
+        sim_setup.output.info['message'] = str(error_msg)
+        sim_setup.output.info['exception_type'] = type(e).__name__
+        sim_setup.output.info['traceback'] = traceback_info
+
+    finally:
+        if _math_model is not None:
+            _math_model.Terminate()
+            _math_model.Dispose()
+
+            # Clean up output files (keep math_model.log)
+            for item in os.listdir(sim_setup.output_path):
+                if item == "math_model.log":
+                    continue
+                item_path = Path(sim_setup.output_path) / item
+                if item_path.is_file():
+                    item_path.unlink()
+
+    sim_setup.output.time_seconds = time.time() - time_started
+    return sim_setup
+
+
+def run_in_process(sim_setup: SimSetup, sim_config: SimConfig) -> SimSetup:
+    """
+    Run simulation in a separate subprocess.
+
+    Note: Each simulation runs in its own process to avoid
+    simulator concurrency issues. This is intentional.
+    """
+    p = multiprocessing.Pool(1)
+    res = p.apply_async(run_simulation, args=[sim_config, sim_setup])
+
+    try:
+        return res.get(sim_config.timeout_seconds)
+    except multiprocessing.TimeoutError:
+        print("Aborting due to timeout")
+        p.terminate()
+        sim_setup.output.status = "TIMEOUT"
+        sim_setup.output.time = sim_config.timeout_seconds
+        return sim_setup
+    finally:
+        p.close()
+        p.join()
+
 
 def collect_supervised_dataset(
-    N_samples=5000,
-    horizon_seconds=3.0,
-    dt=0.1,
-    output_file="ship_dynamics_dataset.csv"
-):
+        nbr_samples: int = 5000,
+        horizon_seconds: float = 3.0,
+        dt: float = 0.1,
+        workers: int = 4,
+        output_file: str = "ship_dynamics_dataset.csv",
+) -> Tuple[np.ndarray, np.ndarray, int]:
+    """
+    Collect supervised dataset by running multiple simulations.
+
+    Args:
+        nbr_samples: Number of samples to generate
+        horizon_seconds: Maximum simulation time
+        dt: Time step for simulation
+        workers: Number of worker threads (for compatibility, but simulations run sequentially)
+        output_file: Output CSV file path
+
+    Returns:
+        Tuple of (x_inputs, y_outputs, successful_count)
+    """
+    # Input validation
+    if nbr_samples <= 0:
+        raise ValueError("nbr_samples must be positive")
+    if dt <= 0:
+        raise ValueError("dt must be positive")
+    if horizon_seconds <= 0:
+        raise ValueError("horizon_seconds must be positive")
+
+    # Create SimConfig with default values (will be updated below)
+    sim_config = SimConfig()
+    sim_config.lib_path = str(Path(simexe_path) / 'exe' / 'installed')
+    sim_config.config_path = str(Path(simexe_path) / 'config' / 'simXdrive.config.xml')
+    sim_config.timeout_seconds = TIMEOUT_SECONDS
+
+    output_path = Path('C:/Users') / user_login / 'Desktop' / 'testExercise' / 'results'
+
+    # Clear output folder
+    shutil.rmtree(output_path, ignore_errors=True)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    exercise_path = Path(
+        simexe_path) / 'database' / 'areas' / 'ScheldeSaeftinge_23_002' / 'invoer' / 'tra' / 'DDShip_scenario2_windnocurrent.tab'
+
+    # Create array of SimSetup test items
     env = PySimEnv(render_mode=None, time_step=dt, wind=False, current=False)
-    env.time_step = dt
 
-    X_inputs = []
-    Y_outputs = []
+    setups = []
+    x_inputs = []
+    y_outputs = []
 
-    xy = env.sample_point_in_river(N_samples)
+    xy = env.sample_point_in_river(nbr_samples)
     x0 = xy[:, 0]
     y0 = xy[:, 1]
 
-    N_samples = len(xy)
+    nbr_samples = len(xy)
     trajectories = []
     counter = 0
 
-    for n in range(N_samples):
-        _math_model = None
-        _ship_interface = None
+    for i in range(nbr_samples):
+        setup = SimSetup(
+            exercise_path=str(exercise_path),
+            output_path=str(output_path / str(i)),
+            x_pos=float(x0[i]),
+            y_pos=float(y0[i]),
+            dt=dt,
+            horizon_seconds=horizon_seconds,
+            output=SimOutput(status="", time_seconds=0.0)
+        )
+        setups.append(setup)
 
-        try:
-            # Configure the math model
-            config = Config(config_path)
-            config.SetOutputDir(output_path)
-            config.SetRewindEnabled(False)
-            config.SetRewindConfig(10000,
-                                   5)  # First parameter is the maximum snapshot window in [s], second parameter is the snapshot frequency in [s]
-            config.SetMathModelFrequency(10.0)  # Math model frequency in Hz
-            config.ClearConnections()
+    # Setup thread pool for parallel test execution
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        # Prepare test execution function with fixed math_model_path parameter
+        execute_with_param = partial(run_in_process, sim_config=sim_config)
 
-            exercise = Exercise(exercise_path, config)
-            ship_config = exercise.getShipConfig()
+        # Submit all tasks to the executor
+        future_to_test = {
+            executor.submit(execute_with_param, setup): (i, setup)
+            for i, setup in enumerate(setups)
+        }
 
-            start_pos = np.array([x0[n], y0[n]], dtype=np.float32)
-            rng = np.random.default_rng()
+        # Process results as they complete
+        for future in concurrent.futures.as_completed(future_to_test):
+            try:
+                # Get the completed test result
+                sim_setup = future.result()
+                test_item = future_to_test[future]
+                index, _ = test_item
 
-            x_pos = float(start_pos[0])
-            y_pos = float(start_pos[1])
-            ship_config.setInitialPosition(x_pos, y_pos)
-            ship_config.setInitialPropellerRps(float(rng.uniform(low=[0.3], high=[5.5])[0]))
-            ship_config.setInitialRudderAngle(float(rng.uniform(low=[-30.0], high=[30.0])[0]))
-
-            # Initialize the math model and enable the bridge
-            _math_model = MathModel()
-            if _math_model.Initialize(config, exercise):
-                print(f"Math model initialized!  --  starting simulation at {start_pos}")
-                _math_model.enableBridge()
-
-                # Get the ship interface
-                _ship_interface = _math_model.getShipInterface(0)
-
-                env.initial_ship_pos = start_pos
-                obs, _ = env.reset()
-
-                initial_pos = env.ship_pos.copy()
-                initial_velocity_over_ground = _ship_interface.getShipVelocityOverGround()
-
-                initial_state = env.state.copy()
-                initial_state[0] = initial_pos[0]
-                initial_state[1] = initial_pos[1]
-                initial_state[2] = np.radians(_ship_interface.getShipHeading())
-                initial_state[3] = initial_velocity_over_ground.x
-                initial_state[4] = initial_velocity_over_ground.y
-                initial_state[5] = _ship_interface.getShipYawRate()
-
-                new_ship_pos = env.ship_pos.copy()
-                action = rng.uniform(-1, 1, size=2).astype(np.float32)
-
-                duration = rng.uniform(low=[5.0*dt], high=[horizon_seconds])[0]
-                steps_per_episode = int(duration / dt)
-
-                # --- Start storing trajectory ---
-                traj = [env.ship_pos.copy()]
-
-                for _ in range(steps_per_episode):
-                    if env._ship_in_open_water(new_ship_pos) and _ship_interface.getKeelClearance() >= 5.0:
-                        # Update rudder controls based on the turning action.
-                        for rudder in _ship_interface.getRudderControls():
-                            rudder.setControlValue(float(
-                                -1.0 * action[0]))  # this is to compensate for opposite behaviour of the Python environment
-                            # in Python: -1 is turn right ; 1 is turn left
-                            # FH sim: -1 is turn left ; 1 is turn right
-                        # Update propeller controls based on the thrust action.
-                        for propeller in _ship_interface.getPropellerControls():
-                            propeller.setEngineLeverValue(float(action[1]))
-
-                        # Simulate the ship's dynamics for a fixed period.
-                        _math_model.simulateSeconds(dt)
-
-                        # Retrieve the updated ship position from the ship interface.
-                        new_ship_pos = (_ship_interface.getShipPosition().x, _ship_interface.getShipPosition().y)
-                        traj.append(new_ship_pos)
-                    else:
-                        break
-
-                traj = np.array(traj)  # shape (T, 2)
-                trajectories.append(traj)
-
-                if env._ship_in_open_water(new_ship_pos) and _ship_interface.getKeelClearance() >= 5.0:
-                    # Calculate delta X and delta Y
-                    delta_x = _ship_interface.getShipPosition().x - initial_pos[0]
-                    delta_y = _ship_interface.getShipPosition().y - initial_pos[1]
-                    velocity_over_ground = _ship_interface.getShipVelocityOverGround()
-
-                    modified_final_state = env.state.copy()
-                    modified_final_state[0] = delta_x  # Replace x with delta_x
-                    modified_final_state[1] = delta_y  # Replace y with delta_y
-                    modified_final_state[2] = np.radians(_ship_interface.getShipHeading())
-                    modified_final_state[3] = velocity_over_ground.x
-                    modified_final_state[4] = velocity_over_ground.y
-                    modified_final_state[5] = _ship_interface.getShipYawRate()
-
+                if sim_setup.output.status == "PASSED":
+                    # Update test config with results
+                    x_inputs.append(sim_setup.output.x_input)
+                    y_outputs.append(sim_setup.output.y_output)
+                    trajectories.append(sim_setup.output.trajectory)
+                    print(f"Simulation {index} succeeded: {sim_setup.output.status}")
                     counter += 1
-                    X_inputs.append(np.concatenate([initial_state, action], axis=0))
-                    Y_outputs.append(modified_final_state)
-            else:
-                print("MathModel initialization failed!")
-        except SimException as e:
-            print('Simulation failed: ' + e.ToString())
-        except Exception as exc:
-            print(f'Simulation failed: {exc}')
-        finally:
-            if not _math_model is None:
-                _math_model.Terminate()
-                _math_model.Dispose()
+                else:
+                    error_info = sim_setup.output.info.get('error', 'Unknown error')
+                    print(f"Simulation {index} failed: {error_info}")
+            except Exception as exc:
+                print(f"Simulation {index} generated an exception: {exc}")
 
-                for item in os.listdir(output_path):
-                    if item == "math_model.log":
-                        continue  # skip this file
+    print(f"Successful simulations: {counter}")
 
-                    p = os.path.join(output_path, item)
-                    if os.path.isfile(p):
-                        os.remove(p)
+    if counter == 0:
+        print("Warning: No successful simulations!")
+        return np.array([]), np.array([]), 0
 
-        if n > 0 and n % 200 == 0:
-            store_data = np.hstack([X_inputs, Y_outputs])  # shape: (N_samples, 8 + 6 = 14)
-            np.savetxt(f"data/ship_dynamics_dataset_{n}.csv", store_data, delimiter=",", fmt="%.6f")
+    x_values = np.vstack(x_inputs).astype(np.float32)
+    y_values = np.vstack(y_outputs).astype(np.float32)
 
-    X = np.vstack(X_inputs).astype(np.float32)
-    Y = np.vstack(Y_outputs).astype(np.float32)
-
-    store_data = np.hstack([X_inputs, Y_outputs])  # shape: (N_samples, 8 + 6 = 14)
+    store_data = np.hstack([x_values, y_values])  # shape: (nbr_samples, 8 + 6 = 14)
     np.savetxt(output_file, store_data, delimiter=",", fmt="%.6f")
-
     plot_xy_points_and_trajectories(env, xy, trajectories)
 
-    return X, Y, counter
+    return x_values, y_values, counter
 
 
 # Example: Generate dataset
 if __name__ == "__main__":
-    X, Y, _ = collect_supervised_dataset(
-        N_samples=10000,
+    x_vals, y_vals, successful_count = collect_supervised_dataset(
+        nbr_samples=10000,
         horizon_seconds=5.0,
         dt=0.1,
+        workers=max(1, multiprocessing.cpu_count() - 1)
     )
 
+    print(f"Dataset generation complete. Successful samples: {successful_count}")
     print("Dataset shapes:")
-    print("X:", X.shape)  # [N, 8] → (state(6) + action(2))
-    print("Y:", Y.shape)  # [N, 6] → final state
-    np.save("ship_dynamics_inputs.npy", X)
-    np.save("ship_dynamics_outputs.npy", Y)
+    print(f"X: {x_vals.shape}")  # [N, 8] → (state(6) + action(2))
+    print(f"Y: {y_vals.shape}")  # [N, 6] → final state
+
+    if successful_count > 0:
+        np.save("ship_dynamics_inputs.npy", x_vals)
+        np.save("ship_dynamics_outputs.npy", y_vals)
+        print("Dataset saved to ship_dynamics_inputs.npy and ship_dynamics_outputs.npy")
