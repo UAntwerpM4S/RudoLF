@@ -95,7 +95,7 @@ def main():
         print(f"[One_step] Generating {args.samples} samples (max. horizon={args.horizon}s)...")
 
         X, Y, nbr_samples = collect_supervised_dataset(
-            N_samples=args.samples,
+            nbr_samples=args.samples,
             horizon_seconds=args.horizon,
             output_file=args.save,
         )
