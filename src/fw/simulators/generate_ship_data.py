@@ -59,7 +59,7 @@ def main():
 
     parser.add_argument("--horizon",
                         type=float,
-                        default=3.0,
+                        default=5.0,
                         help="Rollout duration (seconds)")
 
     parser.add_argument("--save",
@@ -92,7 +92,7 @@ def main():
     nbr_samples = 0
 
     if args.mode == "one_step":
-        print(f"[One_step] Generating {args.samples} samples (max. horizon={args.horizon}s)...")
+        print(f"[one_step] Generating {args.samples} samples (max. horizon={args.horizon}s)...")
 
         X, Y, nbr_samples = collect_supervised_dataset(
             nbr_samples=args.samples,

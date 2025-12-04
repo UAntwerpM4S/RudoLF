@@ -275,7 +275,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
 
         action = rng.uniform(-1, 1, size=2).astype(np.float32)
         duration = rng.uniform(low=[5.0 * sim_setup.dt], high=[sim_setup.horizon_seconds])[0]
-        steps_per_episode = int(duration / sim_setup.dt)
+        steps_per_episode = max(1, int(duration / sim_setup.dt))
 
         # --- Start storing trajectory ---
         new_ship_pos = np.array([sim_setup.x_pos, sim_setup.y_pos], dtype=np.float32)
