@@ -415,25 +415,20 @@ class PySimEnv(BaseEnv):
         """
         # Base observations
         base_low=np.array([
-            self.MIN_GRID_POS,          # Ship position x
-            self.MIN_GRID_POS,          # Ship position y
-            -np.pi,                     # Ship heading
             self.MIN_SURGE_VELOCITY,    # Surge velocity
             self.MIN_SWAY_VELOCITY,     # Sway velocity
             self.MIN_YAW_RATE,          # Yaw rate
             0.0,                        # Distance to current checkpoint
             0.0,                        # Distance to checkpoint+1
             0.0,                        # Distance to checkpoint+2
-            0.0,                        # Cross-track error
+            -self.MAX_GRID_POS,         # Cross-track error
             -np.pi,                     # Heading error
-            -1.0,                       # Rudder angle
-            -1.0,                       # Thrust
+            -np.pi,                     # Heading error
+            -np.pi,                     # Heading error
+            -np.pi,                     # Heading error
         ], dtype=np.float32)
 
         base_high=np.array([
-            self.MAX_GRID_POS,          # Ship position x
-            self.MAX_GRID_POS,          # Ship position y
-            np.pi,                      # Ship heading
             self.MAX_SURGE_VELOCITY,    # Surge velocity
             self.MAX_SWAY_VELOCITY,     # Sway velocity
             self.MAX_YAW_RATE,          # Yaw rate
@@ -442,8 +437,9 @@ class PySimEnv(BaseEnv):
             self.MAX_GRID_POS,          # Distance to checkpoint+2
             self.MAX_GRID_POS,          # Cross-track error
             np.pi,                      # Heading error
-            1.0,                        # Rudder angle
-            1.0,                        # Thrust
+            np.pi,                      # Heading error
+            np.pi,                      # Heading error
+            np.pi,                      # Heading error
         ], dtype=np.float32)
 
         # Add wind/current if enabled
@@ -604,9 +600,6 @@ class PySimEnv(BaseEnv):
             - Current control actions
             - Optional wind/current observations
         """
-        # Normalize positions
-        norm_pos = self._normalize(self.ship_pos, self.MIN_GRID_POS, self.MAX_GRID_POS)
-
         # Normalize velocities
         norm_velocities = np.array([
             np.clip(self.state[3] / self.MAX_SURGE_VELOCITY, -1, 1),
@@ -634,22 +627,41 @@ class PySimEnv(BaseEnv):
         cross_track_error = self._distance_from_point_to_line(
             self.ship_pos, prev_checkpoint_pos, current_checkpoint_pos)
         norm_cross_error = cross_track_error / (self.CHECKPOINTS_DISTANCE / 2)
+        cross = (current_checkpoint_pos[0] - prev_checkpoint_pos[0]) * (self.ship_pos[1] - prev_checkpoint_pos[1]) - (current_checkpoint_pos[1] - prev_checkpoint_pos[1]) * (self.ship_pos[0] - prev_checkpoint_pos[0])
+        norm_cross_error = norm_cross_error if cross >= 0.0 else -1.0 * norm_cross_error
 
         # Heading error
         direction_to_checkpoint = current_checkpoint_pos - self.ship_pos
         desired_heading = np.arctan2(direction_to_checkpoint[1], direction_to_checkpoint[0])
         heading_error = (desired_heading - self.state[2] + np.pi) % (2 * np.pi) - np.pi
 
+        direction_parallel_to_checkpoint = current_checkpoint_pos - prev_checkpoint_pos
+        desired_heading_parallel = np.arctan2(direction_parallel_to_checkpoint[1], direction_parallel_to_checkpoint[0])
+        heading_error_parallel = (desired_heading_parallel - self.state[2] + np.pi) % (2 * np.pi) - np.pi
+
+        try:
+            next_checkpoint_pos = self.checkpoints[checkpoint_idx+1]['pos']
+            direction_to_checkpoint2 = next_checkpoint_pos - self.ship_pos
+            desired_heading2 = np.arctan2(direction_to_checkpoint2[1], direction_to_checkpoint2[0])
+            heading_error2 = (desired_heading2 - self.state[2] + np.pi) % (2 * np.pi) - np.pi
+
+            direction_parallel_to_checkpoint2 = next_checkpoint_pos - current_checkpoint_pos
+            desired_heading_parallel2 = np.arctan2(direction_parallel_to_checkpoint2[1], direction_parallel_to_checkpoint2[0])
+            heading_error_parallel2 = (desired_heading_parallel2 - self.state[2] + np.pi) % (2 * np.pi) - np.pi
+        except (IndexError, KeyError, TypeError, ValueError):
+            heading_error2 = 0.0
+            heading_error_parallel2 = 0.0
+
         # Build observation
         obs = np.hstack([
-            norm_pos,                               # Normalized position
-            [self.state[2] / np.pi],                # Normalized heading
             norm_velocities,                        # Normalized velocities
             [norm_distance],                        # Distance to current checkpoint
             norm_next_distances,                    # Distances to next checkpoints
             [norm_cross_error],                     # Normalized cross-track error
             [heading_error / np.pi],                # Normalized heading error
-            self.current_action,                    # Current action
+            [heading_error2 / np.pi],               # Normalized heading error
+            [heading_error_parallel / np.pi],       # Normalized heading error
+            [heading_error_parallel2 / np.pi],      # Normalized heading error
         ])
 
         # Add environmental observations if enabled
@@ -795,9 +807,9 @@ class PySimEnv(BaseEnv):
         """Calculate perpendicular distance from point to line segment.
 
         Args:
-            point: Point coordinates [x,y]
-            line_seg_start: Line segment start point [x,y]
-            line_seg_end: Line segment end point [x,y]
+            point_tuple: Point coordinates [x,y]
+            line_seg_start_tuple: Line segment start point [x,y]
+            line_seg_end_tuple: Line segment end point [x,y]
 
         Returns:
             float: Perpendicular distance from point to line
@@ -874,33 +886,22 @@ class PySimEnv(BaseEnv):
         proj_now = np.dot(rel_now, path_unit)
 
         # Normalized forward progress (clipped)
-        progress_ratio = np.clip((proj_now - proj_prev) / path_length, -2.0, 2.0)
-        forward_reward = self.REWARD_DISTANCE_SCALE * np.tanh(progress_ratio)
-
-        # Velocity alignment with path
-        velocity = self.ship_pos - self.previous_ship_pos
-        velocity_norm = np.linalg.norm(velocity)
-        if velocity_norm > 1e-3:
-            velocity_unit = velocity / velocity_norm
-            path_alignment_reward = self.REWARD_DIRECTION_SCALE * np.dot(velocity_unit, path_unit)
-        else:
-            path_alignment_reward = 0.0
-
-        # Perpendicular distance penalty
-        perp_vector = rel_now - proj_now * path_unit
-        perp_dist = np.linalg.norm(perp_vector)
-        path_deviation_penalty = -self.PENALTY_DISTANCE_SCALE * np.tanh(perp_dist)
+        progress_ratio = np.clip(proj_now - proj_prev, -1.0, 1.0)
+        forward_reward = 40 * progress_ratio
 
         # === Heading Alignment ===
         direction_vec = current_checkpoint_pos - self.ship_pos
         self.desired_heading = np.arctan2(direction_vec[1], direction_vec[0])
+        direction_vec = current_checkpoint_pos - prev_checkpoint_pos
+        self.desired_heading = np.arctan2(direction_vec[1], direction_vec[0])
         heading_error = self._calculate_heading_error(self.desired_heading, self.state[2])
-        heading_alignment_reward = np.exp(-abs(heading_error))
+        heading_alignment_reward = abs(np.exp(-abs(heading_error))) - 1
 
         # === Cross-Track Penalty ===
         cross_track_error = self._distance_from_point_to_line(self.ship_pos, prev_checkpoint_pos, current_checkpoint_pos)
-        cross_track_penalty = -0.5 * np.tanh(cross_track_error / self.CROSS_TRACK_ERROR_PENALTY_SCALE)
         self.cross_error = cross_track_error
+        cross_track_penalty = cross_track_error / 100
+        cross_track_penalty = - abs(cross_track_penalty) ** 1.0
 
         # === Action Penalties ===
         rudder_penalty = -0.2 * abs(self.current_action[0])
@@ -909,12 +910,10 @@ class PySimEnv(BaseEnv):
 
         # === Combined Reward ===
         reward = (
-                self.reward_weights['forward'] * forward_reward +
-                self.reward_weights['alignment'] * path_alignment_reward +
-                self.reward_weights['deviation'] * path_deviation_penalty +
-                self.reward_weights['heading'] * heading_alignment_reward +
-                self.reward_weights['cross_track'] * cross_track_penalty +
-                self.reward_weights['rudder'] * rudder_penalty  # + rudder_change_penalty + thrust_change_penalty
+                0.2 * 0.5 * forward_reward +  # scaled so max 1
+                6 * 0.3 * heading_alignment_reward +  # scaled so max -0.6
+                15 * 0.1 * cross_track_penalty +  # scaled so reward is -1 when distance is 10m?
+                10 * 0.05 * self.reward_weights['rudder'] * rudder_penalty
         )
 
         # === Stuck Penalty ===
@@ -922,12 +921,14 @@ class PySimEnv(BaseEnv):
         if movement < 0.07:
             self.stuck_steps += 1
             if self.stuck_steps > 40:
-                reward -= 0.6
+                pass
+                # reward -= 0.6
         else:
             self.stuck_steps = 0
 
         # === Checkpoint and target rewarding ===
-        reward += self._is_checkpoint_reached_or_passed(current_checkpoint)
+        _ = self._is_checkpoint_reached_or_passed(current_checkpoint)
+        #reward += self._is_checkpoint_reached_or_passed(current_checkpoint)
 
         done = False
         heading_change = abs(self._calculate_heading_error(self.previous_heading, self.state[2]))
@@ -939,7 +940,7 @@ class PySimEnv(BaseEnv):
                 self.step_count >= self.max_steps or                                # max step-count check
                 heading_change > np.pi / 2.0                                        # heading error check
         ):
-            reward = self.EARLY_TERMINATION_PENALTY
+            reward = -250
             done = True
 
         # === Normal Termination ===
