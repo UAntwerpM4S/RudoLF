@@ -674,7 +674,7 @@ class PySimEnv(BaseEnv):
         self.previous_heading = 0.0
         self.checkpoint_index = 1
 
-        # Set heading toward first checkpoint (safe guard if checkpoint list is short)
+        # Set heading toward first checkpoint (safeguard if checkpoint list is short)
         if len(self.checkpoints) > self.checkpoint_index:
             direction_vector = self.checkpoints[self.checkpoint_index]['pos'] - self.ship_pos
             if np.linalg.norm(direction_vector) > 0:
