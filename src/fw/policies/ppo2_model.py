@@ -130,17 +130,18 @@ class PPO2Model(BaseModel):
         return env
 
 
-    def predict(self, state: np.ndarray) -> Tuple:
+    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple:
         """
         Predict an action for a given observation using the current policy.
 
         Args:
             state (np.ndarray): Current observation from the environment.
+            deterministic (boolean): Whether the action should be deterministic or not.
 
         Returns:
             Tuple: A tuple (action, None), where action is the predicted action. Log-probabilities are not returned.
         """
-        action, _ = self.ppo.predict(state, deterministic=True)
+        action, _ = self.ppo.predict(state, deterministic=deterministic)
         return action, None
 
 

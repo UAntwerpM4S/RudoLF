@@ -603,7 +603,7 @@ class PySimEnv(BaseEnv):
         # Normalize velocities
         norm_velocities = np.array([
             np.clip(self.state[3] / self.MAX_SURGE_VELOCITY, -1, 1),
-            np.clip(self.state[4] / (self.MAX_SWAY_VELOCITY/2), -1, 1),
+            np.clip(self.state[4] / self.MAX_SWAY_VELOCITY, -1, 1),
             np.clip(self.state[5] / self.MAX_YAW_RATE, -1, 1)
         ], dtype=np.float32)
 
@@ -688,7 +688,8 @@ class PySimEnv(BaseEnv):
             raise ValueError(f"Action must be shape (2,), got {action.shape}")
 
         # Update dynamics and get reward
-        smoothened_action = self._smoothen_action(action)
+        smoothened_action = action
+        # smoothened_action = self._smoothen_action(action)
         self._update_ship_dynamics(smoothened_action)
         self.step_count += 1
 
@@ -792,7 +793,7 @@ class PySimEnv(BaseEnv):
 
         new_x = np.clip(self.state[0] + dx * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
         new_y = np.clip(self.state[1] + dy * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
-        new_heading = self.state[2] + dpsi * self.time_step # % (2 * np.pi)
+        new_heading = (self.state[2] + dpsi * self.time_step + np.pi) % (2.0 * np.pi) - np.pi
 
         # Update state
         self.state = np.array([new_x, new_y, new_heading, new_u, new_v, new_r], dtype=np.float32)
