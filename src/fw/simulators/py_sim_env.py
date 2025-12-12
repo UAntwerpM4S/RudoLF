@@ -326,9 +326,9 @@ class PySimEnv(BaseEnv):
         path = create_checkpoints_from_simple_path(path, self.CHECKPOINTS_DISTANCE)
 
         # Ensure start is current ship position; handle empty path safely
-        if path.size == 0:
+        if len(path) == 0:
             # empty path: fallback to a single checkpoint at initial position
-            path = np.array([self.initial_ship_pos], dtype=np.float32)
+            path = [self.initial_ship_pos]
         else:
             path = np.insert(path, 0, self.ship_pos, axis=0)
 
@@ -942,7 +942,7 @@ class PySimEnv(BaseEnv):
 
         # Normalized forward progress (normalized by checkpoint spacing to be scale-stable)
         # Using CHECKPOINTS_DISTANCE as expected segment length approximator
-        raw_progress = (proj_now - proj_prev) / max(self.CHECKPOINTS_DISTANCE, 1e-9)
+        raw_progress = (proj_now - proj_prev) # / max(self.CHECKPOINTS_DISTANCE, 1e-9)
         progress_ratio = np.clip(raw_progress, -1.0, 1.0)
         forward_reward = 40 * progress_ratio
 
