@@ -270,7 +270,7 @@ class Agent:
 
                 while not done:
                     # Select action
-                    action, _ = self._model.predict(state)
+                    action, _ = self._model.predict(state=state, deterministic=True)
 
                     # Take step in environment
                     state, reward, terminated, truncated, _ = env.step(action)
@@ -316,7 +316,7 @@ class Agent:
             done = False
             while not done:
                 # The agent chooses an action based on the current observation
-                prediction = self._model.predict(obs)
+                prediction = self._model.predict(state=obs, deterministic=True)
                 if len(prediction) == 3:
                     action, _, _ = prediction
                 else:

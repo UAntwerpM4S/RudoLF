@@ -164,11 +164,12 @@ class PPOPolicy:
         return log_probs.sum(dim=-1)  # Sum across the action dimensions
 
 
-    def _predict(self, state: torch.Tensor) -> Tuple:
+    def _predict(self, state: torch.Tensor, deterministic: bool = False) -> Tuple:
         """Predict the action and log probability for a given state.
 
         Args:
             state (torch.Tensor): The input state tensor.
+            deterministic (boolean): Whether the action should be deterministic or not.
 
         Returns:
             Tuple: A tuple containing:
@@ -188,15 +189,16 @@ class PPOPolicy:
         # Compute log probability of the squashed action
         log_prob = self.calc_log_probs(dist, raw_action, action)
 
-        return action, log_prob, value.squeeze(-1)  # Return action, log_prob, and value (squeezed)
+        return action_mean if deterministic else action, log_prob, value.squeeze(-1)  # Return action, log_prob, and value (squeezed)
 
 
     from typing import Union
-    def predict(self, state: Union[np.ndarray, torch.Tensor]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def predict(self, state: Union[np.ndarray, torch.Tensor], deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Predict an action for a given state.
 
         Args:
             state (np.ndarray): The input state as a NumPy array or a tensor.
+            deterministic (boolean): Whether the action should be deterministic or not.
 
         Returns:
             Tuple: A tuple containing:
@@ -212,6 +214,6 @@ class PPOPolicy:
             state = state.unsqueeze(0)
 
         with torch.no_grad():  # Disable gradient computation for inference
-            action, log_prob, value = self._predict(state)
+            action, log_prob, value = self._predict(state, deterministic)
 
         return action.cpu().numpy(), log_prob.cpu().numpy(), value.cpu().numpy()  # Move to CPU and return as NumPy arrays
