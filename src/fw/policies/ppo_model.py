@@ -132,17 +132,18 @@ class PPOModel(BaseModel):
         return (rewards - self.reward_mean) / (np.sqrt(self.reward_var) + 1e-8)
 
 
-    def predict(self, state: np.ndarray) -> Tuple:
+    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple:
         """
         Predict an action for a given state using the policy.
 
         Args:
             state (np.ndarray): Current state as a NumPy array.
+            deterministic (boolean): Whether the action should be deterministic or not.
 
         Returns:
             Tuple: A tuple containing the predicted action and log probability.
         """
-        actions, log_probs, _ = self.policy.predict(state)
+        actions, log_probs, _ = self.policy.predict(state, deterministic)
         return actions[0], log_probs.item()
 
 

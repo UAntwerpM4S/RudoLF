@@ -82,12 +82,13 @@ class BaseModel(ABC):
 
 
     @abstractmethod
-    def predict(self, state: np.ndarray) -> Tuple[np.ndarray, float]:
+    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, float]:
         """
         Predict an action for a given state.
 
         Args:
             state (np.ndarray): Current state observation.
+            deterministic (boolean): Whether the action should be deterministic or not.
 
         Returns:
             Tuple[np.ndarray, float]: A tuple containing the selected action and its log probability.
