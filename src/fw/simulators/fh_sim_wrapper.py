@@ -46,7 +46,7 @@ class FhSimWrapper:
         self.start_pos = start_pos
         self.library_path = library_path or os.path.join(simexe_path, 'exe/installed')
         self.config_path = config_path or os.path.join(simexe_path, 'config/simXdrive.config.xml')
-        self.exercise_path = exercise_path or os.path.join(simexe_path, 'database/areas/ScheldeSaeftinge_23_002/invoer/tra/DDShip_scenario2_windnocurrent.tab')
+        self.exercise_path = exercise_path or os.path.join(simexe_path, 'database/areas/ScheldeSaeftinge_23_002/invoer/tra/DDShip_scenario1_nowindnocurrent.tab')
         self.output_path = output_path or os.path.join('C:/Users', user_login, 'Desktop', 'testExercise', 'results')
 
         self.initialize_math_model = True
