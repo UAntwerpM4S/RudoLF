@@ -76,6 +76,7 @@ PERP_LINE_PROXIMITY = 2.0
 
 # Smoothing / heuristics (extracted magic numbers)
 RUDDER_JITTER_THRESHOLD = 0.2  # used in action smoothing to avoid jitter
+EPSILON = 1e-9  # Small epsilon for numerical stability
 
 
 def calculate_perpendicular_lines(
@@ -174,6 +175,7 @@ class PySimEnv(BaseEnv):
 
     # Smoothing threshold exposed
     RUDDER_JITTER_THRESHOLD = RUDDER_JITTER_THRESHOLD
+    EPSILON = EPSILON
 
     def __init__(
             self,
@@ -306,7 +308,7 @@ class PySimEnv(BaseEnv):
             except Exception as exc:
                 raise RuntimeError(f"Failed to load {csv_path}: {exc}")
             if data.ndim != 2 or data.shape[1] != 2:
-                raise ValueError(f"{csv_path} must be a 2D array with shape (N, 2)")
+                raise ValueError(f"{csv_path} must be a 2D array with shape (N, 2), got {data.shape}")
             if data.size == 0:
                 raise ValueError(f"{csv_path} is empty")
             return data
@@ -677,7 +679,7 @@ class PySimEnv(BaseEnv):
         # Set heading toward first checkpoint (safeguard if checkpoint list is short)
         if len(self.checkpoints) > self.checkpoint_index:
             direction_vector = self.checkpoints[self.checkpoint_index]['pos'] - self.ship_pos
-            if np.linalg.norm(direction_vector) > 0:
+            if np.linalg.norm(direction_vector) > 0.0:
                 ship_angle = np.arctan2(direction_vector[1], direction_vector[0])
             else:
                 ship_angle = 0.0
@@ -686,16 +688,6 @@ class PySimEnv(BaseEnv):
 
         self.state = np.array([self.ship_pos[0], self.ship_pos[1], ship_angle, 0.0, 0.0, 0.0], dtype=np.float32)
         self.current_action = np.zeros(2, dtype=np.float32)
-
-        # Reset PID integrators and filters
-        self.rudder_error_sum = 0.0
-        self.thrust_error_sum = 0.0
-        self.previous_rudder_error = 0.0
-        self.previous_thrust_error = 0.0
-        self.previous_rudder_target = 0.0
-        self.previous_thrust_target = 0.0
-        self.filtered_rudder_derivative = 0.0
-        self.filtered_thrust_derivative = 0.0
 
         self.step_count = 0
         self.stuck_steps = 0
@@ -729,7 +721,7 @@ class PySimEnv(BaseEnv):
         # Checkpoint distances
         current_checkpoint_pos = self.checkpoints[checkpoint_idx]['pos']
         distance_to_checkpoint = np.linalg.norm(self.ship_pos - current_checkpoint_pos)
-        norm_distance = distance_to_checkpoint / max(self.max_dist, 1e-9)
+        norm_distance = distance_to_checkpoint / max(self.max_dist, EPSILON)
 
         # Next checkpoint distances
         norm_next_distances = np.zeros(2, dtype=np.float32)
@@ -737,7 +729,7 @@ class PySimEnv(BaseEnv):
             idx = checkpoint_idx + i
             if idx < len(self.checkpoints):
                 next_pos = self.checkpoints[idx]['pos']
-                norm_next_distances[i - 1] = np.linalg.norm(self.ship_pos - next_pos) / max(self.max_dist, 1e-9)
+                norm_next_distances[i - 1] = np.linalg.norm(self.ship_pos - next_pos) / max(self.max_dist, EPSILON)
 
         # Cross-track error (distance to segment, sign preserved)
         prev_checkpoint_pos = self.checkpoints[max(0, checkpoint_idx - 1)]['pos']
@@ -752,13 +744,13 @@ class PySimEnv(BaseEnv):
         # Heading errors (several variants)
         direction_to_checkpoint = current_checkpoint_pos - self.ship_pos
         desired_heading = np.arctan2(direction_to_checkpoint[1], direction_to_checkpoint[0]) if np.linalg.norm(
-            direction_to_checkpoint) > 0 else 0.0
+            direction_to_checkpoint) > 0.0 else 0.0
         heading_error = (desired_heading - self.state[2] + np.pi) % (2 * np.pi) - np.pi
 
         direction_parallel_to_checkpoint = current_checkpoint_pos - prev_checkpoint_pos
         desired_heading_parallel = np.arctan2(direction_parallel_to_checkpoint[1],
                                               direction_parallel_to_checkpoint[0]) if np.linalg.norm(
-            direction_parallel_to_checkpoint) > 0 else 0.0
+            direction_parallel_to_checkpoint) > 0.0 else 0.0
         heading_error_parallel = (desired_heading_parallel - self.state[2] + np.pi) % (2 * np.pi) - np.pi
 
         # Safely calculate next checkpoint heading errors
@@ -768,12 +760,12 @@ class PySimEnv(BaseEnv):
             if checkpoint_idx + 1 < len(self.checkpoints):
                 next_checkpoint_pos = self.checkpoints[checkpoint_idx + 1]['pos']
                 direction_to_checkpoint2 = next_checkpoint_pos - self.ship_pos
-                if np.linalg.norm(direction_to_checkpoint2) > 0:
+                if np.linalg.norm(direction_to_checkpoint2) > 0.0:
                     desired_heading2 = np.arctan2(direction_to_checkpoint2[1], direction_to_checkpoint2[0])
                     heading_error2 = (desired_heading2 - self.state[2] + np.pi) % (2 * np.pi) - np.pi
 
                 direction_parallel_to_checkpoint2 = next_checkpoint_pos - current_checkpoint_pos
-                if np.linalg.norm(direction_parallel_to_checkpoint2) > 0:
+                if np.linalg.norm(direction_parallel_to_checkpoint2) > 0.0:
                     desired_heading_parallel2 = np.arctan2(direction_parallel_to_checkpoint2[1],
                                                            direction_parallel_to_checkpoint2[0])
                     heading_error_parallel2 = (desired_heading_parallel2 - self.state[2] + np.pi) % (2 * np.pi) - np.pi
@@ -882,7 +874,7 @@ class PySimEnv(BaseEnv):
         # Simplified dynamics
         du = self.k_t * t + self.xu * u + wind_effect[0] + current_effect[0]
         dv = self.k_v * sin_delta_r + self.yv * v + wind_effect[1] + current_effect[1]
-        dr = self.k_r * delta_r + self.nr * r + self.yv_r * v + (v * u) / max(self.l, 1e-9) - self.YAW_RATE_DAMPING * r
+        dr = self.k_r * delta_r + self.nr * r + self.yv_r * v + (v * u) / max(self.l, EPSILON) - self.YAW_RATE_DAMPING * r
 
         # Integrate with limits
         new_u = np.clip(u + du * self.time_step, self.MIN_SURGE_VELOCITY, self.MAX_SURGE_VELOCITY)
@@ -942,13 +934,13 @@ class PySimEnv(BaseEnv):
 
         # Normalized forward progress (normalized by checkpoint spacing to be scale-stable)
         # Using CHECKPOINTS_DISTANCE as expected segment length approximator
-        raw_progress = (proj_now - proj_prev) # / max(self.CHECKPOINTS_DISTANCE, 1e-9)
+        raw_progress = (proj_now - proj_prev) # / max(self.CHECKPOINTS_DISTANCE, EPSILON)
         progress_ratio = np.clip(raw_progress, -1.0, 1.0)
         forward_reward = 40 * progress_ratio
 
         # Heading alignment towards current checkpoint
         direction_vec = current_checkpoint_pos - prev_checkpoint_pos
-        if np.linalg.norm(direction_vec) > 0:
+        if np.linalg.norm(direction_vec) > 0.0:
             self.desired_heading = np.arctan2(direction_vec[1], direction_vec[0])
         else:
             self.desired_heading = 0.0
@@ -986,7 +978,21 @@ class PySimEnv(BaseEnv):
             self.stuck_steps = 0
 
         # Checkpoint handling (may increment checkpoint_index)
-        _ = self._is_checkpoint_reached_or_passed(current_checkpoint)
+        checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint["pos"])
+
+        # Reached checkpoint circle
+        if checkpoint_distance <= current_checkpoint['radius']:
+            if self.checkpoint_index == len(self.checkpoints) - 1: # and self.verbose:
+                print(f"Target REACHED at distance {checkpoint_distance:.2f}")
+            self.checkpoint_index += 1
+            self.step_count = 0
+
+        # Passed perpendicular guidance line
+        if self._is_near_perpendicular_line(current_checkpoint):
+            # if self.checkpoint_index == len(self.checkpoints) - 1: # and self.verbose:
+            #     print(f"Target passed at distance {checkpoint_distance:.2f}")
+            self.checkpoint_index += 1
+            self.step_count = 0
 
         done = False
         heading_change = abs(self._calculate_heading_error(self.previous_heading, self.state[2]))
@@ -1007,42 +1013,6 @@ class PySimEnv(BaseEnv):
             done = True
 
         return reward, done
-
-    def _is_checkpoint_reached_or_passed(self, current_checkpoint: dict) -> float:
-        """
-        Check if the current checkpoint is reached or passed. If so, advance the checkpoint index
-        and return the checkpoint reward or shaping reward toward the final target.
-        """
-
-        checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint["pos"])
-        reward = 0.0
-
-        # Reached checkpoint circle
-        if checkpoint_distance <= current_checkpoint['radius']:
-            if self.checkpoint_index == len(self.checkpoints) - 1: # and self.verbose:
-                print(f"Target REACHED at distance {checkpoint_distance:.2f}")
-            reward = current_checkpoint['reward']
-            self.checkpoint_index += 1
-            self.step_count = 0
-            return reward
-
-        # Passed perpendicular guidance line
-        if self._is_near_perpendicular_line(current_checkpoint):
-            # if self.checkpoint_index == len(self.checkpoints) - 1: # and self.verbose:
-            #     print(f"Target passed at distance {checkpoint_distance:.2f}")
-            self.checkpoint_index += 1
-            self.step_count = 0
-            return 0.0
-
-        # Terminal shaping when near the end of the path
-        if self.checkpoint_index >= max(0, len(self.checkpoints) - self.SHAPING_WINDOW):
-            target_radius = self.checkpoints[-1]['radius']
-            target_reward = self.checkpoints[-1]['reward']
-            decay = (checkpoint_distance - target_radius) / (max(target_radius, 1e-6) * self.DECAY_SCALE)
-            shaping = target_reward * np.exp(-decay)
-            reward += self.reward_weights['terminal'] * shaping
-
-        return reward
 
     def _is_near_perpendicular_line(self, checkpoint: dict) -> bool:
         """Check if ship is close enough to checkpoint's perpendicular line."""
