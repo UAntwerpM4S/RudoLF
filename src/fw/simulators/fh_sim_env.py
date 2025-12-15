@@ -195,7 +195,7 @@ class FhSimEnv(PySimEnv):
         self.state[2] = np.radians(self._fh_sim.ship_interface.getShipHeading())
         self.state[3] = velocity_over_ground.x
         self.state[4] = velocity_over_ground.y
-        self.state[5] = self._fh_sim.ship_interface.getShipYawRate()
+        self.state[5] = np.radians(self._fh_sim.ship_interface.getShipYawRate())
 
         # Clip the ship's position to ensure it's within the environment's defined bounds.
         self.ship_pos = self.state[:2]
