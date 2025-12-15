@@ -923,8 +923,8 @@ class PySimEnv(BaseEnv):
 
         # Path vector and unit vector
         path_vec = current_checkpoint_pos - prev_checkpoint_pos
-        path_length = np.linalg.norm(path_vec)
-        path_unit = path_vec / path_length if path_length > 0.0 else np.zeros_like(path_vec)
+        path_length = max(np.linalg.norm(path_vec), EPSILON)
+        path_unit = path_vec / path_length
 
         # Relative projections along the path (progress)
         rel_prev = self.previous_ship_pos - prev_checkpoint_pos
@@ -934,14 +934,12 @@ class PySimEnv(BaseEnv):
 
         # Normalized forward progress (normalized by checkpoint spacing to be scale-stable)
         # Using CHECKPOINTS_DISTANCE as expected segment length approximator
-        raw_progress = (proj_now - proj_prev) # / max(self.CHECKPOINTS_DISTANCE, EPSILON)
-        progress_ratio = np.clip(raw_progress, -1.0, 1.0)
-        forward_reward = 40 * progress_ratio
+        raw_progress = (proj_now - proj_prev) # / path_length
+        forward_reward = 4.0 * np.clip(raw_progress, -1.0, 1.0)
 
         # Heading alignment towards current checkpoint
-        direction_vec = current_checkpoint_pos - prev_checkpoint_pos
-        if np.linalg.norm(direction_vec) > 0.0:
-            self.desired_heading = np.arctan2(direction_vec[1], direction_vec[0])
+        if np.linalg.norm(path_vec) > 0.0:
+            self.desired_heading = np.arctan2(path_vec[1], path_vec[0])
         else:
             self.desired_heading = 0.0
         heading_error = self._calculate_heading_error(self.desired_heading, self.state[2])
@@ -961,10 +959,10 @@ class PySimEnv(BaseEnv):
 
         # Combine weighted rewards and penalties (weights kept from original)
         reward = (
-                0.2 * 0.5 * forward_reward +  # scaled so max 1
-                6 * 0.3 * heading_alignment_reward +  # scaled so max -0.6
-                15 * 0.1 * cross_track_penalty +  # scaled so reward is -1 when distance is 10m?
-                10 * 0.05 * self.reward_weights['rudder'] * rudder_penalty
+                forward_reward +  # scaled so max 1
+                1.8 * heading_alignment_reward +  # scaled so max -0.6
+                1.5 * cross_track_penalty +  # scaled so reward is -1 when distance is 10m?
+                0.5 * self.reward_weights['rudder'] * rudder_penalty
         )
 
         # Stuck penalty
