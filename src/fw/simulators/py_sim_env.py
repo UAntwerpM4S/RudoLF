@@ -231,13 +231,10 @@ class PySimEnv(BaseEnv):
 
         # Reward component weights (kept from original)
         self.reward_weights = {
-            'forward': 0.5,
-            'alignment': 0.1,
-            'deviation': 0.4,
-            'heading': 0.3,
-            'cross_track': 0.1,
-            'rudder': 0.05,
-            'terminal': 0.2,
+            'forward': 1.0,
+            'alignment': 1.8,
+            'cross_track': 1.5,
+            'rudder': 0.03,
         }
 
         # Rendering flag
@@ -619,16 +616,13 @@ class PySimEnv(BaseEnv):
 
         return gym.spaces.Box(low=base_low, high=base_high, dtype=np.float32)
 
-    def randomize(self, randomization_scale: Optional[float] = None):
+    def randomize(self, randomization_scale: Optional[float] = None) -> None:
         """
         Randomize the ship's initial position within specified bounds.
 
         Args:
             randomization_scale: Maximum absolute value for position
                 randomization. If None, uses the class's default scale.
-
-        Returns:
-            None
 
         Raises:
             ValueError: If randomization_scale is not positive
@@ -711,9 +705,9 @@ class PySimEnv(BaseEnv):
         # Normalize velocities
         # Avoid division by zero by using max with small epsilon (but constants are >0 by design)
         norm_velocities = np.array([
-            np.clip(self.state[3] / max(self.MAX_SURGE_VELOCITY, 1e-9), -1, 1),
-            np.clip(self.state[4] / max(self.MAX_SWAY_VELOCITY, 1e-9), -1, 1),
-            np.clip(self.state[5] / max(self.MAX_YAW_RATE, 1e-9), -1, 1)
+            np.clip(self.state[3] / max(self.MAX_SURGE_VELOCITY, EPSILON), -1, 1),
+            np.clip(self.state[4] / max(self.MAX_SWAY_VELOCITY, EPSILON), -1, 1),
+            np.clip(self.state[5] / max(self.MAX_YAW_RATE, EPSILON), -1, 1)
         ], dtype=np.float32)
 
         checkpoint_idx = self.checkpoint_index if self.checkpoint_index < len(self.checkpoints) else max(0, len(self.checkpoints) - 1)
@@ -958,10 +952,10 @@ class PySimEnv(BaseEnv):
 
         # Combine weighted rewards and penalties (weights kept from original)
         reward = (
-                forward_reward +
-                1.8 * heading_alignment_reward +
-                1.5 * cross_track_penalty +
-                0.5 * self.reward_weights['rudder'] * rudder_penalty
+                self.reward_weights['forward'] * forward_reward +
+                self.reward_weights['alignment'] * heading_alignment_reward +
+                self.reward_weights['cross_track'] * cross_track_penalty +
+                self.reward_weights['rudder'] * rudder_penalty
         )
 
         # Stuck penalty
