@@ -950,7 +950,7 @@ class PySimEnv(BaseEnv):
             self.step_count = 0
 
         # Passed perpendicular guidance line
-        if self._is_near_perpendicular_line(current_checkpoint):
+        elif self._is_near_perpendicular_line(current_checkpoint):
             # if self.checkpoint_index == len(self.checkpoints) - 1:
             #     print(f"Target passed at distance {checkpoint_distance:.2f}")
             self.checkpoint_index += 1
