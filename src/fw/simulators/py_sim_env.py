@@ -932,9 +932,8 @@ class PySimEnv(BaseEnv):
         proj_prev = np.dot(rel_prev, path_unit)
         proj_now = np.dot(rel_now, path_unit)
 
-        # Normalized forward progress (normalized by checkpoint spacing to be scale-stable)
-        # Using CHECKPOINTS_DISTANCE as expected segment length approximator
-        raw_progress = (proj_now - proj_prev) # / path_length
+        # Forward progress
+        raw_progress = (proj_now - proj_prev)
         forward_reward = 4.0 * np.clip(raw_progress, -1.0, 1.0)
 
         # Heading alignment towards current checkpoint
@@ -959,9 +958,9 @@ class PySimEnv(BaseEnv):
 
         # Combine weighted rewards and penalties (weights kept from original)
         reward = (
-                forward_reward +  # scaled so max 1
-                1.8 * heading_alignment_reward +  # scaled so max -0.6
-                1.5 * cross_track_penalty +  # scaled so reward is -1 when distance is 10m?
+                forward_reward +
+                1.8 * heading_alignment_reward +
+                1.5 * cross_track_penalty +
                 0.5 * self.reward_weights['rudder'] * rudder_penalty
         )
 
@@ -980,14 +979,14 @@ class PySimEnv(BaseEnv):
 
         # Reached checkpoint circle
         if checkpoint_distance <= current_checkpoint['radius']:
-            if self.checkpoint_index == len(self.checkpoints) - 1: # and self.verbose:
+            if self.checkpoint_index == len(self.checkpoints) - 1:
                 print(f"Target REACHED at distance {checkpoint_distance:.2f}")
             self.checkpoint_index += 1
             self.step_count = 0
 
         # Passed perpendicular guidance line
         if self._is_near_perpendicular_line(current_checkpoint):
-            # if self.checkpoint_index == len(self.checkpoints) - 1: # and self.verbose:
+            # if self.checkpoint_index == len(self.checkpoints) - 1:
             #     print(f"Target passed at distance {checkpoint_distance:.2f}")
             self.checkpoint_index += 1
             self.step_count = 0
