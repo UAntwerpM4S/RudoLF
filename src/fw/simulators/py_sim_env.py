@@ -503,7 +503,7 @@ class PySimEnv(BaseEnv):
         """
 
         action = np.asarray(action, dtype=np.float32)
-        target_rudder, target_thrust = action[0], action[1]
+        target_rudder, target_thrust = action[0], abs(action[1])
         current_rudder, current_thrust = self.current_action[0], self.current_action[1]
 
         # Rudder rate limit
@@ -778,7 +778,7 @@ class PySimEnv(BaseEnv):
             raise ValueError(f"Action must be shape (2,), got {action.shape} with values {action}")
 
         # Smooth action and update dynamics
-        smoothened_action = action
+        smoothened_action = action[0], abs(action[1])
         # smoothened_action = self._smoothen_action(action)
         self._update_ship_dynamics(smoothened_action)
         self.step_count += 1
