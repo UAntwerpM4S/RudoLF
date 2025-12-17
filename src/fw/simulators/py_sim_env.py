@@ -30,7 +30,6 @@ MIN_YAW_RATE = -0.5
 MAX_SURGE_VELOCITY = 5.0
 MAX_SWAY_VELOCITY = 2.0
 MAX_YAW_RATE = 0.5
-YAW_RATE_DAMPING = 0.1
 
 # Rate limits applied in smoothing
 MAX_RUDDER_RATE = 0.06
@@ -55,8 +54,6 @@ DPI = 100
 PERPENDICULAR_LINE_LENGTH = 50.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
-MIN_MOVEMENT_THRESHOLD = 0.07
-STUCK_STEPS_THRESHOLD = 40
 PERPENDICULAR_LINE_PROXIMITY = 2.0
 
 # Smoothing / heuristics (extracted magic numbers)
@@ -110,6 +107,101 @@ def calculate_perpendicular_lines(
     return lines
 
 
+class FossenShipModel:
+    """
+    3-DOF Ship Model based on Fossen's Marine Craft Dynamics
+    Adjusted for better responsiveness in simulation
+    """
+
+    def __init__(self, ship_length=100.0, ship_mass=1e6):
+        """
+        Initialize with ship parameters - adjusted for better turning response
+        """
+        # Ship parameters
+        self.L = ship_length  # Length (m)
+        self.m = ship_mass  # Mass (kg)
+
+        # Added mass coefficients (reduced for more responsiveness)
+        self.X_udot = -0.05 * self.m  # Reduced added mass
+        self.Y_vdot = -0.5 * self.m  # Reduced added mass
+        self.N_rdot = -0.05 * self.m * self.L ** 2  # Reduced added inertia
+
+        # Mass matrix components
+        self.m11 = self.m - self.X_udot
+        self.m22 = self.m - self.Y_vdot
+        self.m33 = (self.m * self.L ** 2 / 12) - self.N_rdot
+
+        # Hydrodynamic damping coefficients (reduced damping)
+        # Original values were too high - ship wouldn't turn
+        self.X_u = -0.002 * self.m  # SIGNIFICANTLY reduced surge damping
+        self.Y_v = -0.02 * self.m  # SIGNIFICANTLY reduced sway damping
+        self.N_r = -0.001 * self.m * self.L ** 2  # SIGNIFICANTLY reduced yaw damping
+
+        # Nonlinear (quadratic) damping coefficients (reduced)
+        self.X_uu = -0.0005 * self.m  # Reduced quadratic damping
+        self.Y_vv = -0.005 * self.m  # Reduced quadratic damping
+        self.N_rr = -0.0005 * self.m * self.L ** 2  # Reduced quadratic damping
+
+        # Rudder coefficients (INCREASED for better turning)
+        # These were way too low - ship wouldn't respond to rudder
+        self.Y_rudder = 0.1 * self.m  # INCREASED 10x - sway force from rudder
+        self.N_rudder = 0.001 * self.m * self.L  # INCREASED 10x - yaw moment from rudder
+
+        # Propeller/thrust coefficient
+        self.X_thrust = 0.05 * self.m  # Surge force from thrust
+
+        # Cross-flow drag coefficients
+        self.Y_uv = -0.005 * self.m  # Reduced cross-term
+        self.N_uv = -0.0005 * self.m * self.L  # Reduced cross-term
+
+    def calculate_accelerations(self, u, v, r, rudder_angle, thrust):
+        """
+        Calculate accelerations - with speed-dependent rudder effectiveness
+        """
+
+        # --- CORIOLIS-CENTRIPETAL MATRIX ---
+        coriolis_surge = self.m22 * v * r
+        coriolis_sway = -self.m11 * u * r
+        coriolis_yaw = (self.m22 - self.m11) * u * v
+
+        # --- HYDRODYNAMIC DAMPING FORCES ---
+        # Reduced damping allows ship to turn more easily
+        d_surge = self.X_u * u + self.X_uu * u * abs(u)
+        d_sway = (self.Y_v * v +
+                  self.Y_vv * v * abs(v) +
+                  self.Y_uv * u * v)
+        d_yaw = (self.N_r * r +
+                 self.N_rr * r * abs(r) +
+                 self.N_uv * u * v)
+
+        # --- CONTROL FORCES ---
+        # CRITICAL: Speed-dependent rudder effectiveness
+        # At low speeds, rudder is less effective
+        speed_factor = max(u / 3.0, 0.2)  # At 0 m/s, still 20% effectiveness
+
+        # INCREASED rudder effectiveness
+        f_rudder_sway = self.Y_rudder * rudder_angle * speed_factor
+
+        # IMPORTANT: Add direct sway force from rudder (helps initial turn)
+        # Ships create sideways force when rudder is applied
+        m_rudder_yaw = self.N_rudder * rudder_angle * speed_factor
+
+        # Thrust force
+        f_thrust = self.X_thrust * thrust
+
+        # --- COMBINE ALL FORCES/MOMENTS ---
+        total_surge_force = (f_thrust + d_surge + coriolis_surge)
+        total_sway_force = (f_rudder_sway + d_sway + coriolis_sway)
+        total_yaw_moment = (m_rudder_yaw + d_yaw + coriolis_yaw)
+
+        # --- CALCULATE ACCELERATIONS ---
+        du = total_surge_force / self.m11
+        dv = total_sway_force / self.m22
+        dr = total_yaw_moment / self.m33
+
+        return du, dv, dr
+
+
 class PySimEnv(BaseEnv):
     """Custom Python Simulator environment for ship navigation with improved physics."""
 
@@ -120,7 +212,6 @@ class PySimEnv(BaseEnv):
     MAX_SURGE_VELOCITY = MAX_SURGE_VELOCITY
     MAX_SWAY_VELOCITY = MAX_SWAY_VELOCITY
     MAX_YAW_RATE = MAX_YAW_RATE
-    YAW_RATE_DAMPING = YAW_RATE_DAMPING
 
     MAX_RUDDER_RATE = MAX_RUDDER_RATE
     MAX_THRUST_RATE = MAX_THRUST_RATE
@@ -140,8 +231,6 @@ class PySimEnv(BaseEnv):
     PERPENDICULAR_LINE_LENGTH = PERPENDICULAR_LINE_LENGTH
     HEADING_CHANGE_THRESHOLD = HEADING_CHANGE_THRESHOLD
     CROSS_TRACK_TERMINATION_MULTIPLIER = CROSS_TRACK_TERMINATION_MULTIPLIER
-    MIN_MOVEMENT_THRESHOLD = MIN_MOVEMENT_THRESHOLD
-    STUCK_STEPS_THRESHOLD = STUCK_STEPS_THRESHOLD
     PERPENDICULAR_LINE_PROXIMITY = PERPENDICULAR_LINE_PROXIMITY
 
     # Smoothing threshold exposed
@@ -188,6 +277,9 @@ class PySimEnv(BaseEnv):
         # State and control placeholders
         self._initialize_state(ship_pos)
         self._initialize_control_parameters()
+
+        # Initialize Fossen ship model
+        self.fossen_model = FossenShipModel(ship_length=100.0, ship_mass=1e6)
 
         # Load environment static data and build checkpoints/polygons
         self._load_environment_data(target_pos)
@@ -342,16 +434,6 @@ class PySimEnv(BaseEnv):
         self.stuck_steps = 0
         self.cross_error = 0.0
         self.desired_heading = 0.0
-
-        # Hydrodynamic & dynamic coefficients (kept original values)
-        self.xu = -0.02
-        self.yv = -0.4
-        self.yv_r = -0.09
-        self.nr = -0.26
-        self.l = 50.0
-        self.k_t = 0.05
-        self.k_r = 0.039
-        self.k_v = 0.03
 
     # -----------------------
     # Utility & math helpers
@@ -807,9 +889,11 @@ class PySimEnv(BaseEnv):
 
         self.current_action = np.array(action, dtype=np.float32)
 
-        # Convert control inputs to physical deltas
+        # Convert control inputs to physical values
+        # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
         delta_r = np.radians(self.current_action[0] * 60.0)  # rudder angle in radians
-        t = self.current_action[1] * 60.0  # scaled thrust value
+        # Thrust: 0 to 1 maps to 0 to full ahead
+        thrust = max(self.current_action[1], 0.0)  # thrust normalized 0-1
 
         # Unpack current dynamic state
         x, y, psi, u, v, r = self.state
@@ -831,34 +915,55 @@ class PySimEnv(BaseEnv):
                 self.current_strength * np.sin(relative_current_angle)
             ], dtype=np.float32)
 
-        # Precomputed trigonometric values
-        sin_delta_r = np.sin(delta_r)
-        cos_psi = np.cos(psi)
-        sin_psi = np.sin(psi)
+        # --- FOSSEN MODEL INTEGRATION ---
+        # Calculate accelerations using Fossen model
+        du, dv, dr = self.fossen_model.calculate_accelerations(u, v, r, delta_r, thrust)
 
-        # Simplified dynamics
-        du = self.k_t * t + self.xu * u + wind_effect[0] + current_effect[0]
-        dv = self.k_v * sin_delta_r + self.yv * v + wind_effect[1] + current_effect[1]
-        dr = self.k_r * delta_r + self.nr * r + self.yv_r * v + (v * u) / max(self.l, EPSILON) - self.YAW_RATE_DAMPING * r
+        # Add environmental effects as additional accelerations
+        du += wind_effect[0] + current_effect[0]
+        dv += wind_effect[1] + current_effect[1]
 
-        # Integrate with limits
-        new_u = np.clip(u + du * self.time_step, self.MIN_SURGE_VELOCITY, self.MAX_SURGE_VELOCITY)
-        new_v = np.clip(v + dv * self.time_step, self.MIN_SWAY_VELOCITY, self.MAX_SWAY_VELOCITY)
-        new_r = np.clip(r + dr * self.time_step, self.MIN_YAW_RATE, self.MAX_YAW_RATE)
+        # --- SEMI-IMPLICIT INTEGRATION FOR STABILITY ---
+        # Better than Euler for large time steps (0.6-1.0s)
+        dt = self.time_step
+
+        # Surge integration (semi-implicit for damping)
+        surge_damping_factor = abs(self.fossen_model.X_u / self.fossen_model.m11)
+        new_u = (u + du * dt) / (1 + surge_damping_factor * dt)
+
+        # Sway integration (semi-implicit for damping)
+        sway_damping_factor = abs(self.fossen_model.Y_v / self.fossen_model.m22)
+        new_v = (v + dv * dt) / (1 + sway_damping_factor * dt)
+
+        # Yaw integration (semi-implicit for damping)
+        yaw_damping_factor = abs(self.fossen_model.N_r / self.fossen_model.m33)
+        new_r = (r + dr * dt) / (1 + yaw_damping_factor * dt)
+
+        # Apply realistic limits
+        new_u = np.clip(new_u, self.MIN_SURGE_VELOCITY, self.MAX_SURGE_VELOCITY)
+        new_v = np.clip(new_v, self.MIN_SWAY_VELOCITY, self.MAX_SWAY_VELOCITY)
+        new_r = np.clip(new_r, self.MIN_YAW_RATE, self.MAX_YAW_RATE)
 
         # Position integration in world coordinates
-        dx = new_u * cos_psi - new_v * sin_psi
-        dy = new_u * sin_psi + new_v * cos_psi
-        dpsi = new_r
+        # Use midpoint heading for better accuracy
+        psi_mid = psi + 0.5 * new_r * dt
+        cos_psi_mid = np.cos(psi_mid)
+        sin_psi_mid = np.sin(psi_mid)
 
-        # Save previous values and update
+        # Earth-fixed velocity components
+        dx = new_u * cos_psi_mid - new_v * sin_psi_mid
+        dy = new_u * sin_psi_mid + new_v * cos_psi_mid
+
+        # Save previous values
         self.previous_ship_pos = self.ship_pos.copy()
         self.previous_heading = self.state[2]
 
-        new_x = np.clip(self.state[0] + dx * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
-        new_y = np.clip(self.state[1] + dy * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
-        new_heading = (self.state[2] + dpsi * self.time_step + np.pi) % (2.0 * np.pi) - np.pi
+        # Update position and heading
+        new_x = np.clip(x + dx * dt, self.MIN_GRID_POS, self.MAX_GRID_POS)
+        new_y = np.clip(y + dy * dt, self.MIN_GRID_POS, self.MAX_GRID_POS)
+        new_heading = (psi + new_r * dt + np.pi) % (2.0 * np.pi) - np.pi
 
+        # Update state vector
         self.state = np.array([new_x, new_y, new_heading, new_u, new_v, new_r], dtype=np.float32)
         self.ship_pos = self.state[:2]
 
@@ -928,16 +1033,6 @@ class PySimEnv(BaseEnv):
                 self.reward_weights['cross_track'] * cross_track_penalty +
                 self.reward_weights['rudder'] * rudder_penalty
         )
-
-        # Stuck penalty
-        movement = np.linalg.norm(self.ship_pos - self.previous_ship_pos)
-        if movement < self.MIN_MOVEMENT_THRESHOLD:
-            self.stuck_steps += 1
-            if self.stuck_steps > self.STUCK_STEPS_THRESHOLD:
-                # previously was 'reward -= 0.6' and commented out penalty; keep same behavior but retain counter
-                pass
-        else:
-            self.stuck_steps = 0
 
         # Checkpoint handling (may increment checkpoint_index)
         checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint["pos"])
