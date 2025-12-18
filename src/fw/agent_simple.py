@@ -13,6 +13,10 @@ from fw.policies.ppo2_model import PPO2Model
 from fw.policies.ppo_model import PPOModel
 
 
+MIN_GRID_POS = -11700
+MAX_GRID_POS = 14500
+
+
 class PolicyStrategy(Enum):
     """Defines strategies for handling policies during environment switching.
 
@@ -47,8 +51,8 @@ class Agent:
 
             # Draw environment boundaries
             ax.plot(
-                [env.MIN_GRID_POS, env.MAX_GRID_POS, env.MAX_GRID_POS, env.MIN_GRID_POS, env.MIN_GRID_POS],
-                [env.MIN_GRID_POS, env.MIN_GRID_POS, env.MAX_GRID_POS, env.MAX_GRID_POS, env.MIN_GRID_POS],
+                [MIN_GRID_POS, MAX_GRID_POS, MAX_GRID_POS, MIN_GRID_POS, MIN_GRID_POS],
+                [MIN_GRID_POS, MIN_GRID_POS, MAX_GRID_POS, MAX_GRID_POS, MIN_GRID_POS],
                 'k-', label='Boundary'
             )
 
