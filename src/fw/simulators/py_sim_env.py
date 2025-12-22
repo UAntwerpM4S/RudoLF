@@ -751,8 +751,7 @@ class PySimEnv(BaseEnv):
             np.clip(self.state[5] / max(MAX_YAW_RATE, EPSILON), -1, 1)
         ], dtype=np.float32)
 
-        checkpoint_idx = self.checkpoint_index if self.checkpoint_index < len(self.checkpoints) else max(0,
-                                                                                                         len(self.checkpoints) - 1)
+        checkpoint_idx = self.checkpoint_index if self.checkpoint_index < len(self.checkpoints) else max(0, len(self.checkpoints) - 1)
 
         # Checkpoint distances
         current_checkpoint_pos = self.checkpoints[checkpoint_idx]['pos']
@@ -761,17 +760,35 @@ class PySimEnv(BaseEnv):
 
         # Next checkpoint distances
         norm_next_distances = np.zeros(2, dtype=np.float32)
-        for i in range(1, 3):
-            idx = checkpoint_idx + i
-            if idx < len(self.checkpoints):
-                next_pos = self.checkpoints[idx]['pos']
-                norm_next_distances[i - 1] = np.linalg.norm(self.ship_pos - next_pos) / max(self.max_dist, EPSILON)
+
+        # Calculate how many valid upcoming checkpoints exist
+        checkpoints_remaining = len(self.checkpoints) - checkpoint_idx - 1
+
+        if checkpoints_remaining >= 1:
+            # Distance to immediate next checkpoint (always exists if checkpoints_remaining > 0)
+            next_idx = checkpoint_idx + 1
+            next_pos = self.checkpoints[next_idx]['pos']
+            dist_to_next = np.linalg.norm(self.ship_pos - next_pos)
+            norm_next_distances[0] = dist_to_next / max(self.max_dist, EPSILON)
+
+            # Handle second distance with your intelligent fallback logic
+            if checkpoints_remaining >= 2:
+                # Normal case: checkpoint after next exists
+                next_next_idx = checkpoint_idx + 2
+                next_next_pos = self.checkpoints[next_next_idx]['pos']
+                dist_to_next_next = np.linalg.norm(self.ship_pos - next_next_pos)
+                norm_next_distances[1] = dist_to_next_next / max(self.max_dist, EPSILON)
+            else:
+                norm_next_distances[1] = norm_next_distances[0]
+        else:
+            norm_next_distances[0] = norm_distance
+            norm_next_distances[1] = norm_distance
 
         # Cross-track error (distance to segment, sign preserved)
         prev_checkpoint_pos = self.checkpoints[max(0, checkpoint_idx - 1)]['pos']
-        cross_track_error = self._distance_from_point_to_line(self.ship_pos, prev_checkpoint_pos,
-                                                              current_checkpoint_pos)
+        cross_track_error = self._distance_from_point_to_line(self.ship_pos, prev_checkpoint_pos, current_checkpoint_pos)
         norm_cross_error = cross_track_error / (CHECKPOINTS_DISTANCE / 2.0)
+
         # cross product sign to indicate side of track
         cross = (current_checkpoint_pos[0] - prev_checkpoint_pos[0]) * (self.ship_pos[1] - prev_checkpoint_pos[1]) - \
                 (current_checkpoint_pos[1] - prev_checkpoint_pos[1]) * (self.ship_pos[0] - prev_checkpoint_pos[0])
