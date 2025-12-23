@@ -91,6 +91,9 @@ class FhSimWrapper:
             y_pos = float(self.start_pos[1])
             ship_config.setInitialPosition(x_pos, y_pos)
 
+            # initial_heading = ship_config.getInitialHeading()
+            # ship_config.setInitialHeading(initial_heading + 1.0)
+
             # Initialize the math model and enable the bridge
             self._math_model = MathModel()
             if self._math_model.Initialize(config, exercise):
