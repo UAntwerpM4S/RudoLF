@@ -11,7 +11,7 @@ class SurrogatePredictor:
 
     def __init__(self, checkpoint, device=None):
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        ckpt = torch.load(checkpoint, map_location=self.device)
+        ckpt = torch.load(checkpoint, map_location=self.device, weights_only=False)
 
         # normalization stats
         self.x_mean = ckpt["x_mean"].astype(np.float32)

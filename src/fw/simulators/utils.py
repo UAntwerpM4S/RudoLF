@@ -21,4 +21,4 @@ def save_checkpoint(state: dict, path: Path):
 def load_checkpoint(path: Path, device: torch.device):
     if not path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {path}")
-    return torch.load(path, map_location=device)
+    return torch.load(path, map_location=device, weights_only=False)
