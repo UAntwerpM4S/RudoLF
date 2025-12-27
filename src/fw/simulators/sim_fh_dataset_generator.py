@@ -244,6 +244,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         ship_config.setInitialPosition(sim_setup.x_pos, sim_setup.y_pos)
         ship_config.setInitialPropellerRps(rng.uniform(low=[0.3], high=[5.5])[0])
         ship_config.setInitialRudderAngle(rng.uniform(low=[-30.0], high=[30.0])[0])
+        ship_config.setInitialHeading(rng.uniform(low=[0.0], high=[360.0])[0])
 
         # Initialize the math model and enable the bridge
         _math_model = MathModel()
@@ -262,15 +263,18 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
 
         # Get the ship interface
         _ship_interface = _math_model.getShipInterface(0)
+        initial_heading = _ship_interface.getShipHeading()
         initial_velocity_over_ground = _ship_interface.getShipVelocityOverGround()
+        initial_yaw_rate = _ship_interface.getShipYawRate()
 
         initial_state = np.array([
             sim_setup.x_pos,
             sim_setup.y_pos,
-            np.radians(_ship_interface.getShipHeading()),
+            0.0,    # start time
+            np.radians(initial_heading),
             initial_velocity_over_ground.x,
             initial_velocity_over_ground.y,
-            _ship_interface.getShipYawRate()
+            np.radians(initial_yaw_rate),
         ], dtype=float)
 
         action = rng.uniform(-1, 1, size=2).astype(np.float32)
@@ -320,10 +324,11 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         final_state = np.array([
             delta_x,
             delta_y,
-            np.radians(_ship_interface.getShipHeading()),
-            velocity_over_ground.x,
-            velocity_over_ground.y,
-            _ship_interface.getShipYawRate(),
+            duration,   # duration of the simulation
+            np.radians(_ship_interface.getShipHeading() - initial_heading),
+            velocity_over_ground.x - initial_velocity_over_ground.x,
+            velocity_over_ground.y - initial_velocity_over_ground.y,
+            np.radians(_ship_interface.getShipYawRate() - initial_yaw_rate),
         ], dtype=float)
 
         sim_setup.output.x_input = np.concatenate([initial_state, action], axis=0)
