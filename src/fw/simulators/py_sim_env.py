@@ -555,6 +555,12 @@ class PySimEnv(BaseEnv):
 
         return (angle + np.pi) % (2.0 * np.pi) - np.pi
 
+    def _safe_heading_from_vector(self, vec):
+        """Return heading angle for vector, or 0.0 if vector is zero."""
+        if np.linalg.norm(vec) > 0.0:
+            return np.arctan2(vec[1], vec[0])
+        return 0.0
+
     def _calculate_heading_error(self, target_heading: float, current_heading: float, dead_zone_deg: float = 5.0) -> float:
         """
         Calculate heading error with dead zone handling.
@@ -737,65 +743,63 @@ class PySimEnv(BaseEnv):
             np.clip(self.state[5] / max(MAX_YAW_RATE, EPSILON), -1, 1)
         ], dtype=np.float32)
 
-        checkpoint_idx = self.checkpoint_index if self.checkpoint_index < len(self.checkpoints) else max(0, len(self.checkpoints) - 1)
+        # Clamp checkpoint indices
+        current_chkp_idx = min(self.checkpoint_index, len(self.checkpoints) - 1)
+        prev_chkp_idx = max(0, current_chkp_idx - 1)
+        next_chkp_idx = min(current_chkp_idx + 1, len(self.checkpoints) - 1)
 
-        # Checkpoint distances
-        current_checkpoint_pos = self.checkpoints[checkpoint_idx]['pos']
-        distance_to_checkpoint = np.linalg.norm(self.ship_pos - current_checkpoint_pos)
-        norm_distance = distance_to_checkpoint / max(self.max_dist, EPSILON)
+        # Checkpoint positions
+        current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
+        prev_chkp_pos = self.checkpoints[prev_chkp_idx]['pos']
+        next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
 
-        # Next checkpoint distances
-        norm_next_distance = 0.0
-        if (len(self.checkpoints) - checkpoint_idx - 1) >= 1:
-            # Distance to immediate next checkpoint (always exists if checkpoints remaining > 0)
-            next_idx = checkpoint_idx + 1
-            next_pos = self.checkpoints[next_idx]['pos']
-            dist_to_next = np.linalg.norm(self.ship_pos - next_pos)
-            norm_next_distance = dist_to_next / max(self.max_dist, EPSILON)
-        else:
-            norm_next_distance = norm_distance
+        # Distances to checkpoints
+        norm_distance = np.linalg.norm(self.ship_pos - current_chkp_pos) / self.max_dist
+        norm_next_distance = np.linalg.norm(self.ship_pos - next_chkp_pos) / self.max_dist
 
-        # Cross-track error (distance to segment, sign preserved)
-        prev_checkpoint_pos = self.checkpoints[max(0, checkpoint_idx - 1)]['pos']
-        cross_track_error = self._distance_from_point_to_line(self.ship_pos, prev_checkpoint_pos, current_checkpoint_pos)
-        norm_cross_error = cross_track_error / (CHECKPOINTS_DISTANCE / 2.0)
+        # Cross-track error (normalized, signed)
+        norm_cross_error = (
+                self._distance_from_point_to_line(
+                    self.ship_pos,
+                    prev_chkp_pos,
+                    current_chkp_pos
+                )
+                / (CHECKPOINTS_DISTANCE / 2.0)
+        )
 
-        # cross product sign to indicate side of track
-        cross = (current_checkpoint_pos[0] - prev_checkpoint_pos[0]) * (self.ship_pos[1] - prev_checkpoint_pos[1]) - \
-                (current_checkpoint_pos[1] - prev_checkpoint_pos[1]) * (self.ship_pos[0] - prev_checkpoint_pos[0])
-        norm_cross_error = norm_cross_error if cross >= 0.0 else -norm_cross_error
+        track_vec = current_chkp_pos - prev_chkp_pos
+        ship_vec = self.ship_pos - prev_chkp_pos
+        norm_cross_error *= 1.0 if np.cross(track_vec, ship_vec) >= 0.0 else -1.0
 
-        # Heading errors (several variants)
-        direction_to_checkpoint = current_checkpoint_pos - self.ship_pos
-        desired_heading = np.arctan2(direction_to_checkpoint[1], direction_to_checkpoint[0]) if np.linalg.norm(
-            direction_to_checkpoint) > 0.0 else 0.0
-        heading_error = self.normalize_angle(desired_heading - self.state[2])
+        # --- Heading errors ---
 
-        direction_parallel_to_checkpoint = current_checkpoint_pos - prev_checkpoint_pos
-        desired_heading_parallel = np.arctan2(direction_parallel_to_checkpoint[1],
-                                              direction_parallel_to_checkpoint[0]) if np.linalg.norm(
-            direction_parallel_to_checkpoint) > 0.0 else 0.0
-        heading_error_parallel = self.normalize_angle(desired_heading_parallel - self.state[2])
+        # To current checkpoint
+        heading_error = self._calculate_heading_error(
+            self._safe_heading_from_vector(current_chkp_pos - self.ship_pos),
+            self.state[2],
+            0.0
+        )
 
-        # Safely calculate next checkpoint heading errors
-        heading_error2 = 0.0
-        heading_error_parallel2 = 0.0
-        try:
-            if checkpoint_idx + 1 < len(self.checkpoints):
-                next_checkpoint_pos = self.checkpoints[checkpoint_idx + 1]['pos']
-                direction_to_checkpoint2 = next_checkpoint_pos - self.ship_pos
-                if np.linalg.norm(direction_to_checkpoint2) > 0.0:
-                    desired_heading2 = np.arctan2(direction_to_checkpoint2[1], direction_to_checkpoint2[0])
-                    heading_error2 = self.normalize_angle(desired_heading2 - self.state[2])
+        # Parallel to current checkpoint segment
+        heading_error_parallel = self._calculate_heading_error(
+            self._safe_heading_from_vector(current_chkp_pos - prev_chkp_pos),
+            self.state[2],
+            0.0
+        )
 
-                direction_parallel_to_checkpoint2 = next_checkpoint_pos - current_checkpoint_pos
-                if np.linalg.norm(direction_parallel_to_checkpoint2) > 0.0:
-                    desired_heading_parallel2 = np.arctan2(direction_parallel_to_checkpoint2[1],
-                                                           direction_parallel_to_checkpoint2[0])
-                    heading_error_parallel2 = self.normalize_angle(desired_heading_parallel2 - self.state[2])
-        except (IndexError, KeyError, TypeError, ValueError):
-            # Index out of bounds or missing key
-            pass
+        # To next checkpoint
+        heading_error2 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next_chkp_pos - self.ship_pos),
+            self.state[2],
+            0.0
+        )
+
+        # Parallel to next checkpoint segment
+        heading_error_parallel2 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next_chkp_pos - prev_chkp_pos),
+            self.state[2],
+            0.0
+        )
 
         # Build observation
         obs = np.hstack([
@@ -976,11 +980,7 @@ class PySimEnv(BaseEnv):
         forward_reward = 4.0 * np.clip(raw_progress, -1.0, 1.0)
 
         # Heading alignment towards current checkpoint
-        if np.linalg.norm(path_vec) > 0.0:
-            self.desired_heading = np.arctan2(path_vec[1], path_vec[0])
-        else:
-            self.desired_heading = 0.0
-        heading_error = self._calculate_heading_error(self.desired_heading, self.state[2])
+        heading_error = self._calculate_heading_error(self._safe_heading_from_vector(path_vec), self.state[2])
         heading_alignment_reward = abs(np.exp(-abs(heading_error))) - 1
 
         # Cross-track penalty (uses distance to segment)
