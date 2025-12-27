@@ -301,11 +301,7 @@ class PySimEnv(BaseEnv):
         # Set heading toward first checkpoint (safeguard if checkpoint list is short)
         if len(self.checkpoints) > self.checkpoint_index:
             direction_vector = self.checkpoints[self.checkpoint_index]['pos'] - self.ship_pos
-
-            if np.linalg.norm(direction_vector) > 0.0:
-                ship_angle = np.arctan2(direction_vector[1], direction_vector[0])
-            else:
-                ship_angle = 0.0
+            ship_angle = self._safe_heading_from_vector(direction_vector)
         else:
             ship_angle = 0.0
 
