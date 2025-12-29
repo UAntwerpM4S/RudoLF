@@ -242,6 +242,7 @@ class PySimEnv(BaseEnv):
         self.time_step = float(time_step)
         self.max_steps = int(max_steps)
         self.verbose = bool(verbose) if verbose is not None else False
+        self.background = None
 
         # RNG: environment-local RNG for reproducibility when seeded via reset()
         self._rng: np.random.Generator = np.random.default_rng()
@@ -552,7 +553,8 @@ class PySimEnv(BaseEnv):
 
         return (angle + np.pi) % (2.0 * np.pi) - np.pi
 
-    def _safe_heading_from_vector(self, vec):
+    @staticmethod
+    def _safe_heading_from_vector(vec):
         """Return heading angle for vector, or 0.0 if vector is zero."""
         if np.linalg.norm(vec) > 0.0:
             return np.arctan2(vec[1], vec[0])
