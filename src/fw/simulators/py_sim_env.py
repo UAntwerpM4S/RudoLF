@@ -43,7 +43,7 @@ MAX_GRID_POS = 14500
 # Reward / shaping
 SUCCESS_REWARD = 50.0
 CHECKPOINT_AREA_SIZE = 5.0
-TARGET_AREA_SIZE = 7.5
+TARGET_AREA_SIZE = 7.0
 
 # Rendering constants
 MAX_FIG_WIDTH = 1200
@@ -237,11 +237,11 @@ class PySimEnv(BaseEnv):
         super().__init__(render_mode)
 
         # Core parameters
+        self.wind = bool(wind)
+        self.current = bool(current)
         self.time_step = float(time_step)
         self.max_steps = int(max_steps)
         self.verbose = bool(verbose) if verbose is not None else False
-        self.wind = bool(wind)
-        self.current = bool(current)
 
         # RNG: environment-local RNG for reproducibility when seeded via reset()
         self._rng: np.random.Generator = np.random.default_rng()
@@ -362,7 +362,8 @@ class PySimEnv(BaseEnv):
         self.overall = load_csv_strict('env_Sche_no_scale.csv')
 
         # Load trajectory
-        path = load_csv_strict('trajectory_points_no_scale.csv')
+        self.path_name = 'trajectory_points_no_scale.csv'
+        path = load_csv_strict(self.path_name)
 
         # Preprocess path (stub currently returns same path)
         path = self._reduce_path(path, self.initial_ship_pos)
