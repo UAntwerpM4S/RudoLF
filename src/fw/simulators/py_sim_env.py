@@ -362,7 +362,7 @@ class PySimEnv(BaseEnv):
         self.overall = load_csv_strict('env_Sche_no_scale.csv')
 
         # Load trajectory
-        self.path_name = 'trajectory_points_no_scale_alternative.csv'
+        self.path_name = 'trajectory_points_no_scale.csv'
         path = load_csv_strict(self.path_name)
 
         # Preprocess path (stub currently returns same path)

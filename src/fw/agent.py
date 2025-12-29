@@ -224,8 +224,7 @@ class Agent:
         env = self.get_env()
 
         if hasattr(env, "ship_pos"):
-            path_name = env.path_name if hasattr(env, "path_name") else ""
-            if env.type_name == 'FhSimEnv' and 'alternative' in path_name:
+            if env.type_name == "FhSimEnv" and "alternative" in getattr(env, "path_name", ""):
                 env.checkpoints[-1]['radius'] = 7.5
 
             # Store results for each episode
