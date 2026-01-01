@@ -248,12 +248,11 @@ class PySimEnv(BaseEnv):
         self._rng: np.random.Generator = np.random.default_rng()
 
         if ship_pos is not None:
-            init = np.array(ship_pos, dtype=np.float32)
+            self.initial_ship_pos = np.array(ship_pos, dtype=np.float32)
         else:
-            init = np.array([5.0, 5.0], dtype=np.float32)
+            self.initial_ship_pos = np.array([5.0, 5.0], dtype=np.float32)
 
         self.randomization_scale = 1.0
-        self.initial_ship_pos = init.copy()
         self.max_dist = np.sqrt(2) * float(MAX_GRID_POS)
 
         # Load environment static data and build checkpoints/polygons
@@ -849,9 +848,7 @@ class PySimEnv(BaseEnv):
         reward, terminated = self._calculate_reward()
 
         # Set truncated True when episode exceeded max_steps but not terminated by failure or success.
-        truncated = False
-        if self.step_count >= self.max_steps and not terminated:
-            truncated = True
+        truncated = self.step_count >= self.max_steps and not terminated
 
         return self._get_obs(), reward, terminated, truncated, {}
 
