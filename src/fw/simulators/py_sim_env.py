@@ -848,7 +848,9 @@ class PySimEnv(BaseEnv):
         reward, terminated = self._calculate_reward()
 
         # Set truncated True when episode exceeded max_steps but not terminated by failure or success.
-        truncated = self.step_count >= self.max_steps and not terminated
+        truncated = False
+        if self.step_count >= self.max_steps and not terminated:
+            truncated = True
 
         return self._get_obs(), reward, terminated, truncated, {}
 
