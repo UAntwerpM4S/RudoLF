@@ -248,12 +248,11 @@ class PySimEnv(BaseEnv):
         self._rng: np.random.Generator = np.random.default_rng()
 
         if ship_pos is not None:
-            init = np.array(ship_pos, dtype=np.float32)
+            self.initial_ship_pos = np.array(ship_pos, dtype=np.float32)
         else:
-            init = np.array([5.0, 5.0], dtype=np.float32)
+            self.initial_ship_pos = np.array([5.0, 5.0], dtype=np.float32)
 
         self.randomization_scale = 1.0
-        self.initial_ship_pos = init.copy()
         self.max_dist = np.sqrt(2) * float(MAX_GRID_POS)
 
         # Load environment static data and build checkpoints/polygons
@@ -631,32 +630,32 @@ class PySimEnv(BaseEnv):
 
         base_low = np.array(
             [
-                MIN_SURGE_VELOCITY,     # Surge velocity
-                MIN_SWAY_VELOCITY,      # Sway velocity
-                MIN_YAW_RATE,           # Yaw rate
-                0.0,                    # Distance to current checkpoint
-                0.0,                    # Distance to checkpoint+1
-                -MAX_GRID_POS,          # Cross-track error
-                -np.pi,                 # Heading error
-                -np.pi,                 # Heading error
-                -np.pi,                 # Heading error
-                -np.pi,                 # Heading error
+                -1.0,   # Surge velocity
+                -1.0,   # Sway velocity
+                -1.0,   # Yaw rate
+                0.0,    # Distance to current checkpoint
+                0.0,    # Distance to checkpoint+1
+                -2.0,   # Cross-track error
+                -1.0,   # Heading error
+                -1.0,   # Heading error
+                -1.0,   # Heading error
+                -1.0,   # Heading error
             ],
             dtype=np.float32,
         )
 
         base_high = np.array(
             [
-                MAX_SURGE_VELOCITY,     # Surge velocity
-                MAX_SWAY_VELOCITY,      # Sway velocity
-                MAX_YAW_RATE,           # Yaw rate
-                1.0,                    # Distance to current checkpoint
-                1.0,                    # Distance to checkpoint+1
-                MAX_GRID_POS,           # Cross-track error
-                np.pi,                  # Heading error
-                np.pi,                  # Heading error
-                np.pi,                  # Heading error
-                np.pi,                  # Heading error
+                1.0,    # Surge velocity
+                1.0,    # Sway velocity
+                1.0,    # Yaw rate
+                1.0,    # Distance to current checkpoint
+                1.0,    # Distance to checkpoint+1
+                2.0,    # Cross-track error
+                1.0,    # Heading error
+                1.0,    # Heading error
+                1.0,    # Heading error
+                1.0,    # Heading error
             ],
             dtype=np.float32,
         )
@@ -737,9 +736,9 @@ class PySimEnv(BaseEnv):
         # Normalize velocities
         # Avoid division by zero by using max with small epsilon (but constants are >0 by design)
         norm_velocities = np.array([
-            np.clip(self.state[3] / max(MAX_SURGE_VELOCITY, EPSILON), -1, 1),
-            np.clip(self.state[4] / max(MAX_SWAY_VELOCITY, EPSILON), -1, 1),
-            np.clip(self.state[5] / max(MAX_YAW_RATE, EPSILON), -1, 1)
+            np.clip(self.state[3] / MAX_SURGE_VELOCITY, -1, 1),
+            np.clip(self.state[4] / MAX_SWAY_VELOCITY, -1, 1),
+            np.clip(self.state[5] / MAX_YAW_RATE, -1, 1)
         ], dtype=np.float32)
 
         # Clamp checkpoint indices
