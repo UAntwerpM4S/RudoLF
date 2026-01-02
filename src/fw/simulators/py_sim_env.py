@@ -618,10 +618,9 @@ class PySimEnv(BaseEnv):
         Initialize and return the observation space for the environment.
 
         Observation space includes:
-        - Normalized ship position, heading, velocities
-        - Distances to current and next checkpoints
+        - Normalized ship velocities
+        - Distances to current checkpoint
         - Cross-track and heading errors
-        - Current control actions
         - Optional wind/current parameters if enabled
 
         Returns:
@@ -728,7 +727,7 @@ class PySimEnv(BaseEnv):
         Returns:
             np.ndarray: Normalized observation array containing:
             - Velocities (normalized to [-1,1] relative to max)
-            - Distances to current and next checkpoints (normalized)
+            - Distance to current checkpoint (normalized)
             - Cross-track and heading errors (normalized)
             - Optional wind/current observations
         """
@@ -803,7 +802,7 @@ class PySimEnv(BaseEnv):
         obs = np.hstack([
             norm_velocities,                        # Normalized velocities
             [norm_distance],                        # Distance to current checkpoint
-            [norm_next_distance],                   # Distances to next checkpoint
+            [norm_next_distance],                   # Distance to next checkpoint
             [norm_cross_error],                     # Normalized cross-track error
             [heading_error / np.pi],                # Normalized heading error
             [heading_error2 / np.pi],               # Normalized heading error
