@@ -873,8 +873,6 @@ class PySimEnv(BaseEnv):
         if checkpoint_distance <= current_checkpoint['radius']:
             if self.checkpoint_index == len(self.checkpoints) - 1:
                 print(f"Target REACHED at distance {checkpoint_distance:.2f}")
-            # else:
-            #     print(f"Checkpoint {self.checkpoint_index} reached.")
             self.checkpoint_index += 1
             self.step_count = 0
 
@@ -882,8 +880,6 @@ class PySimEnv(BaseEnv):
         elif self._is_near_perpendicular_line(current_checkpoint):
             # if self.checkpoint_index == len(self.checkpoints) - 1:
             #     print(f"Target passed at distance {checkpoint_distance:.2f}")
-            # else:
-            #     print(f"Checkpoint {self.checkpoint_index} passed.")
             self.checkpoint_index += 1
             self.step_count = 0
 
