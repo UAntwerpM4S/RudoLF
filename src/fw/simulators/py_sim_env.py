@@ -779,16 +779,16 @@ class PySimEnv(BaseEnv):
         sin_psi = np.sin(psi)
 
         # === Surge ===
-        du = 0.019980 * t - 0.003913 * u + wind_effect[0] + current_effect[0]
+        du = 0.01998 * t - 0.00391 * u + wind_effect[0] + current_effect[0]
 
         # === Sway ===
-        dv = 0.003845 * u * delta_r + 2.575922 * v + wind_effect[1] + current_effect[1]
+        dv = 0.00340 * u * delta_r + 2.5705 * v + wind_effect[1] + current_effect[1]
 
-        # === Yaw ===
-        dr = 0.00014495 * u * delta_r + 1.368933 * r
+        # === Yaw rate ===
+        dr = 1.283e-4 * u * delta_r + 1.3657 * r
 
         # === Heading (direct, NOT via yaw) ===
-        dpsi = (0.990982 * u * delta_r - 3.962034 * delta_r) * self.time_step
+        dpsi = 0.9111 * u * delta_r - 3.6426 * delta_r
 
         # Integrate with limits
         new_u = np.clip(u + du * self.time_step, MIN_SURGE_VELOCITY, MAX_SURGE_VELOCITY)
