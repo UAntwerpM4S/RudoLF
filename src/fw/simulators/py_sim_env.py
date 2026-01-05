@@ -187,16 +187,6 @@ class PySimEnv(BaseEnv):
         # Rendering flag
         self.initialize_plots = True
 
-        # Hydrodynamic & dynamic coefficients (kept original values)
-        self.xu = -0.02
-        self.yv = -0.4
-        self.yv_r = -0.09
-        self.nr = -0.26
-        self.l = 50.0
-        self.k_t = 0.05
-        self.k_r = 0.039
-        self.k_v = 0.03
-
     # -----------------------
     # Initialization helpers
     # -----------------------
@@ -762,7 +752,7 @@ class PySimEnv(BaseEnv):
 
         # Convert control inputs to physical deltas
         delta_r = np.radians(self.current_action[0] * 60.0)  # rudder angle in radians
-        t = self.current_action[1] * 60.0  # scaled thrust value
+        t = self.current_action[1]
 
         # Unpack current dynamic state
         x, y, psi, u, v, r = self.state
@@ -785,14 +775,20 @@ class PySimEnv(BaseEnv):
             ], dtype=np.float32)
 
         # Precomputed trigonometric values
-        sin_delta_r = np.sin(delta_r)
         cos_psi = np.cos(psi)
         sin_psi = np.sin(psi)
 
-        # Simplified dynamics
-        du = self.k_t * t + self.xu * u + wind_effect[0] + current_effect[0]
-        dv = self.k_v * sin_delta_r + self.yv * v + wind_effect[1] + current_effect[1]
-        dr = self.k_r * delta_r + self.nr * r + self.yv_r * v + (v * u) / max(self.l, EPSILON) - YAW_RATE_DAMPING * r
+        # === Surge ===
+        du = 0.019980 * t - 0.003913 * u + wind_effect[0] + current_effect[0]
+
+        # === Sway ===
+        dv = 0.003845 * u * delta_r + 2.575922 * v + wind_effect[1] + current_effect[1]
+
+        # === Yaw ===
+        dr = 0.00014495 * u * delta_r + 1.368933 * r
+
+        # === Heading (direct, NOT via yaw) ===
+        dpsi = (0.990982 * u * delta_r - 3.962034 * delta_r) * self.time_step
 
         # Integrate with limits
         new_u = np.clip(u + du * self.time_step, MIN_SURGE_VELOCITY, MAX_SURGE_VELOCITY)
@@ -802,7 +798,6 @@ class PySimEnv(BaseEnv):
         # Position integration in world coordinates
         dx = new_u * cos_psi - new_v * sin_psi
         dy = new_u * sin_psi + new_v * cos_psi
-        dpsi = new_r
 
         # Save previous values and update
         self.previous_ship_pos = self.ship_pos.copy()
