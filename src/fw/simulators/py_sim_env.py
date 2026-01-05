@@ -500,28 +500,13 @@ class PySimEnv(BaseEnv):
             np.ndarray: Smoothened action array [rudder, thrust]
         """
 
-        action = np.asarray(action, dtype=np.float32)
-        target_rudder, target_thrust = action[0], abs(action[1])
-        current_rudder, current_thrust = self.current_action[0], self.current_action[1]
+        alpha = 0.3
 
-        # Rudder rate limit
-        rudder_change = target_rudder - current_rudder
-        if abs(rudder_change) > MAX_RUDDER_RATE:
-            rudder_change = np.sign(rudder_change) * MAX_RUDDER_RATE
+        # Smooth action application
+        turning_smooth = alpha * action[0] + (1 - alpha) * self.current_action[0]
+        thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.current_action[1]
 
-        # Thrust rate limit
-        thrust_change = target_thrust - current_thrust
-        if abs(thrust_change) > MAX_THRUST_RATE:
-            thrust_change = np.sign(thrust_change) * MAX_THRUST_RATE
-
-        gradual_rudder = current_rudder + rudder_change
-        gradual_thrust = current_thrust + thrust_change
-
-        # Heuristic: if desired rudder change is tiny, keep current rudder to avoid jitter
-        final_rudder = gradual_rudder if abs(
-            target_rudder - current_rudder) > RUDDER_JITTER_THRESHOLD else current_rudder
-
-        return np.array([final_rudder, gradual_thrust], dtype=np.float32)
+        return np.array([turning_smooth, thrust_smooth], dtype=np.float32)
 
     # -----------------------
     # Observation & reset
@@ -751,8 +736,7 @@ class PySimEnv(BaseEnv):
             raise ValueError(f"Action must be shape (2,), got {action.shape} with values {action}")
 
         # Smooth action and update dynamics
-        smoothened_action = action[0], abs(action[1])
-        # smoothened_action = self._smoothen_action(action)
+        smoothened_action = self._smoothen_action(action)
         self._update_ship_dynamics(smoothened_action)
         self.step_count += 1
 
