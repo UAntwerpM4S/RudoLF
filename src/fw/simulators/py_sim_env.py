@@ -120,6 +120,7 @@ class PhysicsShipModel:
         """
         Initialize with ship parameters
         """
+
         # Ship parameters
         self.L = ship_length  # Length (m)
         self.m = ship_mass  # Mass (kg)
@@ -286,6 +287,7 @@ class PySimEnv(BaseEnv):
     # -----------------------
     def _initialize_state(self) -> None:
         """Initialize state vectors and convenience values."""
+
         self.ship_pos = self.initial_ship_pos.copy()
         self.previous_ship_pos = self.initial_ship_pos.copy()
         self.previous_heading = 0.0
@@ -553,6 +555,7 @@ class PySimEnv(BaseEnv):
     @staticmethod
     def _safe_heading_from_vector(vec):
         """Return heading angle for vector, or 0.0 if vector is zero."""
+
         if np.linalg.norm(vec) > 0.0:
             return np.arctan2(vec[1], vec[0])
         return 0.0
