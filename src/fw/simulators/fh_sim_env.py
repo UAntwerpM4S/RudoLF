@@ -154,10 +154,6 @@ class FhSimEnv(PySimEnv):
         # Save the current ship position as the previous position for tracking.
         self.previous_ship_pos = np.copy(self.ship_pos)
         self.previous_heading = np.radians(self._fh_sim.ship_interface.getShipHeading())
-        self.previous_rudder_target = self.current_action[0]
-        self.previous_thrust_target = self.current_action[1]
-
-        self.current_action = action
 
         # Update rudder controls based on the turning action.
         for rudder in self._fh_sim.ship_interface.getRudderControls():
