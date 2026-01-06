@@ -6,7 +6,7 @@ import gymnasium as gym
 import tkinter as tk
 import numpy as np
 
-# Try interactive backend; fallback behavior unchanged
+# First try interactive backend
 try:
     matplotlib.use('TkAgg')  # Try using the interactive backend
 except ImportError:
@@ -21,9 +21,9 @@ from fw.simulators.base_env import BaseEnv
 
 
 # -----------------------
-# Module-level constants (grouped for clarity)
+# Module-level constants
 # -----------------------
-# Physical limits / config (kept from original)
+# Physical limits / config
 MIN_SURGE_VELOCITY = 0.0
 MIN_SWAY_VELOCITY = -2.0
 MIN_YAW_RATE = -0.5
@@ -50,13 +50,13 @@ MAX_FIG_WIDTH = 1200
 MAX_FIG_HEIGHT = 900
 DPI = 100
 
-# New constants for fixes / clarity
+# Constants definition
 PERPENDICULAR_LINE_LENGTH = 50.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
 PERPENDICULAR_LINE_PROXIMITY = 2.0
 
-# Smoothing / heuristics (extracted magic numbers)
+# Smoothing / heuristics
 RUDDER_JITTER_THRESHOLD = 0.2  # used in action smoothing to avoid jitter
 EPSILON = 1e-9  # Small epsilon for numerical stability
 
@@ -118,40 +118,86 @@ class PhysicsShipModel:
 
     def __init__(self, ship_length=100.0, ship_mass=1e6):
         """
-        Initialize with ship parameters - adjusted for better turning response
+        Initialize with ship parameters
         """
+        # Ship parameters
+        self.L = ship_length  # Length (m)
+        self.m = ship_mass  # Mass (kg)
 
         # Added mass coefficients
-        self.X_udot = -0.05 * ship_mass
-        self.Y_vdot = -0.4 * ship_mass
-        self.N_rdot = -0.05 * ship_mass * ship_length**2
+        self.X_udot = -0.05 * self.m  # Added mass
+        self.Y_vdot = -0.5 * self.m  # Added mass
+        self.N_rdot = -0.05 * self.m * self.L ** 2  # Added inertia
 
         # Mass matrix components
-        self.m11 = ship_mass - self.X_udot
-        self.m22 = ship_mass - self.Y_vdot
-        self.m33 = ship_mass * ship_length**2 / 12 - self.N_rdot
+        self.m11 = self.m - self.X_udot
+        self.m22 = self.m - self.Y_vdot
+        self.m33 = (self.m * self.L ** 2 / 12.0) - self.N_rdot
 
-        # Hydrodynamic forces
-        self.X_u = -4.11e3
-        self.X_T =  2.10e4
+        # Hydrodynamic damping coefficients
+        self.X_u = -0.002 * self.m  # Surge damping
+        self.Y_v = -0.02 * self.m  # Sway damping
+        self.N_r = -0.001 * self.m * self.L ** 2  # Yaw damping
 
-        self.Y_v =  3.60e6
-        self.Y_delta = 4.75e3
+        # Nonlinear (quadratic) damping coefficients
+        self.X_uu = -0.0005 * self.m  # Quadratic damping
+        self.Y_vv = -0.005 * self.m  # Quadratic damping
+        self.N_rr = -0.0005 * self.m * self.L ** 2  # Quadratic damping
 
-        self.N_r =  1.82e9
-        self.N_delta = 1.70e5
+        # Rudder coefficients
+        self.Y_rudder = 0.1 * self.m  # Sway force from rudder
+        self.N_rudder = 0.001 * self.m * self.L  # Yaw moment from rudder
 
-    def calculate_accelerations(self, u, v, r, rudder_action, thrust_action):
+        # Propeller/thrust coefficient
+        self.X_thrust = 0.05 * self.m  # Surge force from thrust
+
+        # Cross-flow drag coefficients
+        self.Y_uv = -0.005 * self.m
+        self.N_uv = -0.0005 * self.m * self.L
+
+    def calculate_accelerations(self, u, v, r, rudder_angle, thrust):
         """
         Calculate accelerations - with speed-dependent rudder effectiveness
         """
 
-        delta = rudder_action * np.pi / 3.0
+        # --- CORIOLIS-CENTRIPETAL MATRIX ---
+        coriolis_surge = self.m22 * v * r
+        coriolis_sway = -self.m11 * u * r
+        coriolis_yaw = (self.m22 - self.m11) * u * v
 
-        # Calculated accelerations
-        du = (self.X_u * u + self.X_T * thrust_action) / self.m11
-        dv = (self.Y_v * v + self.Y_delta * delta * u) / self.m22
-        dr = (self.N_r * r + self.N_delta * delta * u) / self.m33
+        # --- HYDRODYNAMIC DAMPING FORCES ---
+        d_surge = self.X_u * u + self.X_uu * u * abs(u)
+        d_sway = (self.Y_v * v +
+                  self.Y_vv * v * abs(v) +
+                  self.Y_uv * u * v)
+        d_yaw = (self.N_r * r +
+                 self.N_rr * r * abs(r) +
+                 self.N_uv * u * v)
+
+        # --- CONTROL FORCES ---
+        # Speed-dependent rudder effectiveness
+        # At low speeds, rudder is less effective
+        speed_factor = max(u / RUDDER_SPEED_FACTOR_DENOM, MIN_RUDDER_EFFECTIVENESS)
+
+        # Rudder effectiveness
+        f_rudder_sway = self.Y_rudder * rudder_angle * speed_factor
+
+        # IMPORTANT: Add direct sway force from rudder (helps initial turn)
+        # Ships create sideways force when rudder is applied
+        m_rudder_yaw = self.N_rudder * rudder_angle * speed_factor
+
+        # Thrust force
+        f_thrust = self.X_thrust * thrust
+
+        # --- COMBINE ALL FORCES/MOMENTS ---
+        total_surge_force = (f_thrust + d_surge + coriolis_surge)
+        total_sway_force = (f_rudder_sway + d_sway + coriolis_sway)
+        total_yaw_moment = (m_rudder_yaw + d_yaw + coriolis_yaw)
+
+        # --- CALCULATE ACCELERATIONS ---
+        du = total_surge_force / self.m11
+        dv = total_sway_force / self.m22
+        dr = total_yaw_moment / self.m33
 
         return du, dv, dr
 
@@ -224,7 +270,7 @@ class PySimEnv(BaseEnv):
         )
         self.observation_space = self._initialize_observation_space()
 
-        # Reward component weights (kept from original)
+        # Reward component weights
         self.reward_weights = {
             'forward': 1.0,
             'alignment': 1.8,
@@ -272,9 +318,9 @@ class PySimEnv(BaseEnv):
         self.wind_direction = np.array([np.cos(self.radians_wind), np.sin(self.radians_wind)], dtype=np.float32)
         self.wind_strength = 0.35
 
-    # -----------------------
+    # -------------------------
     # Environment data loaders
-    # -----------------------
+    # -------------------------
     def _load_environment_data(self, target_pos: Optional[np.ndarray]) -> None:
         """
         Loads static environment data including obstacles, map outlines, and trajectory checkpoints.
@@ -499,7 +545,7 @@ class PySimEnv(BaseEnv):
             angle: An angle in radians. Can be any finite floating-point value.
 
         Returns:
-            The equivalent angle in radians within the range [-π, π].
+            The equivalent angle in radians within the range [-π, π).
         """
 
         return (angle + np.pi) % (2.0 * np.pi) - np.pi
@@ -674,7 +720,6 @@ class PySimEnv(BaseEnv):
         """
 
         # Normalize velocities
-        # Avoid division by zero by using max with small epsilon (but constants are >0 by design)
         norm_velocities = np.array([
             np.clip(self.state[3] / MAX_SURGE_VELOCITY, -1, 1),
             np.clip(self.state[4] / MAX_SWAY_VELOCITY, -1, 1),
@@ -807,6 +852,12 @@ class PySimEnv(BaseEnv):
             action: Array of [rudder, thrust] commands
         """
 
+        # Convert control inputs to physical values
+        # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
+        delta_r = np.radians(action[0] * 60.0)  # rudder angle in radians
+        # Thrust: 0 to 1 maps to 0 to full ahead
+        thrust = action[1]
+
         # Unpack current dynamic state
         x, y, psi, u, v, r = self.state
 
@@ -828,14 +879,13 @@ class PySimEnv(BaseEnv):
             ], dtype=np.float32)
 
         # Calculate accelerations using physics model
-        du, dv, dr = self.physics_model.calculate_accelerations(u, v, r, action[0], action[1])
+        du, dv, dr = self.physics_model.calculate_accelerations(u, v, r, delta_r, thrust)
 
         # Add environmental effects as additional accelerations
         du += wind_effect[0] + current_effect[0]
         dv += wind_effect[1] + current_effect[1]
 
         # --- SEMI-IMPLICIT INTEGRATION FOR STABILITY ---
-        # Better than Euler for large time steps (0.6-1.0s)
         dt = self.time_step
 
         # Surge integration (semi-implicit for damping)
@@ -878,9 +928,9 @@ class PySimEnv(BaseEnv):
         self.state = np.array([new_x, new_y, new_heading, new_u, new_v, new_r], dtype=np.float32)
         self.ship_pos = self.state[:2]
 
-    # -----------------------
+    # -------------------
     # Reward calculation
-    # -----------------------
+    # -------------------
     def _calculate_reward(self) -> Tuple[float, bool]:
         """
         Calculate reward and termination conditions.
@@ -927,7 +977,7 @@ class PySimEnv(BaseEnv):
         # Action penalty (rudder magnitude)
         rudder_penalty = -0.2 * abs(self.performed_action[0])
 
-        # Combine weighted rewards and penalties (weights kept from original)
+        # Combine weighted rewards and penalties
         reward = (
                 self.reward_weights['forward'] * forward_reward +
                 self.reward_weights['alignment'] * heading_alignment_reward +
