@@ -111,97 +111,47 @@ def calculate_perpendicular_lines(
     return lines
 
 
-class FossenShipModel:
+class PhysicsShipModel:
     """
-    3-DOF Ship Model based on Fossen's Marine Craft Dynamics
-    Adjusted for better responsiveness in simulation
+    3-DOF physics ship model
     """
 
     def __init__(self, ship_length=100.0, ship_mass=1e6):
         """
         Initialize with ship parameters - adjusted for better turning response
         """
-        # Ship parameters
-        self.L = ship_length  # Length (m)
-        self.m = ship_mass  # Mass (kg)
 
-        # Added mass coefficients (reduced for more responsiveness)
-        self.X_udot = -0.05 * self.m  # Reduced added mass
-        self.Y_vdot = -0.5 * self.m  # Reduced added mass
-        self.N_rdot = -0.05 * self.m * self.L ** 2  # Reduced added inertia
+        # Added mass coefficients
+        self.X_udot = -0.05 * ship_mass
+        self.Y_vdot = -0.4 * ship_mass
+        self.N_rdot = -0.05 * ship_mass * ship_length**2
 
         # Mass matrix components
-        self.m11 = self.m - self.X_udot
-        self.m22 = self.m - self.Y_vdot
-        self.m33 = (self.m * self.L ** 2 / 12.0) - self.N_rdot
+        self.m11 = ship_mass - self.X_udot
+        self.m22 = ship_mass - self.Y_vdot
+        self.m33 = ship_mass * ship_length**2 / 12 - self.N_rdot
 
-        # Hydrodynamic damping coefficients (reduced damping)
-        # Original values were too high - ship wouldn't turn
-        self.X_u = -0.002 * self.m  # SIGNIFICANTLY reduced surge damping
-        self.Y_v = -0.02 * self.m  # SIGNIFICANTLY reduced sway damping
-        self.N_r = -0.001 * self.m * self.L ** 2  # SIGNIFICANTLY reduced yaw damping
+        # Hydrodynamic forces
+        self.X_u = -4.11e3
+        self.X_T =  2.10e4
 
-        # Nonlinear (quadratic) damping coefficients (reduced)
-        self.X_uu = -0.0005 * self.m  # Reduced quadratic damping
-        self.Y_vv = -0.005 * self.m  # Reduced quadratic damping
-        self.N_rr = -0.0005 * self.m * self.L ** 2  # Reduced quadratic damping
+        self.Y_v =  3.60e6
+        self.Y_delta = 4.75e3
 
-        # Rudder coefficients (INCREASED for better turning)
-        # These were way too low - ship wouldn't respond to rudder
-        self.Y_rudder = 0.1 * self.m  # INCREASED 10x - sway force from rudder
-        self.N_rudder = 0.001 * self.m * self.L  # INCREASED 10x - yaw moment from rudder
+        self.N_r =  1.82e9
+        self.N_delta = 1.70e5
 
-        # Propeller/thrust coefficient
-        self.X_thrust = 0.05 * self.m  # Surge force from thrust
-
-        # Cross-flow drag coefficients
-        self.Y_uv = -0.005 * self.m  # Reduced cross-term
-        self.N_uv = -0.0005 * self.m * self.L  # Reduced cross-term
-
-    def calculate_accelerations(self, u, v, r, rudder_angle, thrust):
+    def calculate_accelerations(self, u, v, r, rudder_action, thrust_action):
         """
         Calculate accelerations - with speed-dependent rudder effectiveness
         """
 
-        # --- CORIOLIS-CENTRIPETAL MATRIX ---
-        coriolis_surge = self.m22 * v * r
-        coriolis_sway = -self.m11 * u * r
-        coriolis_yaw = (self.m22 - self.m11) * u * v
+        delta = rudder_action * np.pi / 3.0
 
-        # --- HYDRODYNAMIC DAMPING FORCES ---
-        # Reduced damping allows ship to turn more easily
-        d_surge = self.X_u * u + self.X_uu * u * abs(u)
-        d_sway = (self.Y_v * v +
-                  self.Y_vv * v * abs(v) +
-                  self.Y_uv * u * v)
-        d_yaw = (self.N_r * r +
-                 self.N_rr * r * abs(r) +
-                 self.N_uv * u * v)
-
-        # --- CONTROL FORCES ---
-        # CRITICAL: Speed-dependent rudder effectiveness
-        # At low speeds, rudder is less effective
-        speed_factor = max(u / RUDDER_SPEED_FACTOR_DENOM, MIN_RUDDER_EFFECTIVENESS)
-
-        # INCREASED rudder effectiveness
-        f_rudder_sway = self.Y_rudder * rudder_angle * speed_factor
-
-        # IMPORTANT: Add direct sway force from rudder (helps initial turn)
-        # Ships create sideways force when rudder is applied
-        m_rudder_yaw = self.N_rudder * rudder_angle * speed_factor
-
-        # Thrust force
-        f_thrust = self.X_thrust * thrust
-
-        # --- COMBINE ALL FORCES/MOMENTS ---
-        total_surge_force = (f_thrust + d_surge + coriolis_surge)
-        total_sway_force = (f_rudder_sway + d_sway + coriolis_sway)
-        total_yaw_moment = (m_rudder_yaw + d_yaw + coriolis_yaw)
-
-        # --- CALCULATE ACCELERATIONS ---
-        du = total_surge_force / self.m11
-        dv = total_sway_force / self.m22
-        dr = total_yaw_moment / self.m33
+        # Calculated accelerations
+        du = (self.X_u * u + self.X_T * thrust_action) / self.m11
+        dv = (self.Y_v * v + self.Y_delta * delta * u) / self.m22
+        dr = (self.N_r * r + self.N_delta * delta * u) / self.m33
 
         return du, dv, dr
 
@@ -242,6 +192,7 @@ class PySimEnv(BaseEnv):
         self.time_step = float(time_step)
         self.max_steps = int(max_steps)
         self.verbose = bool(verbose) if verbose is not None else False
+        self.performed_action = None
         self.background = None
 
         # RNG: environment-local RNG for reproducibility when seeded via reset()
@@ -262,8 +213,8 @@ class PySimEnv(BaseEnv):
         self._initialize_state()
         self._initialize_control_parameters()
 
-        # Initialize Fossen ship model
-        self.fossen_model = FossenShipModel(ship_length=100.0, ship_mass=1e6)
+        # Initialize physics ship model
+        self.physics_model = PhysicsShipModel(ship_length=110.0, ship_mass=3.86e6)    # Myzako specifications
 
         # Gym spaces
         self.action_space = gym.spaces.Box(
@@ -297,6 +248,7 @@ class PySimEnv(BaseEnv):
         self.checkpoint_index = 1
         self.cross_error = 0.0
         self.step_count = 0
+        self.total_steps = 0
 
         # Set heading toward first checkpoint (safeguard if checkpoint list is short)
         if len(self.checkpoints) > self.checkpoint_index:
@@ -306,7 +258,7 @@ class PySimEnv(BaseEnv):
             ship_angle = 0.0
 
         self.state = np.array([self.ship_pos[0], self.ship_pos[1], ship_angle, 0.0, 0.0, 0.0], dtype=np.float32)
-        self.current_action = np.zeros(2, dtype=np.float32)
+        self.performed_action = np.zeros(2, dtype=np.float32)
 
     def _initialize_control_parameters(self) -> None:
         """Initialize environmental effect defaults."""
@@ -587,28 +539,17 @@ class PySimEnv(BaseEnv):
             np.ndarray: Smoothened action array [rudder, thrust]
         """
 
-        action = np.asarray(action, dtype=np.float32)
-        target_rudder, target_thrust = action[0], abs(action[1])
-        current_rudder, current_thrust = self.current_action[0], self.current_action[1]
+        alpha = 0.3
 
-        # Rudder rate limit
-        rudder_change = target_rudder - current_rudder
-        if abs(rudder_change) > MAX_RUDDER_RATE:
-            rudder_change = np.sign(rudder_change) * MAX_RUDDER_RATE
+        if self.total_steps == 0:
+            turning_smooth = action[0]
+            thrust_smooth = abs(action[1])
+        else:
+            # Smooth action application
+            turning_smooth = alpha * action[0] + (1 - alpha) * self.performed_action[0]
+            thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.performed_action[1]
 
-        # Thrust rate limit
-        thrust_change = target_thrust - current_thrust
-        if abs(thrust_change) > MAX_THRUST_RATE:
-            thrust_change = np.sign(thrust_change) * MAX_THRUST_RATE
-
-        gradual_rudder = current_rudder + rudder_change
-        gradual_thrust = current_thrust + thrust_change
-
-        # Heuristic: if desired rudder change is tiny, keep current rudder to avoid jitter
-        final_rudder = gradual_rudder if abs(
-            target_rudder - current_rudder) > RUDDER_JITTER_THRESHOLD else current_rudder
-
-        return np.array([final_rudder, gradual_thrust], dtype=np.float32)
+        return np.array([turning_smooth, thrust_smooth], dtype=np.float32)
 
     # -----------------------
     # Observation & reset
@@ -784,19 +725,23 @@ class PySimEnv(BaseEnv):
             0.0
         )
 
-        # To next checkpoint
-        heading_error2 = self._calculate_heading_error(
-            self._safe_heading_from_vector(next_chkp_pos - self.ship_pos),
-            self.state[2],
-            0.0
-        )
-
-        # Parallel to next checkpoint segment
-        heading_error_parallel2 = self._calculate_heading_error(
-            self._safe_heading_from_vector(next_chkp_pos - prev_chkp_pos),
-            self.state[2],
-            0.0
-        )
+        if self.checkpoint_index < len(self.checkpoints) - 2:
+            # To next checkpoint
+            heading_error2 = self._calculate_heading_error(
+                self._safe_heading_from_vector(next_chkp_pos - self.ship_pos),
+                self.state[2],
+                0.0
+            )
+    
+            # Parallel to next checkpoint segment
+            heading_error_parallel2 = self._calculate_heading_error(
+                self._safe_heading_from_vector(next_chkp_pos - prev_chkp_pos),
+                self.state[2],
+                0.0
+            )
+        else:
+            heading_error2 = 0.0
+            heading_error_parallel2 = 0.0
 
         # Build observation
         obs = np.hstack([
@@ -838,9 +783,10 @@ class PySimEnv(BaseEnv):
             raise ValueError(f"Action must be shape (2,), got {action.shape} with values {action}")
 
         # Smooth action and update dynamics
-        smoothened_action = action[0], abs(action[1])
-        # smoothened_action = self._smoothen_action(action)
+        smoothened_action = self._smoothen_action(action)
         self._update_ship_dynamics(smoothened_action)
+        self.performed_action = smoothened_action.copy()
+        self.total_steps += 1
         self.step_count += 1
 
         # Reward and termination check
@@ -860,14 +806,6 @@ class PySimEnv(BaseEnv):
         Args:
             action: Array of [rudder, thrust] commands
         """
-
-        self.current_action = np.array(action, dtype=np.float32)
-
-        # Convert control inputs to physical values
-        # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
-        delta_r = np.radians(self.current_action[0] * 60.0)  # rudder angle in radians
-        # Thrust: 0 to 1 maps to 0 to full ahead
-        thrust = max(self.current_action[1], 0.0)  # thrust normalized 0-1
 
         # Unpack current dynamic state
         x, y, psi, u, v, r = self.state
@@ -889,9 +827,8 @@ class PySimEnv(BaseEnv):
                 self.current_strength * np.sin(relative_current_angle)
             ], dtype=np.float32)
 
-        # --- FOSSEN MODEL INTEGRATION ---
-        # Calculate accelerations using Fossen model
-        du, dv, dr = self.fossen_model.calculate_accelerations(u, v, r, delta_r, thrust)
+        # Calculate accelerations using physics model
+        du, dv, dr = self.physics_model.calculate_accelerations(u, v, r, action[0], action[1])
 
         # Add environmental effects as additional accelerations
         du += wind_effect[0] + current_effect[0]
@@ -902,15 +839,15 @@ class PySimEnv(BaseEnv):
         dt = self.time_step
 
         # Surge integration (semi-implicit for damping)
-        surge_damping_factor = abs(self.fossen_model.X_u / self.fossen_model.m11)
+        surge_damping_factor = abs(self.physics_model.X_u / self.physics_model.m11)
         new_u = (u + du * dt) / (1 + surge_damping_factor * dt)
 
         # Sway integration (semi-implicit for damping)
-        sway_damping_factor = abs(self.fossen_model.Y_v / self.fossen_model.m22)
+        sway_damping_factor = abs(self.physics_model.Y_v / self.physics_model.m22)
         new_v = (v + dv * dt) / (1 + sway_damping_factor * dt)
 
         # Yaw integration (semi-implicit for damping)
-        yaw_damping_factor = abs(self.fossen_model.N_r / self.fossen_model.m33)
+        yaw_damping_factor = abs(self.physics_model.N_r / self.physics_model.m33)
         new_r = (r + dr * dt) / (1 + yaw_damping_factor * dt)
 
         # Apply realistic limits
@@ -988,7 +925,7 @@ class PySimEnv(BaseEnv):
         cross_track_penalty = -abs(cross_track_penalty) ** 1.0
 
         # Action penalty (rudder magnitude)
-        rudder_penalty = -0.2 * abs(self.current_action[0])
+        rudder_penalty = -0.2 * abs(self.performed_action[0])
 
         # Combine weighted rewards and penalties (weights kept from original)
         reward = (
