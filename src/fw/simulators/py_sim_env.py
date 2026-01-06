@@ -257,7 +257,7 @@ class PySimEnv(BaseEnv):
         else:
             ship_angle = 0.0
 
-        self.state = np.array([self.ship_pos[0], self.ship_pos[1], ship_angle, 4.0, 0.0, 0.0], dtype=np.float32)
+        self.state = np.array([self.ship_pos[0], self.ship_pos[1], ship_angle, 0.0, 0.0, 0.0], dtype=np.float32)
         self.performed_action = np.zeros(2, dtype=np.float32)
 
     def _initialize_control_parameters(self) -> None:
