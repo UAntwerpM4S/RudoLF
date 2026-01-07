@@ -31,10 +31,6 @@ MAX_SURGE_VELOCITY = 5.0
 MAX_SWAY_VELOCITY = 2.0
 MAX_YAW_RATE = 0.5
 
-# Rate limits applied in smoothing
-MAX_RUDDER_RATE = 0.06
-MAX_THRUST_RATE = 0.05
-
 # Grid limits
 CHECKPOINTS_DISTANCE = 350
 MIN_GRID_POS = -11700
@@ -52,12 +48,9 @@ DPI = 100
 
 # Constants definition
 PERPENDICULAR_LINE_LENGTH = 50.0
+PERPENDICULAR_LINE_PROXIMITY = 2.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
-PERPENDICULAR_LINE_PROXIMITY = 2.0
-
-# Smoothing / heuristics
-RUDDER_JITTER_THRESHOLD = 0.2  # used in action smoothing to avoid jitter
 EPSILON = 1e-9  # Small epsilon for numerical stability
 
 # Physics model constants
@@ -265,7 +258,7 @@ class PySimEnv(BaseEnv):
 
         # Gym spaces
         self.action_space = gym.spaces.Box(
-            low=np.array([-1.0, -1.0], dtype=np.float32),
+            low=np.array([-1.0, 0.0], dtype=np.float32),
             high=np.array([1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
@@ -291,12 +284,11 @@ class PySimEnv(BaseEnv):
         self.ship_pos = self.initial_ship_pos.copy()
         self.previous_ship_pos = self.initial_ship_pos.copy()
         self.previous_heading = 0.0
-        self.desired_heading = 0.0
 
         self.checkpoint_index = 1
         self.cross_error = 0.0
-        self.step_count = 0
         self.total_steps = 0
+        self.step_count = 0
 
         # Set heading toward first checkpoint (safeguard if checkpoint list is short)
         if len(self.checkpoints) > self.checkpoint_index:
@@ -357,9 +349,9 @@ class PySimEnv(BaseEnv):
             return data
 
         # Load obstacles and overall map shapes
+        self.overall = load_csv_strict('env_Sche_no_scale.csv')
         self.obstacles = load_csv_strict('env_Sche_250cm_no_scale.csv')
         self.polygon_shape = Polygon(self.obstacles)
-        self.overall = load_csv_strict('env_Sche_no_scale.csv')
 
         # Load trajectory
         self.path_name = 'trajectory_points_no_scale.csv'
@@ -425,11 +417,9 @@ class PySimEnv(BaseEnv):
         """
 
         minx, miny, maxx, maxy = self.polygon_shape.bounds
-
+        rng = self._rng
         samples = []
         tries = 0
-
-        rng = self._rng
 
         while len(samples) < nbr_samples and tries < max_tries:
             tries += 1
@@ -1001,7 +991,7 @@ class PySimEnv(BaseEnv):
             self.step_count = 0
 
         done = False
-        heading_change = abs(self._calculate_heading_error(self.previous_heading, self.state[2]))
+        heading_change = abs(self.normalize_angle(self.previous_heading - self.state[2]))
 
         # Early termination conditions
         termination_conditions = [
