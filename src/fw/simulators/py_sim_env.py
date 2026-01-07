@@ -61,7 +61,7 @@ RUDDER_JITTER_THRESHOLD = 0.2  # used in action smoothing to avoid jitter
 EPSILON = 1e-9  # Small epsilon for numerical stability
 
 # Physics model constants
-RUDDER_SPEED_FACTOR_DENOM = 3.0
+RUDDER_SPEED_FACTOR_DENOMINATOR = 3.0
 MIN_RUDDER_EFFECTIVENESS = 0.2
 
 
@@ -105,8 +105,8 @@ def calculate_perpendicular_lines(
     for i, cp in enumerate(checkpoints):
         pos = np.asarray(cp['pos'], dtype=np.float32)
         smth_tangent = smooth_tangent(checkpoints, i)
-        perp = np.array([-smth_tangent[1], smth_tangent[0]], dtype=np.float32)
-        offset = perp * (line_length / 2.0)
+        perpendicular = np.array([-smth_tangent[1], smth_tangent[0]], dtype=np.float32)
+        offset = perpendicular * (line_length / 2.0)
         lines.append((pos + offset, pos - offset))
     return lines
 
@@ -178,7 +178,7 @@ class PhysicsShipModel:
         # --- CONTROL FORCES ---
         # Speed-dependent rudder effectiveness
         # At low speeds, rudder is less effective
-        speed_factor = max(u / RUDDER_SPEED_FACTOR_DENOM, MIN_RUDDER_EFFECTIVENESS)
+        speed_factor = max(u / RUDDER_SPEED_FACTOR_DENOMINATOR, MIN_RUDDER_EFFECTIVENESS)
 
         # Rudder effectiveness
         f_rudder_sway = self.Y_rudder * rudder_angle * speed_factor
@@ -560,23 +560,6 @@ class PySimEnv(BaseEnv):
             return np.arctan2(vec[1], vec[0])
         return 0.0
 
-    def _calculate_heading_error(self, target_heading: float, current_heading: float, dead_zone_deg: float = 5.0) -> float:
-        """
-        Calculate heading error with dead zone handling.
-
-        Args:
-            target_heading: Desired heading in radians
-            current_heading: Current heading in radians
-            dead_zone_deg: Angular dead zone in degrees
-
-        Returns:
-            float: Heading error in radians, 0 if within dead zone
-        """
-
-        error = self.normalize_angle(target_heading - current_heading)
-        dead_zone = np.radians(dead_zone_deg)
-        return 0.0 if abs(error) < dead_zone else error
-
     def _smoothen_action(self, action: np.ndarray) -> np.ndarray:
         """
         Smoothen the action to prevent erratic behaviour of the ship.
@@ -760,36 +743,24 @@ class PySimEnv(BaseEnv):
         # --- Heading errors ---
 
         # To current checkpoint
-        heading_error = self._calculate_heading_error(
-            self._safe_heading_from_vector(current_chkp_pos - self.ship_pos),
-            self.state[2],
-            0.0
+        heading_error = self.normalize_angle(
+            self._safe_heading_from_vector(current_chkp_pos - self.ship_pos) - self.state[2]
         )
 
         # Parallel to current checkpoint segment
-        heading_error_parallel = self._calculate_heading_error(
-            self._safe_heading_from_vector(current_chkp_pos - prev_chkp_pos),
-            self.state[2],
-            0.0
+        heading_error_parallel = self.normalize_angle(
+            self._safe_heading_from_vector(current_chkp_pos - prev_chkp_pos) - self.state[2]
         )
 
-        if self.checkpoint_index < len(self.checkpoints) - 1:
-            # To next checkpoint
-            heading_error2 = self._calculate_heading_error(
-                self._safe_heading_from_vector(next_chkp_pos - self.ship_pos),
-                self.state[2],
-                0.0
-            )
-    
-            # Parallel to next checkpoint segment
-            heading_error_parallel2 = self._calculate_heading_error(
-                self._safe_heading_from_vector(next_chkp_pos - prev_chkp_pos),
-                self.state[2],
-                0.0
-            )
-        else:
-            heading_error2 = 0.0
-            heading_error_parallel2 = 0.0
+        # To next checkpoint
+        heading_error2 = self.normalize_angle(
+            self._safe_heading_from_vector(next_chkp_pos - self.ship_pos) - self.state[2]
+        )
+
+        # Parallel to next checkpoint segment
+        heading_error_parallel2 = self.normalize_angle(
+            self._safe_heading_from_vector(next_chkp_pos - prev_chkp_pos) - self.state[2]
+        )
 
         # Build observation
         obs = np.hstack([
@@ -831,10 +802,12 @@ class PySimEnv(BaseEnv):
             raise ValueError(f"Action must be shape (2,), got {action.shape} with values {action}")
 
         # Smooth action and update dynamics
-        smoothened_action = np.array([action[0], abs(action[1])], dtype=np.float32)
-        # smoothened_action = self._smoothen_action(action)
+        # smoothened_action = np.array([action[0], abs(action[1])], dtype=np.float32)
+        smoothened_action = self._smoothen_action(action)
+
         self._update_ship_dynamics(smoothened_action)
         self.performed_action = smoothened_action.copy()
+
         self.total_steps += 1
         self.step_count += 1
 
@@ -968,7 +941,7 @@ class PySimEnv(BaseEnv):
         forward_reward = 4.0 * np.clip(raw_progress, -1.0, 1.0)
 
         # Heading alignment towards current checkpoint
-        heading_error = self._calculate_heading_error(self._safe_heading_from_vector(path_vec), self.state[2])
+        heading_error = self.normalize_angle(self._safe_heading_from_vector(path_vec) - self.state[2])
         heading_alignment_reward = abs(np.exp(-abs(heading_error))) - 1
 
         # Cross-track penalty (uses distance to segment)
@@ -1007,7 +980,7 @@ class PySimEnv(BaseEnv):
             self.step_count = 0
 
         done = False
-        heading_change = abs(self._calculate_heading_error(self.previous_heading, self.state[2]))
+        heading_change = abs(self.normalize_angle(self.previous_heading - self.state[2]))
 
         # Early termination conditions
         termination_conditions = [
