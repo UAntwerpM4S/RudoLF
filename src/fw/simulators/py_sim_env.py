@@ -31,6 +31,10 @@ MAX_SURGE_VELOCITY = 5.0
 MAX_SWAY_VELOCITY = 2.0
 MAX_YAW_RATE = 0.5
 
+# Rate limits applied in smoothing
+MAX_RUDDER_RATE = 0.6
+MAX_THRUST_RATE = 0.5
+
 # Grid limits
 CHECKPOINTS_DISTANCE = 350
 MIN_GRID_POS = -11700
@@ -52,6 +56,9 @@ PERPENDICULAR_LINE_PROXIMITY = 2.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
 EPSILON = 1e-9  # Small epsilon for numerical stability
+
+# Smoothing / heuristics (extracted magic numbers)
+RUDDER_JITTER_THRESHOLD = 0.2  # used in action smoothing to avoid jitter
 
 # Physics model constants
 RUDDER_SPEED_FACTOR_DENOMINATOR = 3.0
@@ -578,17 +585,36 @@ class PySimEnv(BaseEnv):
             np.ndarray: Smoothened action array [rudder, thrust]
         """
 
-        alpha = 0.3
+        # Ensure numeric stability
+        action = np.asarray(action, dtype=np.float32)
+        target_rudder = np.clip(action[0], -1.0, 1.0)
+        target_thrust = np.clip(action[1], 0.0, 1.0)
 
-        if self.total_steps == 0:
-            turning_smooth = action[0]
-            thrust_smooth = abs(action[1])
+        current_rudder, current_thrust = self.performed_action
+
+        # Rate limits (per-second → per-step)
+        max_rudder_step = MAX_RUDDER_RATE * self.time_step
+        max_thrust_step = MAX_THRUST_RATE * self.time_step
+
+        # Rudder dynamics
+        rudder_error = target_rudder - current_rudder
+        # Deadband on change to prevent jitter
+        if abs(rudder_error) < RUDDER_JITTER_THRESHOLD:
+            rudder_step = 0.0
         else:
-            # Smooth action application
-            turning_smooth = alpha * action[0] + (1 - alpha) * self.performed_action[0]
-            thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.performed_action[1]
+            rudder_step = np.clip(rudder_error, -max_rudder_step, max_rudder_step)
+        new_rudder = current_rudder + rudder_step
 
-        return np.array([turning_smooth, thrust_smooth], dtype=np.float32)
+        # Thrust dynamics
+        thrust_error = target_thrust - current_thrust
+        thrust_step = np.clip(thrust_error, -max_thrust_step, max_thrust_step)
+        new_thrust = current_thrust + thrust_step
+
+        # Final saturation (critical)
+        new_rudder = np.clip(new_rudder, -1.0, 1.0)
+        new_thrust = np.clip(new_thrust, 0.0, 1.0)
+
+        return np.array([new_rudder, new_thrust], dtype=np.float32)
 
     # -----------------------
     # Observation & reset
