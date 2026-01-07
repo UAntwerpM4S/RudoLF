@@ -560,6 +560,23 @@ class PySimEnv(BaseEnv):
             return np.arctan2(vec[1], vec[0])
         return 0.0
 
+    def _calculate_heading_error(self, target_heading: float, current_heading: float, dead_zone_deg: float = 5.0) -> float:
+        """
+        Calculate heading error with dead zone handling.
+
+        Args:
+            target_heading: Desired heading in radians
+            current_heading: Current heading in radians
+            dead_zone_deg: Angular dead zone in degrees
+
+        Returns:
+            float: Heading error in radians, 0 if within dead zone
+        """
+
+        error = self.normalize_angle(target_heading - current_heading)
+        dead_zone = np.radians(dead_zone_deg)
+        return 0.0 if abs(error) < dead_zone else error
+
     def _smoothen_action(self, action: np.ndarray) -> np.ndarray:
         """
         Smoothen the action to prevent erratic behaviour of the ship.
@@ -743,23 +760,27 @@ class PySimEnv(BaseEnv):
         # --- Heading errors ---
 
         # To current checkpoint
-        heading_error = self.normalize_angle(
-            self._safe_heading_from_vector(current_chkp_pos - self.ship_pos) - self.state[2]
+        heading_error = self._calculate_heading_error(
+            self._safe_heading_from_vector(current_chkp_pos - self.ship_pos),
+            self.state[2]
         )
 
         # Parallel to current checkpoint segment
-        heading_error_parallel = self.normalize_angle(
-            self._safe_heading_from_vector(current_chkp_pos - prev_chkp_pos) - self.state[2]
+        heading_error_parallel = self._calculate_heading_error(
+            self._safe_heading_from_vector(current_chkp_pos - prev_chkp_pos),
+            self.state[2]
         )
 
         # To next checkpoint
-        heading_error2 = self.normalize_angle(
-            self._safe_heading_from_vector(next_chkp_pos - self.ship_pos) - self.state[2]
+        heading_error2 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next_chkp_pos - self.ship_pos),
+            self.state[2]
         )
 
         # Parallel to next checkpoint segment
-        heading_error_parallel2 = self.normalize_angle(
-            self._safe_heading_from_vector(next_chkp_pos - prev_chkp_pos) - self.state[2]
+        heading_error_parallel2 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next_chkp_pos - prev_chkp_pos),
+            self.state[2]
         )
 
         # Build observation
@@ -941,7 +962,7 @@ class PySimEnv(BaseEnv):
         forward_reward = 4.0 * np.clip(raw_progress, -1.0, 1.0)
 
         # Heading alignment towards current checkpoint
-        heading_error = self.normalize_angle(self._safe_heading_from_vector(path_vec) - self.state[2])
+        heading_error = self._calculate_heading_error(self._safe_heading_from_vector(path_vec), self.state[2])
         heading_alignment_reward = abs(np.exp(-abs(heading_error))) - 1
 
         # Cross-track penalty (uses distance to segment)
@@ -980,7 +1001,7 @@ class PySimEnv(BaseEnv):
             self.step_count = 0
 
         done = False
-        heading_change = abs(self.normalize_angle(self.previous_heading - self.state[2]))
+        heading_change = abs(self._calculate_heading_error(self.previous_heading, self.state[2]))
 
         # Early termination conditions
         termination_conditions = [
