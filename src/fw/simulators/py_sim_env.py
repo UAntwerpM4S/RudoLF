@@ -839,8 +839,8 @@ class PySimEnv(BaseEnv):
             raise ValueError(f"Action must be shape (2,), got {action.shape} with values {action}")
 
         # Smooth action and update dynamics
-        # smoothened_action = np.array([action[0], abs(action[1])], dtype=np.float32)
-        smoothened_action = self._smoothen_action(action)
+        smoothened_action = np.array([action[0], abs(action[1])], dtype=np.float32)
+        # smoothened_action = self._smoothen_action(action)
 
         self._update_ship_dynamics(smoothened_action)
         self.performed_action = smoothened_action.copy()
