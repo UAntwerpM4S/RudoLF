@@ -773,7 +773,7 @@ class PySimEnv(BaseEnv):
             0.0
         )
 
-        if self.checkpoint_index < len(self.checkpoints) - 2:
+        if self.checkpoint_index < len(self.checkpoints) - 1:
             # To next checkpoint
             heading_error2 = self._calculate_heading_error(
                 self._safe_heading_from_vector(next_chkp_pos - self.ship_pos),
