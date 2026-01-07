@@ -145,9 +145,13 @@ class FhSimEnv(PySimEnv):
         # Apply rate limiting to action changes
         alpha = 0.3
 
-        # Smooth action application
-        turning_smooth = alpha * action[0] + (1 - alpha) * self.current_action[0]
-        thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.current_action[1]
+        if self.total_steps == 0:
+            turning_smooth = action[0]
+            thrust_smooth = abs(action[1])
+        else:
+            # Smooth action application
+            turning_smooth = alpha * action[0] + (1 - alpha) * self.performed_action[0]
+            thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.performed_action[1]
 
         return np.array([turning_smooth, thrust_smooth], dtype=np.float32)
 
@@ -170,8 +174,6 @@ class FhSimEnv(PySimEnv):
         # Save the current ship position as the previous position for tracking.
         self.previous_ship_pos = np.copy(self.ship_pos)
         self.previous_heading = np.radians(self._fh_sim.ship_interface.getShipHeading())
-
-        self.current_action = action
 
         # Update rudder controls based on the turning action.
         for rudder in self._fh_sim.ship_interface.getRudderControls():
