@@ -119,7 +119,7 @@ class FossenShipModel:
 
     def __init__(self, ship_length=100.0, ship_mass=1e6):
         """
-        Initialize with ship parameters - adjusted for better turning response
+        Initialize with ship parameters
         """
 
         # Ship parameters
