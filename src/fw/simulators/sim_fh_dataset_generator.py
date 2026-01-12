@@ -207,7 +207,11 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
     Note: Each simulation runs in its own subprocess to avoid
     simulator concurrency issues.
     """
-    # Import simulation modules if not already available
+    # Constants
+    initialization_time = 0.125
+    position_format_string = "[{:10.3f} {:10.3f}]"
+
+    # Lazy import of simulator modules
     if not SIM_AVAILABLE:
         sys.path.append(sim_config.lib_path)
         from sim import Config, Exercise, MathModel, SimException
@@ -215,155 +219,250 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
     output_path = Path(sim_setup.output_path)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    logfile_path = output_path / 'math_model.log'
-    logging.basicConfig(filename=str(logfile_path), level=logging.INFO,
-                        format='%(levelname)s: %(message)s')
+    logfile_path = output_path / "math_model.log"
+    logging.basicConfig(
+        filename=str(logfile_path),
+        level=logging.INFO,
+        format="%(levelname)s: %(message)s",
+    )
 
-    env = PySimEnv(render_mode=None, time_step=sim_setup.dt, wind=False, current=False)
+    env = PySimEnv(
+        render_mode=None,
+        time_step=sim_setup.dt,
+        wind=False,
+        current=False,
+    )
 
     sim_setup.output.status = "PASSED"
     sim_setup.output.time_seconds = -1.0
 
-    time_started = time.time()
-
     _math_model = None
     _ship_interface = None
+    time_started = time.time()
 
     try:
-        # Configure the math model
+        # -----------------------------
+        # Configure math model
+        # -----------------------------
         config = Config(sim_config.config_path)
         config.SetOutputDir(str(sim_setup.output_path))
-        config.SetRewindEnabled(False)
         config.SetMathModelFrequency(DEFAULT_MATH_MODEL_FREQUENCY)
+        config.SetRewindEnabled(False)
         config.ClearConnections()
 
         exercise = Exercise(sim_setup.exercise_path, config)
         ship_config = exercise.getShipConfig()
         rng = np.random.default_rng()
 
+        # Set initial conditions with explicit parameter names
         ship_config.setInitialPosition(sim_setup.x_pos, sim_setup.y_pos)
         ship_config.setInitialPropellerRps(rng.uniform(low=[0.3], high=[5.5])[0])
         ship_config.setInitialRudderAngle(rng.uniform(low=[-30.0], high=[30.0])[0])
         ship_config.setInitialHeading(rng.uniform(low=[0.0], high=[360.0])[0])
 
-        # Initialize the math model and enable the bridge
+        # -----------------------------
+        # Initialize math model
+        # -----------------------------
         _math_model = MathModel()
         if not _math_model.Initialize(config, exercise):
             error_msg = "MathModel initialization failed!"
             print(error_msg)
             sim_setup.output.status = "FAILED"
-            sim_setup.output.info['error'] = error_msg
+            sim_setup.output.info["error"] = error_msg
             return sim_setup
 
-        pos_info = f"[{sim_setup.x_pos:10.3f} {sim_setup.y_pos:10.3f}]"
+        # Log initialization success
+        pos_info = position_format_string.format(sim_setup.x_pos, sim_setup.y_pos)
         print(f"Math model initialized! Starting simulation at {pos_info}")
 
         _math_model.enableBridge()
-        _math_model.simulateSeconds(0.125)  # initialize velocities (surge, sway, yaw)
+        _math_model.simulateSeconds(initialization_time)  # initialize velocities
 
-        # Get the ship interface
+        # -----------------------------
+        # Retrieve ship interface
+        # -----------------------------
         _ship_interface = _math_model.getShipInterface(0)
+
+        # Get initial state
         initial_heading = _ship_interface.getShipHeading()
-        initial_velocity_over_ground = _ship_interface.getShipVelocityOverGround()
+        initial_vog = _ship_interface.getShipVelocityOverGround()
         initial_yaw_rate = _ship_interface.getShipYawRate()
 
-        initial_state = np.array([
-            sim_setup.x_pos,
-            sim_setup.y_pos,
-            0.0,    # start time
-            np.radians(initial_heading),
-            initial_velocity_over_ground.x,
-            initial_velocity_over_ground.y,
-            np.radians(initial_yaw_rate),
-        ], dtype=float)
+        input_state = np.array(
+            [
+                sim_setup.x_pos,
+                sim_setup.y_pos,
+                0.0,
+                env.normalize_angle(np.radians(initial_heading)),
+                initial_vog.x,
+                initial_vog.y,
+                np.radians(initial_yaw_rate),
+            ],
+            dtype=np.float64,  # More precise than float
+        )
 
-        action = rng.uniform(-1, 1, size=2).astype(np.float32)
+        # Generate random action and duration
+        action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
         duration = rng.uniform(low=[5.0 * sim_setup.dt], high=[sim_setup.horizon_seconds])[0]
-        steps_per_episode = max(1, int(duration / sim_setup.dt))
+        steps_per_episode = max(1, int(round(duration / sim_setup.dt)))
 
-        # --- Start storing trajectory ---
+        # -----------------------------
+        # Trajectory storage
+        # -----------------------------
         new_ship_pos = np.array([sim_setup.x_pos, sim_setup.y_pos], dtype=np.float32)
+
+        input_states = []
+        output_states = []
         traj = [new_ship_pos.copy()]
 
-        for _ in range(steps_per_episode):
-            if env._ship_in_open_water(new_ship_pos) and _ship_interface.getKeelClearance() >= MIN_KEEL_CLEARANCE:
-                # Update rudder controls based on the turning action
-                for rudder in _ship_interface.getRudderControls():
-                    # Compensate for opposite behaviour between Python env and FH sim
-                    rudder.setControlValue(float(-1.0 * action[0]))
+        # Get controls once for efficiency
+        propellers = _ship_interface.getPropellerControls()
+        rudders = _ship_interface.getRudderControls()
+        has_propellers = len(propellers) > 0
+        has_rudders = len(rudders) > 0
 
-                # Update propeller controls based on the thrust action
-                for propeller in _ship_interface.getPropellerControls():
-                    propeller.setEngineLeverValue(float(action[1]))
+        # Simulation loop
+        for step in range(steps_per_episode):
+            # Check termination conditions
+            is_in_open_water = env._ship_in_open_water(new_ship_pos)
+            has_sufficient_keel_clearance = _ship_interface.getKeelClearance() >= MIN_KEEL_CLEARANCE
 
-                # Simulate the ship's dynamics for a fixed period
-                _math_model.simulateSeconds(sim_setup.dt)
-
-                # Retrieve the updated ship position
-                new_ship_pos = np.array([
-                    _ship_interface.getShipPosition().x,
-                    _ship_interface.getShipPosition().y
-                ], dtype=np.float32)
-                traj.append(new_ship_pos.copy())
-            else:
+            if not (is_in_open_water and has_sufficient_keel_clearance):
                 break
 
-        sim_setup.output.trajectory = np.array(traj)  # shape (T, 2)
+            # Store input state
+            input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0))
 
-        if not env._ship_in_open_water(new_ship_pos) or _ship_interface.getKeelClearance() < 1.0:
+            # Apply controls with safety checks
+            if has_rudders:
+                # Rudder control (sign inversion is intentional)
+                rudder_value = float(-1.0 * action[0])
+                for rudder in rudders:
+                    rudder.setControlValue(rudder_value)
+
+            if has_propellers:
+                # Propeller control
+                propeller_value = float(action[1])
+                for propeller in propellers:
+                    propeller.setEngineLeverValue(propeller_value)
+
+            # Step simulation
+            _math_model.simulateSeconds(sim_setup.dt)
+
+            # Update position
+            pos = _ship_interface.getShipPosition()
+            new_ship_pos = np.array([pos.x, pos.y], dtype=np.float32)
+            traj.append(new_ship_pos.copy())
+
+            # Calculate deltas
+            delta_x = pos.x - input_state[0]
+            delta_y = pos.y - input_state[1]
+            current_vog = _ship_interface.getShipVelocityOverGround()
+            current_heading = _ship_interface.getShipHeading()
+            current_yaw_rate = _ship_interface.getShipYawRate()
+
+            # Store output state
+            output_states.append(
+                np.array(
+                    [
+                        delta_x,
+                        delta_y,
+                        sim_setup.dt,
+                        env.normalize_angle(np.radians(current_heading) - input_state[3]),
+                        current_vog.x - input_state[4],
+                        current_vog.y - input_state[5],
+                        np.radians(current_yaw_rate) - input_state[6],
+                    ],
+                    dtype=np.float64,
+                )
+            )
+
+            # Update initial state for next iteration
+            input_state = np.array(
+                [
+                    pos.x,
+                    pos.y,
+                    input_state[2] + sim_setup.dt,
+                    env.normalize_angle(np.radians(current_heading)),
+                    current_vog.x,
+                    current_vog.y,
+                    np.radians(current_yaw_rate),
+                ],
+                dtype=np.float64,
+            )
+
+        # Store trajectory
+        sim_setup.output.trajectory = np.array(traj, dtype=np.float32)
+
+        # Final validation
+        final_keel_clearance = _ship_interface.getKeelClearance()
+        final_is_open_water = env._ship_in_open_water(new_ship_pos)
+
+        if not final_is_open_water or final_keel_clearance < 1.0:
             error_msg = "Ship not in open water!"
             sim_setup.output.status = "FAILED"
-            sim_setup.output.info['error'] = error_msg
+            sim_setup.output.info["error"] = error_msg
             return sim_setup
 
-        # Calculate delta X and delta Y
-        delta_x = _ship_interface.getShipPosition().x - sim_setup.x_pos
-        delta_y = _ship_interface.getShipPosition().y - sim_setup.y_pos
-        velocity_over_ground = _ship_interface.getShipVelocityOverGround()
+        # Store results if simulation succeeded
+        sim_setup.output.x_input = input_states
+        sim_setup.output.y_output = output_states
 
-        final_state = np.array([
-            delta_x,
-            delta_y,
-            duration,   # duration of the simulation
-            np.radians(_ship_interface.getShipHeading() - initial_heading),
-            velocity_over_ground.x - initial_velocity_over_ground.x,
-            velocity_over_ground.y - initial_velocity_over_ground.y,
-            np.radians(_ship_interface.getShipYawRate() - initial_yaw_rate),
-        ], dtype=float)
-
-        sim_setup.output.x_input = np.concatenate([initial_state, action], axis=0)
-        sim_setup.output.y_output = final_state
-
-    except (SimException, Exception) as e:
-        error_msg = f"Simulation failed: {e}"
+    except SimException as e:
+        # Handle simulator-specific exceptions
+        error_msg = f"Simulator exception: {e}"
         print(error_msg)
-        tb = traceback.extract_tb(e.__traceback__)
-        if tb:
-            filename, line_number, function_name, text = tb[-1]
-            traceback_info = f"Exception occurred at {filename}, line {line_number} in {function_name}"
-        else:
-            traceback_info = "No traceback available"
+        _handle_exception(sim_setup, e, "SimException")
 
-        sim_setup.output.status = "FAILED"
-        sim_setup.output.info['message'] = str(error_msg)
-        sim_setup.output.info['exception_type'] = type(e).__name__
-        sim_setup.output.info['traceback'] = traceback_info
+    except Exception as e:
+        # Handle all other exceptions
+        error_msg = f"Unexpected error: {e}"
+        print(error_msg)
+        _handle_exception(sim_setup, e, type(e).__name__)
 
     finally:
+        # Cleanup resources
         if _math_model is not None:
-            _math_model.Terminate()
-            _math_model.Dispose()
+            try:
+                _math_model.Terminate()
+                _math_model.Dispose()
+            except Exception as e:
+                print(f"Warning: Error during math model cleanup: {e}")
 
-            # Clean up output files (keep math_model.log)
-            for item in os.listdir(sim_setup.output_path):
-                if item == "math_model.log":
-                    continue
-                item_path = Path(sim_setup.output_path) / item
-                if item_path.is_file():
-                    item_path.unlink()
+            # Cleanup output directory, preserving math_model.log
+            try:
+                for item in output_path.iterdir():
+                    if item.name == "math_model.log":
+                        continue
+                    try:
+                        if item.is_file():
+                            item.unlink()
+                    except (PermissionError, OSError) as e:
+                        print(f"Warning: Could not delete {item}: {e}")
+            except (PermissionError, OSError) as e:
+                print(f"Warning: Could not list directory {output_path}: {e}")
 
+    # Record execution time
     sim_setup.output.time_seconds = time.time() - time_started
     return sim_setup
+
+
+def _handle_exception(sim_setup: SimSetup, exception: Exception, exception_type: str) -> None:
+    """Handle exceptions consistently."""
+    sim_setup.output.status = "FAILED"
+    sim_setup.output.info["message"] = str(exception)
+    sim_setup.output.info["exception_type"] = exception_type
+
+    # Extract traceback information
+    tb = traceback.extract_tb(exception.__traceback__)
+    if tb:
+        filename, line_number, function_name, _ = tb[-1]
+        sim_setup.output.info["traceback"] = (
+            f"Exception occurred at {filename}, "
+            f"line {line_number} in {function_name}"
+        )
+    else:
+        sim_setup.output.info["traceback"] = "No traceback available"
 
 
 def run_in_process(sim_setup: SimSetup, sim_config: SimConfig) -> SimSetup:
@@ -480,8 +579,9 @@ def collect_supervised_dataset(
 
                 if sim_setup.output.status == "PASSED":
                     # Update test config with results
-                    x_inputs.append(sim_setup.output.x_input)
-                    y_outputs.append(sim_setup.output.y_output)
+                    for i in range(len(sim_setup.output.x_input)):
+                        x_inputs.append(sim_setup.output.x_input[i])
+                        y_outputs.append(sim_setup.output.y_output[i])
                     trajectories.append(sim_setup.output.trajectory)
                     print(f"Simulation {index} succeeded: {sim_setup.output.status}")
                     counter += 1
