@@ -261,7 +261,7 @@ class PySimEnv(BaseEnv):
         self._initialize_control_parameters()
 
         # Initialize Fossen ship model
-        self.fossen_model = FossenShipModel(ship_length=100.0, ship_mass=1e6)
+        self.fossen_model = FossenShipModel(ship_length=110.0, ship_mass=3.86e6)
 
         # Gym spaces
         self.action_space = gym.spaces.Box(
