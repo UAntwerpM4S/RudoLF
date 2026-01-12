@@ -284,14 +284,15 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         _ship_interface = _math_model.getShipInterface(0)
 
         # Get initial state
+        initial_position = _ship_interface.getShipPosition()
         initial_heading = _ship_interface.getShipHeading()
         initial_vog = _ship_interface.getShipVelocityOverGround()
         initial_yaw_rate = _ship_interface.getShipYawRate()
 
         input_state = np.array(
             [
-                sim_setup.x_pos,
-                sim_setup.y_pos,
+                initial_position.x,
+                initial_position.y,
                 0.0,
                 env.normalize_angle(np.radians(initial_heading)),
                 initial_vog.x,
@@ -309,11 +310,11 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         # -----------------------------
         # Trajectory storage
         # -----------------------------
-        new_ship_pos = np.array([sim_setup.x_pos, sim_setup.y_pos], dtype=np.float32)
+        curr_ship_pos = np.array([sim_setup.x_pos, sim_setup.y_pos], dtype=np.float32)
 
         input_states = []
         output_states = []
-        traj = [new_ship_pos.copy()]
+        traj = [curr_ship_pos.copy()]
 
         # Get controls once for efficiency
         propellers = _ship_interface.getPropellerControls()
@@ -324,7 +325,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         # Simulation loop
         for step in range(steps_per_episode):
             # Check termination conditions
-            is_in_open_water = env._ship_in_open_water(new_ship_pos)
+            is_in_open_water = env._ship_in_open_water(curr_ship_pos)
             has_sufficient_keel_clearance = _ship_interface.getKeelClearance() >= MIN_KEEL_CLEARANCE
 
             if not (is_in_open_water and has_sufficient_keel_clearance):
@@ -351,8 +352,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
 
             # Update position
             pos = _ship_interface.getShipPosition()
-            new_ship_pos = np.array([pos.x, pos.y], dtype=np.float32)
-            traj.append(new_ship_pos.copy())
+            curr_ship_pos = np.array([pos.x, pos.y], dtype=np.float32)
+            traj.append(curr_ship_pos.copy())
 
             # Calculate deltas
             delta_x = pos.x - input_state[0]
@@ -396,7 +397,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
 
         # Final validation
         final_keel_clearance = _ship_interface.getKeelClearance()
-        final_is_open_water = env._ship_in_open_water(new_ship_pos)
+        final_is_open_water = env._ship_in_open_water(curr_ship_pos)
 
         if not final_is_open_water or final_keel_clearance < 1.0:
             error_msg = "Ship not in open water!"
@@ -601,7 +602,7 @@ def collect_supervised_dataset(
     y_values = np.vstack(y_outputs).astype(np.float32)
 
     store_data = np.hstack([x_values, y_values])  # shape: (nbr_samples, 8 + 6 = 14)
-    np.savetxt(output_file, store_data, delimiter=",", fmt="%.6f")
+    np.savetxt(output_file, store_data, delimiter=",", fmt="%.8f")
     plot_xy_points_and_trajectories(env, xy, trajectories)
 
     return x_values, y_values, counter
