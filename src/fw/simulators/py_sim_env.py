@@ -129,7 +129,7 @@ class FossenShipModel:
         # Added mass coefficients
         self.X_udot = -0.05 * self.m  # Added mass
         self.Y_vdot = -0.5 * self.m  # Added mass
-        self.N_rdot = -0.03 * self.m * self.L ** 2  # Added inertia
+        self.N_rdot = -0.05 * self.m * self.L ** 2  # Added inertia
 
         # Mass matrix components
         self.m11 = self.m - self.X_udot
@@ -139,7 +139,7 @@ class FossenShipModel:
         # Hydrodynamic damping coefficients
         self.X_u = -0.1 * self.m  # Surge damping
         self.Y_v = -0.8 * self.m  # Sway damping
-        self.N_r = -0.0011 * self.m * self.L ** 2  # Yaw damping
+        self.N_r = -0.001 * self.m * self.L ** 2  # Yaw damping
 
         # Nonlinear (quadratic) damping coefficients
         self.X_uu = -0.0005 * self.m  # Quadratic damping
@@ -155,7 +155,7 @@ class FossenShipModel:
 
         # Cross-flow drag coefficients
         self.Y_uv = -0.005 * self.m
-        self.N_uv = -0.00045 * self.m * self.L
+        self.N_uv = -0.0005 * self.m * self.L
 
     def calculate_accelerations(self, u, v, r, rudder_angle, thrust):
         """
