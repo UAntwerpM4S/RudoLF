@@ -147,7 +147,7 @@ class FossenShipModel:
         self.N_rr = -0.0008 * self.m * self.L ** 2  # Quadratic damping
 
         # Rudder coefficients
-        self.Y_rudder = 0.28 * self.m  # Sway force from rudder
+        self.Y_rudder = 0.3 * self.m  # Sway force from rudder
         self.N_rudder = 0.003 * self.m * self.L  # Yaw moment from rudder
 
         # Propeller/thrust coefficient
