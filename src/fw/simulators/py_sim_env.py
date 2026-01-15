@@ -61,8 +61,8 @@ RUDDER_JITTER_THRESHOLD = 0.2  # used in action smoothing to avoid jitter
 EPSILON = 1e-9  # Small epsilon for numerical stability
 
 # Physics model constants
-RUDDER_SPEED_FACTOR_DENOM = 2.0
-MIN_RUDDER_EFFECTIVENESS = 0.3
+RUDDER_SPEED_FACTOR_DENOM = 3.0
+MIN_RUDDER_EFFECTIVENESS = 0.2
 
 
 def calculate_perpendicular_lines(
@@ -137,18 +137,18 @@ class FossenShipModel:
         self.m33 = (self.m * self.L ** 2 / 12.0) - self.N_rdot
 
         # Hydrodynamic damping coefficients
-        self.X_u = -0.1 * self.m  # Surge damping
-        self.Y_v = -0.8 * self.m  # Sway damping
+        self.X_u = -0.002 * self.m  # Surge damping
+        self.Y_v = -0.02 * self.m  # Sway damping
         self.N_r = -0.001 * self.m * self.L ** 2  # Yaw damping
 
         # Nonlinear (quadratic) damping coefficients
         self.X_uu = -0.0005 * self.m  # Quadratic damping
-        self.Y_vv = -0.1 * self.m  # Quadratic damping
-        self.N_rr = -0.0008 * self.m * self.L ** 2  # Quadratic damping
+        self.Y_vv = -0.005 * self.m  # Quadratic damping
+        self.N_rr = -0.0005 * self.m * self.L ** 2  # Quadratic damping
 
         # Rudder coefficients
-        self.Y_rudder = 0.3 * self.m  # Sway force from rudder
-        self.N_rudder = 0.003 * self.m * self.L  # Yaw moment from rudder
+        self.Y_rudder = 0.1 * self.m  # Sway force from rudder
+        self.N_rudder = 0.001 * self.m * self.L  # Yaw moment from rudder
 
         # Propeller/thrust coefficient
         self.X_thrust = 0.05 * self.m  # Surge force from thrust
@@ -180,7 +180,6 @@ class FossenShipModel:
         # Speed-dependent rudder effectiveness
         # At low speeds, rudder is less effective
         speed_factor = max(u / RUDDER_SPEED_FACTOR_DENOM, MIN_RUDDER_EFFECTIVENESS)
-        speed_factor = min(speed_factor, 1.0)
 
         # Rudder effectiveness
         f_rudder_sway = self.Y_rudder * rudder_angle * speed_factor
@@ -846,6 +845,7 @@ class PySimEnv(BaseEnv):
         # Set truncated True when episode exceeded max_steps but not terminated by failure or success.
         truncated = False
         if self.step_count >= self.max_steps and not terminated:
+            reward = -250
             truncated = True
 
         return self._get_obs(), reward, terminated, truncated, {}
