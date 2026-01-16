@@ -156,8 +156,8 @@ class PySimEnv(BaseEnv):
         # State and control placeholders
         self._initialize_state()
 
-        self.ship = create_myzako()
-        self.dynamics = Fossen3DOF(self.ship)
+        self.ship = create_myzako(0.0, 0.0)
+        self.dynamics = Fossen3DOF(self.ship.specifications)
         self.phys_sim = PhysicsSimulator(self.ship, self.dynamics, float(time_step), self.wind, self.current)
 
         # Gym spaces

@@ -22,12 +22,19 @@ class ShipSpecifications:
 
 
 class Ship:
-    def __init__(self, specifications: ShipSpecifications):
+    def __init__(self, specifications: ShipSpecifications, initial_position: np.ndarray, initial_heading: float):
         self.specifications: ShipSpecifications = specifications
 
         # Internal actuator state
         self._rudder = 0.0
         self._thrust = 0.0
+
+        # Internal ship state (position, heading and velocities)
+        self.position = initial_position
+        self.heading = initial_heading
+        self.surge = 0.0
+        self.sway = 0.0
+        self.yaw_rate = 0.0
 
 
     def apply_control(self, action: np.ndarray, dt: float) -> np.ndarray:
