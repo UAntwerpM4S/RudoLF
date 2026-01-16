@@ -11,8 +11,8 @@ MIN_RUDDER_EFFECTIVENESS = 0.2
 
 
 class Fossen3DOF(DynamicsModel):
-    def __init__(self, ship: Ship):
-        self.ship_spec: ShipSpecifications = ship.specifications
+    def __init__(self, ship_spec: ShipSpecifications):
+        self.ship_spec: ShipSpecifications = ship_spec
         self._initialize_coefficients()
 
 

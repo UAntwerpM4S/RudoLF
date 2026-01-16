@@ -3,9 +3,9 @@ import numpy as np
 from fw.simulators.ships.ship import Ship, ShipSpecifications
 
 
-def create_myzako() -> Ship:
+def create_myzako(initial_position: np.ndarray, initial_heading: float) -> Ship:
     return Ship(
-        specifications=ShipSpecifications(
+        ShipSpecifications(
             length=110.0,
             mass=3.86e6,
             max_thrust=1.0,
@@ -20,4 +20,6 @@ def create_myzako() -> Ship:
             max_thrust_rate=0.5,
             rudder_jitter_threshold=0.01,
         ),
+        initial_position,
+        initial_heading,
     )
