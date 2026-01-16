@@ -6,11 +6,11 @@ from fw.simulators.dynamics.base import DynamicsModel
 
 class PhysicsSimulator:
     def __init__(self, ship: Ship, dynamics: DynamicsModel, dt: float, wind: bool, current: bool):
-        self.ship = ship
-        self.dynamics = dynamics
         self.dt = dt
+        self.ship = ship
         self.wind = wind
         self.current = current
+        self.dynamics = dynamics
 
         self._initialize_control_parameters()
 
@@ -39,19 +39,16 @@ class PhysicsSimulator:
 
         # Convert control inputs to physical values
         # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
-        target_rudder = np.radians(action[0] * 60.0)  # rudder angle in radians
+        target_rudder = action[0] * self.ship.specifications.max_rudder_angle   # rudder angle in radians
         # Thrust: 0 to 1 maps to 0 to full ahead
-        target_thrust = abs(action[1])
+        target_thrust = abs(action[1]) * self.ship.specifications.max_thrust
 
         actual_rudder, actual_thrust = self.ship.apply_control([target_rudder, target_thrust], self.dt)
-
-        # Unpack current dynamic state
-        x, y, psi, u, v, r = state
 
         # Environmental effects relative to ship heading
         wind_effect = np.zeros(2, dtype=np.float32)
         if self.wind:
-            relative_wind_angle = self.radians_wind - psi
+            relative_wind_angle = self.radians_wind - state[2]
             wind_effect = np.array([
                 self.wind_strength * np.cos(relative_wind_angle),
                 self.wind_strength * np.sin(relative_wind_angle)
@@ -59,7 +56,7 @@ class PhysicsSimulator:
 
         current_effect = np.zeros(2, dtype=np.float32)
         if self.current:
-            relative_current_angle = self.radians_current - psi
+            relative_current_angle = self.radians_current - state[2]
             current_effect = np.array([
                 self.current_strength * np.cos(relative_current_angle),
                 self.current_strength * np.sin(relative_current_angle)
