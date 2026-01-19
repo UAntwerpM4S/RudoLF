@@ -29,6 +29,10 @@ class Ship:
         self._rudder = 0.0
         self._thrust = 0.0
 
+    @property
+    def performed_action(self):
+        return np.array([self._rudder, self._thrust], dtype=np.float32)
+
 
     def apply_control(self, action: np.ndarray, dt: float) -> np.ndarray:
         """
