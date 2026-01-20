@@ -130,21 +130,22 @@ class PySimEnv(BaseEnv):
         # Core parameters
         self.wind = bool(wind)
         self.current = bool(current)
-        self.time_step = float(time_step)
         self.max_steps = int(max_steps)
         self.verbose = bool(verbose) if verbose is not None else False
         self.previous_ship_pos = None
         self.previous_heading = None
         self.performed_action = None
         self.background = None
+        self.ship_pos = None
+        self.state = None
 
         # RNG: environment-local RNG for reproducibility when seeded via reset()
         self._rng: np.random.Generator = np.random.default_rng()
 
         if ship_pos is not None:
-            self.ship_pos = np.array(ship_pos, dtype=np.float32)
+            self.initial_ship_pos = np.array(ship_pos, dtype=np.float32)
         else:
-            self.ship_pos = np.array([5.0, 5.0], dtype=np.float32)
+            self.initial_ship_pos = np.array([5.0, 5.0], dtype=np.float32)
 
         self.randomization_scale = 1.0
         self.max_dist = np.sqrt(2) * float(MAX_GRID_POS)
@@ -153,7 +154,11 @@ class PySimEnv(BaseEnv):
         self._load_environment_data(target_pos)
 
         # State and control placeholders
-        self._initialize_simulation()
+        self._initialize_state()
+
+        self.ship = create_myzako()
+        self.dynamics = Fossen3DOF(self.ship.specifications)
+        self.phys_sim = PhysicsSimulator(self.ship, self.dynamics, float(time_step), self.wind, self.current)
 
         # Gym spaces
         self.action_space = gym.spaces.Box(
@@ -177,10 +182,11 @@ class PySimEnv(BaseEnv):
     # -----------------------
     # Initialization helpers
     # -----------------------
-    def _initialize_simulation(self) -> None:
+    def _initialize_state(self) -> None:
         """Initialize state vectors and convenience values."""
 
-        self.previous_ship_pos = self.ship_pos.copy()
+        self.ship_pos = self.initial_ship_pos.copy()
+        self.previous_ship_pos = self.initial_ship_pos.copy()
         self.previous_heading = 0.0
 
         self.checkpoint_index = 1
@@ -190,13 +196,11 @@ class PySimEnv(BaseEnv):
         # Set heading toward first checkpoint (safeguard if checkpoint list is short)
         if len(self.checkpoints) > self.checkpoint_index:
             direction_vector = self.checkpoints[self.checkpoint_index]['pos'] - self.ship_pos
-            initial_ship_heading = self.normalize_angle(self._safe_heading_from_vector(direction_vector))
+            ship_angle = self.normalize_angle(self._safe_heading_from_vector(direction_vector))
         else:
-            initial_ship_heading = 0.0
+            ship_angle = 0.0
 
-        self.ship = create_myzako()
-        self.dynamics = Fossen3DOF(self.ship.specifications)
-        self.phys_sim = PhysicsSimulator(self.ship, self.dynamics, self.ship_pos.copy(), initial_ship_heading, self.time_step, self.wind, self.current)
+        self.state = np.array([self.ship_pos[0], self.ship_pos[1], ship_angle, 0.0, 0.0, 0.0], dtype=np.float32)
         self.performed_action = np.zeros(2, dtype=np.float32)
 
     # -------------------------
@@ -245,7 +249,7 @@ class PySimEnv(BaseEnv):
         path = load_csv_strict(self.path_name)
 
         # Preprocess path (stub currently returns same path)
-        path = self._reduce_path(path, self.ship_pos)
+        path = self._reduce_path(path, self.initial_ship_pos)
 
         # Create checkpoints spaced along path
         path = create_checkpoints_from_simple_path(path, CHECKPOINTS_DISTANCE)
@@ -253,9 +257,9 @@ class PySimEnv(BaseEnv):
         # Ensure start is current ship position; handle empty path safely
         if len(path) == 0:
             # empty path: fallback to a single checkpoint at initial position
-            path = [self.ship_pos.copy()]
+            path = [self.initial_ship_pos.copy()]
         else:
-            path = np.insert(path, 0, self.ship_pos.copy(), axis=0)
+            path = np.insert(path, 0, self.initial_ship_pos.copy(), axis=0)
 
         # Build checkpoint dicts
         checkpoints = []
@@ -290,7 +294,7 @@ class PySimEnv(BaseEnv):
             if target_pos is not None:
                 self.target_pos = np.array(target_pos, dtype=np.float32)
             else:
-                self.target_pos = self.ship_pos.copy()
+                self.target_pos = self.initial_ship_pos.copy()
 
     # -----------------------
     # Utility & math helpers
@@ -534,9 +538,9 @@ class PySimEnv(BaseEnv):
         perturbation = self._rng.uniform(
             low=-self.randomization_scale,
             high=self.randomization_scale,
-            size=self.ship_pos.shape
+            size=self.initial_ship_pos.shape
         )
-        self.ship_pos = np.clip(self.ship_pos + perturbation, MIN_GRID_POS, MAX_GRID_POS)
+        self.initial_ship_pos = np.clip(self.initial_ship_pos + perturbation, MIN_GRID_POS, MAX_GRID_POS)
 
     def reset(self, seed: Optional[int] = None, **kwargs) -> Tuple[np.ndarray, Dict]:
         """
@@ -560,7 +564,7 @@ class PySimEnv(BaseEnv):
 
         # Hook for environment-specific reset operations
         self.env_specific_reset()
-        self._initialize_simulation()
+        self._initialize_state()
 
         return self._get_obs(), {}
 
@@ -578,9 +582,9 @@ class PySimEnv(BaseEnv):
 
         # Normalize velocities
         norm_velocities = np.array([
-            np.clip(self.phys_sim.surge / self.ship.specifications.max_surge_velocity, -1, 1),
-            np.clip(self.phys_sim.sway / self.ship.specifications.max_sway_velocity, -1, 1),
-            np.clip(self.phys_sim.yaw_rate / self.ship.specifications.max_yaw_rate, -1, 1)
+            np.clip(self.state[3] / self.ship.specifications.max_surge_velocity, -1, 1),
+            np.clip(self.state[4] / self.ship.specifications.max_sway_velocity, -1, 1),
+            np.clip(self.state[5] / self.ship.specifications.max_yaw_rate, -1, 1)
         ], dtype=np.float32)
 
         # Clamp checkpoint indices
@@ -594,13 +598,13 @@ class PySimEnv(BaseEnv):
         next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
 
         # Distances to checkpoints
-        norm_distance = np.linalg.norm(self.phys_sim.position - current_chkp_pos) / self.max_dist
-        norm_next_distance = np.linalg.norm(self.phys_sim.position - next_chkp_pos) / self.max_dist
+        norm_distance = np.linalg.norm(self.ship_pos - current_chkp_pos) / self.max_dist
+        norm_next_distance = np.linalg.norm(self.ship_pos - next_chkp_pos) / self.max_dist
 
         # Cross-track error (normalized, signed)
         norm_cross_error = (
                 self._distance_from_point_to_line(
-                    self.phys_sim.position,
+                    self.ship_pos,
                     prev_chkp_pos,
                     current_chkp_pos
                 )
@@ -608,36 +612,36 @@ class PySimEnv(BaseEnv):
         )
 
         track_vec = current_chkp_pos - prev_chkp_pos
-        ship_vec = self.phys_sim.position - prev_chkp_pos
+        ship_vec = self.ship_pos - prev_chkp_pos
         norm_cross_error *= 1.0 if np.cross(track_vec, ship_vec) >= 0.0 else -1.0
 
         # --- Heading errors ---
 
         # To current checkpoint
         heading_error = self._calculate_heading_error(
-            self._safe_heading_from_vector(current_chkp_pos - self.phys_sim.position),
-            self.phys_sim.heading,
+            self._safe_heading_from_vector(current_chkp_pos - self.ship_pos),
+            self.state[2],
             0.0
         )
 
         # Parallel to current checkpoint segment
         heading_error_parallel = self._calculate_heading_error(
             self._safe_heading_from_vector(current_chkp_pos - prev_chkp_pos),
-            self.phys_sim.heading,
+            self.state[2],
             0.0
         )
 
         # To next checkpoint
         heading_error2 = self._calculate_heading_error(
-            self._safe_heading_from_vector(next_chkp_pos - self.phys_sim.position),
-            self.phys_sim.heading,
+            self._safe_heading_from_vector(next_chkp_pos - self.ship_pos),
+            self.state[2],
             0.0
         )
 
         # Parallel to next checkpoint segment
         heading_error_parallel2 = self._calculate_heading_error(
             self._safe_heading_from_vector(next_chkp_pos - prev_chkp_pos),
-            self.phys_sim.heading,
+            self.state[2],
             0.0
         )
 
@@ -681,11 +685,13 @@ class PySimEnv(BaseEnv):
             raise ValueError(f"Action must be shape (2,), got {action.shape} with values {action}")
 
         # Save previous values
-        self.previous_ship_pos = self.phys_sim.position.copy()
-        self.previous_heading = self.phys_sim.heading
+        self.previous_ship_pos = self.ship_pos.copy()
+        self.previous_heading = self.state[2]
 
         # Update state vector
-        self.phys_sim.step(action, self.enable_smoothing)
+        self.state = np.array(self.phys_sim.step(self.state, action, self.enable_smoothing), dtype=np.float32)
+
+        self.ship_pos = self.state[:2]
         self.performed_action = self.ship.performed_action.copy()
         self.step_count += 1
 
@@ -727,7 +733,7 @@ class PySimEnv(BaseEnv):
 
         # Relative projections along the path (progress)
         rel_prev = self.previous_ship_pos - prev_checkpoint_pos
-        rel_now = self.phys_sim.position - prev_checkpoint_pos
+        rel_now = self.ship_pos - prev_checkpoint_pos
         proj_prev = np.dot(rel_prev, path_unit)
         proj_now = np.dot(rel_now, path_unit)
 
@@ -736,11 +742,11 @@ class PySimEnv(BaseEnv):
         forward_reward = 4.0 * np.clip(raw_progress, -1.0, 1.0)
 
         # Heading alignment towards current checkpoint
-        heading_error = self._calculate_heading_error(self._safe_heading_from_vector(path_vec), self.phys_sim.heading)
+        heading_error = self._calculate_heading_error(self._safe_heading_from_vector(path_vec), self.state[2])
         heading_alignment_reward = abs(np.exp(-abs(heading_error))) - 1
 
         # Cross-track penalty (uses distance to segment)
-        cross_track_error = self._distance_from_point_to_line(self.phys_sim.position, prev_checkpoint_pos,
+        cross_track_error = self._distance_from_point_to_line(self.ship_pos, prev_checkpoint_pos,
                                                               current_checkpoint_pos)
         self.cross_error = cross_track_error
         cross_track_penalty = cross_track_error / 100.0
@@ -758,7 +764,7 @@ class PySimEnv(BaseEnv):
         )
 
         # Checkpoint handling (may increment checkpoint_index)
-        checkpoint_distance = np.linalg.norm(self.phys_sim.position - current_checkpoint["pos"])
+        checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint["pos"])
 
         # Reached checkpoint circle
         if checkpoint_distance <= current_checkpoint['radius']:
@@ -775,12 +781,12 @@ class PySimEnv(BaseEnv):
             self.step_count = 0
 
         done = False
-        heading_change = abs(self._calculate_heading_error(self.previous_heading, self.phys_sim.heading))
+        heading_change = abs(self._calculate_heading_error(self.previous_heading, self.state[2]))
 
         # Early termination conditions
         termination_conditions = [
             cross_track_error > CROSS_TRACK_TERMINATION_MULTIPLIER * CHECKPOINTS_DISTANCE,
-            not self._ship_in_open_water(self.phys_sim.position),
+            not self._ship_in_open_water(self.ship_pos),
             heading_change > HEADING_CHANGE_THRESHOLD,
         ]
 
@@ -798,7 +804,7 @@ class PySimEnv(BaseEnv):
         """Check if ship is close enough to checkpoint's perpendicular line."""
 
         line_start, line_end = checkpoint['perpendicular_line']
-        return self._distance_from_point_to_line(self.phys_sim.position, line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY
+        return self._distance_from_point_to_line(self.ship_pos, line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY
 
     # -----------------------
     # Rendering
@@ -855,7 +861,7 @@ class PySimEnv(BaseEnv):
             return
 
         # Path: start with ship_pos followed by checkpoints and target
-        path_points = [self.phys_sim.position] + [cp['pos'] for cp in self.checkpoints] + [self.target_pos]
+        path_points = [self.ship_pos] + [cp['pos'] for cp in self.checkpoints] + [self.target_pos]
 
         for i in range(len(path_points) - 1):
             start_point = path_points[i]
@@ -927,10 +933,10 @@ class PySimEnv(BaseEnv):
 
         # Update ship and heading graphics
         heading_line_length = 30.0
-        self.ship_plot.set_data(self.phys_sim.position[0:1], self.phys_sim.position[1:2])
-        heading_x = self.phys_sim.position[0] + np.cos(self.phys_sim.heading) * heading_line_length
-        heading_y = self.phys_sim.position[1] + np.sin(self.phys_sim.heading) * heading_line_length
-        self.heading_line.set_data([self.phys_sim.position[0], heading_x], [self.phys_sim.position[1], heading_y])
+        self.ship_plot.set_data(self.ship_pos[0:1], self.ship_pos[1:2])
+        heading_x = self.ship_pos[0] + np.cos(self.state[2]) * heading_line_length
+        heading_y = self.ship_pos[1] + np.sin(self.state[2]) * heading_line_length
+        self.heading_line.set_data([self.ship_pos[0], heading_x], [self.ship_pos[1], heading_y])
 
         # Try blitting for efficient updates; otherwise draw everything
         try:
