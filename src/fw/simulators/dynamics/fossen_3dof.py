@@ -2,7 +2,7 @@ import numpy as np
 
 from typing import Tuple
 from fw.simulators.dynamics.base import DynamicsModel
-from fw.simulators.ships.ship import Ship, ShipSpecifications
+from fw.simulators.ships.ship import ShipSpecifications
 
 
 # Model constants
