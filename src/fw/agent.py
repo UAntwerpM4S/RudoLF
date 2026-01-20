@@ -6,6 +6,7 @@ import matplotlib.patches as patches
 from pathlib import Path
 from gymnasium import Env
 from enum import auto, Enum
+from contextlib import contextmanager
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
@@ -44,6 +45,7 @@ class Agent:
         """
         self._model = None
         self._model_type = model_type
+        self.prev_smoothing_setting = None
         self._hyperparameters = hyperparameters
 
 
@@ -201,6 +203,18 @@ class Agent:
         return coords
 
 
+    @contextmanager
+    def smoothing(self, env):
+        if hasattr(env, "enable_smoothing"):
+            try:
+                self.prev_smoothing_setting = env.enable_smoothing
+                env.enable_smoothing = False
+                yield
+            finally:
+                env.enable_smoothing = self.prev_smoothing_setting
+                self.prev_smoothing_setting = None
+
+
     def visualize_trained_model(self, num_episodes: int=5, live_animation=False) -> None:
         """
         Run and visualize a trained model in the environment over multiple episodes.
@@ -223,281 +237,279 @@ class Agent:
         self.model.set_policy_eval()
         env = self.get_env()
 
-        if hasattr(env, "ship_pos"):
-            if env.type_name == "FhSimEnv" and "alternative" in getattr(env, "path_name", ""):
-                env.checkpoints[-1]['radius'] = 7.5
+        with self.smoothing(env):
+            if hasattr(env, "ship_pos"):
+                # Store results for each episode
+                all_paths = []
+                all_heading_errors = []
+                total_rewards = []
+                all_cross_errors = []  # Store cross-track errors for each episode
+                all_rudder_actions = []
+                all_thrust_actions = []
+                start_pos = None
 
-            # Store results for each episode
-            all_paths = []
-            all_heading_errors = []
-            total_rewards = []
-            all_cross_errors = []  # Store cross-track errors for each episode
-            all_rudder_actions = []
-            all_thrust_actions = []
-            start_pos = None
+                for episode in range(num_episodes):
+                    state, _ = env.reset()
+                    episode_reward = 0
+                    done = False
+                    steps = 0
 
-            for episode in range(num_episodes):
-                state, _ = env.reset()
-                episode_reward = 0
+                    start_pos = np.copy(env.ship_pos)
+
+                    # Store heading errors for this episode
+                    cross_errors = []
+                    heading_errors = []
+                    rudder_actions = []
+                    thrust_actions = []
+                    path_positions = [np.copy(env.ship_pos)]  # Store initial position
+                    cross_errors.append(env.cross_error)  # Store initial cross-track error
+
+                    # Calculate initial heading error relative to desired path
+                    initial_heading_error = self.compute_heading_error(env)
+                    heading_errors.append(initial_heading_error)
+
+                    while not done:
+                        # Select action
+                        action, _ = self._model.predict(state=state, deterministic=True)
+
+                        # Take step in environment
+                        state, reward, terminated, truncated, _ = env.step(action)
+                        done = terminated or truncated
+
+                        if not done:
+                            # Store current position and errors
+                            path_positions.append(np.copy(env.ship_pos))
+                            if env.checkpoint_index >= 2:
+                                cross_errors.append(env.cross_error)
+                            heading_error = self.compute_heading_error(env)
+                            heading_errors.append(heading_error)
+                            rudder_actions.append(env.performed_action[0])
+                            thrust_actions.append(env.performed_action[1])
+
+                            episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
+                            steps += 1
+
+                            # Uncomment for animated evaluation
+                            if live_animation:
+                                env.render()
+                        else:
+                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
+                            break
+
+                    all_paths.append(np.array(path_positions))
+                    all_cross_errors.append(np.array(cross_errors))
+                    all_heading_errors.append(np.array(heading_errors))
+                    all_rudder_actions.append(np.array(rudder_actions))
+                    all_thrust_actions.append(np.array(thrust_actions))
+                    total_rewards.append(episode_reward)
+
+                # Calculate mTEI, MTE, and mHEI
+                mTEI, MTE, mHEI = self.compute_metrics(all_cross_errors, all_heading_errors)
+
+                # Print summary statistics
+                avg_reward = np.mean(total_rewards)
+                print(f"\nEvaluation completed!")
+                print(f"Average reward: {avg_reward:.2f}")
+                print(f"Best episode reward: {max(total_rewards):.2f}")
+                print(f"Worst episode reward: {min(total_rewards):.2f}")
+                print(f"Mean Track Error Integral (mTEI): {mTEI:.2f}")
+                print(f"Maximum Track Error (MTE): {MTE:.2f}")
+                print(f"Mean Heading Error Integral (mHEI): {mHEI:.2f} rad")
+
+                try:
+                    # Create a figure with two subplots
+                    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 16))
+
+                    # Add hatched pattern to first subplot
+                    difference_coords = self.create_hashed_area(env.obstacles, env.overall)
+                    for coords in difference_coords:
+                        ax1.add_patch(patches.Polygon(
+                            coords,
+                            facecolor='none',
+                            edgecolor='gray',
+                            hatch='///',
+                            alpha=0.3,
+                            label='Low water level area' if coords is difference_coords[0] else ""
+                        ))
+
+                    # Plot checkpoints
+                    checkpoint_positions = [checkpoint['pos'] for checkpoint in env.checkpoints]
+                    checkpoint_positions = np.array(checkpoint_positions)
+                    for checkpoint in env.checkpoints:
+                        circle = plt.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
+                                            radius=10,
+                                            color='gray',
+                                            alpha=0.5,
+                                            fill=True)
+                        ax1.add_patch(circle)
+
+                    # Draw the path between checkpoints
+                    ax1.plot(checkpoint_positions[:, 0], checkpoint_positions[:, 1],
+                             'g--', alpha=0.5, label='Ideal Path')
+
+                    # Plot obstacles
+                    polygon_patch = patches.Polygon(env.obstacles, closed=True,
+                                                    edgecolor='r', facecolor='none',
+                                                    lw=2, label='Waterway')
+                    ax1.add_patch(polygon_patch)
+
+                    western_scheldt = patches.Polygon(env.overall, closed=True,
+                                                      edgecolor='brown', facecolor='none',
+                                                      lw=2, label='Western Scheldt')
+                    ax1.add_patch(western_scheldt)
+
+                    # Plot paths for each episode with different colors
+                    colors = plt.cm.rainbow(np.linspace(0, 1, num_episodes))
+                    for i, path in enumerate(all_paths):
+                        ax1.plot(path[:, 0], path[:, 1], '-',
+                                 color=colors[i], alpha=0.4,
+                                 label=f'Episode {i + 1} (reward: {total_rewards[i]:.1f})')
+
+                    # Plot start and target positions
+                    ax1.scatter([start_pos[0]], [start_pos[1]], c='blue', s=100, label='Start')
+                    ax1.scatter([env.target_pos[0]], [env.target_pos[1]], c='red', s=100, label='Target')
+
+                    ax1.set_title('Trajectory with Heading Control')
+                    ax1.set_xlabel('X Position')
+                    ax1.set_ylabel('Y Position')
+                    ax1.legend(loc='upper left')
+                    ax1.grid(True)
+                    ax1.axis('equal')
+
+                    # Compute average errors and actions across episodes
+                    # First, find the maximum length among all episodes
+                    max_error_length = max(len(errors) for errors in all_cross_errors)
+                    max_rudder_length = max(len(actions) for actions in all_rudder_actions)
+                    max_thrust_length = max(len(actions) for actions in all_thrust_actions)
+
+                    # Initialize arrays to store the sum and count for averaging
+                    error_sum = np.zeros(max_error_length)
+                    error_count = np.zeros(max_error_length)
+                    rudder_sum = np.zeros(max_rudder_length)
+                    rudder_count = np.zeros(max_rudder_length)
+                    thrust_sum = np.zeros(max_thrust_length)
+                    thrust_count = np.zeros(max_thrust_length)
+
+                    # Sum up all values and count occurrences at each timestep
+                    for errors in all_cross_errors:
+                        for i, error in enumerate(errors):
+                            error_sum[i] += error
+                            error_count[i] += 1
+
+                    for actions in all_rudder_actions:
+                        for i, action in enumerate(actions):
+                            rudder_sum[i] += action
+                            rudder_count[i] += 1
+
+                    for actions in all_thrust_actions:
+                        for i, action in enumerate(actions):
+                            thrust_sum[i] += action
+                            thrust_count[i] += 1
+
+                    # Calculate averages (avoid division by zero)
+                    avg_errors = np.divide(error_sum, error_count, out=np.zeros_like(error_sum), where=error_count != 0)
+                    avg_rudder = np.divide(rudder_sum, rudder_count, out=np.zeros_like(rudder_sum), where=rudder_count != 0)
+                    avg_thrust = np.divide(thrust_sum, thrust_count, out=np.zeros_like(thrust_sum), where=thrust_count != 0)
+
+                    # Plot individual episode errors with lower alpha
+                    for i, errors in enumerate(all_cross_errors):
+                        timesteps = np.arange(len(errors))
+                        ax2.plot(timesteps, errors, '-',
+                                 color=colors[i], alpha=0.2,
+                                 label=f'Episode {i + 1}' if i == 0 else "")
+
+                    # Plot average errors with higher alpha and thicker line
+                    timesteps = np.arange(len(avg_errors))
+                    ax2.plot(timesteps, avg_errors, '-',
+                             color='black', alpha=0.2,
+                             label='Average Cross-track Error')
+
+                    ax2.set_title(f'Cross-Track Error Over Time (Individual and Average Policy)')
+                    ax2.set_xlabel('Timestep')
+                    ax2.set_ylabel('Cross-Track Error')
+                    ax2.legend(loc='upper right')
+                    ax2.grid(True)
+
+                    # Plot individual episode rudder actions with lower alpha
+                    for i, actions in enumerate(all_rudder_actions):
+                        timesteps = np.arange(len(actions))
+                        ax3.plot(timesteps, actions, '-',
+                                 color=colors[i], alpha=0.2,
+                                 label=f'Episode {i + 1}' if i == 0 else "")
+
+                    # Plot average rudder actions with higher alpha and thicker line
+                    timesteps = np.arange(len(avg_rudder))
+                    ax3.plot(timesteps, avg_rudder, '-',
+                             color='black', alpha=0.2,
+                             label='Average Rudder Action')
+
+                    ax3.set_title(f'Rudder Actions Over Time (Individual and Average Policy)')
+                    ax3.set_xlabel('Timestep')
+                    ax3.set_ylabel('Rudder Action')
+                    ax3.legend(loc='upper right')
+                    ax3.grid(True)
+
+                    # Plot individual episode thrust actions with lower alpha
+                    for i, actions in enumerate(all_thrust_actions):
+                        timesteps = np.arange(len(actions))
+                        ax4.plot(timesteps, actions, '-',
+                                 color=colors[i], alpha=0.2,
+                                 label=f'Episode {i + 1}' if i == 0 else "")
+
+                    # Plot average thrust actions with higher alpha and thicker line
+                    timesteps = np.arange(len(avg_thrust))
+                    ax4.plot(timesteps, avg_thrust, '-',
+                             color='black', alpha=0.2,
+                             label='Average Thrust Action')
+
+                    ax4.set_title(f'Thrust Actions Over Time (Individual and Average Policy)')
+                    ax4.set_xlabel('Timestep')
+                    ax4.set_ylabel('Thrust Action')
+                    ax4.legend(loc='upper right')
+                    ax4.grid(True)
+
+                    # Adjust layout and save
+                    plt.tight_layout()
+
+                    trajectory_file_name = (
+                        f'{self.model.model_dir}/trajectory.png'
+                        if self.model.model_dir
+                        else 'trajectory.png'
+                    )
+
+                    plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
+                    plt.show()
+
+                    print(f"\nPath and error visualization saved as 'trajectory.png'")
+                finally:
+                    plt.close('all')
+
+                    # Cleanup the environment
+                    if hasattr(env, "fh_sim"):
+                        env.fh_sim.dispose()
+            else:
+                # Reset the environment
+                obs, _ = env.reset()
+
+                # Render the environment before starting the loop
+                env.render()
+
+                # Run the agent in the environment
                 done = False
-                steps = 0
-
-                start_pos = np.copy(env.ship_pos)
-
-                # Store heading errors for this episode
-                cross_errors = []
-                heading_errors = []
-                rudder_actions = []
-                thrust_actions = []
-                path_positions = [np.copy(env.ship_pos)]  # Store initial position
-                cross_errors.append(env.cross_error)  # Store initial cross-track error
-
-                # Calculate initial heading error relative to desired path
-                initial_heading_error = self.compute_heading_error(env)
-                heading_errors.append(initial_heading_error)
-
                 while not done:
-                    # Select action
-                    action, _ = self._model.predict(state=state, deterministic=True)
+                    # The agent chooses an action based on the current observation
+                    prediction = self._model.predict(state=obs, deterministic=True)
+                    if len(prediction) == 3:
+                        action, _, _ = prediction
+                    else:
+                        action, _ = prediction
 
-                    # Take step in environment
-                    state, reward, terminated, truncated, _ = env.step(action)
+                    # Take a step in the environment
+                    obs, reward, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
 
-                    if not done:
-                        # Store current position and errors
-                        path_positions.append(np.copy(env.ship_pos))
-                        if env.checkpoint_index >= 2:
-                            cross_errors.append(env.cross_error)
-                        heading_error = self.compute_heading_error(env)
-                        heading_errors.append(heading_error)
-                        rudder_actions.append(env.performed_action[0])
-                        thrust_actions.append(env.performed_action[1])
-
-                        episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
-                        steps += 1
-
-                        # Uncomment for animated evaluation
-                        if live_animation:
-                            env.render()
-                    else:
-                        print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
-                        break
-
-                all_paths.append(np.array(path_positions))
-                all_cross_errors.append(np.array(cross_errors))
-                all_heading_errors.append(np.array(heading_errors))
-                all_rudder_actions.append(np.array(rudder_actions))
-                all_thrust_actions.append(np.array(thrust_actions))
-                total_rewards.append(episode_reward)
-
-            # Calculate mTEI, MTE, and mHEI
-            mTEI, MTE, mHEI = self.compute_metrics(all_cross_errors, all_heading_errors)
-
-            # Print summary statistics
-            avg_reward = np.mean(total_rewards)
-            print(f"\nEvaluation completed!")
-            print(f"Average reward: {avg_reward:.2f}")
-            print(f"Best episode reward: {max(total_rewards):.2f}")
-            print(f"Worst episode reward: {min(total_rewards):.2f}")
-            print(f"Mean Track Error Integral (mTEI): {mTEI:.2f}")
-            print(f"Maximum Track Error (MTE): {MTE:.2f}")
-            print(f"Mean Heading Error Integral (mHEI): {mHEI:.2f} rad")
-
-            try:
-                # Create a figure with two subplots
-                fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 16))
-
-                # Add hatched pattern to first subplot
-                difference_coords = self.create_hashed_area(env.obstacles, env.overall)
-                for coords in difference_coords:
-                    ax1.add_patch(patches.Polygon(
-                        coords,
-                        facecolor='none',
-                        edgecolor='gray',
-                        hatch='///',
-                        alpha=0.3,
-                        label='Low water level area' if coords is difference_coords[0] else ""
-                    ))
-
-                # Plot checkpoints
-                checkpoint_positions = [checkpoint['pos'] for checkpoint in env.checkpoints]
-                checkpoint_positions = np.array(checkpoint_positions)
-                for checkpoint in env.checkpoints:
-                    circle = plt.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
-                                        radius=10,
-                                        color='gray',
-                                        alpha=0.5,
-                                        fill=True)
-                    ax1.add_patch(circle)
-
-                # Draw the path between checkpoints
-                ax1.plot(checkpoint_positions[:, 0], checkpoint_positions[:, 1],
-                         'g--', alpha=0.5, label='Ideal Path')
-
-                # Plot obstacles
-                polygon_patch = patches.Polygon(env.obstacles, closed=True,
-                                                edgecolor='r', facecolor='none',
-                                                lw=2, label='Waterway')
-                ax1.add_patch(polygon_patch)
-
-                western_scheldt = patches.Polygon(env.overall, closed=True,
-                                                  edgecolor='brown', facecolor='none',
-                                                  lw=2, label='Western Scheldt')
-                ax1.add_patch(western_scheldt)
-
-                # Plot paths for each episode with different colors
-                colors = plt.cm.rainbow(np.linspace(0, 1, num_episodes))
-                for i, path in enumerate(all_paths):
-                    ax1.plot(path[:, 0], path[:, 1], '-',
-                             color=colors[i], alpha=0.4,
-                             label=f'Episode {i + 1} (reward: {total_rewards[i]:.1f})')
-
-                # Plot start and target positions
-                ax1.scatter([start_pos[0]], [start_pos[1]], c='blue', s=100, label='Start')
-                ax1.scatter([env.target_pos[0]], [env.target_pos[1]], c='red', s=100, label='Target')
-
-                ax1.set_title('Trajectory with Heading Control')
-                ax1.set_xlabel('X Position')
-                ax1.set_ylabel('Y Position')
-                ax1.legend(loc='upper left')
-                ax1.grid(True)
-                ax1.axis('equal')
-
-                # Compute average errors and actions across episodes
-                # First, find the maximum length among all episodes
-                max_error_length = max(len(errors) for errors in all_cross_errors)
-                max_rudder_length = max(len(actions) for actions in all_rudder_actions)
-                max_thrust_length = max(len(actions) for actions in all_thrust_actions)
-
-                # Initialize arrays to store the sum and count for averaging
-                error_sum = np.zeros(max_error_length)
-                error_count = np.zeros(max_error_length)
-                rudder_sum = np.zeros(max_rudder_length)
-                rudder_count = np.zeros(max_rudder_length)
-                thrust_sum = np.zeros(max_thrust_length)
-                thrust_count = np.zeros(max_thrust_length)
-
-                # Sum up all values and count occurrences at each timestep
-                for errors in all_cross_errors:
-                    for i, error in enumerate(errors):
-                        error_sum[i] += error
-                        error_count[i] += 1
-
-                for actions in all_rudder_actions:
-                    for i, action in enumerate(actions):
-                        rudder_sum[i] += action
-                        rudder_count[i] += 1
-
-                for actions in all_thrust_actions:
-                    for i, action in enumerate(actions):
-                        thrust_sum[i] += action
-                        thrust_count[i] += 1
-
-                # Calculate averages (avoid division by zero)
-                avg_errors = np.divide(error_sum, error_count, out=np.zeros_like(error_sum), where=error_count != 0)
-                avg_rudder = np.divide(rudder_sum, rudder_count, out=np.zeros_like(rudder_sum), where=rudder_count != 0)
-                avg_thrust = np.divide(thrust_sum, thrust_count, out=np.zeros_like(thrust_sum), where=thrust_count != 0)
-
-                # Plot individual episode errors with lower alpha
-                for i, errors in enumerate(all_cross_errors):
-                    timesteps = np.arange(len(errors))
-                    ax2.plot(timesteps, errors, '-',
-                             color=colors[i], alpha=0.2,
-                             label=f'Episode {i + 1}' if i == 0 else "")
-
-                # Plot average errors with higher alpha and thicker line
-                timesteps = np.arange(len(avg_errors))
-                ax2.plot(timesteps, avg_errors, '-',
-                         color='black', alpha=0.2,
-                         label='Average Cross-track Error')
-
-                ax2.set_title(f'Cross-Track Error Over Time (Individual and Average Policy)')
-                ax2.set_xlabel('Timestep')
-                ax2.set_ylabel('Cross-Track Error')
-                ax2.legend(loc='upper right')
-                ax2.grid(True)
-
-                # Plot individual episode rudder actions with lower alpha
-                for i, actions in enumerate(all_rudder_actions):
-                    timesteps = np.arange(len(actions))
-                    ax3.plot(timesteps, actions, '-',
-                             color=colors[i], alpha=0.2,
-                             label=f'Episode {i + 1}' if i == 0 else "")
-
-                # Plot average rudder actions with higher alpha and thicker line
-                timesteps = np.arange(len(avg_rudder))
-                ax3.plot(timesteps, avg_rudder, '-',
-                         color='black', alpha=0.2,
-                         label='Average Rudder Action')
-
-                ax3.set_title(f'Rudder Actions Over Time (Individual and Average Policy)')
-                ax3.set_xlabel('Timestep')
-                ax3.set_ylabel('Rudder Action')
-                ax3.legend(loc='upper right')
-                ax3.grid(True)
-
-                # Plot individual episode thrust actions with lower alpha
-                for i, actions in enumerate(all_thrust_actions):
-                    timesteps = np.arange(len(actions))
-                    ax4.plot(timesteps, actions, '-',
-                             color=colors[i], alpha=0.2,
-                             label=f'Episode {i + 1}' if i == 0 else "")
-
-                # Plot average thrust actions with higher alpha and thicker line
-                timesteps = np.arange(len(avg_thrust))
-                ax4.plot(timesteps, avg_thrust, '-',
-                         color='black', alpha=0.2,
-                         label='Average Thrust Action')
-
-                ax4.set_title(f'Thrust Actions Over Time (Individual and Average Policy)')
-                ax4.set_xlabel('Timestep')
-                ax4.set_ylabel('Thrust Action')
-                ax4.legend(loc='upper right')
-                ax4.grid(True)
-
-                # Adjust layout and save
-                plt.tight_layout()
-
-                trajectory_file_name = (
-                    f'{self.model.model_dir}/trajectory.png'
-                    if self.model.model_dir
-                    else 'trajectory.png'
-                )
-
-                plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
-                plt.show()
-
-                print(f"\nPath and error visualization saved as 'trajectory.png'")
-            finally:
-                plt.close('all')
-
-                # Cleanup the environment
-                if hasattr(env, "fh_sim"):
-                    env.fh_sim.dispose()
-        else:
-            # Reset the environment
-            obs, _ = env.reset()
-
-            # Render the environment before starting the loop
-            env.render()
-
-            # Run the agent in the environment
-            done = False
-            while not done:
-                # The agent chooses an action based on the current observation
-                prediction = self._model.predict(state=obs, deterministic=True)
-                if len(prediction) == 3:
-                    action, _, _ = prediction
-                else:
-                    action, _ = prediction
-
-                # Take a step in the environment
-                obs, reward, terminated, truncated, _ = env.step(action)
-                done = terminated or truncated
-
-                # Render the environment each step to visualize the agent's action
-                env.render()
+                    # Render the environment each step to visualize the agent's action
+                    env.render()
 
 
     def get_env(self):

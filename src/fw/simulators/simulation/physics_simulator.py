@@ -28,22 +28,23 @@ class PhysicsSimulator:
         self.wind_strength = 0.35
 
 
-    def step(self, state: np.ndarray, action: np.ndarray) -> np.ndarray:
+    def step(self, state: np.ndarray, action: np.ndarray, enable_smoothing: bool) -> np.ndarray:
         """
         Update ship state based on actions and environmental effects.
 
         Args:
             state: current state of ship
-            action: Array of [rudder, thrust] commands
+            action: array of [rudder, thrust] commands
+            enable_smoothing: enable/disable smoothing
         """
 
         # Convert control inputs to physical values
         # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
         target_rudder = action[0] * self.ship.specifications.max_rudder_angle   # rudder angle in radians
         # Thrust: 0 to 1 maps to 0 to full ahead
-        target_thrust = abs(action[1]) * self.ship.specifications.max_thrust
+        target_thrust = (action[1] if enable_smoothing else abs(action[1])) * self.ship.specifications.max_thrust
 
-        actual_rudder, actual_thrust = self.ship.apply_control([target_rudder, target_thrust], self.dt)
+        actual_rudder, actual_thrust = self.ship.apply_control([target_rudder, target_thrust], self.dt, enable_smoothing)
 
         # Environmental effects relative to ship heading
         wind_effect = np.zeros(2, dtype=np.float32)
