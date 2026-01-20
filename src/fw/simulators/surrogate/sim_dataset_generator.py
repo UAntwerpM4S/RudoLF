@@ -77,7 +77,7 @@ def collect_supervised_dataset(
     counter = 0
 
     for n in range(N_samples):
-        env.ship_pos = np.array([x0[n], y0[n]], dtype=np.float32)
+        env.initial_ship_pos = np.array([x0[n], y0[n]], dtype=np.float32)
         obs, _ = env.reset()
 
         rng = np.random.default_rng()
