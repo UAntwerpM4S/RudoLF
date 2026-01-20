@@ -34,13 +34,14 @@ class Ship:
         return np.array([self._rudder, self._thrust], dtype=np.float32)
 
 
-    def apply_control(self, action: np.ndarray, dt: float) -> np.ndarray:
+    def apply_control(self, action: np.ndarray, dt: float, enable_smoothing: bool) -> np.ndarray:
         """
         Apply rate-limited and saturated control.
 
         Args:
             action: Array of [rudder, thrust] commands
             dt: Time step in seconds
+            enable_smoothing: Enable/disable smoothing
 
         Returns:
             np.ndarray: Array containing updated rudder and thrust
@@ -50,22 +51,26 @@ class Ship:
         action = np.asarray(action, dtype=np.float32)
         target_rudder, target_thrust = action[0], action[1]
 
-        # Rate limits (per-second -> per-step)
-        max_rudder_step = self.specifications.max_rudder_rate * dt
-        max_thrust_step = self.specifications.max_thrust_rate * dt
+        if enable_smoothing:
+            # Rate limits (per-second -> per-step)
+            max_rudder_step = self.specifications.max_rudder_rate * dt
+            max_thrust_step = self.specifications.max_thrust_rate * dt
 
-        # Rudder dynamics
-        rudder_error = target_rudder - self._rudder
-        # Deadband on change to prevent jitter
-        if abs(rudder_error) < self.specifications.rudder_jitter_threshold:
-            rudder_step = 0.0
+            # Rudder dynamics
+            rudder_error = target_rudder - self._rudder
+            # Deadband on change to prevent jitter
+            if abs(rudder_error) < self.specifications.rudder_jitter_threshold:
+                rudder_step = 0.0
+            else:
+                rudder_step = np.clip(rudder_error, -max_rudder_step, max_rudder_step)
+            self._rudder += rudder_step
+
+            # Thrust dynamics
+            thrust_error = target_thrust - self._thrust
+            thrust_step = np.clip(thrust_error, -max_thrust_step, max_thrust_step)
+            self._thrust += thrust_step
         else:
-            rudder_step = np.clip(rudder_error, -max_rudder_step, max_rudder_step)
-        self._rudder += rudder_step
-
-        # Thrust dynamics
-        thrust_error = target_thrust - self._thrust
-        thrust_step = np.clip(thrust_error, -max_thrust_step, max_thrust_step)
-        self._thrust += thrust_step
+            self._rudder = target_rudder
+            self._thrust = target_thrust
 
         return np.array([self._rudder, self._thrust], dtype=np.float32)

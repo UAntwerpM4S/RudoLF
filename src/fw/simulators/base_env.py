@@ -24,6 +24,7 @@ class BaseEnv(gym.Env):
         """
         super().__init__()
         self._render_mode = render_mode
+        self._smoothing_enabled = True
 
 
     @property
@@ -34,6 +35,16 @@ class BaseEnv(gym.Env):
     @render_mode.setter
     def render_mode(self, value):
         self._render_mode = value
+
+
+    @property
+    def enable_smoothing(self):
+        return self._smoothing_enabled
+
+
+    @enable_smoothing.setter
+    def enable_smoothing(self, value):
+        self._smoothing_enabled = value
 
 
     @property

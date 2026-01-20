@@ -6,6 +6,7 @@ import matplotlib.patches as patches
 from pathlib import Path
 from gymnasium import Env
 from enum import auto, Enum
+from contextlib import contextmanager
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
@@ -145,6 +146,7 @@ class Agent:
         """
         self._model = None
         self._model_type = model_type
+        self.prev_smoothing_setting = None
         self._hyperparameters = hyperparameters
 
 
@@ -233,6 +235,18 @@ class Agent:
             self.get_env().fh_sim.dispose()
 
 
+    @contextmanager
+    def smoothing(self, env):
+        if hasattr(env, "enable_smoothing"):
+            try:
+                self.prev_smoothing_setting = env.enable_smoothing
+                env.enable_smoothing = False
+                yield
+            finally:
+                env.enable_smoothing = self.prev_smoothing_setting
+                self.prev_smoothing_setting = None
+
+
     def visualize_trained_model(self, num_episodes: int=5, live_animation=False) -> None:
         """
         Run and visualize a trained model in the environment over multiple episodes.
@@ -255,83 +269,84 @@ class Agent:
         self.model.set_policy_eval()
         env = self.get_env()
 
-        if hasattr(env, "ship_pos"):
-            # Store results for each episode
-            all_paths = []
-            total_rewards = []
-            start_pos = None
+        with self.smoothing(env):
+            if hasattr(env, "ship_pos"):
+                # Store results for each episode
+                all_paths = []
+                total_rewards = []
+                start_pos = None
 
-            for episode in range(num_episodes):
-                state, _ = env.reset()
-                episode_reward = 0
+                for episode in range(num_episodes):
+                    state, _ = env.reset()
+                    episode_reward = 0
+                    done = False
+                    steps = 0
+
+                    start_pos = np.copy(env.ship_pos)
+
+                    # Store positions for this episode
+                    path_positions = [np.copy(env.ship_pos)]
+
+                    while not done:
+                        # Select action
+                        action, _ = self._model.predict(state=state, deterministic=True)
+
+                        # Take step in environment
+                        state, reward, terminated, truncated, _ = env.step(action)
+                        done = terminated or truncated
+
+                        if not done:
+                            # Store current position
+                            path_positions.append(np.copy(env.ship_pos))
+
+                            # Calculate the average episode reward
+                            episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
+                            steps += 1
+
+                            # Uncomment for animated evaluation
+                            if live_animation:
+                                env.render()
+                        else:
+                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
+                            break
+
+                    all_paths.append(np.array(path_positions))
+                    total_rewards.append(episode_reward)
+
+                # Print summary statistics
+                avg_reward = np.mean(total_rewards)
+                print(f"\nEvaluation completed! Average reward: {avg_reward:.2f}")
+                print(f"Best episode reward: {max(total_rewards):.2f}")
+                print(f"Worst episode reward: {min(total_rewards):.2f}")
+
+                self.render(env, start_pos, all_paths, total_rewards)
+
+                # Cleanup the environment
+                if hasattr(env, "fh_sim"):
+                    env.fh_sim.dispose()
+            else:
+                # Reset the environment
+                obs, _ = env.reset()
+
+                # Render the environment before starting the loop
+                env.render()
+
+                # Run the agent in the environment
                 done = False
-                steps = 0
-
-                start_pos = np.copy(env.ship_pos)
-
-                # Store positions for this episode
-                path_positions = [np.copy(env.ship_pos)]
-
                 while not done:
-                    # Select action
-                    action, _ = self._model.predict(state=state, deterministic=True)
+                    # The agent chooses an action based on the current observation
+                    prediction = self._model.predict(state=obs, deterministic=True)
+                    if len(prediction) == 3:
+                        action, _, _ = prediction
+                    else:
+                        action, _ = prediction
 
-                    # Take step in environment
-                    state, reward, terminated, truncated, _ = env.step(action)
+                    # Take a step in the environment
+                    obs, reward, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
 
-                    if not done:
-                        # Store current position
-                        path_positions.append(np.copy(env.ship_pos))
-
-                        # Calculate the average episode reward
-                        episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
-                        steps += 1
-
-                        # Uncomment for animated evaluation
-                        if live_animation:
-                            env.render()
-                    else:
-                        print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
-                        break
-
-                all_paths.append(np.array(path_positions))
-                total_rewards.append(episode_reward)
-
-            # Print summary statistics
-            avg_reward = np.mean(total_rewards)
-            print(f"\nEvaluation completed! Average reward: {avg_reward:.2f}")
-            print(f"Best episode reward: {max(total_rewards):.2f}")
-            print(f"Worst episode reward: {min(total_rewards):.2f}")
-
-            self.render(env, start_pos, all_paths, total_rewards)
-
-            # Cleanup the environment
-            if hasattr(env, "fh_sim"):
-                env.fh_sim.dispose()
-        else:
-            # Reset the environment
-            obs, _ = env.reset()
-
-            # Render the environment before starting the loop
-            env.render()
-
-            # Run the agent in the environment
-            done = False
-            while not done:
-                # The agent chooses an action based on the current observation
-                prediction = self._model.predict(state=obs, deterministic=True)
-                if len(prediction) == 3:
-                    action, _, _ = prediction
-                else:
-                    action, _ = prediction
-
-                # Take a step in the environment
-                obs, reward, terminated, truncated, _ = env.step(action)
-                done = terminated or truncated
-
-                # Render the environment each step to visualize the agent's action
-                env.render()
+                    # Render the environment each step to visualize the agent's action
+                    env.render()
 
 
     def get_env(self):

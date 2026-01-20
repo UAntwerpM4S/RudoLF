@@ -689,7 +689,7 @@ class PySimEnv(BaseEnv):
         self.previous_heading = self.state[2]
 
         # Update state vector
-        self.state = np.array(self.phys_sim.step(self.state, action), dtype=np.float32)
+        self.state = np.array(self.phys_sim.step(self.state, action, self.enable_smoothing), dtype=np.float32)
 
         self.ship_pos = self.state[:2]
         self.performed_action = self.ship.performed_action.copy()
