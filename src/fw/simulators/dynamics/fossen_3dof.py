@@ -1,5 +1,3 @@
-import numpy as np
-
 from typing import Tuple
 from fw.simulators.dynamics.base import DynamicsModel
 from fw.simulators.ships.ship import ShipSpecifications
@@ -103,43 +101,3 @@ class Fossen3DOF(DynamicsModel):
         dr = total_yaw_moment / self.m33
 
         return du, dv, dr
-
-
-    def integrate(self, state: np.ndarray, accelerations: Tuple[float, float, float],
-                  dt: float) -> np.ndarray:
-        x, y, psi, u, v, r = state
-        du, dv, dr = accelerations
-
-        # Surge integration (semi-implicit for damping)
-        surge_damping_factor = abs(self.X_u / self.m11)
-        new_u = (u + du * dt) / (1.0 + surge_damping_factor * dt)
-
-        # Sway integration (semi-implicit for damping)
-        sway_damping_factor = abs(self.Y_v / self.m22)
-        new_v = (v + dv * dt) / (1.0 + sway_damping_factor * dt)
-
-        # Yaw integration (semi-implicit for damping)
-        yaw_damping_factor = abs(self.N_r / self.m33)
-        new_r = (r + dr * dt) / (1.0 + yaw_damping_factor * dt)
-
-        # Apply realistic limits
-        new_u = np.clip(new_u, self.ship_spec.min_surge_velocity, self.ship_spec.max_surge_velocity)
-        new_v = np.clip(new_v, self.ship_spec.min_sway_velocity, self.ship_spec.max_sway_velocity)
-        new_r = np.clip(new_r, self.ship_spec.min_yaw_rate, self.ship_spec.max_yaw_rate)
-
-        # Position integration in world coordinates
-        # Use midpoint heading for better accuracy
-        psi_mid = psi + 0.5 * new_r * dt
-        cos_psi_mid = np.cos(psi_mid)
-        sin_psi_mid = np.sin(psi_mid)
-
-        # Earth-fixed velocity components
-        dx = new_u * cos_psi_mid - new_v * sin_psi_mid
-        dy = new_u * sin_psi_mid + new_v * cos_psi_mid
-
-        # Update position and heading
-        new_x = x + dx * dt
-        new_y = y + dy * dt
-        new_heading = (psi + new_r * dt + np.pi) % (2.0 * np.pi) - np.pi
-
-        return np.array([new_x, new_y, new_heading, new_u, new_v, new_r], dtype=np.float32)
