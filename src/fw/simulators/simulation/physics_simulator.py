@@ -62,6 +62,8 @@ class PhysicsSimulator:
             enable_smoothing: enable/disable smoothing
         """
 
+        x, y, psi, u, v, r = self._state
+
         # Convert control inputs to physical values
         # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
         target_rudder = action[0] * self.ship.specifications.max_rudder_angle   # rudder angle in radians
@@ -73,7 +75,7 @@ class PhysicsSimulator:
         # Environmental effects relative to ship heading
         wind_effect = np.zeros(2, dtype=np.float32)
         if self.wind:
-            relative_wind_angle = self.radians_wind - self.heading
+            relative_wind_angle = self.radians_wind - psi
             wind_effect = np.array([
                 self.wind_strength * np.cos(relative_wind_angle),
                 self.wind_strength * np.sin(relative_wind_angle)
@@ -81,13 +83,12 @@ class PhysicsSimulator:
 
         current_effect = np.zeros(2, dtype=np.float32)
         if self.current:
-            relative_current_angle = self.radians_current - self.heading
+            relative_current_angle = self.radians_current - psi
             current_effect = np.array([
                 self.current_strength * np.cos(relative_current_angle),
                 self.current_strength * np.sin(relative_current_angle)
             ], dtype=np.float32)
 
-        x, y, psi, u, v, r = self._state
         du, dv, dr = self.dynamics.calculate_accelerations(u, v, r, actual_rudder, actual_thrust)
 
         # Add environmental effects as additional accelerations
