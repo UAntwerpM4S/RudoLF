@@ -1,11 +1,10 @@
 import numpy as np
 
 from fw.simulators.ships.ship import Ship
-from fw.simulators.dynamics.base import DynamicsModel
 
 
 class PhysicsSimulator:
-    def __init__(self, ship: Ship, dynamics: DynamicsModel, initial_ship_pos, initial_ship_heading, dt: float, wind: bool, current: bool):
+    def __init__(self, ship: Ship, dynamics, initial_ship_pos, initial_ship_heading, dt: float, wind: bool, current: bool):
         self.dt = dt
         self.ship = ship
         self.wind = wind
@@ -88,10 +87,43 @@ class PhysicsSimulator:
                 self.current_strength * np.sin(relative_current_angle)
             ], dtype=np.float32)
 
-        du, dv, dr = self.dynamics.calculate_accelerations(self.surge, self.sway, self.yaw_rate, actual_rudder, actual_thrust)
+        x, y, psi, u, v, r = self._state
+        du, dv, dr = self.dynamics.calculate_accelerations(u, v, r, actual_rudder, actual_thrust)
 
         # Add environmental effects as additional accelerations
         du += wind_effect[0] + current_effect[0]
         dv += wind_effect[1] + current_effect[1]
 
-        self.dynamics.integrate(self._state, [du, dv, dr], self.dt)
+        # Surge integration (semi-implicit for damping)
+        surge_damping_factor = abs(self.dynamics.X_u / self.dynamics.m11)
+        new_u = (u + du * self.dt) / (1.0 + surge_damping_factor * self.dt)
+
+        # Sway integration (semi-implicit for damping)
+        sway_damping_factor = abs(self.dynamics.Y_v / self.dynamics.m22)
+        new_v = (v + dv * self.dt) / (1.0 + sway_damping_factor * self.dt)
+
+        # Yaw integration (semi-implicit for damping)
+        yaw_damping_factor = abs(self.dynamics.N_r / self.dynamics.m33)
+        new_r = (r + dr * self.dt) / (1.0 + yaw_damping_factor * self.dt)
+
+        # Apply realistic limits
+        new_u = np.clip(new_u, self.ship.specifications.min_surge_velocity, self.ship.specifications.max_surge_velocity)
+        new_v = np.clip(new_v, self.ship.specifications.min_sway_velocity, self.ship.specifications.max_sway_velocity)
+        new_r = np.clip(new_r, self.ship.specifications.min_yaw_rate, self.ship.specifications.max_yaw_rate)
+
+        # Position integration in world coordinates
+        # Use midpoint heading for better accuracy
+        psi_mid = psi + 0.5 * r * self.dt
+        cos_psi_mid = np.cos(psi_mid)
+        sin_psi_mid = np.sin(psi_mid)
+
+        # Earth-fixed velocity components
+        dx = u * cos_psi_mid - v * sin_psi_mid
+        dy = u * sin_psi_mid + v * cos_psi_mid
+
+        self._state[0] = x + dx * self.dt
+        self._state[1] = y + dy * self.dt
+        self._state[2] = (psi + r * self.dt + np.pi) % (2.0 * np.pi) - np.pi
+        self._state[3] = new_u
+        self._state[4] = new_v
+        self._state[5] = new_r
