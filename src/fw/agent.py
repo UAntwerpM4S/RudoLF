@@ -150,7 +150,7 @@ class Agent:
         )
 
         # Calculate heading error (difference between current and desired heading)
-        heading_error = (env.state[2] - desired_heading + np.pi) % (2 * np.pi) - np.pi
+        heading_error = (env.phys_sim.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
         return heading_error
 
 

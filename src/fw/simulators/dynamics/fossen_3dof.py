@@ -123,23 +123,21 @@ class Fossen3DOF(DynamicsModel):
         new_r = (r + dr * dt) / (1.0 + yaw_damping_factor * dt)
 
         # Apply realistic limits
-        new_u = np.clip(new_u, self.ship_spec.min_surge_velocity, self.ship_spec.max_surge_velocity)
-        new_v = np.clip(new_v, self.ship_spec.min_sway_velocity, self.ship_spec.max_sway_velocity)
-        new_r = np.clip(new_r, self.ship_spec.min_yaw_rate, self.ship_spec.max_yaw_rate)
+        state[3] = np.clip(new_u, self.ship_spec.min_surge_velocity, self.ship_spec.max_surge_velocity)
+        state[4] = np.clip(new_v, self.ship_spec.min_sway_velocity, self.ship_spec.max_sway_velocity)
+        state[5] = np.clip(new_r, self.ship_spec.min_yaw_rate, self.ship_spec.max_yaw_rate)
 
         # Position integration in world coordinates
         # Use midpoint heading for better accuracy
-        psi_mid = psi + 0.5 * new_r * dt
+        psi_mid = psi + 0.5 * state[5] * dt
         cos_psi_mid = np.cos(psi_mid)
         sin_psi_mid = np.sin(psi_mid)
 
         # Earth-fixed velocity components
-        dx = new_u * cos_psi_mid - new_v * sin_psi_mid
-        dy = new_u * sin_psi_mid + new_v * cos_psi_mid
+        dx = state[3] * cos_psi_mid - state[4] * sin_psi_mid
+        dy = state[3] * sin_psi_mid + state[4] * cos_psi_mid
 
         # Update position and heading
-        new_x = x + dx * dt
-        new_y = y + dy * dt
-        new_heading = (psi + new_r * dt + np.pi) % (2.0 * np.pi) - np.pi
-
-        return np.array([new_x, new_y, new_heading, new_u, new_v, new_r], dtype=np.float32)
+        state[0] = x + dx * dt
+        state[1] = y + dy * dt
+        state[2] = (psi + state[5] * dt + np.pi) % (2.0 * np.pi) - np.pi
