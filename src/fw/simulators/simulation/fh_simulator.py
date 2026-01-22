@@ -68,7 +68,7 @@ class FhSimulator:
 
         # Smooth action application
         if np.array_equal(self.ship.performed_action, np.zeros(2)) or not enable_smoothing:
-            turning_smooth, thrust_smooth = action
+            turning_smooth, thrust_smooth = action[0], abs(action[1])
         else:
             turning_smooth = alpha * action[0] + (1 - alpha) * self.ship.performed_action[0]
             thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.ship.performed_action[1]
