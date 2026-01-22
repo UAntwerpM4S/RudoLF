@@ -36,6 +36,11 @@ class Ship:
         return np.array([self._rudder, self._thrust], dtype=np.float32)
 
 
+    @performed_action.setter
+    def performed_action(self, value):
+        self._rudder, self._thrust = value[0], value[1]
+
+
     def apply_control(self, action: np.ndarray, dt: float, enable_smoothing: bool) -> np.ndarray:
         """
         Apply rate-limited and saturated control.
