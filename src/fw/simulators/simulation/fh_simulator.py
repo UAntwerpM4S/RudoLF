@@ -63,27 +63,30 @@ class FhSimulator:
             enable_smoothing: enable/disable smoothing
         """
 
-        # Convert control inputs to physical values
-        # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
-        target_rudder = action[0]
-        # Thrust: -1 to 1 maps to min_thrust to max_thrust
-        target_thrust = (self.ship.specifications.min_thrust + 0.5 * (action[1] + 1.0) *
-                         (self.ship.specifications.max_thrust - self.ship.specifications.min_thrust))
+        # Apply rate limiting to action changes
+        alpha = 0.3
 
-        actual_rudder, actual_thrust = self.ship.apply_control([target_rudder, target_thrust], self.dt, enable_smoothing)
+        # Smooth action application
+        if np.array_equal(self.ship.performed_action, np.zeros(2)) or not enable_smoothing:
+            turning_smooth, thrust_smooth = action
+        else:
+            turning_smooth = alpha * action[0] + (1 - alpha) * self.ship.performed_action[0]
+            thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.ship.performed_action[1]
 
         # Save the current ship position as the previous position for tracking.
         # Update rudder controls based on the turning action.
         for rudder in self.dynamics.ship_interface.getRudderControls():
-            rudder.setControlValue(float(-1.0*actual_rudder)) # this is to compensate for opposite behaviour of the Python environment
+            rudder.setControlValue(float(-1.0*turning_smooth)) # this is to compensate for opposite behaviour of the Python environment
                                                         # in Python: -1 is turn right ; 1 is turn left
                                                         # FH sim: -1 is turn left ; 1 is turn right
         # Update propeller controls based on the thrust action.
         for propeller in self.dynamics.ship_interface.getPropellerControls():
-            propeller.setEngineLeverValue(float(actual_thrust))
+            propeller.setEngineLeverValue(float(thrust_smooth))
 
         # Simulate the ship's dynamics for a fixed period.
         self.dynamics.math_model.simulateSeconds(self.dt)
+
+        self.ship.performed_action = [turning_smooth, thrust_smooth]
 
         # Retrieve the updated ship position from the ship interface.
         new_ship_pos = self.dynamics.ship_interface.getShipPosition()
