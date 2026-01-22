@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Tuple
 from fw.simulators.ships.myzako import create_myzako
 from fw.simulators.dynamics.fossen_3dof import Fossen3DOF
 from fw.simulators.tools import create_checkpoints_from_simple_path
-from fw.simulators.simulation.physics_simulator import PhysicsSimulator
+from fw.simulators.simulation.fossen_simulator import FossenSimulator
 from fw.simulators.base_env import BaseEnv
 
 
@@ -199,8 +199,29 @@ class PySimEnv(BaseEnv):
         else:
             ship_heading = 0.0
 
-        self.phys_sim = PhysicsSimulator(self.ship, self.dynamics, self.ship_pos, ship_heading, self.time_step, self.wind, self.current)
+        self.phys_sim = self.create_simulator(self.ship_pos, ship_heading)
         self.performed_action = np.zeros(2, dtype=np.float32)
+
+    def create_simulator(self, initial_ship_pos, initial_ship_heading):
+        """Create and return a configured Fossen-based ship simulator.
+
+        This factory method instantiates a `FossenSimulator` using the current
+        ship model, dynamics configuration, environmental conditions, and time
+        step stored on this object.
+
+        Args:
+            initial_ship_pos (array-like): Initial ship position in the global
+                (earth-fixed) reference frame, typically given as
+                ``[x, y]`` or ``[x, y, z]`` depending on the simulator setup.
+            initial_ship_heading (float): Initial ship heading (yaw angle) in
+                radians, measured in the earth-fixed frame.
+
+        Returns:
+            FossenSimulator: A fully initialized simulator instance configured
+            with the specified initial state and the current model parameters.
+        """
+
+        return FossenSimulator(self.ship, self.dynamics, initial_ship_pos, initial_ship_heading, self.time_step, self.wind, self.current)
 
     # -------------------------
     # Environment data loaders

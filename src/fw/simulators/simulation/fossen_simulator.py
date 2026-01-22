@@ -3,7 +3,7 @@ import numpy as np
 from fw.simulators.ships.ship import Ship
 
 
-class PhysicsSimulator:
+class FossenSimulator:
     def __init__(self, ship: Ship, dynamics, initial_ship_pos, initial_ship_heading, dt: float, wind: bool, current: bool):
         self.dt = dt
         self.ship = ship
