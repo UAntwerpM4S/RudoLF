@@ -8,6 +8,7 @@ def create_myzako() -> Ship:
         specifications=ShipSpecifications(
             length=110.0,
             mass=3.86e6,
+            min_thrust=0.1,
             max_thrust=1.0,
             max_rudder_angle=np.radians(60.0),
             min_surge_velocity=0.0,
@@ -19,5 +20,6 @@ def create_myzako() -> Ship:
             max_rudder_rate=1.0,
             max_thrust_rate=0.5,
             rudder_jitter_threshold=0.01,
+            thrust_jitter_threshold=0.005,
         ),
     )
