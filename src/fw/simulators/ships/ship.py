@@ -8,6 +8,7 @@ class ShipSpecifications:
     """Ship physical specifications"""
     length: float       # meters
     mass: float     # kg
+    min_thrust: float       # normalized
     max_thrust: float       # normalized
     max_rudder_angle: float     # radians
     min_surge_velocity: float
@@ -19,6 +20,7 @@ class ShipSpecifications:
     max_rudder_rate: float
     max_thrust_rate: float
     rudder_jitter_threshold: float
+    thrust_jitter_threshold: float
 
 
 class Ship:
@@ -65,10 +67,19 @@ class Ship:
                 rudder_step = np.clip(rudder_error, -max_rudder_step, max_rudder_step)
             self._rudder += rudder_step
 
+            # Rudder safety clamp
+            self._rudder = np.clip(self._rudder, -self.specifications.max_rudder_angle, self.specifications.max_rudder_angle)
+
             # Thrust dynamics
             thrust_error = target_thrust - self._thrust
-            thrust_step = np.clip(thrust_error, -max_thrust_step, max_thrust_step)
+            if abs(thrust_error) < self.specifications.thrust_jitter_threshold:
+                thrust_step = 0.0
+            else:
+                thrust_step = np.clip(thrust_error, -max_thrust_step, max_thrust_step)
             self._thrust += thrust_step
+
+            # Thrust safety clamp
+            self._thrust = np.clip(self._thrust, self.specifications.min_thrust, self.specifications.max_thrust)
         else:
             self._rudder = target_rudder
             self._thrust = target_thrust

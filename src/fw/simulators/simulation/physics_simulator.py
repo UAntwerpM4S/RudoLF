@@ -67,8 +67,9 @@ class PhysicsSimulator:
         # Convert control inputs to physical values
         # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
         target_rudder = action[0] * self.ship.specifications.max_rudder_angle   # rudder angle in radians
-        # Thrust: 0 to 1 maps to 0 to full ahead
-        target_thrust = abs(action[1]) * self.ship.specifications.max_thrust
+        # Thrust: -1 to 1 maps to min_thrust to max_thrust
+        target_thrust = (self.ship.specifications.min_thrust + 0.5 * (action[1] + 1.0) *
+                         (self.ship.specifications.max_thrust - self.ship.specifications.min_thrust))
 
         actual_rudder, actual_thrust = self.ship.apply_control([target_rudder, target_thrust], self.dt, enable_smoothing)
 
