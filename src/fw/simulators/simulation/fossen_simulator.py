@@ -65,7 +65,7 @@ class FossenSimulator:
         x, y, psi, u, v, r = self._state
 
         # Convert control inputs to physical values
-        # Rudder: -1 to 1 maps to -60Â° to 60Â° (typical ship rudder limits)
+        # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
         target_rudder = action[0] * self.ship.specifications.max_rudder_angle   # rudder angle in radians
         # Thrust: -1 to 1 maps to min_thrust to max_thrust
         target_thrust = (self.ship.specifications.min_thrust + 0.5 * (action[1] + 1.0) *
@@ -108,24 +108,25 @@ class FossenSimulator:
         yaw_damping_factor = abs(self.dynamics.N_r / self.dynamics.m33)
         new_r = (r + dr * self.dt) / (1.0 + yaw_damping_factor * self.dt)
 
-        # Apply realistic limits
+        # Apply velocity limits
         new_u = np.clip(new_u, self.ship.specifications.min_surge_velocity, self.ship.specifications.max_surge_velocity)
         new_v = np.clip(new_v, self.ship.specifications.min_sway_velocity, self.ship.specifications.max_sway_velocity)
         new_r = np.clip(new_r, self.ship.specifications.min_yaw_rate, self.ship.specifications.max_yaw_rate)
 
-        # Position integration in world coordinates
-        # Use midpoint heading for better accuracy
-        psi_mid = psi + 0.5 * r * self.dt
-        cos_psi_mid = np.cos(psi_mid)
-        sin_psi_mid = np.sin(psi_mid)
+        # Trapezoidal / midpoint integration for position and heading
+        u_avg = 0.5 * (u + new_u)
+        v_avg = 0.5 * (v + new_v)
+        r_avg = 0.5 * (r + new_r)
 
-        # Earth-fixed velocity components
-        dx = new_u * cos_psi_mid - new_v * sin_psi_mid
-        dy = new_u * sin_psi_mid + new_v * cos_psi_mid
+        psi_mid = psi + 0.5 * r_avg * self.dt
 
+        dx = u_avg * np.cos(psi_mid) - v_avg * np.sin(psi_mid)
+        dy = u_avg * np.sin(psi_mid) + v_avg * np.cos(psi_mid)
+
+        # Update state
         self._state[0] = x + dx * self.dt
         self._state[1] = y + dy * self.dt
-        self._state[2] = (psi + new_r * self.dt + np.pi) % (2.0 * np.pi) - np.pi
+        self._state[2] = (psi + r_avg * self.dt + np.pi) % (2.0 * np.pi) - np.pi
         self._state[3] = new_u
         self._state[4] = new_v
         self._state[5] = new_r
