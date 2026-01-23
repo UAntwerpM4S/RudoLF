@@ -27,6 +27,8 @@ class Ship:
     def __init__(self, specifications: ShipSpecifications):
         self.specifications: ShipSpecifications = specifications
 
+        self.count = 0
+
         # Internal actuator state
         self._rudder = 0.0
         self._thrust = 0.0
@@ -36,9 +38,30 @@ class Ship:
         return np.array([self._rudder, self._thrust], dtype=np.float32)
 
 
-    @performed_action.setter
-    def performed_action(self, value):
-        self._rudder, self._thrust = value[0], value[1]
+    def apply_smoothing(self, action: np.ndarray, enable: bool, alpha: float = 0.3) -> np.ndarray:
+        """
+        Apply action smoothing.
+
+        Args:
+            action: Array of [rudder, thrust] commands
+            enable: Enable/disable smoothing
+            alpha: Smoothing factor
+
+        Returns:
+            np.ndarray: Array containing updated rudder and thrust
+        """
+
+        # Smooth action application
+        if self.count == 0 or not enable:
+            self._rudder = action[0]
+            self._thrust = abs(action[1])
+        else:
+            self._rudder = alpha * action[0] + (1 - alpha) * self._rudder
+            self._thrust = alpha * abs(action[1]) + (1 - alpha) * self._thrust
+
+        self.count += 1
+
+        return np.array([self._rudder, self._thrust], dtype=np.float32)
 
 
     def apply_control(self, action: np.ndarray, dt: float, enable_smoothing: bool) -> np.ndarray:
