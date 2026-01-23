@@ -63,30 +63,20 @@ class FhSimulator:
             enable_smoothing: enable/disable smoothing
         """
 
-        # Apply rate limiting to action changes
-        alpha = 0.3
-
-        # Smooth action application
-        if np.array_equal(self.ship.performed_action, np.zeros(2)) or not enable_smoothing:
-            turning_smooth, thrust_smooth = action[0], abs(action[1])
-        else:
-            turning_smooth = alpha * action[0] + (1 - alpha) * self.ship.performed_action[0]
-            thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.ship.performed_action[1]
+        actual_rudder, actual_thrust = self.ship.apply_smoothing(action, enable_smoothing)
 
         # Save the current ship position as the previous position for tracking.
         # Update rudder controls based on the turning action.
         for rudder in self.dynamics.ship_interface.getRudderControls():
-            rudder.setControlValue(float(-1.0*turning_smooth)) # this is to compensate for opposite behaviour of the Python environment
+            rudder.setControlValue(float(-1.0*actual_rudder)) # this is to compensate for opposite behaviour of the Python environment
                                                         # in Python: -1 is turn right ; 1 is turn left
                                                         # FH sim: -1 is turn left ; 1 is turn right
         # Update propeller controls based on the thrust action.
         for propeller in self.dynamics.ship_interface.getPropellerControls():
-            propeller.setEngineLeverValue(float(thrust_smooth))
+            propeller.setEngineLeverValue(float(actual_thrust))
 
         # Simulate the ship's dynamics for a fixed period.
         self.dynamics.math_model.simulateSeconds(self.dt)
-
-        self.ship.performed_action = [turning_smooth, thrust_smooth]
 
         # Retrieve the updated ship position from the ship interface.
         new_ship_pos = self.dynamics.ship_interface.getShipPosition()
