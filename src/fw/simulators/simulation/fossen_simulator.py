@@ -65,7 +65,7 @@ class FossenSimulator:
         x, y, psi, u, v, r = self._state
 
         # Convert control inputs to physical values
-        # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
+        # Rudder: -1 to 1 maps to -60Â° to 60Â° (typical ship rudder limits)
         target_rudder = action[0] * self.ship.specifications.max_rudder_angle   # rudder angle in radians
         # Thrust: -1 to 1 maps to min_thrust to max_thrust
         target_thrust = (self.ship.specifications.min_thrust + 0.5 * (action[1] + 1.0) *
