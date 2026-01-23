@@ -113,20 +113,20 @@ class FossenSimulator:
         new_v = np.clip(new_v, self.ship.specifications.min_sway_velocity, self.ship.specifications.max_sway_velocity)
         new_r = np.clip(new_r, self.ship.specifications.min_yaw_rate, self.ship.specifications.max_yaw_rate)
 
-        # Trapezoidal / midpoint integration for position and heading
-        u_avg = 0.5 * (u + new_u)
-        v_avg = 0.5 * (v + new_v)
-        r_avg = 0.5 * (r + new_r)
+        # Position integration in world coordinates
+        # Use midpoint heading for better accuracy
+        psi_mid = psi + 0.5 * new_r * self.dt
+        cos_psi_mid = np.cos(psi_mid)
+        sin_psi_mid = np.sin(psi_mid)
 
-        psi_mid = psi + 0.5 * r_avg * self.dt
-
-        dx = u_avg * np.cos(psi_mid) - v_avg * np.sin(psi_mid)
-        dy = u_avg * np.sin(psi_mid) + v_avg * np.cos(psi_mid)
+        # Earth-fixed velocity components
+        dx = new_u * cos_psi_mid - new_v * sin_psi_mid
+        dy = new_u * sin_psi_mid + new_v * cos_psi_mid
 
         # Update state
         self._state[0] = x + dx * self.dt
         self._state[1] = y + dy * self.dt
-        self._state[2] = (psi + r_avg * self.dt + np.pi) % (2.0 * np.pi) - np.pi
+        self._state[2] = (psi + new_r * self.dt + np.pi) % (2.0 * np.pi) - np.pi
         self._state[3] = new_u
         self._state[4] = new_v
         self._state[5] = new_r
