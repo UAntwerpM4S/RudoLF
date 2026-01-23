@@ -199,6 +199,7 @@ class PySimEnv(BaseEnv):
         else:
             ship_heading = 0.0
 
+        self.ship.reset()
         self.phys_sim = self.create_simulator(self.ship_pos, ship_heading)
         self.performed_action = np.zeros(2, dtype=np.float32)
 
