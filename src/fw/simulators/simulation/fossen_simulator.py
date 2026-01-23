@@ -120,12 +120,12 @@ class FossenSimulator:
         sin_psi_mid = np.sin(psi_mid)
 
         # Earth-fixed velocity components
-        dx = u * cos_psi_mid - v * sin_psi_mid
-        dy = u * sin_psi_mid + v * cos_psi_mid
+        dx = new_u * cos_psi_mid - new_v * sin_psi_mid
+        dy = new_u * sin_psi_mid + new_v * cos_psi_mid
 
         self._state[0] = x + dx * self.dt
         self._state[1] = y + dy * self.dt
-        self._state[2] = (psi + r * self.dt + np.pi) % (2.0 * np.pi) - np.pi
+        self._state[2] = (psi + new_r * self.dt + np.pi) % (2.0 * np.pi) - np.pi
         self._state[3] = new_u
         self._state[4] = new_v
         self._state[5] = new_r
