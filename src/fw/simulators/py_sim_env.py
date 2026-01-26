@@ -710,7 +710,7 @@ class PySimEnv(BaseEnv):
         # Update state vector
         self.phys_sim.step(action, self.enable_smoothing)
         self.ship_pos = np.array([self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32)
-        self.performed_action = self.phys_sim.actuators.performed_action.copy()
+        self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
         self.step_count += 1
 
         # Reward and termination check

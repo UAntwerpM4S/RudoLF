@@ -8,26 +8,52 @@ from fw.simulators.simulation.base_simulator import BaseSimulator
 
 class FhSimAdapter(BaseSimulator):
     """
-    FH simulator adapter implementing the unified interface.
+    Adapter for FH Simulator integrating with the unified simulator interface.
 
-    Handles coordinate transformations between framework and FH Sim conventions.
+    This class wraps the FH Simulator engine to provide a consistent
+    interface compatible with the framework's BaseSimulator. It handles:
+
+        - Conversion between framework and FH Simulator coordinate and
+          control conventions
+        - Actuator smoothing and rate limiting
+        - State extraction in the framework's VesselState format
+
+    FH-specific notes:
+        - Rudder direction is inverted relative to the framework convention:
+          framework: -1 = turn right, 1 = turn left
+          FH Sim: -1 = turn left, 1 = turn right
     """
 
     def __init__(self, specs: ShipSpecifications, fh_engine, dt: float):
         """
-        Initialize FH Sim adapter.
+        Initialize the FH Simulator adapter.
 
         Args:
-            specs: Ship specifications
-            fh_engine: FH Simulator engine instance
-            dt: Time step [s]
+            specs: ShipSpecifications object defining vessel and actuator limits.
+            fh_engine: Instance of the FH Simulator engine.
+            dt: Simulation time step [s].
+
+        Raises:
+            ValueError: If dt <= 0 (handled by BaseSimulator).
         """
+
         super().__init__(specs, dt)
 
         self._engine = fh_engine
 
     def __deepcopy__(self, memo):
-        """Create deep copy excluding FH engine."""
+        """
+        Create a deep copy of the adapter, excluding the FH engine reference.
+
+        The FH engine instance is shared; all other attributes are deep-copied.
+
+        Args:
+            memo: Dictionary used by copy.deepcopy to avoid duplicate copies.
+
+        Returns:
+            FhSimAdapter: Deep-copied instance with shared FH engine.
+        """
+
         new_instance = self.__class__.__new__(self.__class__)
 
         for key, value in self.__dict__.items():
@@ -39,7 +65,28 @@ class FhSimAdapter(BaseSimulator):
         return new_instance
 
     def step(self, action: np.ndarray, enable_smoothing: bool = True) -> VesselState:
-        """Step FH Simulator forward one time step."""
+        """
+        Advance the FH Simulator by one time step using a normalized action.
+
+        Args:
+            action: Normalized action array [rudder, thrust] in [-1, 1].
+            enable_smoothing: Enable actuator smoothing and rate limiting.
+
+        Returns:
+            VesselState: Updated vessel state in the framework format, with:
+                - x, y: Earth-fixed positions [m]
+                - heading: Earth-fixed heading [rad], wrapped to [-π, π]
+                - u, v: Body-fixed surge and sway velocities [m/s]
+                - r: Yaw rate [rad/s]
+
+        Notes:
+            - Rudder commands are inverted to match FH Sim conventions.
+            - Thrust commands are applied directly to propeller controls.
+            - Actuator smoothing and rate limiting are applied via
+              ActuatorModel.
+            - Coordinates and velocities are extracted from FH engine outputs.
+        """
+
         # Apply smoothing to actions
         actuator = self._actuators.apply_smoothing(action, enable_smoothing)
 

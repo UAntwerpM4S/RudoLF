@@ -10,24 +10,52 @@ MIN_RUDDER_EFFECTIVENESS = 0.2
 
 class Fossen3DOF(DynamicsModel):
     """
-    Fossen 3DOF vessel dynamics model.
+    Three-degrees-of-freedom vessel dynamics model based on Fossen.
 
-    Reference: Fossen, T. I. (2011). Handbook of Marine Craft Hydrodynamics and Motion Control.
+    This class implements a simplified 3-DOF horizontal-plane vessel
+    dynamics model (surge, sway, yaw) inspired by the formulations in:
 
-    Assumptions:
-    - Body-fixed reference at center of gravity
-    - x forward, y starboard, z down
-    - Small angle approximations for some terms
+        Fossen, T. I. (2011). *Handbook of Marine Craft Hydrodynamics and
+        Motion Control*. Wiley.
+
+    The model captures added mass effects, Coriolis and centripetal terms,
+    linear and nonlinear hydrodynamic damping, and simplified control
+    forces from rudder and propeller thrust. It is intended for simulation
+    and control design rather than high-fidelity prediction.
+
+    Coordinate frame and assumptions:
+        - Body-fixed reference frame located at the vessel center of gravity.
+        - Axes: x forward, y starboard, z downward.
+        - Motion is restricted to the horizontal plane (3-DOF).
+        - Environmental forces (wind, current) are not included.
+        - Coefficients are heuristic and scale with vessel mass and length.
     """
 
     def __init__(self, ship_spec: ShipSpecifications):
+        """
+        Initialize the Fossen 3-DOF dynamics model.
+
+        Args:
+            ship_spec: Container holding the vessel's physical properties
+                (e.g. mass, length) used to parameterize the dynamics model.
+        """
+
         self.ship_spec: ShipSpecifications = ship_spec
         self._initialize_coefficients()
 
 
     def _initialize_coefficients(self):
         """
-        Initialize with ship parameters
+        Initialize mass, damping, and control coefficients.
+
+        Derives all hydrodynamic coefficients from the vessel's physical
+        properties. The resulting parameters define:
+            - Rigid-body and added-mass terms
+            - Linear and quadratic damping
+            - Rudder-induced forces and moments
+            - Propeller thrust effectiveness
+
+        This method is intended to be called once during initialization.
         """
 
         # Ship parameters
@@ -69,7 +97,34 @@ class Fossen3DOF(DynamicsModel):
     def accelerations(self, u: float, v: float, r: float,
                       rudder_angle: float, thrust: float) -> Tuple[float, float, float]:
         """
-        Calculate accelerations - with speed-dependent rudder effectiveness
+        Compute body-fixed accelerations from state and control inputs.
+
+        Computes the surge, sway, and yaw accelerations using a nonlinear
+        3-DOF maneuvering model. Rudder effectiveness is scaled by forward
+        speed to reflect reduced control authority at low speeds, with a
+        lower bound to preserve basic maneuverability.
+
+        Args:
+            u: Body-fixed surge velocity in meters per second (m/s).
+            v: Body-fixed sway velocity in meters per second (m/s).
+            r: Body-fixed yaw rate in radians per second (rad/s).
+            rudder_angle: Rudder deflection angle in radians, positive to
+                starboard.
+            thrust: Normalized thrust command (dimensionless), positive in
+                the forward direction.
+
+        Returns:
+            A tuple `(du, dv, dr)` where:
+                - du: Surge acceleration (m/s²).
+                - dv: Sway acceleration (m/s²).
+                - dr: Yaw acceleration (rad/s²).
+
+        Notes:
+            - Coriolis and centripetal effects are included explicitly.
+            - Rudder forces contribute both sway force and yaw moment.
+            - The model assumes thrust acts purely in surge.
+            - This formulation is suitable for control and reinforcement
+              learning, but not for detailed seakeeping analysis.
         """
 
         # --- CORIOLIS-CENTRIPETAL MATRIX ---
