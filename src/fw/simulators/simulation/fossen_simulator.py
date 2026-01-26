@@ -11,20 +11,33 @@ from fw.simulators.dynamics.environmental_model import EnvironmentModel
 class FossenSimulator(BaseSimulator):
     """
     Clean Fossen 3DOF simulator implementing the unified interface.
+
+    This simulator integrates:
+
+        - Fossen 3DOF vessel dynamics model
+        - Actuator dynamics and rate limiting
+        - Environmental forces (wind and current)
+        - Unified interface compatible with RL or control loops
+
+    The simulator computes the vessel state in earth-fixed coordinates
+    using body-fixed velocities and yaw rate. Integration uses a
+    midpoint approximation for improved accuracy.
     """
 
     def __init__(self, specs: ShipSpecifications, dynamics: DynamicsModel, dt: float, wind: bool = False,
                  current: bool = False):
         """
-        Initialize Fossen simulator.
+        Initialize the Fossen 3DOF simulator.
 
         Args:
-            specs: Ship specifications
-            dynamics: Dynamics model
-            dt: Time step [s]
-            wind: Enable wind influence
-            current: Enable current influence
+            specs: ShipSpecifications object defining vessel dimensions,
+                actuator limits, and kinematic constraints.
+            dynamics: DynamicsModel instance implementing 3DOF accelerations.
+            dt: Simulation time step [s]. Must be positive.
+            wind: Enable wind influence if True.
+            current: Enable water current influence if True.
         """
+
         super().__init__(specs, dt)
 
         self._dynamics = dynamics
@@ -33,10 +46,43 @@ class FossenSimulator(BaseSimulator):
 
     @property
     def environment(self) -> EnvironmentModel:
-        """Get environment model."""
+        """
+        Get the environmental model.
+
+        Returns:
+            EnvironmentModel: Contains wind and current settings and
+            provides accelerations in body-fixed frame.
+        """
+
         return self._env
 
     def step(self, action: np.ndarray, enable_smoothing: bool = True) -> VesselState:
+        """
+        Advance the Fossen 3DOF simulator by one time step.
+
+        Args:
+            action: Normalized action array [rudder, thrust] in [-1, 1].
+            enable_smoothing: Enable actuator rate limiting and smoothing.
+
+        Returns:
+            VesselState: Updated vessel state after applying dynamics,
+            actuator commands, and environmental effects.
+
+        Raises:
+            ValueError: If action does not have shape (2,).
+
+        Notes:
+            - Normalized actions are mapped to physical actuators using
+              ActionMapper.
+            - Actuator dynamics are applied using ActuatorModel with optional
+              smoothing.
+            - Vessel accelerations are computed using the provided DynamicsModel.
+            - Environmental accelerations from wind and current are added.
+            - Surge, sway, and yaw velocities are clipped to simulation limits.
+            - Midpoint integration is used to update earth-fixed positions.
+            - Heading is wrapped to [-π, π].
+        """
+
         s = self._state
 
         # Validate action

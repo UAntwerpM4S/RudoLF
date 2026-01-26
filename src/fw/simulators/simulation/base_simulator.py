@@ -8,17 +8,32 @@ from fw.simulators.ships.ship_specs import ShipSpecifications
 
 class BaseSimulator(ABC):
     """
-    Unified simulator interface for RL and control loops.
+    Abstract base class defining a unified simulator interface for vessels.
+
+    This interface is intended for both control loops and reinforcement
+    learning environments. It standardizes the interaction with:
+
+        - Vessel state representation (VesselState)
+        - Actuator dynamics (ActuatorModel)
+        - Time stepping with fixed simulation interval
+
+    Subclasses must implement the `step` method to define the vessel
+    dynamics and environmental effects.
     """
 
     def __init__(self, specs: ShipSpecifications, dt: float):
         """
-        Initialize simulator.
+        Initialize the simulator with vessel specifications and time step.
 
         Args:
-            specs: Ship specifications
-            dt: Simulation time step [s]
+            specs: ShipSpecifications object defining vessel dimensions,
+                actuator limits, and kinematic constraints.
+            dt: Simulation time step [s]. Must be positive.
+
+        Raises:
+            ValueError: If dt <= 0.
         """
+
         if dt <= 0:
             raise ValueError(f"Time step must be positive, got {dt}")
 
@@ -30,34 +45,59 @@ class BaseSimulator(ABC):
 
     @property
     def state(self) -> VesselState:
-        """Get current vessel state."""
+        """
+        Get the current vessel state.
+
+        Returns:
+            VesselState: Current vessel positions (x, y, heading) in
+            earth-fixed frame and body-fixed velocities (u, v, r).
+        """
+
         return self._state
 
     @property
     def actuators(self) -> ActuatorModel:
-        """Get actuator model."""
+        """
+        Get the actuator model.
+
+        Returns:
+            ActuatorModel: Current actuator dynamics instance, used
+            to apply rate limiting, smoothing, and saturation.
+        """
+
         return self._actuators
 
     def reset(self, state: VesselState) -> None:
         """
-        Reset simulator to given state.
+        Reset the simulator to a specific vessel state.
+
+        This also resets the actuator model to neutral positions.
 
         Args:
-            state: Initial vessel state
+            state: VesselState object defining the initial state
+                (position, heading, velocities).
         """
+
         self._state = state
         self._actuators.reset()
 
     @abstractmethod
     def step(self, action: np.ndarray, enable_smoothing: bool = True) -> VesselState:
         """
-        Step simulator by one timestep using normalized action [-1, 1].
+        Advance the simulation by one time step using a normalized action.
+
+        Subclasses must implement this method to update the vessel
+        state according to the chosen dynamics model, environmental
+        effects, and actuator commands.
 
         Args:
-            action: Normalized action array [rudder, thrust]
-            enable_smoothing: Enable actuator rate limiting
+            action: Normalized action array [rudder, thrust] in the
+                range [-1, 1].
+            enable_smoothing: Enable actuator rate limiting and smoothing
+                to prevent unrealistic instantaneous changes.
 
         Returns:
-            Updated vessel state
+            VesselState: Updated vessel state after applying dynamics
+            for one time step.
         """
         pass
