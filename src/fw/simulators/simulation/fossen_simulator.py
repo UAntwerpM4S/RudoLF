@@ -15,6 +15,16 @@ class FossenSimulator(BaseSimulator):
 
     def __init__(self, specs: ShipSpecifications, dynamics: DynamicsModel, dt: float, wind: bool = False,
                  current: bool = False):
+        """
+        Initialize Fossen simulator.
+
+        Args:
+            specs: Ship specifications
+            dynamics: Dynamics model
+            dt: Time step [s]
+            wind: Enable wind influence
+            current: Enable current influence
+        """
         super().__init__(specs, dt)
 
         self._dynamics = dynamics
@@ -23,10 +33,15 @@ class FossenSimulator(BaseSimulator):
 
     @property
     def environment(self) -> EnvironmentModel:
+        """Get environment model."""
         return self._env
 
-    def step(self, action: np.ndarray, enable_smoothing: bool) -> VesselState:
+    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> VesselState:
         s = self._state
+
+        # Validate action
+        if action.shape != (2,):
+            raise ValueError(f"Action must have shape (2,), got {action.shape}")
 
         # Map normalized actions to physical actuators
         command = self._mapper.map(action, self._specs)

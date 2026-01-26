@@ -4,6 +4,10 @@ from typing import Tuple
 
 
 class EnvironmentModel:
+    """
+    Models environmental forces (wind and current) on a vessel.
+    """
+
     def __init__(self, wind: bool, current: bool):
         self.wind = wind
         self.current = current
