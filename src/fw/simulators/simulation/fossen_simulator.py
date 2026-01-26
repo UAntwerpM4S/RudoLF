@@ -96,22 +96,10 @@ class FossenSimulator:
         du += wind_effect[0] + current_effect[0]
         dv += wind_effect[1] + current_effect[1]
 
-        # Surge integration (semi-implicit for damping)
-        surge_damping_factor = abs(self.dynamics.X_u / self.dynamics.m11)
-        new_u = (u + du * self.dt) / (1.0 + surge_damping_factor * self.dt)
-
-        # Sway integration (semi-implicit for damping)
-        sway_damping_factor = abs(self.dynamics.Y_v / self.dynamics.m22)
-        new_v = (v + dv * self.dt) / (1.0 + sway_damping_factor * self.dt)
-
-        # Yaw integration (semi-implicit for damping)
-        yaw_damping_factor = abs(self.dynamics.N_r / self.dynamics.m33)
-        new_r = (r + dr * self.dt) / (1.0 + yaw_damping_factor * self.dt)
-
         # Apply velocity limits
-        new_u = np.clip(new_u, self.ship.specifications.min_surge_velocity, self.ship.specifications.max_surge_velocity)
-        new_v = np.clip(new_v, self.ship.specifications.min_sway_velocity, self.ship.specifications.max_sway_velocity)
-        new_r = np.clip(new_r, self.ship.specifications.min_yaw_rate, self.ship.specifications.max_yaw_rate)
+        new_u = np.clip(u + du * self.dt, self.ship.specifications.min_surge_velocity, self.ship.specifications.max_surge_velocity)
+        new_v = np.clip(v + dv * self.dt, self.ship.specifications.min_sway_velocity, self.ship.specifications.max_sway_velocity)
+        new_r = np.clip(r + dr * self.dt, self.ship.specifications.min_yaw_rate, self.ship.specifications.max_yaw_rate)
 
         # Position integration in world coordinates
         # Use midpoint heading for better accuracy
