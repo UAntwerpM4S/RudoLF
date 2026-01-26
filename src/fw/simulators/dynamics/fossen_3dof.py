@@ -1,6 +1,6 @@
 from typing import Tuple
-from fw.simulators.dynamics.base import DynamicsModel
-from fw.simulators.ships.ship import ShipSpecifications
+from fw.simulators.ships.ship_specs import ShipSpecifications
+from fw.simulators.dynamics.dynamics_model import DynamicsModel
 
 
 # Model constants
@@ -55,8 +55,8 @@ class Fossen3DOF(DynamicsModel):
         self.N_uv = -0.0005 * mass * length
 
 
-    def calculate_accelerations(self, u: float, v: float, r: float,
-                                rudder_angle: float, thrust: float) -> Tuple[float, float, float]:
+    def accelerations(self, u: float, v: float, r: float,
+                      rudder_angle: float, thrust: float) -> Tuple[float, float, float]:
         """
         Calculate accelerations - with speed-dependent rudder effectiveness
         """

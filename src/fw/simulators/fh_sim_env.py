@@ -4,7 +4,7 @@ import numpy as np
 
 from typing import Optional
 from fw.simulators.py_sim_env import PySimEnv
-from fw.simulators.simulation.fh_simulator import FhSimulator
+from fw.simulators.simulation.fh_sim_adapter import FhSimAdapter
 
 
 class FhSimEnv(PySimEnv):
@@ -51,27 +51,19 @@ class FhSimEnv(PySimEnv):
         super().__init__(render_mode, time_step, max_steps, verbose, ship_pos, target_pos, wind, current)
 
 
-    def create_simulator(self, initial_ship_pos, initial_ship_heading):
+    def create_simulator(self):
         """Create and return a configured FH-based ship simulator.
 
         This factory method instantiates an `FhSimulator` using the current
         ship model, FH simulation backend, environmental conditions, and
         integration time step stored on this object.
 
-        Args:
-            initial_ship_pos (array-like): Initial ship position in the global
-                (earth-fixed) reference frame, typically specified as
-                ``[x, y]`` or ``[x, y, z]`` depending on the simulator
-                configuration.
-            initial_ship_heading (float): Initial ship heading (yaw angle) in
-                radians, measured in the earth-fixed frame.
-
         Returns:
             FhSimulator: A fully initialized simulator instance configured
             with the specified initial state and the current model parameters.
         """
 
-        return FhSimulator(self.ship, self._fh_sim, initial_ship_pos, initial_ship_heading, self.time_step, self.wind, self.current)
+        return FhSimAdapter(self.ship.specifications, self._fh_sim, self.time_step)
 
 
     def __deepcopy__(self, memo):
