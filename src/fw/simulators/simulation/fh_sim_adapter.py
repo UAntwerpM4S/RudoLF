@@ -2,7 +2,6 @@ import copy
 import numpy as np
 
 from fw.simulators.ships.vessel_state import VesselState
-from fw.simulators.ships.action_mapper import ActionMapper
 from fw.simulators.ships.ship_specs import ShipSpecifications
 from fw.simulators.simulation.base_simulator import BaseSimulator
 
@@ -10,27 +9,25 @@ from fw.simulators.simulation.base_simulator import BaseSimulator
 class FhSimAdapter(BaseSimulator):
     """
     FH simulator adapter implementing the unified interface.
+
+    Handles coordinate transformations between framework and FH Sim conventions.
     """
 
     def __init__(self, specs: ShipSpecifications, fh_engine, dt: float):
+        """
+        Initialize FH Sim adapter.
+
+        Args:
+            specs: Ship specifications
+            fh_engine: FH Simulator engine instance
+            dt: Time step [s]
+        """
         super().__init__(specs, dt)
 
-        self._mapper = ActionMapper()
         self._engine = fh_engine
 
     def __deepcopy__(self, memo):
-        """
-        Create a deep copy of the FhSimEnv instance, excluding the FH Simulator.
-
-        This method ensures that the FH Simulator instance (`_fh_sim`) is not deep-copied,
-        as it may contain non-picklable or shared resources.
-
-        Args:
-            memo (dict): A dictionary used to track already copied objects.
-
-        Returns:
-            FhSimEnv: A deep copy of the current instance.
-        """
+        """Create deep copy excluding FH engine."""
         new_instance = self.__class__.__new__(self.__class__)
 
         for key, value in self.__dict__.items():
@@ -41,7 +38,9 @@ class FhSimAdapter(BaseSimulator):
 
         return new_instance
 
-    def step(self, action: np.ndarray, enable_smoothing: bool) -> VesselState:
+    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> VesselState:
+        """Step FH Simulator forward one time step."""
+        # Apply smoothing to actions
         actuator = self._actuators.apply_smoothing(action, enable_smoothing)
 
         # Update FH engine controls

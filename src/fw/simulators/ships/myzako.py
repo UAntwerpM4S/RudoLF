@@ -17,9 +17,9 @@ class MyzakoShip:
             max_thrust_rate=0.5,
             rudder_jitter_threshold=0.01,
             thrust_jitter_threshold=0.005,
-            surge_limits=[0.0, 5.0],
-            sway_limits=[-2.0, 2.0],
-            yaw_rate_limits=[-0.5, 0.5],
+            surge_limits=(0.0, 5.0),
+            sway_limits=(-2.0, 2.0),
+            yaw_rate_limits=(-0.5, 0.5),
         )
 
 def create_myzako() -> MyzakoShip:

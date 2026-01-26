@@ -9,6 +9,17 @@ MIN_RUDDER_EFFECTIVENESS = 0.2
 
 
 class Fossen3DOF(DynamicsModel):
+    """
+    Fossen 3DOF vessel dynamics model.
+
+    Reference: Fossen, T. I. (2011). Handbook of Marine Craft Hydrodynamics and Motion Control.
+
+    Assumptions:
+    - Body-fixed reference at center of gravity
+    - x forward, y starboard, z down
+    - Small angle approximations for some terms
+    """
+
     def __init__(self, ship_spec: ShipSpecifications):
         self.ship_spec: ShipSpecifications = ship_spec
         self._initialize_coefficients()
