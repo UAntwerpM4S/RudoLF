@@ -1,29 +1,11 @@
 import numpy as np
 
-from dataclasses import dataclass
+from fw.simulators.ships.actuator_state import ActuatorState
+from fw.simulators.ships.ship_specs import ShipSpecifications
+from fw.simulators.ships.actuator_command import ActuatorCommand
 
 
-@dataclass(frozen=True)
-class ShipSpecifications:
-    """Ship physical specifications"""
-    length: float       # meters
-    mass: float     # kg
-    min_thrust: float       # normalized
-    max_thrust: float       # normalized
-    max_rudder_angle: float     # radians
-    min_surge_velocity: float
-    max_surge_velocity: float
-    min_sway_velocity: float
-    max_sway_velocity: float
-    min_yaw_rate: float
-    max_yaw_rate: float
-    max_rudder_rate: float
-    max_thrust_rate: float
-    rudder_jitter_threshold: float
-    thrust_jitter_threshold: float
-
-
-class Ship:
+class ActuatorModel:
     def __init__(self, specifications: ShipSpecifications):
         self.specifications: ShipSpecifications = specifications
 
@@ -43,7 +25,7 @@ class Ship:
 
         self._initialized = False
 
-    def apply_smoothing(self, action: np.ndarray, enable: bool, alpha: float = 0.3) -> np.ndarray:
+    def apply_smoothing(self, action: np.ndarray, enable: bool, alpha: float = 0.3) -> ActuatorState:
         """
         Apply action smoothing.
 
@@ -53,7 +35,7 @@ class Ship:
             alpha: Smoothing factor
 
         Returns:
-            np.ndarray: Array containing updated rudder and thrust
+            ActuatorState: Array containing updated rudder and thrust
         """
 
         # Smooth action application
@@ -66,10 +48,10 @@ class Ship:
 
         self._initialized = True
 
-        return np.array([self._rudder, self._thrust], dtype=np.float32)
+        return ActuatorState(self._rudder, self._thrust)
 
 
-    def apply_control(self, action: np.ndarray, dt: float, enable_smoothing: bool) -> np.ndarray:
+    def step(self, action: ActuatorCommand, dt: float, enable_smoothing: bool) -> ActuatorState:
         """
         Apply rate-limited and saturated control.
 
@@ -79,12 +61,13 @@ class Ship:
             enable_smoothing: Enable/disable smoothing
 
         Returns:
-            np.ndarray: Array containing updated rudder and thrust
+            ActuatorState: Array containing updated rudder and thrust
         """
 
+        assert dt > 0.0
+
         # Ensure numeric stability
-        action = np.asarray(action, dtype=np.float32)
-        target_rudder, target_thrust = action[0], action[1]
+        target_rudder, target_thrust = action.rudder_angle, action.thrust
 
         if enable_smoothing:
             # Rate limits (per-second -> per-step)
@@ -114,7 +97,7 @@ class Ship:
             # Thrust safety clamp
             self._thrust = np.clip(self._thrust, self.specifications.min_thrust, self.specifications.max_thrust)
         else:
-            self._rudder = target_rudder
-            self._thrust = target_thrust
+            self._rudder = np.clip(target_rudder, -self.specifications.max_rudder_angle, self.specifications.max_rudder_angle)
+            self._thrust = np.clip(target_thrust, self.specifications.min_thrust, self.specifications.max_thrust)
 
-        return np.array([self._rudder, self._thrust], dtype=np.float32)
+        return ActuatorState(self._rudder, self._thrust)
