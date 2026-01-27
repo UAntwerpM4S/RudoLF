@@ -52,8 +52,11 @@ DEFAULT_HYPERPARAMETERS = {
 }
 
 CONFIG_PARAMETERS = {
+    'wind': False,
+    'current': False,
+    'numerical_damping': False,
+    'visualize_best_trained': False,
     'live_animation': False,
-    'visualize_best_trained': False
 }
 
 
