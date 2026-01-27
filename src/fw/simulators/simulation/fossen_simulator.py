@@ -25,7 +25,7 @@ class FossenSimulator(BaseSimulator):
     """
 
     def __init__(self, specs: ShipSpecifications, dynamics: DynamicsModel, dt: float, wind: bool = False,
-                 current: bool = False):
+                 current: bool = False, numerical_damping: bool = False):
         """
         Initialize the Fossen 3DOF simulator.
 
@@ -42,6 +42,7 @@ class FossenSimulator(BaseSimulator):
 
         self._dynamics = dynamics
         self._mapper = ActionMapper()
+        self.numerical_damping = numerical_damping
         self._env = EnvironmentModel(wind, current)
 
     @property
@@ -101,10 +102,17 @@ class FossenSimulator(BaseSimulator):
         du += ax_env
         dv += ay_env
 
+        # Surge damping
+        surge_damping_factor = abs(self._dynamics.X_u / self._dynamics.m11) if self.numerical_damping else 0.0
+        # Sway damping
+        sway_damping_factor = abs(self._dynamics.Y_v / self._dynamics.m22) if self.numerical_damping else 0.0
+        # Yaw damping
+        yaw_damping_factor = abs(self._dynamics.N_r / self._dynamics.m33) if self.numerical_damping else 0.0
+
         # Apply velocity limits
-        u = np.clip(s.u + du * self.dt, *self._specs.surge_limits)
-        v = np.clip(s.v + dv * self.dt, *self._specs.sway_limits)
-        r = np.clip(s.r + dr * self.dt, *self._specs.yaw_rate_limits)
+        u = np.clip((s.u + du * self.dt) / (1.0 + surge_damping_factor * self.dt), *self._specs.surge_limits)
+        v = np.clip((s.v + dv * self.dt) / (1.0 + sway_damping_factor * self.dt), *self._specs.sway_limits)
+        r = np.clip((s.r + dr * self.dt) / (1.0 + yaw_damping_factor * self.dt), *self._specs.yaw_rate_limits)
 
         # Midpoint heading for better integration
         psi_mid = s.heading + 0.5 * r * self.dt
