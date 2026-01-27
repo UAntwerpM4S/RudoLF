@@ -1,5 +1,6 @@
 import types
 
+from fw.config import get_config_parameters
 from fw.simulators.py_sim_env import PySimEnv
 from fw.simulators.fh_sim_env import FhSimEnv
 from fw.simulators.lunar_lander import LunarLander
@@ -199,12 +200,14 @@ class PySimEnvironment(BaseEnvironment):
         """
         ship_pos = [2098, -58]
         target_pos = [11530.0, 13000.0]
+        config = get_config_parameters()
 
         # Wrap the environment in a Monitor and a DummyVecEnv
         # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = PySimEnv(max_steps=14000, ship_pos=ship_pos, target_pos=target_pos)
+        self._env = PySimEnv(max_steps=14000, ship_pos=ship_pos, target_pos=target_pos, wind=config["wind"],
+                             current=config["current"], numerical_damping=config["numerical_damping"])
 
 
 class FhSimEnvironment(BaseEnvironment):
