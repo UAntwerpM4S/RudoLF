@@ -1,132 +1,123 @@
 import numpy as np
 
-from fw.simulators.ships.ship import Ship
+from fw.simulators.ships.vessel_state import VesselState
+from fw.simulators.ships.action_mapper import ActionMapper
+from fw.simulators.ships.ship_specs import ShipSpecifications
+from fw.simulators.dynamics.dynamics_model import DynamicsModel
+from fw.simulators.simulation.base_simulator import BaseSimulator
+from fw.simulators.dynamics.environmental_model import EnvironmentModel
 
 
-class FossenSimulator:
-    def __init__(self, ship: Ship, dynamics, initial_ship_pos, initial_ship_heading, dt: float, wind: bool, current: bool):
-        self.dt = dt
-        self.ship = ship
-        self.wind = wind
-        self.current = current
-        self.dynamics = dynamics
-        self._state = np.array([initial_ship_pos[0], initial_ship_pos[1], initial_ship_heading, 0.0, 0.0, 0.0], dtype=np.float32)
+class FossenSimulator(BaseSimulator):
+    """
+    Clean Fossen 3DOF simulator implementing the unified interface.
 
-        self._initialize_control_parameters()
+    This simulator integrates:
 
+        - Fossen 3DOF vessel dynamics model
+        - Actuator dynamics and rate limiting
+        - Environmental forces (wind and current)
+        - Unified interface compatible with RL or control loops
 
-    @property
-    def position(self):
-        return self._state[:2]
+    The simulator computes the vessel state in earth-fixed coordinates
+    using body-fixed velocities and yaw rate. Integration uses a
+    midpoint approximation for improved accuracy.
+    """
 
-
-    @property
-    def heading(self):
-        return self._state[2]
-
-
-    @property
-    def surge(self):
-        return self._state[3]
-
-
-    @property
-    def sway(self):
-        return self._state[4]
-
-
-    @property
-    def yaw_rate(self):
-        return self._state[5]
-
-
-    def _initialize_control_parameters(self) -> None:
-        """Initialize environmental effect defaults."""
-
-        self.radians_current = np.radians(180.0)
-        self.current_direction = np.array([np.cos(self.radians_current), np.sin(self.radians_current)],
-                                          dtype=np.float32)
-        self.current_strength = 0.35
-
-        self.radians_wind = np.radians(90.0)
-        self.wind_direction = np.array([np.cos(self.radians_wind), np.sin(self.radians_wind)], dtype=np.float32)
-        self.wind_strength = 0.35
-
-
-    def step(self, action: np.ndarray, enable_smoothing: bool):
+    def __init__(self, specs: ShipSpecifications, dynamics: DynamicsModel, dt: float, wind: bool = False,
+                 current: bool = False):
         """
-        Update ship state based on actions and environmental effects.
+        Initialize the Fossen 3DOF simulator.
 
         Args:
-            action: array of [rudder, thrust] commands
-            enable_smoothing: enable/disable smoothing
+            specs: ShipSpecifications object defining vessel dimensions,
+                actuator limits, and kinematic constraints.
+            dynamics: DynamicsModel instance implementing 3DOF accelerations.
+            dt: Simulation time step [s]. Must be positive.
+            wind: Enable wind influence if True.
+            current: Enable water current influence if True.
         """
 
-        x, y, psi, u, v, r = self._state
+        super().__init__(specs, dt)
 
-        # Convert control inputs to physical values
-        # Rudder: -1 to 1 maps to -60° to 60° (typical ship rudder limits)
-        target_rudder = action[0] * self.ship.specifications.max_rudder_angle   # rudder angle in radians
-        # Thrust: -1 to 1 maps to min_thrust to max_thrust
-        target_thrust = (self.ship.specifications.min_thrust + 0.5 * (action[1] + 1.0) *
-                         (self.ship.specifications.max_thrust - self.ship.specifications.min_thrust))
+        self._dynamics = dynamics
+        self._mapper = ActionMapper()
+        self._env = EnvironmentModel(wind, current)
 
-        actual_rudder, actual_thrust = self.ship.apply_control([target_rudder, target_thrust], self.dt, enable_smoothing)
+    @property
+    def environment(self) -> EnvironmentModel:
+        """
+        Get the environmental model.
 
-        # Environmental effects relative to ship heading
-        wind_effect = np.zeros(2, dtype=np.float32)
-        if self.wind:
-            relative_wind_angle = self.radians_wind - psi
-            wind_effect = np.array([
-                self.wind_strength * np.cos(relative_wind_angle),
-                self.wind_strength * np.sin(relative_wind_angle)
-            ], dtype=np.float32)
+        Returns:
+            EnvironmentModel: Contains wind and current settings and
+            provides accelerations in body-fixed frame.
+        """
 
-        current_effect = np.zeros(2, dtype=np.float32)
-        if self.current:
-            relative_current_angle = self.radians_current - psi
-            current_effect = np.array([
-                self.current_strength * np.cos(relative_current_angle),
-                self.current_strength * np.sin(relative_current_angle)
-            ], dtype=np.float32)
+        return self._env
 
-        du, dv, dr = self.dynamics.calculate_accelerations(u, v, r, actual_rudder, actual_thrust)
+    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> VesselState:
+        """
+        Advance the Fossen 3DOF simulator by one time step.
 
-        # Add environmental effects as additional accelerations
-        du += wind_effect[0] + current_effect[0]
-        dv += wind_effect[1] + current_effect[1]
+        Args:
+            action: Normalized action array [rudder, thrust] in [-1, 1].
+            enable_smoothing: Enable actuator rate limiting and smoothing.
 
-        # Surge integration (semi-implicit for damping)
-        surge_damping_factor = abs(self.dynamics.X_u / self.dynamics.m11)
-        new_u = (u + du * self.dt) / (1.0 + surge_damping_factor * self.dt)
+        Returns:
+            VesselState: Updated vessel state after applying dynamics,
+            actuator commands, and environmental effects.
 
-        # Sway integration (semi-implicit for damping)
-        sway_damping_factor = abs(self.dynamics.Y_v / self.dynamics.m22)
-        new_v = (v + dv * self.dt) / (1.0 + sway_damping_factor * self.dt)
+        Raises:
+            ValueError: If action does not have shape (2,).
 
-        # Yaw integration (semi-implicit for damping)
-        yaw_damping_factor = abs(self.dynamics.N_r / self.dynamics.m33)
-        new_r = (r + dr * self.dt) / (1.0 + yaw_damping_factor * self.dt)
+        Notes:
+            - Normalized actions are mapped to physical actuators using
+              ActionMapper.
+            - Actuator dynamics are applied using ActuatorModel with optional
+              smoothing.
+            - Vessel accelerations are computed using the provided DynamicsModel.
+            - Environmental accelerations from wind and current are added.
+            - Surge, sway, and yaw velocities are clipped to simulation limits.
+            - Midpoint integration is used to update earth-fixed positions.
+            - Heading is wrapped to [-π, π].
+        """
+
+        s = self._state
+
+        # Validate action
+        if action.shape != (2,):
+            raise ValueError(f"Action must have shape (2,), got {action.shape}")
+
+        # Map normalized actions to physical actuators
+        command = self._mapper.map(action, self._specs)
+        actuator = self._actuators.step(command, self.dt, enable_smoothing)
+
+        # Compute accelerations from dynamics
+        du, dv, dr = self._dynamics.accelerations(s.u, s.v, s.r, actuator.rudder_angle, actuator.thrust)
+
+        # Add environmental accelerations
+        ax_env, ay_env = self._env.accelerations(s.heading)
+        du += ax_env
+        dv += ay_env
 
         # Apply velocity limits
-        new_u = np.clip(new_u, self.ship.specifications.min_surge_velocity, self.ship.specifications.max_surge_velocity)
-        new_v = np.clip(new_v, self.ship.specifications.min_sway_velocity, self.ship.specifications.max_sway_velocity)
-        new_r = np.clip(new_r, self.ship.specifications.min_yaw_rate, self.ship.specifications.max_yaw_rate)
+        u = np.clip(s.u + du * self.dt, *self._specs.surge_limits)
+        v = np.clip(s.v + dv * self.dt, *self._specs.sway_limits)
+        r = np.clip(s.r + dr * self.dt, *self._specs.yaw_rate_limits)
 
-        # Position integration in world coordinates
-        # Use midpoint heading for better accuracy
-        psi_mid = psi + 0.5 * new_r * self.dt
-        cos_psi_mid = np.cos(psi_mid)
-        sin_psi_mid = np.sin(psi_mid)
+        # Midpoint heading for better integration
+        psi_mid = s.heading + 0.5 * r * self.dt
+        dx = u * np.cos(psi_mid) - v * np.sin(psi_mid)
+        dy = u * np.sin(psi_mid) + v * np.cos(psi_mid)
 
-        # Earth-fixed velocity components
-        dx = new_u * cos_psi_mid - new_v * sin_psi_mid
-        dy = new_u * sin_psi_mid + new_v * cos_psi_mid
+        self._state = VesselState(
+            x=s.x + dx * self.dt,
+            y=s.y + dy * self.dt,
+            heading=(s.heading + r * self.dt + np.pi) % (2.0 * np.pi) - np.pi,
+            u=u,
+            v=v,
+            r=r,
+        )
 
-        # Update state
-        self._state[0] = x + dx * self.dt
-        self._state[1] = y + dy * self.dt
-        self._state[2] = (psi + new_r * self.dt + np.pi) % (2.0 * np.pi) - np.pi
-        self._state[3] = new_u
-        self._state[4] = new_v
-        self._state[5] = new_r
+        return self._state

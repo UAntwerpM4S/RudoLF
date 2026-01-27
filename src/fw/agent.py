@@ -150,7 +150,7 @@ class Agent:
         )
 
         # Calculate heading error (difference between current and desired heading)
-        heading_error = (env.phys_sim.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
+        heading_error = (env.phys_sim.state.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
         return heading_error
 
 
@@ -283,8 +283,8 @@ class Agent:
                                 cross_errors.append(env.cross_error)
                             heading_error = self.compute_heading_error(env)
                             heading_errors.append(heading_error)
-                            rudder_actions.append(env.performed_action[0])
-                            thrust_actions.append(env.performed_action[1])
+                            rudder_actions.append(env.current_actuator_state[0])
+                            thrust_actions.append(env.current_actuator_state[1])
 
                             episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
                             steps += 1
