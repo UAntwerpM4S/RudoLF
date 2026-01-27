@@ -64,20 +64,19 @@ class FhSimAdapter(BaseSimulator):
 
         return new_instance
 
-    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> VesselState:
+    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> None:
         """
         Advance the FH Simulator by one time step using a normalized action.
+
+        Updates `VesselState` with:
+            - x, y: Earth-fixed positions [m]
+            - heading: Earth-fixed heading [rad], wrapped to [-π, π]
+            - u, v: Body-fixed surge and sway velocities [m/s]
+            - r: Yaw rate [rad/s]
 
         Args:
             action: Normalized action array [rudder, thrust] in [-1, 1].
             enable_smoothing: Enable actuator smoothing and rate limiting.
-
-        Returns:
-            VesselState: Updated vessel state in the framework format, with:
-                - x, y: Earth-fixed positions [m]
-                - heading: Earth-fixed heading [rad], wrapped to [-π, π]
-                - u, v: Body-fixed surge and sway velocities [m/s]
-                - r: Yaw rate [rad/s]
 
         Notes:
             - Rudder commands are inverted to match FH Sim conventions.
@@ -111,12 +110,10 @@ class FhSimAdapter(BaseSimulator):
         yaw_rate = np.radians(self._engine.ship_interface.getShipYawRate())
 
         self._state = VesselState(
-            x=new_ship_pos.x,
-            y=new_ship_pos.y,
-            heading=(heading + np.pi) % (2.0 * np.pi) - np.pi,
-            u=velocity_over_ground.x,
-            v=velocity_over_ground.y,
-            r=yaw_rate,
+            x=np.float32(new_ship_pos.x),
+            y=np.float32(new_ship_pos.y),
+            heading=np.float32((heading + np.pi) % (2.0 * np.pi) - np.pi),
+            u=np.float32(velocity_over_ground.x),
+            v=np.float32(velocity_over_ground.y),
+            r=np.float32(yaw_rate),
         )
-
-        return self._state
