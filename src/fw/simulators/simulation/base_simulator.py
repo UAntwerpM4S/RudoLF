@@ -82,7 +82,7 @@ class BaseSimulator(ABC):
         self._actuators.reset()
 
     @abstractmethod
-    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> VesselState:
+    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> None:
         """
         Advance the simulation by one time step using a normalized action.
 
@@ -95,9 +95,5 @@ class BaseSimulator(ABC):
                 range [-1, 1].
             enable_smoothing: Enable actuator rate limiting and smoothing
                 to prevent unrealistic instantaneous changes.
-
-        Returns:
-            VesselState: Updated vessel state after applying dynamics
-            for one time step.
         """
         pass

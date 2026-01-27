@@ -57,17 +57,16 @@ class FossenSimulator(BaseSimulator):
 
         return self._env
 
-    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> VesselState:
+    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> None:
         """
         Advance the Fossen 3DOF simulator by one time step.
+
+        Updates `VesselState` after applying dynamics,
+        actuator commands, and environmental effects.
 
         Args:
             action: Normalized action array [rudder, thrust] in [-1, 1].
             enable_smoothing: Enable actuator rate limiting and smoothing.
-
-        Returns:
-            VesselState: Updated vessel state after applying dynamics,
-            actuator commands, and environmental effects.
 
         Raises:
             ValueError: If action does not have shape (2,).
@@ -120,12 +119,10 @@ class FossenSimulator(BaseSimulator):
         dy = u * np.sin(psi_mid) + v * np.cos(psi_mid)
 
         self._state = VesselState(
-            x=s.x + dx * self.dt,
-            y=s.y + dy * self.dt,
-            heading=(s.heading + r * self.dt + np.pi) % (2.0 * np.pi) - np.pi,
-            u=u,
-            v=v,
-            r=r,
+            x=np.float32(s.x + dx * self.dt),
+            y=np.float32(s.y + dy * self.dt),
+            heading=np.float32((s.heading + r * self.dt + np.pi) % (2.0 * np.pi) - np.pi),
+            u=np.float32(u),
+            v=np.float32(v),
+            r=np.float32(r),
         )
-
-        return self._state
