@@ -111,6 +111,7 @@ class PySimEnv(BaseEnv):
             target_pos: Optional[np.ndarray] = None,
             wind: bool = False,
             current: bool = False,
+            numerical_damping: bool = False,
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -131,8 +132,9 @@ class PySimEnv(BaseEnv):
         # Core parameters
         self.wind = bool(wind)
         self.current = bool(current)
-        self.time_step = float(time_step)
         self.max_steps = int(max_steps)
+        self.time_step = float(time_step)
+        self.numerical_damping = bool(numerical_damping)
         self.verbose = bool(verbose) if verbose is not None else False
         self.previous_ship_pos = None
         self.previous_heading = None
@@ -220,7 +222,7 @@ class PySimEnv(BaseEnv):
             with the specified initial state and the current model parameters.
         """
 
-        return FossenSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
+        return FossenSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current, self.numerical_damping)
 
     # -------------------------
     # Environment data loaders
