@@ -13,7 +13,7 @@ from functools import partial
 from typing import Optional, Tuple
 from matplotlib import pyplot as plt
 from dataclasses import dataclass, field
-from fw.simulators.py_sim_env import PySimEnv
+from fw.environments.py_sim_env import PySimEnv
 from concurrent.futures import ThreadPoolExecutor
 
 # Constants for magic numbers

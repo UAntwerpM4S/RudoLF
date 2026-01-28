@@ -1,9 +1,9 @@
 import numpy as np
 
 from abc import ABC, abstractmethod
-from fw.simulators.ships.vessel_state import VesselState
-from fw.simulators.ships.actuator_model import ActuatorModel
-from fw.simulators.ships.ship_specs import ShipSpecifications
+from fw.ships.vessel_state import VesselState
+from fw.ships.actuator_model import ActuatorModel
+from fw.ships.ship_specs import ShipSpecifications
 
 
 class BaseSimulator(ABC):

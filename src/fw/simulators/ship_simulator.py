@@ -1,11 +1,11 @@
 import numpy as np
 
-from fw.simulators.ships.vessel_state import VesselState
-from fw.simulators.ships.action_mapper import ActionMapper
-from fw.simulators.ships.ship_specs import ShipSpecifications
-from fw.simulators.dynamics.dynamics_model import DynamicsModel
-from fw.simulators.simulation.base_simulator import BaseSimulator
-from fw.simulators.dynamics.environmental_model import EnvironmentModel
+from fw.ships.vessel_state import VesselState
+from fw.ships.action_mapper import ActionMapper
+from fw.ships.ship_specs import ShipSpecifications
+from fw.dynamics.dynamics_model import DynamicsModel
+from fw.simulators.base_simulator import BaseSimulator
+from fw.dynamics.environmental_model import EnvironmentModel
 
 
 class ShipSimulator(BaseSimulator):

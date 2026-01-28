@@ -1,6 +1,6 @@
 import numpy as np
 
-from inference_surrogate import SurrogatePredictor
+from fw.surrogate.inference_surrogate import SurrogatePredictor
 
 
 # load ONE raw sample from your original dataset
