@@ -15,7 +15,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
     )
 
 
-    action = "visualize"
+    action = "train"
 
     # Ensure all environments are registered once
     initialize_all_environments()
