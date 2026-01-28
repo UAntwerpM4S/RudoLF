@@ -102,11 +102,20 @@ class ShipSimulator(BaseSimulator):
         dv += ay_env
 
         # Surge damping
-        surge_damping_factor = abs(self._dynamics.X_u / self._dynamics.m11) if self.numerical_damping else 0.0
+        if self.numerical_damping and hasattr(self._dynamics, "X_u") and hasattr(self._dynamics, "m11"):
+            surge_damping_factor = abs(self._dynamics.X_u / self._dynamics.m11)
+        else:
+            surge_damping_factor = 0.0
         # Sway damping
-        sway_damping_factor = abs(self._dynamics.Y_v / self._dynamics.m22) if self.numerical_damping else 0.0
+        if self.numerical_damping and hasattr(self._dynamics, "Y_v") and hasattr(self._dynamics, "m22"):
+            sway_damping_factor = abs(self._dynamics.Y_v / self._dynamics.m22)
+        else:
+            sway_damping_factor = 0.0
         # Yaw damping
-        yaw_damping_factor = abs(self._dynamics.N_r / self._dynamics.m33) if self.numerical_damping else 0.0
+        if self.numerical_damping and hasattr(self._dynamics, "N_r") and hasattr(self._dynamics, "m33"):
+            yaw_damping_factor = abs(self._dynamics.N_r / self._dynamics.m33)
+        else:
+            yaw_damping_factor = 0.0
 
         # Apply velocity limits
         u = np.clip((s.u + du * self.dt) / (1.0 + surge_damping_factor * self.dt), *self._specs.surge_limits)
