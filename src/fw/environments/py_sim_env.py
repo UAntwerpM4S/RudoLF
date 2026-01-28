@@ -16,12 +16,12 @@ except ImportError:
 from functools import lru_cache
 from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
-from fw.simulators.ships.myzako import create_myzako
-from fw.simulators.ships.vessel_state import VesselState
-from fw.simulators.dynamics.fossen_3dof import Fossen3DOF
-from fw.simulators.tools import create_checkpoints_from_simple_path
-from fw.simulators.simulation.ship_simulator import ShipSimulator
-from fw.simulators.base_env import BaseEnv
+from fw.ships.myzako import create_myzako
+from fw.ships.vessel_state import VesselState
+from fw.dynamics.fossen_3dof import Fossen3DOF
+from fw.environments.tools import create_checkpoints_from_simple_path
+from fw.simulators.ship_simulator import ShipSimulator
+from fw.environments.base_env import BaseEnv
 
 
 # -----------------------

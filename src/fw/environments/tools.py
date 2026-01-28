@@ -3,8 +3,6 @@ import json
 import heapq
 import numpy as np
 
-from shapely.geometry import Point
-
 
 def create_checkpoints_from_simple_path(points, max_distance):
     """

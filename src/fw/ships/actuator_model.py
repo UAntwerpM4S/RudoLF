@@ -1,8 +1,8 @@
 import numpy as np
 
-from fw.simulators.ships.actuator_state import ActuatorState
-from fw.simulators.ships.ship_specs import ShipSpecifications
-from fw.simulators.ships.actuator_command import ActuatorCommand
+from fw.ships.actuator_state import ActuatorState
+from fw.ships.ship_specs import ShipSpecifications
+from fw.ships.actuator_command import ActuatorCommand
 
 
 class ActuatorModel:

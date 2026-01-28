@@ -10,7 +10,7 @@ from gymnasium import error, spaces
 from gymnasium.utils import EzPickle
 from gymnasium.error import DependencyNotInstalled
 from gymnasium.utils.step_api_compatibility import step_api_compatibility
-from fw.simulators.base_env import BaseEnv
+from fw.environments.base_env import BaseEnv
 
 
 try:

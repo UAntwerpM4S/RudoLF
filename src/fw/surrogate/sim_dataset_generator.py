@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from py_sim_env import PySimEnv
+from fw.environments.py_sim_env import PySimEnv
 
 
 def plot_xy_points_and_trajectories(env, xy, trajectories):
