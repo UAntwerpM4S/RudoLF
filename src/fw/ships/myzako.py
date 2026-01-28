@@ -1,6 +1,6 @@
 import numpy as np
 
-from fw.simulators.ships.ship_specs import ShipSpecifications
+from fw.ships.ship_specs import ShipSpecifications
 
 
 class MyzakoShip:

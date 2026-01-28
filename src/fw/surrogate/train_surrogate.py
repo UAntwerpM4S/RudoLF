@@ -5,10 +5,10 @@ import numpy as np
 import torch.nn.functional as F
 
 from pathlib import Path
-from dataset import ShipDynamicsDataset
 from torch.utils.data import DataLoader
-from models.mlp_surrogate import SurrogateMLP
-from fw.simulators.utils import load_checkpoint, data_path, get_device, save_checkpoint
+from fw.surrogate.dataset import ShipDynamicsDataset
+from fw.surrogate.models.mlp_surrogate import SurrogateMLP
+from fw.surrogate.utils import load_checkpoint, data_path, get_device, save_checkpoint
 
 
 def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> float:

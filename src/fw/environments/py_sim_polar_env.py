@@ -18,7 +18,7 @@ import matplotlib.patches as patches
 from shapely.geometry import Point
 from shapely.geometry import Polygon
 from typing import Tuple, Optional, Dict
-from fw.simulators.base_env import BaseEnv
+from fw.environments.base_env import BaseEnv
 
 
 class PySimPolarEnv(BaseEnv):

@@ -1,9 +1,9 @@
 import copy
 import numpy as np
 
-from fw.simulators.ships.vessel_state import VesselState
-from fw.simulators.ships.ship_specs import ShipSpecifications
-from fw.simulators.simulation.base_simulator import BaseSimulator
+from fw.ships.vessel_state import VesselState
+from fw.ships.ship_specs import ShipSpecifications
+from fw.simulators.base_simulator import BaseSimulator
 
 
 class FhSimAdapter(BaseSimulator):

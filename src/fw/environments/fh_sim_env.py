@@ -3,7 +3,8 @@ import importlib
 import numpy as np
 
 from typing import Optional
-from fw.simulators.py_sim_env import PySimEnv
+from fw.environments.py_sim_env import PySimEnv
+from fw.simulators.fh_sim_adapter import FhSimAdapter
 
 
 class FhSimEnv(PySimEnv):
@@ -40,14 +41,29 @@ class FhSimEnv(PySimEnv):
             wind (bool, optional): Whether to enable wind effects. Defaults to False.
             current (bool, optional): Whether to enable current effects. Defaults to False.
         """
-        super().__init__(render_mode, time_step, max_steps, verbose, ship_pos, target_pos, wind, current)
-
         try:
             fh_wrapper_module = importlib.import_module('fw.simulators.fh_sim_wrapper')
             fh_wrapper_class = getattr(fh_wrapper_module, "FhSimWrapper")
-            self._fh_sim = fh_wrapper_class(self.ship_pos)
+            self._fh_sim = fh_wrapper_class(ship_pos)
         except ModuleNotFoundError:
             self._fh_sim = None
+
+        super().__init__(render_mode, time_step, max_steps, verbose, ship_pos, target_pos, wind, current)
+
+
+    def create_simulator(self):
+        """Create and return a configured FH-based ship simulator.
+
+        This factory method instantiates an `FhSimulator` using the current
+        ship model, FH simulation backend, environmental conditions, and
+        integration time step stored on this object.
+
+        Returns:
+            FhSimulator: A fully initialized simulator instance configured
+            with the specified initial state and the current model parameters.
+        """
+
+        return FhSimAdapter(self.ship.specifications, self._fh_sim, self.time_step)
 
 
     def __deepcopy__(self, memo):
@@ -136,66 +152,5 @@ class FhSimEnv(PySimEnv):
         self._fh_sim.reset()
 
 
-    def _smoothen_action(self, action: np.ndarray):
-        """Smoothen the action to prevent erratic behaviour of the ship.
-
-        Args:
-            action: Array of [rudder, thrust] commands
-        """
-        # Apply rate limiting to action changes
-        alpha = 0.3
-
-        if self.total_steps == 0:
-            turning_smooth = action[0]
-            thrust_smooth = abs(action[1])
-        else:
-            # Smooth action application
-            turning_smooth = alpha * action[0] + (1 - alpha) * self.performed_action[0]
-            thrust_smooth = alpha * abs(action[1]) + (1 - alpha) * self.performed_action[1]
-
-        return np.array([turning_smooth, thrust_smooth], dtype=np.float32)
-
-
     def _has_enough_keel_clearance(self, depth_threshold=0.5):
         return self._fh_sim.ship_interface.getKeelClearance() >= depth_threshold
-
-
-    def _update_ship_dynamics(self, action: np.ndarray) -> None:
-        """
-        Update the ship's dynamics based on the provided action.
-
-        This method applies the action to the FH Simulator, updates the ship's state,
-        and ensures the ship remains within the environment's bounds.
-
-        Args:
-            action: An array containing two values (turning, thrust) that determine
-                    the rudder angle and thrust power, respectively.
-        """
-        # Save the current ship position as the previous position for tracking.
-        self.previous_ship_pos = np.copy(self.ship_pos)
-        self.previous_heading = np.radians(self._fh_sim.ship_interface.getShipHeading())
-
-        # Update rudder controls based on the turning action.
-        for rudder in self._fh_sim.ship_interface.getRudderControls():
-            rudder.setControlValue(float(-1.0*action[0])) # this is to compensate for opposite behaviour of the Python environment
-                                                        # in Python: -1 is turn right ; 1 is turn left
-                                                        # FH sim: -1 is turn left ; 1 is turn right
-        # Update propeller controls based on the thrust action.
-        for propeller in self._fh_sim.ship_interface.getPropellerControls():
-            propeller.setEngineLeverValue(float(action[1]))
-
-        # Simulate the ship's dynamics for a fixed period.
-        self._fh_sim.math_model.simulateSeconds(self.time_step)
-
-        # Retrieve the updated ship position from the ship interface.
-        new_ship_pos = self._fh_sim.ship_interface.getShipPosition()
-        velocity_over_ground = self._fh_sim.ship_interface.getShipVelocityOverGround()
-        self.state[0] = new_ship_pos.x
-        self.state[1] = new_ship_pos.y
-        self.state[2] = self.normalize_angle(np.radians(self._fh_sim.ship_interface.getShipHeading()))
-        self.state[3] = velocity_over_ground.x
-        self.state[4] = velocity_over_ground.y
-        self.state[5] = self.normalize_angle(np.radians(self._fh_sim.ship_interface.getShipYawRate()))
-
-        # Clip the ship's position to ensure it's within the environment's defined bounds.
-        self.ship_pos = self.state[:2]

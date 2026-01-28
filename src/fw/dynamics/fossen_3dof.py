@@ -1,6 +1,6 @@
 from typing import Tuple
-from fw.simulators.ships.ship_specs import ShipSpecifications
-from fw.simulators.dynamics.dynamics_model import DynamicsModel
+from fw.ships.ship_specs import ShipSpecifications
+from fw.dynamics.dynamics_model import DynamicsModel
 
 
 # Model constants
