@@ -8,13 +8,13 @@ from fw.simulators.simulation.base_simulator import BaseSimulator
 from fw.simulators.dynamics.environmental_model import EnvironmentModel
 
 
-class FossenSimulator(BaseSimulator):
+class M4SSimulator(BaseSimulator):
     """
-    Clean Fossen 3DOF simulator implementing the unified interface.
+    M4S simulator implementing the unified interface.
 
-    This simulator integrates:
+    This simulator can integrate:
 
-        - Fossen 3DOF vessel dynamics model
+        - Several models like the Fossen 3DOF vessel dynamics model, Nomoto, MMG, etc.
         - Actuator dynamics and rate limiting
         - Environmental forces (wind and current)
         - Unified interface compatible with RL or control loops
@@ -27,7 +27,7 @@ class FossenSimulator(BaseSimulator):
     def __init__(self, specs: ShipSpecifications, dynamics: DynamicsModel, dt: float, wind: bool = False,
                  current: bool = False, numerical_damping: bool = False):
         """
-        Initialize the Fossen 3DOF simulator.
+        Initialize the M4S simulator.
 
         Args:
             specs: ShipSpecifications object defining vessel dimensions,
@@ -59,7 +59,7 @@ class FossenSimulator(BaseSimulator):
 
     def step(self, action: np.ndarray, enable_smoothing: bool = True) -> None:
         """
-        Advance the Fossen 3DOF simulator by one time step.
+        Advance the M4S simulator by one time step.
 
         Updates `VesselState` after applying dynamics,
         actuator commands, and environmental effects.
