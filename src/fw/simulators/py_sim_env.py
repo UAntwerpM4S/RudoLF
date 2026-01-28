@@ -20,7 +20,7 @@ from fw.simulators.ships.myzako import create_myzako
 from fw.simulators.ships.vessel_state import VesselState
 from fw.simulators.dynamics.fossen_3dof import Fossen3DOF
 from fw.simulators.tools import create_checkpoints_from_simple_path
-from fw.simulators.simulation.m4s_simulator import M4SSimulator
+from fw.simulators.simulation.ship_simulator import ShipSimulator
 from fw.simulators.base_env import BaseEnv
 
 
@@ -211,18 +211,18 @@ class PySimEnv(BaseEnv):
         self.performed_action = np.zeros(2, dtype=np.float32)
 
     def create_simulator(self):
-        """Create and return a configured M4S ship simulator.
+        """Create and return a configured ship simulator.
 
-        This factory method instantiates a `M4SSimulator` using the current
+        This factory method instantiates a `ShipSimulator` using the current
         ship model, dynamics configuration, environmental conditions, and time
         step stored on this object.
 
         Returns:
-            M4SSimulator: A fully initialized simulator instance configured
+            ShipSimulator: A fully initialized simulator instance configured
             with the specified initial state and the current model parameters.
         """
 
-        return M4SSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current, self.numerical_damping)
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current, self.numerical_damping)
 
     # -------------------------
     # Environment data loaders
