@@ -8,9 +8,9 @@ from fw.simulators.simulation.base_simulator import BaseSimulator
 from fw.simulators.dynamics.environmental_model import EnvironmentModel
 
 
-class M4SSimulator(BaseSimulator):
+class ShipSimulator(BaseSimulator):
     """
-    M4S simulator implementing the unified interface.
+    Ship simulator implementing the unified interface.
 
     This simulator can integrate:
 
@@ -27,7 +27,7 @@ class M4SSimulator(BaseSimulator):
     def __init__(self, specs: ShipSpecifications, dynamics: DynamicsModel, dt: float, wind: bool = False,
                  current: bool = False, numerical_damping: bool = False):
         """
-        Initialize the M4S simulator.
+        Initialize the ship simulator.
 
         Args:
             specs: ShipSpecifications object defining vessel dimensions,
@@ -59,7 +59,7 @@ class M4SSimulator(BaseSimulator):
 
     def step(self, action: np.ndarray, enable_smoothing: bool = True) -> None:
         """
-        Advance the M4S simulator by one time step.
+        Advance the ship simulator by one time step.
 
         Updates `VesselState` after applying dynamics,
         actuator commands, and environmental effects.
