@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from models.mlp_surrogate import SurrogateMLP
+from fw.surrogate.models.mlp_surrogate import SurrogateMLP
 
 
 class SurrogatePredictor:

@@ -1,10 +1,10 @@
 import types
 
 from fw.config import get_config_parameters
-from fw.simulators.py_sim_env import PySimEnv
-from fw.simulators.fh_sim_env import FhSimEnv
-from fw.simulators.lunar_lander import LunarLander
-from fw.simulators.py_sim_polar_env import PySimPolarEnv
+from fw.environments.py_sim_env import PySimEnv
+from fw.environments.fh_sim_env import FhSimEnv
+from fw.environments.lunar_lander import LunarLander
+from fw.environments.py_sim_polar_env import PySimPolarEnv
 
 
 class EnvironmentRegistryError(Exception):

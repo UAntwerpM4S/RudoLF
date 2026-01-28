@@ -11,7 +11,7 @@ import os
 import argparse
 import numpy as np
 
-from sim_fh_dataset_generator import load_supervised_dataset, collect_supervised_dataset
+from fw.surrogate.sim_fh_dataset_generator import collect_supervised_dataset
 
 
 # ================================================================
