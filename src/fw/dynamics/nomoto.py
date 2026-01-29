@@ -1,14 +1,14 @@
-from typing import Tuple
-
 import numpy as np
 
+from typing import Tuple
 from fw.ships.ship_specs import ShipSpecifications
-from fw.dynamics.dynamics_model import DynamicsModel
+from fw.dynamics.dynamics_model import DynamicsBase
+
 
 YAW_RATE_DAMPING = 0.1
 
 
-class Nomoto(DynamicsModel):
+class Nomoto(DynamicsBase):
     """
     Nomoto-inspired low-order vessel maneuvering model.
 

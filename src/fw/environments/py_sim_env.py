@@ -16,12 +16,14 @@ except ImportError:
 from functools import lru_cache
 from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
-from fw.ships.myzako import create_myzako
-from fw.ships.vessel_state import VesselState
-from fw.dynamics.fossen_3dof import Fossen3DOF
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.simulators.ship_simulator import ShipSimulator
+from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
+from fw.dynamics.dynamics_model import Model
+from fw.ships.myzako import create_myzako
+from fw.dynamics.fossen import Fossen
+from fw.dynamics.nomoto import Nomoto
 
 
 # -----------------------
@@ -109,6 +111,7 @@ class PySimEnv(BaseEnv):
             verbose: Optional[bool] = None,
             ship_pos: Optional[np.ndarray] = None,
             target_pos: Optional[np.ndarray] = None,
+            dynamics_model: Optional[Model] = Model.FOSSEN,
             wind: bool = False,
             current: bool = False,
             numerical_damping: bool = False,
@@ -134,12 +137,14 @@ class PySimEnv(BaseEnv):
         self.current = bool(current)
         self.max_steps = int(max_steps)
         self.time_step = float(time_step)
+        self.dynamics_model = dynamics_model
         self.numerical_damping = bool(numerical_damping)
         self.verbose = bool(verbose) if verbose is not None else False
         self.previous_ship_pos = None
         self.previous_heading = None
         self.performed_action = None
         self.background = None
+        self.dynamics = None
         self.ship_pos = None
 
         # RNG: environment-local RNG for reproducibility when seeded via reset()
@@ -158,7 +163,6 @@ class PySimEnv(BaseEnv):
 
         # State and control placeholders
         self.ship = create_myzako()
-        self.dynamics = Fossen3DOF(self.ship.specifications)
         self.phys_sim = self.create_simulator()
 
         self._initialize_simulation()
@@ -221,6 +225,13 @@ class PySimEnv(BaseEnv):
             ShipSimulator: A fully initialized simulator instance configured
             with the specified initial state and the current model parameters.
         """
+
+        if self.dynamics_model == Model.FOSSEN:
+            self.dynamics = Fossen(self.ship.specifications)
+        elif self.dynamics_model == Model.NOMOTO:
+            self.dynamics = Nomoto(self.ship.specifications)
+        else:
+            raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
         return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current, self.numerical_damping)
 

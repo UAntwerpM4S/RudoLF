@@ -206,7 +206,8 @@ class PySimEnvironment(BaseEnvironment):
         # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = PySimEnv(max_steps=14000, ship_pos=ship_pos, target_pos=target_pos, wind=config["wind"],
+        self._env = PySimEnv(max_steps=14000, ship_pos=ship_pos, target_pos=target_pos,
+                             dynamics_model=config["dynamics_model"], wind=config["wind"],
                              current=config["current"], numerical_damping=config["numerical_damping"])
 
 
