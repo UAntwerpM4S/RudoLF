@@ -1,8 +1,14 @@
 from typing import Tuple
+from enum import auto, Enum
 from abc import ABC, abstractmethod
 
 
-class DynamicsModel(ABC):
+class Model(Enum):
+    NOMOTO = auto()
+    FOSSEN = auto()
+
+
+class DynamicsBase(ABC):
     """
     Abstract base class for vessel dynamics models.
 

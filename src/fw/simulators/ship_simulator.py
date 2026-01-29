@@ -3,7 +3,7 @@ import numpy as np
 from fw.ships.vessel_state import VesselState
 from fw.ships.action_mapper import ActionMapper
 from fw.ships.ship_specs import ShipSpecifications
-from fw.dynamics.dynamics_model import DynamicsModel
+from fw.dynamics.dynamics_model import DynamicsBase
 from fw.simulators.base_simulator import BaseSimulator
 from fw.dynamics.environmental_model import EnvironmentModel
 
@@ -24,7 +24,7 @@ class ShipSimulator(BaseSimulator):
     midpoint approximation for improved accuracy.
     """
 
-    def __init__(self, specs: ShipSpecifications, dynamics: DynamicsModel, dt: float, wind: bool = False,
+    def __init__(self, specs: ShipSpecifications, dynamics: DynamicsBase, dt: float, wind: bool = False,
                  current: bool = False, numerical_damping: bool = False):
         """
         Initialize the ship simulator.

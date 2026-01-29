@@ -1,6 +1,6 @@
 from typing import Tuple
 from fw.ships.ship_specs import ShipSpecifications
-from fw.dynamics.dynamics_model import DynamicsModel
+from fw.dynamics.dynamics_model import DynamicsBase
 
 
 # Model constants
@@ -8,7 +8,7 @@ RUDDER_SPEED_FACTOR_DENOMINATOR = 3.0
 MIN_RUDDER_EFFECTIVENESS = 0.2
 
 
-class Fossen3DOF(DynamicsModel):
+class Fossen(DynamicsBase):
     """
     Three-degrees-of-freedom vessel dynamics model based on Fossen.
 
