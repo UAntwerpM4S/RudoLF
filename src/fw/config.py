@@ -1,3 +1,5 @@
+from fw.dynamics.dynamics_model import Model
+
 PPO_POLICY_NAME = "PPO"
 PPO2_POLICY_NAME = "PPO2"
 
@@ -56,6 +58,7 @@ CONFIG_PARAMETERS = {
     'current': False,
     'numerical_damping': False,
     'visualize_best_trained': False,
+    'dynamics_model': Model.FOSSEN,
     'live_animation': False,
 }
 
