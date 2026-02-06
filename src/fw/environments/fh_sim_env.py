@@ -129,5 +129,9 @@ class FhSimEnv(PySimEnv):
         self._fh_sim.reset()
 
 
+    def get_keel_clearance(self) -> float:
+        return self._fh_sim.ship_interface.getKeelClearance()
+
+
     def _has_enough_keel_clearance(self, depth_threshold=0.5):
         return self._fh_sim.ship_interface.getKeelClearance() >= depth_threshold

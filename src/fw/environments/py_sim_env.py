@@ -204,6 +204,7 @@ class PySimEnv(BaseEnv):
         self.checkpoint_index = 1
         self.cross_error = 0.0
         self.step_count = 0
+        self.ukc = 0.0
 
         # Set heading toward first checkpoint (safeguard if checkpoint list is short)
         if len(self.checkpoints) > self.checkpoint_index:
@@ -362,6 +363,9 @@ class PySimEnv(BaseEnv):
                   f"(polygon may be thin or max_tries reached).")
 
         return np.array(samples, dtype=np.float32)
+
+    def get_keel_clearance(self) -> float:
+        return 0.0
 
     def _has_enough_keel_clearance(self, depth_threshold: float = 0.5) -> bool:
         """
@@ -792,6 +796,8 @@ class PySimEnv(BaseEnv):
         self.cross_error = cross_track_error
         cross_track_penalty = cross_track_error / 100.0
         cross_track_penalty = -abs(cross_track_penalty) ** 1.0
+
+        self.ukc = self.get_keel_clearance()
 
         # Action penalty (rudder magnitude)
         rudder_penalty = -0.2 * abs(self.performed_action[0])

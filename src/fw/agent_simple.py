@@ -48,7 +48,10 @@ class Agent:
             total_rewards (list): List of total rewards corresponding to each episode.
         """
         try:
-            fig, ax = plt.subplots(figsize=(12, 8))
+            if self._overlay_active and self._fig is not None:
+                ax = self._axes
+            else:
+                fig, ax = plt.subplots(figsize=(12, 8))
 
             # Draw environment boundaries
             ax.plot(
@@ -131,10 +134,8 @@ class Agent:
             # Save the figure
             plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
             print("\nPath visualization saved as 'trajectory.png'.")
-
-            plt.show()
-        finally:
-            plt.close('all')
+        except Exception:
+            pass
 
 
     def __init__(self, model_type: str, hyperparameters: dict):
@@ -148,6 +149,29 @@ class Agent:
         self._model_type = model_type
         self.prev_smoothing_setting = None
         self._hyperparameters = hyperparameters
+
+        self._fig = None
+        self._axes = None
+        self._overlay_active = False
+
+
+    def begin_overlay_plot(self):
+        """Create a persistent matplotlib figure for overlaying multiple environments."""
+        if self._fig is None:
+            self._fig, self._axes = plt.subplots(figsize=(12, 8))
+            self._overlay_active = True
+
+
+    def end_overlay_plot(self):
+        """Finalize and close the persistent matplotlib figure."""
+        if self._fig is not None:
+            plt.tight_layout()
+            plt.show()
+            plt.close(self._fig)
+
+            self._fig = None
+            self._axes = None
+            self._overlay_active = False
 
 
     @property
@@ -246,14 +270,19 @@ class Agent:
                 env.enable_smoothing = self.prev_smoothing_setting
                 self.prev_smoothing_setting = None
 
-
-    def visualize_trained_model(self, num_episodes: int=5, live_animation=False) -> None:
+    def visualize_trained_model(
+            self,
+            num_episodes: int = 5,
+            live_animation: bool = False,
+            env_color_index: int = 0,
+    ) -> None:
         """
         Run and visualize a trained model in the environment over multiple episodes.
 
         Args:
             num_episodes (int, optional): Number of episodes to visualize (default is 5).
             live_animation (bool, optional): Enable live animation of the agent in the environment.
+            env_color_index (int, optional): Index of the environment color.
 
         Raises:
             RuntimeError: If no model is created.
@@ -336,18 +365,19 @@ class Agent:
                 while not done:
                     # The agent chooses an action based on the current observation
                     prediction = self._model.predict(state=obs, deterministic=True)
-                    if len(prediction) == 3:
-                        action, _, _ = prediction
-                    else:
-                        action, _ = prediction
-
-                    # Take a step in the environment
-                    obs, reward, terminated, truncated, _ = env.step(action)
+                    action = prediction[0]
+                    obs, _, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
 
                     # Render the environment each step to visualize the agent's action
                     env.render()
 
+                if self._fig is not None and self._overlay_active:
+                    plt.close(self._fig)
+
+                    self._fig = None
+                    self._axes = None
+                    self._overlay_active = False
 
     def get_env(self):
         """
