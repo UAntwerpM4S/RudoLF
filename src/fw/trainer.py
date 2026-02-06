@@ -162,6 +162,14 @@ class Trainer:
             gym_env = env.gym_env
             try:
                 with self.render(gym_env):
+                    if gym_env.phys_sim:
+                        if hasattr(gym_env.phys_sim, "_dynamics"):
+                            print(
+                                f"Visualization of {gym_env.ship_model.name} in a {gym_env.dynamics_model.name}-based simulator.")
+                        elif hasattr(gym_env.phys_sim, "_engine"):
+                            print(
+                                f"Visualization of {gym_env.ship_model.name} in an {gym_env.phys_sim._engine} simulator.")
+
                     policy_name = f"Best_{gym_env.type_name}" if self._config[
                         "visualize_best_trained"] else gym_env.type_name
                     self._agent.set_environment(

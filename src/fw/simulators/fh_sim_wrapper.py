@@ -1,6 +1,10 @@
 import os
 import sys
 import logging
+import numpy as np
+
+from typing import Optional
+from fw.ships.ship_factory import ShipModel
 
 # Define paths for simulation environment
 try:
@@ -37,22 +41,70 @@ class FhSimWrapper:
 
     SNAPSHOT_WINDOW = 100000
 
-    def __init__(self, start_pos, library_path=None, config_path=None, exercise_path=None, output_path=None):
+    def __init__(self,
+                 ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
+                 scenario: str = "DDShip_scenario1_nowindnocurrent",
+                 library_path=None,
+                 config_path=None,
+                 exercise_path=None,
+                 output_path=None):
         """
         Initialize the FhSimWrapper instance.
 
         Sets flags for math model initialization and tracks the initialization state.
         """
-        self.start_pos = start_pos
+
+        base_dir = os.path.join(
+            simexe_path,
+            "database/areas/ScheldeSaeftinge_23_002/invoer/tra"
+        )
+
+        # Determine scenario suffix
+        if ship_model == ShipModel.MYZAKO_DEFAULT:
+            scenario_suffix = f"{scenario}_default"
+        else:
+            scenario_suffix = f"{scenario}_{ship_model.name.lower()}"
+
+        self._initial_vessel_state = None
         self.library_path = library_path or os.path.join(simexe_path, 'exe/installed')
         self.config_path = config_path or os.path.join(simexe_path, 'config/simXdrive.config.xml')
-        self.exercise_path = exercise_path or os.path.join(simexe_path, 'database/areas/ScheldeSaeftinge_23_002/invoer/tra/DDShip_scenario1_nowindnocurrent.tab')
-        self.output_path = output_path or os.path.join('C:/Users', user_login, 'Desktop', 'testExercise', 'results')
+        self.exercise_path = exercise_path or os.path.join(
+            base_dir, f"{scenario_suffix}.tab"
+        )
+        if not os.path.exists(self.exercise_path):
+            if ship_model != ShipModel.MYZAKO_29 and ship_model != ShipModel.MYZAKO_37:
+                self.exercise_path = exercise_path or os.path.join(
+                    base_dir, f"{scenario}.tab"
+                )
 
+            if not os.path.exists(self.exercise_path):
+                raise RuntimeError(
+                    f"File '{self.exercise_path}' does not exists!"
+                )
+        self.output_path = output_path or os.path.join('C:/Users', user_login, 'Desktop', 'testExercise', 'results')
         self.initialize_math_model = True
         self.math_model_initialized = False
         self._ship_interface = None
         self._math_model = None
+
+
+    @property
+    def initial_vessel_state(self):
+        return self._initial_vessel_state
+
+
+    @initial_vessel_state.setter
+    def initial_vessel_state(self, value):
+        self._initial_vessel_state = value
+
+
+    def __repr__(self):
+        """Returns the FH wrapper's user-friendly name.
+
+        Returns:
+            str: The name of the FH wrapper.
+        """
+        return "FH"
 
 
     def _initialize_math_model(self, sample_frequency=10.0, snapshot_window=10000, snapshot_frequency=5):
@@ -87,12 +139,15 @@ class FhSimWrapper:
             exercise = Exercise(self.exercise_path, config)
             ship_config = exercise.getShipConfig()
 
-            x_pos = float(self.start_pos[0])
-            y_pos = float(self.start_pos[1])
-            ship_config.setInitialPosition(x_pos, y_pos)
-
-            # initial_heading = ship_config.getInitialHeading()
-            # ship_config.setInitialHeading(initial_heading + 1.0)
+            # Set initial vessel state
+            if self._initial_vessel_state is not None:
+                ship_config.setInitialPosition(float(self._initial_vessel_state.x), float(self._initial_vessel_state.y))
+                ship_config.setInitialHeading(float(np.degrees(self._initial_vessel_state.heading)))
+                ship_config.setInitialSurgeVelocity(float(self._initial_vessel_state.u))
+                ship_config.setInitialSwayVelocity(float(-self._initial_vessel_state.v))
+                ship_config.setInitialYawVelocity(float(np.degrees(self._initial_vessel_state.r)))
+            else:
+                raise RuntimeError("Initial vessel state not set.")
 
             # Initialize the math model and enable the bridge
             self._math_model = MathModel()
