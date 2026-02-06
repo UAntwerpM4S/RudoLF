@@ -114,6 +114,6 @@ class FhSimAdapter(BaseSimulator):
             y=np.float32(new_ship_pos.y),
             heading=np.float32((heading + np.pi) % (2.0 * np.pi) - np.pi),
             u=np.float32(velocity_over_ground.x),
-            v=np.float32(velocity_over_ground.y),
+            v=np.float32(-velocity_over_ground.y),
             r=np.float32(yaw_rate),
         )

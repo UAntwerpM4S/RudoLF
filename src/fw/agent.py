@@ -6,6 +6,7 @@ import matplotlib.patches as patches
 from pathlib import Path
 from gymnasium import Env
 from enum import auto, Enum
+from matplotlib.colors import to_rgb
 from contextlib import contextmanager
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
@@ -29,12 +30,50 @@ class PolicyStrategy(Enum):
     REUSE_OTHER_POLICY = auto()
 
 
+def normalized_time_axis(length: int) -> np.ndarray:
+    """Return a normalized time axis in [0, 1] for a trajectory of given length."""
+    if length <= 1:
+        return np.array([0.0])
+    return np.linspace(0.0, 100.0, length)
+
+
+def shade_color(base_color, n, lo=0.45, hi=1.0):
+    """
+    Generate n shaded variants of a base color by scaling lightness.
+    """
+    rgb = np.array(to_rgb(base_color))
+    factors = np.linspace(hi, lo, n)
+
+    return [tuple(np.clip(rgb * f, 0, 1)) for f in factors]
+
+
+def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.ndarray:
+    """
+    Resample a 1D signal defined over normalized time [0,1] onto a common grid.
+    """
+    if len(signal) == 1:
+        return np.full_like(common_time, signal[0])
+
+    original_time = np.linspace(0.0, 1.0, len(signal))
+    return np.interp(common_time, original_time, signal)
+
+
 class Agent:
     """Agent class for managing models and environments during training.
 
     This class includes methods for training, saving/loading policies, and
     visualizing paths taken by the agent during evaluation.
     """
+
+    ENV_COLORMAPS = [
+        "#ff7f0e",  # orange
+        "#1f77b4",  # blue
+        "#2ca02c",  # green
+        "#d62728",  # red
+        "#9467bd",  # purple
+        "#8c564b",  # brown
+        "#17becf",  # cyan
+    ]
 
     def __init__(self, model_type: str, hyperparameters: dict):
         """Initialize the Agent.
@@ -47,6 +86,28 @@ class Agent:
         self._model_type = model_type
         self.prev_smoothing_setting = None
         self._hyperparameters = hyperparameters
+
+        self._fig = None
+        self._axes = None
+        self._overlay_active = False
+
+
+    def begin_overlay_plot(self):
+        """Create a persistent matplotlib figure for overlaying multiple environments."""
+        if self._fig is None:
+            self._fig, self._axes = plt.subplots(4, 1, figsize=(12, 16))
+            self._overlay_active = True
+
+    def end_overlay_plot(self):
+        """Finalize and close the persistent matplotlib figure."""
+        if self._fig is not None:
+            plt.tight_layout()
+            plt.show()
+            plt.close(self._fig)
+
+            self._fig = None
+            self._axes = None
+            self._overlay_active = False
 
 
     @property
@@ -214,14 +275,20 @@ class Agent:
                 env.enable_smoothing = self.prev_smoothing_setting
                 self.prev_smoothing_setting = None
 
+    def visualize_trained_model(
+            self,
+            num_episodes: int = 5,
+            live_animation: bool = False,
+            env_color_index: int = 0,
+    ) -> None:
 
-    def visualize_trained_model(self, num_episodes: int=5, live_animation=False) -> None:
         """
         Run and visualize a trained model in the environment over multiple episodes.
 
         Args:
             num_episodes (int, optional): Number of episodes to visualize (default is 5).
             live_animation (bool, optional): Enable live animation of the agent in the environment.
+            env_color_index (int, optional): Index of the environment color.
 
         Raises:
             RuntimeError: If no model is created.
@@ -245,7 +312,7 @@ class Agent:
                 total_rewards = []
                 all_cross_errors = []  # Store cross-track errors for each episode
                 all_rudder_actions = []
-                all_thrust_actions = []
+                all_ukc_measurements = []
                 start_pos = None
 
                 for episode in range(num_episodes):
@@ -260,7 +327,7 @@ class Agent:
                     cross_errors = []
                     heading_errors = []
                     rudder_actions = []
-                    thrust_actions = []
+                    ukc_measurements = []
                     path_positions = [np.copy(env.ship_pos)]  # Store initial position
                     cross_errors.append(env.cross_error)  # Store initial cross-track error
 
@@ -284,7 +351,7 @@ class Agent:
                             heading_error = self.compute_heading_error(env)
                             heading_errors.append(heading_error)
                             rudder_actions.append(env.performed_action[0])
-                            thrust_actions.append(env.performed_action[1])
+                            ukc_measurements.append(env.ukc)
 
                             episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
                             steps += 1
@@ -300,7 +367,7 @@ class Agent:
                     all_cross_errors.append(np.array(cross_errors))
                     all_heading_errors.append(np.array(heading_errors))
                     all_rudder_actions.append(np.array(rudder_actions))
-                    all_thrust_actions.append(np.array(thrust_actions))
+                    all_ukc_measurements.append(np.array(ukc_measurements))
                     total_rewards.append(episode_reward)
 
                 # Calculate mTEI, MTE, and mHEI
@@ -318,7 +385,10 @@ class Agent:
 
                 try:
                     # Create a figure with two subplots
-                    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 16))
+                    if self._overlay_active and self._fig is not None:
+                        ax1, ax2, ax3, ax4 = self._axes
+                    else:
+                        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 16))
 
                     # Add hatched pattern to first subplot
                     difference_coords = self.create_hashed_area(env.obstacles, env.overall)
@@ -358,12 +428,19 @@ class Agent:
                                                       lw=2, label='Western Scheldt')
                     ax1.add_patch(western_scheldt)
 
+                    # Select colormap for this environment
+                    env_cmap = self.ENV_COLORMAPS[env_color_index % len(self.ENV_COLORMAPS)]
+
                     # Plot paths for each episode with different colors
-                    colors = plt.cm.rainbow(np.linspace(0, 1, num_episodes))
+                    colors = shade_color(env_cmap, num_episodes)
+
+                    line_style = ["-", "--", "-.", ":"][env_color_index % 4]
+
                     for i, path in enumerate(all_paths):
                         ax1.plot(path[:, 0], path[:, 1], '-',
                                  color=colors[i], alpha=0.4,
-                                 label=f'Episode {i + 1} (reward: {total_rewards[i]:.1f})')
+                                 label=f'{env.type_name} – Ep {i + 1} (R={total_rewards[i]:.1f})',
+                                 linestyle=line_style)
 
                     # Plot start and target positions
                     ax1.scatter([start_pos[0]], [start_pos[1]], c='blue', s=100, label='Start')
@@ -380,15 +457,16 @@ class Agent:
                     # First, find the maximum length among all episodes
                     max_error_length = max(len(errors) for errors in all_cross_errors)
                     max_rudder_length = max(len(actions) for actions in all_rudder_actions)
-                    max_thrust_length = max(len(actions) for actions in all_thrust_actions)
+                    max_ukc_length = max(len(actions) for actions in all_ukc_measurements)
 
                     # Initialize arrays to store the sum and count for averaging
                     error_sum = np.zeros(max_error_length)
                     error_count = np.zeros(max_error_length)
-                    rudder_sum = np.zeros(max_rudder_length)
-                    rudder_count = np.zeros(max_rudder_length)
-                    thrust_sum = np.zeros(max_thrust_length)
-                    thrust_count = np.zeros(max_thrust_length)
+                    rudder_resampled = []
+                    ukc_sum = np.zeros(max_ukc_length)
+                    ukc_count = np.zeros(max_ukc_length)
+
+                    COMMON_TIME = np.linspace(0.0, 1.0, 200)
 
                     # Sum up all values and count occurrences at each timestep
                     for errors in all_cross_errors:
@@ -397,76 +475,83 @@ class Agent:
                             error_count[i] += 1
 
                     for actions in all_rudder_actions:
-                        for i, action in enumerate(actions):
-                            rudder_sum[i] += action
-                            rudder_count[i] += 1
+                        rudder_resampled.append(
+                            resample_to_common_time(actions, COMMON_TIME)
+                        )
 
-                    for actions in all_thrust_actions:
-                        for i, action in enumerate(actions):
-                            thrust_sum[i] += action
-                            thrust_count[i] += 1
+                    for ukcs in all_ukc_measurements:
+                        for i, ukc in enumerate(ukcs):
+                            ukc_sum[i] += ukc
+                            ukc_count[i] += 1
 
                     # Calculate averages (avoid division by zero)
                     avg_errors = np.divide(error_sum, error_count, out=np.zeros_like(error_sum), where=error_count != 0)
-                    avg_rudder = np.divide(rudder_sum, rudder_count, out=np.zeros_like(rudder_sum), where=rudder_count != 0)
-                    avg_thrust = np.divide(thrust_sum, thrust_count, out=np.zeros_like(thrust_sum), where=thrust_count != 0)
+                    avg_rudder = np.mean(rudder_resampled, axis=0)
+                    avg_ukcs = np.divide(ukc_sum, ukc_count, out=np.zeros_like(ukc_sum), where=ukc_count != 0)
 
                     # Plot individual episode errors with lower alpha
                     for i, errors in enumerate(all_cross_errors):
-                        timesteps = np.arange(len(errors))
+                        timesteps = normalized_time_axis(len(errors))
                         ax2.plot(timesteps, errors, '-',
                                  color=colors[i], alpha=0.2,
-                                 label=f'Episode {i + 1}' if i == 0 else "")
+                                 label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
 
                     # Plot average errors with higher alpha and thicker line
-                    timesteps = np.arange(len(avg_errors))
+                    timesteps = normalized_time_axis(len(avg_errors))
                     ax2.plot(timesteps, avg_errors, '-',
                              color='black', alpha=0.2,
-                             label='Average Cross-track Error')
+                             label='Average Cross-track Error', linestyle=line_style)
 
                     ax2.set_title(f'Cross-Track Error Over Time (Individual and Average Policy)')
-                    ax2.set_xlabel('Timestep')
+                    ax2.set_xlabel('Episode progress [%]')
                     ax2.set_ylabel('Cross-Track Error')
                     ax2.legend(loc='upper right')
                     ax2.grid(True)
+                    ax2.set_ylim(0, 45)
+                    ax2.set_autoscale_on(False)
+                    ax2.axhline(45, color='k', lw=0.8, ls='--', alpha=0.4)
+                    ax2.axhline(0, color='k', lw=0.8, ls='--', alpha=0.4)
 
                     # Plot individual episode rudder actions with lower alpha
                     for i, actions in enumerate(all_rudder_actions):
-                        timesteps = np.arange(len(actions))
-                        ax3.plot(timesteps, actions, '-',
+                        resampled = resample_to_common_time(actions, COMMON_TIME)
+                        ax3.plot(COMMON_TIME, resampled, '-',
                                  color=colors[i], alpha=0.2,
-                                 label=f'Episode {i + 1}' if i == 0 else "")
+                                 label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
 
                     # Plot average rudder actions with higher alpha and thicker line
-                    timesteps = np.arange(len(avg_rudder))
-                    ax3.plot(timesteps, avg_rudder, '-',
-                             color='black', alpha=0.2,
-                             label='Average Rudder Action')
+                    # timesteps = np.arange(len(avg_rudder))
+                    # ax3.plot(timesteps, avg_rudder, '-', color='black', alpha=0.6, lw=2, label='Average Rudder')
 
                     ax3.set_title(f'Rudder Actions Over Time (Individual and Average Policy)')
-                    ax3.set_xlabel('Timestep')
+                    ax3.set_xlabel('Episode progress [%]')
                     ax3.set_ylabel('Rudder Action')
                     ax3.legend(loc='upper right')
                     ax3.grid(True)
+                    ax3.set_xlim(0.0, 1.0)
 
-                    # Plot individual episode thrust actions with lower alpha
-                    for i, actions in enumerate(all_thrust_actions):
-                        timesteps = np.arange(len(actions))
-                        ax4.plot(timesteps, actions, '-',
+                    # Plot individual episode ukcs with lower alpha
+                    for i, ukcs in enumerate(all_ukc_measurements):
+                        timesteps = normalized_time_axis(len(ukcs))
+                        ax4.plot(timesteps, ukcs, '-',
                                  color=colors[i], alpha=0.2,
-                                 label=f'Episode {i + 1}' if i == 0 else "")
+                                 label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
 
-                    # Plot average thrust actions with higher alpha and thicker line
-                    timesteps = np.arange(len(avg_thrust))
-                    ax4.plot(timesteps, avg_thrust, '-',
+                    # Plot average ukcs with higher alpha and thicker line
+                    timesteps = normalized_time_axis(len(avg_ukcs))
+                    ax4.plot(timesteps, avg_ukcs, '-',
                              color='black', alpha=0.2,
-                             label='Average Thrust Action')
+                             label='Average UKC', linestyle=line_style)
 
-                    ax4.set_title(f'Thrust Actions Over Time (Individual and Average Policy)')
-                    ax4.set_xlabel('Timestep')
-                    ax4.set_ylabel('Thrust Action')
+                    ax4.set_title(f'UKC Over Time (Individual and Average Policy)')
+                    ax4.set_xlabel('Episode progress [%]')
+                    ax4.set_ylabel('UKC')
                     ax4.legend(loc='upper right')
                     ax4.grid(True)
+                    ax4.set_ylim(0, 45)
+                    ax4.set_autoscale_on(False)
+                    ax4.axhline(45, color='k', lw=0.8, ls='--', alpha=0.4)
+                    ax4.axhline(0, color='k', lw=0.8, ls='--', alpha=0.4)
 
                     # Adjust layout and save
                     plt.tight_layout()
@@ -478,12 +563,9 @@ class Agent:
                     )
 
                     plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
-                    plt.show()
 
                     print(f"\nPath and error visualization saved as 'trajectory.png'")
                 finally:
-                    plt.close('all')
-
                     # Cleanup the environment
                     if hasattr(env, "fh_sim"):
                         env.fh_sim.dispose()
@@ -499,17 +581,19 @@ class Agent:
                 while not done:
                     # The agent chooses an action based on the current observation
                     prediction = self._model.predict(state=obs, deterministic=True)
-                    if len(prediction) == 3:
-                        action, _, _ = prediction
-                    else:
-                        action, _ = prediction
-
-                    # Take a step in the environment
-                    obs, reward, terminated, truncated, _ = env.step(action)
+                    action = prediction[0]
+                    obs, _, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
 
                     # Render the environment each step to visualize the agent's action
                     env.render()
+
+                if self._fig is not None and self._overlay_active:
+                    plt.close(self._fig)
+
+                    self._fig = None
+                    self._axes = None
+                    self._overlay_active = False
 
 
     def get_env(self):
