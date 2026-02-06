@@ -63,9 +63,9 @@ class Fossen(DynamicsBase):
         mass = self.ship_spec.mass  # Mass (kg)
 
         # Added mass coefficients
-        self.X_udot = -0.05 * mass  # Added mass
-        self.Y_vdot = -0.5 * mass  # Added mass
-        self.N_rdot = -0.05 * mass * length ** 2.0  # Added inertia
+        self.X_udot = self.ship_spec.X_udot_coeff * mass  # Added mass
+        self.Y_vdot = self.ship_spec.Y_vdot_coeff * mass  # Added mass
+        self.N_rdot = self.ship_spec.N_rdot_coeff * mass * length ** 2.0  # Added inertia
 
         # Mass matrix components
         self.m11 = mass - self.X_udot
@@ -73,14 +73,14 @@ class Fossen(DynamicsBase):
         self.m33 = (mass * length ** 2.0 / 12.0) - self.N_rdot
 
         # Hydrodynamic damping coefficients
-        self.X_u = -0.002 * mass  # Surge damping
-        self.Y_v = -0.02 * mass  # Sway damping
-        self.N_r = -0.001 * mass * length ** 2.0    # Yaw damping
+        self.X_u = self.ship_spec.X_u_coeff * mass  # Surge damping
+        self.Y_v = self.ship_spec.Y_v_coeff * mass  # Sway damping
+        self.N_r = self.ship_spec.N_r_coeff * mass * length ** 2.0    # Yaw damping
 
         # Nonlinear (quadratic) damping coefficients
-        self.X_uu = -0.0005 * mass  # Quadratic damping
-        self.Y_vv = -0.005 * mass  # Quadratic damping
-        self.N_rr = -0.0005 * mass * length ** 2.0  # Quadratic damping
+        self.X_uu = self.ship_spec.X_uu_coeff * mass  # Quadratic damping
+        self.Y_vv = self.ship_spec.Y_vv_coeff * mass  # Quadratic damping
+        self.N_rr = self.ship_spec.N_rr_coeff * mass * length ** 2.0  # Quadratic damping
 
         # Rudder coefficients
         self.Y_rudder = 0.1 * mass  # Sway force from rudder
@@ -90,8 +90,8 @@ class Fossen(DynamicsBase):
         self.X_thrust = 0.05 * mass  # Surge force from thrust
 
         # Cross-flow drag coefficients
-        self.Y_uv = -0.005 * mass
-        self.N_uv = -0.0005 * mass * length
+        self.Y_uv = self.ship_spec.Y_uv_coeff * mass
+        self.N_uv = self.ship_spec.N_uv_coeff * mass * length
 
 
     def accelerations(self, u: float, v: float, r: float,

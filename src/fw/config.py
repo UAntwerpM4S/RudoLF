@@ -1,3 +1,4 @@
+from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 
 PPO_POLICY_NAME = "PPO"
@@ -58,6 +59,8 @@ CONFIG_PARAMETERS = {
     'current': False,
     'numerical_damping': False,
     'visualize_best_trained': False,
+    'scenario': "DDShip_scenario1_nowindnocurrent",
+    'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
     'live_animation': False,
 }

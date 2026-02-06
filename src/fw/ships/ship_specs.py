@@ -83,3 +83,25 @@ class ShipSpecifications:
     """
     Allowed yaw rate range [rad/s] for the vessel in simulation.
     """
+
+    X_udot_coeff: float
+
+    Y_vdot_coeff: float
+
+    N_rdot_coeff: float
+
+    X_u_coeff: float
+
+    Y_v_coeff: float
+
+    N_r_coeff: float
+
+    X_uu_coeff: float
+
+    Y_vv_coeff: float
+
+    N_rr_coeff: float
+
+    Y_uv_coeff: float
+
+    N_uv_coeff: float

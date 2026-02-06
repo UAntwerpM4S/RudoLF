@@ -36,6 +36,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         print(f"Training metrics: {metrics}")
     elif "visualize" == action:
-        trainer.visualize(envs[0])
+        trainer.visualize(envs)
     else:
         print(f"Unable to execute unknown action '{action}'")
