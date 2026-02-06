@@ -156,29 +156,36 @@ class Trainer:
 
         return metrics
 
+    def visualize(self, envs):
+        if envs is not None:
+            # Start shared figure
+            self._agent.begin_overlay_plot()
 
-    def visualize(self, env):
-        if env is not None:
-            gym_env = env.gym_env
-            try:
-                with self.render(gym_env):
-                    if gym_env.phys_sim:
-                        if hasattr(gym_env.phys_sim, "_dynamics"):
-                            print(
-                                f"Visualization of {gym_env.ship_model.name} in a {gym_env.dynamics_model.name}-based simulator.")
-                        elif hasattr(gym_env.phys_sim, "_engine"):
-                            print(
-                                f"Visualization of {gym_env.ship_model.name} in an {gym_env.phys_sim._engine} simulator.")
+            for env_idx, env in enumerate(envs):
+                gym_env = env.gym_env
+                try:
+                    with self.render(gym_env):
+                        if hasattr(gym_env, "phys_sim"):
+                            if hasattr(gym_env.phys_sim, "_dynamics"):
+                                print(f"Visualization of {gym_env.ship_model.name} in a {gym_env.dynamics_model.name}-based simulator.")
+                            elif hasattr(gym_env.phys_sim, "_engine"):
+                                print(f"Visualization of {gym_env.ship_model.name} in an {gym_env.phys_sim._engine} simulator.")
 
-                    policy_name = f"Best_{gym_env.type_name}" if self._config[
-                        "visualize_best_trained"] else gym_env.type_name
-                    self._agent.set_environment(
-                        env=gym_env,
-                        policy_strategy=PolicyStrategy.REUSE_OTHER_POLICY,
-                        other_env_name=policy_name,
-                    )
-                    self._agent.visualize_trained_model(num_episodes=1, live_animation=self._config["live_animation"])
-            except RuntimeError as e:
-                print(f"Could not visualize {gym_env.type_name}. {e}")
+                        policy_name = f"Best_{gym_env.type_name}" if self._config[
+                            "visualize_best_trained"] else gym_env.type_name
+
+                        self._agent.set_environment(
+                            env=gym_env,
+                            policy_strategy=PolicyStrategy.REUSE_OTHER_POLICY,
+                            other_env_name=policy_name,
+                        )
+
+                        self._agent.visualize_trained_model(num_episodes=1, live_animation=self._config["live_animation"])
+                except RuntimeError as e:
+                    print(f"Could not visualize {gym_env.type_name}. {e}")
+
+            # Finalize shared figure
+            self._agent.end_overlay_plot()
         else:
             print("No data found to visualize.")
+
