@@ -17,11 +17,11 @@ from functools import lru_cache
 from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
 from fw.environments.tools import create_checkpoints_from_simple_path
+from fw.ships.ship_factory import create_ship, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 from fw.dynamics.dynamics_model import Model
-from fw.ships.myzako import create_myzako
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.nomoto import Nomoto
 
@@ -112,6 +112,7 @@ class PySimEnv(BaseEnv):
             ship_pos: Optional[np.ndarray] = None,
             target_pos: Optional[np.ndarray] = None,
             dynamics_model: Optional[Model] = Model.FOSSEN,
+            ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
             wind: bool = False,
             current: bool = False,
             numerical_damping: bool = False,
@@ -126,8 +127,11 @@ class PySimEnv(BaseEnv):
             verbose: whether to print informational logs.
             ship_pos: optional initial ship position (2-array).
             target_pos: optional target position (unused if checkpoints available).
+            dynamics_model: optional dynamics model to use.
+            ship_model: optional ship model to use.
             wind: enable wind effects.
             current: enable current effects.
+            numerical_damping: enable numerical damping.
         """
 
         super().__init__(render_mode)
@@ -135,6 +139,7 @@ class PySimEnv(BaseEnv):
         # Core parameters
         self.wind = bool(wind)
         self.current = bool(current)
+        self.ship_model = ship_model
         self.max_steps = int(max_steps)
         self.time_step = float(time_step)
         self.dynamics_model = dynamics_model
@@ -162,7 +167,7 @@ class PySimEnv(BaseEnv):
         self._load_environment_data(target_pos)
 
         # State and control placeholders
-        self.ship = create_myzako()
+        self.ship = create_ship(self.ship_model)
         self.phys_sim = self.create_simulator()
 
         self._initialize_simulation()
@@ -203,14 +208,14 @@ class PySimEnv(BaseEnv):
         # Set heading toward first checkpoint (safeguard if checkpoint list is short)
         if len(self.checkpoints) > self.checkpoint_index:
             direction_vector = self.checkpoints[self.checkpoint_index]['pos'] - self.ship_pos
-            ship_heading = self.normalize_angle(self._safe_heading_from_vector(direction_vector))
+            self.ship_heading = self.normalize_angle(self._safe_heading_from_vector(direction_vector))
         else:
-            ship_heading = 0.0
+            self.ship_heading = 0.0
 
         self.phys_sim.reset(VesselState(
             x=self.initial_ship_pos[0],
             y=self.initial_ship_pos[1],
-            heading=ship_heading,
+            heading=self.ship_heading,
             u=0.0, v=0.0, r=0.0))
         self.performed_action = np.zeros(2, dtype=np.float32)
 
@@ -386,28 +391,33 @@ class PySimEnv(BaseEnv):
         deep_enough = self._has_enough_keel_clearance()
         return bool(contains and deep_enough)
 
-    def _reduce_path(self, path: np.ndarray, start_pos: np.ndarray) -> np.ndarray:
-        """
-        Reduces the path to start from the closest point to the given start position.
+    @staticmethod
+    def _reduce_path(path: np.ndarray, start_pos: np.ndarray) -> np.ndarray:
+        """Reduces the path to start from the point closest to the given start position.
 
-        This method searches the provided path for the point that is closest to `start_pos`
-        and returns a sub-path starting from that point to the end. The first point of the
-        reduced path is replaced by `start_pos` itself. If reduction is not performed, the
-        original path is returned as-is.
+        This method finds the point in the path that is closest to `start_pos`, then slices
+        the path so that it begins just after that point and continues to the original end.
+        The `start_pos` itself is not added to the returned path.
 
         Args:
-            path: Original path as array of coordinates
-            start_pos: New start position to align path with
+            path (list of np.ndarray or array-like): The original path as a list of coordinate points.
+            start_pos (np.ndarray or array-like): The new starting position to align the path with.
 
         Returns:
-            np.ndarray: Reduced path starting at closest point to start_pos
+            list of np.ndarray: The reduced path starting after the closest point to `start_pos`.
 
         Note:
-            This stub implementation does not perform any reduction and returns the path
-            unchanged. Override this method to apply actual reduction logic.
+            - If `start_pos` is not on the path, the method finds the closest match and starts from there.
+            - The point closest to `start_pos` is **excluded** from the result.
         """
+        # Find index of the point on the path closest to start_pos
+        distances = [np.linalg.norm(p - start_pos) for p in path]
+        closest_index = np.argmin(distances)
 
-        return path  # Implementation note: Currently returns original path
+        # Slice the path from following point to the end
+        reduced_path = path[closest_index+1:]
+
+        return reduced_path
 
     @staticmethod
     @lru_cache(maxsize=1024)

@@ -48,6 +48,12 @@ class SimpleScheduler(BaseScheduler):
                 f"Invalid environment index '{env_index}'. Only {len(self.envs)} environment(s) available."
             )
 
+        if self.current_env.gym_env.phys_sim:
+            if hasattr(self.current_env.gym_env.phys_sim, "_dynamics"):
+                print(f"Setting up a {self.current_env.gym_env.dynamics_model.name}-based simulator for {self.current_env.gym_env.ship_model.name}.")
+            elif hasattr(self.current_env.gym_env.phys_sim, "_engine"):
+                print(f"Setting up an {self.current_env.gym_env.phys_sim._engine} simulator for {self.current_env.gym_env.ship_model.name}.")
+
         # Set the agent's environment and prepare policy according to the strategy
         self.agent.set_environment(
             env=self.current_env.gym_env,

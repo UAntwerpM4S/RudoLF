@@ -3,6 +3,7 @@ import importlib
 import numpy as np
 
 from typing import Optional
+from fw.ships.ship_factory import ShipModel
 from fw.environments.py_sim_env import PySimEnv
 from fw.simulators.fh_sim_adapter import FhSimAdapter
 
@@ -26,8 +27,8 @@ class FhSimEnv(PySimEnv):
                  verbose: Optional[bool] = None,
                  ship_pos: Optional[np.ndarray] = None,
                  target_pos: Optional[np.ndarray] = None,
-                 wind: bool = False,
-                 current: bool = False):
+                 ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
+                 scenario: str = "DDShip_scenario1_nowindnocurrent"):
         """
         Initialize the FhSimEnv environment.
 
@@ -38,17 +39,21 @@ class FhSimEnv(PySimEnv):
             verbose (bool, optional): Whether to enable verbose logging. Defaults to None.
             ship_pos (tuple, optional): The initial position (x, y) of the ship. Defaults to None.
             target_pos (tuple, optional): The target position (x, y) for the ship. Defaults to None.
-            wind (bool, optional): Whether to enable wind effects. Defaults to False.
-            current (bool, optional): Whether to enable current effects. Defaults to False.
+            ship_model (ShipModel, optional): The ship model. Defaults to ShipModel.MYZAKO_DEFAULT.
+            scenario (str, optional): The scenario name. Defaults to "DDShip_scenario1_nowindnocurrent".
         """
         try:
             fh_wrapper_module = importlib.import_module('fw.simulators.fh_sim_wrapper')
             fh_wrapper_class = getattr(fh_wrapper_module, "FhSimWrapper")
-            self._fh_sim = fh_wrapper_class(ship_pos)
+            self._fh_sim = fh_wrapper_class(ship_model, scenario)
         except ModuleNotFoundError:
             self._fh_sim = None
 
-        super().__init__(render_mode, time_step, max_steps, verbose, ship_pos, target_pos, wind, current)
+        super().__init__(render_mode=render_mode, time_step=time_step, max_steps=max_steps, verbose=verbose,
+                         ship_pos=ship_pos, target_pos=target_pos, ship_model=ship_model)
+
+        if self._fh_sim is not None:
+            self._fh_sim.initial_vessel_state = self.phys_sim.state
 
 
     def create_simulator(self):
@@ -88,34 +93,6 @@ class FhSimEnv(PySimEnv):
                 setattr(new_instance, key, copy.deepcopy(value, memo))  # Deep copy all other attributes
 
         return new_instance
-
-
-    def _reduce_path(self, path: np.ndarray, start_pos: np.ndarray) -> np.ndarray:
-        """Reduces the path to start from the point closest to the given start position.
-
-        This method finds the point in the path that is closest to `start_pos`, then slices
-        the path so that it begins just after that point and continues to the original end.
-        The `start_pos` itself is not added to the returned path.
-
-        Args:
-            path (list of np.ndarray or array-like): The original path as a list of coordinate points.
-            start_pos (np.ndarray or array-like): The new starting position to align the path with.
-
-        Returns:
-            list of np.ndarray: The reduced path starting after the closest point to `start_pos`.
-
-        Note:
-            - If `start_pos` is not on the path, the method finds the closest match and starts from there.
-            - The point closest to `start_pos` is **excluded** from the result.
-        """
-        # Find index of the point on the path closest to start_pos
-        distances = [np.linalg.norm(p - start_pos) for p in path]
-        closest_index = np.argmin(distances)
-
-        # Slice the path from following point to the end
-        reduced_path = path[closest_index+1:]
-
-        return reduced_path
 
 
     @property
