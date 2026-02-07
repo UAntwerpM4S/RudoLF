@@ -148,7 +148,7 @@ class Trainer:
 
         if env_metrics and env_metrics.get("status") == "success":
             try:
-                self.visualize(last_env)
+                self.visualize([last_env])
             except AttributeError as e:
                 print(e)
         else:
