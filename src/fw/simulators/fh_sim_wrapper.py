@@ -54,6 +54,8 @@ class FhSimWrapper:
         Sets flags for math model initialization and tracks the initialization state.
         """
 
+        self.exercise_path_exists = True
+
         base_dir = os.path.join(
             simexe_path,
             "database/areas/ScheldeSaeftinge_23_002/invoer/tra"
@@ -78,9 +80,8 @@ class FhSimWrapper:
                 )
 
             if not os.path.exists(self.exercise_path):
-                raise RuntimeError(
-                    f"File '{self.exercise_path}' does not exists!"
-                )
+                print(f"File '{self.exercise_path}' does not exists!")
+                self.exercise_path_exists = False
         self.output_path = output_path or os.path.join('C:/Users', user_login, 'Desktop', 'testExercise', 'results')
         self.initialize_math_model = True
         self.math_model_initialized = False
@@ -119,6 +120,9 @@ class FhSimWrapper:
         Raises:
             SimAPI.SystemException: If the math model initialization fails.
         """
+        if not self.exercise_path_exists:
+            raise RuntimeError(f"Exercise path {self.exercise_path} does not exist!")
+
         self.initialize_math_model = False
 
         # Save the original sys.path
