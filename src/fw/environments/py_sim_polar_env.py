@@ -366,7 +366,7 @@ class PySimPolarEnv(BaseEnv):
         angle_step = 2 * np.pi / num_rays
 
         for i in range(num_rays):
-            angle = -np.pi + (i * angle_step)
+            angle = -np.pi + (i * angle_step) # TODO:
             total_angle = ship_angle + angle
             cos_angle = np.cos(total_angle)
             sin_angle = np.sin(total_angle)
@@ -560,6 +560,7 @@ class PySimPolarEnv(BaseEnv):
 
         new_x = np.clip(self.state[0] + dx * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
         new_y = np.clip(self.state[1] + dy * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
+        # TODO: wrap
         new_heading = self.state[2] + dpsi * self.time_step  # % (2 * np.pi)
 
         # Update state
@@ -699,6 +700,8 @@ class PySimPolarEnv(BaseEnv):
         if self.observed_surroundings is not None:
             forward_rays = self.observed_surroundings.reshape(self.NUM_RAYS, -1)
             # considering rays from -45 to 45 degrees as forward
+            # TODO: set correct forward heading as follows
+            #  forward_indices = [(center + k) % NUM_RAYS for k in range(-halfspan, halfspan+1)]
             forward_indices = list(range(self.NUM_RAYS - 45, self.NUM_RAYS)) + list(range(0, 45))
             forward_view = forward_rays[forward_indices]
             if np.any(forward_view[:, 0] == 0.0):  # checks the first bin for obstacles
@@ -755,7 +758,9 @@ class PySimPolarEnv(BaseEnv):
             np.clip(self.state[4] / (self.MAX_SWAY_VELOCITY / 2), -1, 1),
             np.clip(self.state[5] / self.MAX_YAW_RATE, -1, 1)
         ], dtype=np.float32)
+        # TODO: not normalized
         distance_to_target = np.linalg.norm(self.target_pos - self.state[:2])
+        # TODO: wrap
         angle_to_target = np.arctan2(self.target_pos[1] - self.state[1], self.target_pos[0] - self.state[0])
         angle_to_target = angle_to_target - self.state[2]
         obs = np.hstack((

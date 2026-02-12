@@ -5,6 +5,7 @@ import importlib
 from enum import Enum
 from pathlib import Path
 from fw.agent import Agent
+from fw.colav_agent import ColavAgent
 from fw.agent import PolicyStrategy
 from fw.config import get_config_parameters, get_hyperparameters
 from contextlib import contextmanager
@@ -97,7 +98,10 @@ class Trainer:
         """
         self._envs = envs
         self._config = get_config_parameters()
-        self._agent = Agent(model_type, get_hyperparameters(model_type))
+
+        # TODO: choosing an agent should be done in a cleaner fashion
+        #self._agent = Agent(model_type, get_hyperparameters(model_type))
+        self._agent = ColavAgent(model_type, get_hyperparameters(model_type))
 
         # Dynamically load the scheduler based on its name
         try:
@@ -180,7 +184,7 @@ class Trainer:
                             other_env_name=policy_name,
                         )
 
-                        self._agent.visualize_trained_model(num_episodes=1, live_animation=self._config["live_animation"])
+                        self._agent.visualize_trained_model(num_episodes=5, live_animation=self._config["live_animation"])
                 except RuntimeError as e:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
 

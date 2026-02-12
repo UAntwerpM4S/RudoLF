@@ -23,7 +23,7 @@ DEFAULT_HYPERPARAMETERS = {
         'clip_range': 0.2,
         'eval_frequency': 100,
         'num_envs': 1,
-        'num_epochs': 10,
+        'num_epochs': 7,
         'normalize': False,
         'max_nbr_iterations': 200000,
         'batch_size': 64,
@@ -44,7 +44,7 @@ DEFAULT_HYPERPARAMETERS = {
         'log_interval': 10,
         'n_steps': 2048,
         'batch_size': 64,
-        'num_epochs': 10,
+        'num_epochs': 7,
         'reward_threshold': 100000.8,
         'device': "cpu",
         'model_dir': "models",
@@ -62,7 +62,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': False,
+    'live_animation': True,
 }
 
 
