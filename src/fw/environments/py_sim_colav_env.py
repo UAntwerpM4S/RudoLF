@@ -6,6 +6,7 @@ import gymnasium as gym
 import tkinter as tk
 import numpy as np
 
+
 # First try interactive backend
 try:
     matplotlib.use('TkAgg')  # Try using the interactive backend
@@ -14,7 +15,7 @@ except ImportError:
     matplotlib.use('Agg')  # Use non-interactive backend as fallback
 
 from functools import lru_cache
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Point, Polygon, LineString
 from typing import Dict, List, Optional, Tuple, Union
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, ShipModel
@@ -162,6 +163,16 @@ class PySimColavEnv(BaseEnv):
         self.static_ship = bool(static_ship)
         self.static_ship_radius = 20 # safety radius around the obstacle
         self.own_ship_radius = 0.0 # keep point-ship model for now; set >0 for hull clearance
+        self.use_polar_scan: bool = True # Enable/disable polar scan representation
+        self.polar_n_sectors: int = 36 # Number of angular sectors around the ship with resolution = 360/n (°)
+        self.polar_max_range: float = 500.0 # max range for ray casting (m)
+
+        # Precompute sector center angles in ship frame, in [-pi, pi)
+        bin_width = 2.0 * np.pi / float(self.polar_n_sectors)
+        self._polar_rel_angles = (
+            -np.pi + (np.arange(self.polar_n_sectors, dtype=np.float32) + 0.5) * bin_width
+        ).astype(np.float32)
+
 
         # RNG: environment-local RNG for reproducibility when seeded via reset()
         self._rng: np.random.Generator = np.random.default_rng()
@@ -421,6 +432,90 @@ class PySimColavEnv(BaseEnv):
         p = Point(float(ship_position[0]), float(ship_position[1]))
         return float(self.polygon_shape.boundary.distance(p))
 
+    def _raycast_min_distance(self, ray: LineString, geometries) -> float:
+        """
+        Return minimum distance along 'ray' to any intersection with the given geometries.
+
+        If no intersection within the ray segment, returns self.polar_max_range.
+        """
+        min_d = self.polar_max_range
+
+        for geom in geometries:
+            inter = ray.intersection(geom)
+            if inter.is_empty:
+                continue
+
+            # Collect intersection points robustly
+            if inter.geom_type == "Point":
+                points = [inter]
+            elif inter.geom_type == "MultiPoint":
+                points = list(inter.geoms)
+            else:
+                # Fallback: try to iterate coordinates (e.g. LineString overlap)
+                points = []
+                if hasattr(inter, "coords"):
+                    for (x, y) in inter.coords:
+                        points.append(Point(x, y))
+                elif hasattr(inter, "geoms"):
+                    for g in inter.geoms:
+                        if g.geom_type == "Point":
+                            points.append(g)
+                        elif hasattr(g, "coords"):
+                            for (x, y) in g.coords:
+                                points.append(Point(x, y))
+
+            for p in points:
+                # Distance from ray start along the ray
+                d_along = float(ray.project(p))
+                if 0.0 <= d_along < min_d:
+                    min_d = d_along
+
+        return float(min_d)
+
+    def _get_polar_scan(self) -> np.ndarray:
+        """
+        Compute polar scan around own-ship.
+
+        Returns:
+            np.ndarray of shape (polar_n_sectors,), values in [0,1]:
+            1.0 => clear up to polar_max_range
+            0.0 => immediate obstacle
+        """
+        x0 = float(self.ship_pos[0])
+        y0 = float(self.ship_pos[1])
+        heading = float(self.phys_sim.state.heading)
+
+        # Surfaces that rays can hit:
+        geometries = [self.polygon_shape.boundary]  # river banks
+
+        # Add static obstacle as an inflated circle (boundary)
+        if self.static_ship and (self.static_ship_pos is not None):
+            sx = float(self.static_ship_pos[0])
+            sy = float(self.static_ship_pos[1])
+            inflated_r = float(self.static_ship_radius + self.own_ship_radius)
+            obstacle_boundary = Point(sx, sy).buffer(inflated_r).boundary
+            geometries.append(obstacle_boundary)
+
+        scan = np.empty(self.polar_n_sectors, dtype=np.float32)
+
+        for i, rel_angle in enumerate(self._polar_rel_angles):
+            angle = heading + float(rel_angle)
+
+            x1 = x0 + self.polar_max_range * float(np.cos(angle))
+            y1 = y0 + self.polar_max_range * float(np.sin(angle))
+
+            ray = LineString([(x0, y0), (x1, y1)])
+
+            d = self._raycast_min_distance(ray, geometries)
+
+            # maybe later: subtract own ship radius to encode hull clearance directly
+            # d = max(0.0, d - self.own_ship_radius)
+
+            scan[i] = float(np.clip(d / self.polar_max_range, 0.0, 1.0))
+
+        return scan
+
+
     @staticmethod
     def _reduce_path(path: np.ndarray, start_pos: np.ndarray) -> np.ndarray:
         """Reduces the path to start from the point closest to the given start position.
@@ -603,6 +698,18 @@ class PySimColavEnv(BaseEnv):
         base_low = np.hstack([base_low, np.array([0.0, -1.0], dtype=np.float32)])
         base_high = np.hstack([base_high, np.array([1.0, 1.0], dtype=np.float32)])
 
+        # Polar scan sectors: normalized distances in [0, 1] for each sector
+        if getattr(self, "use_polar_scan", False):
+            base_low = np.hstack(
+                [base_low, np.zeros(self.polar_n_sectors, dtype=np.float32)]
+            )
+            base_high = np.hstack(
+                [base_high, np.ones(self.polar_n_sectors, dtype=np.float32)]
+            )
+
+        return gym.spaces.Box(low=base_low, high=base_high, dtype=np.float32)
+
+
 
         return gym.spaces.Box(low=base_low, high=base_high, dtype=np.float32)
 
@@ -770,6 +877,12 @@ class PySimColavEnv(BaseEnv):
 
         if self.current:
             obs = np.hstack([obs, self.phys_sim.environment.current_direction * self.phys_sim.environment.current_strength])
+
+        # Add polar scan (simulated range sensor) if enabled
+        if getattr(self, "use_polar_scan", False):
+            polar_scan = self._get_polar_scan()
+            obs = np.hstack([obs, polar_scan])
+
 
         return obs.astype(np.float32)
 
@@ -982,6 +1095,21 @@ class PySimColavEnv(BaseEnv):
         self.ax.set_title("Ship Navigation in a Path Following Environment")
         self.ax.legend()
 
+        # polar scan visualization (ray lines)
+        self.polar_beams = []
+        if getattr(self, "use_polar_scan", False):
+            for _ in range(self.polar_n_sectors):
+                # Semi-transparent rays so they don't clutter the plot
+                beam_line, = self.ax.plot(
+                    [], [],
+                    color='orange',
+                    alpha=0.3,
+                    linewidth=1,
+                    label=''  # avoid extra legend entries
+                )
+                self.polar_beams.append(beam_line)
+
+
     def _draw_fixed_landmarks(self) -> None:
         """Draw static features: path, checkpoints, obstacles, polygons."""
 
@@ -1071,12 +1199,41 @@ class PySimColavEnv(BaseEnv):
         heading_y = self.ship_pos[1] + np.sin(self.phys_sim.state.heading) * heading_line_length
         self.heading_line.set_data([self.ship_pos[0], heading_x], [self.ship_pos[1], heading_y])
 
+        # Update polar beams
+        if getattr(self, "use_polar_scan", False) and hasattr(self, "_get_polar_scan"):
+            scan = self._get_polar_scan()  # shape (polar_n_sectors,), values in [0,1]
+
+            ship_x = float(self.ship_pos[0])
+            ship_y = float(self.ship_pos[1])
+            heading = float(self.phys_sim.state.heading)
+
+            # For each sector, draw a line from ship position to "range" in that direction
+            for i, beam in enumerate(self.polar_beams):
+                rel_angle = float(self._polar_rel_angles[i])
+                angle = heading + rel_angle
+
+                # Actual length in meters for this sector
+                length = float(scan[i]) * float(self.polar_max_range)
+
+                end_x = ship_x + length * np.cos(angle)
+                end_y = ship_y + length * np.sin(angle)
+
+                beam.set_data([ship_x, end_x], [ship_y, end_y])
+
+
         # Try blitting for efficient updates; otherwise draw everything
         try:
             if hasattr(self.fig.canvas, 'blit'):
                 self.ax.draw_artist(self.ship_plot)
                 self.ax.draw_artist(self.heading_line)
+
+                # Draw polar beams
+                if getattr(self, "use_polar_scan", False):
+                    for beam in self.polar_beams:
+                        self.ax.draw_artist(beam)
+
                 self.fig.canvas.blit(self.ax.bbox)
+
             else:
                 self.fig.canvas.draw()
         except (RuntimeError, AttributeError, TypeError, ValueError):
