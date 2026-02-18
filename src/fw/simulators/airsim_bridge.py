@@ -76,7 +76,7 @@ class AirSimBridge:
     controls using PID controllers for both steering and throttle.
 
     Attributes:
-        is_connected: Whether the bridge has an active AirSim connection.
+        _connected: Whether the bridge has an active AirSim connection.
     """
 
     def __init__(self, ip: str = "", port: int = 41451,

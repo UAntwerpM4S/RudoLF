@@ -9,6 +9,7 @@ from gymnasium import Env
 from enum import auto, Enum
 from contextlib import contextmanager
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+from fw.simulators.airsim_bridge import AirSimBridge
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from fw.policies.ppo2_model import PPO2Model
@@ -276,7 +277,7 @@ class Agent:
             num_episodes: int = 5,
             live_animation: bool = False,
             env_color_index: int = 0,
-            airsim_bridge=None,
+            airsim_bridge: AirSimBridge = None,
     ) -> None:
         """
         Run and visualize a trained model in the environment over multiple episodes.
@@ -285,6 +286,7 @@ class Agent:
             num_episodes (int, optional): Number of episodes to visualize (default is 5).
             live_animation (bool, optional): Enable live animation of the agent in the environment.
             env_color_index (int, optional): Index of the environment color.
+            airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
 
         Raises:
             RuntimeError: If no model is created.

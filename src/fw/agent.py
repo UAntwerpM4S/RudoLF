@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+from fw.simulators.airsim_bridge import AirSimBridge
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from fw.policies.ppo2_model import PPO2Model
@@ -280,6 +281,7 @@ class Agent:
             num_episodes: int = 5,
             live_animation: bool = False,
             env_color_index: int = 0,
+            airsim_bridge: AirSimBridge = None,
     ) -> None:
 
         """
@@ -289,6 +291,7 @@ class Agent:
             num_episodes (int, optional): Number of episodes to visualize (default is 5).
             live_animation (bool, optional): Enable live animation of the agent in the environment.
             env_color_index (int, optional): Index of the environment color.
+            airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
 
         Raises:
             RuntimeError: If no model is created.
@@ -456,7 +459,6 @@ class Agent:
                     # Compute average errors and actions across episodes
                     # First, find the maximum length among all episodes
                     max_error_length = max(len(errors) for errors in all_cross_errors)
-                    max_rudder_length = max(len(actions) for actions in all_rudder_actions)
                     max_ukc_length = max(len(actions) for actions in all_ukc_measurements)
 
                     # Initialize arrays to store the sum and count for averaging
@@ -486,7 +488,6 @@ class Agent:
 
                     # Calculate averages (avoid division by zero)
                     avg_errors = np.divide(error_sum, error_count, out=np.zeros_like(error_sum), where=error_count != 0)
-                    avg_rudder = np.mean(rudder_resampled, axis=0)
                     avg_ukcs = np.divide(ukc_sum, ukc_count, out=np.zeros_like(ukc_sum), where=ukc_count != 0)
 
                     # Plot individual episode errors with lower alpha
