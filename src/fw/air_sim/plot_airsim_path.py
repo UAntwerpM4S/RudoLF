@@ -5,12 +5,11 @@ ship and vehicle paths via dead reckoning, and displays them in a
 continuously updating matplotlib window.
 """
 
-import csv
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import math
+import csv
 import os
-import sys
 
 # Configuration
 DT = 0.1  # Simulation time step
@@ -156,10 +155,10 @@ class LivePlotter:
             # --- ALIGNMENT LOGIC ---
             # Calculate initial headings
             # Use average of first few steps to be robust
-            N_avg = min(10, len(ship_headings))
-            if N_avg > 0:
-                start_ship_h = sum(ship_headings[:N_avg]) / N_avg
-                start_car_h = sum(car_headings[:N_avg]) / N_avg
+            n_avg = min(10, len(ship_headings))
+            if n_avg > 0:
+                start_ship_h = sum(ship_headings[:n_avg]) / n_avg
+                start_car_h = sum(car_headings[:n_avg]) / n_avg
                 
                 heading_offset = start_ship_h - start_car_h
                 
