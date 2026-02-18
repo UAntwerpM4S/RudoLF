@@ -277,7 +277,7 @@ class Agent:
 
     def visualize_trained_model(
             self,
-            num_episodes: int = 5,
+            num_episodes: int = 1,
             live_animation: bool = False,
             env_color_index: int = 0,
     ) -> None:

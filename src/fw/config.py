@@ -22,13 +22,15 @@ DEFAULT_HYPERPARAMETERS = {
         'max_grad_norm': 0.5,
         'clip_range': 0.2,
         'eval_frequency': 100,
-        'num_envs': 1,
-        'num_epochs': 7,
+        'num_envs': 8,
+        'num_epochs': 4,
         'normalize': False,
         'max_nbr_iterations': 200000,
-        'batch_size': 64,
+        'batch_size': 2048,
         'device': "cpu",
-        'model_dir': "models"
+        'model_dir': "models",
+        'fixed_horizon': True,
+        'steps_per_update': 8192
     },
     PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,
@@ -62,7 +64,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': True,
+    'live_animation': False,
 }
 
 

@@ -1,10 +1,14 @@
 import os
+from random import randrange, randint
+
 import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import gymnasium as gym
 import tkinter as tk
 import numpy as np
+from numpy import ndarray, dtype
+from sympy.codegen.cnodes import static
 
 # First try interactive backend
 try:
@@ -14,8 +18,8 @@ except ImportError:
     matplotlib.use('Agg')  # Use non-interactive backend as fallback
 
 from functools import lru_cache
-from shapely.geometry import Point, Polygon
-from typing import Dict, List, Optional, Tuple, Union
+from shapely.geometry import Point, Polygon, LineString
+from typing import Dict, List, Optional, Tuple, Union, Any
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
@@ -52,14 +56,6 @@ PERPENDICULAR_LINE_PROXIMITY = 2.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
 EPSILON = 1e-9  # Small epsilon for numerical stability
-
-# -----------------------
-# Bank-distance shaping
-# -----------------------
-BANK_DISTANCE_NORM = 200.0        # meters
-BANK_SOFT_MARGIN = 80.0           # meters -> start penalizing when closer than this
-BANK_PENALTY_POWER = 2.0          # shape of penalty curve (2 = quadratic)
-
 
 def calculate_perpendicular_lines(
         checkpoints: List[dict],
@@ -122,8 +118,9 @@ class PySimColavEnv(BaseEnv):
             ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
             wind: bool = False,
             current: bool = False,
-            static_ship: bool = True,
             numerical_damping: bool = False,
+            static_ship: bool = False,
+            use_polar_scan: bool = True
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -160,8 +157,19 @@ class PySimColavEnv(BaseEnv):
         self.dynamics = None
         self.ship_pos = None
         self.static_ship = bool(static_ship)
+        self.static_ship_count = 3
         self.static_ship_radius = 20 # safety radius around the obstacle
         self.own_ship_radius = 0.0 # keep point-ship model for now; set >0 for hull clearance
+        self.use_polar_scan = bool(use_polar_scan) # Enable/disable polar scan representation
+        self.polar_n_sectors: int = 36 # Number of angular sectors around the ship with resolution = 360/n (°)
+        self.polar_max_range: float = 500.0 # max range for ray casting (m)
+
+        # Precompute sector center angles in ship frame, in [-pi, pi)
+        bin_width = 2.0 * np.pi / float(self.polar_n_sectors)
+        self._polar_rel_angles = (
+            -np.pi + (np.arange(self.polar_n_sectors, dtype=np.float32) + 0.5) * bin_width
+        ).astype(np.float32)
+
 
         # RNG: environment-local RNG for reproducibility when seeded via reset()
         self._rng: np.random.Generator = np.random.default_rng()
@@ -176,7 +184,10 @@ class PySimColavEnv(BaseEnv):
 
         # Load environment static data and build checkpoints/polygons
         self._load_environment_data(target_pos)
-        self.static_ship_pos = self._compute_default_static_ship_pos()
+
+        # Load static ship obstacle
+        if getattr(self, "static_ship", False):
+            self.static_ship_pos = self._compute_default_static_ship_pos()
 
         # State and control placeholders
         self.ship = create_ship(self.ship_model)
@@ -199,7 +210,6 @@ class PySimColavEnv(BaseEnv):
             'alignment': 1.8,
             'cross_track': 1.5,
             'rudder': 0.03,
-            'bank_distance': 5.0
         }
 
         # Rendering flag
@@ -410,16 +420,90 @@ class PySimColavEnv(BaseEnv):
         deep_enough = self._has_enough_keel_clearance()
         return bool(contains and deep_enough)
 
-    def _distance_to_bank(self, ship_position: np.ndarray) -> float:
+    def _raycast_min_distance(self, ray: LineString, geometries) -> float:
         """
-        Distance (meters) from ship position to the nearest bank boundary.
+        Return minimum distance along 'ray' to any intersection with the given geometries.
 
-        Uses polygon boundary distance, so:
-        - inside polygon: positive distance to edge
-        - outside polygon: still positive distance back to edge
+        If no intersection within the ray segment, returns self.polar_max_range.
         """
-        p = Point(float(ship_position[0]), float(ship_position[1]))
-        return float(self.polygon_shape.boundary.distance(p))
+        min_d = self.polar_max_range
+
+        for geom in geometries:
+            inter = ray.intersection(geom)
+            if inter.is_empty:
+                continue
+
+            # Collect intersection points robustly
+            if inter.geom_type == "Point":
+                points = [inter]
+            elif inter.geom_type == "MultiPoint":
+                points = list(inter.geoms)
+            else:
+                # Fallback: try to iterate coordinates (e.g. LineString overlap)
+                points = []
+                if hasattr(inter, "coords"):
+                    for (x, y) in inter.coords:
+                        points.append(Point(x, y))
+                elif hasattr(inter, "geoms"):
+                    for g in inter.geoms:
+                        if g.geom_type == "Point":
+                            points.append(g)
+                        elif hasattr(g, "coords"):
+                            for (x, y) in g.coords:
+                                points.append(Point(x, y))
+
+            for p in points:
+                # Distance from ray start along the ray
+                d_along = float(ray.project(p))
+                if 0.0 <= d_along < min_d:
+                    min_d = d_along
+
+        return float(min_d)
+
+    def _get_polar_scan(self) -> np.ndarray:
+        """
+        Compute polar scan around own-ship.
+
+        Returns:
+            np.ndarray of shape (polar_n_sectors,), values in [0,1]:
+            1.0 => clear up to polar_max_range
+            0.0 => immediate obstacle
+        """
+        x0 = float(self.ship_pos[0])
+        y0 = float(self.ship_pos[1])
+        heading = float(self.phys_sim.state.heading)
+
+        # Surfaces that rays can hit:
+        geometries = [self.polygon_shape.boundary]  # river banks
+
+        # Add static obstacles as an inflated circle (boundary)
+        if getattr(self, "static_ship", False) and self.static_ship_pos is not None:
+            for i in range(self.static_ship_count):
+                sx = float(self.static_ship_pos[i][0])
+                sy = float(self.static_ship_pos[i][1])
+                inflated_r = float(self.static_ship_radius + self.own_ship_radius)
+                obstacle_boundary = Point(sx, sy).buffer(inflated_r).boundary
+                geometries.append(obstacle_boundary)
+
+        scan = np.empty(self.polar_n_sectors, dtype=np.float32)
+
+        for i, rel_angle in enumerate(self._polar_rel_angles):
+            angle = heading + float(rel_angle)
+
+            x1 = x0 + self.polar_max_range * float(np.cos(angle))
+            y1 = y0 + self.polar_max_range * float(np.sin(angle))
+
+            ray = LineString([(x0, y0), (x1, y1)])
+
+            d = self._raycast_min_distance(ray, geometries)
+
+            # maybe later: subtract own ship radius to encode hull clearance directly
+            # d = max(0.0, d - self.own_ship_radius)
+
+            scan[i] = float(np.clip(d / self.polar_max_range, 0.0, 1.0))
+
+        return scan
+
 
     @staticmethod
     def _reduce_path(path: np.ndarray, start_pos: np.ndarray) -> np.ndarray:
@@ -477,12 +561,6 @@ class PySimColavEnv(BaseEnv):
             return float(np.linalg.norm(point - line_start))
 
         projection_scalar = np.dot(point_vec, line_vec) / line_mag_squared
-
-        # Idea behind clamping: without clamping the line segment extends infinitely beyond its segment.
-        # if a ship passes past the segment endpoint, a small distance may be reported due to the line being infinite
-        # even though the ship is actually far away from the relevant (clamped) segment
-        # projected_scalar_clamped = float(np.clip(projection_scalar, 0.0, 1.0))
-
         projected_point = line_start + projection_scalar * line_vec
         return float(np.linalg.norm(point - projected_point))
 
@@ -593,16 +671,14 @@ class PySimColavEnv(BaseEnv):
             base_low = np.hstack([base_low, np.array([-1.0, -1.0], dtype=np.float32)])
             base_high = np.hstack([base_high, np.array([1.0, 1.0], dtype=np.float32)])
 
-        # normalized distance_to_bank in [0,1]
-        base_low = np.hstack([base_low, np.array([0.0], dtype=np.float32)])
-        base_high = np.hstack([base_high, np.array([1.0], dtype=np.float32)])
-
-        # Static obstacle features (for the single fixed ship):
-        # - distance_to_obstacle in [0, 1] (normalized by max_dist)
-        # - bearing_to_obstacle in [-1, 1] (bearing in ship frame divided by pi)
-        base_low = np.hstack([base_low, np.array([0.0, -1.0], dtype=np.float32)])
-        base_high = np.hstack([base_high, np.array([1.0, 1.0], dtype=np.float32)])
-
+        # Polar scan sectors: normalized distances in [0, 1] for each sector
+        if getattr(self, "use_polar_scan", False):
+            base_low = np.hstack(
+                [base_low, np.zeros(self.polar_n_sectors, dtype=np.float32)]
+            )
+            base_high = np.hstack(
+                [base_high, np.ones(self.polar_n_sectors, dtype=np.float32)]
+            )
 
         return gym.spaces.Box(low=base_low, high=base_high, dtype=np.float32)
 
@@ -735,21 +811,6 @@ class PySimColavEnv(BaseEnv):
         )
 
         # Build observation
-
-        # Static obstacle observation
-        vec_obs = self.static_ship_pos - self.ship_pos
-        dist_obs = float(np.linalg.norm(vec_obs))
-        bearing_obs = self.normalize_angle(
-            float(np.arctan2(vec_obs[1], vec_obs[0])) - float(self.phys_sim.state.heading)
-        )
-        norm_obs_dist = float(np.clip(dist_obs / self.max_dist, 0.0, 1.0))
-        norm_obs_bearing = float(np.clip(bearing_obs / np.pi, -1.0, 1.0))
-
-
-        # Normalized distance to bank
-        bank_dist = self._distance_to_bank(self.ship_pos)
-        norm_bank_dist = float(np.clip(bank_dist / BANK_DISTANCE_NORM, 0.0, 1.0))
-
         obs = np.hstack([
             norm_velocities,                        # Normalized velocities
             [norm_distance],                        # Distance to current checkpoint
@@ -759,9 +820,6 @@ class PySimColavEnv(BaseEnv):
             [heading_error2 / np.pi],               # Normalized heading error
             [heading_error_parallel / np.pi],       # Normalized heading error
             [heading_error_parallel2 / np.pi],      # Normalized heading error
-            [norm_obs_dist],                        # Distance to static obstacle (normalized)
-            [norm_obs_bearing],                     # Bearing to static obstacle (normalized)
-            [norm_bank_dist]                        # Distance to bank (normalized)
         ])
 
         # Add environmental observations if enabled
@@ -770,6 +828,12 @@ class PySimColavEnv(BaseEnv):
 
         if self.current:
             obs = np.hstack([obs, self.phys_sim.environment.current_direction * self.phys_sim.environment.current_strength])
+
+        # Add polar scan (simulated range sensor) if enabled
+        if getattr(self, "use_polar_scan", False):
+            polar_scan = self._get_polar_scan()
+            obs = np.hstack([obs, polar_scan])
+
 
         return obs.astype(np.float32)
 
@@ -863,30 +927,14 @@ class PySimColavEnv(BaseEnv):
         # Action penalty (rudder magnitude)
         rudder_penalty = -0.2 * abs(self.performed_action[0])
 
-        # bank distance
-        bank_dist = self._distance_to_bank(self.ship_pos)
-        if bank_dist < BANK_SOFT_MARGIN:
-            x = (BANK_SOFT_MARGIN - bank_dist) / BANK_SOFT_MARGIN  # in (0..1]
-            bank_penalty = -(x ** BANK_PENALTY_POWER)  # in [-1..0)
-        else:
-            bank_penalty = 0.0
-
         # Combine weighted rewards and penalties
         reward = (
                 self.reward_weights['forward'] * forward_reward +
                 self.reward_weights['alignment'] * heading_alignment_reward +
                 self.reward_weights['cross_track'] * cross_track_penalty +
-                self.reward_weights['rudder'] * rudder_penalty +
-                self.reward_weights['bank_distance'] * bank_penalty
+                self.reward_weights['rudder'] * rudder_penalty
         )
 
-
-        # Static obstacle collision penalty
-        # If the ship intersects the static obstacle safety circle, terminate with a large negative reward.
-        info = {}
-        if self._check_static_ship_collision():
-            info = {"collision": True, "collision_type": "ship"}
-            return -250.0, True, info
         # Checkpoint handling (may increment checkpoint_index)
         checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint["pos"])
 
@@ -907,16 +955,25 @@ class PySimColavEnv(BaseEnv):
         done = False
         heading_change = abs(self._calculate_heading_error(self.previous_heading, self.phys_sim.state.heading))
 
+        bank_collision = not self._ship_in_open_water(self.ship_pos)
+
         # Early termination conditions
         termination_conditions = [
             cross_track_error > CROSS_TRACK_TERMINATION_MULTIPLIER * CHECKPOINTS_DISTANCE,
-            not self._ship_in_open_water(self.ship_pos),
+            bank_collision,
             heading_change > HEADING_CHANGE_THRESHOLD,
         ]
 
-        if not self._ship_in_open_water(self.ship_pos):
+        if getattr(self, "static_ship", False) and self.static_ship_pos is not None:
+            static_ship_collision = self._check_static_ship_collision()
+            termination_conditions.append(static_ship_collision)
+
+        info = {}
+        if bank_collision:
             info = {"collision": True, "collision_type": "bank"}
 
+        if getattr(self, "static_ship", False) and static_ship_collision:
+            info = {"collision": True, "collision_type": "ship"}
 
         if any(termination_conditions):
             reward = -250.0
@@ -982,6 +1039,21 @@ class PySimColavEnv(BaseEnv):
         self.ax.set_title("Ship Navigation in a Path Following Environment")
         self.ax.legend()
 
+        # polar scan visualization (ray lines)
+        self.polar_beams = []
+        if getattr(self, "use_polar_scan", False):
+            for _ in range(self.polar_n_sectors):
+                # Semi-transparent rays so they don't clutter the plot
+                beam_line, = self.ax.plot(
+                    [], [],
+                    color='orange',
+                    alpha=0.3,
+                    linewidth=1,
+                    label=''  # avoid extra legend entries
+                )
+                self.polar_beams.append(beam_line)
+
+
     def _draw_fixed_landmarks(self) -> None:
         """Draw static features: path, checkpoints, obstacles, polygons."""
 
@@ -1015,11 +1087,14 @@ class PySimColavEnv(BaseEnv):
         self.ax.add_patch(polygon_patch)
         self.ax.add_patch(western_scheldt)
 
-        # Draw a single static obstacle ship
-        sx, sy = float(self.static_ship_pos[0]), float(self.static_ship_pos[1])
-        obstacle_patch = patches.Circle((sx, sy), float(self.static_ship_radius),
+        # Draw all static obstacle ships
+        if getattr(self, "static_ship", False) and self.static_ship_pos is not None:
+            for i in range(self.static_ship_count):
+                sx, sy = float(self.static_ship_pos[i][0]), float(self.static_ship_pos[i][1])
+                obstacle_patch = patches.Circle((sx, sy), float(self.static_ship_radius),
                                             color='gray', alpha=0.4, label='Static ship')
-        self.ax.add_patch(obstacle_patch)
+                self.ax.add_patch(obstacle_patch)
+
         # Update target plot
         self.target_plot.set_data(self.target_pos[0:1], self.target_pos[1:2])
 
@@ -1071,12 +1146,41 @@ class PySimColavEnv(BaseEnv):
         heading_y = self.ship_pos[1] + np.sin(self.phys_sim.state.heading) * heading_line_length
         self.heading_line.set_data([self.ship_pos[0], heading_x], [self.ship_pos[1], heading_y])
 
+        # Update polar beams
+        if getattr(self, "use_polar_scan", False) and hasattr(self, "_get_polar_scan"):
+            scan = self._get_polar_scan()  # shape (polar_n_sectors,), values in [0,1]
+
+            ship_x = float(self.ship_pos[0])
+            ship_y = float(self.ship_pos[1])
+            heading = float(self.phys_sim.state.heading)
+
+            # For each sector, draw a line from ship position to "range" in that direction
+            for i, beam in enumerate(self.polar_beams):
+                rel_angle = float(self._polar_rel_angles[i])
+                angle = heading + rel_angle
+
+                # Actual length in meters for this sector
+                length = float(scan[i]) * float(self.polar_max_range)
+
+                end_x = ship_x + length * np.cos(angle)
+                end_y = ship_y + length * np.sin(angle)
+
+                beam.set_data([ship_x, end_x], [ship_y, end_y])
+
+
         # Try blitting for efficient updates; otherwise draw everything
         try:
             if hasattr(self.fig.canvas, 'blit'):
                 self.ax.draw_artist(self.ship_plot)
                 self.ax.draw_artist(self.heading_line)
+
+                # Draw polar beams
+                if getattr(self, "use_polar_scan", False):
+                    for beam in self.polar_beams:
+                        self.ax.draw_artist(beam)
+
                 self.fig.canvas.blit(self.ax.bbox)
+
             else:
                 self.fig.canvas.draw()
         except (RuntimeError, AttributeError, TypeError, ValueError):
@@ -1098,7 +1202,7 @@ class PySimColavEnv(BaseEnv):
     # -----------------------
     # Static obstacle helpers
     # -----------------------
-    def _compute_default_static_ship_pos(self) -> Optional[np.ndarray]:
+    def _compute_default_static_ship_pos(self) -> list[ndarray[Any, dtype[Any]]] | None:
         """Compute a deterministic static obstacle position.
 
         By default we place a single static ship on the path between the 2nd and 3rd checkpoint
@@ -1110,18 +1214,19 @@ class PySimColavEnv(BaseEnv):
         if not hasattr(self, "checkpoints") or len(self.checkpoints) < 2:
             return None
 
-        # Prefer segment (2 -> 3), then (1 -> 2), then (0 -> 1)
-        segments = [(2, 3), (1, 2), (0, 1)]
-        for a, b in segments:
-            if b < len(self.checkpoints):
-                pa = np.asarray(self.checkpoints[a]["pos"], dtype=np.float32)
-                pb = np.asarray(self.checkpoints[b]["pos"], dtype=np.float32)
-                return (0.5 * (pa + pb)).astype(np.float32)
+        static_ship_positions = []
+        for static_ship in range(self.static_ship_count):
+            random_seg = randint(1, len(self.checkpoints) - 1)
+            pa = np.asarray(self.checkpoints[random_seg - 1]["pos"], dtype=np.float32)
+            pb = np.asarray(self.checkpoints[random_seg]["pos"], dtype=np.float32)
+            static_ship_positions.append((0.5 * (pa + pb)).astype(np.float32))
 
-        # Fallback: place it near the first checkpoint
-        return np.asarray(self.checkpoints[1]["pos"], dtype=np.float32).copy()
+        return static_ship_positions
 
     def _check_static_ship_collision(self) -> bool:
-        """Return True if the own ship intersects the static obstacle safety circle."""
-        d = float(np.linalg.norm(self.ship_pos - self.static_ship_pos))
-        return d <= float(self.static_ship_radius + self.own_ship_radius)
+        """Return True if the own ship intersects with any static obstacle safety circle."""
+        collisions = []
+        for i in range(self.static_ship_count):
+            d = float(np.linalg.norm(self.ship_pos - self.static_ship_pos[i]))
+            collisions.append(d <= float(self.static_ship_radius + self.own_ship_radius))
+        return any(collisions)

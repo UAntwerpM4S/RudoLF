@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.optim as optim
 import gymnasium as gym
 import numpy as np
+import time
+import math
 
 from typing import Optional, Tuple
 from fw.stop_condition import StopCondition
@@ -13,6 +15,8 @@ from fw.policies.base_model import BaseModel
 from fw.policies.ppo_policy import PPOPolicy
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+import matplotlib.pyplot as plt
+
 
 
 class PPOModel(BaseModel):
@@ -100,6 +104,8 @@ class PPOModel(BaseModel):
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4  # avoid division by zero
+
+        self._vec_env = None
 
 
     def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
@@ -294,12 +300,14 @@ class PPOModel(BaseModel):
         return true_indices[0] if true_indices.size > 0 else -1
 
 
-    def run_parallel_episodes(self, num_envs) -> list:
+    def run_parallel_episodes(self, num_envs, fixed_horizon) -> list:
         """
         Run multiple episodes in parallel using Gym vectorized environments.
 
         Args:
             num_envs (int): Number of parallel environments to run.
+            fixed_horizon (bool): If true, runs a fixed number of iterations per env
+                                  as opposed to waiting for all envs to finish
 
         Returns:
             list: A list of dictionaries containing episode data for each environment.
@@ -307,11 +315,16 @@ class PPOModel(BaseModel):
         if num_envs <= 0:
             raise ValueError("num_envs must be greater than 0.")
 
-        # Create vectorized environments
-        if self.num_envs > 1:
-            vec_env = SubprocVecEnv([self.make_env() for _ in range(self.num_envs)])
-        else:
-            vec_env = DummyVecEnv([lambda: Monitor(self.create_env())])
+        # Create vectorized environments once and reuse
+        # follows the approach of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/common/on_policy_algorithm.html
+        # where the vector is passed for each rollout instead of recreating it for all environments
+        if self._vec_env is None:
+            if num_envs > 1:
+                self._vec_env = SubprocVecEnv([self.make_env() for _ in range(num_envs)])
+            else:
+                self._vec_env = DummyVecEnv([lambda: Monitor(self.create_env())])
+
+        vec_env = self._vec_env
 
         # Reset all environments
         states = vec_env.reset()
@@ -321,25 +334,50 @@ class PPOModel(BaseModel):
         collected_data = {k: [] for k in ["states", "actions", "rewards", "dones", "values", "log_probs"]}
         safeguard = 0
 
-        while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
-            # Select actions and get value predictions
-            actions, log_probs, values = self.policy.predict(states)
+        t0 = time.perf_counter()
+        if fixed_horizon:
+            # follows the definition of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/ppo/ppo.html
+            n_steps = max(1, self.steps_per_update // self.num_envs)
 
-            # Step all environments
-            next_states, rewards, terminations, _ = vec_env.step(actions)
-            envs_done = np.logical_or(envs_done, terminations)
+            for _ in range(min(n_steps, self.max_nbr_iterations)):
+                # Select actions and get value predictions
+                actions, log_probs, values = self.policy.predict(states)
 
-            # Store episode data
-            collected_data["states"].append(states)
-            collected_data["actions"].append(actions)
-            collected_data["rewards"].append(rewards)
-            collected_data["dones"].append(terminations)
-            collected_data["values"].append(values)
-            collected_data["log_probs"].append(log_probs)
+                # Step all environments
+                next_states, rewards, terminations, _ = vec_env.step(actions)
+                envs_done = np.logical_or(envs_done, terminations)
 
-            # Update states for the next step
-            states = next_states
-            safeguard += 1
+                # Store episode data
+                collected_data["states"].append(states)
+                collected_data["actions"].append(actions)
+                collected_data["rewards"].append(rewards)
+                collected_data["dones"].append(terminations)
+                collected_data["values"].append(values)
+                collected_data["log_probs"].append(log_probs)
+
+                # Update states for the next step
+                states = next_states
+                safeguard += 1
+        else:
+            while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
+                # Select actions and get value predictions
+                actions, log_probs, values = self.policy.predict(states)
+
+                # Step all environments
+                next_states, rewards, terminations, _ = vec_env.step(actions)
+                envs_done = np.logical_or(envs_done, terminations)
+
+                # Store episode data
+                collected_data["states"].append(states)
+                collected_data["actions"].append(actions)
+                collected_data["rewards"].append(rewards)
+                collected_data["dones"].append(terminations)
+                collected_data["values"].append(values)
+                collected_data["log_probs"].append(log_probs)
+
+                # Update states for the next step
+                states = next_states
+                safeguard += 1
 
         if safeguard >= 135000:
             print(f"Safeguard surpassed the 135000 boundary: {safeguard}.")
@@ -347,7 +385,7 @@ class PPOModel(BaseModel):
         if safeguard == self.max_nbr_iterations:
             print(f"Safeguard triggered due to reaching max_iterations ({self.max_nbr_iterations}).")
 
-        vec_env.close()
+        #vec_env.close()
 
         # Compute next values for the last state in each environment
         with torch.no_grad():
@@ -357,16 +395,20 @@ class PPOModel(BaseModel):
         # Process episode data
         episode_data = []
         for i in range(num_envs):
-            # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
-            # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
+            if fixed_horizon:
+                # Keep full rollout when in fixed-horizon mode, no padding needed
+                first_true = len(collected_data["dones"]) - 1
+            else:
+                # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
+                # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
 
-            # Find the first True in dones for this environment
-            episode_dones = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in collected_data["dones"]])
-            first_true = self.find_first_true(episode_dones)
+                # Find the first True in dones for this environment
+                episode_dones = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in collected_data["dones"]])
+                first_true = self.find_first_true(episode_dones)
 
-            # Handle cases where no True is found (episode did not terminate)
-            if first_true == -1:
-                first_true = len(episode_dones) - 1  # Use the entire episode
+                # Handle cases where no True is found (episode did not terminate)
+                if first_true == -1:
+                    first_true = len(episode_dones) - 1  # Use the entire episode
 
             episode = {}
             for key in collected_data:
@@ -410,6 +452,7 @@ class PPOModel(BaseModel):
             stop_condition (StopCondition): Condition that defines when training should stop.
         """
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
+        training_start = time.perf_counter()
 
         last_save_index = 0
         training_metrics = []
@@ -427,7 +470,7 @@ class PPOModel(BaseModel):
             total_advantage = 0
 
             # Collect batch data from multiple parallel environments
-            batch_data = self.run_parallel_episodes(self.num_envs)
+            batch_data = self.run_parallel_episodes(self.num_envs, self.fixed_horizon)
 
             for episode_result in batch_data:
                 episode_data.append(episode_result)
@@ -474,7 +517,16 @@ class PPOModel(BaseModel):
         # Dump training metrics to CSV
         self.dump_metrics_to_csv("training_metrics.csv", training_metrics)
 
+
+        if getattr(self, "_vec_env", None) is not None:
+            self._vec_env.close()
+            self._vec_env = None
+
+        training_time = time.perf_counter() - training_start
         print("Training completed!")
+        print(f"Training took: {training_time:.3f}s")
+        print("Visualizing training process")
+        self.plot_reward_metrics(training_metrics)
 
 
     def dump_metrics_to_csv(self, csv_filename, training_metrics):
@@ -547,3 +599,26 @@ class PPOModel(BaseModel):
         Set policy in evaluation mode.
         """
         self.policy.network.eval()
+
+    # TODO: does not really follow the workflow; previous workflow used exporting to a CSV. Cleaner solution
+    #       may be to read the CSV in the visualization code of the environment and plot it there.
+    def plot_reward_metrics(self, training_metrics):
+        """
+        Plot the evolution of the average reward over training iterations.
+
+        Args:
+            training_metrics (list): List of dicts. Each dict must contain a 'reward' key.
+                                     e.g. {'loss': ..., 'advantage': ..., 'reward': ...}
+        """
+        iterations = np.arange(len(training_metrics))
+        rewards = [m["reward"] for m in training_metrics]
+        plt.figure()
+        plt.plot(iterations, rewards)
+        plt.xlabel("Iteration")
+        plt.ylabel("Average Reward")
+        plt.title("PPO: Average Reward over iterations")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+

@@ -104,6 +104,8 @@ class ColavAgent:
         """Finalize and close the persistent matplotlib figure."""
         if self._fig is not None:
             plt.tight_layout()
+            self._fig.tight_layout()
+            self._fig.subplots_adjust(hspace=0.6)
             plt.show()
             plt.close(self._fig)
 
@@ -279,7 +281,7 @@ class ColavAgent:
 
     def visualize_trained_model(
             self,
-            num_episodes: int = 5,
+            num_episodes: int = 1,
             live_animation: bool = False,
             env_color_index: int = 0,
     ) -> None:
@@ -319,6 +321,7 @@ class ColavAgent:
                 collisions_total = 0
                 collisions_by_type = defaultdict(int)
                 collision_points = []
+                all_rewards = []
 
 
                 for episode in range(num_episodes):
@@ -350,6 +353,10 @@ class ColavAgent:
                         state, reward, terminated, truncated, info = env.step(action)
                         done = terminated or truncated
                         collision_flag = bool(info.get("collision", False))
+                        if not terminated:
+                            # make sure that large negative rewards upon termination do not destroy the scale
+                            # in the plot of all rewards over an episode
+                            all_rewards.append(reward)
 
                         if collision_flag and not episode_had_collision:
                             episode_had_collision = True
@@ -406,9 +413,9 @@ class ColavAgent:
                 try:
                     # Create a figure with two subplots
                     if self._overlay_active and self._fig is not None:
-                        ax1, ax2, ax3, ax4 = self._axes
+                        ax1, ax2, ax3, ax5 = self._axes
                     else:
-                        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 16))
+                        fig, (ax1, ax2, ax3, ax5) = plt.subplots(4, 1, figsize=(12, 20))
 
                     # Add hatched pattern to first subplot
                     difference_coords = self.create_hashed_area(env.obstacles, env.overall)
@@ -556,27 +563,41 @@ class ColavAgent:
                     ax3.set_xlim(0.0, 1.0)
 
                     # Plot individual episode ukcs with lower alpha
-                    for i, ukcs in enumerate(all_ukc_measurements):
-                        timesteps = normalized_time_axis(len(ukcs))
-                        ax4.plot(timesteps, ukcs, '-',
-                                 color=colors[i], alpha=0.2,
-                                 label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
+                    # for i, ukcs in enumerate(all_ukc_measurements):
+                    #     timesteps = normalized_time_axis(len(ukcs))
+                    #     ax4.plot(timesteps, ukcs, '-',
+                    #              color=colors[i], alpha=0.2,
+                    #              label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
 
                     # Plot average ukcs with higher alpha and thicker line
-                    timesteps = normalized_time_axis(len(avg_ukcs))
-                    ax4.plot(timesteps, avg_ukcs, '-',
-                             color='black', alpha=0.2,
-                             label='Average UKC', linestyle=line_style)
+                    # timesteps = normalized_time_axis(len(avg_ukcs))
+                    # ax4.plot(timesteps, avg_ukcs, '-',
+                    #          color='black', alpha=0.2,
+                    #          label='Average UKC', linestyle=line_style)
+                    #
+                    # ax4.set_title(f'UKC Over Time (Individual and Average Policy)')
+                    # ax4.set_xlabel('Episode progress [%]')
+                    # ax4.set_ylabel('UKC')
+                    # ax4.legend(loc='upper right')
+                    # ax4.grid(True)
+                    # ax4.set_ylim(0, 45)
+                    # ax4.set_autoscale_on(False)
+                    # ax4.axhline(45, color='k', lw=0.8, ls='--', alpha=0.4)
+                    # ax4.axhline(0, color='k', lw=0.8, ls='--', alpha=0.4)
 
-                    ax4.set_title(f'UKC Over Time (Individual and Average Policy)')
-                    ax4.set_xlabel('Episode progress [%]')
-                    ax4.set_ylabel('UKC')
-                    ax4.legend(loc='upper right')
-                    ax4.grid(True)
-                    ax4.set_ylim(0, 45)
-                    ax4.set_autoscale_on(False)
-                    ax4.axhline(45, color='k', lw=0.8, ls='--', alpha=0.4)
-                    ax4.axhline(0, color='k', lw=0.8, ls='--', alpha=0.4)
+                    # Plot rewards obtained throughout the episode
+                    t_rewards = normalized_time_axis(len(all_rewards))
+                    ax5.plot(t_rewards, all_rewards, '-',
+                             color='tab:blue', alpha=0.8,
+                             label='Reward', linestyle=line_style)
+
+                    ax5.set_title('Rewards over episode')
+                    ax5.set_xlabel('Episode progress [%]')
+                    ax5.set_ylabel('Reward')
+                    ax5.legend(loc='upper right')
+                    ax5.grid(True)
+
+
 
                     # Adjust layout and save
                     plt.tight_layout()
