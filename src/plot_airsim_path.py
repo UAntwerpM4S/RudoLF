@@ -1,3 +1,10 @@
+"""Live path-reconstruction plotter for AirSim telemetry.
+
+Reads ``airsim_telemetry.csv`` produced by the AirSim bridge, reconstructs
+ship and vehicle paths via dead reckoning, and displays them in a
+continuously updating matplotlib window.
+"""
+
 import csv
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -11,7 +18,12 @@ POSSIBLE_PATHS = ["airsim_telemetry.csv", "src/airsim_telemetry.csv", "../src/ai
 
 
 def find_telemetry_file():
-    """Finds the telemetry file in possible paths."""
+    """Search for the telemetry CSV in a list of candidate locations.
+
+    Returns:
+        The first existing path from ``POSSIBLE_PATHS``, or ``None``
+        if no file is found.
+    """
     for p in POSSIBLE_PATHS:
         if os.path.exists(p):
             return p
@@ -19,11 +31,22 @@ def find_telemetry_file():
 
 
 def reconstruct_path(speeds, headings_deg, start_pos=(0, 0)):
-    """
-    Reconstructs a 2D path from speed and heading arrays using dead reckoning.
-    Assumes headings are North-Referenced (0=North, 90=East).
-    x_{t+1} = x_t + v_t * cos(theta_t) * dt  (North)
-    y_{t+1} = y_t + v_t * sin(theta_t) * dt  (East)
+    """Reconstruct a 2D path from speed and heading arrays via dead reckoning.
+
+    Assumes headings are north-referenced (0 = North, 90 = East)::
+
+        x_{t+1} = x_t + v_t * cos(theta_t) * dt   (North)
+        y_{t+1} = y_t + v_t * sin(theta_t) * dt   (East)
+
+    Args:
+        speeds: Sequence of scalar speeds (m/s) at each time step.
+        headings_deg: Sequence of headings in degrees
+            (0 = North, 90 = East).
+        start_pos: ``(x, y)`` starting position. Defaults to ``(0, 0)``.
+
+    Returns:
+        A tuple ``(x_list, y_list)`` of reconstructed positions.
+        Each list has ``len(speeds) + 1`` elements (start + one per step).
     """
     x, y = [start_pos[0]], [start_pos[1]]
     for v, h_deg in zip(speeds, headings_deg):
@@ -36,7 +59,19 @@ def reconstruct_path(speeds, headings_deg, start_pos=(0, 0)):
 
 
 class LivePlotter:
+    """Continuously updating matplotlib plot of reference-ship vs. AirSim paths.
+
+    Reads ``airsim_telemetry.csv`` every second, reconstructs both paths
+    with dead reckoning, aligns their initial headings, and re-draws the
+    figure.
+
+    Attributes:
+        telemetry_file: Path to the CSV file, or ``None`` while waiting.
+        is_running: Whether the animation loop is still active.
+    """
+
     def __init__(self):
+        """Initialise the figure, axes, line artists, and event handlers."""
         self.telemetry_file = find_telemetry_file()
         if not self.telemetry_file:
             print(f"Warning: airsim_telemetry.csv not found in {POSSIBLE_PATHS}. Waiting for file...")
@@ -69,6 +104,14 @@ class LivePlotter:
         print("Press 'q' or close the window to stop and save the plot.")
 
     def update(self, frame):
+        """Read the latest telemetry and refresh the plot.
+
+        Called automatically by ``FuncAnimation`` each interval.
+
+        Args:
+            frame: Frame index supplied by the animation timer
+                (unused).
+        """
         if not self.is_running:
             return
 
@@ -155,6 +198,11 @@ class LivePlotter:
             # Don't crash the loop, just wait for next frame
 
     def save_plot(self):
+        """Save the current figure to ``airsim_path_reconstruction.png``.
+
+        The file is written next to the telemetry CSV.  If no telemetry
+        file has been found yet, this method does nothing.
+        """
         if self.telemetry_file:
             output_file = os.path.join(os.path.dirname(self.telemetry_file), "airsim_path_reconstruction.png")
             # Fallback if dirname is empty
@@ -165,20 +213,28 @@ class LivePlotter:
             print(f"Plot saved to {os.path.abspath(output_file)}")
 
     def on_close(self, event):
-        """Handle window close event"""
+        """Handle the matplotlib window-close event.
+
+        Args:
+            event: The matplotlib ``CloseEvent``.
+        """
         if self.is_running:
             print("Window closed. Saving plot...")
             self.save_plot()
             self.is_running = False
 
     def on_key(self, event):
-        """Handle key press events"""
+        """Handle keyboard input; pressing *q* stops the plot.
+
+        Args:
+            event: The matplotlib ``KeyEvent``.
+        """
         if event.key == 'q':
             print("Stop requested. Closing...")
-            plt.close(self.fig) # This will trigger on_close
+            plt.close(self.fig)  # This will trigger on_close
 
     def start(self):
-        # Update every 1000ms (1 second)
+        """Start the live animation loop (updates every 1 second)."""
         self.ani = animation.FuncAnimation(self.fig, self.update, interval=1000, cache_frame_data=False)
         plt.show()
 

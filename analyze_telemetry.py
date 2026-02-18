@@ -1,3 +1,9 @@
+"""Offline analysis of AirSim bridge telemetry.
+
+Reads ``airsim_telemetry.csv`` and computes summary statistics including
+mean / max distance error, mean / max heading error, and derived accuracy
+percentages.  Results are printed to stdout.
+"""
 
 import csv
 import math
