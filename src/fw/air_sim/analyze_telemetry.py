@@ -6,9 +6,8 @@ percentages.  Results are printed to stdout.
 """
 
 import csv
-import math
 
-filename = "src/airsim_telemetry.csv"
+filename = "airsim_telemetry.csv"
 
 steps = 0
 total_dist_err = 0.0
