@@ -156,7 +156,7 @@ class Trainer:
 
         return metrics
 
-    def visualize(self, envs):
+    def visualize(self, envs, airsim_bridge=None):
         if envs is not None:
             # Start shared figure
             self._agent.begin_overlay_plot()
@@ -180,7 +180,7 @@ class Trainer:
                             other_env_name=policy_name,
                         )
 
-                        self._agent.visualize_trained_model(num_episodes=1, live_animation=self._config["live_animation"])
+                        self._agent.visualize_trained_model(num_episodes=1, live_animation=self._config["live_animation"], airsim_bridge=airsim_bridge)
                 except RuntimeError as e:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
 
