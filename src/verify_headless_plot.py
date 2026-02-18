@@ -1,3 +1,9 @@
+"""Headless verification script for the AirSim path-reconstruction plot.
+
+Imports ``plot_airsim_path``, forces the ``Agg`` (non-interactive) backend,
+runs a single update cycle, and saves the resulting figure to disk.
+This is useful for CI pipelines or servers without a display.
+"""
 
 import matplotlib
 matplotlib.use('Agg')
@@ -15,6 +21,7 @@ except ImportError:
     sys.exit(1)
 
 def main():
+    """Run a single headless update of the live plotter and save the figure."""
     print("Initializing LivePlotter (Headless)...")
     plotter = plot_airsim_path.LivePlotter()
     

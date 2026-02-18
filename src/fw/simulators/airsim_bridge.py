@@ -1,35 +1,36 @@
-"""
-CosysAirSim bridge
+"""CosysAirSim bridge.
 
 The UE5 water physics differ from the Fossen model used in matplotlib.
-So instead of mapping RL *inputs* 1:1, this bridge maps *outputs*:
+So instead of mapping RL *inputs* 1-to-1, this bridge maps *outputs*:
 
-- **Speed**: matched to the Fossen simulation's surge speed
+- **Speed**: matched to the Fossen simulation's surge speed.
 - **Heading**: a P-controller steers the AirSim vehicle to track the
-  Fossen-computed heading each step.  Because heading + speed together
-  define the trajectory, the AirSim vehicle should follow the same route as the matplotlib ship.
+  Fossen-computed heading each step. Because heading + speed together
+  define the trajectory, the AirSim vehicle should follow the same
+  route as the matplotlib ship.
 
-How it works
-------------
-Each step:
-  1. Read the ship's heading from ``VesselState.heading`` (Fossen output)
-  2. Convert to AirSim yaw frame
-  3. Read the AirSim vehicle's actual yaw from its pose quaternion
-  4. Compute heading error and steer proportionally
+How it works:
+    Each step:
+        1. Read the ship's heading from ``VesselState.heading`` (Fossen output).
+        2. Convert to AirSim yaw frame.
+        3. Read the AirSim vehicle's actual yaw from its pose quaternion.
+        4. Compute heading error and steer proportionally.
 
-Coordinate frames (source: fossen unreal engine physics water physics calculation)
------------------
-Ship:   x = east,  y = north, heading from east (CCW positive)
-AirSim: x = north, y = east (NED), yaw from north (CW positive)
-Transform: AirSim_yaw = π/2 - ship_heading
+Coordinate frames:
+    (source: Fossen / Unreal Engine water physics calculation)
 
-Usage::
+    - Ship:   x = east,  y = north, heading from east (CCW positive).
+    - AirSim: x = north, y = east (NED), yaw from north (CW positive).
+    - Transform: ``AirSim_yaw = π/2 - ship_heading``.
 
-    bridge = AirSimBridge()
-    bridge.send_action(action,
-                       ship_speed=env.phys_sim.state.u,
-                       ship_heading=env.phys_sim.state.heading)
-    bridge.disconnect()
+Example:
+    >>> bridge = AirSimBridge()
+    >>> bridge.send_action(
+    ...     action,
+    ...     ship_speed=env.phys_sim.state.u,
+    ...     ship_heading=env.phys_sim.state.heading,
+    ... )
+    >>> bridge.disconnect()
 """
 
 import math
@@ -41,12 +42,27 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_angle(a: float) -> float:
-    """Wrap angle to [-π, π]."""
+    """Wrap an angle to the interval [-π, π].
+
+    Args:
+        a: Angle in radians.
+
+    Returns:
+        The equivalent angle wrapped into [-π, π].
+    """
     return (a + math.pi) % (2.0 * math.pi) - math.pi
 
 
 def _yaw_from_quaternion(q) -> float:
-    """Extract yaw from an AirSim Quaternionr."""
+    """Extract the yaw angle from an AirSim quaternion.
+
+    Args:
+        q: An AirSim ``Quaternionr`` object with attributes
+            ``w_val``, ``x_val``, ``y_val``, and ``z_val``.
+
+    Returns:
+        The yaw angle in radians.
+    """
     return math.atan2(
         2.0 * (q.w_val * q.z_val + q.x_val * q.y_val),
         1.0 - 2.0 * (q.y_val ** 2 + q.z_val ** 2),
@@ -56,27 +72,11 @@ def _yaw_from_quaternion(q) -> float:
 class AirSimBridge:
     """Heading-tracking adapter for CosysAirSim.
 
-    Parameters
-    ----------
-    ip : str
-        AirSim server address (default ``""`` = localhost).
-    port : int
-        AirSim RPC port (default ``41451``).
-    heading_kp : float
-        Proportional gain.  Higher = faster response to turns.
-        Default ``5.0``.
-    heading_ki : float
-        Integral gain.  Eliminates persistent heading drift.
-        Default ``0.5``.
-    heading_ff : float
-        Feedforward gain.  Steers based on ship's yaw rate (r)
-        to anticipate turns.  Default ``0.5``.
-    speed_scale : float
-        Multiplier for speed (e.g., if units differ).
-        Default ``1.06``.
-    log_telemetry : bool
-        If True, writes "airsim_telemetry.csv" with debug data.
-        Default ``True``.
+    Maps Fossen simulation outputs (heading and speed) to AirSim vehicle
+    controls using PID controllers for both steering and throttle.
+
+    Attributes:
+        is_connected: Whether the bridge has an active AirSim connection.
     """
 
     def __init__(self, ip: str = "", port: int = 41451,
@@ -86,6 +86,34 @@ class AirSimBridge:
                  throttle_kp: float = 1.0, throttle_ki: float = 0.05,
                  dist_gain: float = 0.1, dist_ki: float = 0.0,
                  log_telemetry: bool = True):
+        """Initialise the AirSim bridge and connect to the simulator.
+
+        Args:
+            ip: AirSim server address. Defaults to ``""`` (localhost).
+            port: AirSim RPC port. Defaults to ``41451``.
+            heading_kp: Proportional gain for heading PID. Higher values
+                give a faster response to turns. Defaults to ``5.0``.
+            heading_ki: Integral gain for heading PID. Eliminates
+                persistent heading drift. Defaults to ``0.5``.
+            heading_kd: Derivative gain for heading PID. Defaults to
+                ``1.0``.
+            heading_ff: Feedforward gain. Steers based on the ship's
+                yaw rate to anticipate turns. Defaults to ``0.5``.
+            speed_scale: Multiplier applied to the ship speed (e.g.
+                when units differ). Defaults to ``1.0``.
+            lat_gain: Gain for cross-track (lateral) error correction.
+                Defaults to ``0.5``.
+            throttle_kp: Proportional gain for the throttle PI
+                controller. Defaults to ``1.0``.
+            throttle_ki: Integral gain for the throttle PI controller.
+                Defaults to ``0.05``.
+            dist_gain: Proportional gain for cumulative-distance error
+                correction. Defaults to ``0.1``.
+            dist_ki: Integral gain for cumulative-distance error
+                correction. Defaults to ``0.0``.
+            log_telemetry: If ``True``, writes per-step debug data to
+                ``airsim_telemetry.csv``. Defaults to ``True``.
+        """
         self._connected = False
         self._client = None
         self._controls = None
@@ -157,6 +185,7 @@ class AirSimBridge:
 
     @property
     def is_connected(self) -> bool:
+        """Whether the bridge currently has an active AirSim connection."""
         return self._connected
 
 
@@ -168,19 +197,25 @@ class AirSimBridge:
         ship_yaw_rate: float = 0.0,
         ship_state=None,
     ) -> None:
-        """Steer AirSim vehicle to match the Fossen ship's heading and speed.
+        """Steer the AirSim vehicle to match the Fossen ship's heading and speed.
 
-        Parameters
-        ----------
-        action : np.ndarray
-            ``[rudder, thrust]`` — kept for interface compatibility,
-            not used directly for steering.
-        ship_speed : float
-            Ship's current surge speed from Fossen (m/s).
-        ship_heading : float
-            Ship's current heading from Fossen (rad, from east).
-        ship_yaw_rate : float
-            Ship's current yaw rate (rad/s).
+        Computes steering via a PID + feedforward + cross-track controller
+        and throttle via a PI controller with distance-error correction,
+        then sends the resulting ``CarControls`` to AirSim.
+
+        Args:
+            action: ``[rudder, thrust]`` array. Kept for interface
+                compatibility; not used directly for steering.
+            ship_speed: Ship's current surge speed from Fossen in m/s.
+                Defaults to ``0.0``.
+            ship_heading: Ship's current heading from Fossen in
+                radians (measured from east, CCW positive).
+                Defaults to ``0.0``.
+            ship_yaw_rate: Ship's current yaw rate in rad/s.
+                Defaults to ``0.0``.
+            ship_state: Optional ``VesselState`` object providing
+                ``x`` and ``y`` position attributes for cross-track
+                and distance-error calculations.
         """
         if not self._connected:
             return
@@ -387,6 +422,13 @@ class AirSimBridge:
             logger.warning("AirSim send_action failed: %s", exc)
 
     def get_state(self) -> dict:
+        """Retrieve the current vehicle state from AirSim.
+
+        Returns:
+            A dictionary with keys ``"speed"``, ``"gear"``, and
+            ``"timestamp"``, or an empty dictionary if the bridge
+            is not connected or the query fails.
+        """
         if not self._connected:
             return {}
         try:
@@ -397,6 +439,12 @@ class AirSimBridge:
             return {}
 
     def reset(self) -> None:
+        """Reset the AirSim vehicle and all internal controller state.
+
+        Re-enables API control, zeroes PID integrals, and clears the
+        heading-offset calibration so it is recalculated on the next
+        ``send_action`` call.
+        """
         if not self._connected:
             return
         try:
@@ -417,6 +465,11 @@ class AirSimBridge:
             logger.warning("AirSim reset failed: %s", exc)
 
     def disconnect(self) -> None:
+        """Gracefully disconnect from the AirSim simulator.
+
+        Stops the vehicle by zeroing throttle, steering, and brake,
+        closes any open telemetry CSV file, and releases API control.
+        """
         if not self._connected:
             return
         try:
