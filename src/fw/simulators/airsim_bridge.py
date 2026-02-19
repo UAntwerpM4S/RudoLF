@@ -36,9 +36,13 @@ Example:
 import math
 import time
 import logging
+from pathlib import Path
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Resolve the telemetry output directory.
+_AIRSIM_DIR = Path(__file__).resolve().parent.parent / "air_sim"
 
 
 def _normalize_angle(a: float) -> float:
@@ -164,7 +168,8 @@ class AirSimBridge:
 
             if self._log_telemetry:
                 import csv
-                self._csv_file = open("airsim_telemetry.csv", "w", newline="")
+                _AIRSIM_DIR.mkdir(parents=True, exist_ok=True)
+                self._csv_file = open(_AIRSIM_DIR / "airsim_telemetry.csv", "w", newline="")
                 self._csv_writer = csv.writer(self._csv_file)
                 self._csv_writer.writerow([
                     "step", "ship_speed", "car_speed", "target_speed",
