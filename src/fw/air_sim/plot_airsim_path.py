@@ -13,12 +13,11 @@ import os
 
 # Configuration
 DT = 0.1  # Simulation time step
-POSSIBLE_PATHS = ["airsim_telemetry.csv", "src/airsim_telemetry.csv", "../src/airsim_telemetry.csv"]
+POSSIBLE_PATHS = ["airsim_telemetry.csv", "src/fw/air_sim/airsim_telemetry.csv", "../src/fw/air_sim/airsim_telemetry.csv"]
 
 
 def find_telemetry_file():
     """Search for the telemetry CSV in a list of candidate locations.
-
     Returns:
         The first existing path from ``POSSIBLE_PATHS``, or ``None``
         if no file is found.
