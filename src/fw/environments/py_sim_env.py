@@ -109,7 +109,7 @@ class PySimEnv(BaseEnv):
             time_step: float = 0.1,
             max_steps: int = 1500,
             verbose: Optional[bool] = None,
-            ship_pos: Optional[np.ndarray] = None,
+            start_pos: Optional[np.ndarray] = None,
             target_pos: Optional[np.ndarray] = None,
             dynamics_model: Optional[Model] = Model.FOSSEN,
             ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
@@ -125,7 +125,7 @@ class PySimEnv(BaseEnv):
             time_step: simulation time step (s).
             max_steps: maximum steps per episode (for truncation).
             verbose: whether to print informational logs.
-            ship_pos: optional initial ship position (2-array).
+            start_pos: optional initial ship position (2-array).
             target_pos: optional target position (unused if checkpoints available).
             dynamics_model: optional dynamics model to use.
             ship_model: optional ship model to use.
@@ -139,6 +139,7 @@ class PySimEnv(BaseEnv):
         # Core parameters
         self.wind = bool(wind)
         self.current = bool(current)
+        self.start_pos = start_pos
         self.ship_model = ship_model
         self.max_steps = int(max_steps)
         self.time_step = float(time_step)
@@ -155,8 +156,8 @@ class PySimEnv(BaseEnv):
         # RNG: environment-local RNG for reproducibility when seeded via reset()
         self._rng: np.random.Generator = np.random.default_rng()
 
-        if ship_pos is not None:
-            self.initial_ship_pos = np.array(ship_pos, dtype=np.float32)
+        if start_pos is not None:
+            self.initial_ship_pos = np.array(start_pos, dtype=np.float32)
         else:
             self.initial_ship_pos = np.array([5.0, 5.0], dtype=np.float32)
 
@@ -586,7 +587,12 @@ class PySimEnv(BaseEnv):
             high=self.randomization_scale,
             size=self.initial_ship_pos.shape
         )
-        self.initial_ship_pos = np.clip(self.initial_ship_pos + perturbation, MIN_GRID_POS, MAX_GRID_POS)
+
+        if self.start_pos is not None:
+            self.initial_ship_pos = np.clip(self.start_pos + perturbation, MIN_GRID_POS, MAX_GRID_POS)
+        else:
+            self.initial_ship_pos = np.clip(np.array([5.0, 5.0], dtype=np.float32) + perturbation, MIN_GRID_POS, MAX_GRID_POS)
+
 
     def reset(self, seed: Optional[int] = None, **kwargs) -> Tuple[np.ndarray, Dict]:
         """

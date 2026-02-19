@@ -307,12 +307,8 @@ class PPOModel(BaseModel):
         # ------------------------------------------------------------------
         # Optional environment randomization
         # ------------------------------------------------------------------
-        if num_envs > 1:
-            if hasattr(self._vec_env, "env_method"):
-                self._vec_env.env_method("randomize")
-        else:
-            if hasattr(self._vec_env, "randomize"):
-                self._vec_env.randomize()
+        if hasattr(self._vec_env, "env_method"):
+            self._vec_env.env_method("randomize")
 
         # Reset all environments
         states = self._vec_env.reset()
