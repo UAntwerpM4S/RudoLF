@@ -582,7 +582,9 @@ class PySimEnv(BaseEnv):
 
             self.randomization_scale = randomization_scale
 
-        perturbation = self._rng.uniform(
+        ran_gen = np.random.default_rng()
+
+        perturbation = ran_gen.uniform(
             low=-self.randomization_scale,
             high=self.randomization_scale,
             size=self.initial_ship_pos.shape
