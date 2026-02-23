@@ -119,7 +119,7 @@ class PySimColavEnv(BaseEnv):
             wind: bool = False,
             current: bool = False,
             numerical_damping: bool = False,
-            static_ship: bool = False,
+            static_ship: bool = True,
             use_polar_scan: bool = True
     ) -> None:
         """
@@ -157,7 +157,10 @@ class PySimColavEnv(BaseEnv):
         self.dynamics = None
         self.ship_pos = None
         self.static_ship = bool(static_ship)
-        self.static_ship_count = 3
+        self.static_ship_population = [0, 1, 2, 3]
+        self.static_ship_weights = [80, 15, 10, 5]
+        self._static_ship_probs = self.static_ship_weights / np.sum(self.static_ship_weights)
+        self.eval_static_ship_count = None
         self.static_ship_radius = 20 # safety radius around the obstacle
         self.own_ship_radius = 0.0 # keep point-ship model for now; set >0 for hull clearance
         self.use_polar_scan = bool(use_polar_scan) # Enable/disable polar scan representation
@@ -184,10 +187,7 @@ class PySimColavEnv(BaseEnv):
 
         # Load environment static data and build checkpoints/polygons
         self._load_environment_data(target_pos)
-
-        # Load static ship obstacle
-        if getattr(self, "static_ship", False):
-            self.static_ship_pos = self._compute_default_static_ship_pos()
+        self._sample_static_ship_scenario()
 
         # State and control placeholders
         self.ship = create_ship(self.ship_model)
@@ -1089,11 +1089,21 @@ class PySimColavEnv(BaseEnv):
 
         # Draw all static obstacle ships
         if getattr(self, "static_ship", False) and self.static_ship_pos is not None:
-            for i in range(self.static_ship_count):
+            n = min(self.static_ship_count, len(self.static_ship_pos))
+            for i in range(n):
                 sx, sy = float(self.static_ship_pos[i][0]), float(self.static_ship_pos[i][1])
-                obstacle_patch = patches.Circle((sx, sy), float(self.static_ship_radius),
-                                            color='gray', alpha=0.4, label='Static ship')
-                self.ax.add_patch(obstacle_patch)
+
+                # Safety circle
+                safety = patches.Circle(
+                    (sx, sy),
+                    float(self.static_ship_radius),
+                    fill=False,
+                    edgecolor="gray",
+                    linewidth=2,
+                    alpha=0.8,
+                    label="Static ship" if i == 0 else ""
+                )
+                self.ax.add_patch(safety)
 
         # Update target plot
         self.target_plot.set_data(self.target_pos[0:1], self.target_pos[1:2])
@@ -1202,6 +1212,12 @@ class PySimColavEnv(BaseEnv):
     # -----------------------
     # Static obstacle helpers
     # -----------------------
+    def _sample_static_ship_scenario(self) -> None:
+        """Sample number of static ships for this episode and regenerate their positions."""
+        # Sample count for this episode
+        self.static_ship_count = int(self._rng.choice(self.static_ship_population, p=self._static_ship_probs))
+        self.static_ship_pos = self._compute_default_static_ship_pos()
+
     def _compute_default_static_ship_pos(self) -> list[ndarray[Any, dtype[Any]]] | None:
         """Compute a deterministic static obstacle position.
 
@@ -1215,8 +1231,8 @@ class PySimColavEnv(BaseEnv):
             return None
 
         static_ship_positions = []
-        for static_ship in range(self.static_ship_count):
-            random_seg = randint(1, len(self.checkpoints) - 1)
+        for i in range(self.static_ship_count):
+            random_seg = int(self._rng.integers(1, len(self.checkpoints)))
             pa = np.asarray(self.checkpoints[random_seg - 1]["pos"], dtype=np.float32)
             pb = np.asarray(self.checkpoints[random_seg]["pos"], dtype=np.float32)
             static_ship_positions.append((0.5 * (pa + pb)).astype(np.float32))
@@ -1230,3 +1246,17 @@ class PySimColavEnv(BaseEnv):
             d = float(np.linalg.norm(self.ship_pos - self.static_ship_pos[i]))
             collisions.append(d <= float(self.static_ship_radius + self.own_ship_radius))
         return any(collisions)
+
+    def env_specific_reset(self) -> None:
+        """
+        Called from reset() every episode.
+        calculates amount and position of static ships differently for evaluation/training
+        """
+        if getattr(self, "static_ship", False):
+            # Evaluation (visualization) runs
+            if getattr(self, "eval_static_ship_count", None) is not None:
+                self.static_ship_count = int(self.eval_static_ship_count)
+                self.static_ship_pos = self._compute_default_static_ship_pos()
+            # Training runs
+            else:
+                self._sample_static_ship_scenario()

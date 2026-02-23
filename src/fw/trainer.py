@@ -6,7 +6,8 @@ from enum import Enum
 from pathlib import Path
 from fw.agent import Agent
 from fw.colav_agent import ColavAgent
-from fw.agent import PolicyStrategy
+from fw.agent import PolicyStrategy as PfPolicyStrategy
+from fw.colav_agent import PolicyStrategy as COLAVPolicyStrategy
 from fw.config import get_config_parameters, get_hyperparameters
 from contextlib import contextmanager
 
@@ -178,9 +179,15 @@ class Trainer:
                         policy_name = f"Best_{gym_env.type_name}" if self._config[
                             "visualize_best_trained"] else gym_env.type_name
 
+                        # self._agent.set_environment(
+                        #     env=gym_env,
+                        #     policy_strategy=PfPolicyStrategy.REUSE_OTHER_POLICY,
+                        #     other_env_name=policy_name,
+                        # )
+
                         self._agent.set_environment(
                             env=gym_env,
-                            policy_strategy=PolicyStrategy.REUSE_OTHER_POLICY,
+                            policy_strategy=COLAVPolicyStrategy.REUSE_OTHER_POLICY,
                             other_env_name=policy_name,
                         )
 

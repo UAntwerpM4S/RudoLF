@@ -307,6 +307,7 @@ class ColavAgent:
 
         self.model.set_policy_eval()
         env = self.get_env()
+        env.eval_static_ship_count = 3
 
         with self.smoothing(env):
             if hasattr(env, "ship_pos"):
@@ -325,6 +326,7 @@ class ColavAgent:
 
 
                 for episode in range(num_episodes):
+                    print(f"Starting episode {episode}")
                     episode_had_collision = False
                     state, _ = env.reset()
                     episode_reward = 0
