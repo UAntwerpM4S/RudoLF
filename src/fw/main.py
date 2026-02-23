@@ -37,6 +37,26 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         print(f"Training metrics: {metrics}")
     elif "visualize" == action:
-        trainer.visualize(envs)
+        # Optionally create AirSim bridge for simultaneous vehicle control
+        from fw.config import get_config_parameters
+        config = get_config_parameters()
+        airsim_bridge = None
+        if config.get("use_airsim", False):
+            from fw.simulators.airsim_bridge import AirSimBridge
+            airsim_bridge = AirSimBridge(
+                ip=config.get("airsim_ip", ""),
+                port=config.get("airsim_port", 41451),
+                heading_kp=config.get("airsim_kp", 5.0),
+                heading_ki=config.get("airsim_ki", 0.5),
+                heading_ff=config.get("airsim_ff", 0.5),
+                speed_scale=config.get("airsim_speed_scale", 1.0),
+                throttle_kp=config.get("airsim_throttle_kp", 1.0),
+                throttle_ki=config.get("airsim_throttle_ki", 0.05),
+                dist_gain=config.get("airsim_dist_gain", 0.1),
+                dist_ki=config.get("airsim_dist_ki", 0.0), # Default 0 if missing
+                log_telemetry=config.get("airsim_log_telemetry", True),
+            )
+
+        trainer.visualize(envs, airsim_bridge=airsim_bridge)
     else:
         print(f"Unable to execute unknown action '{action}'")

@@ -98,14 +98,13 @@ class PPOModel(BaseModel):
         self.input_dim = self.observation_space.shape[0]
         self.policy = PPOPolicy(self.input_dim, self.output_dim, self.device)
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
-        self.normalize = normalize
         self.max_nbr_iterations = max_nbr_iterations
+        self.normalize = normalize
+        self._vec_env = None
 
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4  # avoid division by zero
-
-        self._vec_env = None
 
 
     def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
@@ -260,25 +259,9 @@ class PPOModel(BaseModel):
         """
 
         def _init():
-            return Monitor(self.create_env())
+            return Monitor(copy.deepcopy(self.env))
 
         return _init
-
-
-    def create_env(self):
-        """
-        Create a copy of the environment for parallel runs.
-
-        Returns:
-            gym.Env: A new instance of the environment.
-        """
-        env = copy.deepcopy(self.env)
-
-        # Optionally randomize the environment's initial state
-        if hasattr(env, "randomize"):
-            env.randomize()
-
-        return env
 
 
     @staticmethod
@@ -318,23 +301,29 @@ class PPOModel(BaseModel):
         # Create vectorized environments once and reuse
         # follows the approach of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/common/on_policy_algorithm.html
         # where the vector is passed for each rollout instead of recreating it for all environments
-        if self._vec_env is None:
-            if num_envs > 1:
-                self._vec_env = SubprocVecEnv([self.make_env() for _ in range(num_envs)])
-            else:
-                self._vec_env = DummyVecEnv([lambda: Monitor(self.create_env())])
+        if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
+            # Recreate vec_env only if it does not exist or if the requested number of envs changed
+            env_fns = [self.make_env() for _ in range(num_envs)]
 
-        vec_env = self._vec_env
+            if num_envs > 1:
+                self._vec_env = SubprocVecEnv(env_fns)
+            else:
+                self._vec_env = DummyVecEnv(env_fns)
+
+        # ------------------------------------------------------------------
+        # Optional environment randomization
+        # ------------------------------------------------------------------
+        if hasattr(self._vec_env, "env_method"):
+            self._vec_env.env_method("randomize")
 
         # Reset all environments
-        states = vec_env.reset()
+        states = self._vec_env.reset()
         envs_done = np.zeros(num_envs, dtype=bool)
 
         # Storage for episode data
         collected_data = {k: [] for k in ["states", "actions", "rewards", "dones", "values", "log_probs"]}
         safeguard = 0
 
-        t0 = time.perf_counter()
         if fixed_horizon:
             # follows the definition of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/ppo/ppo.html
             n_steps = max(1, self.steps_per_update // self.num_envs)
@@ -344,7 +333,7 @@ class PPOModel(BaseModel):
                 actions, log_probs, values = self.policy.predict(states)
 
                 # Step all environments
-                next_states, rewards, terminations, _ = vec_env.step(actions)
+                next_states, rewards, terminations, _ = self._vec_env.step(actions)
                 envs_done = np.logical_or(envs_done, terminations)
 
                 # Store episode data
@@ -364,7 +353,7 @@ class PPOModel(BaseModel):
                 actions, log_probs, values = self.policy.predict(states)
 
                 # Step all environments
-                next_states, rewards, terminations, _ = vec_env.step(actions)
+                next_states, rewards, terminations, _ = self._vec_env.step(actions)
                 envs_done = np.logical_or(envs_done, terminations)
 
                 # Store episode data
@@ -385,7 +374,7 @@ class PPOModel(BaseModel):
         if safeguard == self.max_nbr_iterations:
             print(f"Safeguard triggered due to reaching max_iterations ({self.max_nbr_iterations}).")
 
-        #vec_env.close()
+        # self._vec_env.close()
 
         # Compute next values for the last state in each environment
         with torch.no_grad():
@@ -413,10 +402,12 @@ class PPOModel(BaseModel):
             episode = {}
             for key in collected_data:
                 # Extract only the relevant portion of the data for this environment
+                relevant_steps = collected_data[key][:first_true + 1]
+
                 if key in ["states", "actions"]:
-                    episode[key] = np.stack([step[i] for step in collected_data[key][:first_true + 1]])
+                    episode[key] = np.stack([step[i] for step in relevant_steps])
                 else:
-                    episode[key] = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in collected_data[key][:first_true + 1]])
+                    episode[key] = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in relevant_steps])
 
             if self.normalize:
                 episode["rewards"] = self.normalize_rewards(episode["rewards"])
@@ -461,7 +452,6 @@ class PPOModel(BaseModel):
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
         for iteration in range(stopping_condition.max_time_steps):
-            print(iteration)
             self.policy.network.eval()
 
             # Prepare batch for training
@@ -517,12 +507,10 @@ class PPOModel(BaseModel):
         # Dump training metrics to CSV
         self.dump_metrics_to_csv("training_metrics.csv", training_metrics)
 
-
         if getattr(self, "_vec_env", None) is not None:
             self._vec_env.close()
             self._vec_env = None
 
-        training_time = time.perf_counter() - training_start
         print("Training completed!")
         print(f"Training took: {training_time:.3f}s")
         print("Visualizing training process")

@@ -25,7 +25,7 @@ class FhSimEnv(PySimEnv):
                  time_step: float = 1.0,
                  max_steps: int = 15000,
                  verbose: Optional[bool] = None,
-                 ship_pos: Optional[np.ndarray] = None,
+                 start_pos: Optional[np.ndarray] = None,
                  target_pos: Optional[np.ndarray] = None,
                  ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
                  scenario: str = "DDShip_scenario1_nowindnocurrent"):
@@ -37,7 +37,7 @@ class FhSimEnv(PySimEnv):
             time_step (float, optional): Simulation time step in seconds. Defaults to 1.0.
             max_steps (int, optional): The maximum number of steps per episode. Defaults to 15000.
             verbose (bool, optional): Whether to enable verbose logging. Defaults to None.
-            ship_pos (tuple, optional): The initial position (x, y) of the ship. Defaults to None.
+            start_pos (tuple, optional): The initial position (x, y) of the ship. Defaults to None.
             target_pos (tuple, optional): The target position (x, y) for the ship. Defaults to None.
             ship_model (ShipModel, optional): The ship model. Defaults to ShipModel.MYZAKO_DEFAULT.
             scenario (str, optional): The scenario name. Defaults to "DDShip_scenario1_nowindnocurrent".
@@ -50,7 +50,7 @@ class FhSimEnv(PySimEnv):
             self._fh_sim = None
 
         super().__init__(render_mode=render_mode, time_step=time_step, max_steps=max_steps, verbose=verbose,
-                         ship_pos=ship_pos, target_pos=target_pos, ship_model=ship_model)
+                         start_pos=start_pos, target_pos=target_pos, ship_model=ship_model)
 
         if self._fh_sim is not None:
             self._fh_sim.initial_vessel_state = self.phys_sim.state

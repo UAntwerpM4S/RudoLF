@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -8,6 +9,7 @@ from gymnasium import Env
 from enum import auto, Enum
 from contextlib import contextmanager
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+from fw.simulators.airsim_bridge import AirSimBridge
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from fw.policies.ppo2_model import PPO2Model
@@ -275,6 +277,7 @@ class Agent:
             num_episodes: int = 1,
             live_animation: bool = False,
             env_color_index: int = 0,
+            airsim_bridge: AirSimBridge = None,
     ) -> None:
         """
         Run and visualize a trained model in the environment over multiple episodes.
@@ -283,6 +286,7 @@ class Agent:
             num_episodes (int, optional): Number of episodes to visualize (default is 5).
             live_animation (bool, optional): Enable live animation of the agent in the environment.
             env_color_index (int, optional): Index of the environment color.
+            airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
 
         Raises:
             RuntimeError: If no model is created.
@@ -305,42 +309,69 @@ class Agent:
                 total_rewards = []
                 start_pos = None
 
-                for episode in range(num_episodes):
-                    state, _ = env.reset()
-                    episode_reward = 0
-                    done = False
-                    steps = 0
+                # Determine simulation time step for AirSim sync
+                _sim_dt = getattr(env, 'time_step', 0.1)
 
-                    start_pos = np.copy(env.ship_pos)
+                try:
+                    for episode in range(num_episodes):
+                        state, _ = env.reset()
+                        episode_reward = 0
+                        done = False
+                        steps = 0
 
-                    # Store positions for this episode
-                    path_positions = [np.copy(env.ship_pos)]
+                        start_pos = np.copy(env.ship_pos)
 
-                    while not done:
-                        # Select action
-                        action, _ = self._model.predict(state=state, deterministic=True)
+                        # Reset AirSim vehicle at the start of each episode
+                        if airsim_bridge is not None:
+                            airsim_bridge.reset()
 
-                        # Take step in environment
-                        state, reward, terminated, truncated, _ = env.step(action)
-                        done = terminated or truncated
+                        # Store positions for this episode
+                        path_positions = [np.copy(env.ship_pos)]
 
-                        if not done:
-                            # Store current position
-                            path_positions.append(np.copy(env.ship_pos))
+                        while not done:
+                            # Select action
+                            action, _ = self._model.predict(state=state, deterministic=True)
 
-                            # Calculate the average episode reward
-                            episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
-                            steps += 1
+                            # Forward action to AirSim (if bridge is active)
+                            if airsim_bridge is not None:
+                                ship_state = env.phys_sim.state
+                                airsim_bridge.send_action(
+                                    action,
+                                    ship_speed=float(ship_state.u),
+                                    ship_heading=float(ship_state.heading),
+                                    ship_yaw_rate=float(ship_state.r),
+                                    ship_state=ship_state,
+                                )
 
-                            # Uncomment for animated evaluation
-                            if live_animation:
-                                env.render()
-                        else:
-                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
-                            break
+                            # Take step in environment
+                            state, reward, terminated, truncated, _ = env.step(action)
+                            done = terminated or truncated
 
-                    all_paths.append(np.array(path_positions))
-                    total_rewards.append(episode_reward)
+                            if not done:
+                                # Store current position
+                                path_positions.append(np.copy(env.ship_pos))
+
+                                # Calculate the average episode reward
+                                episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
+                                steps += 1
+
+                                # Uncomment for animated evaluation
+                                if live_animation:
+                                    env.render()
+
+                                # Brief pause to let AirSim process commands smoothly
+                                if airsim_bridge is not None and airsim_bridge.is_connected:
+                                    dt = getattr(env, "time_step", 0.1)
+                                    time.sleep(dt)
+                            else:
+                                print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
+                                break
+
+                        all_paths.append(np.array(path_positions))
+                        total_rewards.append(episode_reward)
+                finally:
+                    if airsim_bridge is not None:
+                        airsim_bridge.disconnect()
 
                 # Print summary statistics
                 avg_reward = np.mean(total_rewards)
