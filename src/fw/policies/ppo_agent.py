@@ -9,15 +9,15 @@ import numpy as np
 
 from typing import Optional, Tuple
 from fw.stop_condition import StopCondition
-from fw.policies.base_model import BaseModel
+from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo_policy import PPOPolicy
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 
 
-class PPOModel(BaseModel):
+class PPOAgent(BaseAgent):
     """
-    Proximal Policy Optimization (PPO) Model for reinforcement learning.
+    Proximal Policy Optimization (PPO) Agent for reinforcement learning.
 
     This class handles the training, evaluation, and policy management for PPO-based reinforcement learning agents.
     """
@@ -70,18 +70,18 @@ class PPOModel(BaseModel):
         **kwargs
     ):
         """
-        Initialize PPOModel with environment and training hyperparameters.
+        Initialize PPOAgent with environment and training hyperparameters.
 
-        This constructor passes core arguments to the BaseModel and adds two specific options
+        This constructor passes core arguments to the BaseAgent and adds two specific options
         for training behavior: maximum number of iterations and reward normalization.
 
         Args:
-            *args: Positional arguments passed to the BaseModel initializer.
+            *args: Positional arguments passed to the BaseAgent initializer.
             max_nbr_iterations (int, optional): The maximum number of environment steps before terminating training.
                 Used as a safeguard to prevent infinite loops. Defaults to 200000.
             normalize (bool, optional): Whether to normalize rewards using running statistics.
                 Helps stabilize learning when reward scales vary significantly. Defaults to False.
-            **kwargs: Keyword arguments passed to the BaseModel initializer.
+            **kwargs: Keyword arguments passed to the BaseAgent initializer.
         """
         super().__init__(*args, **kwargs)
 
@@ -403,7 +403,7 @@ class PPOModel(BaseModel):
 
         This method runs the training loop for the specified number of timesteps using parallel environments.
         It collects experience from the environments, updates the policy, logs training metrics, and saves
-        model checkpoints at regular intervals.
+        agent checkpoints at regular intervals.
 
         Args:
             stop_condition (StopCondition): Condition that defines when training should stop.
@@ -508,13 +508,13 @@ class PPOModel(BaseModel):
 
     def load_policy(self, policy_file_name: str) -> None:
         """
-        Load a trained model's policy.
+        Load a trained agent's policy.
 
         Args:
             policy_file_name (str): Name of the policy file to load.
 
         Raises:
-            RuntimeError: If no model is created or the policy fails to load.
+            RuntimeError: If no agent is created or the policy fails to load.
         """
         try:
             if self.model_dir:
@@ -527,13 +527,13 @@ class PPOModel(BaseModel):
 
     def save_policy(self, policy_file_name: str) -> None:
         """
-        Save the trained model's policy.
+        Save the trained agent's policy.
 
         Args:
             policy_file_name (str): Name of the policy file to save.
 
         Raises:
-            RuntimeError: If no model is created or the policy fails to save.
+            RuntimeError: If no agent is created or the policy fails to save.
         """
         try:
             if self.model_dir:
