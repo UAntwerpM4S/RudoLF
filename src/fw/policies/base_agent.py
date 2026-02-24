@@ -8,9 +8,9 @@ from abc import ABC, abstractmethod
 from fw.stop_condition import StopCondition
 
 
-class BaseModel(ABC):
+class BaseAgent(ABC):
     """
-    Abstract base class for reinforcement learning models.
+    Abstract base class for reinforcement learning agents.
 
     This class provides a unified interface and shared hyperparameters
     for reinforcement learning algorithms. Subclasses must implement
@@ -35,7 +35,7 @@ class BaseModel(ABC):
         model_dir: str = "models",
     ):
         """
-        Initialize the base model with environment and hyperparameters.
+        Initialize the base agent with environment and hyperparameters.
 
         Args:
             environment (gym.Env): The training environment.
@@ -51,7 +51,7 @@ class BaseModel(ABC):
             num_epochs (int, optional): Number of training epochs per update. Default is 10.
             batch_size (int, optional): Mini-batch size. Default is 64.
             device (str, optional): Device for training, either 'cpu' or 'cuda'. Default is 'cpu'.
-            model_dir (str, optional): Folder in which the generated models are saved.
+            model_dir (str, optional): Folder in which the generated agents are saved.
         """
         if device not in ("cpu", "cuda"):
             raise ValueError("device must be 'cpu' or 'cuda'")
@@ -102,7 +102,7 @@ class BaseModel(ABC):
         stop_condition: Optional[StopCondition] = None,
     ):
         """
-        Train the model using collected experiences.
+        Train the agent using collected experiences.
 
         Args:
             stop_condition (StopCondition, optional): A stopping criterion to terminate training early.
@@ -113,7 +113,7 @@ class BaseModel(ABC):
     @abstractmethod
     def save_policy(self, policy_file_name: str):
         """
-        Save the model policy to a file.
+        Save the agent policy to a file.
 
         Args:
             policy_file_name (str): Name of the policy file to save.
@@ -124,7 +124,7 @@ class BaseModel(ABC):
     @abstractmethod
     def load_policy(self, policy_file_name: str):
         """
-        Load the model policy from a file.
+        Load the agent policy from a file.
 
         Args:
             policy_file_name (str): Name of the policy file to load.
