@@ -91,7 +91,10 @@ class PPOAgent(BaseAgent):
         else:
             self.output_dim = self.action_space.shape[0]
 
-        self.input_dim = self.observation_space.shape[0]
+        if len(self.observation_space.shape) > 1:
+            self.input_dim = self.observation_space.shape[-1]
+        else:
+            self.input_dim = self.observation_space.shape[0]
         self.policy = PPOPolicy(self.input_dim, self.output_dim, self.device)
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         self.max_nbr_iterations = max_nbr_iterations
@@ -137,6 +140,11 @@ class PPOAgent(BaseAgent):
         """
         Predict an action for a given state using the policy.
 
+        Supports:
+            (obs_dim,)
+            (batch, obs_dim)
+            (num_envs, num_ships, obs_dim)
+
         Args:
             state (np.ndarray): Current state as a NumPy array.
             deterministic (boolean): Whether the action should be deterministic or not.
@@ -144,8 +152,26 @@ class PPOAgent(BaseAgent):
         Returns:
             Tuple: A tuple containing the predicted action and log probability.
         """
-        actions, log_probs, _ = self.policy.predict(state, deterministic)
-        return actions[0], log_probs.item()
+
+        # Case 1: single state
+        if state.ndim == 1:
+            state = state.reshape(1, -1)
+
+        # Case 2: (num_envs, num_ships, obs_dim)
+        reshape_back = False
+        if state.ndim == 3:
+            reshape_back = True
+            num_envs, num_ships, obs_dim = state.shape
+            state = state.reshape(num_envs * num_ships, obs_dim)
+
+        actions, log_probs, values = self.policy.predict(state, deterministic)
+
+        if reshape_back:
+            actions = actions.reshape(num_envs, num_ships, -1)
+            log_probs = log_probs.reshape(num_envs, num_ships)
+            values = values.reshape(num_envs, num_ships)
+
+        return actions, log_probs, values
 
 
     def train(self, all_episodes_data) -> float:
@@ -282,6 +308,7 @@ class PPOAgent(BaseAgent):
     def run_parallel_episodes(self, num_envs) -> list:
         """
         Run multiple episodes in parallel using Gym vectorized environments.
+        Collect trajectories per (env_id, ship_id) and compute GAE correctly.
 
         Args:
             num_envs (int): Number of parallel environments to run.
@@ -289,50 +316,87 @@ class PPOAgent(BaseAgent):
         Returns:
             list: A list of dictionaries containing episode data for each environment.
         """
+
         if num_envs <= 0:
             raise ValueError("num_envs must be greater than 0.")
 
-        # Create vectorized environments once and reuse
-        # follows the approach of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/common/on_policy_algorithm.html
-        # where the vector is passed for each rollout instead of recreating it for all environments
+        # ------------------------------------------------------------------
+        # Create or reuse vectorized environments
+        # ------------------------------------------------------------------
         if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
-            # Recreate vec_env only if it does not exist or if the requested number of envs changed
             env_fns = [self.make_env() for _ in range(num_envs)]
-
             if num_envs > 1:
                 self._vec_env = SubprocVecEnv(env_fns)
             else:
                 self._vec_env = DummyVecEnv(env_fns)
 
-        # ------------------------------------------------------------------
         # Optional environment randomization
-        # ------------------------------------------------------------------
         if hasattr(self._vec_env, "env_method"):
             self._vec_env.env_method("randomize")
 
-        # Reset all environments
-        states = self._vec_env.reset()
-        envs_done = np.zeros(num_envs, dtype=bool)
+        # ------------------------------------------------------------------
+        # Reset environments
+        # ------------------------------------------------------------------
+        states = self._vec_env.reset()  # expected: (num_envs, num_ships, obs_dim)
 
-        # Storage for episode data
-        collected_data = {k: [] for k in ["states", "actions", "rewards", "dones", "values", "log_probs"]}
+        # Ensure consistent dimensionality
+        if states.ndim == 2:
+            # (num_envs, obs_dim) → assume 1 ship
+            states = states[:, None, :]
+
+        num_envs, num_ships, obs_dim = states.shape
+
+        # ------------------------------------------------------------------
+        # Initialize per-ship trajectory buffers
+        # ------------------------------------------------------------------
+        buffers = [
+            [
+                {
+                    "states": [],
+                    "actions": [],
+                    "rewards": [],
+                    "dones": [],
+                    "values": [],
+                    "log_probs": [],
+                }
+                for _ in range(num_ships)
+            ]
+            for _ in range(num_envs)
+        ]
+
+        envs_done = np.zeros(num_envs, dtype=bool)
         safeguard = 0
 
+        # ------------------------------------------------------------------
+        # Rollout loop
+        # ------------------------------------------------------------------
         while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
-            # Select actions and get value predictions
-            actions, log_probs, values = self.policy.predict(states)
 
-            # Step all environments
+            actions, log_probs, values = self.predict(states, deterministic=False)
+
             next_states, rewards, terminations, _ = self._vec_env.step(actions)
-            envs_done = np.logical_or(envs_done, terminations)
 
-            # Store episode data
-            collected_data["states"].append(states)
-            collected_data["actions"].append(actions)
-            collected_data["rewards"].append(rewards)
-            collected_data["dones"].append(terminations)
-            collected_data["values"].append(values)
-            collected_data["log_probs"].append(log_probs)
+            # Ensure correct dimensionality
+            if next_states.ndim == 2:
+                next_states = next_states[:, None, :]
+            if rewards.ndim == 1:
+                rewards = rewards[:, None]
+            if terminations.ndim == 1:
+                terminations = terminations[:, None]
+
+            # Store per-ship transitions
+            for env_id in range(num_envs):
+                for ship_id in range(num_ships):
+                    buffers[env_id][ship_id]["states"].append(states[env_id, ship_id])
+                    buffers[env_id][ship_id]["actions"].append(actions[env_id, ship_id])
+                    buffers[env_id][ship_id]["rewards"].append(rewards[env_id, ship_id])
+                    buffers[env_id][ship_id]["dones"].append(terminations[env_id, ship_id])
+                    buffers[env_id][ship_id]["values"].append(values[env_id, ship_id])
+                    buffers[env_id][ship_id]["log_probs"].append(log_probs[env_id, ship_id])
+
+            # Update done flags at environment level
+            env_done = np.all(terminations, axis=1)
+            envs_done = np.logical_or(envs_done, env_done)
 
             # Update states for the next step
             states = next_states
@@ -341,55 +405,66 @@ class PPOAgent(BaseAgent):
         if safeguard >= 135000:
             print(f"Safeguard surpassed the 135000 boundary: {safeguard}.")
 
-        if safeguard == self.max_nbr_iterations:
+        if safeguard >= self.max_nbr_iterations:
             print(f"Safeguard triggered due to reaching max_iterations ({self.max_nbr_iterations}).")
 
         # self._vec_env.close()
 
-        # Compute next values for the last state in each environment
-        with torch.no_grad():
-            _, _, next_values = self.policy.network(torch.FloatTensor(states).to(self.device))
-            next_values = next_values.cpu().numpy()
-
-        # Process episode data
+        # ------------------------------------------------------------------
+        # Convert buffers into training episodes
+        # ------------------------------------------------------------------
         episode_data = []
-        for i in range(num_envs):
-            # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
-            # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
 
-            # Find the first True in dones for this environment
-            episode_dones = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in collected_data["dones"]])
-            first_true = self.find_first_true(episode_dones)
+        for env_id in range(num_envs):
+            for ship_id in range(num_ships):
+                traj = buffers[env_id][ship_id]
+                next_value = 0.0
 
-            # Handle cases where no True is found (episode did not terminate)
-            if first_true == -1:
-                first_true = len(episode_dones) - 1  # Use the entire episode
+                if len(traj["states"]) == 0:
+                    continue
 
-            episode = {}
-            for key in collected_data:
-                # Extract only the relevant portion of the data for this environment
-                relevant_steps = collected_data[key][:first_true + 1]
+                states_arr = np.array(traj["states"], dtype=np.float32)
+                actions_arr = np.array(traj["actions"])
+                rewards_arr = np.array(traj["rewards"], dtype=np.float32)
+                dones_arr = np.array(traj["dones"], dtype=np.float32)
+                values_arr = np.array(traj["values"], dtype=np.float32)
+                log_probs_arr = np.array(traj["log_probs"], dtype=np.float32)
 
-                if key in ["states", "actions"]:
-                    episode[key] = np.stack([step[i] for step in relevant_steps])
+                if self.normalize:
+                    rewards_arr = self.normalize_rewards(rewards_arr)
+
+                # Bootstrap value
+                if dones_arr[-1]:
+                    next_value = 0.0
                 else:
-                    episode[key] = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in relevant_steps])
+                    with torch.no_grad():
+                        last_state = torch.as_tensor(states_arr[-1], dtype=torch.float32).unsqueeze(0).to(self.device)
+                        _, _, last_value = self.policy.predict(last_state)
+                        next_value = last_value.item()
 
-            if self.normalize:
-                episode["rewards"] = self.normalize_rewards(episode["rewards"])
+                advantages = self.compute_gae(
+                    rewards_arr,
+                    values_arr,
+                    dones_arr,
+                    next_value,
+                    self.gamma,
+                    self.gae_lambda,
+                )
 
-            # Compute advantages and returns
-            episode["advantages"] = self.compute_gae(
-                episode["rewards"],
-                episode["values"],
-                episode["dones"],
-                next_values[i],
-                self.gamma,
-                self.gae_lambda,
-            )
+                returns = advantages + values_arr
 
-            episode["returns"] = episode["advantages"] + episode["values"]
-            episode_data.append(episode)
+                episode = {
+                    "states": states_arr,
+                    "actions": actions_arr,
+                    "rewards": rewards_arr,
+                    "dones": dones_arr,
+                    "values": values_arr,
+                    "log_probs": log_probs_arr,
+                    "advantages": advantages,
+                    "returns": returns,
+                }
+
+                episode_data.append(episode)
 
         return episode_data
 
@@ -436,8 +511,8 @@ class PPOAgent(BaseAgent):
             loss = self.train(episode_data)
 
             # Log results
-            mean_reward = total_reward / self.num_envs
-            mean_advantage = total_advantage / self.num_envs
+            mean_reward = total_reward / len(batch_data)
+            mean_advantage = total_advantage / len(batch_data)
 
             training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
 
