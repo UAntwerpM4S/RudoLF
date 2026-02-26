@@ -400,6 +400,7 @@ class PPOAgent(BaseAgent):
             env_done = np.all(terminations, axis=1)
             envs_done = np.logical_or(envs_done, env_done)
 
+            # Update states for the next step
             states = next_states
             safeguard += 1
 
@@ -408,6 +409,8 @@ class PPOAgent(BaseAgent):
 
         if safeguard >= self.max_nbr_iterations:
             print(f"Safeguard triggered due to reaching max_iterations ({self.max_nbr_iterations}).")
+
+        # self._vec_env.close()
 
         # ------------------------------------------------------------------
         # Convert buffers into training episodes
