@@ -224,21 +224,14 @@ class PySimEnv(BaseEnv):
             self.ukc.append(0.0)
 
             direction_vector = self.checkpoints[self.checkpoint_index[0]]['pos'] - self.ship_pos[i]
-            heading = self.normalize_angle(
-                self._safe_heading_from_vector(direction_vector)
-            )
-
+            heading = self.normalize_angle(self._safe_heading_from_vector(direction_vector))
             self.ship_heading.append(heading)
 
-            self.phys_sims[i].reset(
-                VesselState(
+            self.phys_sims[i].reset(VesselState(
                     x=self.ship_pos[i][0],
                     y=self.ship_pos[i][1],
                     heading=heading,
-                    u=0.0, v=0.0, r=0.0
-                )
-            )
-
+                    u=0.0, v=0.0, r=0.0))
             self.performed_action.append(np.zeros(2, dtype=np.float32))
 
     def create_simulator(self):
@@ -702,9 +695,9 @@ class PySimEnv(BaseEnv):
             ship_vec = ship_pos - prev_chkp_pos
             norm_cross_error *= 1.0 if np.cross(track_vec, ship_vec) >= 0.0 else -1.0
 
-        # --- Heading errors ---
+            # --- Heading errors ---
 
-        # To current checkpoint
+            # To current checkpoint
             heading_error = self._calculate_heading_error(
                 self._safe_heading_from_vector(current_chkp_pos - ship_pos),
                 phys_sim.state.heading,

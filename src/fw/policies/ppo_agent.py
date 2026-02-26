@@ -416,8 +416,8 @@ class PPOAgent(BaseAgent):
 
         for env_id in range(num_envs):
             for ship_id in range(num_ships):
-
                 traj = buffers[env_id][ship_id]
+                next_value = 0.0
 
                 if len(traj["states"]) == 0:
                     continue
@@ -437,9 +437,7 @@ class PPOAgent(BaseAgent):
                     next_value = 0.0
                 else:
                     with torch.no_grad():
-                        last_state = torch.as_tensor(
-                            states_arr[-1], dtype=torch.float32
-                        ).unsqueeze(0).to(self.device)
+                        last_state = torch.as_tensor(states_arr[-1], dtype=torch.float32).unsqueeze(0).to(self.device)
                         _, _, last_value = self.policy.predict(last_state)
                         next_value = last_value.item()
 
