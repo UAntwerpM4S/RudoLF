@@ -153,8 +153,6 @@ class PPOAgent(BaseAgent):
             Tuple: A tuple containing the predicted action and log probability.
         """
 
-        original_shape = state.shape
-
         # Case 1: single state
         if state.ndim == 1:
             state = state.reshape(1, -1)
