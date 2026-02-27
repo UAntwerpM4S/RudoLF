@@ -202,8 +202,8 @@ class AgentManager:
         Compute heading error relative to desired path direction
         """
         # Get current checkpoint index and position
-        curr_checkpoint = env.checkpoints[env.checkpoint_index[0]]
-        next_checkpoint = env.checkpoints[min(env.checkpoint_index[0] + 1, len(env.checkpoints) - 1)]
+        curr_checkpoint = env.checkpoints[env.checkpoint_index]
+        next_checkpoint = env.checkpoints[min(env.checkpoint_index + 1, len(env.checkpoints) - 1)]
 
         # Calculate desired heading (angle of path segment)
         desired_heading = np.arctan2(
@@ -212,7 +212,7 @@ class AgentManager:
         )
 
         # Calculate heading error (difference between current and desired heading)
-        heading_error = (env.phys_sims[0].state.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
+        heading_error = (env.phys_sim.state.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
         return heading_error
 
 
@@ -324,15 +324,15 @@ class AgentManager:
                     done = False
                     steps = 0
 
-                    start_pos = np.copy(env.ship_pos[0])
+                    start_pos = np.copy(env.ship_pos)
 
                     # Store heading errors for this episode
                     cross_errors = []
                     heading_errors = []
                     rudder_actions = []
                     ukc_measurements = []
-                    path_positions = [np.copy(env.ship_pos[0])]  # Store initial position
-                    cross_errors.append(env.cross_error[0])  # Store initial cross-track error
+                    path_positions = [np.copy(env.ship_pos)]  # Store initial position
+                    cross_errors.append(env.cross_error)  # Store initial cross-track error
 
                     # Calculate initial heading error relative to desired path
                     initial_heading_error = self.compute_heading_error(env)
@@ -340,7 +340,7 @@ class AgentManager:
 
                     while not done:
                         # Select action
-                        action, _, _ = self._agent.predict(state=state, deterministic=True)
+                        action, _ = self._agent.predict(state=state, deterministic=True)
 
                         # Take step in environment
                         state, reward, terminated, truncated, _ = env.step(action)
@@ -348,13 +348,13 @@ class AgentManager:
 
                         if not done:
                             # Store current position and errors
-                            path_positions.append(np.copy(env.ship_pos[0]))
-                            if env.checkpoint_index[0] >= 2:
-                                cross_errors.append(env.cross_error[0])
+                            path_positions.append(np.copy(env.ship_pos))
+                            if env.checkpoint_index >= 2:
+                                cross_errors.append(env.cross_error)
                             heading_error = self.compute_heading_error(env)
                             heading_errors.append(heading_error)
-                            rudder_actions.append(env.performed_action[0][0])
-                            ukc_measurements.append(env.ukc[0])
+                            rudder_actions.append(env.performed_action[0])
+                            ukc_measurements.append(env.ukc)
 
                             episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
                             steps += 1
@@ -363,7 +363,7 @@ class AgentManager:
                             if live_animation:
                                 env.render()
                         else:
-                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward[0]:.2f}")
+                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
                             break
 
                     all_paths.append(np.array(path_positions))
@@ -380,8 +380,8 @@ class AgentManager:
                 avg_reward = np.mean(total_rewards)
                 print(f"\nEvaluation completed!")
                 print(f"Average reward: {avg_reward:.2f}")
-                print(f"Best episode reward: {max(total_rewards[0]):.2f}")
-                print(f"Worst episode reward: {min(total_rewards[0]):.2f}")
+                print(f"Best episode reward: {max(total_rewards):.2f}")
+                print(f"Worst episode reward: {min(total_rewards):.2f}")
                 print(f"Mean Track Error Integral (mTEI): {mTEI:.2f}")
                 print(f"Maximum Track Error (MTE): {MTE:.2f}")
                 print(f"Mean Heading Error Integral (mHEI): {mHEI:.2f} rad")
@@ -442,7 +442,7 @@ class AgentManager:
                     for i, path in enumerate(all_paths):
                         ax1.plot(path[:, 0], path[:, 1], '-',
                                  color=colors[i], alpha=0.4,
-                                 label=f'{env.type_name} – Ep {i + 1} (R={total_rewards[0][i]:.1f})',
+                                 label=f'{env.type_name} – Ep {i + 1} (R={total_rewards[i]:.1f})',
                                  linestyle=line_style)
 
                     # Plot start and target positions
