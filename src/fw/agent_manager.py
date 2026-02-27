@@ -363,7 +363,7 @@ class AgentManager:
                             if live_animation:
                                 env.render()
                         else:
-                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward[0]:.2f}")
+                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
                             break
 
                     all_paths.append(np.array(path_positions))
@@ -380,8 +380,8 @@ class AgentManager:
                 avg_reward = np.mean(total_rewards)
                 print(f"\nEvaluation completed!")
                 print(f"Average reward: {avg_reward:.2f}")
-                print(f"Best episode reward: {max(total_rewards[0]):.2f}")
-                print(f"Worst episode reward: {min(total_rewards[0]):.2f}")
+                print(f"Best episode reward: {max(total_rewards):.2f}")
+                print(f"Worst episode reward: {min(total_rewards):.2f}")
                 print(f"Mean Track Error Integral (mTEI): {mTEI:.2f}")
                 print(f"Maximum Track Error (MTE): {MTE:.2f}")
                 print(f"Mean Heading Error Integral (mHEI): {mHEI:.2f} rad")
@@ -442,7 +442,7 @@ class AgentManager:
                     for i, path in enumerate(all_paths):
                         ax1.plot(path[:, 0], path[:, 1], '-',
                                  color=colors[i], alpha=0.4,
-                                 label=f'{env.type_name} – Ep {i + 1} (R={total_rewards[0][i]:.1f})',
+                                 label=f'{env.type_name} – Ep {i + 1} (R={total_rewards[i]:.1f})',
                                  linestyle=line_style)
 
                     # Plot start and target positions
