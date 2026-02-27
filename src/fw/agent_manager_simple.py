@@ -292,7 +292,7 @@ class AgentManager:
             RuntimeError: If no agent is created.
         """
         # Load checkpoint
-        # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
+        # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device_str="cpu")
 
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
@@ -319,22 +319,22 @@ class AgentManager:
                         done = False
                         steps = 0
 
-                        start_pos = np.copy(env.ship_pos[0])
+                        start_pos = np.copy(env.ship_pos)
 
                         # Reset AirSim vehicle at the start of each episode
                         if airsim_bridge is not None:
                             airsim_bridge.reset()
 
                         # Store positions for this episode
-                        path_positions = [np.copy(env.ship_pos[0])]
+                        path_positions = [np.copy(env.ship_pos)]
 
                         while not done:
                             # Select action
-                            action, _, _ = self._agent.predict(state=state, deterministic=True)
+                            action, _ = self._agent.predict(state=state, deterministic=True)
 
                             # Forward action to AirSim (if bridge is active)
                             if airsim_bridge is not None:
-                                ship_state = env.phys_sims[0].state
+                                ship_state = env.phys_sim.state
                                 airsim_bridge.send_action(
                                     action,
                                     ship_speed=float(ship_state.u),
@@ -349,7 +349,7 @@ class AgentManager:
 
                             if not done:
                                 # Store current position
-                                path_positions.append(np.copy(env.ship_pos[0]))
+                                path_positions.append(np.copy(env.ship_pos))
 
                                 # Calculate the average episode reward
                                 episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
@@ -364,7 +364,7 @@ class AgentManager:
                                     dt = getattr(env, "time_step", 0.1)
                                     time.sleep(dt)
                             else:
-                                print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward[0]:.2f}")
+                                print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
                                 break
 
                         all_paths.append(np.array(path_positions))
@@ -376,10 +376,10 @@ class AgentManager:
                 # Print summary statistics
                 avg_reward = np.mean(total_rewards)
                 print(f"\nEvaluation completed! Average reward: {avg_reward:.2f}")
-                print(f"Best episode reward: {max(total_rewards[0]):.2f}")
-                print(f"Worst episode reward: {min(total_rewards[0]):.2f}")
+                print(f"Best episode reward: {max(total_rewards):.2f}")
+                print(f"Worst episode reward: {min(total_rewards):.2f}")
 
-                self.render(env, start_pos, all_paths, total_rewards[0])
+                self.render(env, start_pos, all_paths, total_rewards)
 
                 # Cleanup the environment
                 if hasattr(env, "fh_sim"):
