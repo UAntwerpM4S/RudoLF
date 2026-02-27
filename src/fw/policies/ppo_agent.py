@@ -392,15 +392,10 @@ class PPOAgent(BaseAgent):
         for env_id in range(num_envs):
             for ship_id in range(num_ships):
                 traj = collected_data[env_id][ship_id]
+                next_value = 0.0
 
                 if len(traj["states"]) == 0:
                     continue
-
-                # Compute next values for the last state in each environment
-                with torch.no_grad():
-                    last_state = torch.FloatTensor(traj["states"][-1]).unsqueeze(0).to(self.device)
-                    _, _, next_values = self.policy.network(last_state)
-                    next_value = next_values.squeeze(0).item()
 
                 # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
                 # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
@@ -412,6 +407,12 @@ class PPOAgent(BaseAgent):
                 # Handle cases where no True is found (episode did not terminate)
                 if first_true == -1:
                     first_true = len(episode_dones) - 1  # Use the entire episode
+
+                    # Compute next values for the last state in each environment
+                    with torch.no_grad():
+                        last_state = torch.FloatTensor(traj["states"][-1]).unsqueeze(0).to(self.device)
+                        _, _, next_values = self.policy.network(last_state)
+                        next_value = next_values.squeeze(0).item()
 
                 episode = {}
                 for key in traj:
