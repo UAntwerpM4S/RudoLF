@@ -371,9 +371,10 @@ class PPOAgent(BaseAgent):
         # Rollout loop
         # ------------------------------------------------------------------
         while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
-
+            # Select actions and get value predictions
             actions, log_probs, values = self.predict(states, deterministic=False)
 
+            # Step all environments
             next_states, rewards, terminations, _ = self._vec_env.step(actions)
 
             # Ensure correct dimensionality
@@ -438,9 +439,9 @@ class PPOAgent(BaseAgent):
                     next_value = 0.0
                 else:
                     with torch.no_grad():
-                        last_state = torch.as_tensor(states_arr[-1], dtype=torch.float32).unsqueeze(0).to(self.device)
+                        last_state = torch.FloatTensor(states_arr[-1]).unsqueeze(0).to(self.device)
                         _, _, last_value = self.policy.predict(last_state)
-                        next_value = last_value.item()
+                        next_value = last_value.squeeze(0).item()
 
                 advantages = self.compute_gae(
                     rewards_arr,

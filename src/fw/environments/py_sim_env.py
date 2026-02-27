@@ -756,7 +756,7 @@ class PySimEnv(BaseEnv):
         Execute one environment timestep.
 
         Args:
-            action: Array-like with [rudder, thrust] commands in [-1, 1]
+            actions: Array-like with [rudder, thrust] commands in [-1, 1]
 
         Returns:
             tuple: (observation, reward, terminated, truncated, info)
