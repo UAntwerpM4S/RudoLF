@@ -140,11 +140,6 @@ class PPOAgent(BaseAgent):
         """
         Predict an action for a given state using the policy.
 
-        Supports:
-            (obs_dim,)
-            (batch, obs_dim)
-            (num_envs, num_ships, obs_dim)
-
         Args:
             state (np.ndarray): Current state as a NumPy array.
             deterministic (boolean): Whether the action should be deterministic or not.
@@ -152,25 +147,7 @@ class PPOAgent(BaseAgent):
         Returns:
             Tuple: A tuple containing the predicted action and log probability.
         """
-
-        # Case 1: single state
-        if state.ndim == 1:
-            state = state.reshape(1, -1)
-
-        # Case 2: (num_envs, num_ships, obs_dim)
-        reshape_back = False
-        if state.ndim == 3:
-            reshape_back = True
-            num_envs, num_ships, obs_dim = state.shape
-            state = state.reshape(num_envs * num_ships, obs_dim)
-
         actions, log_probs, values = self.policy.predict(state, deterministic)
-
-        if reshape_back:
-            actions = actions.reshape(num_envs, num_ships, -1)
-            log_probs = log_probs.reshape(num_envs, num_ships)
-            values = values.reshape(num_envs, num_ships)
-
         return actions, log_probs, values
 
 
@@ -308,7 +285,7 @@ class PPOAgent(BaseAgent):
     def run_parallel_episodes(self, num_envs) -> list:
         """
         Run multiple episodes in parallel using Gym vectorized environments.
-        Collect trajectories per (env_id, ship_id) and compute GAE correctly.
+        Collect trajectories per (env_id, ship_id) and compute GAE.
 
         Args:
             num_envs (int): Number of parallel environments to run.
@@ -320,10 +297,11 @@ class PPOAgent(BaseAgent):
         if num_envs <= 0:
             raise ValueError("num_envs must be greater than 0.")
 
-        # ------------------------------------------------------------------
-        # Create or reuse vectorized environments
-        # ------------------------------------------------------------------
+        # Create vectorized environments once and reuse
+        # follows the approach of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/common/on_policy_algorithm.html
+        # where the vector is passed for each rollout instead of recreating it for all environments
         if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
+            # Recreate vec_env only if it does not exist or if the requested number of envs changed
             env_fns = [self.make_env() for _ in range(num_envs)]
 
             if num_envs > 1:
@@ -331,26 +309,20 @@ class PPOAgent(BaseAgent):
             else:
                 self._vec_env = DummyVecEnv(env_fns)
 
+        # ------------------------------------------------------------------
         # Optional environment randomization
+        # ------------------------------------------------------------------
         if hasattr(self._vec_env, "env_method"):
             self._vec_env.env_method("randomize")
 
-        # ------------------------------------------------------------------
-        # Reset environments
-        # ------------------------------------------------------------------
-        states = self._vec_env.reset()  # expected: (num_envs, num_ships, obs_dim)
+        # Reset all environments
+        states = self._vec_env.reset()
 
-        # Ensure consistent dimensionality
-        if states.ndim == 2:
-            # (num_envs, obs_dim) → assume 1 ship
-            states = states[:, None, :]
+        _, num_ships, _ = states.shape
+        envs_done = np.zeros(num_envs, dtype=bool)
 
-        num_envs, num_ships, obs_dim = states.shape
-
-        # ------------------------------------------------------------------
-        # Initialize per-ship trajectory buffers
-        # ------------------------------------------------------------------
-        buffers = [
+        # Storage for episode data
+        collected_data = [
             [
                 {
                     "states": [],
@@ -366,12 +338,7 @@ class PPOAgent(BaseAgent):
             for _ in range(num_envs)
         ]
 
-        envs_done = np.zeros(num_envs, dtype=bool)
         safeguard = 0
-
-        # ------------------------------------------------------------------
-        # Rollout loop
-        # ------------------------------------------------------------------
         while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
             # Select actions and get value predictions
             actions, log_probs, values = self.predict(states, deterministic=False)
@@ -393,26 +360,16 @@ class PPOAgent(BaseAgent):
             terminations = np.asarray(terminations, dtype=bool)
             truncations = np.asarray(truncations, dtype=bool)
 
-            # Ensure correct dimensionality
-            if next_states.ndim == 2:
-                next_states = next_states[:, None, :]
-            if rewards.ndim == 1:
-                rewards = rewards[:, None]
-            if terminations.ndim == 1:
-                terminations = terminations[:, None]
-            if truncations.ndim == 1:
-                truncations = truncations[:, None]
-
             # Store per-ship transitions
             for env_id in range(num_envs):
                 for ship_id in range(num_ships):
-                    buffers[env_id][ship_id]["states"].append(states[env_id, ship_id])
-                    buffers[env_id][ship_id]["actions"].append(actions[env_id, ship_id])
-                    buffers[env_id][ship_id]["rewards"].append(rewards[env_id, ship_id])
-                    buffers[env_id][ship_id]["terminations"].append(terminations[env_id, ship_id])
-                    buffers[env_id][ship_id]["truncations"].append(truncations[env_id, ship_id])
-                    buffers[env_id][ship_id]["values"].append(values[env_id, ship_id])
-                    buffers[env_id][ship_id]["log_probs"].append(log_probs[env_id, ship_id])
+                    collected_data[env_id][ship_id]["states"].append(states[env_id, ship_id])
+                    collected_data[env_id][ship_id]["actions"].append(actions[env_id, ship_id])
+                    collected_data[env_id][ship_id]["rewards"].append(rewards[env_id, ship_id])
+                    collected_data[env_id][ship_id]["terminations"].append(terminations[env_id, ship_id])
+                    collected_data[env_id][ship_id]["truncations"].append(truncations[env_id, ship_id])
+                    collected_data[env_id][ship_id]["values"].append(values[env_id, ship_id])
+                    collected_data[env_id][ship_id]["log_probs"].append(log_probs[env_id, ship_id])
 
             # Update done flags at environment level
             env_done = np.all(terminations | truncations, axis=1)
@@ -430,60 +387,57 @@ class PPOAgent(BaseAgent):
 
         # self._vec_env.close()
 
-        # ------------------------------------------------------------------
-        # Convert buffers into training episodes
-        # ------------------------------------------------------------------
+        # Process episode data
         episode_data = []
-
         for env_id in range(num_envs):
             for ship_id in range(num_ships):
-                traj = buffers[env_id][ship_id]
-                next_value = 0.0
+                traj = collected_data[env_id][ship_id]
 
                 if len(traj["states"]) == 0:
                     continue
 
-                states_arr = np.array(traj["states"], dtype=np.float32)
-                actions_arr = np.array(traj["actions"])
-                rewards_arr = np.array(traj["rewards"], dtype=np.float32)
-                dones_arr = np.array(traj["terminations"], dtype=np.float32)
-                values_arr = np.array(traj["values"], dtype=np.float32)
-                log_probs_arr = np.array(traj["log_probs"], dtype=np.float32)
+                # Compute next values for the last state in each environment
+                with torch.no_grad():
+                    last_state = torch.FloatTensor(traj["states"][-1]).unsqueeze(0).to(self.device)
+                    _, _, next_values = self.policy.network(last_state)
+                    next_value = next_values.squeeze(0).item()
+
+                # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
+                # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
+
+                # Find the first True in dones for this environment
+                episode_dones = np.asarray(traj["terminations"], dtype=bool)
+                first_true = self.find_first_true(episode_dones)
+
+                # Handle cases where no True is found (episode did not terminate)
+                if first_true == -1:
+                    first_true = len(episode_dones) - 1  # Use the entire episode
+
+                episode = {}
+                for key in traj:
+                    relevant_steps = traj[key][:first_true + 1]
+
+                    if key in ["states", "actions"]:
+                        episode[key] = np.stack(relevant_steps)
+                    elif key in ["terminations", "truncations"]:
+                        episode[key] = np.asarray(relevant_steps, dtype=bool)
+                    else:
+                        episode[key] = np.asarray(relevant_steps)
 
                 if self.normalize:
-                    rewards_arr = self.normalize_rewards(rewards_arr)
+                    episode["rewards"] = self.normalize_rewards(episode["rewards"])
 
-                # Bootstrap value
-                if dones_arr[-1]:
-                    next_value = 0.0
-                else:
-                    with torch.no_grad():
-                        last_state = torch.FloatTensor(states_arr[-1]).unsqueeze(0).to(self.device)
-                        _, _, last_value = self.policy.predict(last_state)
-                        next_value = last_value.squeeze(0).item()
-
-                advantages = self.compute_gae(
-                    rewards_arr,
-                    values_arr,
-                    dones_arr,
+                # Compute advantages and returns
+                episode["advantages"] = self.compute_gae(
+                    episode["rewards"],
+                    episode["values"],
+                    episode["terminations"],
                     next_value,
                     self.gamma,
                     self.gae_lambda,
                 )
 
-                returns = advantages + values_arr
-
-                episode = {
-                    "states": states_arr,
-                    "actions": actions_arr,
-                    "rewards": rewards_arr,
-                    "dones": dones_arr,
-                    "values": values_arr,
-                    "log_probs": log_probs_arr,
-                    "advantages": advantages,
-                    "returns": returns,
-                }
-
+                episode["returns"] = episode["advantages"] + episode["values"]
                 episode_data.append(episode)
 
         return episode_data
