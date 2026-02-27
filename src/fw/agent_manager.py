@@ -297,7 +297,7 @@ class AgentManager:
             RuntimeError: If no agent is created.
         """
         # Load checkpoint
-        # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
+        # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device_str="cpu")
 
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
