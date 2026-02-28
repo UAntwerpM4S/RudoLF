@@ -57,7 +57,8 @@ class PPOAgent(BaseAgent):
             next_non_terminal = 1.0 - dones[t]
             next_values = next_value if t == len(rewards) - 1 else values[t + 1]
             delta = rewards[t] + gamma * next_values * next_non_terminal - values[t]
-            advantages[t] = last_gae = delta + gamma * lambda_ * next_non_terminal * last_gae
+            last_gae = delta + gamma * lambda_ * next_non_terminal * last_gae
+            advantages[t] = last_gae
 
         return advantages
 
@@ -332,6 +333,7 @@ class PPOAgent(BaseAgent):
                     "truncations": [],
                     "values": [],
                     "log_probs": [],
+					"next_states": [],
                 }
                 for _ in range(num_ships)
             ]
@@ -346,7 +348,7 @@ class PPOAgent(BaseAgent):
             # Step all environments
             next_states, _, _, info = self._vec_env.step(actions)
 
-            rewards = np.zeros((num_envs, num_ships), dtype=np.float64)
+            rewards = np.zeros((num_envs, num_ships), dtype=np.float32)
             terminations = np.zeros((num_envs, num_ships), dtype=bool)
             truncations = np.zeros((num_envs, num_ships), dtype=bool)
 
@@ -356,12 +358,15 @@ class PPOAgent(BaseAgent):
                 truncations[e] = env_info["truncations"]
 
             # Convert to numpy arrays with identical structure as original step()
-            rewards = np.asarray(rewards, dtype=np.float64)
+            rewards = np.asarray(rewards, dtype=np.float32)
             terminations = np.asarray(terminations, dtype=bool)
             truncations = np.asarray(truncations, dtype=bool)
 
             # Store per-ship transitions
             for env_id in range(num_envs):
+                if envs_done[env_id]:
+                    continue  # Skip already completed environments
+
                 for ship_id in range(num_ships):
                     collected_data[env_id][ship_id]["states"].append(states[env_id, ship_id])
                     collected_data[env_id][ship_id]["actions"].append(actions[env_id, ship_id])
@@ -370,6 +375,7 @@ class PPOAgent(BaseAgent):
                     collected_data[env_id][ship_id]["truncations"].append(truncations[env_id, ship_id])
                     collected_data[env_id][ship_id]["values"].append(values[env_id, ship_id])
                     collected_data[env_id][ship_id]["log_probs"].append(log_probs[env_id, ship_id])
+                    collected_data[env_id][ship_id]["next_states"].append(next_states[env_id, ship_id])
 
             # Update done flags at environment level
             env_done = np.all(terminations | truncations, axis=1)
@@ -392,47 +398,70 @@ class PPOAgent(BaseAgent):
         for env_id in range(num_envs):
             for ship_id in range(num_ships):
                 traj = collected_data[env_id][ship_id]
-                next_value = 0.0
 
                 if len(traj["states"]) == 0:
                     continue
+
+                # ----------------------------------------------------------
+                # Determine episode end (termination OR truncation)
+                # ----------------------------------------------------------
 
                 # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
                 # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
 
                 # Find the first True in dones for this environment
-                episode_dones = np.asarray(traj["terminations"], dtype=bool)
-                first_true = self.find_first_true(episode_dones)
+                done_mask = np.logical_or(traj["terminations"], traj["truncations"])
+                first_done = self.find_first_true(done_mask)
 
                 # Handle cases where no True is found (episode did not terminate)
-                if first_true == -1:
-                    first_true = len(episode_dones) - 1  # Use the entire episode
+                if first_done == -1:
+                    first_done = len(done_mask) - 1  # Use the entire episode
 
-                    # Compute next values for the last state in each environment
+                # ----------------------------------------------------------
+                # Determine bootstrap condition
+                # ----------------------------------------------------------
+                last_step_terminated = traj["terminations"][first_done]
+
+                next_value = 0.0
+                if not last_step_terminated:
+                    # We bootstrap for:
+                    # - truncation
+                    # - safeguard stop
                     with torch.no_grad():
-                        last_state = torch.FloatTensor(traj["states"][-1]).unsqueeze(0).to(self.device)
+                        last_state = torch.FloatTensor(traj["next_states"][first_done]).unsqueeze(0).to(self.device)
                         _, _, next_values = self.policy.network(last_state)
                         next_value = next_values.squeeze(0).item()
 
+                # ----------------------------------------------------------
+                # Trim trajectory to valid region
+                # ----------------------------------------------------------
                 episode = {}
-                for key in traj:
-                    relevant_steps = traj[key][:first_true + 1]
 
-                    if key in ["states", "actions"]:
+                for key in traj:
+                    relevant_steps = traj[key][:first_done + 1]
+
+                    if key in ["states", "actions", "next_states"]:
                         episode[key] = np.stack(relevant_steps)
                     elif key in ["terminations", "truncations"]:
                         episode[key] = np.asarray(relevant_steps, dtype=bool)
                     else:
-                        episode[key] = np.asarray(relevant_steps)
+                        episode[key] = np.asarray(relevant_steps, dtype=np.float32)
 
+                # ----------------------------------------------------------
+                # Optional reward normalization
+                # ----------------------------------------------------------
                 if self.normalize:
                     episode["rewards"] = self.normalize_rewards(episode["rewards"])
 
-                # Compute advantages and returns
+                # ----------------------------------------------------------
+                # Compute GAE (ONLY true terminations zero bootstrap)
+                # ----------------------------------------------------------
+
+				# Compute advantages and returns
                 episode["advantages"] = self.compute_gae(
                     episode["rewards"],
                     episode["values"],
-                    episode["terminations"],
+                    episode["terminations"],  # only real terminals
                     next_value,
                     self.gamma,
                     self.gae_lambda,
