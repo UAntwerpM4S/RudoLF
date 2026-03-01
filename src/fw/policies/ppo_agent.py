@@ -175,58 +175,56 @@ class PPOAgent(BaseAgent):
         self.policy.network.train()
 
         # Concatenate all episode data into single arrays for batch processing
-        all_states = np.concatenate([ep['states'] for ep in all_episodes_data])
-        all_actions = np.concatenate([ep['actions'] for ep in all_episodes_data])
-        all_advantages = np.concatenate([ep['advantages'] for ep in all_episodes_data])
-        all_old_log_probs = np.concatenate([ep['log_probs'] for ep in all_episodes_data])
-        all_returns = np.concatenate([ep['returns'] for ep in all_episodes_data])
+        all_states = torch.as_tensor(np.concatenate([ep['states'] for ep in all_episodes_data]),
+                                     dtype=torch.float32).to(self.device)
+        all_actions = torch.as_tensor(np.concatenate([ep['actions'] for ep in all_episodes_data]),
+                                      dtype=torch.float32).to(self.device)
+        all_advantages = torch.as_tensor(np.concatenate([ep['advantages'] for ep in all_episodes_data]),
+                                         dtype=torch.float32).to(self.device)
+        all_old_log_probs = torch.as_tensor(np.concatenate([ep['log_probs'] for ep in all_episodes_data]),
+                                            dtype=torch.float32).to(self.device)
+        all_returns = torch.as_tensor(np.concatenate([ep['returns'] for ep in all_episodes_data]),
+                                      dtype=torch.float32).to(self.device)
 
-        # Convert data to tensors
-        states = torch.as_tensor(all_states, dtype=torch.float32).to(self.device)
-        actions = torch.as_tensor(all_actions, dtype=torch.float32).to(self.device)
-        advantages = torch.as_tensor(all_advantages, dtype=torch.float32).to(self.device)
-        old_log_probs = torch.as_tensor(all_old_log_probs, dtype=torch.float32).to(self.device)
-        returns = torch.as_tensor(all_returns, dtype=torch.float32).to(self.device)
-
-        if advantages.numel() <= 1:
-            print(f"[Warning] Very short trajectory detected. Length: {advantages.numel()}")
+        if all_advantages.numel() <= 1:
+            print(f"[Warning] Very short trajectory detected. Length: {all_advantages.numel()}")
             return float('nan')
 
         # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
 
         # Train over multiple epochs
-        batch_size = states.shape[0]
-        minibatch_size = self.batch_size
-
+        batch_size = all_states.shape[0]
         loss_per_epoch = []
 
         for _ in range(self.num_epochs):
             # Shuffle indices
             indices = torch.randperm(batch_size)
 
-            for start in range(0, batch_size, minibatch_size):
-                end = start + minibatch_size
+            for start in range(0, batch_size, self.batch_size):
+                end = start + self.batch_size
                 mb_idx = indices[start:end]
 
-                mb_states = states[mb_idx]
-                mb_actions = actions[mb_idx]
-                mb_old_log_probs = old_log_probs[mb_idx]
-                mb_returns = returns[mb_idx]
-                mb_advantages = advantages[mb_idx]
+                # Slicing existing tensors is faster than re-creating them
+                mb_states = all_states[mb_idx]
+                mb_actions = all_actions[mb_idx]
+                mb_old_log_probs = all_old_log_probs[mb_idx]
+                mb_returns = all_returns[mb_idx]
+                mb_advantages = all_advantages[mb_idx]
 
                 # Get current policy distribution
                 action_mean, action_std, state_values = self.policy.network(mb_states)
                 dist = torch.distributions.Normal(action_mean, action_std)
 
-                # Adjust actions if action space is continuous
+                # Use the raw actions logic safely
                 if isinstance(self.action_space, gym.spaces.Box):
-                    raw_actions = torch.atanh(mb_actions.clamp(-0.99, 0.99))
+                    # Numerical safety for atanh
+                    raw_actions = torch.atanh(mb_actions.clamp(-0.999, 0.999))
                 else:
                     raw_actions = mb_actions
                 log_probs = self.policy.calc_log_probs(dist, raw_actions, mb_actions)
 
-                # PPO clipped loss
+                # PPO Objective
                 ratios = torch.exp(log_probs - mb_old_log_probs)
 
                 surrogate_1 = ratios * mb_advantages
@@ -234,12 +232,12 @@ class PPOAgent(BaseAgent):
 
                 policy_loss = -torch.min(surrogate_1, surrogate_2).mean()
 
-                # Value loss
+                # Value Loss: MSE between predicted value and GAE-based returns
                 value_loss = torch.nn.functional.mse_loss(state_values.squeeze(-1), mb_returns)
-                entropy = dist.entropy().sum(dim=-1).mean()
+                entropy_loss = dist.entropy().sum(dim=-1).mean()    # Encourage exploration
 
                 # Total loss
-                loss = policy_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy
+                loss = policy_loss + (self.value_loss_coef * value_loss) - (self.entropy_coef * entropy_loss)
 
                 # Optimize
                 self.optimizer.zero_grad()
@@ -247,7 +245,7 @@ class PPOAgent(BaseAgent):
                 nn.utils.clip_grad_norm_(self.policy.network.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
-                loss_per_epoch.append(loss.detach().cpu().item())
+                loss_per_epoch.append(loss.item())
 
         # Return mean loss over all updates
         return np.mean(loss_per_epoch)
@@ -286,7 +284,7 @@ class PPOAgent(BaseAgent):
     def run_parallel_episodes(self, num_envs) -> list:
         """
         Run multiple episodes in parallel using Gym vectorized environments.
-        Collect trajectories per (env_id, ship_id) and compute GAE.
+        Collect trajectories per (env_id, agent_id) and compute GAE.
 
         Args:
             num_envs (int): Number of parallel environments to run.
@@ -304,11 +302,7 @@ class PPOAgent(BaseAgent):
         if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
             # Recreate vec_env only if it does not exist or if the requested number of envs changed
             env_fns = [self.make_env() for _ in range(num_envs)]
-
-            if num_envs > 1:
-                self._vec_env = SubprocVecEnv(env_fns)
-            else:
-                self._vec_env = DummyVecEnv(env_fns)
+            self._vec_env = SubprocVecEnv(env_fns) if num_envs > 1 else DummyVecEnv(env_fns)
 
         # ------------------------------------------------------------------
         # Optional environment randomization
@@ -319,7 +313,20 @@ class PPOAgent(BaseAgent):
         # Reset all environments
         states = self._vec_env.reset()
 
-        _, num_ships, _ = states.shape
+        if states.ndim == 3:
+            # Multi-agent case: (num_envs, num_agents, obs_dim)
+            num_envs, num_agents, obs_dim = states.shape
+        elif states.ndim == 2:
+            # Single-agent case: (num_envs, obs_dim)
+            num_envs, obs_dim = states.shape
+            num_agents = 1
+        else:
+            raise ValueError(
+                f"Unexpected states shape {states.shape}. "
+                "Expected 2D (num_envs, obs_dim) or 3D (num_envs, num_agents, obs_dim)."
+            )
+
+        # Track which environments are finished
         envs_done = np.zeros(num_envs, dtype=bool)
 
         # Storage for episode data
@@ -335,47 +342,46 @@ class PPOAgent(BaseAgent):
                     "log_probs": [],
 					"next_states": [],
                 }
-                for _ in range(num_ships)
+                for _ in range(num_agents)
             ]
             for _ in range(num_envs)
         ]
 
         safeguard = 0
         while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
-            # Select actions and get value predictions
+            # Inference: No gradients needed here
             actions, log_probs, values = self.predict(states, deterministic=False)
 
             # Step all environments
-            next_states, _, _, info = self._vec_env.step(actions)
+            next_states, next_rewards, next_terminations, infos = self._vec_env.step(actions)
 
-            rewards = np.zeros((num_envs, num_ships), dtype=np.float32)
-            terminations = np.zeros((num_envs, num_ships), dtype=bool)
-            truncations = np.zeros((num_envs, num_ships), dtype=bool)
+            if infos and all(
+                    all(k in env_info for k in ("rewards", "terminations", "truncations"))
+                    for env_info in infos
+            ):
+                rewards = np.stack([env_info["rewards"] for env_info in infos]).astype(np.float32)
+                terminations = np.stack([env_info["terminations"] for env_info in infos]).astype(bool)
+                truncations = np.stack([env_info["truncations"] for env_info in infos]).astype(bool)
+            else:
+                rewards = next_rewards
+                terminations = next_terminations
+                truncations = np.zeros((num_envs, num_agents), dtype=bool)
 
-            for e, env_info in enumerate(info):
-                rewards[e] = env_info["rewards"]
-                terminations[e] = env_info["terminations"]
-                truncations[e] = env_info["truncations"]
-
-            # Convert to numpy arrays with identical structure as original step()
-            rewards = np.asarray(rewards, dtype=np.float32)
-            terminations = np.asarray(terminations, dtype=bool)
-            truncations = np.asarray(truncations, dtype=bool)
-
-            # Store per-ship transitions
+            # Store per-agent transitions
             for env_id in range(num_envs):
                 if envs_done[env_id]:
                     continue  # Skip already completed environments
 
-                for ship_id in range(num_ships):
-                    collected_data[env_id][ship_id]["states"].append(states[env_id, ship_id])
-                    collected_data[env_id][ship_id]["actions"].append(actions[env_id, ship_id])
-                    collected_data[env_id][ship_id]["rewards"].append(rewards[env_id, ship_id])
-                    collected_data[env_id][ship_id]["terminations"].append(terminations[env_id, ship_id])
-                    collected_data[env_id][ship_id]["truncations"].append(truncations[env_id, ship_id])
-                    collected_data[env_id][ship_id]["values"].append(values[env_id, ship_id])
-                    collected_data[env_id][ship_id]["log_probs"].append(log_probs[env_id, ship_id])
-                    collected_data[env_id][ship_id]["next_states"].append(next_states[env_id, ship_id])
+                for agent_id in range(num_agents):
+                    traj = collected_data[env_id][agent_id]
+                    traj["states"].append(states[env_id, agent_id])
+                    traj["actions"].append(actions[env_id, agent_id])
+                    traj["rewards"].append(rewards[env_id, agent_id])
+                    traj["terminations"].append(terminations[env_id, agent_id])
+                    traj["truncations"].append(truncations[env_id, agent_id])
+                    traj["values"].append(values[env_id, agent_id])
+                    traj["log_probs"].append(log_probs[env_id, agent_id])
+                    traj["next_states"].append(next_states[env_id, agent_id])
 
             # Update done flags at environment level
             env_done = np.all(terminations | truncations, axis=1)
@@ -393,11 +399,11 @@ class PPOAgent(BaseAgent):
 
         # self._vec_env.close()
 
-        # Process episode data
+        # Process episode data with proper trimming
         episode_data = []
         for env_id in range(num_envs):
-            for ship_id in range(num_ships):
-                traj = collected_data[env_id][ship_id]
+            for agent_id in range(num_agents):
+                traj = collected_data[env_id][agent_id]
 
                 if len(traj["states"]) == 0:
                     continue
@@ -457,7 +463,7 @@ class PPOAgent(BaseAgent):
                 # Compute GAE (ONLY true terminations zero bootstrap)
                 # ----------------------------------------------------------
 
-				# Compute advantages and returns
+                # Compute advantages and returns
                 episode["advantages"] = self.compute_gae(
                     episode["rewards"],
                     episode["values"],
@@ -515,8 +521,8 @@ class PPOAgent(BaseAgent):
             loss = self.train(episode_data)
 
             # Log results
-            mean_reward = total_reward / len(batch_data)
-            mean_advantage = total_advantage / len(batch_data)
+            mean_reward = total_reward / len(batch_data) if batch_data else 0
+            mean_advantage = total_advantage / len(batch_data) if batch_data else 0
 
             training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
 
