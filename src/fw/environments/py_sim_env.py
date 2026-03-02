@@ -207,6 +207,7 @@ class PySimEnv(BaseEnv):
         self.ship_heading = []
         self.previous_ship_pos = []
         self.previous_heading = []
+        self.performed_action = []
 
         self.checkpoint_index = []
         self.cross_error = []
@@ -775,17 +776,16 @@ class PySimEnv(BaseEnv):
         truncations = np.zeros(self.num_ships, dtype=bool)
 
         for i in range(self.num_ships):
-            state = self.phys_sims[i].state
-            if not state.terminated and not state.truncated:
+            if not self.phys_sims[i].state.terminated and not self.phys_sims[i].state.truncated:
                 action = actions[i]
 
                 # Save previous values
                 self.previous_ship_pos[i] = self.ship_pos[i].copy()
-                self.previous_heading[i] = state.heading
+                self.previous_heading[i] = self.phys_sims[i].state.heading
 
                 # Update state vector
                 self.phys_sims[i].step(action, self.enable_smoothing)
-                self.ship_pos[i] = np.array([state.x, state.y], dtype=np.float32)
+                self.ship_pos[i] = np.array([self.phys_sims[i].state.x, self.phys_sims[i].state.y], dtype=np.float32)
                 self.performed_action[i] = self.phys_sims[i].actuators.current_actuator_state.copy()
                 self.step_count[i] += 1
 
@@ -799,8 +799,8 @@ class PySimEnv(BaseEnv):
                     truncated = True
 
                 # Update ship state
-                state.terminated = terminated
-                state.truncated = truncated
+                self.phys_sims[i].state.terminated = terminated
+                self.phys_sims[i].state.truncated = truncated
 
                 # Store outputs
                 rewards[i] = reward
@@ -809,8 +809,8 @@ class PySimEnv(BaseEnv):
             else:
                 # Ship already terminated/truncated, output zero reward and keep flags
                 rewards[i] = 0.0
-                terminations[i] = state.terminated
-                truncations[i] = state.truncated
+                terminations[i] = self.phys_sims[i].state.terminated
+                truncations[i] = self.phys_sims[i].state.truncated
 
         info = {
             "rewards": rewards,
