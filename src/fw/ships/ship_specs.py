@@ -29,6 +29,18 @@ class ShipSpecifications:
     Vessel mass [kg]. Used in dynamics calculations and damping scaling.
     """
 
+    terminated: bool
+    """
+    Indicates whether the ship’s episode ended due to a terminal condition,
+    such as collision, goal achievement, or other criterion.
+    """
+
+    truncated: bool
+    """
+    Indicates whether the ship’s episode ended due to truncation, e.g., because the
+    maximum allowed number of steps was reached without meeting a terminal condition.
+    """
+
     # Actuator limits
     max_rudder_angle: float
     """

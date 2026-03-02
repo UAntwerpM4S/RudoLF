@@ -162,9 +162,9 @@ class PySimEnv(BaseEnv):
         self._rng: np.random.Generator = np.random.default_rng()
 
         if start_pos is not None:
-            self.initial_ship_pos = np.array(start_pos, dtype=np.float32)
+            self.initial_ship_pos = [np.array(start_pos, dtype=np.float32) for _ in range(self.num_ships)]
         else:
-            self.initial_ship_pos = np.array([5.0, 5.0], dtype=np.float32)
+            self.initial_ship_pos = [np.array([5.0, 5.0], dtype=np.float32) for _ in range(self.num_ships)]
 
         self.randomization_scale = 1.0
         self.max_dist = np.sqrt(2) * float(MAX_GRID_POS)
@@ -174,7 +174,7 @@ class PySimEnv(BaseEnv):
 
         # State and control placeholders
         self.ships = [create_ship(self.ship_model) for _ in range(self.num_ships)]
-        self.phys_sims = [self.create_simulator() for _ in range(self.num_ships)]
+        self.phys_sims = [self.create_simulator(i) for i in range(self.num_ships)]
 
         self._initialize_simulation()
 
@@ -215,15 +215,17 @@ class PySimEnv(BaseEnv):
 
         # Set heading toward first checkpoint (safeguard if checkpoint list is short)
         for i in range(self.num_ships):
-            self.ship_pos.append(self.initial_ship_pos.copy())
-            self.previous_ship_pos.append(self.initial_ship_pos.copy())
+            self.ship_pos.append(self.initial_ship_pos[i].copy())
+            self.previous_ship_pos.append(self.initial_ship_pos[i].copy())
             self.previous_heading.append(0.0)
             self.checkpoint_index.append(1)
             self.cross_error.append(0.0)
             self.step_count.append(0)
             self.ukc.append(0.0)
+            self.ships[i].terminated = False
+            self.ships[i].truncated = False
 
-            direction_vector = self.checkpoints[self.checkpoint_index[0]]['pos'] - self.ship_pos[i]
+            direction_vector = self.checkpoints[self.checkpoint_index[i]]['pos'] - self.ship_pos[i]
             heading = self.normalize_angle(self._safe_heading_from_vector(direction_vector))
             self.ship_heading.append(heading)
 
@@ -234,7 +236,7 @@ class PySimEnv(BaseEnv):
                     u=0.0, v=0.0, r=0.0))
             self.performed_action.append(np.zeros(2, dtype=np.float32))
 
-    def create_simulator(self):
+    def create_simulator(self, ship_index):
         """Create and return a configured ship simulator.
 
         This factory method instantiates a `ShipSimulator` using the current
@@ -247,13 +249,13 @@ class PySimEnv(BaseEnv):
         """
 
         if self.dynamics_model == Model.FOSSEN:
-            self.dynamics = Fossen(self.ships[0].specifications)
+            self.dynamics = Fossen(self.ships[ship_index].specifications)
         elif self.dynamics_model == Model.NOMOTO:
-            self.dynamics = Nomoto(self.ships[0].specifications)
+            self.dynamics = Nomoto(self.ships[ship_index].specifications)
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ships[0].specifications, self.dynamics, self.time_step, self.wind, self.current, self.numerical_damping)
+        return ShipSimulator(self.ships[ship_index].specifications, self.dynamics, self.time_step, self.wind, self.current, self.numerical_damping)
 
     # -------------------------
     # Environment data loaders
@@ -301,7 +303,7 @@ class PySimEnv(BaseEnv):
         path = load_csv_strict(self.path_name)
 
         # Preprocess path (stub currently returns same path)
-        path = self._reduce_path(path, self.initial_ship_pos)
+        path = self._reduce_path(path, self.initial_ship_pos[0])
 
         # Create checkpoints spaced along path
         path = create_checkpoints_from_simple_path(path, CHECKPOINTS_DISTANCE)
@@ -309,9 +311,9 @@ class PySimEnv(BaseEnv):
         # Ensure start is current ship position; handle empty path safely
         if len(path) == 0:
             # empty path: fallback to a single checkpoint at initial position
-            path = [self.initial_ship_pos.copy()]
+            path = [self.initial_ship_pos[0].copy()]
         else:
-            path = np.insert(path, 0, self.initial_ship_pos.copy(), axis=0)
+            path = np.insert(path, 0, self.initial_ship_pos[0].copy(), axis=0)
 
         # Build checkpoint dicts
         checkpoints = []
@@ -346,7 +348,7 @@ class PySimEnv(BaseEnv):
             if target_pos is not None:
                 self.target_pos = np.array(target_pos, dtype=np.float32)
             else:
-                self.target_pos = self.initial_ship_pos.copy()
+                self.target_pos = self.initial_ship_pos[0].copy()
 
     # -----------------------
     # Utility & math helpers
@@ -606,13 +608,13 @@ class PySimEnv(BaseEnv):
         perturbation = ran_gen.uniform(
             low=-self.randomization_scale,
             high=self.randomization_scale,
-            size=self.initial_ship_pos.shape
+            size=self.initial_ship_pos[0].shape
         )
 
         if self.start_pos is not None:
-            self.initial_ship_pos = np.clip(self.start_pos + perturbation, MIN_GRID_POS, MAX_GRID_POS)
+            self.initial_ship_pos = [np.clip(self.start_pos + perturbation, MIN_GRID_POS, MAX_GRID_POS) for _ in range(self.num_ships)]
         else:
-            self.initial_ship_pos = np.clip(np.array([5.0, 5.0], dtype=np.float32) + perturbation, MIN_GRID_POS, MAX_GRID_POS)
+            self.initial_ship_pos = [np.clip(np.array([5.0, 5.0], dtype=np.float32) + perturbation, MIN_GRID_POS, MAX_GRID_POS) for _ in range(self.num_ships)]
 
 
     def reset(self, seed: Optional[int] = None, **kwargs) -> Tuple[np.ndarray, Dict]:
@@ -772,31 +774,38 @@ class PySimEnv(BaseEnv):
         truncations = []
 
         for i in range(self.num_ships):
+            if not self.ships[i].terminated and not self.ships[i].truncated:
+                action = actions[i]
 
-            action = actions[i]
+                # Save previous values
+                self.previous_ship_pos[i] = self.ship_pos[i].copy()
+                self.previous_heading[i] = self.phys_sims[i].state.heading
 
-            # Save previous values
-            self.previous_ship_pos[i] = self.ship_pos[i].copy()
-            self.previous_heading[i] = self.phys_sims[i].state.heading
+                # Update state vector
+                self.phys_sims[i].step(action, self.enable_smoothing)
+                self.ship_pos[i] = np.array([self.phys_sims[i].state.x, self.phys_sims[i].state.y], dtype=np.float32)
+                self.performed_action[i] = self.phys_sims[i].actuators.current_actuator_state.copy()
+                self.step_count[i] += 1
 
-            # Update state vector
-            self.phys_sims[i].step(action, self.enable_smoothing)
-            self.ship_pos[i] = np.array([self.phys_sims[i].state.x, self.phys_sims[i].state.y], dtype=np.float32)
-            self.performed_action[i] = self.phys_sims[i].actuators.current_actuator_state.copy()
-            self.step_count[i] += 1
+                # Reward and termination check
+                reward, terminated = self._calculate_reward_single(i)
 
-            # Reward and termination check
-            reward, terminated = self._calculate_reward_single(i)
+                # Set truncated True when episode exceeded max_steps but not terminated by failure or success.
+                truncated = False
+                if self.step_count[i] >= self.max_steps and not terminated:
+                    reward = -250
+                    truncated = True
 
-            # Set truncated True when episode exceeded max_steps but not terminated by failure or success.
-            truncated = False
-            if self.step_count[i] >= self.max_steps and not terminated:
-                reward = -250
-                truncated = True
+                rewards.append(reward)
+                terminations.append(terminated)
+                truncations.append(truncated)
 
-            rewards.append(reward)
-            terminations.append(terminated)
-            truncations.append(truncated)
+                self.ships[i].terminated = terminated
+                self.ships[i].truncated = truncated
+            else:
+                rewards.append(0.0)
+                terminations.append(self.ships[i].terminated)
+                truncations.append(self.ships[i].truncated)
 
         rewards = np.asarray(rewards, dtype=float)
         terminations = np.asarray(terminations, dtype=bool)
@@ -880,7 +889,7 @@ class PySimEnv(BaseEnv):
             self.step_count[i] = 0
 
         # Passed perpendicular guidance line
-        elif self._is_near_perpendicular_line(current_checkpoint):
+        elif self._is_near_perpendicular_line(current_checkpoint, i):
             # if self.checkpoint_index[i] == len(self.checkpoints) - 1:
             #     print(f"Target passed at distance {checkpoint_distance:.2f}")
             self.checkpoint_index[i] += 1
@@ -906,11 +915,11 @@ class PySimEnv(BaseEnv):
 
         return reward, done
 
-    def _is_near_perpendicular_line(self, checkpoint: dict) -> bool:
+    def _is_near_perpendicular_line(self, checkpoint: dict, ship_index) -> bool:
         """Check if ship is close enough to checkpoint's perpendicular line."""
 
         line_start, line_end = checkpoint['perpendicular_line']
-        return self._distance_from_point_to_line(self.ship_pos[0], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY
+        return self._distance_from_point_to_line(self.ship_pos[ship_index], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY
 
     # -----------------------
     # Rendering
@@ -967,7 +976,7 @@ class PySimEnv(BaseEnv):
             return
 
         # Path: start with ship_pos followed by checkpoints and target
-        path_points = [self.ship_pos[0]] + [cp['pos'] for cp in self.checkpoints] + [self.target_pos]
+        path_points = [self.start_pos] + [cp['pos'] for cp in self.checkpoints] + [self.target_pos]
 
         for i in range(len(path_points) - 1):
             start_point = path_points[i]
@@ -1038,11 +1047,12 @@ class PySimEnv(BaseEnv):
             _safe(lambda: canvas.restore_region(self.background))
 
         # Update ship and heading graphics
-        heading_line_length = 30.0
-        self.ship_plot.set_data(self.ship_pos[0][0:1], self.ship_pos[0][1:2])
-        heading_x = self.ship_pos[0][0] + np.cos(self.phys_sims[0].state.heading) * heading_line_length
-        heading_y = self.ship_pos[0][1] + np.sin(self.phys_sims[0].state.heading) * heading_line_length
-        self.heading_line.set_data([self.ship_pos[0][0], heading_x], [self.ship_pos[0][1], heading_y])
+        for i in range(self.num_ships):
+            heading_line_length = 30.0
+            self.ship_plot.set_data(self.ship_pos[i][0:1], self.ship_pos[i][1:2])
+            heading_x = self.ship_pos[i][0] + np.cos(self.phys_sims[i].state.heading) * heading_line_length
+            heading_y = self.ship_pos[i][1] + np.sin(self.phys_sims[i].state.heading) * heading_line_length
+            self.heading_line.set_data([self.ship_pos[i][0], heading_x], [self.ship_pos[i][1], heading_y])
 
         # Try blitting for efficient updates; otherwise draw everything
         try:
