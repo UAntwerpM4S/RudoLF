@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
-from fw.simulators.airsim_bridge import AirSimBridge
+from airsim.communication.airsim_bridge import AirSimBridge
 from fw.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent

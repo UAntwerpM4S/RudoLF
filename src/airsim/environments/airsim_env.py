@@ -196,7 +196,13 @@ class AirSimEnv(BaseEnv):
             logger.info("No calibration found — using identity axis-swap transform.")
 
         # ── Connect to AirSim ──
-        import cosysairsim as airsim
+        try:
+            import cosysairsim as airsim
+        except ImportError as e:
+            raise ImportError(
+                "The 'cosysairsim' package is required to use AirSimEnv but is "
+                "not installed. Install it with:  pip install cosysairsim"
+            ) from e
         self._airsim = airsim
         self.client = airsim.CarClient(ip=ip, port=port)
         self.client.confirmConnection()
