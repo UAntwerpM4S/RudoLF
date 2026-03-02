@@ -582,7 +582,7 @@ class AgentManager:
                 while not done:
                     # The agent chooses an action based on the current observation
                     prediction = self._agent.predict(state=obs, deterministic=True)
-                    action = prediction[0]
+                    action = prediction[0].squeeze()
                     obs, _, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
 
