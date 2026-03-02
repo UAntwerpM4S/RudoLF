@@ -319,6 +319,7 @@ class PPOAgent(BaseAgent):
         elif states.ndim == 2:
             # Single-agent case: (num_envs, obs_dim)
             num_envs, obs_dim = states.shape
+            states = states[:, None, :]
             num_agents = 1
         else:
             raise ValueError(
@@ -340,7 +341,7 @@ class PPOAgent(BaseAgent):
                     "truncations": [],
                     "values": [],
                     "log_probs": [],
-					"next_states": [],
+                    "next_states": [],
                 }
                 for _ in range(num_agents)
             ]
@@ -351,6 +352,9 @@ class PPOAgent(BaseAgent):
         while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
             # Inference: No gradients needed here
             actions, log_probs, values = self.predict(states, deterministic=False)
+
+            if len(self.observation_space.shape) == 1 and actions.ndim == 3 and actions.shape[1] == 1:
+                actions = actions[:, 0, :]
 
             # Step all environments
             next_states, next_rewards, next_terminations, infos = self._vec_env.step(actions)
@@ -367,21 +371,35 @@ class PPOAgent(BaseAgent):
                 terminations = next_terminations
                 truncations = np.zeros((num_envs, num_agents), dtype=bool)
 
+            if len(self.observation_space.shape) == 1:
+                if actions.ndim == 2:  # (num_envs, action_dim)
+                    actions = actions[:, None, :]  # → (num_envs, 1, action_dim)
+
+                if log_probs.ndim == 1:  # (num_envs,)
+                    log_probs = log_probs[:, None]  # → (num_envs, 1)
+
+                if values.ndim == 1:  # (num_envs,)
+                    values = values[:, None]  # → (num_envs, 1)
+
+                if next_states.ndim == 2:
+                    next_states = next_states[:, None, :]
+                    rewards = next_rewards[:, None]
+                    terminations = next_terminations[:, None]
+
             # Store per-agent transitions
             for env_id in range(num_envs):
                 if envs_done[env_id]:
                     continue  # Skip already completed environments
 
                 for agent_id in range(num_agents):
-                    traj = collected_data[env_id][agent_id]
-                    traj["states"].append(states[env_id, agent_id])
-                    traj["actions"].append(actions[env_id, agent_id])
-                    traj["rewards"].append(rewards[env_id, agent_id])
-                    traj["terminations"].append(terminations[env_id, agent_id])
-                    traj["truncations"].append(truncations[env_id, agent_id])
-                    traj["values"].append(values[env_id, agent_id])
-                    traj["log_probs"].append(log_probs[env_id, agent_id])
-                    traj["next_states"].append(next_states[env_id, agent_id])
+                    collected_data[env_id][agent_id]["states"].append(states[env_id, agent_id])
+                    collected_data[env_id][agent_id]["actions"].append(actions[env_id, agent_id])
+                    collected_data[env_id][agent_id]["rewards"].append(rewards[env_id, agent_id])
+                    collected_data[env_id][agent_id]["terminations"].append(terminations[env_id, agent_id])
+                    collected_data[env_id][agent_id]["truncations"].append(truncations[env_id, agent_id])
+                    collected_data[env_id][agent_id]["values"].append(values[env_id, agent_id])
+                    collected_data[env_id][agent_id]["log_probs"].append(log_probs[env_id, agent_id])
+                    collected_data[env_id][agent_id]["next_states"].append(next_states[env_id, agent_id])
 
             # Update done flags at environment level
             env_done = np.all(terminations | truncations, axis=1)
@@ -403,9 +421,9 @@ class PPOAgent(BaseAgent):
         episode_data = []
         for env_id in range(num_envs):
             for agent_id in range(num_agents):
-                traj = collected_data[env_id][agent_id]
+                trajectory = collected_data[env_id][agent_id]
 
-                if len(traj["states"]) == 0:
+                if len(trajectory["states"]) == 0:
                     continue
 
                 # ----------------------------------------------------------
@@ -416,7 +434,7 @@ class PPOAgent(BaseAgent):
                 # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
 
                 # Find the first True in dones for this environment
-                done_mask = np.logical_or(traj["terminations"], traj["truncations"])
+                done_mask = np.logical_or(trajectory["terminations"], trajectory["truncations"])
                 first_done = self.find_first_true(done_mask)
 
                 # Handle cases where no True is found (episode did not terminate)
@@ -426,7 +444,7 @@ class PPOAgent(BaseAgent):
                 # ----------------------------------------------------------
                 # Determine bootstrap condition
                 # ----------------------------------------------------------
-                last_step_terminated = traj["terminations"][first_done]
+                last_step_terminated = trajectory["terminations"][first_done]
 
                 next_value = 0.0
                 if not last_step_terminated:
@@ -434,7 +452,7 @@ class PPOAgent(BaseAgent):
                     # - truncation
                     # - safeguard stop
                     with torch.no_grad():
-                        last_state = torch.FloatTensor(traj["next_states"][first_done]).unsqueeze(0).to(self.device)
+                        last_state = torch.FloatTensor(trajectory["next_states"][first_done]).unsqueeze(0).to(self.device)
                         _, _, next_values = self.policy.network(last_state)
                         next_value = next_values.squeeze(0).item()
 
@@ -443,8 +461,8 @@ class PPOAgent(BaseAgent):
                 # ----------------------------------------------------------
                 episode = {}
 
-                for key in traj:
-                    relevant_steps = traj[key][:first_done + 1]
+                for key in trajectory:
+                    relevant_steps = trajectory[key][:first_done + 1]
 
                     if key in ["states", "actions", "next_states"]:
                         episode[key] = np.stack(relevant_steps)
