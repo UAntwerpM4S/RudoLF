@@ -659,35 +659,31 @@ class PySimEnv(BaseEnv):
         observations = []
 
         for i in range(self.num_ships):
-            phys_sim = self.phys_sims[i]
-            ship_pos = self.ship_pos[i]
-            checkpoint_index = self.checkpoint_index[i]
-
-        # Normalize velocities
+            # Normalize velocities
             norm_velocities = np.array([
-                np.clip(phys_sim.state.u / self.ships[i].specifications.surge_limits[1], -1, 1),
-                np.clip(phys_sim.state.v / self.ships[i].specifications.sway_limits[1], -1, 1),
-                np.clip(phys_sim.state.r / self.ships[i].specifications.yaw_rate_limits[1], -1, 1)
+                np.clip(self.phys_sims[i].state.u / self.ships[i].specifications.surge_limits[1], -1, 1),
+                np.clip(self.phys_sims[i].state.v / self.ships[i].specifications.sway_limits[1], -1, 1),
+                np.clip(self.phys_sims[i].state.r / self.ships[i].specifications.yaw_rate_limits[1], -1, 1)
             ], dtype=np.float32)
 
-        # Clamp checkpoint indices
-            current_chkp_idx = min(checkpoint_index, len(self.checkpoints) - 1)
+            # Clamp checkpoint indices
+            current_chkp_idx = min(self.checkpoint_index[i], len(self.checkpoints) - 1)
             prev_chkp_idx = max(0, current_chkp_idx - 1)
             next_chkp_idx = min(current_chkp_idx + 1, len(self.checkpoints) - 1)
 
-        # Checkpoint positions
+            # Checkpoint positions
             current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
             prev_chkp_pos = self.checkpoints[prev_chkp_idx]['pos']
             next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
 
-        # Distances to checkpoints
-            norm_distance = np.linalg.norm(ship_pos - current_chkp_pos) / self.max_dist
-            norm_next_distance = np.linalg.norm(ship_pos - next_chkp_pos) / self.max_dist
+            # Distances to checkpoints
+            norm_distance = np.linalg.norm(self.ship_pos[i] - current_chkp_pos) / self.max_dist
+            norm_next_distance = np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
 
             # Cross-track error (normalized, signed)
             norm_cross_error = (
                     self._distance_from_point_to_line(
-                        ship_pos,
+                        self.ship_pos[i],
                         prev_chkp_pos,
                         current_chkp_pos
                     )
@@ -695,36 +691,36 @@ class PySimEnv(BaseEnv):
             )
 
             track_vec = current_chkp_pos - prev_chkp_pos
-            ship_vec = ship_pos - prev_chkp_pos
+            ship_vec = self.ship_pos[i] - prev_chkp_pos
             norm_cross_error *= 1.0 if np.cross(track_vec, ship_vec) >= 0.0 else -1.0
 
             # --- Heading errors ---
 
             # To current checkpoint
             heading_error = self._calculate_heading_error(
-                self._safe_heading_from_vector(current_chkp_pos - ship_pos),
-                phys_sim.state.heading,
+                self._safe_heading_from_vector(current_chkp_pos - self.ship_pos[i]),
+                self.phys_sims[i].state.heading,
                 0.0
             )
 
             # Parallel to current checkpoint segment
             heading_error_parallel = self._calculate_heading_error(
                 self._safe_heading_from_vector(current_chkp_pos - prev_chkp_pos),
-                phys_sim.state.heading,
+                self.phys_sims[i].state.heading,
                 0.0
             )
 
             # To next checkpoint
             heading_error2 = self._calculate_heading_error(
-                self._safe_heading_from_vector(next_chkp_pos - ship_pos),
-                phys_sim.state.heading,
+                self._safe_heading_from_vector(next_chkp_pos - self.ship_pos[i]),
+                self.phys_sims[i].state.heading,
                 0.0
             )
 
             # Parallel to next checkpoint segment
             heading_error_parallel2 = self._calculate_heading_error(
                 self._safe_heading_from_vector(next_chkp_pos - prev_chkp_pos),
-                phys_sim.state.heading,
+                self.phys_sims[i].state.heading,
                 0.0
             )
 
@@ -742,10 +738,10 @@ class PySimEnv(BaseEnv):
 
             # Add environmental observations if enabled
             if self.wind:
-                obs = np.hstack([obs, phys_sim.environment.wind_direction * phys_sim.environment.wind_strength])
+                obs = np.hstack([obs, self.phys_sims[i].environment.wind_direction * self.phys_sims[i].environment.wind_strength])
 
             if self.current:
-                obs = np.hstack([obs, phys_sim.environment.current_direction * phys_sim.environment.current_strength])
+                obs = np.hstack([obs, self.phys_sims[i].environment.current_direction * self.phys_sims[i].environment.current_strength])
 
             observations.append(obs)
 
