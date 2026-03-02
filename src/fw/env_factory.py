@@ -3,6 +3,7 @@ import types
 from fw.config import get_config_parameters
 from fw.environments.py_sim_env import PySimEnv
 from fw.environments.fh_sim_env import FhSimEnv
+from airsim.environments.airsim_env import AirSimEnv
 from fw.environments.lunar_lander import LunarLander
 from fw.environments.py_sim_polar_env import PySimPolarEnv
 
@@ -235,6 +236,26 @@ class FhSimEnvironment(BaseEnvironment):
                              ship_model=config["ship_model"], scenario=config["scenario"])
 
 
+class AirSimEnvironment(BaseEnvironment):
+    """
+    Class for the AirSim (UE5) environment.
+    Requires UE5 with CosysAirSim to be running.
+    """
+
+    def __init__(self, name, configuration):
+        super().__init__(name, configuration)
+
+        ship_pos = [2245, -47]
+        target_pos = [11530.0, 13000.0]
+
+        self._env = AirSimEnv(
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            max_steps=14000,
+            use_pause_stepping=True,
+        )
+
+
 class LunarEnvironment(BaseEnvironment):
     """
     Class for the lunar environment
@@ -272,6 +293,7 @@ get = _Factory.get
 
 py_sim_env_name = "PySimEnv"
 fh_sim_env_name = "FhSimEnv"
+airsim_env_name = "AirSimEnv"
 lunar_env_name = "LunarLander"
 py_sim_polar_env_name = "PySimPolarEnv"
 

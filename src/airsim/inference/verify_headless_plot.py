@@ -14,11 +14,12 @@ import os
 sys.path.append(os.getcwd())
 
 try:
-    import fw.air_sim.plot_airsim_path as airsim_plotter
+    import airsim.inference.plot_airsim_path as airsim_plotter
 except ImportError:
-    print("Could not import plot_airsim_path. Please ensure it is in the current directory.")
+    print("Could not import plot_airsim_path. Please ensure the airsim package is on the path.")
     airsim_plotter = None
     sys.exit(1)
+
 
 def main():
     """Run a single headless update of the live plotter and save the figure."""
@@ -35,6 +36,7 @@ def main():
         print("Saving plot...")
         plotter.save_plot()
         print("Done.")
+
 
 if __name__ == "__main__":
     main()
