@@ -36,7 +36,11 @@ class _Factory:
             EnvironmentRegistryError: If a class with the same environment name
             is already registered.
         """
-        temp_instance = environment_class("", [])  # Create a temporary instance to extract the environment name
+        try:
+            temp_instance = environment_class("", [])  # Create a temporary instance to extract the environment name
+        except Exception as e:
+            print(f"Skipping registration of {environment_class.__name__}: {e}")
+            return
         environment_name = type(temp_instance._env).__name__
         assert environment_name, "Environment name must not be empty."
 
