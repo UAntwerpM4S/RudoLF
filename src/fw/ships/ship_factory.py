@@ -91,8 +91,6 @@ class MyzakoShip:
         self.specifications = ShipSpecifications(
             length=length,
             mass=mass,
-            terminated = False,
-            truncated = False,
             max_rudder_angle=np.radians(60.0),
             max_rudder_rate=1.0,
             min_thrust=0.1,

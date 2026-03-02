@@ -222,14 +222,14 @@ class PySimEnv(BaseEnv):
             self.cross_error.append(0.0)
             self.step_count.append(0)
             self.ukc.append(0.0)
-            self.ships[i].terminated = False
-            self.ships[i].truncated = False
 
             direction_vector = self.checkpoints[self.checkpoint_index[i]]['pos'] - self.ship_pos[i]
             heading = self.normalize_angle(self._safe_heading_from_vector(direction_vector))
             self.ship_heading.append(heading)
 
             self.phys_sims[i].reset(VesselState(
+                    terminated=False,
+                    truncated=False,
                     x=self.ship_pos[i][0],
                     y=self.ship_pos[i][1],
                     heading=heading,
@@ -755,13 +755,13 @@ class PySimEnv(BaseEnv):
     # -----------------------
     def step(self, actions: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """
-        Execute one environment timestep.
+        Execute one environment timestep for all ships.
 
         Args:
-            actions: Array-like with [rudder, thrust] commands in [-1, 1]
+            actions: Array-like with shape (num_ships, 2) [rudder, thrust] commands in [-1, 1]
 
         Returns:
-            tuple: (observation, reward, terminated, truncated, info)
+            tuple: (observations, reward, terminated, truncated, info)
         """
 
         actions = np.asarray(actions, dtype=np.float32)
@@ -769,21 +769,23 @@ class PySimEnv(BaseEnv):
         if actions.shape == (2,):
             actions = actions[None, :]  # single-ship fallback
 
-        rewards = []
-        terminations = []
-        truncations = []
+        # Preallocate arrays
+        rewards = np.zeros(self.num_ships, dtype=np.float32)
+        terminations = np.zeros(self.num_ships, dtype=bool)
+        truncations = np.zeros(self.num_ships, dtype=bool)
 
         for i in range(self.num_ships):
-            if not self.ships[i].terminated and not self.ships[i].truncated:
+            state = self.phys_sims[i].state
+            if not state.terminated and not state.truncated:
                 action = actions[i]
 
                 # Save previous values
                 self.previous_ship_pos[i] = self.ship_pos[i].copy()
-                self.previous_heading[i] = self.phys_sims[i].state.heading
+                self.previous_heading[i] = state.heading
 
                 # Update state vector
                 self.phys_sims[i].step(action, self.enable_smoothing)
-                self.ship_pos[i] = np.array([self.phys_sims[i].state.x, self.phys_sims[i].state.y], dtype=np.float32)
+                self.ship_pos[i] = np.array([state.x, state.y], dtype=np.float32)
                 self.performed_action[i] = self.phys_sims[i].actuators.current_actuator_state.copy()
                 self.step_count[i] += 1
 
@@ -796,20 +798,19 @@ class PySimEnv(BaseEnv):
                     reward = -250
                     truncated = True
 
-                rewards.append(reward)
-                terminations.append(terminated)
-                truncations.append(truncated)
+                # Update ship state
+                state.terminated = terminated
+                state.truncated = truncated
 
-                self.ships[i].terminated = terminated
-                self.ships[i].truncated = truncated
+                # Store outputs
+                rewards[i] = reward
+                terminations[i] = terminated
+                truncations[i] = truncated
             else:
-                rewards.append(0.0)
-                terminations.append(self.ships[i].terminated)
-                truncations.append(self.ships[i].truncated)
-
-        rewards = np.asarray(rewards, dtype=float)
-        terminations = np.asarray(terminations, dtype=bool)
-        truncations = np.asarray(truncations, dtype=bool)
+                # Ship already terminated/truncated, output zero reward and keep flags
+                rewards[i] = 0.0
+                terminations[i] = state.terminated
+                truncations[i] = state.truncated
 
         info = {
             "rewards": rewards,
