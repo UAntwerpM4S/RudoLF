@@ -128,6 +128,8 @@ class ShipSimulator(BaseSimulator):
         dy = u * np.sin(psi_mid) + v * np.cos(psi_mid)
 
         self._state = VesselState(
+            terminated=s.terminated,
+            truncated=s.truncated,
             x=np.float32(s.x + dx * self.dt),
             y=np.float32(s.y + dy * self.dt),
             heading=np.float32((s.heading + r * self.dt + np.pi) % (2.0 * np.pi) - np.pi),
