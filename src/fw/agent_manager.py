@@ -202,8 +202,8 @@ class AgentManager:
         Compute heading error relative to desired path direction
         """
         # Get current checkpoint index and position
-        curr_checkpoint = env.checkpoints[env.checkpoint_index]
-        next_checkpoint = env.checkpoints[min(env.checkpoint_index + 1, len(env.checkpoints) - 1)]
+        curr_checkpoint = env.checkpoints[env.checkpoint_index[0]]
+        next_checkpoint = env.checkpoints[min(env.checkpoint_index[0] + 1, len(env.checkpoints) - 1)]
 
         # Calculate desired heading (angle of path segment)
         desired_heading = np.arctan2(
@@ -212,7 +212,7 @@ class AgentManager:
         )
 
         # Calculate heading error (difference between current and desired heading)
-        heading_error = (env.phys_sim.state.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
+        heading_error = (env.phys_sims[0].state.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
         return heading_error
 
 
@@ -324,15 +324,15 @@ class AgentManager:
                     done = False
                     steps = 0
 
-                    start_pos = np.copy(env.ship_pos)
+                    start_pos = np.copy(env.ship_pos[0])
 
                     # Store heading errors for this episode
                     cross_errors = []
                     heading_errors = []
                     rudder_actions = []
                     ukc_measurements = []
-                    path_positions = [np.copy(env.ship_pos)]  # Store initial position
-                    cross_errors.append(env.cross_error)  # Store initial cross-track error
+                    path_positions = [np.copy(env.ship_pos[0])]  # Store initial position
+                    cross_errors.append(env.cross_error[0])  # Store initial cross-track error
 
                     # Calculate initial heading error relative to desired path
                     initial_heading_error = self.compute_heading_error(env)
@@ -340,7 +340,7 @@ class AgentManager:
 
                     while not done:
                         # Select action
-                        action, _ = self._agent.predict(state=state, deterministic=True)
+                        action, _, _ = self._agent.predict(state=state, deterministic=True)
 
                         # Take step in environment
                         state, reward, terminated, truncated, _ = env.step(action)
@@ -348,13 +348,13 @@ class AgentManager:
 
                         if not done:
                             # Store current position and errors
-                            path_positions.append(np.copy(env.ship_pos))
-                            if env.checkpoint_index >= 2:
-                                cross_errors.append(env.cross_error)
+                            path_positions.append(np.copy(env.ship_pos[0]))
+                            if env.checkpoint_index[0] >= 2:
+                                cross_errors.append(env.cross_error[0])
                             heading_error = self.compute_heading_error(env)
                             heading_errors.append(heading_error)
-                            rudder_actions.append(env.performed_action[0])
-                            ukc_measurements.append(env.ukc)
+                            rudder_actions.append(env.performed_action[0][0])
+                            ukc_measurements.append(env.ukc[0])
 
                             episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
                             steps += 1

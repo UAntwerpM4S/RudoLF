@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 from typing import Tuple
 
@@ -27,22 +28,28 @@ class ActorCriticNetwork(nn.Module):
         """
         super().__init__()
 
+        # Helper to initialize layers orthogonally
+        def init_layer(layer, gain=np.sqrt(2)):
+            nn.init.orthogonal_(layer.weight, gain=gain)
+            nn.init.constant_(layer.bias, 0)
+            return layer
+
         # Shared feature extraction layers
         self.shared_network = nn.Sequential(
-            nn.Linear(input_dim, 256),
+            init_layer(nn.Linear(input_dim, 256)),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            init_layer(nn.Linear(256, 128)),
             nn.ReLU(),
         )
 
-        # Actor head: outputs mean of the action distribution
-        self.actor_mean = nn.Linear(128, output_dim)
+        # Actor head: gain of 0.01 makes initial actions close to mean (near 0)
+        self.actor_mean = init_layer(nn.Linear(128, output_dim), gain=0.01)
 
-        # Actor head: learnable log standard deviation for actions
-        self.actor_log_std = nn.Parameter(torch.zeros(output_dim))
+        # Actor head: start with a slightly smaller standard deviation for stability
+        self.actor_log_std = nn.Parameter(torch.ones(output_dim) * -0.5)
 
-        # Critic head: outputs the predicted value of the state
-        self.critic = nn.Linear(128, 1)
+        # Critic head: gain of 1.0 is standard for value estimation
+        self.critic = init_layer(nn.Linear(128, 1), gain=1.0)
 
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -65,7 +72,8 @@ class ActorCriticNetwork(nn.Module):
 
         # Compute the standard deviation of the action distribution
         # Clamp log_std to reasonable range before exponentiation to avoid instability
-        action_std = torch.exp(self.actor_log_std.clamp(-20, 2))
+        log_std = torch.clamp(self.actor_log_std, -20, 2)
+        action_std = torch.exp(log_std)
 
         # Compute the value estimate for the input state
         state_value = self.critic(shared_features)
