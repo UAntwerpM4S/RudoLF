@@ -319,6 +319,7 @@ class PPOAgent(BaseAgent):
         elif states.ndim == 2:
             # Single-agent case: (num_envs, obs_dim)
             num_envs, obs_dim = states.shape
+            states = states[:, None, :]
             num_agents = 1
         else:
             raise ValueError(
@@ -352,6 +353,9 @@ class PPOAgent(BaseAgent):
             # Inference: No gradients needed here
             actions, log_probs, values = self.predict(states, deterministic=False)
 
+            if len(self.observation_space.shape) == 1 and actions.ndim == 3 and actions.shape[1] == 1:
+                actions = actions[:, 0, :]
+
             # Step all environments
             next_states, next_rewards, next_terminations, infos = self._vec_env.step(actions)
 
@@ -366,6 +370,21 @@ class PPOAgent(BaseAgent):
                 rewards = next_rewards
                 terminations = next_terminations
                 truncations = np.zeros((num_envs, num_agents), dtype=bool)
+
+            if len(self.observation_space.shape) == 1:
+                if actions.ndim == 2:  # (num_envs, action_dim)
+                    actions = actions[:, None, :]  # → (num_envs, 1, action_dim)
+
+                if log_probs.ndim == 1:  # (num_envs,)
+                    log_probs = log_probs[:, None]  # → (num_envs, 1)
+
+                if values.ndim == 1:  # (num_envs,)
+                    values = values[:, None]  # → (num_envs, 1)
+
+                if next_states.ndim == 2:
+                    next_states = next_states[:, None, :]
+                    rewards = next_rewards[:, None]
+                    terminations = next_terminations[:, None]
 
             # Store per-agent transitions
             for env_id in range(num_envs):
