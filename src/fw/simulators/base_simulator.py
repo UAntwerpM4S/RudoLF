@@ -41,7 +41,7 @@ class BaseSimulator(ABC):
         self._specs = specs
         self._actuators = ActuatorModel(specs)
         # Initial state
-        self._state = VesselState(x=0.0, y=0.0, heading=0.0, u=0.0, v=0.0, r=0.0)
+        self._state = VesselState(terminated=False, truncated=False, x=0.0, y=0.0, heading=0.0, u=0.0, v=0.0, r=0.0)
 
     @property
     def state(self) -> VesselState:
