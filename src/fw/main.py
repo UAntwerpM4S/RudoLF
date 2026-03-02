@@ -37,23 +37,25 @@ if __name__ == "__main__" or __name__ == "fw.main":
         print(f"Training metrics: {metrics}")
     elif "visualize" == action:
         # Optionally create AirSim bridge for simultaneous vehicle control
-        from fw.config import get_config_parameters
-        config = get_config_parameters()
+        from airsim.config.airsim_config import get_airsim_config
+        airsim_cfg = get_airsim_config()
         airsim_bridge = None
-        if config.get("use_airsim", False):
-            from fw.simulators.airsim_bridge import AirSimBridge
+        if airsim_cfg.get("use_airsim", False):
+            from airsim.communication.airsim_bridge import AirSimBridge
             airsim_bridge = AirSimBridge(
-                ip=config.get("airsim_ip", ""),
-                port=config.get("airsim_port", 41451),
-                heading_kp=config.get("airsim_kp", 5.0),
-                heading_ki=config.get("airsim_ki", 0.5),
-                heading_ff=config.get("airsim_ff", 0.5),
-                speed_scale=config.get("airsim_speed_scale", 1.0),
-                throttle_kp=config.get("airsim_throttle_kp", 1.0),
-                throttle_ki=config.get("airsim_throttle_ki", 0.05),
-                dist_gain=config.get("airsim_dist_gain", 0.1),
-                dist_ki=config.get("airsim_dist_ki", 0.0), # Default 0 if missing
-                log_telemetry=config.get("airsim_log_telemetry", True),
+                ip=airsim_cfg.get("airsim_ip", ""),
+                port=airsim_cfg.get("airsim_port", 41451),
+                heading_kp=airsim_cfg.get("airsim_kp", 3.0),
+                heading_ki=airsim_cfg.get("airsim_ki", 0.2),
+                heading_kd=airsim_cfg.get("airsim_kd", 2.0),
+                heading_ff=airsim_cfg.get("airsim_ff", 0.3),
+                speed_scale=airsim_cfg.get("airsim_speed_scale", 1.0),
+                lat_gain=airsim_cfg.get("airsim_lat_gain", 0.3),
+                throttle_kp=airsim_cfg.get("airsim_throttle_kp", 1.0),
+                throttle_ki=airsim_cfg.get("airsim_throttle_ki", 0.05),
+                dist_gain=airsim_cfg.get("airsim_dist_gain", 0.1),
+                dist_ki=airsim_cfg.get("airsim_dist_ki", 0.0),
+                log_telemetry=airsim_cfg.get("airsim_log_telemetry", True),
             )
 
         trainer.visualize(envs, airsim_bridge=airsim_bridge)
