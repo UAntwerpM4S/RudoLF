@@ -10,11 +10,11 @@ from fw.policies.actor_critic_network import ActorCriticNetwork
 POLICY_FILE_NAME = 'policy.pth'
 
 
-def get_device(device_str: str = "auto") -> torch.device:
+def get_device(device: str = "auto") -> torch.device:
     """Retrieve the PyTorch device to be used for computations.
 
     Args:
-        device_str (str, optional): The device to use. Options are 'auto', 'cuda', or 'cpu'.
+        device (str, optional): The device to use. Options are 'auto', 'cuda', or 'cpu'.
             If 'auto', defaults to using GPU ('cuda') if available, otherwise falls back to CPU.
 
     Returns:
@@ -24,10 +24,10 @@ def get_device(device_str: str = "auto") -> torch.device:
 
 
     # Default to CUDA if device is 'auto'
-    if device_str == "auto":
+    if device == "auto":
         device = torch.device("cuda")
     else:
-        device = torch.device(device_str)
+        device = torch.device(device)
 
  
 
@@ -102,12 +102,12 @@ class PPOPolicy:
 
 
     @classmethod
-    def load(cls, filename: str, device_str: str = "cpu") -> "PPOPolicy":
+    def load(cls, filename: str, device: str = "cpu") -> "PPOPolicy":
         """Load a PPOPolicy model from a file.
 
         Args:
             filename (str): The path to the file from which the model should be loaded.
-            device_str (str, optional): The device to load the model onto ('cpu', 'cuda', or 'auto'). Default is 'cpu'.
+            device (str, optional): The device to load the model onto ('cpu', 'cuda', or 'auto'). Default is 'cpu'.
 
         Returns:
             PPOPolicy: The loaded PPOPolicy instance.
@@ -115,7 +115,7 @@ class PPOPolicy:
         Raises:
             RuntimeError: If the model file is corrupted or the device doesn't match.
         """
-        device = get_device(device_str)
+        device = get_device(device)
 
         try:
             with zipfile.ZipFile(f"{filename}.zip", 'r') as zip_file:
