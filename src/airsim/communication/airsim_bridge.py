@@ -1,46 +1,49 @@
-"""CosysAirSim bridge — heading-tracking adapter for UE5.
+"""CosysAirSim bridge — robust connection manager for UE5.
 
-The UE5 water-surface physics differ from the Fossen mathematical model
-used in the matplotlib simulator.  Rather than mapping RL *inputs*
-1-to-1, this bridge maps *outputs*:
+This bridge manages the network connection to CosysAirSim running
+inside Unreal Engine 5.  It provides:
 
-* **Speed** is matched to the Fossen simulation's surge speed via a PI
-  controller with cumulative-distance correction.
-* **Heading** is tracked by a PID + feedforward + cross-track-error
-  controller that steers the AirSim vehicle to follow the
-  Fossen-computed heading at every step.
+* **UE5 auto-detection** via a lightweight TCP port probe.
+* **Retry with exponential backoff** for resilient startup.
+* **Periodic health-checks** to detect stale connections.
+* **Pass-through control** — ``send_action()`` forwards raw
+  ``[steering, throttle]`` to AirSim without any PID processing.
 
-Workflow per step:
-    1. Read the ship's heading from ``VesselState.heading``.
-    2. Convert to AirSim yaw frame (``AirSim_yaw = π/2 − heading``).
-    3. Read the AirSim vehicle's actual yaw from its pose quaternion.
-    4. Compute heading error and derive steering + throttle commands.
+The actual *input mapping* (Fossen model → UE5 controls) will be
+implemented in a separate layer in the future.
 
 Coordinate frames:
     * **Ship (Fossen):** x = east, y = north, heading from east (CCW+).
     * **AirSim (NED):** x = north, y = east, yaw from north (CW+).
     * **Transform:** ``AirSim_yaw = π/2 − ship_heading``.
 
-Example:
-    >>> bridge = AirSimBridge()
-    >>> bridge.send_action(
-    ...     action,
-    ...     ship_speed=env.phys_sim.state.u,
-    ...     ship_heading=env.phys_sim.state.heading,
-    ... )
+Example::
+
+    >>> from airsim.config.airsim_config import AirSimConfig
+    >>> bridge = AirSimBridge(AirSimConfig())
+    >>> bridge.is_connected
+    True
+    >>> bridge.health_check()
+    True
     >>> bridge.disconnect()
 """
 
+from __future__ import annotations
+
 import math
+import socket
 import time
 import logging
-from pathlib import Path
+from typing import Any, Dict, Optional
+
 import numpy as np
+
+from airsim.config.airsim_config import AirSimConfig
 
 logger = logging.getLogger(__name__)
 
-# Resolve the telemetry output directory.
-_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+
+# ── Utility helpers ────────────────────────────────────────
 
 
 def _normalize_angle(a: float) -> float:
@@ -74,329 +77,246 @@ def _yaw_from_quaternion(q) -> float:
     )
 
 
-class AirSimBridge:
-    """Heading-tracking adapter between the Fossen sim and CosysAirSim.
+def is_ue5_reachable(ip: str = "", port: int = 41451, timeout: float = 2.0) -> bool:
+    """Probe the AirSim RPC port to check if UE5 is reachable.
 
-    Maps Fossen simulation outputs (heading and speed) to AirSim vehicle
-    ``CarControls`` using PID controllers for both steering and throttle.
+    Performs a lightweight TCP connect — does **not** require the
+    ``cosysairsim`` package.
+
+    Args:
+        ip: AirSim server IP.  Empty string = ``127.0.0.1``.
+        port: AirSim RPC port.
+        timeout: Socket connect timeout in seconds.
+
+    Returns:
+        ``True`` if the port is open, ``False`` otherwise.
+    """
+    host = ip if ip else "127.0.0.1"
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (OSError, ConnectionRefusedError, TimeoutError):
+        return False
+
+
+# ── AirSimBridge ───────────────────────────────────────────
+
+
+class AirSimBridge:
+    """Robust connection manager and pass-through adapter for CosysAirSim.
+
+    Handles UE5 auto-detection, retry with exponential backoff,
+    periodic health checks, and forwards raw control commands.
 
     Attributes:
-        _connected: ``True`` while the bridge holds an active AirSim
-            connection; ``False`` otherwise (including when
-            ``cosysairsim`` is not installed).
+        config: The :class:`AirSimConfig` used to create this bridge.
     """
 
-    def __init__(self, ip: str = "", port: int = 41451,
-                 heading_kp: float = 5.0, heading_ki: float = 0.5,
-                 heading_kd: float = 1.0, heading_ff: float = 0.5,
-                 speed_scale: float = 1.0, lat_gain: float = 0.5,
-                 throttle_kp: float = 1.0, throttle_ki: float = 0.05,
-                 dist_gain: float = 0.1, dist_ki: float = 0.0,
-                 log_telemetry: bool = True):
+    def __init__(self, config: Optional[AirSimConfig] = None) -> None:
         """Initialise the AirSim bridge and connect to the simulator.
 
-        If ``cosysairsim`` is not installed or the connection fails, the
-        bridge starts in a disconnected state and all control methods
-        become no-ops.
+        Connection flow:
+            1. Probe the RPC port (``is_ue5_reachable``).
+            2. If reachable, attempt ``CarClient.confirmConnection()``
+               with retry + exponential backoff.
+            3. On success, enable API control.
+
+        If ``cosysairsim`` is not installed, or UE5 is not reachable,
+        or all retries fail, the bridge stays disconnected and all
+        control methods become no-ops.
 
         Args:
-            ip: AirSim server IP address.  An empty string (the default)
-                connects to ``localhost``.
-            port: AirSim RPC port.
-            heading_kp: Proportional gain for the heading PID controller.
-            heading_ki: Integral gain for the heading PID controller.
-            heading_kd: Derivative gain for the heading PID controller.
-            heading_ff: Feedforward gain — steers proactively based on
-                the ship's yaw rate to anticipate turns.
-            speed_scale: Multiplicative factor applied to the Fossen
-                ship speed before sending it to AirSim.
-            lat_gain: Gain for cross-track (lateral) error correction.
-            throttle_kp: Proportional gain for the throttle PI
-                controller.
-            throttle_ki: Integral gain for the throttle PI controller.
-            dist_gain: Proportional gain for cumulative-distance error
-                correction.
-            dist_ki: Integral gain for cumulative-distance error
-                correction.
-            log_telemetry: If ``True``, writes per-step debug data to
-                ``airsim_telemetry.csv`` inside ``airsim/config/``.
+            config: Connection parameters.  Defaults to
+                ``AirSimConfig()`` (localhost:41451).
         """
-        self._connected = False
-        self._client = None
-        self._controls = None
-        self._heading_kp = heading_kp
-        self._heading_ki = heading_ki
-        self._heading_kd = heading_kd
-        self._heading_ff = heading_ff
-        self._lat_gain = lat_gain
-        self._speed_scale = speed_scale
-        self._throttle_kp = throttle_kp
-        self._throttle_ki = throttle_ki
-        self._dist_gain = dist_gain
-        self._dist_ki = dist_ki
-        self._heading_integral = 0.0
-        self._throttle_integral = 0.0
-        self._dist_integral = 0.0
-        self._heading_offset = None
-        self._prev_heading_error = 0.0
+        self.config: AirSimConfig = config or AirSimConfig()
+        self._connected: bool = False
+        self._client: Any = None
+        self._controls: Any = None
+        self._airsim: Any = None
+        self._last_health_check: float = time.monotonic()
+        self._step_count: int = 0
 
-        # Origin recording for absolute distance tracking
-        self._origin_ship_pos = None
-        self._origin_car_pos = None
-        # Cumulative Path Integration variables
-        self._last_ship_pos = None
-        self._last_car_pos = None
-        self._total_ship_dist = 0.0
-        self._total_car_dist = 0.0
+        if not self.config.use_airsim:
+            logger.info("AirSim bridge disabled via config (use_airsim=False).")
+            return
 
-        self._step_count = 0
+        # ── Step 1: lightweight port probe ──
+        if not is_ue5_reachable(
+            self.config.ip, self.config.port, timeout=self.config.timeout
+        ):
+            logger.warning(
+                "UE5 not reachable at %s:%d — bridge disabled.",
+                self.config.resolved_ip,
+                self.config.port,
+            )
+            print(
+                f"[AirSimBridge] UE5 not detected at "
+                f"{self.config.resolved_ip}:{self.config.port} — bridge disabled."
+            )
+            return
 
-        # Telemetry logging
-        self._log_telemetry = log_telemetry
-        self._csv_file = None
-        self._csv_writer = None
-
+        # ── Step 2: import cosysairsim ──
         try:
             import cosysairsim as airsim
 
             self._airsim = airsim
-            self._client = airsim.CarClient(ip=ip, port=port)
-            self._client.confirmConnection()
-            self._client.enableApiControl(True)
-            self._controls = airsim.CarControls()
-            self._connected = True
-            logger.info("Connected to Cosys-AirSim at %s:%d", ip, port)
-            print(f"Connected to Cosys-AirSim at {ip}:{port}!")
-            print(f"  Mode: PI+FF heading (Kp={heading_kp}, Ki={heading_ki}) | PI throttle (Kp={throttle_kp}, Ki={throttle_ki})")
-            print(f"  Speed scale: {speed_scale}")
-
-            if self._log_telemetry:
-                import csv
-                _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-                self._csv_file = open(_CONFIG_DIR / "airsim_telemetry.csv", "w", newline="")
-                self._csv_writer = csv.writer(self._csv_file)
-                self._csv_writer.writerow([
-                    "step", "ship_speed", "car_speed", "target_speed",
-                    "dist_error", "heading_error_deg", "ship_heading_deg", "car_yaw_deg",
-                    "steer", "throttle", "ship_yaw_rate"
-                ])
-                print("  Telemetry logging to 'airsim_telemetry.csv'")
-
         except ImportError:
             logger.warning("cosysairsim package not installed — bridge disabled.")
             print("Warning: cosysairsim not installed. AirSim bridge disabled.")
+            return
 
-        except Exception as exc:
-            logger.warning("Could not connect to AirSim at %s:%d: %s", ip, port, exc)
-            print(f"Warning: Could not connect to AirSim at {ip}:{port}: {exc}")
-            print("AirSim bridge disabled — matplotlib visualization will still run.")
+        # ── Step 3: connect with retry + exponential backoff ──
+        self._connect_with_retry(airsim)
+
+    def _connect_with_retry(self, airsim) -> None:
+        """Attempt to connect ``max_retries + 1`` times with backoff.
+
+        On each failure the wait time doubles (capped at 30 s).
+        If all attempts fail, ``_connected`` stays ``False`` and a
+        ``ConnectionError`` is logged (but not raised, to keep the
+        bridge non-fatal).
+
+        Args:
+            airsim: The imported ``cosysairsim`` module.
+        """
+        attempts = self.config.max_retries + 1  # first attempt + retries
+        last_error: Optional[Exception] = None
+
+        for attempt in range(attempts):
+            try:
+                self._client = airsim.CarClient(
+                    ip=self.config.ip, port=self.config.port,
+                    timeout_value=self.config.timeout,
+                )
+                self._client.confirmConnection()
+                self._client.enableApiControl(True)
+                self._controls = airsim.CarControls()
+                self._connected = True
+                self._last_health_check = time.monotonic()
+
+                logger.info(
+                    "Connected to Cosys-AirSim at %s:%d (attempt %d/%d)",
+                    self.config.resolved_ip, self.config.port,
+                    attempt + 1, attempts,
+                )
+                print(
+                    f"[AirSimBridge] Connected to CosysAirSim at "
+                    f"{self.config.resolved_ip}:{self.config.port}"
+                )
+                return
+
+            except Exception as exc:
+                last_error = exc
+                if attempt < attempts - 1:
+                    backoff = min(2 ** attempt, 30)
+                    logger.warning(
+                        "Connection attempt %d/%d failed: %s — retrying in %ds…",
+                        attempt + 1, attempts, exc, backoff,
+                    )
+                    print(
+                        f"[AirSimBridge] Attempt {attempt + 1}/{attempts} failed: "
+                        f"{exc} — retrying in {backoff}s…"
+                    )
+                    time.sleep(backoff)
+
+        # All attempts exhausted
+        logger.error(
+            "Failed to connect to AirSim at %s:%d after %d attempts: %s",
+            self.config.resolved_ip, self.config.port, attempts, last_error,
+        )
+        print(
+            f"[AirSimBridge] Failed to connect after {attempts} attempts. "
+            f"Bridge disabled."
+        )
+
+    # ── Properties ─────────────────────────────────────────
 
     @property
     def is_connected(self) -> bool:
-        """Whether the bridge currently has an active AirSim connection.
-
-        Returns:
-            ``True`` if connected, ``False`` otherwise.
-        """
+        """Whether the bridge currently has an active AirSim connection."""
         return self._connected
 
-    def send_action(
-        self,
-        action: np.ndarray,
-        ship_speed: float = 0.0,
-        ship_heading: float = 0.0,
-        ship_yaw_rate: float = 0.0,
-        ship_state=None,
-    ) -> None:
-        """Steer the AirSim vehicle to match the Fossen ship.
+    @property
+    def client(self) -> Any:
+        """Expose the underlying CarClient for advanced environment state queries.
 
-        Computes steering via a PID + feedforward + cross-track-error
-        controller and throttle via a PI controller with cumulative
-        distance-error correction, then sends the resulting
-        ``CarControls`` to AirSim.
+        Raises:
+            ConnectionError: If the bridge is not currently connected to AirSim.
+        """
+        if not self._ensure_connected():
+            raise ConnectionError("Cannot access AirSim client: bridge disconnected.")
+        return self._client
 
-        Args:
-            action: ``[rudder, thrust]`` array from the RL agent.  Kept
-                for interface compatibility; the bridge derives its own
-                steering and throttle from the Fossen outputs.
-            ship_speed: Surge speed (m/s) from the Fossen model.
-            ship_heading: Heading (rad) from the Fossen model, measured
-                from east, counter-clockwise positive.
-            ship_yaw_rate: Yaw rate (rad/s) from the Fossen model.
-            ship_state: Optional ``VesselState`` with ``.x`` and ``.y``
-                attributes for cross-track and distance calculations.
+    # ── Health check ───────────────────────────────────────
+
+    def health_check(self) -> bool:
+        """Verify the AirSim connection is still alive.
+
+        Calls ``getCarState()`` as a lightweight ping.
+
+        Returns:
+            ``True`` if the connection is healthy, ``False`` otherwise.
         """
         if not self._connected:
+            return False
+        try:
+            self._client.getCarState()
+            self._last_health_check = time.monotonic()
+            return True
+        except Exception as exc:
+            logger.warning("Health check failed: %s", exc)
+            self._connected = False
+            return False
+
+    def _ensure_connected(self) -> bool:
+        """Run a health check if the interval has elapsed.
+
+        Returns:
+            ``True`` if connected (or still within interval), ``False``
+            if a health check ran and failed.
+        """
+        if not self._connected:
+            return False
+        elapsed = time.monotonic() - self._last_health_check
+        if elapsed >= self.config.health_check_interval:
+            return self.health_check()
+        return True
+
+    # ── Control methods ────────────────────────────────────
+
+    def send_action(self, action: np.ndarray) -> None:
+        """Forward raw control commands to AirSim.
+
+        This is a **pass-through stub**.  The actual Fossen-to-UE5
+        input mapping will be implemented in a separate layer.
+
+        Args:
+            action: ``[steering, throttle]`` array in [−1, 1].
+        """
+        if not self._ensure_connected():
             return
 
         try:
-            self._step_count += 1
-
-            # ── Read AirSim state ──
-            car_state = self._client.getCarState()
-            airsim_speed = car_state.speed
-
-            pose = self._client.simGetVehiclePose()
-            airsim_yaw = _yaw_from_quaternion(pose.orientation)
-
-            # ── STEERING: track Fossen heading ──
-            target_yaw = math.pi / 2.0 - ship_heading
-
-            # Calibrate offset on first step
-            if self._heading_offset is None:
-                self._heading_offset = _normalize_angle(target_yaw - airsim_yaw)
-                print(f"  Heading offset calibrated: {math.degrees(self._heading_offset):+.1f}°")
-
-            # Heading error minus initial offset
-            heading_error = _normalize_angle(target_yaw - airsim_yaw - self._heading_offset)
-
-            # PI-controller — accumulate integral (with anti-windup clamp)
-            self._heading_integral += heading_error
-            self._heading_integral = float(np.clip(
-                self._heading_integral, -0.5 / max(self._heading_ki, 1e-9),
-                                          0.5 / max(self._heading_ki, 1e-9),
-            ))
-
-            # Derivative (D) term
-            heading_derivative = heading_error - self._prev_heading_error
-            self._prev_heading_error = heading_error
-
-            # Cross-Track Error (Lateral Error)
-            if self._origin_car_pos is None or self._origin_ship_pos is None:
-                dx, dy = 0.0, 0.0
-            else:
-                car_rel_x = pose.position.x_val - self._origin_car_pos[0]
-                car_rel_y = pose.position.y_val - self._origin_car_pos[1]
-                ship_rel_x = float(ship_state.x) - self._origin_ship_pos[0]
-                ship_rel_y = float(ship_state.y) - self._origin_ship_pos[1]
-                dx = car_rel_x - ship_rel_x
-                dy = car_rel_y - ship_rel_y
-
-            path_yaw = target_yaw
-            nx = -math.sin(path_yaw)
-            ny = math.cos(path_yaw)
-            cross_track_error = dx * nx + dy * ny
-
-            steering_lat = -1.0 * self._lat_gain * cross_track_error
-
-            # Combine Control Outputs
-            steering = (self._heading_kp * heading_error +
-                        self._heading_ki * self._heading_integral +
-                        self._heading_kd * heading_derivative +
-                        steering_lat)
-
-            steering -= self._heading_ff * ship_yaw_rate
-
-            steering = float(np.clip(steering, -1.0, 1.0))
-            self._controls.steering = steering
-
-            # ── THROTTLE: track absolute distance ──
-            if self._origin_ship_pos is None and ship_state is not None:
-                self._origin_ship_pos = (float(ship_state.x), float(ship_state.y))
-                self._last_ship_pos = (float(ship_state.x), float(ship_state.y))
-                self._last_car_pos = (pose.position.x_val, pose.position.y_val)
-                self._total_ship_dist = 0.0
-                self._total_car_dist = 0.0
-                print("  Origin captured for distance tracking.")
-
-            dist_error = 0.0
-            if self._origin_ship_pos is not None and ship_state is not None:
-                curr_ship_x = float(ship_state.x)
-                curr_ship_y = float(ship_state.y)
-                ds_s = math.sqrt((curr_ship_x - self._last_ship_pos[0])**2 +
-                                 (curr_ship_y - self._last_ship_pos[1])**2)
-                self._total_ship_dist += ds_s
-                self._last_ship_pos = (curr_ship_x, curr_ship_y)
-
-                curr_car_x = pose.position.x_val
-                curr_car_y = pose.position.y_val
-                ds_c = math.sqrt((curr_car_x - self._last_car_pos[0])**2 +
-                                 (curr_car_y - self._last_car_pos[1])**2)
-                self._total_car_dist += ds_c
-                self._last_car_pos = (curr_car_x, curr_car_y)
-
-                dist_error = (self._total_ship_dist * self._speed_scale) - self._total_car_dist
-
-            self._dist_integral += dist_error
-            self._dist_integral = float(np.clip(self._dist_integral, -50.0, 50.0))
-
-            scaled_ship_speed = ship_speed * self._speed_scale
-            target_speed = (scaled_ship_speed
-                            + self._dist_gain * dist_error
-                            + self._dist_ki * self._dist_integral)
-
-            # Cornering logic: slow down if heading error is large
-            abs_head_err = abs(heading_error)
-            if abs_head_err > math.radians(10.0):
-                slow_down = (abs_head_err - math.radians(10.0)) * 3.0
-                target_speed -= slow_down
-
-            target_speed = max(0.0, target_speed)
-
-            # PI-controller for throttle
-            speed_error = target_speed - airsim_speed
-            self._throttle_integral += speed_error
-            self._throttle_integral = float(np.clip(
-                self._throttle_integral, -20.0, 20.0
-            ))
-
-            throttle_cmd = (self._throttle_kp * speed_error +
-                            self._throttle_ki * self._throttle_integral)
-
-            if target_speed < 0.1 and airsim_speed < 0.1:
-                throttle_cmd = 0.0
-                self._throttle_integral = 0.0
-
-            self._controls.throttle = float(np.clip(throttle_cmd, 0.0, 1.0))
+            action = np.asarray(action, dtype=np.float32)
+            self._controls.steering = float(np.clip(action[0], -1.0, 1.0))
+            self._controls.throttle = float(np.clip(action[1], 0.0, 1.0))
             self._controls.brake = 0.0
             self._controls.is_manual_gear = True
             self._controls.manual_gear = 1
-
             self._client.setCarControls(self._controls)
-
-            # Log to CSV
-            if self._csv_writer:
-                self._csv_writer.writerow([
-                    self._step_count,
-                    f"{ship_speed:.4f}", f"{airsim_speed:.4f}", f"{target_speed:.4f}",
-                    f"{dist_error:.4f}",
-                    f"{math.degrees(heading_error):.4f}",
-                    f"{math.degrees(ship_heading):.4f}",
-                    f"{math.degrees(airsim_yaw):.4f}",
-                    f"{steering:.4f}", f"{self._controls.throttle:.4f}",
-                    f"{ship_yaw_rate:.4f}"
-                ])
-                self._csv_file.flush()
-
-            # Telemetry every 200 steps
-            if self._step_count % 200 == 1:
-                print(
-                    f"  [AirSim] step={self._step_count:>5} | "
-                    f"ship_spd={ship_speed:>5.2f} | "
-                    f"car_spd={airsim_speed:>5.2f} | "
-                    f"dist_err={dist_error:>+5.1f}m | "
-                    f"head_err={math.degrees(heading_error):>+5.1f}° | "
-                    f"steer={steering:>+.3f} | "
-                    f"thr={self._controls.throttle:.3f}"
-                )
-
+            self._step_count += 1
         except Exception as exc:
             logger.warning("AirSim send_action failed: %s", exc)
 
-    def get_state(self) -> dict:
+    def get_state(self) -> Dict[str, Any]:
         """Retrieve the current vehicle state from AirSim.
 
         Returns:
-            A dictionary with the following keys when connected:
-
-            * ``"speed"`` — current vehicle speed in m/s.
-            * ``"gear"`` — current gear (integer).
-            * ``"timestamp"`` — AirSim timestamp.
-
-            Returns an empty dictionary if the bridge is not connected
-            or if the query fails.
+            A dictionary with ``"speed"``, ``"gear"``, and
+            ``"timestamp"`` keys when connected.  Empty dict otherwise.
         """
-        if not self._connected:
+        if not self._ensure_connected():
             return {}
         try:
             s = self._client.getCarState()
@@ -406,12 +326,9 @@ class AirSimBridge:
             return {}
 
     def reset(self) -> None:
-        """Reset the AirSim vehicle and all internal controller state.
+        """Reset the AirSim vehicle and re-enable API control.
 
-        Performs a full AirSim vehicle reset, re-enables API control,
-        zeroes all PID integrals, and clears the heading-offset
-        calibration so it is recalculated on the next ``send_action``
-        call.  Does nothing if the bridge is not connected.
+        Does nothing if the bridge is not connected.
         """
         if not self._connected:
             return
@@ -420,32 +337,20 @@ class AirSimBridge:
             time.sleep(0.5)
             self._client.enableApiControl(True)
             self._controls = self._airsim.CarControls()
-            self._heading_offset = None
-            self._heading_integral = 0.0
-            self._throttle_integral = 0.0
-            self._dist_integral = 0.0
-            self._origin_ship_pos = None
-            self._origin_car_pos = None
             self._step_count = 0
-            print("\n--- AirSim vehicle reset ---")
+            print("[AirSimBridge] Vehicle reset.")
         except Exception as exc:
             logger.warning("AirSim reset failed: %s", exc)
 
     def disconnect(self) -> None:
         """Gracefully disconnect from the AirSim simulator.
 
-        Stops the vehicle by zeroing throttle, steering, and brake;
-        closes any open telemetry CSV file; and releases API control.
-        Safe to call multiple times — subsequent calls are no-ops.
+        Stops the vehicle, releases API control.  Safe to call
+        multiple times.
         """
         if not self._connected:
             return
         try:
-            if self._csv_file:
-                self._csv_file.close()
-                self._csv_file = None
-                print("  Telemetry log closed.")
-
             self._controls.throttle = 0.0
             self._controls.steering = 0.0
             self._controls.brake = 0.0
@@ -453,7 +358,7 @@ class AirSimBridge:
             time.sleep(0.3)
             self._client.enableApiControl(False)
             self._connected = False
-            print(f"\nAirSim released after {self._step_count} steps.")
+            print(f"[AirSimBridge] Disconnected after {self._step_count} steps.")
         except Exception as exc:
             logger.warning("AirSim disconnect failed: %s", exc)
             self._connected = False

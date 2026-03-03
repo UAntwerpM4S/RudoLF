@@ -1,5 +1,5 @@
 """AirSim configuration subpackage.
 
-Provides access to all CosysAirSim PID gains, network settings,
-and calibration data files.
+Provides :class:`AirSimConfig`, a validated dataclass with all
+CosysAirSim connection parameters (IP, port, timeout, retries).
 """
