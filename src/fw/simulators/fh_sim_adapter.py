@@ -110,6 +110,8 @@ class FhSimAdapter(BaseSimulator):
         yaw_rate = np.radians(self._engine.ship_interface.getShipYawRate())
 
         self._state = VesselState(
+            terminated=False,
+            truncated=False,
             x=np.float32(new_ship_pos.x),
             y=np.float32(new_ship_pos.y),
             heading=np.float32((heading + np.pi) % (2.0 * np.pi) - np.pi),
