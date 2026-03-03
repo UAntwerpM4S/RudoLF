@@ -1,74 +1,127 @@
-"""AirSim-specific configuration parameters.
+"""AirSim connection configuration with validation.
 
-Centralises all CosysAirSim PID gains, network settings, and
-telemetry options that were previously scattered in ``fw/config.py``.
+Provides a validated ``AirSimConfig`` dataclass that centralises all
+CosysAirSim connection parameters.  PID / control-loop gains are
+intentionally **not** stored here — they belong in the future
+Fossen-input-mapping layer.
 
-Example:
-    >>> from airsim.config.airsim_config import get_airsim_config
-    >>> cfg = get_airsim_config()
-    >>> cfg["airsim_kp"]
-    5.0
+Example::
+
+    >>> from airsim.config.airsim_config import AirSimConfig
+    >>> cfg = AirSimConfig()
+    >>> cfg.port
+    41451
+    >>> cfg = AirSimConfig(port=0)  # raises ValueError
 """
 
-AIRSIM_CONFIG: dict[str, object] = {
-    "use_airsim": True,
-    "airsim_ip": "",
-    "airsim_port": 41451,
+from __future__ import annotations
 
-    # Heading PID controller
-    "airsim_kp": 5.0,
-    "airsim_ki": 0.5,
-    "airsim_kd": 1.0,
-    "airsim_ff": 0.5,
+import ipaddress
+import logging
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict
 
-    # Cross-track error correction
-    "airsim_lat_gain": 0.5,
-
-    # Speed matching
-    "airsim_speed_scale": 1.05,
-
-    # Throttle PI controller
-    "airsim_throttle_kp": 1.0,
-    "airsim_throttle_ki": 0.2,
-
-    # Distance error correction
-    "airsim_dist_gain": 0.1,
-    "airsim_dist_ki": 0.01,
-
-    # Telemetry
-    "airsim_log_telemetry": True,
-}
-"""Module-level configuration dictionary.
-
-Keys:
-    use_airsim (bool): Enable or disable the AirSim bridge.
-    airsim_ip (str): AirSim server IP address (empty = localhost).
-    airsim_port (int): AirSim RPC port.
-    airsim_kp (float): Proportional gain for heading PID.
-    airsim_ki (float): Integral gain for heading PID.
-    airsim_kd (float): Derivative gain for heading PID.
-    airsim_ff (float): Feedforward gain for yaw-rate anticipation.
-    airsim_lat_gain (float): Cross-track error correction gain.
-    airsim_speed_scale (float): Multiplier from Fossen to AirSim speeds.
-    airsim_throttle_kp (float): Proportional gain for throttle PI.
-    airsim_throttle_ki (float): Integral gain for throttle PI.
-    airsim_dist_gain (float): Distance-error proportional gain.
-    airsim_dist_ki (float): Distance-error integral gain.
-    airsim_log_telemetry (bool): Write per-step data to CSV.
-"""
+logger = logging.getLogger(__name__)
 
 
-def get_airsim_config() -> dict:
-    """Return a shallow copy of the AirSim configuration dictionary.
+@dataclass(frozen=True)
+class AirSimConfig:
+    """Validated, immutable configuration for the AirSim bridge.
 
-    The copy prevents accidental mutation of the module-level defaults.
+    All values are validated in ``__post_init__``.  Invalid parameters
+    raise ``ValueError`` with a clear, actionable message.
+
+    Attributes:
+        use_airsim: Enable the AirSim bridge. When ``False`` the bridge
+            is never connected, regardless of other settings.
+        ip: AirSim server IP address.  An empty string means
+            ``127.0.0.1`` (localhost).
+        port: AirSim RPC port (1–65 535).
+        timeout: Connection timeout in seconds (must be > 0).
+        max_retries: Maximum number of connection attempts before
+            giving up (0 = try once, no retries).
+        health_check_interval: Seconds between periodic health checks
+            (must be > 0).
+    """
+
+    use_airsim: bool = True
+    ip: str = ""
+    port: int = 41451
+    timeout: float = 10.0
+    max_retries: int = 3
+    health_check_interval: float = 30.0
+
+    def __post_init__(self) -> None:
+        """Validate all fields after initialisation."""
+        # ── IP ──
+        if self.ip:
+            try:
+                ipaddress.ip_address(self.ip)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid IP address '{self.ip}'. "
+                    f"Expected a valid IPv4/IPv6 address or an empty string for localhost."
+                )
+
+        # ── Port ──
+        if not isinstance(self.port, int) or not (1 <= self.port <= 65_535):
+            raise ValueError(
+                f"Port must be an integer in range 1–65535, got {self.port!r}."
+            )
+
+        # ── Timeout ──
+        if not isinstance(self.timeout, (int, float)) or self.timeout <= 0:
+            raise ValueError(
+                f"Timeout must be a positive number (seconds), got {self.timeout!r}."
+            )
+
+        # ── Max retries ──
+        if not isinstance(self.max_retries, int) or self.max_retries < 0:
+            raise ValueError(
+                f"max_retries must be a non-negative integer, got {self.max_retries!r}."
+            )
+
+        # ── Health-check interval ──
+        if (
+            not isinstance(self.health_check_interval, (int, float))
+            or self.health_check_interval <= 0
+        ):
+            raise ValueError(
+                f"health_check_interval must be a positive number (seconds), "
+                f"got {self.health_check_interval!r}."
+            )
+
+    # ── Convenience helpers ────────────────────────────────
+
+    @property
+    def resolved_ip(self) -> str:
+        """Return the effective IP address (``127.0.0.1`` when empty)."""
+        return self.ip if self.ip else "127.0.0.1"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a plain dictionary of all config values.
+
+        Returns:
+            A dictionary with all configuration parameters.
+        """
+        return asdict(self)
+
+
+# ── Backward-compatible accessor ──────────────────────────
+
+
+def get_airsim_config() -> Dict[str, Any]:
+    """Return a dictionary of AirSim configuration values.
+
+    Backward-compatible wrapper around :class:`AirSimConfig`.
 
     Returns:
         A dictionary with all AirSim-specific parameters.
 
-    Example:
+    Example::
+
         >>> cfg = get_airsim_config()
-        >>> cfg["airsim_port"]
+        >>> cfg["port"]
         41451
     """
-    return AIRSIM_CONFIG.copy()
+    return AirSimConfig().to_dict()

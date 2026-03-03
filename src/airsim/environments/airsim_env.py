@@ -195,7 +195,7 @@ class AirSimEnv(BaseEnv):
             self.coord = CoordTransform.identity(tuple(self.initial_ship_pos))
             logger.info("No calibration found — using identity axis-swap transform.")
 
-        # ── Connect to AirSim ──
+        # ── Connect to AirSim via Bridge ──
         try:
             import cosysairsim as airsim
         except ImportError as e:
@@ -204,11 +204,21 @@ class AirSimEnv(BaseEnv):
                 "not installed. Install it with:  pip install cosysairsim"
             ) from e
         self._airsim = airsim
-        self.client = airsim.CarClient(ip=ip, port=port)
-        self.client.confirmConnection()
-        self.client.enableApiControl(True)
-        self._controls = airsim.CarControls()
-        print(f"[AirSimEnv] Connected to CosysAirSim at {ip or '127.0.0.1'}:{port}")
+
+        from airsim.config.airsim_config import AirSimConfig
+        from airsim.communication.airsim_bridge import AirSimBridge
+
+        cfg = AirSimConfig(ip=ip, port=port)
+        self.bridge = AirSimBridge(cfg)
+
+        if not self.bridge.is_connected:
+            raise ConnectionError(
+                f"AirSimBridge could not connect to UE5 at {ip or '127.0.0.1'}:{port}. "
+                "Make sure Unreal Engine 5 is open and in Play mode."
+            )
+        
+        # Expose client for environment-specific features (plotting, etc)
+        self.client = self.bridge.client
 
         # ── Auto drift correction ──
         self._spawn_pose = self.client.simGetVehiclePose()
@@ -225,11 +235,11 @@ class AirSimEnv(BaseEnv):
                 drift = current_spawn - saved_spawn
                 mag = np.linalg.norm(drift)
                 if mag > 0.5:
-                    print(f"[AirSimEnv] ⚠  Origin drift detected: "
+                    print(f"[AirSimEnv] Origin drift detected: "
                           f"Δx={drift[0]:.2f}, Δy={drift[1]:.2f} ({mag:.1f} m) → auto-correcting.")
                     self.coord._airsim_origin = self.coord._airsim_origin + drift
                 else:
-                    print(f"[AirSimEnv] ✓  No origin drift ({mag:.2f} m).")
+                    print(f"[AirSimEnv] No origin drift ({mag:.2f} m).")
 
         if self.use_pause_stepping:
             self.client.simPause(True)
@@ -557,13 +567,7 @@ class AirSimEnv(BaseEnv):
         self.previous_heading = self.ship_heading
 
         actuator = self._actuators.apply_smoothing(action, self.enable_smoothing)
-
-        self._controls.steering = float(np.clip(actuator.rudder_angle, -1.0, 1.0))
-        self._controls.throttle = float(np.clip(actuator.thrust, 0.0, 1.0))
-        self._controls.brake = 0.0
-        self._controls.is_manual_gear = True
-        self._controls.manual_gear = 1
-        self.client.setCarControls(self._controls)
+        self.bridge.send_action([actuator.rudder_angle, actuator.thrust])
 
         if self.use_pause_stepping:
             self.client.simContinueForFrames(self.frames_per_step)
@@ -589,10 +593,7 @@ class AirSimEnv(BaseEnv):
         if seed is not None:
             super().reset(seed=seed)
 
-        self.client.reset()
-        time.sleep(0.3)
-        self.client.enableApiControl(True)
-        self._controls = self._airsim.CarControls()
+        self.bridge.reset()
 
         if self.use_pause_stepping:
             self.client.simPause(True)
@@ -646,11 +647,6 @@ class AirSimEnv(BaseEnv):
             self.client.simFlushPersistentMarkers()
             self.client.simSetVehiclePose(self._spawn_pose, ignore_collision=True)
 
-            self._controls.throttle = 0.0
-            self._controls.steering = 0.0
-            self._controls.brake = 0.0
-            self.client.setCarControls(self._controls)
-
             if getattr(self, '_training_mode', False):
                 self.client.simRunConsoleCommand("ShowFlag.Rendering 1")
                 self.client.simRunConsoleCommand("ShowFlag.PostProcessing 1")
@@ -672,7 +668,7 @@ class AirSimEnv(BaseEnv):
             if self.use_pause_stepping:
                 self.client.simPause(False)
 
-            self.client.enableApiControl(False)
+            self.bridge.disconnect()
             print("[AirSimEnv] Vehicle reset to spawn, simulation unpaused.")
         except Exception as e:
             logger.warning("Error during AirSimEnv.close(): %s", e)
