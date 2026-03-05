@@ -17,6 +17,8 @@ from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from fw.policies.ppo2_model import PPO2Model
 from fw.policies.ppo_model import PPOModel
+from fw.simulators.airsim_bridge import AirSimBridge
+
 
 
 class PolicyStrategy(Enum):
@@ -92,6 +94,8 @@ class ColavAgent:
         self._fig = None
         self._axes = None
         self._overlay_active = False
+        self._collision_episode_records = []
+        self._warned_reset_seed_not_supported = False
 
 
     def begin_overlay_plot(self):
@@ -284,6 +288,9 @@ class ColavAgent:
             num_episodes: int = 1,
             live_animation: bool = False,
             env_color_index: int = 0,
+            airsim_bridge: AirSimBridge = None,
+            replay_collision_episodes: bool = False,
+            max_replays: int = 5,
     ) -> None:
 
         """
@@ -307,7 +314,10 @@ class ColavAgent:
 
         self.model.set_policy_eval()
         env = self.get_env()
-        env.eval_static_ship_count = 3
+        env.eval_static_ship_count = 5
+
+        if replay_collision_episodes:
+            self._collision_episode_records = []
 
         with self.smoothing(env):
             if hasattr(env, "ship_pos"):
@@ -326,12 +336,18 @@ class ColavAgent:
 
 
                 for episode in range(num_episodes):
-                    print(f"Starting episode {episode}")
+                    print(f"Starting episode {episode + 1}")
                     episode_had_collision = False
-                    state, _ = env.reset()
+                    #state, _ = env.reset()
+                    # seeded reset for reproducibility
+                    episode_seed = int(np.random.randint(0, 2**31 - 1))
+                    state, _ = env.reset(episode_seed)
                     episode_reward = 0
                     done = False
                     steps = 0
+                    episode_actions = []
+                    first_collision_step = None
+                    first_collision_type = None
 
                     start_pos = np.copy(env.ship_pos)
 
@@ -351,6 +367,9 @@ class ColavAgent:
                         # Select action
                         action, _ = self._model.predict(state=state, deterministic=True)
 
+                        if replay_collision_episodes:
+                            episode_actions.append(np.array(action, copy=True).tolist())
+
                         # Take step in environment
                         state, reward, terminated, truncated, info = env.step(action)
                         done = terminated or truncated
@@ -366,6 +385,10 @@ class ColavAgent:
                             ctype = info.get("collision_type", "unknown") if info else "unknown"
                             collisions_by_type[ctype] += 1
                             collision_points.append(np.copy(env.ship_pos))
+
+                            if replay_collision_episodes:
+                                first_collision_step = len(episode_actions)
+                                first_collision_type = ctype
 
 
                         if not done:
@@ -395,6 +418,15 @@ class ColavAgent:
                     all_ukc_measurements.append(np.array(ukc_measurements))
                     total_rewards.append(episode_reward)
 
+                    if replay_collision_episodes and episode_had_collision:
+                        self._collision_episode_records.append({
+                            "episode_index": episode,
+                            "seed": episode_seed,
+                            "collision_step": first_collision_step,
+                            "collision_type": first_collision_type or "unknown",
+                            "actions": episode_actions,
+                        })
+
                 # Calculate mTEI, MTE, and mHEI
                 mTEI, MTE, mHEI = self.compute_metrics(all_cross_errors, all_heading_errors)
 
@@ -411,6 +443,12 @@ class ColavAgent:
                       f"({100.0 * collisions_total / max(1, num_episodes):.1f}%)")
                 if collisions_by_type:
                     print("Collision types:", dict(collisions_by_type))
+
+                if replay_collision_episodes:
+                    print(f"Stored {len(self._collision_episode_records)} collision episode(s) for replay.")
+
+                if replay_collision_episodes and self._collision_episode_records:
+                    self.replay_collision_episodes(max_replays=max_replays)
 
                 try:
                     # Create a figure with two subplots
@@ -642,6 +680,71 @@ class ColavAgent:
                     self._fig = None
                     self._axes = None
                     self._overlay_active = False
+
+    def replay_collision_episodes(self, max_replays=None):
+        """
+        Replay previously stored collision episodes using recorded actions.
+
+        Args:
+            max_replays (int | None): Max number of stored collision episodes to replay.
+        """
+        if not self._collision_episode_records:
+            print("No stored collision episodes to replay.")
+            return
+
+        if not self._model:
+            raise RuntimeError("No model has been created yet!")
+
+        env = self.get_env()
+        self.model.set_policy_eval()
+
+        records = self._collision_episode_records
+        if max_replays is not None:
+            records = records[:max_replays]
+
+        print(f"\nReplaying {len(records)} stored collision episode(s)...")
+
+        with self.smoothing(env):
+            try:
+                for rec in records:
+                    print(
+                        f"\nReplay episode {rec['episode_index'] + 1} "
+                        f"(collision_type={rec.get('collision_type', 'unknown')}, "
+                        f"collision_step={rec.get('collision_step', 'unknown')})"
+                    )
+
+                    # Seeded reset (directly, since your env supports it)
+                    obs, _ = env.reset(seed=rec["seed"])
+
+                    # Always render during replay
+                    env.render()
+
+                    done = False
+                    collision_seen = False
+
+                    for step_idx, action in enumerate(rec["actions"], start=1):
+                        action_np = np.array(action)
+
+                        obs, reward, terminated, truncated, info = env.step(action_np)
+                        done = terminated or truncated
+
+                        env.render()
+
+                        if bool(info.get("collision", False)):
+                            collision_seen = True
+                            print(f"  Collision reached during replay at step {step_idx}.")
+
+                        if done:
+                            break
+
+                    if not collision_seen:
+                        print(
+                            "  Replay finished without detecting a collision "
+                            "(possible non-determinism despite seeded reset)."
+                        )
+            finally:
+                if hasattr(env, "fh_sim"):
+                    env.fh_sim.dispose()
 
 
     def get_env(self):

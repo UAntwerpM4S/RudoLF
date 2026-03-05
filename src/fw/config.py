@@ -14,7 +14,7 @@ In the long term this should be moved to a config-file which will then be read.
 
 DEFAULT_HYPERPARAMETERS = {
     PPO_POLICY_NAME: {
-        'learning_rate': 3e-4,
+        'learning_rate': 1e-4,
         'gamma': 0.99,
         'gae_lambda': 0.95,
         'entropy_coef': 0.01,
@@ -23,14 +23,14 @@ DEFAULT_HYPERPARAMETERS = {
         'clip_range': 0.2,
         'eval_frequency': 100,
         'num_envs': 8,
-        'num_epochs': 4,
+        'num_epochs': 10,
         'normalize': False,
         'max_nbr_iterations': 200000,
-        'batch_size': 2048,
-        'device': "cpu",
+        'batch_size': 8192,
+        'device': "cuda",
         'model_dir': "models",
         'fixed_horizon': True,
-        'steps_per_update': 8192
+        'steps_per_update': 2048
     },
     PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,

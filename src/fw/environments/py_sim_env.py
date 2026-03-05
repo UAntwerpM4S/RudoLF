@@ -106,7 +106,7 @@ class PySimEnv(BaseEnv):
     def __init__(
             self,
             render_mode: Optional[str] = None,
-            time_step: float = 0.1,
+            time_step: float = 1,
             max_steps: int = 1500,
             verbose: Optional[bool] = None,
             start_pos: Optional[np.ndarray] = None,
@@ -756,7 +756,6 @@ class PySimEnv(BaseEnv):
         if self.step_count >= self.max_steps and not terminated:
             reward = -250
             truncated = True
-
         return self._get_obs(), reward, terminated, truncated, {}
 
     # -------------------
@@ -817,6 +816,7 @@ class PySimEnv(BaseEnv):
                 self.reward_weights['cross_track'] * cross_track_penalty +
                 self.reward_weights['rudder'] * rudder_penalty
         )
+
 
         # Checkpoint handling (may increment checkpoint_index)
         checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint["pos"])

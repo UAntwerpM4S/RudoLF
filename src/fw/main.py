@@ -15,7 +15,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         initialize_all_environments
     )
 
-    action = "visualize"
+    action = "train"
 
     # Ensure all environments are registered once
     initialize_all_environments()
@@ -28,11 +28,11 @@ if __name__ == "__main__" or __name__ == "fw.main":
     trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
 
     if "train" == action:
-        configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=500),
+        configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=100, patience=20, max_time_steps=1500),
                          fh_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=3.80, patience=4, max_time_steps=1300),
                          lunar_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD_AND_LOSS, target_reward=0.20, target_loss=0.8, patience=1, max_time_steps=300),
                          py_sim_polar_env_name: StopCondition(stop_criterion=Criterion.NBR_POLICY_UPDATES, max_time_steps=600),
-                         py_sim_colav_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=0.74, patience=20, max_time_steps=1300)}
+                         py_sim_colav_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=3.9, patience=4, max_time_steps=2500)}
         metrics = trainer.train(configuration)
 
         print(f"Training metrics: {metrics}")

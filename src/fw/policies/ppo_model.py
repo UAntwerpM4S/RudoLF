@@ -452,6 +452,7 @@ class PPOModel(BaseModel):
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
         for iteration in range(stopping_condition.max_time_steps):
+            print(iteration)
             self.policy.network.eval()
 
             # Prepare batch for training
@@ -473,7 +474,6 @@ class PPOModel(BaseModel):
             # Log results
             mean_reward = total_reward / self.num_envs
             mean_advantage = total_advantage / self.num_envs
-
             training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
 
             # Save best policy so far
@@ -511,6 +511,7 @@ class PPOModel(BaseModel):
             self._vec_env.close()
             self._vec_env = None
 
+        training_time = time.perf_counter() - training_start
         print("Training completed!")
         print(f"Training took: {training_time:.3f}s")
         print("Visualizing training process")
