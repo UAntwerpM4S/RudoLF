@@ -6,6 +6,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+    # Suppress all airsim loggers by default; they are re-enabled once a live
+    # connection is confirmed (see visualize / train blocks below).
+    logging.getLogger("airsim").setLevel(logging.CRITICAL)
 
     multiprocessing.set_start_method("spawn", force=True)
 
@@ -37,6 +40,10 @@ if __name__ == "__main__" or __name__ == "fw.main":
     trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
 
     if "train" == action:
+        # Re-enable airsim logging only when the airsim environment is selected
+        if any(env.__class__.__name__ == airsim_env_name for env in envs):
+            logging.getLogger("airsim").setLevel(logging.INFO)
+
         configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
                          airsim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
                          fh_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=3.80, patience=4, max_time_steps=1300),
@@ -59,6 +66,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             temp_bridge = AirSimBridge(bridge_cfg)
             if temp_bridge.is_connected:
                 airsim_bridge = temp_bridge
+                logging.getLogger("airsim").setLevel(logging.INFO)  # connected — enable airsim logs
             else:
                 print("[main] AirSim bridge not connected — running without.")
 
