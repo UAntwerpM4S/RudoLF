@@ -57,39 +57,39 @@ class ShipSimulator(BaseSimulator):
 
         return self._env
 
-    def integrate(self, command, time_step, surge_damping_factor, sway_damping_factor, yaw_damping_factor, enable_smoothing: bool = True) -> None:
+    def integrate(self, actuator, time_step, surge_damping_factor, sway_damping_factor, yaw_damping_factor) -> None:
         """
-        Advance the ship state by a single physics integration step.
+        Advance the vessel state by a single physics integration step.
 
-        Applies actuator commands, computes vessel accelerations, adds
-        environmental effects, applies damping, clips velocities to
-        limits, and updates the earth-fixed position using midpoint
-        integration.
+        Performs one substep of the continuous-time vessel dynamics using a
+        zero-order hold actuator input. The provided actuator state is assumed
+        to remain constant over the given time_step.
 
         Args:
-            command: ActuatorCommand object containing the current
-                rudder_angle and thrust setpoints.
-            time_step: Time step (seconds) over which to integrate the dynamics.
-            surge_damping_factor: Linear damping factor for surge velocity.
-            sway_damping_factor: Linear damping factor for sway velocity.
-            yaw_damping_factor: Linear damping factor for yaw rate.
-            enable_smoothing: If True, actuator outputs are rate-limited
-                and smoothed according to the ActuatorModel.
+            actuator: ActuatorState containing the current rudder_angle [rad]
+                and thrust command [-], already updated for the environment step.
+            time_step: Physics integration step size in seconds.
+            surge_damping_factor: Linear damping coefficient applied to surge
+                velocity (u).
+            sway_damping_factor: Linear damping coefficient applied to sway
+                velocity (v).
+            yaw_damping_factor: Linear damping coefficient applied to yaw
+                rate (r).
 
         Notes:
-            - Rudder and thrust are processed through the ActuatorModel
-              before computing dynamics.
-            - Vessel accelerations are computed via the DynamicsModel.
-            - Environmental accelerations (wind, current) are added
+            - The actuator state is not modified in this method.
+            - Vessel accelerations are computed using the DynamicsModel.
+            - Environmental accelerations (e.g., wind and current) are added
               in the body-fixed frame.
-            - Velocity limits from ShipSpecifications are enforced.
-            - Midpoint integration improves numerical accuracy for position
-              and heading updates.
-            - Heading is wrapped to [-π, π].
+            - Linear damping is applied implicitly in surge, sway, and yaw.
+            - Body-fixed velocities (u, v, r) are clipped to limits defined
+              in ShipSpecifications.
+            - Earth-fixed position is updated using midpoint integration
+              for improved numerical accuracy.
+            - Heading is wrapped to the interval [-π, π].
         """
 
         s = self._state
-        actuator = self._actuators.step(command, time_step, enable_smoothing)
 
         # Compute accelerations from dynamics
         du, dv, dr = self._dynamics.accelerations(s.u, s.v, s.r, actuator.rudder_angle, actuator.thrust)
@@ -173,6 +173,7 @@ class ShipSimulator(BaseSimulator):
 
         # Map normalized actions to physical actuators
         command = self._mapper.map(action, self._specs)
+        actuator = self._actuators.step(command, self.dt, enable_smoothing)
 
         # Surge damping
         if self.numerical_damping and hasattr(self._dynamics, "X_u") and hasattr(self._dynamics, "m11"):
@@ -191,10 +192,10 @@ class ShipSimulator(BaseSimulator):
             yaw_damping_factor = 0.0
 
         for i in range(n_full):
-            self.integrate(command, dyn_model_time_step, surge_damping_factor, sway_damping_factor, yaw_damping_factor, enable_smoothing)
+            self.integrate(actuator, dyn_model_time_step, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
 
         if dt_rem > 1e-12:
-            self.integrate(command, dt_rem, surge_damping_factor, sway_damping_factor, yaw_damping_factor, enable_smoothing)
+            self.integrate(actuator, dt_rem, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
 
         s = self._state
         self._state = VesselState(
