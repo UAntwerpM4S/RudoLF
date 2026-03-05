@@ -1,5 +1,12 @@
 if __name__ == "__main__" or __name__ == "fw.main":
+    import logging
     import multiprocessing
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    )
+
     multiprocessing.set_start_method("spawn", force=True)
 
     from fw.trainer import Trainer
@@ -15,7 +22,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
     )
 
 
-    action = "train"
+    action = "visualize"
 
     # Ensure all environments are registered once
     initialize_all_environments()

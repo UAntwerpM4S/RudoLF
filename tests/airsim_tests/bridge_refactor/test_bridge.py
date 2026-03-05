@@ -17,6 +17,23 @@ def mock_car_client():
     state_mock.speed = 0.0
     state_mock.gear = 1
     state_mock.timestamp = 123456789
+    
+    kinematics_mock = MagicMock()
+    kinematics_mock.position.x_val = 1.0
+    kinematics_mock.position.y_val = 2.0
+    kinematics_mock.position.z_val = 3.0
+    kinematics_mock.linear_velocity.x_val = 4.0
+    kinematics_mock.linear_velocity.y_val = 5.0
+    kinematics_mock.linear_velocity.z_val = 6.0
+    kinematics_mock.angular_velocity.x_val = 0.1
+    kinematics_mock.angular_velocity.y_val = 0.2
+    kinematics_mock.angular_velocity.z_val = 0.3
+    kinematics_mock.orientation.w_val = 0.7071
+    kinematics_mock.orientation.x_val = 0.0
+    kinematics_mock.orientation.y_val = 0.0
+    kinematics_mock.orientation.z_val = 0.7071
+    state_mock.kinematics_estimated = kinematics_mock
+    
     client_mock.getCarState.return_value = state_mock
     return client_mock
 
@@ -119,19 +136,20 @@ class TestBridgeHealthAndControl:
     def test_health_check_failure(self):
         """Test 10: Health check disables bridge on failure."""
         self.mock_client.getCarState.side_effect = Exception("Disconnected")
+        self.mock_client.confirmConnection.side_effect = Exception("Reconnection Fail") # To prevent successful reconnect
         assert self.bridge.health_check() is False
         assert self.bridge.is_connected is False
 
-    def test_send_action(self):
-        """Test 11: send_action passes raw bounds directly (T-001 pass-through constraint)."""
-        action = np.array([-0.5, 0.8])
-        self.bridge.send_action(action)
+    def test_set_controls(self, mock_cosysairsim_module):
+        """Test 11: set_controls forwards predefined CarControls (T-001 pass-through constraint modified to pure middleware)."""
+        controls = mock_cosysairsim_module.CarControls()
+        controls.steering = -0.5
+        controls.throttle = 0.8
+        
+        self.bridge.set_controls(controls)
 
-        controls = self.bridge._controls
-        assert controls.steering == pytest.approx(-0.5)
-        assert controls.throttle == pytest.approx(0.8)
-        assert controls.brake == pytest.approx(0.0)
-        self.mock_client.setCarControls.assert_called_once()
+        assert self.bridge._controls is controls
+        self.mock_client.setCarControls.assert_called_once_with(controls)
 
 # ── T-005: AirSimEnv & AirSimBridge Integratie ──
 
@@ -147,3 +165,79 @@ def test_client_property_exposure(mock_cosysairsim_module, mock_car_client):
         bridge._connected = False
         with pytest.raises(ConnectionError, match="Cannot access AirSim client"):
             _ = bridge.client
+
+# ── Extension Tests (T-005 - T-008) ──
+
+@patch("airsim.communication.airsim_bridge.AirSimBridge._connect_with_retry")
+@patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True)
+def test_health_check_reconnect(mock_reachable, mock_connect, mock_cosysairsim_module, mock_car_client):
+    """T-005: Verify health_check triggers reconnect and cleans up when connection fails."""
+    mock_car_client.getCarState.side_effect = Exception("Connection lost")
+    bridge = AirSimBridge(AirSimConfig(max_retries=1))
+    
+    # Fake being connected so health_check can try
+    bridge._connected = True
+    
+    # Act
+    mock_connect.reset_mock()
+    bridge.health_check()
+    
+    # Assert
+    assert mock_connect.call_count == 1
+    assert bridge._client is None  # Should be cleared before reconnect
+    assert bridge._controls is None
+
+def test_disconnect_behavior(mock_cosysairsim_module, mock_car_client):
+    """T-005 & T-008: Disconnect clears state, sends brakes, and flushes CSV."""
+    with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True):
+        bridge = AirSimBridge(AirSimConfig(csv_log_path="dummy.csv"))
+        bridge._sensor_buffer.append({"dummy": 1})
+        
+        with patch("airsim.communication.airsim_bridge.AirSimBridge._flush_csv") as mock_flush:
+            bridge.disconnect()
+            
+            # Assert flush was called
+            mock_flush.assert_called_once()
+            
+            # Assert brakes were applied
+            args, kwargs = mock_car_client.setCarControls.call_args
+            controls = args[0]
+            assert controls.throttle == 0.0
+            assert controls.brake == 1.0
+            assert bridge._connected is False
+
+def test_get_state_telemetry_and_yaw(mock_cosysairsim_module, mock_car_client):
+    """T-007: get_state returns full telemetry and valid yaw from quaternion."""
+    with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True):
+        bridge = AirSimBridge()
+        state = bridge.get_state()
+        
+        # Validate positions
+        assert state["pos_x"] == 1.0
+        assert state["pos_y"] == 2.0
+        assert state["pos_z"] == 3.0
+        
+        # Validate yaw (w=0.7071, z=0.7071 -> ~90 degrees or pi/2 radians)
+        assert state["yaw"] == pytest.approx(1.5707, abs=0.01)
+
+@patch("os.path.isfile", return_value=False)
+@patch("builtins.open")
+def test_csv_logging_buffer(mock_open, mock_isfile, mock_cosysairsim_module, mock_car_client):
+    """T-008: Verify buffered data logic flushes to CSV."""
+    with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True):
+        bridge = AirSimBridge(AirSimConfig(csv_log_path="test_log.csv"))
+        import csv
+        with patch("csv.DictWriter") as mock_writer_cls:
+            mock_writer_inst = mock_writer_cls.return_value
+            
+            # Add one item to buffer
+            bridge._sensor_buffer.append({"a": 1, "b": 2})
+            
+            # Flush
+            bridge._flush_csv()
+            
+            # Assert empty buffer and file opened
+            assert len(bridge._sensor_buffer) == 0
+            mock_open.assert_called_once_with("test_log.csv", mode='a', newline='')
+            mock_writer_inst.writeheader.assert_called_once()
+            mock_writer_inst.writerows.assert_called_once_with([{"a": 1, "b": 2}])
