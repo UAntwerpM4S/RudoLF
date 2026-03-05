@@ -2,7 +2,7 @@
 
 Provides a validated ``AirSimConfig`` dataclass that centralises all
 CosysAirSim connection parameters.  PID / control-loop gains are
-intentionally **not** stored here — they belong in the future
+intentionally **not** stored here - they belong in the future
 Fossen-input-mapping layer.
 
 Example::
@@ -50,6 +50,7 @@ class AirSimConfig:
     timeout: float = 10.0
     max_retries: int = 3
     health_check_interval: float = 30.0
+    csv_log_path: str = ""
 
     def __post_init__(self) -> None:
         """Validate all fields after initialisation."""
