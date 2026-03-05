@@ -9,9 +9,14 @@ Prerequisites:
     2. calibration.json must exist (run calibrate_coords.py once first).
 """
 
+import logging
 import multiprocessing
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    )
     multiprocessing.set_start_method("spawn", force=True)
 
     from fw.trainer import Trainer
