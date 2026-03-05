@@ -1,5 +1,17 @@
 if __name__ == "__main__" or __name__ == "fw.main":
+    import logging
     import multiprocessing
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    )
+    # Suppress all airsim loggers by default; they are re-enabled once a live
+    # connection is confirmed (see visualize / train blocks below).
+    logging.getLogger("airsim").setLevel(logging.CRITICAL)
+    logging.getLogger("sim").setLevel(logging.CRITICAL)
+
+
     multiprocessing.set_start_method("spawn", force=True)
 
     from fw.trainer import Trainer
@@ -9,6 +21,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         get as get_environment,
         py_sim_env_name,
         fh_sim_env_name,
+        airsim_env_name,
         lunar_env_name,
         py_sim_polar_env_name,
         initialize_all_environments
@@ -21,14 +34,20 @@ if __name__ == "__main__" or __name__ == "fw.main":
     initialize_all_environments()
 
     # Define simulator inputs
-    envs = [get_environment(py_sim_env_name)]
-            # get_environment(fh_sim_env_name)]
+    envs =  [get_environment(py_sim_env_name)]
+            #get_environment(fh_sim_env_name)]
+            #get_environment(airsim_env_name, configuration={"training_mode": False})]
 
     # Create a Trainer and pass on a list of agents that you want to train
     trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
 
     if "train" == action:
+        # Re-enable airsim logging only when the airsim environment is selected
+        if any(env.__class__.__name__ == airsim_env_name for env in envs):
+            logging.getLogger("airsim").setLevel(logging.INFO)
+
         configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
+                         airsim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
                          fh_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=3.80, patience=4, max_time_steps=1300),
                          lunar_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD_AND_LOSS, target_reward=0.20, target_loss=0.8, patience=1, max_time_steps=300),
                          py_sim_polar_env_name: StopCondition(stop_criterion=Criterion.NBR_POLICY_UPDATES, max_time_steps=600)}
@@ -37,26 +56,21 @@ if __name__ == "__main__" or __name__ == "fw.main":
         print(f"Training metrics: {metrics}")
     elif "visualize" == action:
         # Optionally create AirSim bridge for simultaneous vehicle control
-        from airsim.config.airsim_config import get_airsim_config
+        from airsim.config.airsim_config import get_airsim_config, AirSimConfig
         airsim_cfg = get_airsim_config()
         airsim_bridge = None
         if airsim_cfg.get("use_airsim", False):
             from airsim.communication.airsim_bridge import AirSimBridge
-            airsim_bridge = AirSimBridge(
+            bridge_cfg = AirSimConfig(
                 ip=airsim_cfg.get("airsim_ip", ""),
-                port=airsim_cfg.get("airsim_port", 41451),
-                heading_kp=airsim_cfg.get("airsim_kp", 3.0),
-                heading_ki=airsim_cfg.get("airsim_ki", 0.2),
-                heading_kd=airsim_cfg.get("airsim_kd", 2.0),
-                heading_ff=airsim_cfg.get("airsim_ff", 0.3),
-                speed_scale=airsim_cfg.get("airsim_speed_scale", 1.0),
-                lat_gain=airsim_cfg.get("airsim_lat_gain", 0.3),
-                throttle_kp=airsim_cfg.get("airsim_throttle_kp", 1.0),
-                throttle_ki=airsim_cfg.get("airsim_throttle_ki", 0.05),
-                dist_gain=airsim_cfg.get("airsim_dist_gain", 0.1),
-                dist_ki=airsim_cfg.get("airsim_dist_ki", 0.0),
-                log_telemetry=airsim_cfg.get("airsim_log_telemetry", True),
+                port=airsim_cfg.get("airsim_port", 41451)
             )
+            temp_bridge = AirSimBridge(bridge_cfg)
+            if temp_bridge.is_connected:
+                airsim_bridge = temp_bridge
+                logging.getLogger("airsim").setLevel(logging.INFO)  # connected — enable airsim logs
+            else:
+                print("[main] AirSim bridge not connected — running without.")
 
         trainer.visualize(envs, airsim_bridge=airsim_bridge)
     else:
