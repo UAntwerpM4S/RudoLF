@@ -9,6 +9,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
     # Suppress all airsim loggers by default; they are re-enabled once a live
     # connection is confirmed (see visualize / train blocks below).
     logging.getLogger("airsim").setLevel(logging.CRITICAL)
+    logging.getLogger("sim").setLevel(logging.CRITICAL)
+
 
     multiprocessing.set_start_method("spawn", force=True)
 
