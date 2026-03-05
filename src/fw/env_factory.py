@@ -251,9 +251,9 @@ class AirSimEnvironment(BaseEnvironment):
         
         # Factory calls __init__("", []) to extract the type name during class registration.
         # We return a dummy object to avoid connecting to UE5 unnecessarily.
+        # The dummy's class name must be "AirSimEnv" so the factory registers the correct key.
         if name == "":
-            class AirSimEnv: pass
-            self._env = AirSimEnv()
+            self._env = type("AirSimEnv", (), {})()
             return
 
         ship_pos = [2245, -47]

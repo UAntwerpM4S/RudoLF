@@ -138,7 +138,7 @@ class AirSimEnv(BaseEnv):
         time_step: float = 0.1,
         frames_per_step: int = 10,
         use_pause_stepping: bool = True,
-        training_mode: bool = True,
+        training_mode: bool = False,
         verbose: bool = False,
         episode_log_path: str = "",
     ) -> None:
@@ -792,14 +792,21 @@ class AirSimEnv(BaseEnv):
 
         actuator = self._actuators.apply_smoothing(action, self.enable_smoothing)
         controls = self._airsim.CarControls()
-        controls.steering = actuator.rudder_angle
-        controls.throttle = actuator.thrust
-        self.bridge.set_controls(controls)
+        # msgpack requires plain Python float — numpy.float32 has no to_msgpack()
+        controls.steering = float(actuator.rudder_angle)
+        controls.throttle = float(actuator.thrust)
 
         if self.use_pause_stepping:
+            # When the sim is paused, setCarControls blocks indefinitely waiting
+            # for a physics-thread acknowledgement that never arrives.
+            # Fix: unpause first so the RPC returns immediately, then
+            # simContinueForFrames advances N frames and auto-pauses again.
+            self.client.simPause(False)
+            self.client.setCarControls(controls)
             self.client.simContinueForFrames(self.frames_per_step)
             time.sleep(0.001)
         else:
+            self.bridge.set_controls(controls)
             time.sleep(self.time_step)
 
         self._read_airsim_state()
