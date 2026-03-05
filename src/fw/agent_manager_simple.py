@@ -1,5 +1,4 @@
 import os
-import time
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -302,15 +301,18 @@ class AgentManager:
         self.agent.set_policy_eval()
         env = self.get_env()
 
+        # Prepare Fossen->AirSim coordinate transform if bridge is active
+        coord_transform = None
+        if airsim_bridge and airsim_bridge.is_connected:
+            from airsim.communication.coord_transform import CoordTransform
+            coord_transform = CoordTransform()
+
         with self.smoothing(env):
             if hasattr(env, "ship_pos"):
                 # Store results for each episode
                 all_paths = []
                 total_rewards = []
                 start_pos = None
-
-                # Determine simulation time step for AirSim sync
-                _sim_dt = getattr(env, 'time_step', 0.1)
 
                 try:
                     for episode in range(num_episodes):
@@ -321,27 +323,12 @@ class AgentManager:
 
                         start_pos = np.copy(env.ship_pos[0])
 
-                        # Reset AirSim vehicle at the start of each episode
-                        if airsim_bridge is not None:
-                            airsim_bridge.reset()
-
                         # Store positions for this episode
                         path_positions = [np.copy(env.ship_pos[0])]
 
                         while not done:
                             # Select action
                             action, _, _ = self._agent.predict(state=state, deterministic=True)
-
-                            # Forward action to AirSim (if bridge is active)
-                            if airsim_bridge is not None:
-                                ship_state = env.phys_sims[0].state
-                                airsim_bridge.send_action(
-                                    action,
-                                    ship_speed=float(ship_state.u),
-                                    ship_heading=float(ship_state.heading),
-                                    ship_yaw_rate=float(ship_state.r),
-                                    ship_state=ship_state,
-                                )
 
                             # Take step in environment
                             state, reward, terminated, truncated, _ = env.step(action)
@@ -359,10 +346,16 @@ class AgentManager:
                                 if live_animation:
                                     env.render()
 
-                                # Brief pause to let AirSim process commands smoothly
-                                if airsim_bridge is not None and airsim_bridge.is_connected:
-                                    dt = getattr(env, "time_step", 0.1)
-                                    time.sleep(dt)
+                                # Bridge ship position and heading to UE5 via coordinate transform
+                                if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
+                                    ax, ay, _ = coord_transform.fossen_to_airsim(
+                                        float(env.ship_pos[0][0]),
+                                        float(env.ship_pos[0][1])
+                                    )
+                                    ayaw = coord_transform.fossen_heading_to_airsim_yaw(
+                                        float(env.phys_sims[0].state.heading)
+                                    )
+                                    airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
                             else:
                                 print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
                                 break

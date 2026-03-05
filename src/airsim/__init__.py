@@ -20,9 +20,15 @@ Example::
     >>> from airsim.communication.coord_transform import CoordTransform
 """
 
+import logging
+
 from airsim.communication.coord_transform import CoordTransform
 from airsim.config.airsim_config import AirSimConfig, get_airsim_config
 from airsim.communication.airsim_bridge import is_ue5_reachable
+
+# Library best practice: prevent "No handler found" warnings.
+# The consuming application (e.g. main.py) configures the actual handlers.
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
     "AirSimConfig",
