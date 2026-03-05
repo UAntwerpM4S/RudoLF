@@ -16,7 +16,7 @@ import time
 import numpy as np
 from pathlib import Path
 
-from airsim.communication.coord_transform import CoordTransform
+from communication.coord_transform import CoordTransform
 
 _THIS_DIR = Path(__file__).resolve().parent
 _CONFIG_DIR = _THIS_DIR.parent / "config"

@@ -19,6 +19,7 @@ Usage
 >>> env.close()
 """
 
+import csv
 import os
 import math
 import time
@@ -139,6 +140,7 @@ class AirSimEnv(BaseEnv):
         use_pause_stepping: bool = True,
         training_mode: bool = True,
         verbose: bool = False,
+        episode_log_path: str = "",
     ) -> None:
         """Initialise the AirSim training environment.
 
@@ -156,6 +158,10 @@ class AirSimEnv(BaseEnv):
             use_pause_stepping: If True, pause sim and step frame-by-frame
                 (fastest training mode).
             verbose: Print debug info.
+            episode_log_path: Optional path to a CSV file where per-step
+                episode telemetry (position, speed, cross-track error,
+                reward, action) is appended.  One file collects all
+                episodes across resets.  Set to ``""`` to disable.
         """
         super().__init__(render_mode)
 
@@ -164,6 +170,12 @@ class AirSimEnv(BaseEnv):
         self.frames_per_step = frames_per_step
         self.use_pause_stepping = use_pause_stepping
         self.verbose = verbose
+
+        # ── Episode-level telemetry CSV (T-012) ──
+        self._episode_log_path: str = episode_log_path
+        self._episode_log_file = None
+        self._episode_csv_writer = None
+        self._episode_number: int = 0
 
         # ── Ship specifications & actuator model ──
         self.ship = create_ship(ShipModel.MYZAKO_DEFAULT)
@@ -235,15 +247,17 @@ class AirSimEnv(BaseEnv):
                 drift = current_spawn - saved_spawn
                 mag = np.linalg.norm(drift)
                 if mag > 0.5:
-                    print(f"[AirSimEnv] Origin drift detected: "
-                          f"Δx={drift[0]:.2f}, Δy={drift[1]:.2f} ({mag:.1f} m) → auto-correcting.")
+                    logger.info(
+                        "Origin drift detected: Δx=%.2f, Δy=%.2f (%.1f m) → auto-correcting.",
+                        drift[0], drift[1], mag,
+                    )
                     self.coord._airsim_origin = self.coord._airsim_origin + drift
                 else:
-                    print(f"[AirSimEnv] No origin drift ({mag:.2f} m).")
+                    logger.debug("No origin drift (%.2f m).", mag)
 
         if self.use_pause_stepping:
             self.client.simPause(True)
-            print("[AirSimEnv] Simulation paused — using deterministic frame stepping.")
+            logger.info("Simulation paused — using deterministic frame stepping.")
 
         # ── Training mode: disable UE5 rendering for speed ──
         self._training_mode = training_mode
@@ -264,7 +278,7 @@ class AirSimEnv(BaseEnv):
             self.client.simRunConsoleCommand("sg.TextureQuality 0")
             self.client.simRunConsoleCommand("sg.EffectsQuality 0")
             self.client.simRunConsoleCommand("sg.FoliageQuality 0")
-            print("[AirSimEnv] Training mode: UE5 rendering minimized for speed.")
+            logger.info("Training mode: UE5 rendering minimized for speed.")
 
         # ── Draw trajectory in UE5 ──
         self._draw_visualization()
@@ -303,19 +317,157 @@ class AirSimEnv(BaseEnv):
             "rudder": 0.03,
         }
 
+        # ── Open episode log if configured ──
+        if self._episode_log_path:
+            self._open_episode_log()
+
     # AirSimEnv holds a live network connection and a module reference
     # that cannot be pickled.
     def __deepcopy__(self, memo):
+        """Return *self* — AirSimEnv cannot be deep-copied (live socket)."""
         return self
 
     def __copy__(self):
+        """Return *self* — AirSimEnv cannot be shallow-copied."""
         return self
 
     # ─────────────────────────────────────
-    # Data loading
+    # Episode telemetry CSV  (T-012)
+    # ─────────────────────────────────────
+
+    _EPISODE_LOG_FIELDS = [
+        "episode", "episode_step",
+        "ship_x", "ship_y", "heading_deg", "speed",
+        "cross_track_error", "checkpoint_index",
+        "reward", "steering", "throttle",
+    ]
+
+    def _open_episode_log(self) -> None:
+        """Open (or re-open) the episode telemetry CSV for appending.
+
+        Creates the file with a header row when it does not yet exist.
+        Safe to call repeatedly — closes any previously open handle first.
+        """
+        self._close_episode_log()
+        path = self._episode_log_path
+        try:
+            file_exists = os.path.isfile(path)
+            self._episode_log_file = open(path, "a", newline="")
+            self._episode_csv_writer = csv.DictWriter(
+                self._episode_log_file,
+                fieldnames=self._EPISODE_LOG_FIELDS,
+            )
+            if not file_exists:
+                self._episode_csv_writer.writeheader()
+            logger.info("Episode log opened: %s", path)
+        except Exception as exc:
+            logger.warning("Could not open episode log '%s': %s", path, exc)
+            self._episode_log_file = None
+            self._episode_csv_writer = None
+
+    def _write_episode_log_row(self, reward: float) -> None:
+        """Append one row of telemetry to the episode CSV.
+
+        Args:
+            reward: The scalar reward computed for this step.
+        """
+        if self._episode_csv_writer is None:
+            return
+        try:
+            self._episode_csv_writer.writerow({
+                "episode": self._episode_number,
+                "episode_step": self.step_count,
+                "ship_x": float(self.ship_pos[0]),
+                "ship_y": float(self.ship_pos[1]),
+                "heading_deg": float(math.degrees(self.ship_heading)),
+                "speed": float(self.ship_speed),
+                "cross_track_error": float(self.cross_error),
+                "checkpoint_index": int(self.checkpoint_index),
+                "reward": float(reward),
+                "steering": float(self.performed_action[0]),
+                "throttle": float(self.performed_action[1]),
+            })
+        except Exception as exc:
+            logger.warning("Episode log write failed: %s", exc)
+
+    def _close_episode_log(self) -> None:
+        """Flush and close the episode log file handle, if open."""
+        if self._episode_log_file is not None:
+            try:
+                self._episode_log_file.flush()
+                self._episode_log_file.close()
+            except Exception:
+                pass
+            self._episode_log_file = None
+            self._episode_csv_writer = None
+
+    # ─────────────────────────────────────
+    # BaseEnv adapter  (T-010)
+    # ─────────────────────────────────────
+    def env_specific_reset(self) -> None:
+        """Perform AirSim-specific reset actions.
+
+        Called by ``BaseEnv`` / the training pipeline *after* the
+        generic state reset.  Delegates to the bridge reset and
+        re-pauses the simulation when deterministic stepping is used.
+        """
+        self.bridge.reset()
+        if self.use_pause_stepping:
+            self.client.simPause(True)
+
+    def randomize(self, randomization_scale: Optional[float] = None) -> None:
+        """Apply domain randomisation to the initial ship position.
+
+        Adds a uniform random perturbation to ``initial_ship_pos`` and
+        ensures the new position stays inside the navigable polygon.
+
+        Args:
+            randomization_scale: Maximum absolute perturbation (meters).
+                Defaults to ``1.0`` if *None*.
+        """
+        scale = randomization_scale if randomization_scale is not None else 1.0
+        if scale <= 0:
+            raise ValueError("randomization_scale must be positive")
+
+        perturbation = np.random.default_rng().uniform(
+            low=-scale, high=scale, size=self.initial_ship_pos.shape,
+        ).astype(np.float32)
+
+        candidate = np.clip(
+            self.initial_ship_pos + perturbation,
+            MIN_GRID_POS, MAX_GRID_POS,
+        )
+
+        # Only accept if the candidate is inside the river polygon.
+        if self._ship_in_open_water(candidate):
+            self.initial_ship_pos = candidate
+        else:
+            logger.debug(
+                "Randomised position (%.0f, %.0f) outside polygon — keeping original.",
+                candidate[0], candidate[1],
+            )
+
+    # ─────────────────────────────────────
+    # Data loading  (T-011)
     # ─────────────────────────────────────
     def _load_checkpoints(self) -> None:
-        """Load trajectory checkpoints from the same CSV as PySimEnv."""
+        """Load trajectory checkpoints from CSV and add 3D AirSim coords.
+
+        Reads ``trajectory_points_no_scale.csv`` (2-column Fossen x/y),
+        reduces the path to start near ``initial_ship_pos``, spaces
+        checkpoints evenly, and converts each one to 3D AirSim
+        coordinates via ``coord.fossen_to_airsim``.
+
+        Each checkpoint dict contains:
+            * ``pos``              — 2D Fossen position ``(x_east, y_north)``.
+            * ``pos_airsim_3d``    — 3D AirSim position ``(ax, ay, az)``.
+            * ``radius``           — Proximity radius for checkpoint hit.
+            * ``reward``           — Reward granted on reaching this checkpoint.
+            * ``perpendicular_line`` — Guidance gate line endpoints.
+
+        Raises:
+            ValueError: If the CSV has an unexpected shape.
+        """
         csv_path = _ENVIRONMENTS_DIR / "trajectory_points_no_scale.csv"
         path = np.loadtxt(csv_path, delimiter=",", skiprows=1)
         if path.ndim != 2 or path.shape[1] != 2:
@@ -334,8 +486,16 @@ class AirSimEnv(BaseEnv):
 
         checkpoints = []
         for i, point in enumerate(path):
+            fossen_pos = np.array(point, dtype=np.float32)
+
+            # T-011: 3D coordinate transformation (Fossen → AirSim)
+            ax, ay, az = self.coord.fossen_to_airsim(
+                float(fossen_pos[0]), float(fossen_pos[1]),
+            )
+
             checkpoints.append({
-                "pos": np.array(point, dtype=np.float32),
+                "pos": fossen_pos,
+                "pos_airsim_3d": np.array([ax, ay, az], dtype=np.float32),
                 "radius": float(CHECKPOINT_AREA_SIZE),
                 "reward": (i / max(1, len(path))) * 10.0,
             })
@@ -430,24 +590,44 @@ class AirSimEnv(BaseEnv):
             is_persistent=True,
         )
 
-        print("[AirSimEnv] Trajectory and polygon drawn in UE5.")
+        logger.info("Trajectory and polygon drawn in UE5.")
 
     # ─────────────────────────────────────
-    # Observation space
+    # Observation space  (T-009)
     # ─────────────────────────────────────
     def _initialize_observation_space(self) -> gym.spaces.Box:
-        """10-dim observation space identical to PySimEnv."""
+        """Create the 10-dimensional observation space.
+
+        The layout is **identical** to ``PySimEnv`` so that policies
+        trained in either environment can be transferred directly.
+
+        Observation channels (all min-max normalised):
+            0. **surge velocity**  ``u / surge_max``          → [-1, 1]
+            1. **sway  velocity**  ``v / sway_max``           → [-1, 1]
+            2. **yaw rate**        ``r / yaw_rate_max``       → [-1, 1]
+            3. **dist to current checkpoint** ``/ max_dist``  → [ 0, 1]
+            4. **dist to next checkpoint**    ``/ max_dist``  → [ 0, 1]
+            5. **signed cross-track error** ``/ (CP_DIST/2)`` → [-2, 2]
+            6. **heading error  → current CP** ``/ π``        → [-1, 1]
+            7. **heading error  → next CP**    ``/ π``        → [-1, 1]
+            8. **heading error ∥ current seg** ``/ π``        → [-1, 1]
+            9. **heading error ∥ next seg**    ``/ π``        → [-1, 1]
+
+        Returns:
+            A ``gym.spaces.Box`` with shape ``(10,)`` and dtype
+            ``float32``.
+        """
         low = np.array([
-            -1.0,  # surge velocity
-            -1.0,  # sway velocity
-            -1.0,  # yaw rate
-             0.0,  # distance to current checkpoint
-             0.0,  # distance to next checkpoint
-            -2.0,  # cross-track error
-            -1.0,  # heading error (to current)
-            -1.0,  # heading error (to next)
-            -1.0,  # heading error parallel (current)
-            -1.0,  # heading error parallel (next)
+            -1.0,  # 0  surge velocity
+            -1.0,  # 1  sway velocity
+            -1.0,  # 2  yaw rate
+             0.0,  # 3  distance to current checkpoint
+             0.0,  # 4  distance to next checkpoint
+            -2.0,  # 5  cross-track error
+            -1.0,  # 6  heading error (to current)
+            -1.0,  # 7  heading error (to next)
+            -1.0,  # 8  heading error parallel (current)
+            -1.0,  # 9  heading error parallel (next)
         ], dtype=np.float32)
 
         high = np.array([
@@ -463,7 +643,13 @@ class AirSimEnv(BaseEnv):
     # AirSim state reading
     # ─────────────────────────────────────
     def _read_airsim_state(self) -> None:
-        """Read vehicle state from UE5 and convert to Fossen frame."""
+        """Read vehicle state from UE5 and convert to Fossen frame.
+
+        Queries ``simGetVehiclePose`` and ``getCarState`` from the
+        AirSim client, then maps AirSim NED coordinates → Fossen
+        east/north via ``CoordTransform``.  Also derives the yaw rate
+        from consecutive headings.
+        """
         pose = self.client.simGetVehiclePose()
         car_state = self.client.getCarState()
 
@@ -482,15 +668,37 @@ class AirSimEnv(BaseEnv):
         self.ship_r = heading_diff / max(self.time_step, EPSILON)
 
     def _check_collision(self) -> bool:
-        """Check for collision via AirSim API."""
+        """Check for collision via AirSim API.
+
+        Returns:
+            ``True`` if the vehicle has collided with any object.
+        """
         info = self.client.simGetCollisionInfo()
         return info.has_collided
 
     # ─────────────────────────────────────
-    # Observation
+    # Observation  (T-009)
     # ─────────────────────────────────────
     def _get_obs(self) -> np.ndarray:
-        """Build 10-dim observation vector (same format as PySimEnv)."""
+        """Build the 10-dim normalised observation vector.
+
+        All values are min-max normalised to match the ranges defined
+        in ``_initialize_observation_space`` so that a policy trained on
+        ``PySimEnv`` can be deployed here without any rescaling.
+
+        Normalisation strategy:
+            * **Velocities** — divided by the ship-spec hard limits and
+              clipped to [-1, 1].
+            * **Distances** — divided by the diagonal of the grid
+              (``max_dist``).
+            * **Cross-track error** — divided by half the checkpoint
+              spacing; sign encodes port/starboard.
+            * **Heading errors** — divided by π.
+
+        Returns:
+            A ``np.float32`` array of shape ``(10,)`` clipped to
+            ``observation_space``.
+        """
         norm_velocities = np.array([
             np.clip(self.ship_u / self.ship_specs.surge_limits[1], -1, 1),
             np.clip(self.ship_v / self.ship_specs.sway_limits[1], -1, 1),
@@ -514,7 +722,10 @@ class AirSimEnv(BaseEnv):
         norm_cross_error = cross_error / (CHECKPOINTS_DISTANCE / 2.0)
         track_vec = cur_pos - prev_pos
         ship_vec = self.ship_pos - prev_pos
-        norm_cross_error *= 1.0 if np.cross(track_vec, ship_vec) >= 0.0 else -1.0
+        
+        # 2D cross product: x1*y2 - y1*x2
+        cross_2d = track_vec[0] * ship_vec[1] - track_vec[1] * ship_vec[0]
+        norm_cross_error *= 1.0 if cross_2d >= 0.0 else -1.0
         self.cross_error = cross_error
 
         heading_error = self._calc_heading_error(
@@ -534,18 +745,21 @@ class AirSimEnv(BaseEnv):
             self.ship_heading, 0.0
         )
 
-        obs = np.hstack([
-            norm_velocities,
-            [norm_distance],
-            [norm_next_distance],
-            [norm_cross_error],
-            [heading_error / np.pi],
-            [heading_error2 / np.pi],
-            [heading_error_parallel / np.pi],
-            [heading_error_parallel2 / np.pi],
-        ])
+        obs = np.array([
+            norm_velocities[0],
+            norm_velocities[1],
+            norm_velocities[2],
+            norm_distance,
+            norm_next_distance,
+            norm_cross_error,
+            heading_error / np.pi,
+            heading_error2 / np.pi,
+            heading_error_parallel / np.pi,
+            heading_error_parallel2 / np.pi,
+        ], dtype=np.float32)
 
-        return obs.astype(np.float32)
+        # Safety clamp: guarantee the vector lies inside observation_space.
+        return np.clip(obs, self.observation_space.low, self.observation_space.high)
 
     # ─────────────────────────────────────
     # Step & Reset
@@ -553,11 +767,21 @@ class AirSimEnv(BaseEnv):
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """Execute one RL step in UE5.
 
+        Applies the action through the actuator model, advances the
+        UE5 simulation, reads back the vehicle state, and computes
+        the reward.
+
         Args:
-            action: [steering, throttle] in [-1, 1].
+            action: Array of shape ``(2,)`` containing
+                ``[steering, throttle]`` each in ``[-1, 1]``.
 
         Returns:
-            (observation, reward, terminated, truncated, info)
+            A tuple ``(observation, reward, terminated, truncated, info)``
+            where *info* contains ``cross_track_error`` and
+            ``checkpoint_index``.
+
+        Raises:
+            ValueError: If *action* does not have shape ``(2,)``.
         """
         action = np.asarray(action, dtype=np.float32)
         if action.shape != (2,):
@@ -567,7 +791,10 @@ class AirSimEnv(BaseEnv):
         self.previous_heading = self.ship_heading
 
         actuator = self._actuators.apply_smoothing(action, self.enable_smoothing)
-        self.bridge.send_action([actuator.rudder_angle, actuator.thrust])
+        controls = self._airsim.CarControls()
+        controls.steering = actuator.rudder_angle
+        controls.throttle = actuator.thrust
+        self.bridge.set_controls(controls)
 
         if self.use_pause_stepping:
             self.client.simContinueForFrames(self.frames_per_step)
@@ -581,15 +808,36 @@ class AirSimEnv(BaseEnv):
 
         reward, terminated = self._calculate_reward()
 
+        # T-012: log per-step telemetry to episode CSV
+        self._write_episode_log_row(reward)
+
         truncated = False
         if self.step_count >= self.max_steps and not terminated:
             reward = -250.0
             truncated = True
 
-        return self._get_obs(), float(reward), bool(terminated), bool(truncated), {}
+        # T-012: expose cross-track error and checkpoint progress
+        info = {
+            "cross_track_error": float(self.cross_error),
+            "checkpoint_index": int(self.checkpoint_index),
+        }
+
+        return self._get_obs(), float(reward), bool(terminated), bool(truncated), info
 
     def reset(self, seed: Optional[int] = None, **kwargs) -> Tuple[np.ndarray, Dict]:
-        """Reset the UE5 environment for a new episode."""
+        """Reset the UE5 environment for a new episode.
+
+        Resets the AirSim vehicle, re-pauses the simulation (if
+        ``use_pause_stepping``), and teleports the ship back to the
+        initial Fossen position.
+
+        Args:
+            seed: Optional RNG seed for reproducibility.
+            **kwargs: Forwarded to ``gym.Env.reset``.
+
+        Returns:
+            A tuple ``(observation, info)``.
+        """
         if seed is not None:
             super().reset(seed=seed)
 
@@ -611,6 +859,7 @@ class AirSimEnv(BaseEnv):
         self.checkpoint_index = 1
         self.cross_error = 0.0
         self.step_count = 0
+        self._episode_number += 1  # T-012: advance episode counter for CSV grouping
 
         initial_heading = 0.0
         if len(self.checkpoints) > self.checkpoint_index:
@@ -636,13 +885,20 @@ class AirSimEnv(BaseEnv):
         self._read_airsim_state()
 
         if self.verbose:
-            print(f"[AirSimEnv] Reset — ship at ({self.ship_pos[0]:.0f}, {self.ship_pos[1]:.0f}), "
-                  f"heading {math.degrees(self.ship_heading):.1f}°")
+            logger.debug(
+                "Reset — ship at (%.0f, %.0f), heading %.1f°",
+                self.ship_pos[0], self.ship_pos[1],
+                math.degrees(self.ship_heading),
+            )
 
         return self._get_obs(), {}
 
     def close(self) -> None:
-        """Disconnect from AirSim, unfreeze, and restore vehicle to spawn."""
+        """Disconnect from AirSim, restore UE5 rendering, and unfreeze.
+
+        Safe to call multiple times.  If the training-mode flag was set,
+        the UE5 rendering quality is restored before disconnecting.
+        """
         try:
             self.client.simFlushPersistentMarkers()
             self.client.simSetVehiclePose(self._spawn_pose, ignore_collision=True)
@@ -663,15 +919,18 @@ class AirSimEnv(BaseEnv):
                 self.client.simRunConsoleCommand("sg.EffectsQuality 3")
                 self.client.simRunConsoleCommand("sg.FoliageQuality 3")
                 self.client.simRunConsoleCommand("t.MaxFPS 0")
-                print("[AirSimEnv] UE5 rendering quality restored.")
+                logger.info("UE5 rendering quality restored.")
 
             if self.use_pause_stepping:
                 self.client.simPause(False)
 
             self.bridge.disconnect()
-            print("[AirSimEnv] Vehicle reset to spawn, simulation unpaused.")
+            logger.info("Vehicle reset to spawn, simulation unpaused.")
         except Exception as e:
             logger.warning("Error during AirSimEnv.close(): %s", e)
+        finally:
+            # T-012: always flush and close episode log on env teardown
+            self._close_episode_log()
 
     # ─────────────────────────────────────
     # Reward (mirrors PySimEnv exactly)
@@ -718,7 +977,7 @@ class AirSimEnv(BaseEnv):
         cp_dist = np.linalg.norm(self.ship_pos - cur_pos)
         if cp_dist <= current_cp["radius"]:
             if self.checkpoint_index == len(self.checkpoints) - 1:
-                print(f"[AirSimEnv] Target REACHED at distance {cp_dist:.2f}")
+                logger.info("Target REACHED at distance %.2f", cp_dist)
             self.checkpoint_index += 1
             self.step_count = 0
         elif self._is_near_perpendicular_line(current_cp):
@@ -746,7 +1005,7 @@ class AirSimEnv(BaseEnv):
             if self.verbose:
                 reasons = ["cross-track", "collision", "out-of-water", "heading-change"]
                 triggered = [r for r, c in zip(reasons, termination_conditions) if c]
-                print(f"[AirSimEnv] Terminated: {', '.join(triggered)}")
+                logger.debug("Terminated: %s", ", ".join(triggered))
 
         if self.checkpoint_index >= len(self.checkpoints):
             done = True

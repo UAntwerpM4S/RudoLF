@@ -304,6 +304,28 @@ class AirSimBridge:
         except Exception as exc:
             logger.warning("AirSim set_controls failed: %s", exc)
 
+    def set_pose(self, x: float, y: float, z: float, yaw: float) -> None:
+        """Forcibly set the vehicle's position and orientation in UE5.
+        
+        Useful for visualization where another physics engine (e.g. Fossen)
+        computes the trajectory and we only use UE5 for rendering.
+        
+        Args:
+            x, y, z: Coordinates in AirSim NED frame.
+            yaw: Yaw angle in radians in AirSim NED frame.
+        """
+        if not self._ensure_connected():
+            return
+            
+        try:
+            pose = self._airsim.Pose(
+                self._airsim.Vector3r(x, y, z),
+                self._airsim.Quaternionr(0, 0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
+            )
+            self._client.simSetVehiclePose(pose, ignore_collision=True)
+        except Exception as exc:
+            logger.warning("AirSim set_pose failed: %s", exc)
+
     def get_state(self) -> Dict[str, Any]:
         """Retrieve the full vehicle telemetry state from AirSim.
 

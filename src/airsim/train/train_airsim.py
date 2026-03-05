@@ -30,8 +30,12 @@ if __name__ == "__main__":
     # ── Configuration ──
     ACTION = "train"  # "train" or "visualize"
 
+    # training_mode=True  → disables UE5 rendering + fast frame-stepping (optimal for training)
+    # training_mode=False → full UE5 rendering + real-time stepping (required for visualize)
+    env_config = {"training_mode": ACTION == "train"}
+
     # Register the AirSim environment (creates AirSimEnv, connects to UE5)
-    env = get_environment(airsim_env_name, configuration=[])
+    env = get_environment(airsim_env_name, configuration=env_config)
     envs = [env]
 
     # Create trainer with PPO
