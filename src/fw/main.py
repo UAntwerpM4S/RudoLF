@@ -35,8 +35,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     # Define simulator inputs
     envs =  [get_environment(py_sim_env_name)]
-            # get_environment(fh_sim_env_name)]
-            # [get_environment(airsim_env_name, configuration={"training_mode": False})]
+            #get_environment(fh_sim_env_name)]
+            #get_environment(airsim_env_name, configuration={"training_mode": False})]
 
     # Create a Trainer and pass on a list of agents that you want to train
     trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
