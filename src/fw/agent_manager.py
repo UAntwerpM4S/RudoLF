@@ -306,6 +306,12 @@ class AgentManager:
 
         self.agent.set_policy_eval()
         env = self.get_env()
+        
+        # T-011 / Visualisation logic: prepare Fossen->AirSim coord transform if bridge active
+        coord_transform = None
+        if airsim_bridge and airsim_bridge.is_connected:
+            from airsim.communication.coord_transform import CoordTransform
+            coord_transform = CoordTransform()
 
         with self.smoothing(env):
             if hasattr(env, "ship_pos"):
@@ -318,21 +324,28 @@ class AgentManager:
                 all_ukc_measurements = []
                 start_pos = None
 
+                # AirSimEnv is single-ship (flat scalar/array attributes).
+                # PySimEnv/FhSimEnv is multi-ship (list-of-arrays).
+                # Normalise access once so the episode loop works for both.
+                _ms = hasattr(env, 'phys_sims')            # True = multi-ship env
+                _s = (lambda a: a[0]) if _ms else (lambda a: a)              # index first ship
+                _steer = (lambda pa: pa[0][0]) if _ms else (lambda pa: float(pa[0]))  # rudder
+
                 for episode in range(num_episodes):
                     state, _ = env.reset()
                     episode_reward = 0
                     done = False
                     steps = 0
 
-                    start_pos = np.copy(env.ship_pos[0])
+                    start_pos = np.copy(_s(env.ship_pos))
 
                     # Store heading errors for this episode
                     cross_errors = []
                     heading_errors = []
                     rudder_actions = []
                     ukc_measurements = []
-                    path_positions = [np.copy(env.ship_pos[0])]  # Store initial position
-                    cross_errors.append(env.cross_error[0])  # Store initial cross-track error
+                    path_positions = [np.copy(_s(env.ship_pos))]  # Store initial position
+                    cross_errors.append(_s(env.cross_error))  # Store initial cross-track error
 
                     # Calculate initial heading error relative to desired path
                     initial_heading_error = self.compute_heading_error(env)
@@ -348,13 +361,13 @@ class AgentManager:
 
                         if not done:
                             # Store current position and errors
-                            path_positions.append(np.copy(env.ship_pos[0]))
-                            if env.checkpoint_index[0] >= 2:
-                                cross_errors.append(env.cross_error[0])
+                            path_positions.append(np.copy(_s(env.ship_pos)))
+                            if _s(env.checkpoint_index) >= 2:
+                                cross_errors.append(_s(env.cross_error))
                             heading_error = self.compute_heading_error(env)
                             heading_errors.append(heading_error)
-                            rudder_actions.append(env.performed_action[0][0])
-                            ukc_measurements.append(env.ukc[0])
+                            rudder_actions.append(_steer(env.performed_action))
+                            ukc_measurements.append(env.ukc[0] if _ms else 0.0)
 
                             episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
                             steps += 1
@@ -362,6 +375,18 @@ class AgentManager:
                             # Uncomment for animated evaluation
                             if live_animation:
                                 env.render()
+                            
+                            # Bridge position to UE5 if connected
+                            if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
+                                ax, ay, _ = coord_transform.fossen_to_airsim(
+                                    float(env.ship_pos[0][0]), 
+                                    float(env.ship_pos[0][1])
+                                )
+                                ayaw = coord_transform.fossen_heading_to_airsim_yaw(
+                                    float(env.phys_sims[0].state.heading)
+                                )
+                                airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
+                                
                         else:
                             print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
                             break
@@ -387,6 +412,10 @@ class AgentManager:
                 print(f"Mean Heading Error Integral (mHEI): {mHEI:.2f} rad")
 
                 try:
+                    # AirSimEnv has no obstacles/overall for matplotlib — skip trajectory plot.
+                    if not _ms:
+                        return
+
                     # Create a figure with two subplots
                     if self._overlay_active and self._fig is not None:
                         ax1, ax2, ax3, ax4 = self._axes
@@ -588,6 +617,17 @@ class AgentManager:
 
                     # Render the environment each step to visualize the agent's action
                     env.render()
+                    
+                    # Bridge position to UE5 if connected
+                    if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
+                        ax, ay, _ = coord_transform.fossen_to_airsim(
+                            float(env.ship_pos[0][0]), 
+                            float(env.ship_pos[0][1])
+                        )
+                        ayaw = coord_transform.fossen_heading_to_airsim_yaw(
+                            float(env.phys_sims[0].state.heading)
+                        )
+                        airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
 
                 if self._fig is not None and self._overlay_active:
                     plt.close(self._fig)

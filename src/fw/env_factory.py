@@ -248,15 +248,30 @@ class AirSimEnvironment(BaseEnvironment):
 
     def __init__(self, name, configuration):
         super().__init__(name, configuration)
+        
+        # Factory calls __init__("", []) to extract the type name during class registration.
+        # We return a dummy object to avoid connecting to UE5 unnecessarily.
+        if name == "":
+            class AirSimEnv: pass
+            self._env = AirSimEnv()
+            return
 
         ship_pos = [2245, -47]
         target_pos = [-1559, 11990]
+
+        # Allow callers to control training vs. inference mode via configuration dict.
+        # training_mode=True  → disables UE5 rendering + uses fast frame-stepping.
+        # training_mode=False → restores UE5 rendering + uses real-time stepping.
+        cfg = configuration if isinstance(configuration, dict) else {}
+        training_mode = cfg.get("training_mode", True)
+        use_pause = cfg.get("use_pause_stepping", training_mode)
 
         self._env = AirSimEnv(
             ship_pos=ship_pos,
             target_pos=target_pos,
             max_steps=14000,
-            use_pause_stepping=True,
+            training_mode=training_mode,
+            use_pause_stepping=use_pause,
         )
 
 
