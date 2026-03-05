@@ -173,7 +173,6 @@ class ShipSimulator(BaseSimulator):
 
         # Map normalized actions to physical actuators
         command = self._mapper.map(action, self._specs)
-        actuator = self._actuators.step(command, self.dt, enable_smoothing)
 
         # Surge damping
         if self.numerical_damping and hasattr(self._dynamics, "X_u") and hasattr(self._dynamics, "m11"):
@@ -192,9 +191,11 @@ class ShipSimulator(BaseSimulator):
             yaw_damping_factor = 0.0
 
         for i in range(n_full):
+            actuator = self._actuators.step(command, dyn_model_time_step, enable_smoothing)
             self.integrate(actuator, dyn_model_time_step, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
 
         if dt_rem > 1e-12:
+            actuator = self._actuators.step(command, dt_rem, enable_smoothing)
             self.integrate(actuator, dt_rem, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
 
         s = self._state
