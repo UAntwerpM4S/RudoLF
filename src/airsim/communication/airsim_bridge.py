@@ -6,11 +6,13 @@ inside Unreal Engine 5.  It provides:
 * **UE5 auto-detection** via a lightweight TCP port probe.
 * **Retry with exponential backoff** for resilient startup.
 * **Periodic health-checks** to detect stale connections.
-* **Pass-through control** - ``send_action()`` forwards raw
-  ``[steering, throttle]`` to AirSim without any PID processing.
+* **Pass-through control** - ``set_controls()`` forwards pre-mapped
+  ``CarControls`` to AirSim without any PID processing.
 
-The actual *input mapping* (Fossen model -> UE5 controls) will be
-implemented in a separate layer in the future.
+Input mapping (Fossen model → UE5 controls) is handled by
+:class:`~airsim.environments.airsim_env.AirSimEnv` and the
+:mod:`airsim.inference.run_inference` module.  **PID control is not
+used anywhere in this bridge.**
 
 Coordinate frames:
     * **Ship (Fossen):** x = east, y = north, heading from east (CCW+).

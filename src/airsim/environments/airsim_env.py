@@ -141,6 +141,7 @@ class AirSimEnv(BaseEnv):
         training_mode: bool = False,
         verbose: bool = False,
         episode_log_path: str = "",
+        simulation_speed: float = 1.0,
     ) -> None:
         """Initialise the AirSim training environment.
 
@@ -162,6 +163,9 @@ class AirSimEnv(BaseEnv):
                 episode telemetry (position, speed, cross-track error,
                 reward, action) is appended.  One file collects all
                 episodes across resets.  Set to ``""`` to disable.
+            simulation_speed: Simulation speed multiplier set via
+                ``simSetSimulationSpeed``.  ``1.0`` = real-time (inference);
+                higher values (e.g. ``20.0``) speed up training.
         """
         super().__init__(render_mode)
 
@@ -182,8 +186,10 @@ class AirSimEnv(BaseEnv):
         self.ship_specs = self.ship.specifications
         self._actuators = ActuatorModel(self.ship_specs)
 
-        # UE5-specific limits (may differ from Fossen model)
-        self.MAX_SPEED = 5.6  # m/s — top speed of the UE5 ship
+        # Match Fossen model surge limit for identical observation normalisation.
+        # MYZAKO_DEFAULT: surge_limits = (0.0, 5.0).  UE5 top speed is 5.6 m/s
+        # but we cap at the same value the policy was trained against.
+        self.MAX_SPEED = self.ship_specs.surge_limits[1]  # 5.0 m/s
 
         # Positions in Fossen frame
         self.initial_ship_pos = np.array(
@@ -232,7 +238,64 @@ class AirSimEnv(BaseEnv):
         # Expose client for environment-specific features (plotting, etc)
         self.client = self.bridge.client
 
+        # ── Load world save + set simulation speed ──
+        # UE5 is launched manually (no-render mode).  Loading the save restores
+        # the ship to the correct MYZAKO_DEFAULT starting position and heading.
+        self._simulation_speed = simulation_speed
+        logger.info("Loading world save 'simulator_1'...")
+        self.client.simSetSaveSlot("simulator_1")
+        self.client.simRequestLoad()
+        # simRequestLoad() triggers a full level reload which drops the RPC
+        # connection for the duration of the load screen (up to ~30 s).
+        # Step 1 – wait for the port to go *down* (UE5 is restarting).
+        # Step 2 – wait for the port to come *back up* (load complete).
+        # Step 3 – re-connect the bridge and re-enable API control.
+        _reload_timeout = 90.0  # total seconds to wait before giving up
+        _poll = 0.5             # seconds between polls
+        _t0 = time.monotonic()
+
+        # Step 1: wait up to 10 s for the port to go away
+        from airsim.communication.airsim_bridge import is_ue5_reachable
+        _went_down = False
+        while time.monotonic() - _t0 < 10.0:
+            if not is_ue5_reachable(ip, port):
+                _went_down = True
+                logger.info("UE5 RPC port went offline – level is reloading…")
+                break
+            time.sleep(_poll)
+
+        # Step 2: wait for the port to come back up
+        logger.info("Waiting for UE5 to finish reloading (timeout=%ds)…", int(_reload_timeout))
+        while time.monotonic() - _t0 < _reload_timeout:
+            if is_ue5_reachable(ip, port):
+                break
+            time.sleep(_poll)
+        else:
+            raise TimeoutError(
+                f"UE5 did not finish reloading within {_reload_timeout:.0f} s. "
+                "Check that the level loaded successfully in UE5."
+            )
+
+        # Step 3: give UE5 one more second to fully initialise the RPC server,
+        # then re-create the bridge so the client object is fresh.
+        time.sleep(1.5)
+        from airsim.communication.airsim_bridge import AirSimBridge
+        from airsim.config.airsim_config import AirSimConfig
+        self.bridge = AirSimBridge(AirSimConfig(ip=ip, port=port))
+        if not self.bridge.is_connected:
+            raise ConnectionError(
+                "AirSimBridge failed to reconnect after level reload. "
+                "UE5 may still be initialising — try increasing the sleep above."
+            )
+        self.client = self.bridge.client
+        elapsed = time.monotonic() - _t0
+        logger.info("Level reloaded in %.1f s; reconnected to AirSim.", elapsed)
+
+        self.client.simSetSimulationSpeed(simulation_speed)
+        logger.info("Simulation speed set to %.1fx.", simulation_speed)
+
         # ── Auto drift correction ──
+        # Capture spawn pose AFTER world load so it reflects the loaded position.
         self._spawn_pose = self.client.simGetVehiclePose()
         cal_path = Path(calibration_path) if calibration_path else _DEFAULT_CALIBRATION_PATH
         if cal_path.exists():
@@ -259,27 +322,6 @@ class AirSimEnv(BaseEnv):
             self.client.simPause(True)
             logger.info("Simulation paused — using deterministic frame stepping.")
 
-        # ── Training mode: disable UE5 rendering for speed ──
-        self._training_mode = training_mode
-        if training_mode:
-            self.client.simRunConsoleCommand("r.SetRes 64x64w")
-            self.client.simRunConsoleCommand("t.MaxFPS 5")
-            self.client.simRunConsoleCommand("ShowFlag.Rendering 0")
-            self.client.simRunConsoleCommand("ShowFlag.PostProcessing 0")
-            self.client.simRunConsoleCommand("ShowFlag.Lighting 0")
-            self.client.simRunConsoleCommand("ShowFlag.Translucency 0")
-            self.client.simRunConsoleCommand("ShowFlag.Fog 0")
-            self.client.simRunConsoleCommand("ShowFlag.Particles 0")
-            self.client.simRunConsoleCommand("ShowFlag.SkeletalMeshes 0")
-            self.client.simRunConsoleCommand("ShowFlag.Bloom 0")
-            self.client.simRunConsoleCommand("ShowFlag.EyeAdaptation 0")
-            self.client.simRunConsoleCommand("sg.PostProcessQuality 0")
-            self.client.simRunConsoleCommand("sg.ShadowQuality 0")
-            self.client.simRunConsoleCommand("sg.TextureQuality 0")
-            self.client.simRunConsoleCommand("sg.EffectsQuality 0")
-            self.client.simRunConsoleCommand("sg.FoliageQuality 0")
-            logger.info("Training mode: UE5 rendering minimized for speed.")
-
         # ── Draw trajectory in UE5 ──
         self._draw_visualization()
 
@@ -300,6 +342,7 @@ class AirSimEnv(BaseEnv):
         self.cross_error = 0.0
         self.step_count = 0
         self.max_dist = np.sqrt(2) * float(MAX_GRID_POS)
+        self._smooth_action1: float = 0.0  # EMA state for Fossen throttle mapping
 
         # ── Gym spaces (identical to PySimEnv) ──
         self.action_space = gym.spaces.Box(
@@ -792,9 +835,27 @@ class AirSimEnv(BaseEnv):
 
         actuator = self._actuators.apply_smoothing(action, self.enable_smoothing)
         controls = self._airsim.CarControls()
-        # msgpack requires plain Python float — numpy.float32 has no to_msgpack()
+        # Steering: smoothed action[0] stays normalised to [-1, 1].
+        # CarControls.steering expects [-1, 1] where ±1 = ±max_rudder_angle.
         controls.steering = float(actuator.rudder_angle)
-        controls.throttle = float(actuator.thrust)
+
+        # Throttle: apply the same affine mapping used by Fossen ActionMapper so
+        # that the same policy action produces equivalent thrust in both envs.
+        #   action[1] = -1  →  min_thrust = 0.1  (slow ahead)
+        #   action[1] =  0  →  0.55             (half ahead)
+        #   action[1] = +1  →  max_thrust = 1.0  (full ahead)
+        # We keep a separate EMA on the *signed* action[1] (not abs()) so that
+        # near-zero actions correctly map to mid-range throttle (~0.55), not idle.
+        _alpha = 0.3
+        if self.enable_smoothing:
+            self._smooth_action1 = _alpha * float(action[1]) + (1.0 - _alpha) * self._smooth_action1
+        else:
+            self._smooth_action1 = float(action[1])
+        controls.throttle = float(
+            self.ship_specs.min_thrust
+            + 0.5 * (self._smooth_action1 + 1.0)
+            * (self.ship_specs.max_thrust - self.ship_specs.min_thrust)
+        )
 
         if self.use_pause_stepping:
             # When the sim is paused, setCarControls blocks indefinitely waiting
@@ -866,6 +927,7 @@ class AirSimEnv(BaseEnv):
         self.checkpoint_index = 1
         self.cross_error = 0.0
         self.step_count = 0
+        self._smooth_action1 = 0.0  # reset throttle EMA for new episode
         self._episode_number += 1  # T-012: advance episode counter for CSV grouping
 
         initial_heading = 0.0
@@ -901,38 +963,21 @@ class AirSimEnv(BaseEnv):
         return self._get_obs(), {}
 
     def close(self) -> None:
-        """Disconnect from AirSim, restore UE5 rendering, and unfreeze.
+        """Disconnect from AirSim and restore real-time simulation speed.
 
-        Safe to call multiple times.  If the training-mode flag was set,
-        the UE5 rendering quality is restored before disconnecting.
+        Safe to call multiple times.  Resets the simulation speed to 1.0
+        (real-time) before disconnecting so UE5 is left in a usable state.
         """
         try:
             self.client.simFlushPersistentMarkers()
             self.client.simSetVehiclePose(self._spawn_pose, ignore_collision=True)
-
-            if getattr(self, '_training_mode', False):
-                self.client.simRunConsoleCommand("ShowFlag.Rendering 1")
-                self.client.simRunConsoleCommand("ShowFlag.PostProcessing 1")
-                self.client.simRunConsoleCommand("ShowFlag.Lighting 1")
-                self.client.simRunConsoleCommand("ShowFlag.Translucency 1")
-                self.client.simRunConsoleCommand("ShowFlag.Fog 1")
-                self.client.simRunConsoleCommand("ShowFlag.Particles 1")
-                self.client.simRunConsoleCommand("ShowFlag.SkeletalMeshes 1")
-                self.client.simRunConsoleCommand("ShowFlag.Bloom 1")
-                self.client.simRunConsoleCommand("ShowFlag.EyeAdaptation 1")
-                self.client.simRunConsoleCommand("sg.PostProcessQuality 3")
-                self.client.simRunConsoleCommand("sg.ShadowQuality 3")
-                self.client.simRunConsoleCommand("sg.TextureQuality 3")
-                self.client.simRunConsoleCommand("sg.EffectsQuality 3")
-                self.client.simRunConsoleCommand("sg.FoliageQuality 3")
-                self.client.simRunConsoleCommand("t.MaxFPS 0")
-                logger.info("UE5 rendering quality restored.")
+            self.client.simSetSimulationSpeed(1.0)
 
             if self.use_pause_stepping:
                 self.client.simPause(False)
 
             self.bridge.disconnect()
-            logger.info("Vehicle reset to spawn, simulation unpaused.")
+            logger.info("Vehicle reset to spawn, simulation speed restored to 1.0x.")
         except Exception as e:
             logger.warning("Error during AirSimEnv.close(): %s", e)
         finally:
