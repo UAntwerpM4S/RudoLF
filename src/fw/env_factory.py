@@ -265,6 +265,8 @@ class AirSimEnvironment(BaseEnvironment):
         cfg = configuration if isinstance(configuration, dict) else {}
         training_mode = cfg.get("training_mode", True)
         use_pause = cfg.get("use_pause_stepping", training_mode)
+        # Default speed: 20x for training (fast), 1x for inference (real-time).
+        simulation_speed = cfg.get("simulation_speed", 20.0 if training_mode else 1.0)
 
         self._env = AirSimEnv(
             ship_pos=ship_pos,
@@ -272,6 +274,7 @@ class AirSimEnvironment(BaseEnvironment):
             max_steps=14000,
             training_mode=training_mode,
             use_pause_stepping=use_pause,
+            simulation_speed=simulation_speed,
         )
 
 
