@@ -26,11 +26,11 @@ DEFAULT_HYPERPARAMETERS = {
         'num_epochs': 10,
         'normalize': False,
         'max_nbr_iterations': 200000,
-        'batch_size': 8192,
+        'batch_size': 2048,
         'device': "cuda",
         'model_dir': "models",
         'fixed_horizon': True,
-        'steps_per_update': 2048
+        'steps_per_update': 8192
     },
     PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,
@@ -64,7 +64,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': False,
+    'live_animation': True,
     'use_airsim': False,
     'airsim_ip': '',
     'airsim_port': 41451,

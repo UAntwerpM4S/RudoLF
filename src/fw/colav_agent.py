@@ -408,7 +408,7 @@ class ColavAgent:
                             if live_animation:
                                 env.render()
                         else:
-                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
+                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f} and with collision: {episode_had_collision}")
                             break
 
                     all_paths.append(np.array(path_positions))

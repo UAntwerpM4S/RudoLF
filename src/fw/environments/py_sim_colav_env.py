@@ -166,9 +166,9 @@ class PySimColavEnv(BaseEnv):
         self.ship_pos = None
         self.static_ship = bool(static_ship)
         self.static_ship_population = [0, 1, 2, 3] # min() ships at least, max() at most
-        self.static_ship_weights = [80, 12.5, 5, 2.5] # likeliness of ships being present
+        self.static_ship_weights = [50, 25, 15, 10] # likeliness of ships being present
         self._static_ship_probs = np.asarray(self.static_ship_weights, dtype=np.float32) / np.sum(self.static_ship_weights) # static ship probability
-        self.static_ship_lateral_max = 40.0  # max lateral deviation off path for static ships
+        self.static_ship_lateral_max = 150.0  # max lateral deviation off path for static ships
         self.eval_static_ship_count = None
         self.static_ship_radius = 20 # safety radius around the obstacle
         self.static_ship_segment_margin_frac = 0.1  # avoid exact checkpoint positions (% margin at each end)
@@ -232,7 +232,7 @@ class PySimColavEnv(BaseEnv):
             'alignment': 1.8,
             'cross_track': 1.5,
             'rudder': 0.03,
-            'polar_distance': 1
+            'polar_distance': 3.0
         }
 
         # Rendering flag
@@ -508,27 +508,6 @@ class PySimColavEnv(BaseEnv):
         else:
             self._static_ship_centers = None
 
-    def _raycast_min_distance(self, ray: LineString, geometry, origin: Point) -> float:
-        """
-        Return minimum distance from the ray start to any intersection with ``geometry``.
-
-        If no intersection within the ray segment, returns ``self.polar_max_range``.
-        """
-        inter = ray.intersection(geometry)
-        if inter.is_empty:
-            return float(self.polar_max_range)
-
-        # The intersection is a subset of the ray segment, so Euclidean distance
-        # from the ray origin equals distance along the ray.
-        d = float(origin.distance(inter))
-
-        # Numerical guards
-        if d <= 0.0:
-            return 0.0
-        if d >= self.polar_max_range:
-            return float(self.polar_max_range)
-        return d
-
     def _get_polar_scan(self) -> np.ndarray:
         x0, y0 = self.ship_pos
         heading = self.phys_sim.state.heading
@@ -544,7 +523,6 @@ class PySimColavEnv(BaseEnv):
         # Filter to relevant boundaries to reduce computation time
         buffer = 50.0
         limit_sq = (self.polar_max_range + buffer) ** 2
-        dists_sq = (self._boundary_starts[:, 0] - x0) ** 2 + (self._boundary_starts[:, 1] - y0) ** 2
         d0 = (self._boundary_starts[:, 0] - x0) ** 2 + (self._boundary_starts[:, 1] - y0) ** 2
         d1 = (self._boundary_ends[:, 0] - x0) ** 2 + (self._boundary_ends[:, 1] - y0) ** 2
 
@@ -733,6 +711,10 @@ class PySimColavEnv(BaseEnv):
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
+                #-1.0,   # Heading error
+                #-1.0,   # Heading error
+                #-1.0,   # Heading error
+                #-1.0,   # Heading error
             ],
             dtype=np.float32,
         )
@@ -749,6 +731,10 @@ class PySimColavEnv(BaseEnv):
                 1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
+                #1.0,  # Heading error
+                #1.0,  # Heading error
+                #1.0,  # Heading error
+                #1.0,  # Heading error
             ],
             dtype=np.float32,
         )
@@ -846,15 +832,22 @@ class PySimColavEnv(BaseEnv):
         current_chkp_idx = min(self.checkpoint_index, len(self.checkpoints) - 1)
         prev_chkp_idx = max(0, current_chkp_idx - 1)
         next_chkp_idx = min(current_chkp_idx + 1, len(self.checkpoints) - 1)
+        next_next_chkp_idx = min(self.checkpoint_index + 2, len(self.checkpoints) - 1)
+        next_next_next_chkp_idx = min(self.checkpoint_index + 3, len(self.checkpoints) - 1)
+
 
         # Checkpoint positions
         current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
         prev_chkp_pos = self.checkpoints[prev_chkp_idx]['pos']
         next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
+        next_next_chkp_pos = self.checkpoints[next_next_chkp_idx]['pos']
+        next_next_next_chkp_pos = self.checkpoints[next_next_next_chkp_idx]['pos']
 
         # Distances to checkpoints
         norm_distance = np.linalg.norm(self.ship_pos - current_chkp_pos) / self.max_dist
         norm_next_distance = np.linalg.norm(self.ship_pos - next_chkp_pos) / self.max_dist
+        norm_next_next_distance = np.linalg.norm(self.ship_pos - next_next_chkp_pos) / self.max_dist
+        norm_next_next_next_distance = np.linalg.norm(self.ship_pos - next_next_next_chkp_pos) / self.max_dist
 
         # Cross-track error (normalized, signed)
         norm_cross_error = (
@@ -900,6 +893,20 @@ class PySimColavEnv(BaseEnv):
             0.0
         )
 
+        # To next_next checkpoint
+        heading_error3 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next_next_chkp_pos - self.ship_pos),
+            self.phys_sim.state.heading,
+            0.0
+        )
+
+        # Parallel to current checkpoint segment
+        heading_error_parallel3 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next_next_next_chkp_pos - prev_chkp_pos),
+            self.phys_sim.state.heading,
+            0.0
+        )
+
         # Build observation
         obs = np.hstack([
             norm_velocities,                        # Normalized velocities
@@ -910,6 +917,8 @@ class PySimColavEnv(BaseEnv):
             [heading_error2 / np.pi],               # Normalized heading error
             [heading_error_parallel / np.pi],       # Normalized heading error
             [heading_error_parallel2 / np.pi],      # Normalized heading error
+            # [heading_error3 / np.pi],             # Normalized heading error
+            # [heading_error_parallel3 / np.pi]     # Normalized heading error
         ])
 
         # Add environmental observations if enabled
@@ -1026,18 +1035,26 @@ class PySimColavEnv(BaseEnv):
 
         # Polar distances (closeness-based scan in [0..polar_obs_max])
         if getattr(self, "use_polar_scan", False):
-            d_safe = 50.0  # meters
-            d_safe_n = d_safe / self.polar_max_range  # normalized distance threshold in [0..1]
-
             # scan is closeness; closest object => largest value
             max_close = float(np.max(self.polar_scan_cached))  # [0..polar_obs_max]
             # convert back to normalized distance in [0..1], where 0 = collision, 1 = far
             min_dist_n = 1.0 - (max_close / max(float(self.polar_obs_max), 1e-6))
 
-            # penalty if closer than d_safe
-            x = (d_safe_n - min_dist_n) / max(d_safe_n, 1e-6)   # >0 only when too close
-            pen = np.clip(x, 0.0, 1.0)
-            reward -= self.reward_weights['polar_distance'] * pen
+            d_ramp_start = 100 # ramp starts at X meters
+            ramp_max_penalty = 5.0 # penalty at the collision boundary edges of TS and OS
+            min_dist = min_dist_n * self.polar_max_range
+
+            if min_dist < d_ramp_start:
+                collision_boundary = float(self.static_ship_radius + self.own_ship_radius)
+                # Normalize distance within the ramp zone: 1.0 at ramp start, 0.0 at collision boundary
+                ramp_t = (min_dist - collision_boundary) / max(d_ramp_start - collision_boundary, EPSILON)
+                ramp_t = float(np.clip(ramp_t, 0.0, 1.0))
+
+                # Penalty grows exponentially as ramp_t approaches 0
+                # exp_t=1.0 at ramp start (no penalty), exp_t→0 at collision boundary (max penalty)
+                exp_t = (np.exp(ramp_t) - 1.0) / (np.e - 1.0)  # maps [0,1] → [0,1] with exponential curve
+                ramp_penalty = ramp_max_penalty * (1.0 - exp_t)
+                reward -= self.reward_weights['polar_distance'] * ramp_penalty
 
 
         # Checkpoint handling (may increment checkpoint_index)
@@ -1383,7 +1400,26 @@ class PySimColavEnv(BaseEnv):
         segment_margin_frac = float(getattr(self, "static_ship_segment_margin_frac", 0.0))  # values 0.1, 0.2, ...
 
         for i in range(self.static_ship_count):
-            random_seg = int(self._rng.integers(3, len(self.checkpoints) - 3)) # skip first and last few segments
+            # Build index range we want to sample from (skip first/last few segments)
+            eligible_indices = list(range(3, len(self.checkpoints) - 2))
+
+            # Compute the physical length of each eligible segment
+            seg_lengths = np.array([
+                np.linalg.norm(
+                    np.asarray(self.checkpoints[i]["pos"], dtype=np.float32) -
+                    np.asarray(self.checkpoints[i - 1]["pos"], dtype=np.float32)
+                )
+                for i in eligible_indices
+            ], dtype=np.float32)
+
+            # let the probability of choosing a segment, be proportional to its length
+            # such that curves (that have more segments) are not more likely to contain ships than straight parts
+            # of the path
+            seg_lengths = np.maximum(seg_lengths, EPSILON)
+            probs = seg_lengths / seg_lengths.sum()
+
+            # Sample proportional to length
+            random_seg = int(eligible_indices[int(self._rng.choice(len(eligible_indices), p=probs))])
             pa = np.asarray(self.checkpoints[random_seg - 1]["pos"], dtype=np.float32)
             pb = np.asarray(self.checkpoints[random_seg]["pos"], dtype=np.float32)
 
@@ -1415,8 +1451,8 @@ class PySimColavEnv(BaseEnv):
                 t = float(self._rng.uniform(t_min, t_max))
                 base = pa + tangent * (t * seg_len)  # equivalent to pa + t * (pb-pa)
 
-                # Random lateral offset to either side
-                lat = float(self._rng.uniform(-max_lat, max_lat)) if max_lat > 0.0 else 0.0
+                # Normally distributed lateral offset to either side
+                lat = float(np.clip(self._rng.normal(0.0, max_lat / 3.0), -max_lat, max_lat)) if max_lat > 0.0 else 0.0
                 cand = base + normal * lat
 
                 # Keep the full safety circle inside navigable water

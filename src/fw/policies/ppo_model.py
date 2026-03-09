@@ -10,6 +10,9 @@ import time
 import math
 
 from typing import Optional, Tuple
+
+from fontTools.merge.util import first
+
 from fw.stop_condition import StopCondition
 from fw.policies.base_model import BaseModel
 from fw.policies.ppo_policy import PPOPolicy
@@ -386,7 +389,10 @@ class PPOModel(BaseModel):
         for i in range(num_envs):
             if fixed_horizon:
                 # Keep full rollout when in fixed-horizon mode, no padding needed
-                first_true = len(collected_data["dones"]) - 1
+                episode_dones = np.array([step[i] for step in collected_data["dones"]])
+                first_true = self.find_first_true(episode_dones)
+                if first_true == -1:
+                    first_true = len(episode_dones) - 1
             else:
                 # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
                 # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
@@ -447,6 +453,7 @@ class PPOModel(BaseModel):
 
         last_save_index = 0
         training_metrics = []
+        episode_returns = []
         best_mean_reward = float('-inf')
         best_policy_file = f"Best_{self.env.type_name}_PPO_policy"
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
@@ -467,6 +474,7 @@ class PPOModel(BaseModel):
                 episode_data.append(episode_result)
                 total_reward += np.mean(episode_result['rewards'])
                 total_advantage += np.mean(episode_result['advantages'])
+                episode_returns.append(np.sum(episode_result['rewards']))
 
             # Update policy using all collected episodes
             loss = self.train(episode_data)
@@ -515,7 +523,7 @@ class PPOModel(BaseModel):
         print("Training completed!")
         print(f"Training took: {training_time:.3f}s")
         print("Visualizing training process")
-        self.plot_reward_metrics(training_metrics)
+        self.plot_reward_metrics(episode_returns)
 
 
     def dump_metrics_to_csv(self, csv_filename, training_metrics):
@@ -591,21 +599,20 @@ class PPOModel(BaseModel):
 
     # TODO: does not really follow the workflow; previous workflow used exporting to a CSV. Cleaner solution
     #       may be to read the CSV in the visualization code of the environment and plot it there.
-    def plot_reward_metrics(self, training_metrics):
-        """
-        Plot the evolution of the average reward over training iterations.
-
-        Args:
-            training_metrics (list): List of dicts. Each dict must contain a 'reward' key.
-                                     e.g. {'loss': ..., 'advantage': ..., 'reward': ...}
-        """
-        iterations = np.arange(len(training_metrics))
-        rewards = [m["reward"] for m in training_metrics]
+    def plot_reward_metrics(self, episode_returns):
         plt.figure()
-        plt.plot(iterations, rewards)
-        plt.xlabel("Iteration")
-        plt.ylabel("Average Reward")
-        plt.title("PPO: Average Reward over iterations")
+        plt.plot(episode_returns, alpha=0.3, color='steelblue', label='Raw episode return')
+
+        window = 50
+        if len(episode_returns) >= window:
+            smoothed = np.convolve(episode_returns, np.ones(window) / window, mode='valid')
+            smoothed_x = range(window - 1, window - 1 + len(smoothed))
+            plt.plot(smoothed_x, smoothed, color='steelblue', linewidth=2, label=f'Rolling avg (n={window})')
+
+        plt.xlabel("Episode")
+        plt.ylabel("Total Episode Return")
+        plt.title("PPO: Episode Return over iterations")
+        plt.legend()
         plt.grid(True)
         plt.tight_layout()
         plt.show()
