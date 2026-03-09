@@ -849,7 +849,7 @@ class PySimEnv(BaseEnv):
 
         # Forward progress
         raw_progress = (proj_now - proj_prev)
-        forward_reward = 4.0 * np.clip(raw_progress, -1.0, 1.0)
+        forward_reward = 0.4 * raw_progress / self.time_step
 
         # Heading alignment towards current checkpoint
         heading_error = self._calculate_heading_error(self._safe_heading_from_vector(path_vec), self.phys_sims[i].state.heading)
