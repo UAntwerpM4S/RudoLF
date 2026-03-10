@@ -126,7 +126,8 @@ class PySimColavEnv(BaseEnv):
             current: bool = False,
             numerical_damping: bool = False,
             static_ship: bool = True,
-            use_polar_scan: bool = True
+            use_polar_scan: bool = True,
+            enable_mirror_augmentation: bool = True
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -168,7 +169,7 @@ class PySimColavEnv(BaseEnv):
         self.static_ship_population = [0, 1, 2, 3] # min() ships at least, max() at most
         self.static_ship_weights = [50, 25, 15, 10] # likeliness of ships being present
         self._static_ship_probs = np.asarray(self.static_ship_weights, dtype=np.float32) / np.sum(self.static_ship_weights) # static ship probability
-        self.static_ship_lateral_max = 150.0  # max lateral deviation off path for static ships
+        self.static_ship_lateral_max = 0.0  # max lateral deviation off path for static ships
         self.eval_static_ship_count = None
         self.static_ship_radius = 20 # safety radius around the obstacle
         self.static_ship_segment_margin_frac = 0.1  # avoid exact checkpoint positions (% margin at each end)
@@ -180,6 +181,10 @@ class PySimColavEnv(BaseEnv):
         self.polar_fov = np.radians(270) # determines how "forward facing" the polar scan is
         self.polar_max_range: float = 250.0 # max range for ray casting (m)
         self.polar_obs_max: float = 0.1  # max value in observation when distance is ~0
+        self.enable_mirror_augmentation = bool(enable_mirror_augmentation) # enables mirroring of the environment during training
+        self.mirror_probability = 0.5 # mirror with probability
+        self._mirror_this_episode = False # mirroring current episode
+        self._mirror_axis_x = None
 
         # Precompute sector center angles in ship frame, spanning exactly the FOV
         bin_width = float(self.polar_fov) / float(self.polar_n_sectors)
@@ -205,6 +210,27 @@ class PySimColavEnv(BaseEnv):
 
         # Load environment static data and build checkpoints/polygons
         self._load_environment_data(target_pos)
+        # Mirror around the center x-coordinate of the navigable area
+        minx, _, maxx, _ = self.polygon_shape.bounds
+        self._mirror_axis_x = 0.5 * (minx + maxx)
+
+        # Cache original episode geometry once
+        self._base_initial_ship_pos = self.initial_ship_pos.copy()
+        self._base_target_pos = self.target_pos.copy()
+        self._base_overall = np.asarray(self.overall, dtype=np.float32).copy()
+        self._base_obstacles = np.asarray(self.obstacles, dtype=np.float32).copy()
+        self._base_checkpoints = [
+            {
+                'pos': cp['pos'].copy(),
+                'radius': float(cp['radius']),
+                'reward': float(cp['reward']),
+                'perpendicular_line': (
+                    cp['perpendicular_line'][0].copy(),
+                    cp['perpendicular_line'][1].copy(),
+                ),
+            }
+            for cp in self.checkpoints
+        ]
         self._sample_static_ship_scenario()
 
         # Build union geometry once (bank boundary + static ships) to speed up per-step ray casting
@@ -387,6 +413,57 @@ class PySimColavEnv(BaseEnv):
     # -----------------------
     # Utility & math helpers
     # -----------------------
+    def _mirror_x(self, arr: np.ndarray) -> np.ndarray:
+        """
+        Mirror point(s) across the vertical axis x = self._mirror_axis_x.
+        Works for shape (2,) and (N, 2).
+        """
+        out = np.array(arr, dtype=np.float32).copy()
+        out[..., 0] = 2.0 * float(self._mirror_axis_x) - out[..., 0]
+        return out
+
+    def _apply_episode_geometry(self, mirrored: bool) -> None:
+        """
+        Restore original geometry or its mirrored counterpart for the current episode.
+        """
+        if mirrored:
+            self.initial_ship_pos = self._mirror_x(self._base_initial_ship_pos)
+            self.target_pos = self._mirror_x(self._base_target_pos)
+            self.overall = self._mirror_x(self._base_overall)
+            self.obstacles = self._mirror_x(self._base_obstacles)
+
+            self.checkpoints = []
+            for cp in self._base_checkpoints:
+                self.checkpoints.append({
+                    'pos': self._mirror_x(cp['pos']),
+                    'radius': float(cp['radius']),
+                    'reward': float(cp['reward']),
+                    'perpendicular_line': (
+                        self._mirror_x(cp['perpendicular_line'][0]),
+                        self._mirror_x(cp['perpendicular_line'][1]),
+                    ),
+                })
+        else:
+            self.initial_ship_pos = self._base_initial_ship_pos.copy()
+            self.target_pos = self._base_target_pos.copy()
+            self.overall = self._base_overall.copy()
+            self.obstacles = self._base_obstacles.copy()
+
+            self.checkpoints = []
+            for cp in self._base_checkpoints:
+                self.checkpoints.append({
+                    'pos': cp['pos'].copy(),
+                    'radius': float(cp['radius']),
+                    'reward': float(cp['reward']),
+                    'perpendicular_line': (
+                        cp['perpendicular_line'][0].copy(),
+                        cp['perpendicular_line'][1].copy(),
+                    ),
+                })
+
+        # Rebuild polygon because obstacle coordinates changed
+        self.polygon_shape = Polygon(self.obstacles)
+
     def sample_point_in_river(self, nbr_samples: int = 1, max_tries: int = 20000) -> np.ndarray:
         """
         Sample N random points INSIDE the river polygon using rejection sampling.
@@ -715,6 +792,8 @@ class PySimColavEnv(BaseEnv):
                 #-1.0,   # Heading error
                 #-1.0,   # Heading error
                 #-1.0,   # Heading error
+                #-1.0,  # Heading error
+                #-1.0,  # Heading error
             ],
             dtype=np.float32,
         )
@@ -735,6 +814,8 @@ class PySimColavEnv(BaseEnv):
                 #1.0,  # Heading error
                 #1.0,  # Heading error
                 #1.0,  # Heading error
+                #1.0,   # Heading error
+                #1.0    # Heading error
             ],
             dtype=np.float32,
         )
@@ -917,6 +998,8 @@ class PySimColavEnv(BaseEnv):
             [heading_error2 / np.pi],               # Normalized heading error
             [heading_error_parallel / np.pi],       # Normalized heading error
             [heading_error_parallel2 / np.pi],      # Normalized heading error
+            # [norm_next_next_distance],            # Normalized distance to next checkpoint
+            # [norm_next_next_next_distance]        # Normalized distance to next next next checkpoint
             # [heading_error3 / np.pi],             # Normalized heading error
             # [heading_error_parallel3 / np.pi]     # Normalized heading error
         ])
@@ -1490,6 +1573,16 @@ class PySimColavEnv(BaseEnv):
         """
         if getattr(self, "use_polar_scan", False):
             self.polar_scan_cached = None # invalidate polar scan at start of each episode
+
+        # Sample whether this episode uses mirrored geometry
+        if getattr(self, "eval_static_ship_count", None) is None:
+            if self.enable_mirror_augmentation:
+                self._mirror_this_episode = bool(self._rng.random() < self.mirror_probability)
+            else:
+                self._mirror_this_episode = False
+
+        # Apply original or mirrored geometry BEFORE static ship placement
+        self._apply_episode_geometry(self._mirror_this_episode)
 
         if getattr(self, "static_ship", False):
             # Evaluation (visualization) runs
