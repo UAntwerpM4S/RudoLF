@@ -1,0 +1,42 @@
+{
+  "main": {
+    "action": "visualize",
+    "train_environment": "PySimEnv"
+  },
+  "visualization": {
+    "fossen_visualise": true,
+    "inference_visualise": false,
+    "fossen_model_path": "src/models/PySimEnv_PPO_policy.zip",
+    "inference_model_path": "src/models/AirSimEnv_PPO_policy.zip",
+    "fossen_environment": "auto",
+    "mirror_controls_in_ue5": false,
+    "animate_steering_in_ue5": true,
+    "animate_throttle_in_ue5": false,
+    "render_interpolation_steps": 8,
+    "steering_visual_gain": 0.35,
+    "throttle_visual_gain": 1.0,
+    "use_kinematics_in_ue5": false,
+    "min_render_hz": 90.0,
+    "max_translation_step": 0.15,
+    "max_yaw_step_deg": 1.5,
+    "vehicle_object_name": "",
+    "show_minimap": true,
+    "lock_path_in_ue5": false,
+    "episodes": 1,
+    "max_steps": 30000,
+    "device": "cpu",
+    "log_every": 50,
+    "draw_calibration_reference": true
+  },
+  "airsim": {
+    "use_airsim": true,
+    "ip": "",
+    "port": 41451,
+    "timeout": 10.0,
+    "max_retries": 3,
+    "health_check_interval": 30.0,
+    "csv_log_path": "",
+    "save_slot": "simulator_1",
+    "simulation_speed": 10.0
+  }
+}

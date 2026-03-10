@@ -1,4 +1,4 @@
-"""Inference / visualization runner – drives the UE5 MYZAKO ship with a trained PPO policy.
+"""UE5 inference runner with legacy Fossen-visualisation compatibility.
 
 Two control modes are available, selected automatically from the model filename
 or overridden via CLI flags:
@@ -59,6 +59,10 @@ Usage::
     python -m airsim.inference.run_inference \\
         --model src/fw/best_models/AirSimEnv_PPO_policy --ue5
 
+    # Dedicated Fossen visualisation runner
+    python -m airsim.inference.run_visualise_fossen \
+        --model src/fw/best_models/PySimEnv_PPO_policy
+
     # Override start/target position
     python -m airsim.inference.run_inference \\
         --model my_model --ship-pos 2245 -47 --target-pos 11530 13000
@@ -81,11 +85,13 @@ import torch
 
 # ── Bootstrap the Python path when run directly (python run_inference.py) ──
 _SRC_DIR = Path(__file__).resolve().parent.parent.parent
+_REPO_ROOT = _SRC_DIR.parent
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from airsim.environments.airsim_env import AirSimEnv          # noqa: E402
 from airsim.communication.airsim_bridge import AirSimBridge   # noqa: E402
+from airsim.communication.control_mapping import map_direct_policy_action  # noqa: E402
 from fw.policies.ppo_policy import PPOPolicy                   # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -135,6 +141,31 @@ def detect_model_origin(model_path: str) -> str:
 # Policy loader
 # ─────────────────────────────────────────────────────────
 
+def _resolve_model_path(model_path: str) -> Path:
+    """Resolve a model path against the common repository search roots.
+
+    Args:
+        model_path: User-supplied model path, absolute or relative.
+
+    Returns:
+        A resolved filesystem path. If the file is not found in the search
+        roots, the repository-root candidate is returned unchanged.
+    """
+    path = Path(model_path)
+    if path.is_absolute() and path.exists():
+        return path
+
+    candidates = [
+        Path.cwd() / path,
+        _REPO_ROOT / path,
+        _SRC_DIR / path,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return (_REPO_ROOT / path).resolve()
+
 def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     """Load a :class:`PPOPolicy` from a saved ``.zip`` file.
 
@@ -151,7 +182,7 @@ def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     Raises:
         RuntimeError: If the model file cannot be found or parsed.
     """
-    path = Path(model_path)
+    path = _resolve_model_path(model_path)
     stem = str(path.with_suffix("")) if path.suffix == ".zip" else str(path)
     policy = PPOPolicy.load(stem, device=device)
     policy.network.eval()
@@ -200,12 +231,12 @@ def _ue5_direct_step(env: AirSimEnv, action: np.ndarray) -> np.ndarray:
     bridge: AirSimBridge = env.bridge
 
     # ── Direct CarControls – NO Fossen affine formula, NO PID ──
-    controls = env._airsim.CarControls()
-    controls.steering = float(np.clip(action[0], -1.0, 1.0))
-    # Simple linear remap [-1, 1] → [0, 1]
-    controls.throttle = float(np.clip((action[1] + 1.0) / 2.0, 0.0, 1.0))
-    controls.brake = 0.0
-    controls.is_manual_gear = False
+    controls = map_direct_policy_action(env._airsim, action)
+    env.last_controls = {
+        "steering": float(controls.steering),
+        "throttle": float(controls.throttle),
+        "brake": float(controls.brake),
+    }
 
     # Save state needed by _read_airsim_state for yaw-rate derivation
     env.previous_ship_pos = env.ship_pos.copy()
@@ -404,9 +435,10 @@ def run_inference(
         print(_BANNER)
     else:
         print(_BANNER)
-        print("  FOSSEN-TRANSLATION MODE")
+        print("  FOSSEN-TRANSLATION MODE  [compatibility path]")
         print(f"  Model  : {Path(model_path).name}")
         print("  Actions: Fossen→UE5 affine formula → bridge.set_controls()")
+        print("  Prefer : python -m airsim.inference.run_visualise_fossen")
         print("  PID    : NOT USED")
         print(_BANNER)
 
@@ -509,11 +541,18 @@ def run_inference(
 # ─────────────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for AirSim inference runs.
+
+    Returns:
+        A configured ``ArgumentParser`` for the backwards-compatible AirSim
+        inference entry point.
+    """
     p = argparse.ArgumentParser(
         description=(
             "Inference runner: load a trained PPO policy and control the "
-            "UE5 MYZAKO ship in real-time.  Two modes: Fossen-translation "
-            "(default) or UE5-direct.  PID control is not used."
+            "UE5 MYZAKO ship in real-time. Use run_visualise_fossen for "
+            "Fossen-trained policies; this entry point is kept for UE5-direct "
+            "inference and backwards compatibility. PID control is not used."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

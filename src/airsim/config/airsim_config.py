@@ -16,12 +16,28 @@ Example::
 
 from __future__ import annotations
 
+import json
 import ipaddress
 import logging
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
+
+_THIS_DIR = Path(__file__).resolve().parent
+_RUNTIME_SETTINGS_PATH = _THIS_DIR / "runtime_settings.json"
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge two nested dictionaries without mutating either input."""
+    merged: Dict[str, Any] = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 @dataclass(frozen=True)
@@ -108,6 +124,58 @@ class AirSimConfig:
         return asdict(self)
 
 
+def get_runtime_settings_path() -> Path:
+    """Return the path to the runtime settings JSON file."""
+    return _RUNTIME_SETTINGS_PATH
+
+
+def get_runtime_settings() -> Dict[str, Any]:
+    """Load runtime settings from JSON and merge them with defaults."""
+    defaults = {
+        "main": {
+            "action": "train",
+            "train_environment": "PySimEnv",
+        },
+        "visualization": {
+            "fossen_visualise": False,
+            "inference_visualise": False,
+            "fossen_model_path": "src/models/PySimEnv_PPO_policy.zip",
+            "inference_model_path": "src/models/AirSimEnv_PPO_policy.zip",
+            "fossen_environment": "auto",
+            "mirror_controls_in_ue5": False,
+            "animate_steering_in_ue5": True,
+            "animate_throttle_in_ue5": True,
+            "render_interpolation_steps": 12,
+            "steering_visual_gain": 1.0,
+            "throttle_visual_gain": 1.0,
+            "use_kinematics_in_ue5": False,
+            "min_render_hz": 90.0,
+            "max_translation_step": 0.15,
+            "max_yaw_step_deg": 1.5,
+            "vehicle_object_name": "",
+            "show_minimap": True,
+            "lock_path_in_ue5": False,
+            "episodes": 1,
+            "max_steps": 14000,
+            "device": "cpu",
+            "log_every": 50,
+            "draw_calibration_reference": True,
+        },
+        "airsim": {
+            **AirSimConfig().to_dict(),
+            "save_slot": "simulator_1",
+            "simulation_speed": 8.0,
+        },
+    }
+
+    if not _RUNTIME_SETTINGS_PATH.exists():
+        return defaults
+
+    with open(_RUNTIME_SETTINGS_PATH, "r", encoding="utf-8") as fh:
+        loaded = json.load(fh)
+    return _deep_merge(defaults, loaded)
+
+
 # ── Backward-compatible accessor ──────────────────────────
 
 
@@ -125,4 +193,7 @@ def get_airsim_config() -> Dict[str, Any]:
         >>> cfg["port"]
         41451
     """
-    return AirSimConfig().to_dict()
+    runtime = get_runtime_settings().get("airsim", {})
+    valid_keys = set(AirSimConfig.__dataclass_fields__.keys())
+    filtered = {key: runtime[key] for key in valid_keys if key in runtime}
+    return AirSimConfig(**filtered).to_dict()
