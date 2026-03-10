@@ -9,7 +9,7 @@ inside Unreal Engine 5.  It provides:
 * **Pass-through control** - ``set_controls()`` forwards pre-mapped
   ``CarControls`` to AirSim without any PID processing.
 
-Input mapping (Fossen model → UE5 controls) is handled by
+Input mapping (Fossen model -> UE5 controls) is handled by
 :class:`~airsim.environments.airsim_env.AirSimEnv` and the
 :mod:`airsim.inference.run_inference` module.  **PID control is not
 used anywhere in this bridge.**
@@ -17,7 +17,7 @@ used anywhere in this bridge.**
 Coordinate frames:
     * **Ship (Fossen):** x = east, y = north, heading from east (CCW+).
     * **AirSim (NED):** x = north, y = east, yaw from north (CW+).
-    * **Transform:** ``AirSim_yaw = π/2 - ship_heading``.
+    * **Transform:** ``AirSim_yaw = pi/2 - ship_heading``.
 
 Example::
 
@@ -52,13 +52,13 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_angle(a: float) -> float:
-    """Wrap an angle to the interval [-π, π].
+    """Wrap an angle to the interval [-pi, pi].
 
     Args:
         a: Angle in radians.
 
     Returns:
-        The equivalent angle in the range [-π, π].
+        The equivalent angle in the range [-pi, pi].
     """
     return (a + math.pi) % (2.0 * math.pi) - math.pi
 
@@ -80,6 +80,57 @@ def _yaw_from_quaternion(q) -> float:
         2.0 * (q.w_val * q.z_val + q.x_val * q.y_val),
         1.0 - 2.0 * (q.y_val ** 2 + q.z_val ** 2),
     )
+
+
+def _roll_pitch_from_quaternion(q) -> tuple[float, float]:
+    """Extract roll and pitch from an AirSim quaternion.
+
+    Uses the standard ZYX Euler-angle decomposition and intentionally leaves yaw
+    to the caller so we can preserve UE5's live roll/pitch while replacing yaw.
+
+    Args:
+        q: A ``cosysairsim.Quaternionr`` instance with attributes
+            ``w_val``, ``x_val``, ``y_val``, and ``z_val``.
+
+    Returns:
+        A tuple ``(roll, pitch)`` in radians.
+    """
+    sinr_cosp = 2.0 * (q.w_val * q.x_val + q.y_val * q.z_val)
+    cosr_cosp = 1.0 - 2.0 * (q.x_val ** 2 + q.y_val ** 2)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+
+    sinp = 2.0 * (q.w_val * q.y_val - q.z_val * q.x_val)
+    if abs(sinp) >= 1.0:
+        pitch = math.copysign(math.pi / 2.0, sinp)
+    else:
+        pitch = math.asin(sinp)
+
+    return roll, pitch
+
+
+def _quaternion_from_euler(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
+    """Create a quaternion from ZYX Euler angles.
+
+    Args:
+        roll: Roll angle in radians.
+        pitch: Pitch angle in radians.
+        yaw: Yaw angle in radians.
+
+    Returns:
+        A tuple ``(x, y, z, w)`` quaternion components.
+    """
+    cy = math.cos(yaw * 0.5)
+    sy = math.sin(yaw * 0.5)
+    cp = math.cos(pitch * 0.5)
+    sp = math.sin(pitch * 0.5)
+    cr = math.cos(roll * 0.5)
+    sr = math.sin(roll * 0.5)
+
+    w = cr * cp * cy + sr * sp * sy
+    x = sr * cp * cy - cr * sp * sy
+    y = cr * sp * cy + sr * cp * sy
+    z = cr * cp * sy - sr * sp * cy
+    return x, y, z, w
 
 
 def is_ue5_reachable(ip: str = "", port: int = 41451, timeout: float = 2.0) -> bool:
@@ -104,7 +155,7 @@ def is_ue5_reachable(ip: str = "", port: int = 41451, timeout: float = 2.0) -> b
         return False
 
 
-# ── AirSimBridge ───────────────────────────────────────────
+# -- AirSimBridge --
 
 
 class AirSimBridge:
@@ -142,12 +193,14 @@ class AirSimBridge:
         self._last_health_check: float = time.monotonic()
         self._step_count: int = 0
         self._sensor_buffer: deque = deque(maxlen=1000)
+        self.coord_transform = None
+        self.render_z: float = 0.0
 
         if not self.config.use_airsim:
             logger.info("AirSim bridge disabled via config (use_airsim=False).")
             return
 
-        # ── Step 1: lightweight port probe ──
+        # -- Step 1: lightweight port probe --
         if not is_ue5_reachable(
             self.config.ip, self.config.port, timeout=self.config.timeout
         ):
@@ -158,7 +211,7 @@ class AirSimBridge:
             )
             return
 
-        # ── Step 2: import cosysairsim ──
+        # -- Step 2: import cosysairsim --
         try:
             import cosysairsim as airsim
 
@@ -167,7 +220,7 @@ class AirSimBridge:
             logger.warning("cosysairsim package not installed - bridge disabled.")
             return
 
-        # ── Step 3: connect with retry + exponential backoff ──
+        # -- Step 3: connect with retry + exponential backoff --
         self._connect_with_retry(airsim)
 
     def _connect_with_retry(self, airsim) -> None:
@@ -208,7 +261,7 @@ class AirSimBridge:
                 if attempt < attempts - 1:
                     backoff = min(2 ** attempt, 30)
                     logger.warning(
-                        "Connection attempt %d/%d failed: %s - retrying in %ds…",
+                        "Connection attempt %d/%d failed: %s - retrying in %ds...",
                         attempt + 1, attempts, exc, backoff,
                     )
                     time.sleep(backoff)
@@ -219,7 +272,7 @@ class AirSimBridge:
             self.config.resolved_ip, self.config.port, attempts, last_error,
         )
 
-    # ── Properties ─────────────────────────────────────────
+    # -- Properties --
 
     @property
     def is_connected(self) -> bool:
@@ -237,7 +290,7 @@ class AirSimBridge:
             raise ConnectionError("Cannot access AirSim client: bridge disconnected.")
         return self._client
 
-    # ── Health check ───────────────────────────────────────
+    # -- Health check --
 
     def health_check(self) -> bool:
         """Verify the AirSim connection is still alive.
@@ -285,7 +338,7 @@ class AirSimBridge:
             return self.health_check()
         return True
 
-    # ── Control methods ────────────────────────────────────
+    # -- Control methods --
 
     def set_controls(self, controls: Any) -> None:
         """Forward pre-mapped control commands directly to AirSim.
@@ -306,7 +359,16 @@ class AirSimBridge:
         except Exception as exc:
             logger.warning("AirSim set_controls failed: %s", exc)
 
-    def set_pose(self, x: float, y: float, z: float, yaw: float) -> None:
+    def set_pose(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        yaw: float,
+        preserve_current_z: bool = False,
+        preserve_roll_pitch: bool = False,
+        _current_pose: Any = None,
+    ) -> None:
         """Forcibly set the vehicle's position and orientation in UE5.
         
         Useful for visualization where another physics engine (e.g. Fossen)
@@ -315,18 +377,138 @@ class AirSimBridge:
         Args:
             x, y, z: Coordinates in AirSim NED frame.
             yaw: Yaw angle in radians in AirSim NED frame.
+            preserve_current_z: Keep the current UE5 heave value instead of
+                forcing the supplied ``z`` each frame.
+            preserve_roll_pitch: Keep the current UE5 roll and pitch while
+                replacing only yaw.
+            _current_pose: Optional pre-fetched ``simGetVehiclePose()`` result.
+                When provided the API round-trip is skipped, eliminating
+                per-sub-step RPC overhead during interpolation loops.
         """
         if not self._ensure_connected():
             return
             
         try:
+            target_z = z
+            quat_x, quat_y, quat_z, quat_w = 0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)
+            current_pose = _current_pose
+            if preserve_current_z and current_pose is None:
+                current_pose = self._client.simGetVehiclePose()
+            if preserve_current_z:
+                target_z = float(current_pose.position.z_val)
+
+            if preserve_roll_pitch and current_pose is None:
+                current_pose = self._client.simGetVehiclePose()
+            if preserve_roll_pitch:
+                current_roll, current_pitch = _roll_pitch_from_quaternion(current_pose.orientation)
+                quat_x, quat_y, quat_z, quat_w = _quaternion_from_euler(current_roll, current_pitch, yaw)
+
             pose = self._airsim.Pose(
-                self._airsim.Vector3r(x, y, z),
-                self._airsim.Quaternionr(0, 0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
+                self._airsim.Vector3r(x, y, target_z),
+                self._airsim.Quaternionr(quat_x, quat_y, quat_z, quat_w)
             )
             self._client.simSetVehiclePose(pose, ignore_collision=True)
         except Exception as exc:
             logger.warning("AirSim set_pose failed: %s", exc)
+
+    def set_object_pose(
+        self,
+        object_name: str,
+        x: float,
+        y: float,
+        z: float,
+        yaw: float,
+    ) -> None:
+        """Move a named UE5 actor via simSetObjectPose without triggering vehicle physics.
+
+        Unlike ``simSetVehiclePose``, this moves any named scene object (e.g. a
+        Static/Skeletal Mesh Actor) that has no Chaos physics body. The water
+        plugin never sees a physics body move, so there are no buoyancy reactions
+        or water ripple artefacts. This is the recommended transport for the
+        fully-external-physics visualisation mode: Fossen runs in Python, UE5
+        is used purely as a renderer.
+
+        Args:
+            object_name: Exact actor name as shown in the UE5 Outliner.
+            x, y, z: Coordinates in AirSim NED frame.
+            yaw: Yaw angle in radians in AirSim NED frame.
+        """
+        if not self._ensure_connected():
+            return
+        try:
+            quat_x, quat_y, quat_z, quat_w = (
+                0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)
+            )
+            pose = self._airsim.Pose(
+                self._airsim.Vector3r(x, y, z),
+                self._airsim.Quaternionr(quat_x, quat_y, quat_z, quat_w),
+            )
+            self._client.simSetObjectPose(object_name, pose, teleport=True)
+        except Exception as exc:
+            logger.warning("AirSim set_object_pose('%s') failed: %s", object_name, exc)
+
+    def set_kinematics(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        yaw: float,
+        linear_velocity_x: float = 0.0,
+        linear_velocity_y: float = 0.0,
+        linear_velocity_z: float = 0.0,
+        angular_velocity_x: float = 0.0,
+        angular_velocity_y: float = 0.0,
+        angular_velocity_z: float = 0.0,
+        preserve_current_z: bool = False,
+        preserve_roll_pitch: bool = False,
+    ) -> None:
+        """Set vehicle pose and kinematics in UE5 for smoother visual playback."""
+        if not self._ensure_connected():
+            return
+
+        try:
+            target_z = z
+            quat_x, quat_y, quat_z, quat_w = 0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)
+            current_pose = None
+            if preserve_current_z:
+                current_pose = self._client.simGetVehiclePose()
+                target_z = float(current_pose.position.z_val)
+
+            if preserve_roll_pitch:
+                if current_pose is None:
+                    current_pose = self._client.simGetVehiclePose()
+                current_roll, current_pitch = _roll_pitch_from_quaternion(current_pose.orientation)
+                quat_x, quat_y, quat_z, quat_w = _quaternion_from_euler(current_roll, current_pitch, yaw)
+
+            if hasattr(self._client, "simSetKinematics"):
+                state = self._airsim.KinematicsState()
+                state.position = self._airsim.Vector3r(float(x), float(y), float(target_z))
+                state.orientation = self._airsim.Quaternionr(quat_x, quat_y, quat_z, quat_w)
+                state.linear_velocity = self._airsim.Vector3r(
+                    float(linear_velocity_x),
+                    float(linear_velocity_y),
+                    float(linear_velocity_z),
+                )
+                state.angular_velocity = self._airsim.Vector3r(
+                    float(angular_velocity_x),
+                    float(angular_velocity_y),
+                    float(angular_velocity_z),
+                )
+                state.linear_acceleration = self._airsim.Vector3r(0.0, 0.0, 0.0)
+                state.angular_acceleration = self._airsim.Vector3r(0.0, 0.0, 0.0)
+                self._client.simSetKinematics(state, ignore_collision=True)
+                return
+
+            self.set_pose(
+                x,
+                y,
+                target_z,
+                yaw,
+                preserve_current_z=False,
+                preserve_roll_pitch=False,
+            )
+        except Exception as exc:
+            logger.warning("AirSim set_kinematics failed: %s", exc)
 
     def get_state(self) -> Dict[str, Any]:
         """Retrieve the full vehicle telemetry state from AirSim.
@@ -395,6 +577,85 @@ class AirSimBridge:
             self._sensor_buffer.clear()
         except Exception as exc:
             logger.warning("Failed to dump sensor buffer to CSV: %s", exc)
+
+    def load_world_save(
+        self,
+        save_slot: str = "simulator_1",
+        reload_timeout: float = 90.0,
+        poll_interval: float = 0.5,
+        reconnect_delay: float = 1.5,
+    ) -> None:
+        """Load a UE5 save slot and reconnect after the level reload completes."""
+        if not self._ensure_connected():
+            raise ConnectionError("Cannot load world save: bridge disconnected.")
+
+        logger.info("Loading world save '%s'...", save_slot)
+        self._client.simSetSaveSlot(save_slot)
+        self._client.simRequestLoad()
+
+        start = time.monotonic()
+        went_down = False
+        while time.monotonic() - start < 10.0:
+            if not is_ue5_reachable(self.config.ip, self.config.port):
+                went_down = True
+                logger.info("UE5 RPC port went offline - level is reloading...")
+                break
+            time.sleep(poll_interval)
+
+        if not went_down:
+            logger.debug("UE5 RPC port never went down after save-load request.")
+
+        logger.info("Waiting for UE5 to finish reloading (timeout=%ds)...", int(reload_timeout))
+        while time.monotonic() - start < reload_timeout:
+            if is_ue5_reachable(self.config.ip, self.config.port):
+                break
+            time.sleep(poll_interval)
+        else:
+            raise TimeoutError(
+                f"UE5 did not finish reloading within {reload_timeout:.0f} s."
+            )
+
+        time.sleep(reconnect_delay)
+        self._connected = False
+        self._client = None
+        self._controls = None
+        if self._airsim is None:
+            raise ConnectionError("Cannot reconnect: cosysairsim module not available.")
+        self._connect_with_retry(self._airsim)
+        if not self._connected:
+            raise ConnectionError("AirSimBridge failed to reconnect after level reload.")
+
+    def prepare_fossen_visualisation(
+        self,
+        save_slot: str = "simulator_1",
+        simulation_speed: float = 1.0,
+        draw_reference: bool = True,
+    ):
+        """Prepare UE5 for framework-driven Fossen visualisation."""
+        from airsim.tools.calibrate_coords import load_saved_calibration_reference
+
+        self.load_world_save(save_slot=save_slot)
+        self._client.simSetSimulationSpeed(simulation_speed)
+        spawn_pose = self._client.simGetVehiclePose()
+        self.render_z = float(spawn_pose.position.z_val)
+        self.coord_transform, _ = load_saved_calibration_reference(
+            self._client,
+            draw_reference=draw_reference,
+        )
+
+        # Park vehicle immediately after world load so its physics engine does
+        # not drift around (and disturb the water surface) during the window
+        # between the save-slot reload and the first Fossen pose update.
+        try:
+            _park = self._airsim.CarControls()
+            _park.throttle = 0.0
+            _park.steering = 0.0
+            _park.brake = 1.0
+            self._client.setCarControls(_park)
+        except Exception:
+            pass
+
+        return self.coord_transform
 
     def reset(self) -> None:
         """Reset the AirSim vehicle and re-enable API control.

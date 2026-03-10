@@ -9,25 +9,27 @@
 The `airsim` package connects the RudoLF reinforcement-learning framework to [CosysAirSim](https://github.com/Cosys-Lab/Cosys-AirSim) — a photorealistic vehicle simulator built on Unreal Engine 5. It enables:
 
 - **RL training inside UE5** — the `AirSimEnv` Gymnasium environment reads vehicle state (position, heading, speed) directly from UE5 and sends steering / throttle commands back, replacing the Fossen mathematical model with UE5's physics engine.
-- **Simultaneous path following** — the `AirSimBridge` PID adapter runs alongside the Fossen simulation, mirroring the trained policy's ship in UE5 in real time.
+- **Framework-to-UE5 visualisation** — the Fossen framework simulation can be mirrored into UE5 in real time while keeping the framework as the physics source of truth.
 - **Coordinate calibration** — an interactive wizard aligns the Fossen (east, north) frame with AirSim's (NED) frame using two reference points, automatically handling scale, rotation, axis mirroring, and origin drift.
 
 ### Architecture
 
 ```
-┌─────────────────┐         ┌──────────────────┐         ┌──────────────────┐
-│  RL Agent (PPO)  │────────▶│  Fossen Ship Sim  │────────▶│    Matplotlib     │
-│   (Stable B3)    │  action │  (Python, NED)    │  state  │   Live Animation  │
-└─────────────────┘         └────────┬─────────┘         └──────────────────┘
-                                     │ ship_state
-                                     ▼
-                            ┌──────────────────┐         ┌──────────────────┐
-                            │  AirSimBridge     │────────▶│   Unreal Engine 5 │
-                            │  (PID + XTE)      │  steer  │   CosysAirSim     │
-                            └──────────────────┘  + thr   └──────────────────┘
+┌────────────────┐      ┌──────────────────┐      ┌──────────────────────┐
+│ PPO / Trainer  │─────▶│ AirSimEnv        │─────▶│ AirSimBridge         │
+│ or Fossen env  │      │ or Fossen replay │      │ RPC / pose transport │
+└────────────────┘      └──────────────────┘      └──────────┬───────────┘
+                                                              │
+                                                              ▼
+                                                    ┌──────────────────────┐
+                                                    │ Unreal Engine 5      │
+                                                    │ CosysAirSim RPC      │
+                                                    └──────────────────────┘
 ```
 
-The bridge does **not** forward raw RL actions to UE5. Instead, it reads the _outputs_ of the Fossen model (heading + speed) and uses PID controllers to make the AirSim vehicle match them. This decouples the control logic from differences in physics engines.
+The current bridge is a transport and lifecycle layer. It owns the CosysAirSim connection, save-slot reloads, pose mirroring, kinematic mirroring, object-pose mirroring, and telemetry reads. Control laws and action mapping live in upper layers such as `AirSimEnv`, `run_inference.py`, `run_visualise_fossen.py`, and `control_mapping.py`.
+
+For the full tree structure and runtime diagrams, see [../../docs/airsim_architecture.md](../../docs/airsim_architecture.md).
 
 ---
 
@@ -38,13 +40,15 @@ airsim/
 ├── __init__.py                   # Re-exports CoordTransform, get_airsim_config
 │
 ├── config/                       # Configuration & calibration data
-│   ├── airsim_config.py          # PID gains, network settings, telemetry flags
+│   ├── airsim_config.py          # Validated connection and runtime settings
+│   ├── runtime_settings.json     # Entry-point and visualization settings
 │   ├── calibration.json          # Fossen ↔ AirSim coordinate calibration
 │   └── settings_training.json    # UE5 simulation mode / speed settings
 │
 ├── communication/                # UE5 ↔ Fossen communication layer
-│   ├── airsim_bridge.py          # PID heading-tracking adapter
-│   └── coord_transform.py       # Bidirectional coordinate mapping
+│   ├── airsim_bridge.py          # RPC lifecycle, control forwarding, pose mirroring
+│   ├── control_mapping.py        # Policy and actuator mapping to CarControls
+│   └── coord_transform.py        # Bidirectional coordinate mapping
 │
 ├── environments/                 # Gymnasium RL environments
 │   └── airsim_env.py             # AirSimEnv — drop-in replacement for PySimEnv
@@ -53,7 +57,10 @@ airsim/
 │   └── train_airsim.py           # Entry point for RL training inside UE5
 │
 ├── inference/                    # Visualization & analysis scripts
+│   ├── minimap_fossen_airsim.py  # Live minimap for Fossen replay
 │   ├── plot_airsim_path.py       # Live dead-reckoning path plotter
+│   ├── run_inference.py          # AirSim-backed inference entry point
+│   ├── run_visualise_fossen.py   # Fossen replay mirrored into UE5
 │   └── verify_headless_plot.py   # CI-friendly headless plot export
 │
 ├── tools/                        # Calibration & telemetry utilities
@@ -104,25 +111,34 @@ python -m airsim.train.train_airsim
 
 This connects to a running UE5 + CosysAirSim instance, creates an `AirSimEnv` Gymnasium environment, and trains a PPO agent using Stable Baselines 3.
 
-### 3 — Visualise via the bridge
-
-To run a trained policy in the Fossen sim **and** mirror it in UE5 simultaneously:
+### 3 — Run inference inside UE5
 
 ```bash
 cd src
-python -m fw.main
+python -m airsim.inference.run_inference --model src/models/AirSimEnv_PPO_policy.zip
 ```
 
-Set `use_airsim: True` in `airsim/config/airsim_config.py`. The bridge automatically connects and starts forwarding.
+This runs a saved PPO policy against `AirSimEnv`. For UE5-trained models, actions are mapped directly to `CarControls`. For older Fossen-trained models, the compatibility path inside `AirSimEnv.step()` is used.
 
-### 4 — Analyse telemetry
+### 4 — Visualise Fossen replay in UE5
+
+To keep the framework physics authoritative and use UE5 as a renderer:
+
+```bash
+cd src
+python -m airsim.inference.run_visualise_fossen --model src/models/PySimEnv_PPO_policy.zip
+```
+
+This path steps `PySimEnv` or `FhSimEnv`, converts the resulting framework state with `CoordTransform`, and mirrors it into UE5 through `AirSimBridge`.
+
+### 5 — Analyse telemetry
 
 ```bash
 cd src
 python -m airsim.tools.analyze_telemetry
 ```
 
-### 5 — Run tests
+### 6 — Run tests
 
 ```bash
 cd src
@@ -133,25 +149,19 @@ python -m pytest airsim/tests -v
 
 ## Key Components
 
-### `AirSimBridge` — Heading-Tracking Adapter
+### `AirSimBridge` — Connection and Transport Layer
 
 **Module:** `airsim.communication.airsim_bridge`
 
-The bridge connects to AirSim via RPC and, on every simulation step:
+The bridge is responsible for:
 
-1. Reads the Fossen ship's heading, speed, and yaw rate.
-2. Converts the Fossen heading to AirSim yaw: `AirSim_yaw = π/2 − heading`.
-3. Reads the AirSim vehicle's actual yaw from its pose quaternion.
-4. Computes a **steering command** using:
-   - **PID** on heading error (`Kp`, `Ki`, `Kd`).
-   - **Feedforward** on yaw rate (`Kff`).
-   - **Cross-track error correction** (`lat_gain`).
-5. Computes a **throttle command** using:
-   - **PI** on speed error (`throttle_kp`, `throttle_ki`).
-   - **Cumulative-distance correction** (`dist_gain`, `dist_ki`).
-6. Sends `CarControls(steering, throttle)` to AirSim.
+- Connecting to `cosysairsim.CarClient` with retry and health-check logic.
+- Reloading UE5 save slots and reconnecting after world reloads.
+- Forwarding already-mapped `CarControls` objects to UE5.
+- Mirroring framework state into UE5 through `set_pose()`, `set_kinematics()`, or `set_object_pose()`.
+- Reading vehicle telemetry and optionally buffering it to CSV.
 
-All parameters are configurable in `airsim/config/airsim_config.py`.
+The bridge does not implement the active control law for the current architecture. Action mapping happens in `communication/control_mapping.py`, `environments/airsim_env.py`, and the inference entry points.
 
 ### `CoordTransform` — Bidirectional Coordinate Mapping
 
@@ -185,28 +195,27 @@ Additional UE5-specific features:
 - **Training mode** — disables UE5 rendering, fog, particles, shadows to maximise training speed.
 - **Drift auto-correction** — detects and compensates for UE5 coordinate-origin shifts.
 
+### `run_visualise_fossen.py` — Framework Replay Renderer
+
+This entry point keeps `PySimEnv` or `FhSimEnv` as the source of truth and mirrors the resulting motion into UE5. It supports pose mirroring, kinematic mirroring, object-pose mirroring, optional visual steering/throttle animation, and a side-thread minimap.
+
 ---
 
 ## Configuration Reference
 
-All AirSim parameters live in `airsim/config/airsim_config.py`:
+The validated bridge settings live in `airsim/config/airsim_config.py`:
 
-| Parameter              | Default | Description                                      |
-| ---------------------- | ------- | ------------------------------------------------ |
-| `use_airsim`           | `True`  | Enable / disable the AirSim bridge               |
-| `airsim_ip`            | `""`    | AirSim server IP (empty = localhost)             |
-| `airsim_port`          | `41451` | AirSim RPC port                                  |
-| `airsim_kp`            | `5.0`   | Heading PID — proportional gain                  |
-| `airsim_ki`            | `0.5`   | Heading PID — integral gain                      |
-| `airsim_kd`            | `1.0`   | Heading PID — derivative gain                    |
-| `airsim_ff`            | `0.5`   | Heading feedforward gain (yaw rate anticipation) |
-| `airsim_lat_gain`      | `0.5`   | Cross-track error correction gain                |
-| `airsim_speed_scale`   | `1.05`  | Speed multiplier (Fossen → AirSim)               |
-| `airsim_throttle_kp`   | `1.0`   | Throttle PI — proportional gain                  |
-| `airsim_throttle_ki`   | `0.2`   | Throttle PI — integral gain                      |
-| `airsim_dist_gain`     | `0.1`   | Cumulative distance error — proportional gain    |
-| `airsim_dist_ki`       | `0.01`  | Cumulative distance error — integral gain        |
-| `airsim_log_telemetry` | `True`  | Write per-step CSV telemetry                     |
+| Parameter               | Default | Description                                 |
+| ----------------------- | ------- | ------------------------------------------- |
+| `use_airsim`            | `True`  | Enable / disable the AirSim bridge          |
+| `ip`                    | `""`    | AirSim server IP, empty meaning localhost   |
+| `port`                  | `41451` | AirSim RPC port                             |
+| `timeout`               | `10.0`  | Connection timeout in seconds               |
+| `max_retries`           | `3`     | Number of reconnect attempts                |
+| `health_check_interval` | `30.0`  | Health-check interval in seconds            |
+| `csv_log_path`          | `""`    | Optional path for buffered telemetry export |
+
+Higher-level runtime options for training, inference, and visualisation live in `airsim/config/runtime_settings.json`.
 
 ---
 
@@ -225,23 +234,19 @@ The `CoordTransform` class handles all conversions, including scale, rotation, a
 
 ## Telemetry
 
-When `airsim_log_telemetry` is enabled, the bridge writes a CSV file with the following columns per simulation step:
+When `csv_log_path` is configured, the bridge can export buffered vehicle telemetry with fields returned by `AirSimBridge.get_state()`, including:
 
-| Column              | Unit    | Description                     |
-| ------------------- | ------- | ------------------------------- |
-| `step`              | —       | Simulation step counter         |
-| `ship_speed`        | m/s     | Fossen ship surge speed         |
-| `car_speed`         | m/s     | AirSim vehicle speed            |
-| `target_speed`      | m/s     | Desired speed after corrections |
-| `dist_error`        | m       | Cumulative distance error       |
-| `heading_error_deg` | degrees | Heading error (target − actual) |
-| `ship_heading_deg`  | degrees | Fossen ship heading             |
-| `car_yaw_deg`       | degrees | AirSim vehicle yaw              |
-| `steer`             | [-1, 1] | Commanded steering              |
-| `throttle`          | [0, 1]  | Commanded throttle              |
-| `ship_yaw_rate`     | rad/s   | Fossen ship yaw rate            |
+| Column                                | Unit  | Description                   |
+| ------------------------------------- | ----- | ----------------------------- |
+| `timestamp`                           | —     | AirSim timestamp              |
+| `speed`                               | m/s   | AirSim-reported vehicle speed |
+| `gear`                                | —     | Current gear                  |
+| `pos_x`, `pos_y`, `pos_z`             | m     | AirSim-frame position         |
+| `vel_x`, `vel_y`, `vel_z`             | m/s   | Linear velocity components    |
+| `ang_vel_x`, `ang_vel_y`, `ang_vel_z` | rad/s | Angular velocity components   |
+| `yaw`                                 | rad   | Normalized AirSim yaw         |
 
-Use `python -m airsim.tools.analyze_telemetry` to compute accuracy statistics, or `python -m airsim.inference.plot_airsim_path` for live visualisation.
+Use `python -m airsim.tools.analyze_telemetry` for offline inspection, and see [../../docs/airsim_architecture.md](../../docs/airsim_architecture.md) for how telemetry fits into the overall design.
 
 ---
 

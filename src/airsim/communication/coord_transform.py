@@ -1,4 +1,4 @@
-"""Fossen ↔ AirSim coordinate transform.
+"""Fossen <-> AirSim coordinate transform.
 
 Handles the mapping between Fossen (east, north) coordinates and
 AirSim / UE5 coordinates, including scale, rotation, axis mirroring,
@@ -31,7 +31,7 @@ def _normalize_angle(a: float) -> float:
 class CoordTransform:
     """Bidirectional coordinate transform between Fossen and AirSim frames.
 
-    The transform is defined by an anchor pair (fossen_origin ↔ airsim_origin)
+    The transform is defined by an anchor pair (fossen_origin <-> airsim_origin)
     plus scale, rotation, and optional axis mirrors.  Any point is transformed
     by computing its delta from the fossen_origin, optionally mirroring the
     delta, rotating + scaling it, and adding the airsim_origin.
@@ -74,7 +74,7 @@ class CoordTransform:
             self._fossen_origin = np.array(calibration["fossen_origin"], dtype=np.float64)
             self._airsim_origin = np.array(calibration["airsim_origin"], dtype=np.float64)
         else:
-            # Identity transform (Fossen x→AirSim y, Fossen y→AirSim x)
+            # Identity transform (Fossen x->AirSim y, Fossen y->AirSim x)
             self._scale = 1.0
             self._rotation = -math.pi / 2.0  # 90° swap
             self._mirror_x = False
@@ -82,7 +82,7 @@ class CoordTransform:
             self._fossen_origin = np.array([0.0, 0.0])
             self._airsim_origin = np.array([0.0, 0.0])
 
-    # ── Forward transform ──────────────────────────────────
+    # -- Forward transform --────
 
     def fossen_to_airsim(
         self, fossen_x: float, fossen_y: float, z: float = 0.0
@@ -130,7 +130,50 @@ class CoordTransform:
         ax, ay, _ = self.fossen_to_airsim(fossen_x, fossen_y)
         return ax, ay
 
-    # ── Inverse transform ──────────────────────────────────
+    def fossen_vector_to_airsim(
+        self, fossen_dx: float, fossen_dy: float
+    ) -> Tuple[float, float]:
+        """Convert a Fossen-frame vector to an AirSim-frame vector.
+
+        Unlike position transforms, vectors are rotated, mirrored, and scaled,
+        but are not translated by the origin anchors.
+
+        Args:
+            fossen_dx: X component of the vector in the Fossen frame.
+            fossen_dy: Y component of the vector in the Fossen frame.
+
+        Returns:
+            A tuple ``(airsim_dx, airsim_dy)``.
+        """
+        dx = fossen_dx
+        dy = fossen_dy
+
+        if self._mirror_x:
+            dx = -dx
+        if self._mirror_y:
+            dy = -dy
+
+        cos_r = math.cos(self._rotation)
+        sin_r = math.sin(self._rotation)
+        ax = self._scale * (cos_r * dx - sin_r * dy)
+        ay = self._scale * (sin_r * dx + cos_r * dy)
+        return ax, ay
+
+    def fossen_velocity_to_airsim(
+        self, fossen_vx: float, fossen_vy: float
+    ) -> Tuple[float, float]:
+        """Convert an earth-fixed Fossen velocity vector to AirSim.
+
+        Args:
+            fossen_vx: X velocity component in the Fossen frame.
+            fossen_vy: Y velocity component in the Fossen frame.
+
+        Returns:
+            A tuple ``(airsim_vx, airsim_vy)``.
+        """
+        return self.fossen_vector_to_airsim(fossen_vx, fossen_vy)
+
+    # -- Inverse transform --────
 
     def airsim_to_fossen(
         self, airsim_x: float, airsim_y: float
@@ -166,7 +209,7 @@ class CoordTransform:
         fy = dy + self._fossen_origin[1]
         return fx, fy
 
-    # ── Heading / yaw conversion ───────────────────────────
+    # -- Heading / yaw conversion --────
 
     def fossen_heading_to_airsim_yaw(self, heading: float) -> float:
         """Convert a Fossen heading to an AirSim yaw angle.
@@ -208,7 +251,19 @@ class CoordTransform:
             h = math.pi - h
         return _normalize_angle(h)
 
-    # ── Persistence ────────────────────────────────────────
+    def fossen_yaw_rate_to_airsim(self, yaw_rate: float) -> float:
+        """Convert a Fossen yaw-rate to the matching AirSim yaw-rate.
+
+        Args:
+            yaw_rate: Yaw rate in rad/s in the Fossen frame.
+
+        Returns:
+            Yaw rate in rad/s adjusted for the AirSim frame axis convention.
+        """
+        sign = -1.0 if (self._mirror_x ^ self._mirror_y) else 1.0
+        return sign * yaw_rate
+
+    # -- Persistence --────
 
     @classmethod
     def load(cls, path: Path = _DEFAULT_CALIBRATION_PATH) -> "CoordTransform":
