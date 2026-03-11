@@ -127,7 +127,8 @@ class PySimColavEnv(BaseEnv):
             numerical_damping: bool = False,
             static_ship: bool = True,
             use_polar_scan: bool = True,
-            enable_mirror_augmentation: bool = True
+            enable_mirror_augmentation: bool = False,
+            enable_variable_ship_size: bool = False
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -169,11 +170,12 @@ class PySimColavEnv(BaseEnv):
         self.static_ship_population = [0, 1, 2, 3] # min() ships at least, max() at most
         self.static_ship_weights = [50, 25, 15, 10] # likeliness of ships being present
         self._static_ship_probs = np.asarray(self.static_ship_weights, dtype=np.float32) / np.sum(self.static_ship_weights) # static ship probability
-        self.static_ship_lateral_max = 150  # max lateral deviation off path for static ships
+        self.static_ship_lateral_max = 0  # max lateral deviation off path for static ships
         self.eval_static_ship_count = None
+        self.enable_variable_ship_size = bool(enable_variable_ship_size)
         self.static_ship_radius = 20 # safety radius around the obstacle
         self.static_ship_radius_min = 20.0  # minimum safety radius around obstacle
-        self.static_ship_radius_max = 50.0  # maximum safety radius around obstacle
+        self.static_ship_radius_max = 50.0 if self.enable_variable_ship_size else self.static_ship_radius_min  # maximum safety radius around obstacle
         self.static_ship_radii = []  # sampled per-ship radii for current episode
         self.static_ship_segment_margin_frac = 0.1  # avoid exact checkpoint positions (% margin at each end)
         self.own_ship_radius = 0.0 # keep point-ship model for now; set >0 for hull clearance
@@ -788,17 +790,15 @@ class PySimColavEnv(BaseEnv):
                 -1.0,   # Yaw rate
                 0.0,    # Distance to current checkpoint
                 0.0,    # Distance to checkpoint+1
+                0.0,    # Distance to checkpoint+2
+                0.0,    # Distance to checkpoint+3
                 -2.0,   # Cross-track error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
-                #-1.0,   # Heading error
-                #-1.0,   # Heading error
-                #-1.0,   # Heading error
-                #-1.0,   # Heading error
-                #-1.0,  # Heading error
-                #-1.0,  # Heading error
+                -1.0,   # Heading error
+                -1.0,   # Heading error
             ],
             dtype=np.float32,
         )
@@ -810,17 +810,15 @@ class PySimColavEnv(BaseEnv):
                 1.0,    # Yaw rate
                 1.0,    # Distance to current checkpoint
                 1.0,    # Distance to checkpoint+1
+                1.0,    # Distance to checkpoint+2
+                1.0,    # Distance to checkpoint+3
                 2.0,    # Cross-track error
                 1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
-                #1.0,  # Heading error
-                #1.0,  # Heading error
-                #1.0,  # Heading error
-                #1.0,  # Heading error
-                #1.0,   # Heading error
-                #1.0    # Heading error
+                1.0,    # Heading error
+                1.0,    # Heading error
             ],
             dtype=np.float32,
         )
@@ -986,9 +984,9 @@ class PySimColavEnv(BaseEnv):
             0.0
         )
 
-        # Parallel to current checkpoint segment
-        heading_error_parallel3 = self._calculate_heading_error(
-            self._safe_heading_from_vector(next_next_next_chkp_pos - prev_chkp_pos),
+        # To next_next_next checkpoint
+        heading_error4 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next_next_next_chkp_pos - self.ship_pos),
             self.phys_sim.state.heading,
             0.0
         )
@@ -998,15 +996,15 @@ class PySimColavEnv(BaseEnv):
             norm_velocities,                        # Normalized velocities
             [norm_distance],                        # Distance to current checkpoint
             [norm_next_distance],                   # Distance to next checkpoint
+            [norm_next_next_distance],              # Normalized distance to next checkpoint
+            [norm_next_next_next_distance],          # Normalized distance to next next next checkpoint
             [norm_cross_error],                     # Normalized cross-track error
             [heading_error / np.pi],                # Normalized heading error
             [heading_error2 / np.pi],               # Normalized heading error
+            [heading_error3 / np.pi],               # Normalized heading error
+            [heading_error4 / np.pi],                # Normalized heading error
             [heading_error_parallel / np.pi],       # Normalized heading error
             [heading_error_parallel2 / np.pi],      # Normalized heading error
-            # [norm_next_next_distance],            # Normalized distance to next checkpoint
-            # [norm_next_next_next_distance]        # Normalized distance to next next next checkpoint
-            # [heading_error3 / np.pi],             # Normalized heading error
-            # [heading_error_parallel3 / np.pi]     # Normalized heading error
         ])
 
         # Add environmental observations if enabled
