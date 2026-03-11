@@ -17,6 +17,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
     from fw.trainer import Trainer
     from fw.stop_condition import StopCondition, Criterion
     from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+    from airsim.config.airsim_config import get_runtime_settings
     from fw.env_factory import (
         get as get_environment,
         py_sim_env_name,
@@ -27,13 +28,36 @@ if __name__ == "__main__" or __name__ == "fw.main":
         initialize_all_environments
     )
 
+    def _should_delegate_to_airsim_extension() -> bool:
+        """Return whether runtime settings explicitly select the AirSim entrypoint."""
+        try:
+            runtime_settings = get_runtime_settings()
+        except Exception:
+            return False
+
+        if not isinstance(runtime_settings, dict):
+            return False
+
+        main_cfg = runtime_settings.get("main", {})
+        selected_action = str(main_cfg.get("action", "")).strip().lower()
+        selected_environment = str(main_cfg.get("train_environment", "")).strip()
+        return (
+            selected_environment == airsim_env_name
+            and selected_action in {"train", "visualize"}
+        )
+
+    if _should_delegate_to_airsim_extension():
+        import runpy
+
+        runpy.run_module("fw.main_with_airsim", run_name="__main__")
+        raise SystemExit(0)
 
     action = "train"
 
     # Ensure all environments are registered once
     initialize_all_environments()
 
-    # Define simulator inputs
+    # Define simulator inputs. Keep hardcoded behavior by default, allow runtime override.
     envs = [get_environment(py_sim_env_name)]
             # get_environment(fh_sim_env_name)]
             # [get_environment(airsim_env_name, configuration={"training_mode": False})]
@@ -55,23 +79,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         print(f"Training metrics: {metrics}")
     elif "visualize" == action:
-        # Optionally create AirSim bridge for simultaneous vehicle control
-        from airsim.config.airsim_config import get_airsim_config, AirSimConfig
-        airsim_cfg = get_airsim_config()
-        airsim_bridge = None
-        if airsim_cfg.get("use_airsim", False):
-            from airsim.communication.airsim_bridge import AirSimBridge
-            bridge_cfg = AirSimConfig(
-                ip=airsim_cfg.get("airsim_ip", ""),
-                port=airsim_cfg.get("airsim_port", 41451)
-            )
-            temp_bridge = AirSimBridge(bridge_cfg)
-            if temp_bridge.is_connected:
-                airsim_bridge = temp_bridge
-                logging.getLogger("airsim").setLevel(logging.INFO)  # connected — enable airsim logs
-            else:
-                print("[main] AirSim bridge not connected — running without.")
-
-        trainer.visualize(envs, airsim_bridge=airsim_bridge)
+        trainer.visualize(envs, airsim_bridge=None)
     else:
         print(f"Unable to execute unknown action '{action}'")
