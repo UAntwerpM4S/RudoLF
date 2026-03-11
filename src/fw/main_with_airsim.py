@@ -162,8 +162,17 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # AirSim visualize dispatch from runtime settings.
     # This makes fw.main_with_airsim a single entrypoint for both AirSim visualize modes.
     if action == "visualize" and selected_environment_name == airsim_env_name:
-        if _run_airsim_visualization_from_runtime():
-            raise SystemExit(0)
+        try:
+            if _run_airsim_visualization_from_runtime():
+                raise SystemExit(0)
+        except ConnectionError as exc:
+            print(f"[main_with_airsim] {exc}")
+            print(
+                "[main_with_airsim] UE5-dependent AirSim visualisation was requested, "
+                "but UE5 is not reachable. Start UE5 in Play mode or disable the "
+                "AirSim visualisation flags in runtime_settings.json."
+            )
+            raise SystemExit(1)
 
     # Ensure all environments are registered once
     from fw.trainer import Trainer

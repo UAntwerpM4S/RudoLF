@@ -86,3 +86,57 @@ def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
     assert called["num_episodes"] == 2
     assert called["max_steps"] == 123
     assert called["simulation_speed"] == 10.0
+
+
+def test_main_with_airsim_exits_cleanly_when_ue5_is_unreachable(monkeypatch, capsys):
+    """Run fw.main_with_airsim and verify UE5 connection failures exit cleanly.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        capsys: Pytest stdout/stderr capture fixture.
+
+    Verifies:
+        - runtime settings select AirSim + visualize + fossen_visualise.
+        - a ConnectionError from the AirSim visualiser is converted into a
+          clean ``SystemExit(1)`` rather than an uncaught traceback.
+        - the user-facing message explains the missing UE5 dependency.
+    """
+    runtime = {
+        "main": {
+            "action": "visualize",
+            "train_environment": "AirSimEnv",
+        },
+        "visualization": {
+            "fossen_visualise": True,
+            "inference_visualise": False,
+        },
+        "airsim": {
+            "ip": "",
+            "port": 41451,
+        },
+    }
+
+    import airsim.config.airsim_config as airsim_config
+    monkeypatch.setattr(airsim_config, "get_runtime_settings", lambda: runtime)
+
+    import airsim.inference.run_visualise_fossen as run_visualise_fossen_module
+
+    def _raise_connection_error(**kwargs):
+        raise ConnectionError("AirSimBridge could not connect to UE5 at 127.0.0.1:41451.")
+
+    monkeypatch.setattr(
+        run_visualise_fossen_module,
+        "run_visualise_fossen",
+        _raise_connection_error,
+    )
+
+    import multiprocessing
+    monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("fw.main_with_airsim", run_name="__main__")
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "UE5-dependent AirSim visualisation was requested" in captured.out
+    assert "AirSimBridge could not connect to UE5" in captured.out
