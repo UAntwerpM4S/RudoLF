@@ -121,7 +121,10 @@ def test_bridge_retry_exhausted(_, mock_sleep, mock_cosysairsim_module, mock_car
 class TestBridgeHealthAndControl:
     @pytest.fixture(autouse=True)
     def setup_bridge(self, mock_cosysairsim_module, mock_car_client):
-        with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True):
+        with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True), patch(
+            "airsim.communication.airsim_bridge.time.sleep",
+            return_value=None,
+        ):
             self.mock_client = mock_car_client
             self.bridge = AirSimBridge()
             self.mock_client.reset_mock()

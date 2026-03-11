@@ -72,11 +72,22 @@ airsim/
 │   ├── airsim_bridge_PID.py      # Original bridge (unmodified)
 │   └── train_airsim.py           # Original training script (unmodified)
 │
-└── tests/                        # Pytest unit tests
-    ├── conftest.py               # Mock AirSim fixtures
-    ├── test_airsim_bridge.py     # Bridge helper & init tests
-    ├── test_airsim_config.py     # Config key & default tests
-    └── test_coord_transform.py   # Round-trip & heading transform tests
+
+Repository-level tests for this package live in:
+
+```
+
+tests/
+└── airsim/
+├── communication/
+│ └── test_bridge.py
+├── enviroments/
+│ └── test_airsim_env.py
+└── inference/
+└── test_fossen_visualisation_dispatch.py
+
+```
+
 ```
 
 ---
@@ -141,8 +152,8 @@ python -m airsim.tools.analyze_telemetry
 ### 6 — Run tests
 
 ```bash
-cd src
-python -m pytest airsim/tests -v
+cd ..
+python -m pytest tests/airsim -v
 ```
 
 ---
@@ -253,8 +264,8 @@ Use `python -m airsim.tools.analyze_telemetry` for offline inspection, and see [
 ## Tests
 
 ```bash
-cd src
-python -m pytest airsim/tests -v
+cd ..
+python -m pytest tests/airsim -v
 ```
 
 The test suite covers:
@@ -262,5 +273,6 @@ The test suite covers:
 - **`test_coord_transform.py`** — round-trip position/heading conversions, mirroring, JSON loading.
 - **`test_airsim_config.py`** — config key presence, default value sanity, immutability.
 - **`test_airsim_bridge.py`** — `_normalize_angle`, `_yaw_from_quaternion`, graceful disconnected state.
+- **`test_fossen_visualisation_dispatch.py`** — verifies `fw.main_with_airsim` routes runtime Fossen-visualise mode to `run_visualise_fossen` with expected arguments.
 
 Tests run without UE5 or CosysAirSim (mock fixtures in `conftest.py`).

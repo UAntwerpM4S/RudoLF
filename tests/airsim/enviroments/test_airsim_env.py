@@ -6,6 +6,8 @@ All tests are fully mocked — no UE5 or CosysAirSim is required.
 import math
 import os
 import csv
+import importlib
+import sys
 import pytest
 import numpy as np
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -65,13 +67,24 @@ def _make_mock_airsim_module():
 
 
 def _make_env(mock_module):
-    """Build an ``AirSimEnv`` with cosysairsim fully mocked."""
-    import sys
+    """Build an ``AirSimEnv`` with cosysairsim fully mocked.
+
+    The real AirSimEnv constructor waits for a simulated UE5 reload cycle.
+    In tests we short-circuit that sequence by controlling reachability checks
+    and making sleeps return immediately.
+    """
     sys.modules["cosysairsim"] = mock_module
 
-    with patch(
-        "airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True
-    ):
+    bridge_module = importlib.import_module("airsim.communication.airsim_bridge")
+    env_module = importlib.import_module("airsim.environments.airsim_env")
+
+    reachability_sequence = [True, False, True, True]
+
+    with patch.object(
+        bridge_module,
+        "is_ue5_reachable",
+        side_effect=reachability_sequence,
+    ), patch.object(env_module.time, "sleep", return_value=None):
         from airsim.environments.airsim_env import AirSimEnv
 
         env = AirSimEnv(
@@ -96,14 +109,19 @@ def mock_airsim():
         A tuple ``(env, client)`` where ``env`` is the ready-to-use
         ``AirSimEnv`` and ``client`` is the mock ``CarClient``.
     """
-    import sys
-
     mock_module, client = _make_mock_airsim_module()
     sys.modules["cosysairsim"] = mock_module
 
-    with patch(
-        "airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True
-    ):
+    bridge_module = importlib.import_module("airsim.communication.airsim_bridge")
+    env_module = importlib.import_module("airsim.environments.airsim_env")
+
+    reachability_sequence = [True, False, True, True]
+
+    with patch.object(
+        bridge_module,
+        "is_ue5_reachable",
+        side_effect=reachability_sequence,
+    ), patch.object(env_module.time, "sleep", return_value=None):
         from airsim.environments.airsim_env import AirSimEnv
 
         env = AirSimEnv(

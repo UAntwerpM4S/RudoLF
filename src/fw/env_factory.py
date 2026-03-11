@@ -211,7 +211,7 @@ class PySimEnvironment(BaseEnvironment):
         # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = PySimEnv(max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
+        self._env = PySimEnv(time_step=0.7, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
                              dynamics_model=config["dynamics_model"], ship_model=config["ship_model"],
                              wind=config["wind"], current=config["current"],
                              numerical_damping=config["numerical_damping"])
@@ -265,16 +265,20 @@ class AirSimEnvironment(BaseEnvironment):
         cfg = configuration if isinstance(configuration, dict) else {}
         training_mode = cfg.get("training_mode", True)
         use_pause = cfg.get("use_pause_stepping", training_mode)
-        # Default speed: 20x for training (fast), 1x for inference (real-time).
-        simulation_speed = cfg.get("simulation_speed", 20.0 if training_mode else 1.0)
+        max_steps = int(cfg.get("max_steps", 14000))
+        ip = cfg.get("ip", "")
+        port = int(cfg.get("port", 41451))
+        simulation_speed = float(cfg.get("simulation_speed", 1.0))
 
         self._env = AirSimEnv(
             ship_pos=ship_pos,
             target_pos=target_pos,
-            max_steps=14000,
+            max_steps=max_steps,
+            ip=ip,
+            port=port,
+            simulation_speed=simulation_speed,
             training_mode=training_mode,
             use_pause_stepping=use_pause,
-            simulation_speed=simulation_speed,
         )
 
 

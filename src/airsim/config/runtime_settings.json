@@ -1,7 +1,7 @@
 {
   "main": {
     "action": "visualize",
-    "train_environment": "PySimEnv"
+    "train_environment": "AirSimEnv"
   },
   "visualization": {
     "fossen_visualise": true,

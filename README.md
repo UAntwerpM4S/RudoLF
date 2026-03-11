@@ -83,7 +83,19 @@ Telemetry data can be visualized with `plot_airsim_path.py`, which reconstructs 
 | `airsim_speed_scale`   | `1.05`  | Speed multiplier to match simulation units               |
 | `airsim_log_telemetry` | `True`  | Logs step-by-step control data to CSV                    |
 
-> **📖 Full documentation:** See [`src/airsim/README.md`](src/airsim/README.md) for the complete AirSim package documentation, including coordinate frame details, telemetry schema, and test suite information.
+> **Full documentation:** See [`src/airsim/README.md`](src/airsim/README.md) for the complete AirSim package documentation, including runtime entrypoints, coordinate frame details, telemetry schema, and test suite information.
+
+### AirSim Tests
+
+Run the AirSim test suite from the repository root:
+
+```bash
+python -m pytest tests/airsim -v
+```
+
+Inference routing test (Fossen visualisation dispatch from `fw.main_with_airsim`) is located at:
+
+`tests/airsim/inference/test_fossen_visualisation_dispatch.py`
 
 ---
 
