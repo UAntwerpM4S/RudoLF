@@ -169,9 +169,12 @@ class PySimColavEnv(BaseEnv):
         self.static_ship_population = [0, 1, 2, 3] # min() ships at least, max() at most
         self.static_ship_weights = [50, 25, 15, 10] # likeliness of ships being present
         self._static_ship_probs = np.asarray(self.static_ship_weights, dtype=np.float32) / np.sum(self.static_ship_weights) # static ship probability
-        self.static_ship_lateral_max = 0.0  # max lateral deviation off path for static ships
+        self.static_ship_lateral_max = 150  # max lateral deviation off path for static ships
         self.eval_static_ship_count = None
         self.static_ship_radius = 20 # safety radius around the obstacle
+        self.static_ship_radius_min = 20.0  # minimum safety radius around obstacle
+        self.static_ship_radius_max = 50.0  # maximum safety radius around obstacle
+        self.static_ship_radii = []  # sampled per-ship radii for current episode
         self.static_ship_segment_margin_frac = 0.1  # avoid exact checkpoint positions (% margin at each end)
         self.own_ship_radius = 0.0 # keep point-ship model for now; set >0 for hull clearance
         self.use_polar_scan = bool(use_polar_scan) # Enable/disable polar scan representation
@@ -578,12 +581,14 @@ class PySimColavEnv(BaseEnv):
         self._boundary_ends = coords[1:]
 
         if getattr(self, "static_ship", False) and self.static_ship_pos is not None:
-            # Ensure this is always (M, 2) even if M=1
-            centers = np.array(self.static_ship_pos[:self.static_ship_count])
+            centers = np.array(self.static_ship_pos[:self.static_ship_count], dtype=np.float32)
             self._static_ship_centers = centers.reshape(-1, 2)
-            self._static_ship_radii_sq = (self.static_ship_radius + self.own_ship_radius) ** 2
+
+            radii = np.array(self.static_ship_radii[:self.static_ship_count], dtype=np.float32)
+            self._static_ship_radii_sq = np.square(radii + float(self.own_ship_radius))
         else:
             self._static_ship_centers = None
+            self._static_ship_radii_sq = None
 
     def _get_polar_scan(self) -> np.ndarray:
         x0, y0 = self.ship_pos
@@ -1266,8 +1271,9 @@ class PySimColavEnv(BaseEnv):
         n = min(int(self.static_ship_count), len(self.static_ship_pos))
         arr = np.asarray(self.static_ship_pos[:n], dtype=np.float32)
         # rounding avoids tiny float diffs causing redraw spam
-        rounded = tuple(map(tuple, np.round(arr, 2)))
-        return (int(n), rounded)
+        rounded_pos = tuple(map(tuple, np.round(arr, 2)))
+        rounded_radii = tuple(np.round(np.asarray(self.static_ship_radii[:n], dtype=np.float32), 2))
+        return (int(n), rounded_pos, rounded_radii)
 
     def _clear_static_ship_patches(self) -> None:
         """Remove previous static ship patches from the axes."""
@@ -1295,9 +1301,11 @@ class PySimColavEnv(BaseEnv):
         n = min(int(self.static_ship_count), len(self.static_ship_pos))
         for i in range(n):
             sx, sy = float(self.static_ship_pos[i][0]), float(self.static_ship_pos[i][1])
+            radius = float(self.static_ship_radii[i])
+
             safety = patches.Circle(
                 (sx, sy),
-                float(self.static_ship_radius),
+                radius,
                 fill=False,
                 edgecolor="gray",
                 linewidth=2,
@@ -1477,6 +1485,7 @@ class PySimColavEnv(BaseEnv):
             return None
 
         static_ship_positions = []
+        self.static_ship_radii = []
 
         max_lat = float(getattr(self, "static_ship_lateral_max", 0.0))
         # Keep ships away from exact checkpoint centers (0.0 means full segment allowed)
@@ -1510,15 +1519,19 @@ class PySimColavEnv(BaseEnv):
             seg_len = float(np.linalg.norm(seg))
 
             # Fallback if degenerate segment
-            if seg_len <= EPSILON:
-                static_ship_positions.append(((pa + pb) * 0.5).astype(np.float32))
-                continue
+            # if seg_len <= EPSILON:
+            #     static_ship_positions.append(((pa + pb) * 0.5).astype(np.float32))
+            #     continue
 
             tangent = seg / seg_len
             normal = np.array([-tangent[1], tangent[0]], dtype=np.float32)
 
             # Safety circle radius used for "inside water" check and overlap clearance
-            inflated_r = float(self.static_ship_radius + self.own_ship_radius)
+            ship_radius = float(
+                self._rng.uniform(self.static_ship_radius_min, self.static_ship_radius_max)
+            )
+
+            inflated_r = float(ship_radius + self.own_ship_radius)
 
             # Default fallback: midpoint with no lateral offset
             pos = (0.5 * (pa + pb)).astype(np.float32)
@@ -1544,8 +1557,9 @@ class PySimColavEnv(BaseEnv):
 
                 # prevent overlap with already placed static ships
                 too_close = False
-                for p in static_ship_positions:
-                    if float(np.linalg.norm(cand - p)) < 2.0 * inflated_r:
+                for p, prev_radius in zip(static_ship_positions, self.static_ship_radii):
+                    prev_inflated_r = float(prev_radius + self.own_ship_radius)
+                    if float(np.linalg.norm(cand - p)) < (inflated_r + prev_inflated_r):
                         too_close = True
                         break
                 if too_close:
@@ -1555,6 +1569,7 @@ class PySimColavEnv(BaseEnv):
                 break
 
             static_ship_positions.append(pos)
+            self.static_ship_radii.append(ship_radius)
 
         return static_ship_positions
 
@@ -1563,7 +1578,8 @@ class PySimColavEnv(BaseEnv):
         collisions = []
         for i in range(self.static_ship_count):
             d = float(np.linalg.norm(self.ship_pos - self.static_ship_pos[i]))
-            collisions.append(d <= float(self.static_ship_radius + self.own_ship_radius))
+            r = float(self.static_ship_radii[i] + self.own_ship_radius)
+            collisions.append(d <= r)
         return any(collisions)
 
     def env_specific_reset(self) -> None:
@@ -1580,6 +1596,8 @@ class PySimColavEnv(BaseEnv):
                 self._mirror_this_episode = bool(self._rng.random() < self.mirror_probability)
             else:
                 self._mirror_this_episode = False
+        else:
+            self._mirror_this_episode = True
 
         # Apply original or mirrored geometry BEFORE static ship placement
         self._apply_episode_geometry(self._mirror_this_episode)

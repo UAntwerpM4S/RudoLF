@@ -289,7 +289,7 @@ class ColavAgent:
             live_animation: bool = False,
             env_color_index: int = 0,
             airsim_bridge: AirSimBridge = None,
-            replay_collision_episodes: bool = False,
+            replay_collision_episodes: bool = True,
             max_replays: int = 5,
     ) -> None:
 
