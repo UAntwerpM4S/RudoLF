@@ -109,8 +109,8 @@ class UGentSurrogate(DynamicsBase):
         D_prop = 1.6573  # m
         T = 2 * ((0.6723 - 0.7968 * (u * 0.7 / (n_rps * D_prop))) * 1025 * n_rps ** 2 * D_prop ** 4)  # N
 
-        du = (T * np.cos(rudder_angle) - self.X_u * u - self.X_uabsu * u * abs(u) + self.mass * v * np.deg2rad(
-            r) + self.X_uabsv * u * abs(v)) / (self.mass - self.X_udot)
+        du = (T * np.cos(rudder_angle) - self.X_u * u - self.X_uabsu * u * abs(u) + self.mass * v *
+            r + self.X_uabsv * u * abs(v)) / (self.mass - self.X_udot)
         dv = (-self.mass * u * r + self.Y_uv * u * v + self.Y_vabsv * v * abs(v) + T * np.sin(rudder_angle)) / (
                     self.mass - self.Y_vdot)
         dr = (-self.mass * x_G * u * r + self.N_ur * u * r + self.N_rabsr * r * np.abs(
