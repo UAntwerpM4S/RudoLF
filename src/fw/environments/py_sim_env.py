@@ -21,6 +21,7 @@ from fw.ships.ship_factory import create_ship, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
+from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.dynamics_model import Model
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.nomoto import Nomoto
@@ -253,6 +254,8 @@ class PySimEnv(BaseEnv):
             self.dynamics = Fossen(self.ships[ship_index].specifications)
         elif self.dynamics_model == Model.NOMOTO:
             self.dynamics = Nomoto(self.ships[ship_index].specifications)
+        elif self.dynamics_model == Model.UGENT_SURROGATE:
+            self.dynamics = UGentSurrogate(self.ships[ship_index].specifications)
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
