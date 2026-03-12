@@ -361,6 +361,18 @@ class TestCrossTrackCSV:
         assert "checkpoint_index" in info
         assert isinstance(info["checkpoint_index"], int)
 
+    def test_step_info_contains_latency_fields(self, mock_airsim):
+        """Lock-step telemetry must expose latency and UE5 timestamp info."""
+        env, _ = mock_airsim
+        action = np.array([0.0, 0.0], dtype=np.float32)
+        _, _, _, _, info = env.step(action)
+        assert "physics_wait_s" in info
+        assert "step_latency_s" in info
+        assert "ue5_timestamp" in info
+        assert isinstance(info["physics_wait_s"], float)
+        assert isinstance(info["step_latency_s"], float)
+        assert isinstance(info["ue5_timestamp"], int)
+
     def test_episode_csv_logging(self, mock_airsim, tmp_path):
         """T-012: step() must write one telemetry row to the episode CSV.
 
@@ -394,6 +406,7 @@ class TestCrossTrackCSV:
             "ship_x", "ship_y", "heading_deg", "speed",
             "cross_track_error", "checkpoint_index",
             "reward", "steering", "throttle",
+            "physics_wait_s", "step_latency_s", "ue5_timestamp",
         }
         assert required_columns.issubset(rows[0].keys()), (
             f"Missing columns: {required_columns - set(rows[0].keys())}"

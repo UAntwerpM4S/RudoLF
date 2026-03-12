@@ -35,7 +35,10 @@ from typing import Dict, List, Optional, Tuple
 from fw.environments.base_env import BaseEnv
 from fw.environments.tools import create_checkpoints_from_simple_path
 from airsim.communication.coord_transform import CoordTransform, _normalize_angle
-from airsim.communication.control_mapping import map_fossen_policy_action
+from airsim.communication.control_mapping import (
+    map_fossen_policy_action,
+    validate_policy_action,
+)
 from fw.ships.ship_factory import create_ship, ShipModel
 from fw.ships.actuator_model import ActuatorModel
 
@@ -143,6 +146,9 @@ class AirSimEnv(BaseEnv):
         verbose: bool = False,
         episode_log_path: str = "",
         simulation_speed: float = 1.0,
+        physics_update_timeout: float = 1.0,
+        state_poll_interval: float = 0.005,
+        latency_warning_threshold: Optional[float] = None,
     ) -> None:
         """Initialise the AirSim training environment.
 
@@ -175,6 +181,16 @@ class AirSimEnv(BaseEnv):
         self.frames_per_step = frames_per_step
         self.use_pause_stepping = use_pause_stepping
         self.verbose = verbose
+        self._physics_update_timeout = float(physics_update_timeout)
+        self._state_poll_interval = float(state_poll_interval)
+        self._latency_warning_threshold = float(
+            latency_warning_threshold
+            if latency_warning_threshold is not None
+            else max(0.25, self.time_step)
+        )
+        self._last_ue5_timestamp: Optional[int] = None
+        self.last_physics_wait_s: float = 0.0
+        self.last_step_latency_s: float = 0.0
 
         # -- Episode-level telemetry CSV (T-012) --
         self._episode_log_path: str = episode_log_path
@@ -385,6 +401,7 @@ class AirSimEnv(BaseEnv):
         "ship_x", "ship_y", "heading_deg", "speed",
         "cross_track_error", "checkpoint_index",
         "reward", "steering", "throttle",
+        "physics_wait_s", "step_latency_s", "ue5_timestamp",
     ]
 
     def _open_episode_log(self) -> None:
@@ -431,6 +448,9 @@ class AirSimEnv(BaseEnv):
                 "reward": float(reward),
                 "steering": float(self.performed_action[0]),
                 "throttle": float(self.performed_action[1]),
+                "physics_wait_s": float(self.last_physics_wait_s),
+                "step_latency_s": float(self.last_step_latency_s),
+                "ue5_timestamp": int(self._last_ue5_timestamp or 0),
             })
         except Exception as exc:
             logger.warning("Episode log write failed: %s", exc)
@@ -687,7 +707,64 @@ class AirSimEnv(BaseEnv):
     # -------------
     # AirSim state reading
     # -------------
-    def _read_airsim_state(self) -> None:
+    @staticmethod
+    def _extract_ue5_timestamp(car_state) -> Optional[int]:
+        """Return the UE5 state timestamp when available.
+
+        Args:
+            car_state: AirSim ``CarState`` object returned by ``getCarState``.
+
+        Returns:
+            The integer timestamp reported by UE5, or ``None`` when the field
+            is missing or not parseable.
+        """
+        timestamp = getattr(car_state, "timestamp", None)
+        if timestamp is None:
+            return None
+        try:
+            return int(timestamp)
+        except (TypeError, ValueError):
+            return None
+
+    def _wait_for_next_physics_update(self, previous_timestamp: Optional[int]):
+        """Wait until UE5 exposes a newer physics state or the watchdog fires.
+
+        Args:
+            previous_timestamp: The most recently observed UE5 physics
+                timestamp before issuing the new control command.
+
+        Returns:
+            A tuple ``(car_state, wait_time_s)`` containing the freshest
+            ``CarState`` observed and the total wait duration in seconds.
+        """
+        started = time.monotonic()
+        latest_car_state = None
+
+        while True:
+            latest_car_state = self.client.getCarState()
+            current_timestamp = self._extract_ue5_timestamp(latest_car_state)
+            if previous_timestamp is None or current_timestamp is None:
+                break
+            if current_timestamp > previous_timestamp:
+                break
+            if time.monotonic() - started >= self._physics_update_timeout:
+                logger.warning(
+                    "UE5 physics update watchdog expired after %.3f s; continuing with the latest state.",
+                    time.monotonic() - started,
+                )
+                break
+            time.sleep(self._state_poll_interval)
+
+        wait_time = time.monotonic() - started
+        if wait_time > self._latency_warning_threshold:
+            logger.warning(
+                "UE5 physics update latency %.3f s exceeded threshold %.3f s.",
+                wait_time,
+                self._latency_warning_threshold,
+            )
+        return latest_car_state, wait_time
+
+    def _read_airsim_state(self, car_state=None) -> None:
         """Read vehicle state from UE5 and convert to Fossen frame.
 
         Queries ``simGetVehiclePose`` and ``getCarState`` from the
@@ -696,7 +773,8 @@ class AirSimEnv(BaseEnv):
         from consecutive headings.
         """
         pose = self.client.simGetVehiclePose()
-        car_state = self.client.getCarState()
+        if car_state is None:
+            car_state = self.client.getCarState()
 
         fx, fy = self.coord.airsim_to_fossen(
             pose.position.x_val, pose.position.y_val
@@ -711,6 +789,7 @@ class AirSimEnv(BaseEnv):
         self.ship_v = 0.0
         heading_diff = _normalize_angle(self.ship_heading - self.previous_heading)
         self.ship_r = heading_diff / max(self.time_step, EPSILON)
+        self._last_ue5_timestamp = self._extract_ue5_timestamp(car_state)
 
     def _check_collision(self) -> bool:
         """Check for collision via AirSim API.
@@ -828,12 +907,12 @@ class AirSimEnv(BaseEnv):
         Raises:
             ValueError: If *action* does not have shape ``(2,)``.
         """
-        action = np.asarray(action, dtype=np.float32)
-        if action.shape != (2,):
-            raise ValueError(f"Action must be shape (2,), got {action.shape}")
+        step_started = time.monotonic()
+        action = validate_policy_action(action, action_name="AirSimEnv.step action")
 
         self.previous_ship_pos = self.ship_pos.copy()
         self.previous_heading = self.ship_heading
+        previous_timestamp = self._last_ue5_timestamp
 
         actuator = self._actuators.apply_smoothing(action, self.enable_smoothing)
 
@@ -869,14 +948,18 @@ class AirSimEnv(BaseEnv):
             self.client.simPause(False)
             self.client.setCarControls(controls)
             self.client.simContinueForFrames(self.frames_per_step)
-            time.sleep(0.001)
+            car_state, physics_wait_s = self._wait_for_next_physics_update(previous_timestamp)
         else:
             self.bridge.set_controls(controls)
             time.sleep(self.time_step)
+            car_state = self.client.getCarState()
+            physics_wait_s = 0.0
 
-        self._read_airsim_state()
+        self._read_airsim_state(car_state=car_state)
         self.performed_action = self._actuators.current_actuator_state.copy()
         self.step_count += 1
+        self.last_physics_wait_s = float(physics_wait_s)
+        self.last_step_latency_s = float(time.monotonic() - step_started)
 
         reward, terminated = self._calculate_reward()
 
@@ -892,6 +975,9 @@ class AirSimEnv(BaseEnv):
         info = {
             "cross_track_error": float(self.cross_error),
             "checkpoint_index": int(self.checkpoint_index),
+            "physics_wait_s": float(self.last_physics_wait_s),
+            "step_latency_s": float(self.last_step_latency_s),
+            "ue5_timestamp": int(self._last_ue5_timestamp or 0),
         }
 
         return self._get_obs(), float(reward), bool(terminated), bool(truncated), info

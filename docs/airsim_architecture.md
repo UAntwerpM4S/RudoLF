@@ -60,7 +60,7 @@ flowchart TB
 
     infer --> runinf[run_inference.py\npolicy replay in AirSimEnv]
     infer --> runviz[run_visualise_fossen.py\nFossen replay mirrored into UE5]
-    infer --> minimap[minimap_fossen_airsim.py\nlive minimap worker]
+    infer --> minimap[minimap_fossen_airsim.py\nlive minimap process]
     infer --> plotpath[plot_airsim_path.py\npath plotting]
 
     tools --> calib[calibrate_coords.py\ninteractive calibration wizard]
@@ -83,7 +83,8 @@ flowchart TB
 ### 2. Two runtime modes
 
 - UE5-native mode: `AirSimEnv` uses UE5 as the physics source of truth. PPO actions are mapped to `CarControls`, sent through `AirSimBridge`, and observations are reconstructed from UE5 state.
-- Fossen-visualisation mode: the framework simulator remains the physics source of truth. `run_visualise_fossen.py` steps `PySimEnv` or ``, converts the resulting motion with `CoordTransform`, and mirrors the motion into UE5 through `AirSimBridge`.
+- Fossen-visualisation mode: the framework simulator remains the physics source of truth. `run_visualise_fossen.py` steps `PySimEnv` or `FhSimEnv`, converts the resulting motion with `CoordTransform`, and mirrors the motion into UE5 through `AirSimBridge`.
+- The live minimap is intentionally isolated in a separate child process, not a thread, so GUI redraws and viewport recentering cannot stall the main replay loop.
 
 ### 3. Calibration as a first-class dependency
 
@@ -99,7 +100,7 @@ flowchart LR
     subgraph FrameworkSide[Python framework side]
         policy[PPOPolicy]
         airsimEnv[AirSimEnv]
-        fossenEnv[PySimEnv or ]
+        fossenEnv[PySimEnv or FhSimEnv]
         mapping[action mapping]
         transformSvc[CoordTransform]
         bridgeSvc[AirSimBridge]
@@ -220,6 +221,7 @@ Key points:
 
 - Framework physics stays authoritative.
 - UE5 is used as a renderer and visual mirror.
+- At high `simulation_speed`, visual updates now snap directly when the allocated wall-clock duration becomes shorter than the effective render interval. This avoids adding artificial slowdown through pointless interpolation sleeps.
 - The mirror transport can use one of three strategies:
   - `set_pose()` for standard vehicle-pose mirroring.
   - `set_kinematics()` when the installed CosysAirSim build exposes `simSetKinematics`.
@@ -233,7 +235,7 @@ Key points:
 - `environments/airsim_env.py`: UE5-backed Gymnasium environment that keeps the framework-compatible observation and reward contract.
 - `inference/run_inference.py`: policy replay entry point that can drive UE5-backed inference using `AirSimEnv`.
 - `inference/run_visualise_fossen.py`: framework replay entry point that mirrors external physics into UE5.
-- `inference/minimap_fossen_airsim.py`: side-thread visual aid for framework replay episodes.
+- `inference/minimap_fossen_airsim.py`: process-isolated visual aid for framework replay episodes, with UE5-aware docking and a local follow-view.
 - `tools/calibrate_coords.py`: interactive production of `calibration.json` and overlay verification in UE5.
 - `tools/analyze_telemetry.py`: post-run inspection of logged bridge telemetry.
 - `train/train_airsim.py`: minimal bridge from the framework trainer into `AirSimEnv`.
@@ -244,3 +246,4 @@ Key points:
 - The active bridge assumes upper layers already decided what controls or poses to send.
 - `poc/airsim_bridge_PID.py` is a historical snapshot and should not be used as the reference architecture for current behavior.
 - `run_visualise_fossen.py` is the correct reference for current Fossen-to-UE5 visualisation behavior.
+- The minimap is not part of the timing-critical replay loop anymore; it runs in a separate process and receives latest-wins position updates.

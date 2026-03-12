@@ -9,6 +9,43 @@ import numpy as np
 from fw.ships.ship_specs import ShipSpecifications
 
 
+_ACTION_BOUNDS_TOLERANCE = 1e-4
+
+
+def validate_policy_action(
+    action: np.ndarray,
+    action_name: str = "action",
+) -> np.ndarray:
+    """Validate and lightly clamp a policy action in the expected space.
+
+    Args:
+        action: Candidate action vector.
+        action_name: Human-readable name used in error messages.
+
+    Returns:
+        A float32 action vector of shape ``(2,)`` clipped to ``[-1, 1]``.
+
+    Raises:
+        ValueError: If the action shape is wrong, contains non-finite values,
+            or exceeds the valid range by more than a small numeric tolerance.
+    """
+    action = np.asarray(action, dtype=np.float32)
+    if action.shape != (2,):
+        raise ValueError(f"{action_name} must be shape (2,), got {action.shape}")
+
+    if not np.all(np.isfinite(action)):
+        raise ValueError(f"{action_name} must contain only finite values, got {action}")
+
+    if np.any(action < -1.0 - _ACTION_BOUNDS_TOLERANCE) or np.any(
+        action > 1.0 + _ACTION_BOUNDS_TOLERANCE
+    ):
+        raise ValueError(
+            f"{action_name} must stay within [-1, 1], got {action}"
+        )
+
+    return np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
+
+
 def _normalize_fossen_thrust(specs: ShipSpecifications, thrust: float) -> float:
     """Convert a Fossen thrust value to a UE5 throttle command in [0, 1].
 
@@ -86,9 +123,7 @@ def map_direct_policy_action(airsim_module: Any, action: np.ndarray):
     Raises:
         ValueError: If *action* does not have shape ``(2,)``.
     """
-    action = np.asarray(action, dtype=np.float32)
-    if action.shape != (2,):
-        raise ValueError(f"Action must be shape (2,), got {action.shape}")
+    action = validate_policy_action(action)
 
     return build_car_controls(
         airsim_module,
@@ -122,15 +157,19 @@ def map_fossen_policy_action(
         A ``cosysairsim.CarControls`` object ready to pass to
         ``bridge.set_controls()``.
     """
-    throttle = (
+    signed_action = validate_policy_action(
+        np.array([steering, signed_throttle_action], dtype=np.float32),
+        action_name="Fossen policy action",
+    )
+    thrust = (
         specs.min_thrust
-        + 0.5 * (float(np.clip(signed_throttle_action, -1.0, 1.0)) + 1.0)
+        + 0.5 * (float(signed_action[1]) + 1.0)
         * (specs.max_thrust - specs.min_thrust)
     )
     return build_car_controls(
         airsim_module,
-        steering=float(steering),
-        throttle=float(throttle),
+        steering=float(signed_action[0]),
+        throttle=_normalize_fossen_thrust(specs, thrust),
         brake=brake,
     )
 
