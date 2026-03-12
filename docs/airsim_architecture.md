@@ -1,6 +1,6 @@
 # AirSim Architecture
 
-This document describes the current AirSim subsystem as implemented in `src/airsim`. It reflects the current code paths, where the bridge is a connection and transport layer, not a PID controller.
+This document describes the current AirSim subsystem as implemented in `src/airsim`. It reflects the active code paths and runtime responsibilities.
 
 ## Package Tree
 
@@ -68,7 +68,7 @@ flowchart TB
 
     train --> trainue5[train_airsim.py\ntrainer entry point for UE5]
 
-    poc --> oldbridge[airsim_bridge_PID.py\nlegacy snapshot]
+    poc --> oldbridge[legacy bridge snapshot]
 ```
 
 ## Core Design
@@ -97,13 +97,21 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph FrameworkSide[Python framework side]
-        policy[PPOPolicy]
+    subgraph EntryPoints[Runtime entrypoints]
+        main[fw.main]
+        airsimMain[fw.main_with_airsim]
+        inference[run_inference.py]
+        replay[run_visualise_fossen.py]
+    end
+
+    subgraph FrameworkSide[Python runtime side]
+        policy[PPOPolicy / Trainer]
         airsimEnv[AirSimEnv]
         fossenEnv[PySimEnv or FhSimEnv]
         mapping[action mapping]
         transformSvc[CoordTransform]
         bridgeSvc[AirSimBridge]
+        minimap[minimap process]
     end
 
     subgraph UE5Side[UE5 and CosysAirSim]
@@ -111,9 +119,14 @@ flowchart LR
         ue5[UE5 world and vehicle actor]
     end
 
-    policy --> airsimEnv
-    policy --> fossenEnv
+    main -->|AirSimEnv selected| airsimMain
+    main -->|framework env_type| policy
+    airsimMain -->|train or inference| policy
+    airsimMain -->|Fossen replay| replay
 
+    policy --> airsimEnv
+    replay --> fossenEnv
+    replay --> minimap
     airsimEnv --> mapping
     mapping --> bridgeSvc
     bridgeSvc --> rpc
@@ -194,9 +207,10 @@ Key points:
 ```mermaid
 sequenceDiagram
     participant Runner as run_visualise_fossen.py
-    participant FossenEnv as PySimEnv
+    participant FossenEnv as PySimEnv or FhSimEnv
     participant Transform as CoordTransform
     participant Bridge as AirSimBridge
+    participant Minimap as minimap process
     participant UE5 as UE5/CosysAirSim
 
     Runner->>Bridge: connect
@@ -205,16 +219,19 @@ sequenceDiagram
     Bridge->>UE5: read spawn pose
     Bridge->>Runner: loaded coordinate transform + render_z
     Runner->>FossenEnv: reset
+    Runner->>Minimap: start live minimap
     loop each framework step
         Runner->>FossenEnv: step(policy action)
         FossenEnv-->>Runner: framework pose and actuator state
         Runner->>Transform: convert pose, velocity, yaw rate
         Runner->>Bridge: set_pose or set_kinematics or set_object_pose
+        Runner->>Minimap: latest vessel state
         opt visual controls enabled
             Runner->>Bridge: set_controls(mapped visual actuator state)
         end
         Bridge->>UE5: mirror framework state for rendering
     end
+    Runner->>Minimap: finish and close
 ```
 
 Key points:
@@ -242,8 +259,7 @@ Key points:
 
 ## Important Current Constraints
 
-- The current design does not use PID inside the main `AirSimBridge` path.
 - The active bridge assumes upper layers already decided what controls or poses to send.
-- `poc/airsim_bridge_PID.py` is a historical snapshot and should not be used as the reference architecture for current behavior.
+- The `poc/` directory is a historical snapshot and should not be used as the reference architecture for current behavior.
 - `run_visualise_fossen.py` is the correct reference for current Fossen-to-UE5 visualisation behavior.
 - The minimap is not part of the timing-critical replay loop anymore; it runs in a separate process and receives latest-wins position updates.
