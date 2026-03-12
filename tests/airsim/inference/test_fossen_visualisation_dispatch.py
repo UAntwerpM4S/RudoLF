@@ -12,16 +12,12 @@ def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
         monkeypatch: Pytest monkeypatch fixture.
 
     Verifies:
-        - runtime settings select AirSim + visualize + fossen_visualise.
+        - runtime settings enable fossen_visualise.
         - run_visualise_fossen receives expected arguments.
         - main_with_airsim exits early with code 0 after dispatch.
         - run_inference is not called in this mode.
     """
     runtime = {
-        "main": {
-            "action": "visualize",
-            "train_environment": "AirSimEnv",
-        },
         "visualization": {
             "fossen_visualise": True,
             "inference_visualise": False,
@@ -96,16 +92,12 @@ def test_main_with_airsim_exits_cleanly_when_ue5_is_unreachable(monkeypatch, cap
         capsys: Pytest stdout/stderr capture fixture.
 
     Verifies:
-        - runtime settings select AirSim + visualize + fossen_visualise.
+        - runtime settings enable fossen_visualise.
         - a ConnectionError from the AirSim visualiser is converted into a
           clean ``SystemExit(1)`` rather than an uncaught traceback.
         - the user-facing message explains the missing UE5 dependency.
     """
     runtime = {
-        "main": {
-            "action": "visualize",
-            "train_environment": "AirSimEnv",
-        },
         "visualization": {
             "fossen_visualise": True,
             "inference_visualise": False,

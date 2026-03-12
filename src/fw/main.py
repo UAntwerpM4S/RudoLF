@@ -17,7 +17,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
     from fw.trainer import Trainer
     from fw.stop_condition import StopCondition, Criterion
     from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, get_config_parameters
-    from airsim.config.airsim_config import get_runtime_settings
     from fw.env_factory import (
         build_default_environment,
         get as get_environment,
@@ -30,23 +29,18 @@ if __name__ == "__main__" or __name__ == "fw.main":
         initialize_all_environments
     )
 
+    framework_config = get_config_parameters()
+    configured_env_name = resolve_environment_name(
+        framework_config.get("env_type", py_sim_env_name)
+    )
+    action = str(framework_config.get("action", "train")).strip().lower()
+    if action not in {"train", "visualize"}:
+        print(f"[main] Unknown action '{action}'. Falling back to 'train'.")
+        action = "train"
+
     def _should_delegate_to_airsim_extension() -> bool:
-        """Return whether runtime settings explicitly select the AirSim entrypoint."""
-        try:
-            runtime_settings = get_runtime_settings()
-        except Exception:
-            return False
-
-        if not isinstance(runtime_settings, dict):
-            return False
-
-        main_cfg = runtime_settings.get("main", {})
-        selected_action = str(main_cfg.get("action", "")).strip().lower()
-        selected_environment = str(main_cfg.get("train_environment", "")).strip()
-        return (
-            selected_environment == airsim_env_name
-            and selected_action in {"train", "visualize"}
-        )
+        """Return whether the framework-selected environment is AirSim."""
+        return configured_env_name == airsim_env_name
 
     if _should_delegate_to_airsim_extension():
         import runpy
@@ -62,15 +56,10 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 "falling back to the default framework entrypoint."
             )
 
-    action = "train"
-
     # Ensure all environments are registered once
     initialize_all_environments()
 
     # Define simulator inputs. Keep hardcoded behavior by default, allow runtime override.
-    configured_env_name = resolve_environment_name(
-        get_config_parameters().get("env_type", py_sim_env_name)
-    )
     envs = [build_default_environment(configured_env_name)]
             # get_environment(fh_sim_env_name)]
             # [get_environment(airsim_env_name, configuration={"training_mode": False})]

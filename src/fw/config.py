@@ -56,11 +56,13 @@ DEFAULT_HYPERPARAMETERS = {
 }
 
 CONFIG_PARAMETERS = {
+    # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander"
+    'env_type': "PySimPolarEnv",
+    'action': "train",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
     'numerical_damping': False,
     'visualize_best_trained': False,
-    'env_type': "PySimEnv",
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,

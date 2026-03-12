@@ -1,8 +1,4 @@
 {
-  "main": {
-    "action": "visualize",
-    "train_environment": "AirSimEnv"
-  },
   "visualization": {
     "fossen_visualise": true,
     "inference_visualise": false,

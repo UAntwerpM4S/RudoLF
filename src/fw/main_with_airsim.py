@@ -1,11 +1,13 @@
 """AirSim-focused runtime entrypoint for training and visualization.
 
-This module centralizes AirSim orchestration from runtime settings:
+This module centralizes AirSim orchestration from AirSim-specific runtime
+settings:
 - Training with AirSimEnv through the framework trainer.
 - Visualization dispatch to either Fossen replay or UE5-direct inference.
 
 It is intended to be called directly (``python -m fw.main_with_airsim``) or via
-delegation from ``fw.main`` when AirSim mode is selected.
+delegation from ``fw.main`` when ``fw.config.CONFIG_PARAMETERS['env_type']`` is
+set to ``"AirSimEnv"``.
 """
 
 if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
@@ -25,49 +27,32 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     multiprocessing.set_start_method("spawn", force=True)
 
     from airsim.config.airsim_config import get_runtime_settings
+    from fw.env_factory import (
+        airsim_env_name,
+        fh_sim_env_name,
+        lunar_env_name,
+        py_sim_env_name,
+        py_sim_polar_env_name,
+    )
 
-    py_sim_env_name = "PySimEnv"
-    fh_sim_env_name = "FhSimEnv"
-    airsim_env_name = "AirSimEnv"
-    lunar_env_name = "LunarLander"
-    py_sim_polar_env_name = "PySimPolarEnv"
-
-    # Hardcoded defaults are intentionally kept as fallback behavior.
-    action = "visualize"  # "train" or "visualize"
-    selected_environment_name = py_sim_env_name
+    # AirSim runtime only controls AirSim-specific behavior.
+    # The selected framework environment is handled by fw.main / fw.config.
+    action = "train"
+    selected_environment_name = airsim_env_name
     runtime_settings = {}
 
-    # Runtime settings can override defaults when present and valid.
+    # Visualization flags switch the AirSim entrypoint into visualize mode.
     try:
         runtime_settings = get_runtime_settings()
-        main_cfg = runtime_settings.get("main", {})
-
-        requested_action = str(main_cfg.get("action", action)).strip().lower()
-        if requested_action in {"train", "visualize"}:
-            action = requested_action
-        elif requested_action:
-            print(f"[main] Unknown action '{requested_action}'. Falling back to hardcoded '{action}'.")
-
-        requested_environment = main_cfg.get("train_environment", selected_environment_name)
-        valid_env_names = {
-            py_sim_env_name,
-            fh_sim_env_name,
-            airsim_env_name,
-            lunar_env_name,
-            py_sim_polar_env_name,
-        }
-        if requested_environment in valid_env_names:
-            selected_environment_name = requested_environment
-        elif requested_environment:
-            print(
-                f"[main] Unknown train_environment '{requested_environment}'. "
-                f"Falling back to hardcoded '{selected_environment_name}'."
-            )
     except Exception as exc:
         print(f"[main] Could not load runtime settings ({exc}). Using hardcoded defaults.")
 
     visualization_cfg = runtime_settings.get("visualization", {}) if isinstance(runtime_settings, dict) else {}
     airsim_runtime_cfg = runtime_settings.get("airsim", {}) if isinstance(runtime_settings, dict) else {}
+    if bool(visualization_cfg.get("fossen_visualise", False)) or bool(
+        visualization_cfg.get("inference_visualise", False)
+    ):
+        action = "visualize"
 
     def _run_airsim_visualization_from_runtime() -> bool:
         """Dispatch AirSim-specific visualize runners driven by runtime settings.
@@ -161,7 +146,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     # AirSim visualize dispatch from runtime settings.
     # This makes fw.main_with_airsim a single entrypoint for both AirSim visualize modes.
-    if action == "visualize" and selected_environment_name == airsim_env_name:
+    if action == "visualize":
         try:
             if _run_airsim_visualization_from_runtime():
                 raise SystemExit(0)

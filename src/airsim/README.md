@@ -143,7 +143,13 @@ cd src
 python -m fw.main_with_airsim
 ```
 
-This reads `airsim/config/runtime_settings.json`, selects `AirSimEnv`, and launches the AirSim-specific training flow. The generic alternative is `python -m fw.main`, which delegates into `fw.main_with_airsim` only when runtime settings explicitly request AirSim.
+This reads `airsim/config/runtime_settings.json` and launches the AirSim-specific training flow for `AirSimEnv`. The generic alternative is `python -m fw.main`, which delegates into `fw.main_with_airsim` when `fw.config.CONFIG_PARAMETERS['env_type']` is set to `"AirSimEnv"`.
+
+When you launch through `fw.main`, the framework-level selector lives in `fw.config.CONFIG_PARAMETERS`:
+
+- `env_type = "AirSimEnv"` routes into `fw.main_with_airsim`.
+- `action = "train"` or `"visualize"` controls the generic non-AirSim framework path.
+- AirSim visualisation itself is selected through `fossen_visualise` or `inference_visualise` in `airsim/config/runtime_settings.json` after the AirSim branch has been selected.
 
 ### 3 — Run inference inside UE5
 
@@ -253,7 +259,7 @@ The validated bridge settings live in `airsim/config/airsim_config.py`:
 | `health_check_interval` | `30.0`  | Health-check interval in seconds            |
 | `csv_log_path`          | `""`    | Optional path for buffered telemetry export |
 
-Higher-level runtime options for training, inference, and visualisation live in `airsim/config/runtime_settings.json`.
+Higher-level AirSim runtime options for inference and visualisation live in `airsim/config/runtime_settings.json`. Framework routing lives in `fw.config.CONFIG_PARAMETERS`, where `env_type` chooses the environment and `action` chooses generic framework train versus visualize behavior.
 
 Important visualisation-related settings include:
 
