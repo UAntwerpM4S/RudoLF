@@ -37,6 +37,6 @@
     "health_check_interval": 30.0,
     "csv_log_path": "",
     "save_slot": "simulator_1",
-    "simulation_speed": 10.0
+    "simulation_speed": 20.0
   }
 }

@@ -29,6 +29,8 @@ The `airsim` package connects the RudoLF reinforcement-learning framework to [Co
 
 The current bridge is a transport and lifecycle layer. It owns the CosysAirSim connection, save-slot reloads, pose mirroring, kinematic mirroring, object-pose mirroring, and telemetry reads. Control laws and action mapping live in upper layers such as `AirSimEnv`, `run_inference.py`, `run_visualise_fossen.py`, and `control_mapping.py`.
 
+For the rationale behind the current `fw.main` and `fw.main_with_airsim` split, see [verantwoording_workflow.md](verantwoording_workflow.md).
+
 For the full tree structure and runtime diagrams, see [../../docs/airsim_architecture.md](../../docs/airsim_architecture.md).
 
 ---
@@ -117,10 +119,10 @@ Follow the prompts to drive the vehicle to two reference points. The wizard writ
 
 ```bash
 cd src
-python -m airsim.train.train_airsim
+python -m fw.main_with_airsim
 ```
 
-This connects to a running UE5 + CosysAirSim instance, creates an `AirSimEnv` Gymnasium environment, and trains a PPO agent using Stable Baselines 3.
+This reads `airsim/config/runtime_settings.json`, selects `AirSimEnv`, and launches the AirSim-specific training flow. The generic alternative is `python -m fw.main`, which delegates into `fw.main_with_airsim` only when runtime settings explicitly request AirSim.
 
 ### 3 — Run inference inside UE5
 
@@ -203,12 +205,16 @@ A drop-in replacement for `PySimEnv` that uses UE5's physics engine instead of t
 Additional UE5-specific features:
 
 - **Deterministic frame stepping** — pauses UE5 and advances frame-by-frame for reproducible training.
+- **Physics-update watchdog** — waits for a newer UE5 timestamp after each paused-frame step and warns when latency exceeds the configured threshold.
 - **Training mode** — disables UE5 rendering, fog, particles, shadows to maximise training speed.
 - **Drift auto-correction** — detects and compensates for UE5 coordinate-origin shifts.
+- **Per-step latency telemetry** — exposes `physics_wait_s`, `step_latency_s`, and `ue5_timestamp` through `step()` info and the episode CSV logger.
 
 ### `run_visualise_fossen.py` — Framework Replay Renderer
 
-This entry point keeps `PySimEnv` or `FhSimEnv` as the source of truth and mirrors the resulting motion into UE5. It supports pose mirroring, kinematic mirroring, object-pose mirroring, optional visual steering/throttle animation, and a side-thread minimap.
+This entry point keeps `PySimEnv` or `FhSimEnv` as the source of truth and mirrors the resulting motion into UE5. It supports pose mirroring, kinematic mirroring, object-pose mirroring, optional visual steering/throttle animation, and a process-isolated live minimap.
+
+For high replay speeds, the visualisation no longer insists on time-based interpolation when the wall-clock budget per framework step is already shorter than the effective render interval. In that case, the mirror path snaps directly to the target pose to reduce pacing jitter in both UE5 and the minimap.
 
 ---
 
@@ -227,6 +233,17 @@ The validated bridge settings live in `airsim/config/airsim_config.py`:
 | `csv_log_path`          | `""`    | Optional path for buffered telemetry export |
 
 Higher-level runtime options for training, inference, and visualisation live in `airsim/config/runtime_settings.json`.
+
+Important visualisation-related settings include:
+
+| Runtime key                  | Purpose                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `simulation_speed`           | Multiplies UE5 replay speed during training or visualisation.                    |
+| `min_render_hz`              | Sets the minimum wall-clock cadence for UE5 pose pushes during framework replay. |
+| `render_interpolation_steps` | Requests smoothing steps for mirrored framework motion.                          |
+| `show_minimap`               | Enables the live minimap process during Fossen replay.                           |
+
+These settings interact: at high `simulation_speed`, the replay may reach a point where the time budget per framework step becomes smaller than the effective render interval. The current implementation then snaps the visual update directly instead of blocking on interpolation that cannot become visible anyway.
 
 ---
 
@@ -259,6 +276,14 @@ When `csv_log_path` is configured, the bridge can export buffered vehicle teleme
 
 Use `python -m airsim.tools.analyze_telemetry` for offline inspection, and see [../../docs/airsim_architecture.md](../../docs/airsim_architecture.md) for how telemetry fits into the overall design.
 
+`AirSimEnv` can additionally write episode-scoped CSV telemetry with the following extra fields:
+
+| Column           | Unit | Description                                          |
+| ---------------- | ---- | ---------------------------------------------------- |
+| `physics_wait_s` | s    | Time spent waiting for a newer UE5 physics timestamp |
+| `step_latency_s` | s    | Total wall-clock duration of the environment step    |
+| `ue5_timestamp`  | —    | Last timestamp reported by `getCarState()`           |
+
 ---
 
 ## Tests
@@ -270,9 +295,11 @@ python -m pytest tests/airsim -v
 
 The test suite covers:
 
-- **`test_coord_transform.py`** — round-trip position/heading conversions, mirroring, JSON loading.
-- **`test_airsim_config.py`** — config key presence, default value sanity, immutability.
-- **`test_airsim_bridge.py`** — `_normalize_angle`, `_yaw_from_quaternion`, graceful disconnected state.
+- **`test_bridge.py`** — connection handling, state conversion helpers, and bridge integration behavior.
+- **`test_airsim_env.py`** — observation parity, reset/step behavior, checkpoint loading, and CSV telemetry.
+- **`test_control_mapping.py`** — action validation and Fossen-to-UE5 throttle mapping bounds.
 - **`test_fossen_visualisation_dispatch.py`** — verifies `fw.main_with_airsim` routes runtime Fossen-visualise mode to `run_visualise_fossen` with expected arguments.
+- **`test_minimap_layout.py`** — verifies minimap sizing, docking, and local follow-view helper behaviour.
+- **`test_fossen_visualisation_timing.py`** — verifies the snap-versus-interpolate decision used to reduce pacing jitter at high replay speeds.
 
-Tests run without UE5 or CosysAirSim (mock fixtures in `conftest.py`).
+Tests run without UE5 or CosysAirSim by patching the bridge and environment dependencies directly inside the test modules.

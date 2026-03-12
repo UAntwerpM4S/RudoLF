@@ -1,4 +1,5 @@
 import types
+from collections.abc import Mapping
 
 from fw.config import get_config_parameters
 from fw.environments.py_sim_env import PySimEnv
@@ -10,6 +11,22 @@ from fw.environments.py_sim_polar_env import PySimPolarEnv
 
 class EnvironmentRegistryError(Exception):
     """ General environment registry error """
+
+
+def _normalize_configuration(configuration):
+    """Normalize placeholder configuration values to stable runtime objects.
+
+    The framework historically used ``[]`` as a stand-in for "no extra
+    configuration". Newer code expects dictionary-like configuration objects,
+    so an empty sequence must be treated the same as an empty mapping.
+    """
+    if configuration is None:
+        return None
+    if isinstance(configuration, Mapping):
+        return dict(configuration)
+    if isinstance(configuration, (list, tuple)) and len(configuration) == 0:
+        return {}
+    return configuration
 
 
 class _Factory:
@@ -75,6 +92,8 @@ class _Factory:
             EnvironmentRegistryError: If the environment name is not registered,
                 or if a conflicting configuration is provided.
         """
+        normalized_configuration = _normalize_configuration(configuration)
+
         try:
             instance = cls._environment_instances[environment_name]  # Existing instance is candidate, if available.
         except KeyError:  # New instance! Exciting. Find the appropriate class.
@@ -87,16 +106,16 @@ class _Factory:
                                                f"Available: {available_list}")
 
             # Instantiate and register instance for later use
-            if configuration is None:
+            if normalized_configuration is None:
                 raise EnvironmentRegistryError("A configuration must be provided when instantiating an environment "
                                                "for the first time")
 
-            instance = environment_class(environment_name, configuration)
+            instance = environment_class(environment_name, normalized_configuration)
             cls._environment_instances[environment_name] = instance
 
         else:
             # Just in case: if about to return an existing instance, check configurations are compatible
-            if configuration is not None and configuration != instance.configuration:
+            if normalized_configuration is not None and normalized_configuration != instance.configuration:
                 raise EnvironmentRegistryError(f"A configuration was now provided for '{environment_name}' "
                                                f"which clashes with the configuration used with the environment "
                                                f"previously. Try again without providing a configuration.")
@@ -121,7 +140,8 @@ class BaseEnvironment:
         """
 
         super().__init__()
-        self._configuration = configuration
+        normalized_configuration = _normalize_configuration(configuration)
+        self._configuration = {} if normalized_configuration is None else normalized_configuration
         self._name = name
         self._env = None  # Will hold the actual simulation environment (e.g., PySimEnv or FhSimEnv)
 
@@ -178,9 +198,12 @@ class BaseEnvironment:
         """Returns a read-only view of the environment's configuration.
 
         Returns:
-            MappingProxyType: An immutable dictionary view of the configuration.
+            object: An immutable mapping view when the configuration is
+                mapping-like, otherwise the normalized configuration value.
         """
-        return types.MappingProxyType(self._configuration)  # maybe overkill, but saves confusion
+        if isinstance(self._configuration, Mapping):
+            return types.MappingProxyType(self._configuration)  # maybe overkill, but saves confusion
+        return self._configuration
 
 
     def __repr__(self):
@@ -323,8 +346,67 @@ airsim_env_name = "AirSimEnv"
 lunar_env_name = "LunarLander"
 py_sim_polar_env_name = "PySimPolarEnv"
 
+_ENVIRONMENT_NAME_ALIASES = {
+    py_sim_env_name.lower(): py_sim_env_name,
+    "pysim": py_sim_env_name,
+    fh_sim_env_name.lower(): fh_sim_env_name,
+    "fhsim": fh_sim_env_name,
+    airsim_env_name.lower(): airsim_env_name,
+    "airsim": airsim_env_name,
+    lunar_env_name.lower(): lunar_env_name,
+    "lunar": lunar_env_name,
+    py_sim_polar_env_name.lower(): py_sim_polar_env_name,
+    "pysimpolar": py_sim_polar_env_name,
+    "polar": py_sim_polar_env_name,
+}
+
+
+def resolve_environment_name(env_type):
+    """Resolve a configured environment selector to a registered name.
+
+    Args:
+        env_type: Configured environment selector, alias, or canonical name.
+
+    Returns:
+        The canonical registered environment name used by the framework.
+
+    Raises:
+        EnvironmentRegistryError: If the selector does not match a known
+            environment name or alias.
+    """
+    if env_type is None:
+        return py_sim_env_name
+
+    normalized = str(env_type).strip()
+    if not normalized:
+        return py_sim_env_name
+
+    try:
+        return _ENVIRONMENT_NAME_ALIASES[normalized.lower()]
+    except KeyError as exc:
+        available = ", ".join(sorted(_Factory._environment_classes.keys()))
+        raise EnvironmentRegistryError(
+            f"Unknown env_type '{env_type}'. Available environments: {available}"
+        ) from exc
+
+
+def build_default_environment(environment_name):
+    """Instantiate the configured default environment with safe defaults.
+
+    Args:
+        environment_name: Canonical environment name returned by
+            ``resolve_environment_name``.
+
+    Returns:
+        A registered environment instance ready for training or
+        visualization.
+    """
+    if environment_name == airsim_env_name:
+        return get(environment_name, configuration={"training_mode": True})
+    return get(environment_name, configuration={})
+
 def initialize_all_environments():
-    get(py_sim_env_name, configuration=[])
-    get(fh_sim_env_name, configuration=[])
-    get(lunar_env_name, configuration=[])
-    get(py_sim_polar_env_name, configuration=[])
+    get(py_sim_env_name, configuration={})
+    get(fh_sim_env_name, configuration={})
+    get(lunar_env_name, configuration={})
+    get(py_sim_polar_env_name, configuration={})

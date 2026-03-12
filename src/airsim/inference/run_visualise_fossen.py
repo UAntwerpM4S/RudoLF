@@ -254,6 +254,28 @@ def _resolve_interpolation_steps(
     return max(1, steps)
 
 
+def _should_snap_visual_update(total_duration: float, min_render_hz: float) -> bool:
+    """Return whether a visual update should skip time-based interpolation.
+
+    When the allocated wall-clock duration for one mirrored framework step is
+    shorter than the minimum render interval, interpolation cannot produce more
+    than a single visible pose push anyway. In that case, sleeping inside the
+    interpolation loop only adds jitter and can make both UE5 and the minimap
+    appear to slow down abruptly.
+
+    Args:
+        total_duration: Wall-clock duration allocated to the update.
+        min_render_hz: Minimum render cadence used for UE5 pose pushes.
+
+    Returns:
+        ``True`` when the update should snap directly to the target pose.
+    """
+    total_duration = max(float(total_duration), 0.0)
+    min_step_interval = 1.0 / float(min_render_hz) if min_render_hz > 0.0 else 0.0
+    snap_threshold = max(1e-3, min_step_interval)
+    return total_duration <= snap_threshold
+
+
 def _animate_framework_state(
     env,
     bridge: AirSimBridge,
@@ -373,12 +395,12 @@ def _animate_framework_state(
             )
         bridge.set_controls(controls)
 
-    # -- Instant snap (reset, zero-duration, or near-zero at high simulation_speed) --
-    # At simulation_speed >= ~100x total_duration drops below 1 ms, making
-    # multi-step interpolation meaningless.  Snap directly and skip the
-    # elapsed-time loop and the simGetVehiclePose pre-fetch entirely.
-    _SNAP_THRESHOLD = 1e-3
-    if total_duration <= _SNAP_THRESHOLD:
+    # -- Instant snap when interpolation would be invisible or too short --
+    # If the requested wall-clock duration is shorter than the effective render
+    # interval, time-based interpolation only burns CPU and introduces jitter.
+    # Snapping directly preserves the intended high-speed cadence more reliably.
+    min_step_interval = 1.0 / min_render_hz if min_render_hz > 0.0 else 0.0
+    if _should_snap_visual_update(total_duration, min_render_hz):
         _send_pose(1.0)
         _send_controls(1.0)
         return target_motion_state, target_actuator_state
@@ -400,7 +422,6 @@ def _animate_framework_state(
     # avoid mid-interpolation physics interference from setCarControls().
     # A short sleep() yields CPU to UE5's render/physics thread between
     # pose updates, preventing the busy-wait that starved UE5 previously.
-    min_step_interval = 1.0 / min_render_hz if min_render_hz > 0.0 else 0.0
     start_time = time.perf_counter()
     deadline = start_time + total_duration
     _last_pose_time = start_time - min_step_interval  # allow first update immediately

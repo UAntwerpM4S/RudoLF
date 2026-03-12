@@ -60,6 +60,7 @@ CONFIG_PARAMETERS = {
     'current': False,
     'numerical_damping': False,
     'visualize_best_trained': False,
+    'env_type': "PySimEnv",
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,

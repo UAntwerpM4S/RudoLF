@@ -10,43 +10,65 @@ Multi-paradigm Reinforcement Learning Framework
 
 ## UE5 Visualization — CosysAirSim Bridge (WIP)
 
-RudoLF can now drive a vehicle inside **Unreal Engine 5** in real-time (TESTING PHASE!!!), mirroring the RL agent's behavior from the Fossen ship simulation. The bridge translates RL actions (`[rudder, thrust]`) into AirSim `CarControls` (`[steering, throttle]`), achieving synchronized path following between both environments.
+RudoLF can now train and visualise navigation policies in **Unreal Engine 5** through CosysAirSim. The current integration supports two complementary modes:
+
+- **AirSim-native execution** through `AirSimEnv`, where UE5 is the physics source of truth.
+- **Framework replay in UE5** through `run_visualise_fossen.py`, where `PySimEnv` or `FhSimEnv` remains authoritative and UE5 acts as renderer.
+
+The active bridge layer is no longer a PID controller. It is a transport and lifecycle layer that forwards mapped controls, mirrors pose or kinematics, reloads save slots, and reads telemetry.
 
 ![RudoLF UE5 vs Matplotlib](docs/rudolf_ue5_vs_matplotlib.png)
+
+### Recent Updates
+
+- The live UE5 minimap now runs in a separate child process instead of a thread, which prevents GUI redraws from stalling the main replay loop.
+- Fossen replay in UE5 now skips blocking interpolation when `simulation_speed` makes the available wall-clock update time shorter than the effective render interval.
+- The minimap now docks itself near the top-right of the UE5 monitor, uses a local follow-view around the vessel, and recenters when the ship approaches the edge of the visible section.
+- The AirSim documentation and architecture notes were updated to match the current split between `fw.main`, `fw.main_with_airsim`, `AirSimEnv`, and Fossen replay.
+- The risk-based test planning document now includes broader risk coverage, detection signals, planned test types, acceptance thresholds, and a forward outlook for later roadmap tasks.
 
 ### Architecture
 
 ```
-┌─────────────────┐         ┌──────────────────┐         ┌──────────────────┐
-│  RL Agent (PPO)  │────────▶│  Fossen Ship Sim  │────────▶│    Matplotlib     │
-│   (Stable B3)    │  action │  (Python, NED)    │  state  │   Live Animation  │
-└─────────────────┘         └────────┬─────────┘         └──────────────────┘
-                                     │ ship_state
-                                     ▼
-                            ┌──────────────────┐         ┌──────────────────┐
-                            │  AirSim Bridge    │────────▶│   Unreal Engine 5 │
-                            │  (PID + XTE)      │  steer  │   CosysAirSim     │
-                            └──────────────────┘  + thr   └──────────────────┘
+┌─────────────────┐      ┌──────────────────┐      ┌──────────────────────┐
+│ PPO / Trainer   │─────▶│ AirSimEnv        │─────▶│ AirSimBridge         │
+│ or Fossen env   │      │ or Fossen replay │      │ RPC / pose transport │
+└─────────────────┘      └──────────────────┘      └──────────┬───────────┘
+                                                                                             │
+                                                                                             ▼
+                                                                              ┌──────────────────────┐
+                                                                              │ Unreal Engine 5      │
+                                                                              │ CosysAirSim RPC      │
+                                                                              └──────────────────────┘
 ```
 
 ### Key Components
 
 | Component           | File                                          | Purpose                                           |
 | ------------------- | --------------------------------------------- | ------------------------------------------------- |
-| **AirSim Bridge**   | `src/airsim/communication/airsim_bridge.py`   | PID+FF steering & PI throttle controller          |
+| **AirSim Bridge**   | `src/airsim/communication/airsim_bridge.py`   | RPC lifecycle, control forwarding, pose mirroring |
 | **Coord Transform** | `src/airsim/communication/coord_transform.py` | Fossen ↔ AirSim bidirectional mapping             |
 | **RL Environment**  | `src/airsim/environments/airsim_env.py`       | Gymnasium env for training inside UE5             |
-| **Configuration**   | `src/airsim/config/airsim_config.py`          | All tuning parameters (PID gains, network, etc.)  |
+| **Configuration**   | `src/airsim/config/airsim_config.py`          | Connection and runtime settings                   |
 | **Path Plotter**    | `src/airsim/inference/plot_airsim_path.py`    | Dead-reckoning path reconstruction from telemetry |
 | **Calibration**     | `src/airsim/tools/calibrate_coords.py`        | Interactive Fossen↔AirSim coordinate calibration  |
-| **Telemetry Log**   | `src/airsim/config/airsim_telemetry.csv`      | Per-step speed, heading, steering, and error data |
+| **Telemetry Log**   | `src/airsim/config/airsim_telemetry.csv`      | Optional bridge-level telemetry export            |
 
-### Control Strategy
+### Runtime Strategy
 
-- **Steering**: PID + Feedforward + Cross-Track Error correction
-  - `Kp` heading error + `Ki` integral + `Kd` derivative + `Kff` yaw rate + XTE lateral correction
-- **Throttle**: PI controller tracking cumulative path distance (arc length)
-  - Cornering logic reduces speed during large heading deviations
+- `python -m fw.main` is the default launcher.
+- `fw.main` delegates to `fw.main_with_airsim` only when runtime settings explicitly select `AirSimEnv` for `train` or `visualize`.
+- If the AirSim extension fails with a non-zero exit code, `fw.main` falls back to the default framework entrypoint.
+- `src/fw/config.py` now supports `env_type`, so the generic framework flow can select `PySimEnv`, `FhSimEnv`, `AirSimEnv`, `PySimPolarEnv`, or `LunarLander` without breaking the current 2D default.
+
+### AirSim Execution Notes
+
+- `AirSimEnv.step()` validates actions before mapping them to UE5 controls.
+- Lock-step stepping now waits for a newer UE5 physics timestamp after `simContinueForFrames()`.
+- Per-step telemetry includes `physics_wait_s`, `step_latency_s`, and `ue5_timestamp`, both in `step()` info and in the episode CSV logger.
+- `run_visualise_fossen.py` now snaps visual updates directly when `simulation_speed` makes the allocated wall-clock update time shorter than the effective render interval, which reduces abrupt pacing drops at high replay speeds.
+- The live minimap is isolated in a separate child process instead of a thread, so viewport redraws and Tk event handling do not stall the main UE5 replay loop.
+- Fossen replay remains available through `python -m airsim.inference.run_visualise_fossen`.
 
 ### Path Reconstruction
 
@@ -57,33 +79,36 @@ Telemetry data can be visualized with `plot_airsim_path.py`, which reconstructs 
 ### Quick Start
 
 1. Ensure **CosysAirSim** is running with the UE5 environment.
-2. In `src/airsim/config/airsim_config.py`, set:
-   ```python
-   "use_airsim": True,
-   ```
-3. Run the simulation:
+2. Configure the runtime selector in `src/airsim/config/runtime_settings.json` when you want `fw.main` to route into AirSim.
+3. Run the default framework entrypoint:
    ```bash
    cd src
    python -m fw.main
    ```
-4. _(Optional)_ Visualize telemetry in real-time:
+4. Run the AirSim-only extension directly when you do not want fallback behavior:
+   ```bash
+   cd src
+   python -m fw.main_with_airsim
+   ```
+5. _(Optional)_ Visualize telemetry in real-time:
    ```bash
    python -m airsim.inference.plot_airsim_path
    ```
 
 ### Configuration Reference
 
-| Parameter              | Default | Description                                              |
-| ---------------------- | ------- | -------------------------------------------------------- |
-| `airsim_kp`            | `5.0`   | Proportional gain — steering response to heading error   |
-| `airsim_ki`            | `0.5`   | Integral gain — eliminates steady-state heading drift    |
-| `airsim_kd`            | `1.0`   | Derivative gain — dampens steering oscillation           |
-| `airsim_ff`            | `0.5`   | Feedforward gain — proactive steering from ship yaw rate |
-| `airsim_lat_gain`      | `0.5`   | Cross-Track Error gain — corrects lateral position drift |
-| `airsim_speed_scale`   | `1.05`  | Speed multiplier to match simulation units               |
-| `airsim_log_telemetry` | `True`  | Logs step-by-step control data to CSV                    |
+| Parameter                | Default             | Description                                                |
+| ------------------------ | ------------------- | ---------------------------------------------------------- |
+| `env_type`               | `PySimEnv`          | Default environment used by the generic framework flow     |
+| `ip`                     | `""`                | AirSim server IP, empty meaning localhost                  |
+| `port`                   | `41451`             | AirSim RPC port                                            |
+| `simulation_speed`       | `1.0`               | Simulation speed multiplier for UE5 runs                   |
+| `use_pause_stepping`     | `True` for training | Enables deterministic frame stepping                       |
+| `physics_update_timeout` | `1.0`               | Watchdog timeout while waiting for a new UE5 physics state |
 
-> **Full documentation:** See [`src/airsim/README.md`](src/airsim/README.md) for the complete AirSim package documentation, including runtime entrypoints, coordinate frame details, telemetry schema, and test suite information.
+For high-speed Fossen replay, `simulation_speed`, `min_render_hz`, and `render_interpolation_steps` must be interpreted together: if the replay speed makes the available wall-clock budget per framework step smaller than the effective UE5 render interval, the visualisation now snaps directly to the target pose instead of forcing a blocking interpolation loop.
+
+> **Full documentation:** See [`src/airsim/README.md`](src/airsim/README.md) for the complete AirSim package documentation, and [`src/airsim/verantwoording_workflow.md`](src/airsim/verantwoording_workflow.md) for the workflow rationale.
 
 ### AirSim Tests
 
@@ -96,6 +121,13 @@ python -m pytest tests/airsim -v
 Inference routing test (Fossen visualisation dispatch from `fw.main_with_airsim`) is located at:
 
 `tests/airsim/inference/test_fossen_visualisation_dispatch.py`
+
+Focused visualisation helper tests are located at:
+
+- `tests/airsim/inference/test_minimap_layout.py`
+- `tests/airsim/inference/test_fossen_visualisation_timing.py`
+
+The project-level risk-based test strategy is documented in [`tests/test_planning.md`](tests/test_planning.md).
 
 ---
 
@@ -130,13 +162,13 @@ The `src/airsim/` package is a self-contained module that encapsulates all Cosys
 
 | Subpackage       | Purpose                                                              |
 | ---------------- | -------------------------------------------------------------------- |
-| `config/`        | AirSim-specific PID gains, network settings, and calibration files   |
-| `communication/` | Bridge adapter and coordinate transform between Fossen and AirSim    |
+| `config/`        | Runtime settings, connection settings, and calibration files         |
+| `communication/` | Bridge transport and coordinate transform between Fossen and AirSim  |
 | `environments/`  | Gymnasium RL environment that uses UE5 physics via CosysAirSim       |
 | `train/`         | Entry points for RL training inside UE5                              |
 | `inference/`     | Live and headless telemetry visualisation                            |
 | `tools/`         | Interactive calibration wizard and offline telemetry analysis        |
 | `poc/`           | Frozen proof-of-concept snapshots of the original bridge and trainer |
-| `tests/`         | Pytest unit tests (33 tests, runs without UE5)                       |
+| `tests/`         | Pytest unit, integration, and regression tests plus test planning    |
 
-For detailed documentation on each component, coordinate frames, control strategy, and telemetry schema, see **[`src/airsim/README.md`](src/airsim/README.md)**.
+For detailed documentation on each component, coordinate frames, runtime routing, and telemetry schema, see **[`src/airsim/README.md`](src/airsim/README.md)**.
