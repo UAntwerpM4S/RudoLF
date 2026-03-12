@@ -95,6 +95,12 @@ flowchart TB
 
 ## Runtime Architecture
 
+Framework routing is split across two configuration layers:
+
+- `fw.config.CONFIG_PARAMETERS['env_type']` selects the generic environment and determines whether `fw.main` stays in the framework flow or delegates to `fw.main_with_airsim`.
+- `fw.config.CONFIG_PARAMETERS['action']` controls `train` versus `visualize` for the generic non-AirSim framework flow.
+- `airsim/config/runtime_settings.json` controls AirSim-specific visualize dispatch such as `fossen_visualise` and `inference_visualise` after the AirSim branch has been selected.
+
 ```mermaid
 flowchart LR
     subgraph EntryPoints[Runtime entrypoints]
@@ -119,10 +125,10 @@ flowchart LR
         ue5[UE5 world and vehicle actor]
     end
 
-    main -->|AirSimEnv selected| airsimMain
-    main -->|framework env_type| policy
-    airsimMain -->|train or inference| policy
-    airsimMain -->|Fossen replay| replay
+    main -->|env_type = AirSimEnv| airsimMain
+    main -->|other env_type + action| policy
+    airsimMain -->|AirSim train| policy
+    airsimMain -->|Fossen replay or UE5 inference| replay
 
     policy --> airsimEnv
     replay --> fossenEnv

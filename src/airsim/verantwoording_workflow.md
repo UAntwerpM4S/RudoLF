@@ -6,7 +6,7 @@ Deze notitie beschrijft de huidige werking van de framework-entrypoints in combi
 
 - de klassieke frameworkflow te behouden;
 - AirSim-specifieke logica apart en beheersbaar te houden;
-- runtime-gestuurde AirSim-keuzes mogelijk te maken;
+- framework-keuzes en AirSim-keuzes van elkaar te scheiden;
 - graceful fallback te voorzien wanneer UE5 niet beschikbaar is.
 
 De huidige structuur is dus bewust opgesplitst in een generieke entrypoint en een AirSim-uitbreiding.
@@ -17,18 +17,22 @@ De huidige structuur is dus bewust opgesplitst in een generieke entrypoint en ee
 
 `fw.main` is de standaard framework-entrypoint.
 
-Deze file doet twee dingen:
+Deze file doet drie dingen:
 
-1. Eerst controleren of de runtime-instellingen expliciet AirSim selecteren.
-2. Indien AirSim niet geselecteerd is, of indien de AirSim-flow faalt, de klassieke frameworkflow uitvoeren.
+1. De framework-config lezen (`env_type` en `action`).
+2. Controleren of `env_type = AirSimEnv` en dan eventueel delegeren naar `fw.main_with_airsim`.
+3. Indien AirSim niet geselecteerd is, of indien de AirSim-flow faalt, de klassieke frameworkflow uitvoeren.
 
-De klassieke frameworkflow is momenteel nog hardcoded en gebruikt standaard `PySimEnv`.
+De klassieke frameworkflow gebruikt de waarden uit `fw.config.CONFIG_PARAMETERS`:
+
+- `env_type` bepaalt welke framework-omgeving gekozen wordt;
+- `action` bepaalt of getraind of gevisualiseerd wordt.
 
 ### `fw.main_with_airsim`
 
 `fw.main_with_airsim` is de AirSim-uitbreiding van `fw.main`.
 
-Deze entrypoint leest de runtime-instellingen en beslist welke AirSim-flow uitgevoerd moet worden:
+Deze entrypoint leest de AirSim-runtime-instellingen en beslist welke AirSim-flow uitgevoerd moet worden:
 
 - AirSim training;
 - Fossen-gebaseerde visualisatie in UE5;
@@ -45,20 +49,25 @@ De opsplitsing is gekozen om drie redenen.
 De gewone frameworklogica en de AirSim-logica hebben andere verantwoordelijkheden.
 
 - `fw.main` moet bruikbaar blijven voor gewone framework-runs.
-- `fw.main_with_airsim` moet runtime-gestuurd AirSim-gedrag kunnen uitvoeren.
+- `fw.main_with_airsim` moet AirSim-gedrag kunnen uitvoeren dat afhangt van UE5, CosysAirSim en AirSim-runtime-opties.
 
 Door deze twee te scheiden blijft de basis-entrypoint leesbaar en blijft de AirSim-uitbreiding uitbreidbaar.
 
-### 2. Runtime-gestuurde AirSim-keuze
+### 2. Gescheiden configuratielagen
 
-AirSim-visualisatie en AirSim-training hangen af van runtime-instellingen in `airsim/config/runtime_settings.json`.
+De generieke frameworkflow en de AirSim-flow gebruiken niet langer dezelfde selector.
 
-Die instellingen bepalen onder meer:
+De framework-config in `fw.config` bepaalt:
 
-- `action`: `train` of `visualize`;
-- `train_environment`: bijvoorbeeld `AirSimEnv`;
+- `env_type`: bijvoorbeeld `PySimEnv`, `FhSimEnv`, `PySimPolarEnv`, `LunarLander` of `AirSimEnv`;
+- `action`: `train` of `visualize`.
+
+De AirSim-runtime-instellingen in `airsim/config/runtime_settings.json` bepalen onder meer:
+
 - `fossen_visualise`;
-- `inference_visualise`.
+- `inference_visualise`;
+- `simulation_speed`;
+- `save_slot` en andere UE5/AirSim-instellingen.
 
 Deze beslissingen horen logisch thuis in de AirSim-entrypoint en niet in de klassieke generieke `main`.
 
@@ -68,7 +77,7 @@ AirSim-visualisatie vereist een actieve UE5/AirSim-verbinding. Wanneer UE5 niet 
 
 Daarom is de huidige flow als volgt:
 
-- `fw.main` probeert eerst de AirSim-uitbreiding indien runtime dat vraagt;
+- `fw.main` probeert eerst de AirSim-uitbreiding indien `env_type = AirSimEnv` dat vraagt;
 - als de AirSim-uitbreiding correct slaagt, stopt de flow daar;
 - als de AirSim-uitbreiding netjes faalt door ontbrekende UE5-connectie, valt `fw.main` terug op de standaard frameworkflow.
 
@@ -78,17 +87,21 @@ Daarom is de huidige flow als volgt:
 
 Wanneer `fw.main` gestart wordt, gebeurt dit:
 
-1. Runtime-instellingen worden gelezen.
-2. Indien `AirSimEnv` geselecteerd is met actie `train` of `visualize`, wordt gedelegeerd naar `fw.main_with_airsim`.
-3. Indien die AirSim-flow succesvol is, stopt `fw.main`.
-4. Indien die AirSim-flow met foutcode eindigt, wordt teruggevallen op de standaard frameworkflow.
+1. Framework-config wordt gelezen.
+2. `env_type` wordt opgelost naar een canonieke omgevingsnaam.
+3. Indien `env_type = AirSimEnv`, wordt gedelegeerd naar `fw.main_with_airsim`.
+4. Indien die AirSim-flow succesvol is, stopt `fw.main`.
+5. Indien die AirSim-flow met foutcode eindigt, wordt teruggevallen op de standaard frameworkflow.
+6. Indien `env_type` geen AirSim is, blijft `fw.main` in de generieke frameworkflow.
 
 De standaard frameworkflow gebruikt momenteel standaard:
 
+- `env_type = "PySimEnv"`
 - `action = "train"`
-- `envs = [PySimEnv]`
 
-Dat betekent dat de fallback vandaag resulteert in een klassieke PySim-trainingsrun.
+maar beide kunnen in `fw.config` aangepast worden.
+
+Dat betekent dat de fallback standaard resulteert in een klassieke PySim-trainingsrun, maar desgewenst ook een andere framework-omgeving of visualisatie kan zijn.
 
 ## Scenario 2: `python -m fw.main_with_airsim`
 
@@ -110,19 +123,23 @@ Binnen de standaard frameworkflow geldt:
 - `train` betekent trainen van de omgevingen in `envs`;
 - `visualize` betekent `trainer.visualize(...)` uitvoeren op de omgevingen in `envs`.
 
-Omdat `envs` momenteel hardcoded `PySimEnv` bevat, betekent de generieke flow dus standaard:
+Omdat `envs` uit `env_type` afgeleid wordt, betekent de generieke flow standaard:
 
 - trainen van `PySimEnv`, of
 - visualiseren van `PySimEnv`.
+
+Als de gebruiker in `fw.config` een andere omgeving kiest, geldt hetzelfde patroon voor die omgeving.
 
 ### In `fw.main_with_airsim`
 
 Binnen de AirSim-flow geldt:
 
 - `train` met `AirSimEnv` start training in AirSim;
-- `visualize` met `AirSimEnv` kiest op basis van runtime-instellingen tussen:
+- AirSim-visualisatie kiest op basis van runtime-instellingen tussen:
   - Fossen-visualisatie in UE5;
   - inference-visualisatie in UE5.
+
+Met andere woorden: bij AirSim wordt `visualize` niet meer gekozen via een `main`-blok in runtime settings, maar via de AirSim-specifieke visualisatievlaggen.
 
 ## Gedrag met en zonder UE5
 
@@ -152,7 +169,7 @@ De huidige opzet maakt expliciet onderscheid tussen:
 
 - algemene frameworklogica;
 - AirSim-specialisatie;
-- runtime-gestuurde visualisatieroutes;
+- runtime-gestuurde visualisatieroutes binnen de AirSim-tak;
 - fallback-gedrag.
 
 Daardoor is het eenvoudiger om:
@@ -171,7 +188,8 @@ python -m fw.main
 
 Deze entrypoint:
 
-- probeert automatisch de AirSim-flow als runtime dat vraagt;
+- probeert automatisch de AirSim-flow als `env_type = AirSimEnv` dat vraagt;
+- gebruikt voor de generieke frameworkflow de waarden `env_type` en `action` uit `fw.config`;
 - valt terug op de framework-defaults indien nodig.
 
 De AirSim-entrypoint:
@@ -190,7 +208,7 @@ Belangrijkste redenen:
 
 - behoud van de klassieke frameworkflow;
 - duidelijke scheiding van verantwoordelijkheden;
-- runtime-gestuurde AirSim-keuzes;
+- gescheiden framework- en AirSim-configuratie;
 - graceful fallback wanneer UE5 niet beschikbaar is.
 
 Daardoor is de huidige integratie robuuster, beter uitlegbaar en praktischer in gebruik tijdens ontwikkeling en testen.

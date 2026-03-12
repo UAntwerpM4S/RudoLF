@@ -132,10 +132,6 @@ def get_runtime_settings_path() -> Path:
 def get_runtime_settings() -> Dict[str, Any]:
     """Load runtime settings from JSON and merge them with defaults."""
     defaults = {
-        "main": {
-            "action": "train",
-            "train_environment": "PySimEnv",
-        },
         "visualization": {
             "fossen_visualise": False,
             "inference_visualise": False,

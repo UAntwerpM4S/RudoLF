@@ -73,7 +73,9 @@ flowchart LR
 ### Runtime Strategy
 
 - `python -m fw.main` is the default launcher.
-- `fw.main` delegates to `fw.main_with_airsim` only when runtime settings explicitly select `AirSimEnv` for `train` or `visualize`.
+- `src/fw/config.py` controls the generic framework flow through `env_type` and `action` (`train` or `visualize`).
+- `fw.main` delegates to `fw.main_with_airsim` when `src/fw/config.py` selects `env_type = "AirSimEnv"`.
+- For non-AirSim environments, `fw.main` handles both training and visualisation itself based on `src/fw/config.py`.
 - If the AirSim extension fails with a non-zero exit code, `fw.main` falls back to the default framework entrypoint.
 - `src/fw/config.py` now supports `env_type`, so the generic framework flow can select `PySimEnv`, `FhSimEnv`, `AirSimEnv`, `PySimPolarEnv`, or `LunarLander` without breaking the current 2D default.
 
@@ -95,18 +97,23 @@ Telemetry data can be visualized with `plot_airsim_path.py`, which reconstructs 
 ### Quick Start
 
 1. Ensure **CosysAirSim** is running with the UE5 environment.
-2. Configure the runtime selector in `src/airsim/config/runtime_settings.json` when you want `fw.main` to route into AirSim.
-3. Run the default framework entrypoint:
+2. Choose the generic framework run in `src/fw/config.py`:
+   - Set `env_type` to one of `PySimEnv`, `FhSimEnv`, `PySimPolarEnv`, `LunarLander`, or `AirSimEnv`.
+   - Set `action` to `train` or `visualize`.
+3. Set `env_type` to `"AirSimEnv"` when you want `fw.main` to route into AirSim.
+4. For AirSim training through `fw.main`, leave both `fossen_visualise` and `inference_visualise` disabled in `src/airsim/config/runtime_settings.json`.
+5. For AirSim visualisation through `fw.main`, keep `env_type = "AirSimEnv"` and enable either `fossen_visualise` or `inference_visualise` in `src/airsim/config/runtime_settings.json`.
+6. Run the default framework entrypoint:
    ```bash
    cd src
    python -m fw.main
    ```
-4. Run the AirSim-only extension directly when you do not want fallback behavior:
+7. Run the AirSim-only extension directly when you do not want fallback behavior:
    ```bash
    cd src
    python -m fw.main_with_airsim
    ```
-5. _(Optional)_ Visualize telemetry in real-time:
+8. _(Optional)_ Visualize telemetry in real-time:
    ```bash
    python -m airsim.inference.plot_airsim_path
    ```
@@ -115,7 +122,8 @@ Telemetry data can be visualized with `plot_airsim_path.py`, which reconstructs 
 
 | Parameter                | Default             | Description                                                |
 | ------------------------ | ------------------- | ---------------------------------------------------------- |
-| `env_type`               | `PySimEnv`          | Default environment used by the generic framework flow     |
+| `env_type`               | `PySimEnv`          | Generic framework environment selector used by `fw.main`   |
+| `action`                 | `train`             | Generic framework action (`train` or `visualize`)          |
 | `ip`                     | `""`                | AirSim server IP, empty meaning localhost                  |
 | `port`                   | `41451`             | AirSim RPC port                                            |
 | `simulation_speed`       | `1.0`               | Simulation speed multiplier for UE5 runs                   |
