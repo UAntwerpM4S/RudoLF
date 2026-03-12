@@ -8,14 +8,12 @@ Multi-paradigm Reinforcement Learning Framework
 
 ---
 
-## UE5 Visualization — CosysAirSim Bridge (WIP)
+## UE5 Visualization — CosysAirSim Bridge
 
 RudoLF can now train and visualise navigation policies in **Unreal Engine 5** through CosysAirSim. The current integration supports two complementary modes:
 
 - **AirSim-native execution** through `AirSimEnv`, where UE5 is the physics source of truth.
 - **Framework replay in UE5** through `run_visualise_fossen.py`, where `PySimEnv` or `FhSimEnv` remains authoritative and UE5 acts as renderer.
-
-The active bridge layer is no longer a PID controller. It is a transport and lifecycle layer that forwards mapped controls, mirrors pose or kinematics, reloads save slots, and reads telemetry.
 
 ![RudoLF UE5 vs Matplotlib](docs/rudolf_ue5_vs_matplotlib.png)
 
@@ -29,17 +27,35 @@ The active bridge layer is no longer a PID controller. It is a transport and lif
 
 ### Architecture
 
-```
-┌─────────────────┐      ┌──────────────────┐      ┌──────────────────────┐
-│ PPO / Trainer   │─────▶│ AirSimEnv        │─────▶│ AirSimBridge         │
-│ or Fossen env   │      │ or Fossen replay │      │ RPC / pose transport │
-└─────────────────┘      └──────────────────┘      └──────────┬───────────┘
-                                                                                             │
-                                                                                             ▼
-                                                                              ┌──────────────────────┐
-                                                                              │ Unreal Engine 5      │
-                                                                              │ CosysAirSim RPC      │
-                                                                              └──────────────────────┘
+```mermaid
+flowchart LR
+   subgraph EntryPoints[Runtime entrypoints]
+      main[fw.main]
+      airsimMain[fw.main_with_airsim]
+   end
+
+   subgraph Framework[Framework side]
+      trainer[Trainer / PPO]
+      airsimEnv[AirSimEnv]
+      fossenReplay[run_visualise_fossen.py]
+      bridge[AirSimBridge]
+      minimap[minimap process]
+   end
+
+   subgraph UE5[UE5 side]
+      rpc[CosysAirSim RPC]
+      world[UE5 world and vehicle]
+   end
+
+   main -->|AirSimEnv selected| airsimMain
+   main -->|other env_type| trainer
+   airsimMain -->|train or inference| airsimEnv
+   airsimMain -->|Fossen replay| fossenReplay
+   trainer --> airsimEnv
+   airsimEnv --> bridge
+   fossenReplay --> bridge
+   fossenReplay --> minimap
+   bridge --> rpc --> world
 ```
 
 ### Key Components

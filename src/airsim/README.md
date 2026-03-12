@@ -14,17 +14,38 @@ The `airsim` package connects the RudoLF reinforcement-learning framework to [Co
 
 ### Architecture
 
-```
-┌────────────────┐      ┌──────────────────┐      ┌──────────────────────┐
-│ PPO / Trainer  │─────▶│ AirSimEnv        │─────▶│ AirSimBridge         │
-│ or Fossen env  │      │ or Fossen replay │      │ RPC / pose transport │
-└────────────────┘      └──────────────────┘      └──────────┬───────────┘
-                                                              │
-                                                              ▼
-                                                    ┌──────────────────────┐
-                                                    │ Unreal Engine 5      │
-                                                    │ CosysAirSim RPC      │
-                                                    └──────────────────────┘
+```mermaid
+flowchart LR
+    subgraph EntryPoints[Runtime entrypoints]
+        main[fw.main]
+        airsimMain[fw.main_with_airsim]
+        inference[run_inference.py]
+        replay[run_visualise_fossen.py]
+    end
+
+    subgraph Runtime[Python runtime]
+        trainer[Trainer / PPO]
+        airsimEnv[AirSimEnv]
+        mapping[control_mapping.py]
+        bridge[AirSimBridge]
+        coord[CoordTransform]
+        minimap[minimap process]
+    end
+
+    subgraph UE5[UE5 and CosysAirSim]
+        rpc[CosysAirSim RPC]
+        world[UE5 world / vehicle / save slot]
+    end
+
+    main -->|AirSimEnv selected| airsimMain
+    main -->|framework envs| trainer
+    airsimMain --> trainer
+    trainer --> airsimEnv
+    inference --> airsimEnv
+    replay --> coord --> bridge
+    replay --> minimap
+    airsimEnv --> mapping --> bridge
+    bridge --> rpc --> world
 ```
 
 The current bridge is a transport and lifecycle layer. It owns the CosysAirSim connection, save-slot reloads, pose mirroring, kinematic mirroring, object-pose mirroring, and telemetry reads. Control laws and action mapping live in upper layers such as `AirSimEnv`, `run_inference.py`, `run_visualise_fossen.py`, and `control_mapping.py`.
@@ -71,8 +92,8 @@ airsim/
 │
 ├── poc/                          # Frozen proof-of-concept snapshots
 │   ├── README.md                 # Documents the POC scope
-│   ├── airsim_bridge_PID.py      # Original bridge (unmodified)
-│   └── train_airsim.py           # Original training script (unmodified)
+│   ├── airsim_bridge_PID.py      # Historical bridge prototype
+│   └── train_airsim.py           # Historical training snapshot
 │
 
 Repository-level tests for this package live in:
@@ -174,7 +195,7 @@ The bridge is responsible for:
 - Mirroring framework state into UE5 through `set_pose()`, `set_kinematics()`, or `set_object_pose()`.
 - Reading vehicle telemetry and optionally buffering it to CSV.
 
-The bridge does not implement the active control law for the current architecture. Action mapping happens in `communication/control_mapping.py`, `environments/airsim_env.py`, and the inference entry points.
+Action mapping happens in `communication/control_mapping.py`, `environments/airsim_env.py`, and the inference entry points.
 
 ### `CoordTransform` — Bidirectional Coordinate Mapping
 
