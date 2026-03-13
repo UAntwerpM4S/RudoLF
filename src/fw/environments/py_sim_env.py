@@ -551,6 +551,7 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
+                -1.0,   # Previous rudder angle
             ],
             dtype=np.float32,
         )
@@ -567,6 +568,7 @@ class PySimEnv(BaseEnv):
                 1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
+                1.0,   # Previous rudder angle
             ],
             dtype=np.float32,
         )
@@ -735,6 +737,7 @@ class PySimEnv(BaseEnv):
                 [heading_error2 / np.pi],               # Normalized heading error
                 [heading_error_parallel / np.pi],       # Normalized heading error
                 [heading_error_parallel2 / np.pi],      # Normalized heading error
+                self.performed_action[i][0],            # Previous rudder angle
             ])
 
             # Add environmental observations if enabled
