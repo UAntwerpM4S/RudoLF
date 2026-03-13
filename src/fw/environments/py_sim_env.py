@@ -919,7 +919,7 @@ class PySimEnv(BaseEnv):
         """Check if ship is close enough to checkpoint's perpendicular line."""
 
         line_start, line_end = checkpoint['perpendicular_line']
-        return self._distance_from_point_to_line(self.ship_pos[ship_index], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY
+        return self._distance_from_point_to_line(self.ship_pos[ship_index], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY * (self.time_step / 0.1)
 
     # -----------------------
     # Rendering
