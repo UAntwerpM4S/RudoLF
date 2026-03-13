@@ -365,10 +365,38 @@ class AirSimEnvironment(BaseEnvironment):
         except (ImportError, ConnectionError) as exc:
             # Graceful fallback: if AirSim is unavailable (missing package or no UE5 connection),
             print(
-                "[env_factory] AirSim environment unavailable (reason: %s). "
-                "Falling back to PySimEnv. Install 'cosysairsim' and/or ensure UE5 is running "
-                "in Play mode to use AirSim." % exc
+                "[env_factory] AirSim environment unavailable (reason: %s)." % exc
             )
+            config = get_config_parameters()
+            env_types = config.get("env_type", [])
+            if isinstance(env_types, str):
+                env_types = [env_types]
+
+            # Find fallback environments in the configuration
+            other_envs = []
+            for e in env_types:
+                # Use loose checking since resolve_environment_name might not be cleanly available if refactored
+                e_lower = str(e).strip().lower()
+                if e_lower not in ("airsimenv", "airsim"):
+                    other_envs.append(e)
+
+            if not other_envs:
+                print("[env_factory] Only AirSimEnv was selected in config.py. Exiting.")
+                import sys
+                sys.exit(1)
+            else:
+                fallback_name = other_envs[0]
+                print(f"[env_factory] Falling back to {fallback_name}.")
+                fallback_name_lower = str(fallback_name).strip().lower()
+                
+                if fallback_name_lower in ("fhsimenv", "fhsim"):
+                    self._env = FhSimEnvironment(name, configuration)._env
+                elif fallback_name_lower in ("lunarlander", "lunar"):
+                    self._env = LunarEnvironment(name, configuration)._env
+                elif fallback_name_lower in ("pysimpolarenv", "pysimpolar", "polar"):
+                    self._env = PySimPolarEnvironment(name, configuration)._env
+                else:
+                    self._env = PySimEnvironment(name, configuration)._env
 
 
 class LunarEnvironment(BaseEnvironment):
