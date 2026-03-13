@@ -717,7 +717,12 @@ class AirSimEnv(BaseEnv):
             current_timestamp = self._extract_ue5_timestamp(latest_car_state)
             if previous_timestamp is None or current_timestamp is None:
                 break
-            if current_timestamp > previous_timestamp:
+            if current_timestamp != previous_timestamp:
+                break
+            # Timestamps are frozen (e.g. always 0 in some CosysAirSim builds).
+            # simContinueForFrames is synchronous so physics has already
+            # advanced; accept the current state immediately.
+            if current_timestamp == 0:
                 break
             if time.monotonic() - started >= self._physics_update_timeout:
                 logger.warning(
@@ -916,11 +921,23 @@ class AirSimEnv(BaseEnv):
             # When the sim is paused, setCarControls blocks indefinitely waiting
             # for a physics-thread acknowledgement that never arrives.
             # Fix: unpause first so the RPC returns immediately, then
-            # simContinueForFrames advances N frames and auto-pauses again.
+            # simContinueForFrames schedules N frames and auto-pauses the sim.
+            # simContinueForFrames is NON-blocking: poll simIsPause() to know
+            # when UE5 has finished those N frames and re-paused.
+            _pause_wait_started = time.monotonic()
             self.bridge.set_pause(False)
             self.bridge.set_controls(controls)
             self.bridge.continue_for_frames(self.frames_per_step)
-            car_state, physics_wait_s = self._wait_for_next_physics_update(previous_timestamp)
+            while not self.bridge.is_paused():
+                if time.monotonic() - _pause_wait_started >= self._physics_update_timeout:
+                    logger.warning(
+                        "Pause watchdog expired after %.3f s; reading latest state.",
+                        time.monotonic() - _pause_wait_started,
+                    )
+                    break
+                time.sleep(self._state_poll_interval)
+            car_state = self.bridge.get_car_state()
+            physics_wait_s = time.monotonic() - _pause_wait_started
         else:
             self.bridge.set_controls(controls)
             time.sleep(self.time_step)

@@ -42,6 +42,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     # AirSim runtime only controls AirSim-specific behavior.
     # The selected framework environment is handled by fw.main / fw.config.
+    _action_was_explicit = "FW_MAIN_ACTION_OVERRIDE" in os.environ
     action = str(os.environ.get("FW_MAIN_ACTION_OVERRIDE", "train")).strip().lower()
     if action not in {"train", "visualize"}:
         action = "train"
@@ -55,9 +56,52 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         print(f"[main] Could not load runtime settings ({exc}). Using built-in defaults.")
 
     visualization_cfg = runtime_settings.get("visualization", {}) if isinstance(runtime_settings, dict) else {}
+    training_cfg = runtime_settings.get("training", {}) if isinstance(runtime_settings, dict) else {}
     airsim_runtime_cfg = runtime_settings.get("airsim", {}) if isinstance(runtime_settings, dict) else {}
-    if bool(visualization_cfg.get("fossen_visualise", False)) or bool(
-        visualization_cfg.get("inference_visualise", False)
+
+    training_speed_profiles = {
+        "safe": {
+            "simulation_speed": 20.0,
+            "use_pause_stepping": True,
+            "frames_per_step": 8,
+            "time_step": 0.1,
+            "physics_update_timeout": 1.0,
+            "state_poll_interval": 0.005,
+        },
+        "fast": {
+            "simulation_speed": 40.0,
+            "use_pause_stepping": True,
+            "frames_per_step": 10,
+            "time_step": 0.1,
+            "physics_update_timeout": 1.0,
+            "state_poll_interval": 0.003,
+        },
+        "turbo": {
+            "simulation_speed": 80.0,
+            "use_pause_stepping": True,
+            "frames_per_step": 12,
+            "time_step": 0.1,
+            "physics_update_timeout": 1.2,
+            "state_poll_interval": 0.002,
+        },
+    }
+    profile_name = str(training_cfg.get("speed_profile", "custom")).strip().lower()
+    effective_training_cfg = dict(training_cfg)
+    if profile_name in training_speed_profiles:
+        effective_training_cfg.update(training_speed_profiles[profile_name])
+        print(f"[main_with_airsim] Training speed profile: {profile_name}")
+    elif profile_name != "custom":
+        print(
+            f"[main_with_airsim] Unknown training.speed_profile '{profile_name}'. "
+            "Using explicit training settings."
+        )
+    # Only let runtime visualization flags drive the mode when main_with_airsim is
+    # called directly (no explicit FW_MAIN_ACTION_OVERRIDE).  When delegated from
+    # fw.main, the action set in fw.config takes precedence.
+    if not _action_was_explicit and (
+        bool(visualization_cfg.get("fossen_visualise", False)) or bool(
+            visualization_cfg.get("inference_visualise", False)
+        )
     ):
         action = "visualize"
 
@@ -181,12 +225,28 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     if selected_environment_name == airsim_env_name:
         is_training = action == "train"
         airsim_env_cfg = dict(airsim_runtime_cfg)
+        effective_max_steps = (
+            int(effective_training_cfg.get("max_steps", 14000))
+            if is_training
+            else int(visualization_cfg.get("max_steps", 14000))
+        )
+        effective_simulation_speed = (
+            float(effective_training_cfg.get("simulation_speed", airsim_runtime_cfg["simulation_speed"]))
+            if is_training
+            else float(airsim_runtime_cfg["simulation_speed"])
+        )
         airsim_env_cfg.update({
             "training_mode": is_training,
-            "use_pause_stepping": airsim_runtime_cfg.get("use_pause_stepping", is_training),
-            "simulation_speed": airsim_runtime_cfg["simulation_speed"],
-            "max_steps": int(visualization_cfg["max_steps"]),
+            "use_pause_stepping": bool(effective_training_cfg.get("use_pause_stepping", is_training)),
+            "simulation_speed": effective_simulation_speed,
+            "max_steps": effective_max_steps,
+            "frames_per_step": int(effective_training_cfg.get("frames_per_step", 10)),
+            "time_step": float(effective_training_cfg.get("time_step", 0.1)),
+            "physics_update_timeout": float(effective_training_cfg.get("physics_update_timeout", 1.0)),
+            "state_poll_interval": float(effective_training_cfg.get("state_poll_interval", 0.005)),
         })
+        if "latency_warning_threshold" in effective_training_cfg:
+            airsim_env_cfg["latency_warning_threshold"] = float(effective_training_cfg["latency_warning_threshold"])
         envs = [get_environment(airsim_env_name, configuration=airsim_env_cfg)]
     else:
         envs = [get_environment(selected_environment_name)]

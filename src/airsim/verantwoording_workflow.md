@@ -66,8 +66,11 @@ De AirSim-runtime-instellingen in `airsim/config/runtime_settings.json` bepalen 
 
 - `fossen_visualise`;
 - `inference_visualise`;
-- `simulation_speed`;
+- `training.speed_profile` (`safe`, `fast`, `turbo`, `custom`);
+- `training.simulation_speed` en `training.frames_per_step` (bij `custom`);
 - `save_slot` en andere UE5/AirSim-instellingen.
+
+Omdat dit bestand geldige JSON moet blijven, worden toelichtingen niet als comments geschreven maar in `_remarks`-velden.
 
 Deze beslissingen horen logisch thuis in de AirSim-entrypoint en niet in de klassieke generieke `main`.
 
@@ -135,6 +138,7 @@ Als de gebruiker in `fw.config` een andere omgeving kiest, geldt hetzelfde patro
 Binnen de AirSim-flow geldt:
 
 - `train` met `AirSimEnv` start training in AirSim;
+- trainingssnelheid en stepping-gedrag worden gestuurd via `training.speed_profile` of via expliciete `training.*` waarden;
 - AirSim-visualisatie kiest op basis van runtime-instellingen tussen:
   - Fossen-visualisatie in UE5;
   - inference-visualisatie in UE5.

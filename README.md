@@ -102,18 +102,19 @@ Telemetry data can be visualized with `plot_airsim_path.py`, which reconstructs 
    - Set `action` to `train` or `visualize`.
 3. Set `env_type` to `"AirSimEnv"` when you want `fw.main` to route into AirSim.
 4. For AirSim training through `fw.main`, leave both `fossen_visualise` and `inference_visualise` disabled in `src/airsim/config/runtime_settings.json`.
-5. For AirSim visualisation through `fw.main`, keep `env_type = "AirSimEnv"` and enable either `fossen_visualise` or `inference_visualise` in `src/airsim/config/runtime_settings.json`.
-6. Run the default framework entrypoint:
+5. Tune training speed via `training.speed_profile` (`safe`, `fast`, `turbo`, `custom`) in `src/airsim/config/runtime_settings.json`.
+6. For AirSim visualisation through `fw.main`, keep `env_type = "AirSimEnv"` and enable either `fossen_visualise` or `inference_visualise` in `src/airsim/config/runtime_settings.json`.
+7. Run the default framework entrypoint:
    ```bash
    cd src
    python -m fw.main
    ```
-7. Run the AirSim-only extension directly when you do not want fallback behavior:
+8. Run the AirSim-only extension directly when you do not want fallback behavior:
    ```bash
    cd src
    python -m fw.main_with_airsim
    ```
-8. _(Optional)_ Visualize telemetry in real-time:
+9. _(Optional)_ Visualize telemetry in real-time:
    ```bash
    python -m airsim.inference.plot_airsim_path
    ```
@@ -129,6 +130,14 @@ Telemetry data can be visualized with `plot_airsim_path.py`, which reconstructs 
 | `simulation_speed`       | `1.0`               | Simulation speed multiplier for UE5 runs                   |
 | `use_pause_stepping`     | `True` for training | Enables deterministic frame stepping                       |
 | `physics_update_timeout` | `1.0`               | Watchdog timeout while waiting for a new UE5 physics state |
+
+AirSim runtime configuration now has dedicated sections:
+
+- `visualization`: Fossen/inference visual replay behavior.
+- `training`: AirSim training speed controls (`speed_profile` and related stepping values).
+- `airsim`: bridge connectivity and save-slot ownership.
+
+`runtime_settings.json` is strict JSON, so inline explanations are stored in `_remarks` objects.
 
 For high-speed Fossen replay, `simulation_speed`, `min_render_hz`, and `render_interpolation_steps` must be interpreted together: if the replay speed makes the available wall-clock budget per framework step smaller than the effective UE5 render interval, the visualisation now snaps directly to the target pose instead of forcing a blocking interpolation loop.
 
