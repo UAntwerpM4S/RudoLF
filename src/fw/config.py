@@ -57,7 +57,7 @@ DEFAULT_HYPERPARAMETERS = {
 
 CONFIG_PARAMETERS = {
     # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander"
-    'env_type': "PySimPolarEnv",
+    'env_type': "PySimEnv",
     'action': "train",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
