@@ -311,6 +311,11 @@ class AirSimEnvironment(BaseEnvironment):
         csv_log_path = str(cfg.get("csv_log_path", ""))
         save_slot = str(cfg.get("save_slot", DEFAULT_AIRSIM_SAVE_SLOT))
         simulation_speed = float(cfg.get("simulation_speed", DEFAULT_AIRSIM_SIMULATION_SPEED))
+        frames_per_step = int(cfg.get("frames_per_step", 10))
+        time_step = float(cfg.get("time_step", 0.1))
+        physics_update_timeout = float(cfg.get("physics_update_timeout", 1.0))
+        state_poll_interval = float(cfg.get("state_poll_interval", 0.005))
+        latency_warning_threshold = cfg.get("latency_warning_threshold", None)
 
         self._env = AirSimEnv(
             ship_pos=ship_pos,
@@ -327,6 +332,15 @@ class AirSimEnvironment(BaseEnvironment):
             simulation_speed=simulation_speed,
             training_mode=training_mode,
             use_pause_stepping=use_pause,
+            frames_per_step=frames_per_step,
+            time_step=time_step,
+            physics_update_timeout=physics_update_timeout,
+            state_poll_interval=state_poll_interval,
+            latency_warning_threshold=(
+                float(latency_warning_threshold)
+                if latency_warning_threshold is not None
+                else None
+            ),
         )
 
 

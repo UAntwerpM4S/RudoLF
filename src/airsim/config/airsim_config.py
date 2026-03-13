@@ -159,6 +159,16 @@ def get_default_runtime_settings() -> Dict[str, Any]:
             "log_every": 50,
             "draw_calibration_reference": True,
         },
+        "training": {
+            "speed_profile": "custom",
+            "max_steps": 14000,
+            "simulation_speed": DEFAULT_AIRSIM_SIMULATION_SPEED,
+            "use_pause_stepping": True,
+            "frames_per_step": 10,
+            "time_step": 0.1,
+            "physics_update_timeout": 1.0,
+            "state_poll_interval": 0.005,
+        },
         "airsim": {
             **AirSimConfig().to_dict(),
             "save_slot": DEFAULT_AIRSIM_SAVE_SLOT,

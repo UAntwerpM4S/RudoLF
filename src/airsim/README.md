@@ -147,11 +147,14 @@ This reads `airsim/config/runtime_settings.json` and launches the AirSim-specifi
 
 `settings_training.json` is not loaded by the Python runtime. It exists as a manual template for the UE5 / CosysAirSim application settings that you may copy into the simulator-side settings location.
 
+`runtime_settings.json` is valid JSON and therefore cannot contain native comments. Inline explanations are stored under `_remarks` objects.
+
 When you launch through `fw.main`, the framework-level selector lives in `fw.config.CONFIG_PARAMETERS`:
 
 - `env_type = "AirSimEnv"` routes into `fw.main_with_airsim`.
 - `action = "train"` or `"visualize"` controls the generic non-AirSim framework path.
 - AirSim visualisation itself is selected through `fossen_visualise` or `inference_visualise` in `airsim/config/runtime_settings.json` after the AirSim branch has been selected.
+- AirSim training throughput is tuned through `training.speed_profile` (`safe`, `fast`, `turbo`, `custom`) in `airsim/config/runtime_settings.json`.
 
 ### 3 — Run inference inside UE5
 
@@ -261,7 +264,17 @@ The validated bridge settings live in `airsim/config/airsim_config.py`:
 | `health_check_interval` | `30.0`  | Health-check interval in seconds            |
 | `csv_log_path`          | `""`    | Optional path for buffered telemetry export |
 
-Higher-level AirSim runtime options for inference and visualisation live in `airsim/config/runtime_settings.json`. Framework routing lives in `fw.config.CONFIG_PARAMETERS`, where `env_type` chooses the environment and `action` chooses generic framework train versus visualize behavior.
+Higher-level AirSim runtime options for training, inference, and visualisation live in `airsim/config/runtime_settings.json`. Framework routing lives in `fw.config.CONFIG_PARAMETERS`, where `env_type` chooses the environment and `action` chooses generic framework train versus visualize behavior.
+
+Training runtime controls include:
+
+| Runtime key                       | Purpose                                                               |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `training.speed_profile`          | One-switch preset: `safe`, `fast`, `turbo`, or `custom`.              |
+| `training.simulation_speed`       | UE5 speed multiplier used in training mode (`custom` profile).        |
+| `training.frames_per_step`        | Number of UE5 physics frames advanced per RL step (`custom` profile). |
+| `training.use_pause_stepping`     | Deterministic paused stepping toggle (`custom` profile).              |
+| `training.physics_update_timeout` | Watchdog timeout while waiting for paused step completion.            |
 
 Important visualisation-related settings include:
 

@@ -399,6 +399,12 @@ class AirSimBridge:
             return
         self._client.simContinueForFrames(frames)
 
+    def is_paused(self) -> bool:
+        """Return True if the UE5 simulation is currently paused."""
+        if not self._ensure_connected():
+            return False
+        return bool(self._client.simIsPause())
+
     def set_simulation_speed(self, simulation_speed: float) -> None:
         """Set the UE5 simulation speed multiplier."""
         if not self._ensure_connected():

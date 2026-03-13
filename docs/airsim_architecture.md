@@ -99,7 +99,8 @@ Framework routing is split across two configuration layers:
 
 - `fw.config.CONFIG_PARAMETERS['env_type']` selects the generic environment and determines whether `fw.main` stays in the framework flow or delegates to `fw.main_with_airsim`.
 - `fw.config.CONFIG_PARAMETERS['action']` controls `train` versus `visualize` for the generic non-AirSim framework flow.
-- `airsim/config/runtime_settings.json` controls AirSim-specific visualize dispatch such as `fossen_visualise` and `inference_visualise` after the AirSim branch has been selected.
+- `airsim/config/runtime_settings.json` controls AirSim-specific visualize dispatch (`fossen_visualise`, `inference_visualise`) and training-speed controls through `training.speed_profile` (`safe`, `fast`, `turbo`, `custom`) after the AirSim branch has been selected.
+- `runtime_settings.json` is strict JSON; documentation comments are stored in `_remarks` objects.
 
 ```mermaid
 flowchart LR
@@ -181,6 +182,7 @@ Key points:
 - UE5 is the physics engine in this path.
 - `AirSimEnv` preserves the framework-style observation and reward interface so the rest of the RL stack can stay unchanged.
 - `AirSimBridge` is intentionally thin here: it forwards commands and exposes state transport, but does not decide control laws.
+- Training performance can be tuned from `runtime_settings.json` without code edits via `training.speed_profile` or explicit `training.*` values when profile is `custom`.
 
 ### B. Direct policy replay through `run_inference.py`
 
