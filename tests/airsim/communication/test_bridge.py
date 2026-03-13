@@ -2,8 +2,6 @@
 
 import pytest
 from unittest.mock import patch
-import numpy as np
-
 from airsim.config.airsim_config import AirSimConfig
 from airsim.communication.airsim_bridge import AirSimBridge, is_ue5_reachable
 
@@ -121,7 +119,10 @@ def test_bridge_retry_exhausted(_, mock_sleep, mock_cosysairsim_module, mock_car
 class TestBridgeHealthAndControl:
     @pytest.fixture(autouse=True)
     def setup_bridge(self, mock_cosysairsim_module, mock_car_client):
-        with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True):
+        with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True), patch(
+            "airsim.communication.airsim_bridge.time.sleep",
+            return_value=None,
+        ):
             self.mock_client = mock_car_client
             self.bridge = AirSimBridge()
             self.mock_client.reset_mock()
@@ -226,7 +227,6 @@ def test_csv_logging_buffer(mock_open, mock_isfile, mock_cosysairsim_module, moc
     """T-008: Verify buffered data logic flushes to CSV."""
     with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True):
         bridge = AirSimBridge(AirSimConfig(csv_log_path="test_log.csv"))
-        import csv
         with patch("csv.DictWriter") as mock_writer_cls:
             mock_writer_inst = mock_writer_cls.return_value
             
