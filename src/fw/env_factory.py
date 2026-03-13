@@ -336,31 +336,39 @@ class AirSimEnvironment(BaseEnvironment):
         state_poll_interval = float(cfg.get("state_poll_interval", 0.005))
         latency_warning_threshold = cfg.get("latency_warning_threshold", None)
 
-        self._env = AirSimEnv(
-            ship_pos=ship_pos,
-            target_pos=target_pos,
-            max_steps=max_steps,
-            ip=ip,
-            port=port,
-            use_airsim=use_airsim,
-            timeout=timeout,
-            max_retries=max_retries,
-            health_check_interval=health_check_interval,
-            csv_log_path=csv_log_path,
-            save_slot=save_slot,
-            simulation_speed=simulation_speed,
-            training_mode=training_mode,
-            use_pause_stepping=use_pause,
-            frames_per_step=frames_per_step,
-            time_step=time_step,
-            physics_update_timeout=physics_update_timeout,
-            state_poll_interval=state_poll_interval,
-            latency_warning_threshold=(
-                float(latency_warning_threshold)
-                if latency_warning_threshold is not None
-                else None
-            ),
-        )
+        try:
+            self._env = AirSimEnv(
+                ship_pos=ship_pos,
+                target_pos=target_pos,
+                max_steps=max_steps,
+                ip=ip,
+                port=port,
+                use_airsim=use_airsim,
+                timeout=timeout,
+                max_retries=max_retries,
+                health_check_interval=health_check_interval,
+                csv_log_path=csv_log_path,
+                save_slot=save_slot,
+                simulation_speed=simulation_speed,
+                training_mode=training_mode,
+                use_pause_stepping=use_pause,
+                frames_per_step=frames_per_step,
+                time_step=time_step,
+                physics_update_timeout=physics_update_timeout,
+                state_poll_interval=state_poll_interval,
+                latency_warning_threshold=(
+                    float(latency_warning_threshold)
+                    if latency_warning_threshold is not None
+                    else None
+                ),
+            )
+        except (ImportError, ConnectionError) as exc:
+            # Graceful fallback: if AirSim is unavailable (missing package or no UE5 connection),
+            print(
+                "[env_factory] AirSim environment unavailable (reason: %s). "
+                "Falling back to PySimEnv. Install 'cosysairsim' and/or ensure UE5 is running "
+                "in Play mode to use AirSim." % exc
+            )
 
 
 class LunarEnvironment(BaseEnvironment):
