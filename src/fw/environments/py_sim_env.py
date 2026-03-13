@@ -546,7 +546,7 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Yaw rate
                 0.0,    # Distance to current checkpoint
                 0.0,    # Distance to checkpoint+1
-                -2.0,   # Cross-track error
+                -1.0,   # Cross-track error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
@@ -562,7 +562,7 @@ class PySimEnv(BaseEnv):
                 1.0,    # Yaw rate
                 1.0,    # Distance to current checkpoint
                 1.0,    # Distance to checkpoint+1
-                2.0,    # Cross-track error
+                1.0,    # Cross-track error
                 1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
