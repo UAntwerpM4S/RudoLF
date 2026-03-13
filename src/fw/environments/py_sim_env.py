@@ -505,7 +505,7 @@ class PySimEnv(BaseEnv):
             return np.arctan2(vec[1], vec[0])
         return 0.0
 
-    def _calculate_heading_error(self, target_heading: float, current_heading: float, dead_zone_deg: float = 5.0) -> float:
+    def _calculate_heading_error(self, target_heading: float, current_heading: float, dead_zone_deg: float = 0.0) -> float:
         """
         Calculate heading error with dead zone handling.
 
