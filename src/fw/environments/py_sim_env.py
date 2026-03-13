@@ -198,6 +198,7 @@ class PySimEnv(BaseEnv):
 
         self.ship_pos = []
         self.ship_heading = []
+        self.previous_action = []
         self.previous_ship_pos = []
         self.previous_heading = []
         self.performed_action = []
@@ -211,6 +212,7 @@ class PySimEnv(BaseEnv):
         for i in range(self.num_ships):
             self.ship_pos.append(self.initial_ship_pos[i].copy())
             self.previous_ship_pos.append(self.initial_ship_pos[i].copy())
+            self.previous_action.append(np.zeros(2, dtype=np.float32))
             self.previous_heading.append(0.0)
             self.checkpoint_index.append(1)
             self.cross_error.append(0.0)
@@ -800,6 +802,7 @@ class PySimEnv(BaseEnv):
         for i in range(self.num_ships):
             if not self.phys_sims[i].state.terminated and not self.phys_sims[i].state.truncated:
                 action = actions[i]
+                self.previous_action[i] = self.performed_action[i].copy()
 
                 # Save previous values
                 self.previous_ship_pos[i] = self.ship_pos[i].copy()
