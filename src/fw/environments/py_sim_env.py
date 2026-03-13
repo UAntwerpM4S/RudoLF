@@ -187,14 +187,6 @@ class PySimEnv(BaseEnv):
         )
         self.observation_space = self._initialize_observation_space()
 
-        # Reward component weights
-        self.reward_weights = {
-            'forward': 1.0,
-            'alignment': 1.8,
-            'cross_track': 1.5,
-            'rudder': 0.03,
-        }
-
         # Rendering flag
         self.initialize_plots = True
 
@@ -880,31 +872,37 @@ class PySimEnv(BaseEnv):
 
         # Forward progress
         raw_progress = (proj_now - proj_prev)
-        forward_reward = 0.4 * raw_progress / self.time_step
 
-        # Heading alignment towards current checkpoint
-        heading_error = self._calculate_heading_error(self._safe_heading_from_vector(path_vec), self.phys_sims[i].state.heading)
-        heading_alignment_reward = abs(np.exp(-abs(heading_error))) - 1
-
-        # Cross-track penalty (uses distance to segment)
-        cross_track_error = self._distance_from_point_to_line(self.ship_pos[i], prev_checkpoint_pos,
-                                                              current_checkpoint_pos)
+        # Cross-track errors
+        cross_track_error = self._distance_from_point_to_line(self.ship_pos[i], prev_checkpoint_pos, current_checkpoint_pos)
+        prev_cross_track_error = self._distance_from_point_to_line(self.previous_ship_pos[i], prev_checkpoint_pos, current_checkpoint_pos)
         self.cross_error[i] = cross_track_error
-        cross_track_penalty = cross_track_error / 100.0
-        cross_track_penalty = -abs(cross_track_penalty) ** 1.0
 
+        # Keel clearance
         self.ukc[i] = self.get_keel_clearance()
 
-        # Action penalty (rudder magnitude)
-        rudder_penalty = -0.2 * abs(self.performed_action[i][0])
+        # Ship information
+        max_speed = self.ships[i].specifications.surge_limits[1]
+        rudder_change = abs(self.performed_action[i][0] - self.previous_action[i][0])
+        max_rudder_change = self.ships[i].specifications.max_rudder_rate * self.time_step / self.ships[i].specifications.max_rudder_angle  # rad/s * s * action/rad
+
+        # Reward components
+        R_forward = + raw_progress / (max_speed * self.time_step)
+        R_CTE_change = - 0.009 * ((cross_track_error - prev_cross_track_error) / max_speed) * min(120.0, cross_track_error)
+        R_CTE_change = 3 * R_CTE_change if R_CTE_change < 0 else R_CTE_change
+        R_CTE = - 0.005 * cross_track_error
+        R_rudder_angle_change = - 0.025 * (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -10
+        R_rudder_angle = - 0.05 * (abs(self.performed_action[i][0]) / 0.2) ** 2
 
         # Combine weighted rewards and penalties
         reward = (
-                self.reward_weights['forward'] * forward_reward +
-                self.reward_weights['alignment'] * heading_alignment_reward +
-                self.reward_weights['cross_track'] * cross_track_penalty +
-                self.reward_weights['rudder'] * rudder_penalty
+                R_forward +
+                R_CTE_change +
+                R_CTE +
+                R_rudder_angle_change +
+                R_rudder_angle
         )
+        reward = 1.6 + reward / 5
 
         # Checkpoint handling (may increment checkpoint_index)
         checkpoint_distance = np.linalg.norm(self.ship_pos[i] - current_checkpoint["pos"])
