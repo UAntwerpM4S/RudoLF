@@ -429,6 +429,33 @@ def resolve_environment_name(env_type):
         ) from exc
 
 
+def resolve_environment_names(env_type):
+    """Resolve one or more configured environment selectors to canonical names.
+
+    Accepts either a single environment selector string or a list/tuple of
+    selectors, and returns a deduplicated list of canonical environment names
+    in the order they were specified.
+
+    Args:
+        env_type: A single environment selector string, or a list/tuple of them.
+
+    Returns:
+        A list of canonical registered environment names.
+
+    Raises:
+        EnvironmentRegistryError: If any selector does not match a known
+            environment name or alias.
+    """
+    if isinstance(env_type, (list, tuple)):
+        seen = []
+        for name in env_type:
+            resolved = resolve_environment_name(name)
+            if resolved not in seen:
+                seen.append(resolved)
+        return seen
+    return [resolve_environment_name(env_type)]
+
+
 def build_default_environment(environment_name):
     """Instantiate the configured default environment with safe defaults.
 
