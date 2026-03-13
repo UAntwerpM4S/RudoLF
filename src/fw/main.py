@@ -16,27 +16,65 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     from fw.trainer import Trainer
     from fw.stop_condition import StopCondition, Criterion
-    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, get_config_parameters
     from fw.env_factory import (
+        build_default_environment,
         get as get_environment,
         py_sim_env_name,
         fh_sim_env_name,
         airsim_env_name,
         lunar_env_name,
         py_sim_polar_env_name,
+        resolve_environment_names,
         initialize_all_environments
     )
 
+    framework_config = get_config_parameters()
+    configured_env_names = resolve_environment_names(
+        framework_config.get("env_type", py_sim_env_name)
+    )
+    action = str(framework_config.get("action", "train")).strip().lower()
+    if action not in {"train", "visualize"}:
+        print(f"[main] Unknown action '{action}'. Falling back to 'train'.")
+        action = "train"
 
-    action = "train"
+    def _should_delegate_to_airsim_extension() -> bool:
+        """Return whether any of the selected environments is AirSim."""
+        return airsim_env_name in configured_env_names
 
+    if _should_delegate_to_airsim_extension():
+        import os
+        import runpy
+
+        try:
+            os.environ["FW_MAIN_ACTION_OVERRIDE"] = action
+            runpy.run_module("fw.main_with_airsim", run_name="__main__")
+            raise SystemExit(0)
+        except SystemExit as exc:
+            if exc.code in (None, 0):
+                raise
+            print(
+                "[main] AirSim extension exited with an error; "
+                "falling back to the default framework entrypoint."
+            )
+            configured_env_names[:] = [n for n in configured_env_names if n != airsim_env_name]
+        except (ConnectionError, OSError) as exc:
+            print(
+                f"[main] AirSim extension failed to connect to UE5 ({exc}); "
+                "falling back to the default framework entrypoint."
+            )
+            configured_env_names[:] = [n for n in configured_env_names if n != airsim_env_name]
+        finally:
+            os.environ.pop("FW_MAIN_ACTION_OVERRIDE", None)
+
+    if not configured_env_names:
+        print("[main] No environments remaining after AirSim fallback. Exiting.")
+        raise SystemExit(1)
     # Ensure all environments are registered once
     initialize_all_environments()
 
-    # Define simulator inputs
-    envs = [get_environment(py_sim_env_name)]
-            # get_environment(fh_sim_env_name)]
-            # [get_environment(airsim_env_name, configuration={"training_mode": False})]
+    # Define simulator inputs. Builds one environment per configured env_type entry.
+    envs = [build_default_environment(name) for name in configured_env_names]
 
     # Create a Trainer and pass on a list of agents that you want to train
     trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
@@ -55,23 +93,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         print(f"Training metrics: {metrics}")
     elif "visualize" == action:
-        # Optionally create AirSim bridge for simultaneous vehicle control
-        from airsim.config.airsim_config import get_airsim_config, AirSimConfig
-        airsim_cfg = get_airsim_config()
-        airsim_bridge = None
-        if airsim_cfg.get("use_airsim", False):
-            from airsim.communication.airsim_bridge import AirSimBridge
-            bridge_cfg = AirSimConfig(
-                ip=airsim_cfg.get("airsim_ip", ""),
-                port=airsim_cfg.get("airsim_port", 41451)
-            )
-            temp_bridge = AirSimBridge(bridge_cfg)
-            if temp_bridge.is_connected:
-                airsim_bridge = temp_bridge
-                logging.getLogger("airsim").setLevel(logging.INFO)  # connected — enable airsim logs
-            else:
-                print("[main] AirSim bridge not connected — running without.")
-
-        trainer.visualize(envs, airsim_bridge=airsim_bridge)
+        trainer.visualize(envs, airsim_bridge=None)
     else:
         print(f"Unable to execute unknown action '{action}'")

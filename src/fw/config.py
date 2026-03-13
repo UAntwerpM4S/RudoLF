@@ -56,6 +56,11 @@ DEFAULT_HYPERPARAMETERS = {
 }
 
 CONFIG_PARAMETERS = {
+    # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander"
+    # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
+    # to train or visualize across multiple environments simultaneously.
+    'env_type': ["PySimEnv"],
+    'action': "train",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
     'numerical_damping': False,

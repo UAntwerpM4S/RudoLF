@@ -1,0 +1,77 @@
+{
+  "_remarks": {
+    "file_purpose": "Runtime controls for AirSim train/visualize behavior used by fw.main_with_airsim.",
+    "json_note": "JSON does not support comments, so remarks are stored in _remarks blocks.",
+    "routing_note": "fw.config chooses env_type/action; this file refines AirSim behavior once AirSimEnv is selected."
+  },
+  "visualization": {
+    "_remarks": {
+      "fossen_visualise": "true => visualize framework/Fossen path in UE5.",
+      "inference_visualise": "true => run UE5 inference model visualization.",
+      "mode_priority": "If both fossen_visualise and inference_visualise are true, fossen_visualise wins.",
+      "max_steps": "Episode step cap for visualize entry points.",
+      "render_interpolation_steps": "Higher values smooth mirrored motion but can increase visual overhead."
+    },
+    "fossen_visualise": true,
+    "inference_visualise": false,
+    "fossen_model_path": "src/models/PySimEnv_PPO_policy.zip",
+    "inference_model_path": "src/models/AirSimEnv_PPO_policy.zip",
+    "fossen_environment": "auto",
+    "mirror_controls_in_ue5": false,
+    "animate_steering_in_ue5": true,
+    "animate_throttle_in_ue5": false,
+    "render_interpolation_steps": 8,
+    "steering_visual_gain": 0.35,
+    "throttle_visual_gain": 1.0,
+    "use_kinematics_in_ue5": false,
+    "min_render_hz": 90.0,
+    "max_translation_step": 0.15,
+    "max_yaw_step_deg": 1.5,
+    "vehicle_object_name": "",
+    "show_minimap": true,
+    "lock_path_in_ue5": false,
+    "episodes": 1,
+    "max_steps": 30000,
+    "device": "cpu",
+    "log_every": 50,
+    "draw_calibration_reference": true
+  },
+  "training": {
+    "_remarks": {
+      "speed_profile": "safe|fast|turbo|custom. safe/fast/turbo apply built-in presets. custom uses explicit values below.",
+      "simulation_speed": "UE5 simulation speed multiplier during training.",
+      "use_pause_stepping": "true => deterministic frame stepping (recommended for training throughput/stability).",
+      "frames_per_step": "How many UE5 physics frames are advanced per RL step.",
+      "time_step": "Nominal simulator dt used by env dynamics metrics.",
+      "physics_update_timeout": "Watchdog while waiting for frame-step completion.",
+      "state_poll_interval": "Polling cadence while waiting for UE5 to re-pause.",
+      "max_steps": "Episode step cap for AirSim training."
+    },
+    "speed_profile": "turbo",
+    "max_steps": 30000,
+    "simulation_speed": 100.0,
+    "use_pause_stepping": true,
+    "frames_per_step": 10,
+    "time_step": 0.1,
+    "physics_update_timeout": 1.0,
+    "state_poll_interval": 0.005
+  },
+  "airsim": {
+    "_remarks": {
+      "use_airsim": "Master on/off switch for AirSim bridge usage.",
+      "ip": "AirSim RPC host. Empty string means localhost.",
+      "port": "AirSim RPC port.",
+      "save_slot": "UE5 save slot loaded before training/visualization.",
+      "simulation_speed": "Base UE5 speed used by visualize path and as fallback when training overrides are absent."
+    },
+    "use_airsim": true,
+    "ip": "",
+    "port": 41451,
+    "timeout": 10.0,
+    "max_retries": 3,
+    "health_check_interval": 30.0,
+    "csv_log_path": "",
+    "save_slot": "simulator_1",
+    "simulation_speed": 20.0
+  }
+}
