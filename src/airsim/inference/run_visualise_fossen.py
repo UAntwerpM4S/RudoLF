@@ -516,6 +516,7 @@ def run_visualise_fossen(
 
     env = _build_fossen_environment(selected_env, max_steps=max_steps)
     max_yaw_step_rad = np.deg2rad(max_yaw_step_deg)
+    minimap: Optional[MinimapFossenAirsim] = None
 
     try:
         bridge.prepare_fossen_visualisation(
@@ -525,7 +526,6 @@ def run_visualise_fossen(
         )
         logger.info("Loaded saved calibration reference overlay.")
 
-        minimap: Optional[MinimapFossenAirsim] = None
 
         if not mirror_controls_in_ue5 and not animate_steering_in_ue5 and not animate_throttle_in_ue5:
             neutral_controls = bridge._airsim.CarControls()

@@ -14,11 +14,12 @@ if str(_SRC_DIR) not in sys.path:
 
 
 def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
-    """Verify fw.main falls back to the default framework flow.
+    """Verify fw.main exits cleanly when the AirSim extension fails and no
+    other environments are configured.
 
-    When fw.config selects the AirSim extension but that extension exits
-    with a non-zero status, the generic framework entrypoint should continue
-    with its own hardcoded default flow instead of terminating early.
+    When fw.config selects only the AirSim environment but the extension
+    exits with a non-zero status, the generic framework entrypoint should
+    raise SystemExit(1) rather than continuing with an empty environment list.
     """
     import multiprocessing
     import runpy as stdlib_runpy
@@ -44,28 +45,15 @@ def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
     monkeypatch.setattr(stdlib_runpy, "run_module", _failing_run_module)
     monkeypatch.setattr(env_factory, "initialize_all_environments", lambda: None)
     monkeypatch.setattr(env_factory, "get", lambda *args, **kwargs: object())
+    monkeypatch.setattr(trainer_module, "Trainer", lambda *a, **kw: None)
 
-    trainer_calls = {}
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_module("fw.main", run_name="__main__")
 
-    class _FakeTrainer:
-        def __init__(self, *args, **kwargs):
-            trainer_calls["constructed"] = True
-
-        def train(self, configuration):
-            trainer_calls["train_called"] = True
-            trainer_calls["config_keys"] = set(configuration.keys())
-            return {"status": "fallback-ok"}
-
-    monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
-
-    runpy.run_module("fw.main", run_name="__main__")
-
+    assert exc_info.value.code == 1
     captured = capsys.readouterr()
     assert "AirSim extension exited with an error" in captured.out
-    assert "Training metrics" in captured.out
-    assert trainer_calls["constructed"] is True
-    assert trainer_calls["train_called"] is True
-    assert env_factory.py_sim_env_name in trainer_calls["config_keys"]
+    assert "No environments remaining" in captured.out
 
 
 def test_main_uses_framework_visualize_action(monkeypatch):

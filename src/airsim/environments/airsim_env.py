@@ -29,7 +29,6 @@ import numpy as np
 import gymnasium as gym
 
 from pathlib import Path
-from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 from fw.environments.base_env import BaseEnv
@@ -129,7 +128,9 @@ class AirSimEnv(BaseEnv):
     collision info from UE5.
 
     Attributes:
-        client: The active ``cosysairsim.CarClient`` connection.
+        bridge: The :class:`~airsim.communication.airsim_bridge.AirSimBridge`
+            that manages the connection to UE5.  The underlying
+            ``cosysairsim.CarClient`` is accessible via ``bridge.client``.
         coord: The coordinate transform between Fossen and AirSim frames.
     """
 

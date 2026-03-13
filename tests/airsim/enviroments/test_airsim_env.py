@@ -3,14 +3,12 @@
 All tests are fully mocked — no UE5 or CosysAirSim is required.
 """
 
-import math
-import os
 import csv
 import importlib
 import sys
 import pytest
 import numpy as np
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 
 # ── Shared helpers ─────────────────────────────────────────
