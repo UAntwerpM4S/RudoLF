@@ -691,22 +691,22 @@ class PySimEnv(BaseEnv):
                 current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
             else:
                 multiplier = current_chkp_idx - (len(self.checkpoints) - 1)
-                current_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + multiplier * direction_last_path
+                current_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
             if next_chkp_idx <= len(self.checkpoints) - 1:
                 next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
             else:
                 multiplier = next_chkp_idx - (len(self.checkpoints) - 1)
-                next_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + multiplier * direction_last_path
+                next_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
             if four_chkp_idx <= len(self.checkpoints) - 1:
                 four_chkp_pos = self.checkpoints[four_chkp_idx]['pos']
             else:
                 multiplier = four_chkp_idx - (len(self.checkpoints) - 1)
-                four_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + multiplier * direction_last_path
+                four_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
             if five_chkp_idx <= len(self.checkpoints) - 1:
                 five_chkp_pos = self.checkpoints[five_chkp_idx]['pos']
             else:
                 multiplier = five_chkp_idx - (len(self.checkpoints) - 1)
-                five_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + multiplier * direction_last_path
+                five_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
 
             # Distances to checkpoints
             norm_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - current_chkp_pos)),
