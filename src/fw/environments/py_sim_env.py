@@ -932,7 +932,7 @@ class PySimEnv(BaseEnv):
         ]
 
         if any(termination_conditions):
-            reward = -250
+            #reward = -250
             done = True
 
         # Normal completion (reached or passed all checkpoints)
