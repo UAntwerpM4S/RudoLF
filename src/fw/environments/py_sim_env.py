@@ -544,8 +544,8 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Surge velocity
                 -1.0,   # Sway velocity
                 -1.0,   # Yaw rate
-                0.0,    # Distance to current checkpoint
-                0.0,    # Distance to checkpoint+1
+                -1.0,    # Distance to current checkpoint
+                -1.0,    # Distance to checkpoint+1
                 -1.0,   # Cross-track error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
