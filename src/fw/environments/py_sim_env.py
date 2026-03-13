@@ -688,7 +688,7 @@ class PySimEnv(BaseEnv):
             norm_next_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - next_chkp_pos)),
                                                            range=(0, 2 * 2000),
                                                            half_value=1.5 * 370)
-            norm_five_distance = self._logarithmic_scaling(value=np.linalg.norm(self.ship_pos[i] - five_chkp_pos),
+            norm_five_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - five_chkp_pos)),
                                                            range=(0, 5 * 2000),
                                                            half_value=4.5 * 370)  # np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
 
