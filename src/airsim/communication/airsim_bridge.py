@@ -43,7 +43,11 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from airsim.config.airsim_config import AirSimConfig
+from airsim.config.airsim_config import (
+    AirSimConfig,
+    DEFAULT_AIRSIM_SAVE_SLOT,
+    DEFAULT_AIRSIM_SIMULATION_SPEED,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -359,6 +363,88 @@ class AirSimBridge:
         except Exception as exc:
             logger.warning("AirSim set_controls failed: %s", exc)
 
+    def get_car_state(self) -> Any:
+        """Return the latest AirSim car state."""
+        if not self._ensure_connected():
+            raise ConnectionError("Cannot read AirSim car state: bridge disconnected.")
+        return self._client.getCarState()
+
+    def get_vehicle_pose(self) -> Any:
+        """Return the latest AirSim vehicle pose."""
+        if not self._ensure_connected():
+            raise ConnectionError("Cannot read AirSim vehicle pose: bridge disconnected.")
+        return self._client.simGetVehiclePose()
+
+    def set_vehicle_pose(self, pose: Any, ignore_collision: bool = True) -> None:
+        """Set the AirSim vehicle pose."""
+        if not self._ensure_connected():
+            return
+        self._client.simSetVehiclePose(pose, ignore_collision=ignore_collision)
+
+    def get_collision_info(self) -> Any:
+        """Return collision information for the active vehicle."""
+        if not self._ensure_connected():
+            raise ConnectionError("Cannot read AirSim collision info: bridge disconnected.")
+        return self._client.simGetCollisionInfo()
+
+    def set_pause(self, is_paused: bool) -> None:
+        """Pause or unpause the simulation."""
+        if not self._ensure_connected():
+            return
+        self._client.simPause(is_paused)
+
+    def continue_for_frames(self, frames: int) -> None:
+        """Advance the simulation by a fixed number of frames."""
+        if not self._ensure_connected():
+            return
+        self._client.simContinueForFrames(frames)
+
+    def set_simulation_speed(self, simulation_speed: float) -> None:
+        """Set the UE5 simulation speed multiplier."""
+        if not self._ensure_connected():
+            return
+        self._client.simSetSimulationSpeed(simulation_speed)
+
+    def flush_persistent_markers(self) -> None:
+        """Clear all persistent debug markers from UE5."""
+        if not self._ensure_connected():
+            return
+        self._client.simFlushPersistentMarkers()
+
+    def plot_line_strip(
+        self,
+        points: Any,
+        color_rgba: list[float],
+        thickness: float,
+        is_persistent: bool = True,
+    ) -> None:
+        """Draw a line strip in UE5."""
+        if not self._ensure_connected():
+            return
+        self._client.simPlotLineStrip(
+            points,
+            color_rgba=color_rgba,
+            thickness=thickness,
+            is_persistent=is_persistent,
+        )
+
+    def plot_points(
+        self,
+        points: Any,
+        color_rgba: list[float],
+        size: float,
+        is_persistent: bool = True,
+    ) -> None:
+        """Draw points in UE5."""
+        if not self._ensure_connected():
+            return
+        self._client.simPlotPoints(
+            points,
+            color_rgba=color_rgba,
+            size=size,
+            is_persistent=is_persistent,
+        )
+
     def set_pose(
         self,
         x: float,
@@ -580,7 +666,7 @@ class AirSimBridge:
 
     def load_world_save(
         self,
-        save_slot: str = "simulator_1",
+        save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
         reload_timeout: float = 90.0,
         poll_interval: float = 0.5,
         reconnect_delay: float = 1.5,
@@ -627,8 +713,8 @@ class AirSimBridge:
 
     def prepare_fossen_visualisation(
         self,
-        save_slot: str = "simulator_1",
-        simulation_speed: float = 1.0,
+        save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
+        simulation_speed: float = DEFAULT_AIRSIM_SIMULATION_SPEED,
         draw_reference: bool = True,
     ):
         """Prepare UE5 for framework-driven Fossen visualisation."""

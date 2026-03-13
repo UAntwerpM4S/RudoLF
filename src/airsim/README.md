@@ -64,9 +64,9 @@ airsim/
 │
 ├── config/                       # Configuration & calibration data
 │   ├── airsim_config.py          # Validated connection and runtime settings
-│   ├── runtime_settings.json     # Entry-point and visualization settings
+│   ├── runtime_settings.json     # Python runtime settings and AirSim overrides
 │   ├── calibration.json          # Fossen ↔ AirSim coordinate calibration
-│   └── settings_training.json    # UE5 simulation mode / speed settings
+│   └── settings_training.json    # Manual UE5 / CosysAirSim settings template
 │
 ├── communication/                # UE5 ↔ Fossen communication layer
 │   ├── airsim_bridge.py          # RPC lifecycle, control forwarding, pose mirroring
@@ -144,6 +144,8 @@ python -m fw.main_with_airsim
 ```
 
 This reads `airsim/config/runtime_settings.json` and launches the AirSim-specific training flow for `AirSimEnv`. The generic alternative is `python -m fw.main`, which delegates into `fw.main_with_airsim` when `fw.config.CONFIG_PARAMETERS['env_type']` is set to `"AirSimEnv"`.
+
+`settings_training.json` is not loaded by the Python runtime. It exists as a manual template for the UE5 / CosysAirSim application settings that you may copy into the simulator-side settings location.
 
 When you launch through `fw.main`, the framework-level selector lives in `fw.config.CONFIG_PARAMETERS`:
 

@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 _THIS_DIR = Path(__file__).resolve().parent
 _RUNTIME_SETTINGS_PATH = _THIS_DIR / "runtime_settings.json"
+DEFAULT_AIRSIM_SAVE_SLOT = "simulator_1"
+DEFAULT_AIRSIM_SIMULATION_SPEED = 8.0
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -129,9 +131,9 @@ def get_runtime_settings_path() -> Path:
     return _RUNTIME_SETTINGS_PATH
 
 
-def get_runtime_settings() -> Dict[str, Any]:
-    """Load runtime settings from JSON and merge them with defaults."""
-    defaults = {
+def get_default_runtime_settings() -> Dict[str, Any]:
+    """Return the built-in runtime defaults used when JSON is absent or invalid."""
+    return {
         "visualization": {
             "fossen_visualise": False,
             "inference_visualise": False,
@@ -159,17 +161,29 @@ def get_runtime_settings() -> Dict[str, Any]:
         },
         "airsim": {
             **AirSimConfig().to_dict(),
-            "save_slot": "simulator_1",
-            "simulation_speed": 8.0,
+            "save_slot": DEFAULT_AIRSIM_SAVE_SLOT,
+            "simulation_speed": DEFAULT_AIRSIM_SIMULATION_SPEED,
         },
     }
+
+
+def merge_runtime_settings(override: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Merge a partial runtime-settings override onto the built-in defaults."""
+    if not isinstance(override, dict):
+        return get_default_runtime_settings()
+    return _deep_merge(get_default_runtime_settings(), override)
+
+
+def get_runtime_settings() -> Dict[str, Any]:
+    """Load runtime settings from JSON and merge them with defaults."""
+    defaults = get_default_runtime_settings()
 
     if not _RUNTIME_SETTINGS_PATH.exists():
         return defaults
 
     with open(_RUNTIME_SETTINGS_PATH, "r", encoding="utf-8") as fh:
         loaded = json.load(fh)
-    return _deep_merge(defaults, loaded)
+    return merge_runtime_settings(loaded)
 
 
 # ── Backward-compatible accessor ──────────────────────────

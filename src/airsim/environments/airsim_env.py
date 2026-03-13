@@ -34,6 +34,10 @@ from typing import Dict, List, Optional, Tuple
 
 from fw.environments.base_env import BaseEnv
 from fw.environments.tools import create_checkpoints_from_simple_path
+from airsim.config.airsim_config import (
+    DEFAULT_AIRSIM_SAVE_SLOT,
+    DEFAULT_AIRSIM_SIMULATION_SPEED,
+)
 from airsim.communication.coord_transform import CoordTransform, _normalize_angle
 from airsim.communication.control_mapping import (
     map_fossen_policy_action,
@@ -135,8 +139,14 @@ class AirSimEnv(BaseEnv):
         target_pos: Optional[list] = None,
         calibration: Optional[dict] = None,
         calibration_path: Optional[str] = None,
+        use_airsim: bool = True,
         ip: str = "",
         port: int = 41451,
+        timeout: float = 10.0,
+        max_retries: int = 3,
+        health_check_interval: float = 30.0,
+        csv_log_path: str = "",
+        save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
         render_mode: Optional[str] = None,
         max_steps: int = 14000,
         time_step: float = 0.1,
@@ -145,7 +155,7 @@ class AirSimEnv(BaseEnv):
         training_mode: bool = False,
         verbose: bool = False,
         episode_log_path: str = "",
-        simulation_speed: float = 1.0,
+        simulation_speed: float = DEFAULT_AIRSIM_SIMULATION_SPEED,
         physics_update_timeout: float = 1.0,
         state_poll_interval: float = 0.005,
         latency_warning_threshold: Optional[float] = None,
@@ -157,8 +167,14 @@ class AirSimEnv(BaseEnv):
             target_pos: Target position in Fossen coords.
             calibration: Optional calibration dict with scale/rotation/origins.
             calibration_path: Path to calibration JSON. If None, tries default.
+            use_airsim: Whether the AirSim bridge should be enabled.
             ip: AirSim server IP. Empty string = localhost.
             port: AirSim RPC port.
+            timeout: RPC connection timeout in seconds.
+            max_retries: Maximum number of connection retries.
+            health_check_interval: Seconds between bridge health checks.
+            csv_log_path: Optional bridge telemetry CSV path.
+            save_slot: UE5 save slot loaded before training or visualization.
             render_mode: 'human' or None.
             max_steps: Maximum steps per episode before truncation.
             time_step: Nominal simulation time step (seconds).
@@ -243,7 +259,16 @@ class AirSimEnv(BaseEnv):
         from airsim.config.airsim_config import AirSimConfig
         from airsim.communication.airsim_bridge import AirSimBridge
 
-        cfg = AirSimConfig(ip=ip, port=port)
+        self._save_slot = save_slot
+        cfg = AirSimConfig(
+            use_airsim=use_airsim,
+            ip=ip,
+            port=port,
+            timeout=timeout,
+            max_retries=max_retries,
+            health_check_interval=health_check_interval,
+            csv_log_path=csv_log_path,
+        )
         self.bridge = AirSimBridge(cfg)
 
         if not self.bridge.is_connected:
@@ -252,68 +277,15 @@ class AirSimEnv(BaseEnv):
                 "Make sure Unreal Engine 5 is open and in Play mode."
             )
         
-        # Expose client for environment-specific features (plotting, etc)
-        self.client = self.bridge.client
-
         # -- Load world save + set simulation speed --
-        # UE5 is launched manually (no-render mode).  Loading the save restores
-        # the ship to the correct MYZAKO_DEFAULT starting position and heading.
         self._simulation_speed = simulation_speed
-        logger.info("Loading world save 'simulator_1'...")
-        self.client.simSetSaveSlot("simulator_1")
-        self.client.simRequestLoad()
-        # simRequestLoad() triggers a full level reload which drops the RPC
-        # connection for the duration of the load screen (up to ~30 s).
-        # Step 1 - wait for the port to go *down* (UE5 is restarting).
-        # Step 2 - wait for the port to come *back up* (load complete).
-        # Step 3 - re-connect the bridge and re-enable API control.
-        _reload_timeout = 90.0  # total seconds to wait before giving up
-        _poll = 0.5             # seconds between polls
-        _t0 = time.monotonic()
-
-        # Step 1: wait up to 10 s for the port to go away
-        from airsim.communication.airsim_bridge import is_ue5_reachable
-        _went_down = False
-        while time.monotonic() - _t0 < 10.0:
-            if not is_ue5_reachable(ip, port):
-                _went_down = True
-                logger.info("UE5 RPC port went offline - level is reloading...")
-                break
-            time.sleep(_poll)
-
-        # Step 2: wait for the port to come back up
-        logger.info("Waiting for UE5 to finish reloading (timeout=%ds)...", int(_reload_timeout))
-        while time.monotonic() - _t0 < _reload_timeout:
-            if is_ue5_reachable(ip, port):
-                break
-            time.sleep(_poll)
-        else:
-            raise TimeoutError(
-                f"UE5 did not finish reloading within {_reload_timeout:.0f} s. "
-                "Check that the level loaded successfully in UE5."
-            )
-
-        # Step 3: give UE5 one more second to fully initialise the RPC server,
-        # then re-create the bridge so the client object is fresh.
-        time.sleep(1.5)
-        from airsim.communication.airsim_bridge import AirSimBridge
-        from airsim.config.airsim_config import AirSimConfig
-        self.bridge = AirSimBridge(AirSimConfig(ip=ip, port=port))
-        if not self.bridge.is_connected:
-            raise ConnectionError(
-                "AirSimBridge failed to reconnect after level reload. "
-                "UE5 may still be initialising - try increasing the sleep above."
-            )
-        self.client = self.bridge.client
-        elapsed = time.monotonic() - _t0
-        logger.info("Level reloaded in %.1f s; reconnected to AirSim.", elapsed)
-
-        self.client.simSetSimulationSpeed(simulation_speed)
+        self.bridge.load_world_save(save_slot=self._save_slot)
+        self.bridge.set_simulation_speed(simulation_speed)
         logger.info("Simulation speed set to %.1fx.", simulation_speed)
 
         # -- Auto drift correction --
         # Capture spawn pose AFTER world load so it reflects the loaded position.
-        self._spawn_pose = self.client.simGetVehiclePose()
+        self._spawn_pose = self.bridge.get_vehicle_pose()
         cal_path = Path(calibration_path) if calibration_path else _DEFAULT_CALIBRATION_PATH
         if cal_path.exists():
             with open(cal_path, "r") as f:
@@ -336,7 +308,7 @@ class AirSimEnv(BaseEnv):
                     logger.debug("No origin drift (%.2f m).", mag)
 
         if self.use_pause_stepping:
-            self.client.simPause(True)
+            self.bridge.set_pause(True)
             logger.info("Simulation paused - using deterministic frame stepping.")
 
         # -- Draw trajectory in UE5 --
@@ -478,7 +450,7 @@ class AirSimEnv(BaseEnv):
         """
         self.bridge.reset()
         if self.use_pause_stepping:
-            self.client.simPause(True)
+            self.bridge.set_pause(True)
 
     def randomize(self, randomization_scale: Optional[float] = None) -> None:
         """Apply domain randomisation to the initial ship position.
@@ -588,7 +560,7 @@ class AirSimEnv(BaseEnv):
         """Draw trajectory and polygon lines in UE5 for visual reference."""
         airsim = self._airsim
 
-        self.client.simFlushPersistentMarkers()
+        self.bridge.flush_persistent_markers()
         time.sleep(0.2)
 
         # -- Polygon outline (green) --
@@ -604,7 +576,7 @@ class AirSimEnv(BaseEnv):
         for i in range(0, len(poly_points), chunk_size - 1):
             chunk = poly_points[i:i + chunk_size]
             if len(chunk) > 1:
-                self.client.simPlotLineStrip(
+                self.bridge.plot_line_strip(
                     chunk,
                     color_rgba=[0, 1, 0, 0.8],
                     thickness=5.0,
@@ -627,7 +599,7 @@ class AirSimEnv(BaseEnv):
         for i in range(0, len(traj_points), chunk_size - 1):
             chunk = traj_points[i:i + chunk_size]
             if len(chunk) > 1:
-                self.client.simPlotLineStrip(
+                self.bridge.plot_line_strip(
                     chunk,
                     color_rgba=[1, 1, 0, 1.0],
                     thickness=8.0,
@@ -642,13 +614,13 @@ class AirSimEnv(BaseEnv):
             float(traj_data[-1][0]), float(traj_data[-1][1])
         )
 
-        self.client.simPlotPoints(
+        self.bridge.plot_points(
             [airsim.Vector3r(start_ux, start_uy, -3.0)],
             color_rgba=[0, 0, 1, 1],
             size=30.0,
             is_persistent=True,
         )
-        self.client.simPlotPoints(
+        self.bridge.plot_points(
             [airsim.Vector3r(end_ux, end_uy, -3.0)],
             color_rgba=[1, 0, 0, 1],
             size=30.0,
@@ -741,7 +713,7 @@ class AirSimEnv(BaseEnv):
         latest_car_state = None
 
         while True:
-            latest_car_state = self.client.getCarState()
+            latest_car_state = self.bridge.get_car_state()
             current_timestamp = self._extract_ue5_timestamp(latest_car_state)
             if previous_timestamp is None or current_timestamp is None:
                 break
@@ -772,9 +744,9 @@ class AirSimEnv(BaseEnv):
         east/north via ``CoordTransform``.  Also derives the yaw rate
         from consecutive headings.
         """
-        pose = self.client.simGetVehiclePose()
+        pose = self.bridge.get_vehicle_pose()
         if car_state is None:
-            car_state = self.client.getCarState()
+            car_state = self.bridge.get_car_state()
 
         fx, fy = self.coord.airsim_to_fossen(
             pose.position.x_val, pose.position.y_val
@@ -797,7 +769,7 @@ class AirSimEnv(BaseEnv):
         Returns:
             ``True`` if the vehicle has collided with any object.
         """
-        info = self.client.simGetCollisionInfo()
+        info = self.bridge.get_collision_info()
         return info.has_collided
 
     # -------------
@@ -945,14 +917,14 @@ class AirSimEnv(BaseEnv):
             # for a physics-thread acknowledgement that never arrives.
             # Fix: unpause first so the RPC returns immediately, then
             # simContinueForFrames advances N frames and auto-pauses again.
-            self.client.simPause(False)
-            self.client.setCarControls(controls)
-            self.client.simContinueForFrames(self.frames_per_step)
+            self.bridge.set_pause(False)
+            self.bridge.set_controls(controls)
+            self.bridge.continue_for_frames(self.frames_per_step)
             car_state, physics_wait_s = self._wait_for_next_physics_update(previous_timestamp)
         else:
             self.bridge.set_controls(controls)
             time.sleep(self.time_step)
-            car_state = self.client.getCarState()
+            car_state = self.bridge.get_car_state()
             physics_wait_s = 0.0
 
         self._read_airsim_state(car_state=car_state)
@@ -1002,7 +974,7 @@ class AirSimEnv(BaseEnv):
         self.bridge.reset()
 
         if self.use_pause_stepping:
-            self.client.simPause(True)
+            self.bridge.set_pause(True)
 
         self.ship_pos = self.initial_ship_pos.copy()
         self.previous_ship_pos = self.initial_ship_pos.copy()
@@ -1027,7 +999,7 @@ class AirSimEnv(BaseEnv):
             initial_heading = _normalize_angle(_safe_heading_from_vector(direction))
         self.ship_heading = initial_heading
 
-        current_pose = self.client.simGetVehiclePose()
+        current_pose = self.bridge.get_vehicle_pose()
         current_z = current_pose.position.z_val
 
         start_ax, start_ay, _ = self.coord.fossen_to_airsim(
@@ -1039,7 +1011,7 @@ class AirSimEnv(BaseEnv):
             self._airsim.Vector3r(start_ax, start_ay, current_z),
             self._airsim.Quaternionr(0, 0, math.sin(initial_yaw / 2), math.cos(initial_yaw / 2)),
         )
-        self.client.simSetVehiclePose(pose, ignore_collision=True)
+        self.bridge.set_vehicle_pose(pose, ignore_collision=True)
         time.sleep(0.2)
 
         self._read_airsim_state()
@@ -1060,12 +1032,12 @@ class AirSimEnv(BaseEnv):
         (real-time) before disconnecting so UE5 is left in a usable state.
         """
         try:
-            self.client.simFlushPersistentMarkers()
-            self.client.simSetVehiclePose(self._spawn_pose, ignore_collision=True)
-            self.client.simSetSimulationSpeed(1.0)
+            self.bridge.flush_persistent_markers()
+            self.bridge.set_vehicle_pose(self._spawn_pose, ignore_collision=True)
+            self.bridge.set_simulation_speed(1.0)
 
             if self.use_pause_stepping:
-                self.client.simPause(False)
+                self.bridge.set_pause(False)
 
             self.bridge.disconnect()
             logger.info("Vehicle reset to spawn, simulation speed restored to 1.0x.")

@@ -1,6 +1,10 @@
 import types
 from collections.abc import Mapping
 
+from airsim.config.airsim_config import (
+    DEFAULT_AIRSIM_SAVE_SLOT,
+    DEFAULT_AIRSIM_SIMULATION_SPEED,
+)
 from fw.config import get_config_parameters
 from fw.environments.py_sim_env import PySimEnv
 from fw.environments.fh_sim_env import FhSimEnv
@@ -95,17 +99,22 @@ class _Factory:
         normalized_configuration = _normalize_configuration(configuration)
 
         try:
-            instance = cls._environment_instances[environment_name]  # Existing instance is candidate, if available.
-        except KeyError:  # New instance! Exciting. Find the appropriate class.
-            try:
-                environment_class = cls._environment_classes[environment_name]
-            except KeyError:
-                available_list = ', '.join([f"'{name}'" for name in cls._environment_classes.keys()]
-                                          ) if cls._environment_classes else 'none.'
-                raise EnvironmentRegistryError(f"No environment '{environment_name}' is registered. "
-                                               f"Available: {available_list}")
+            environment_class = cls._environment_classes[environment_name]
+        except KeyError:
+            available_list = ', '.join([f"'{name}'" for name in cls._environment_classes.keys()]
+                                      ) if cls._environment_classes else 'none.'
+            raise EnvironmentRegistryError(f"No environment '{environment_name}' is registered. "
+                                           f"Available: {available_list}")
 
-            # Instantiate and register instance for later use
+        if not getattr(environment_class, "_cache_instance", True):
+            if normalized_configuration is None:
+                raise EnvironmentRegistryError("A configuration must be provided when instantiating an environment "
+                                               "for the first time")
+            return environment_class(environment_name, normalized_configuration)
+
+        try:
+            instance = cls._environment_instances[environment_name]  # Existing instance is candidate, if available.
+        except KeyError:  # New instance! Exciting.
             if normalized_configuration is None:
                 raise EnvironmentRegistryError("A configuration must be provided when instantiating an environment "
                                                "for the first time")
@@ -130,6 +139,8 @@ class BaseEnvironment:
     Environment classes should inherit from this base class. Environments
     are automatically registered upon subclassing unless their name starts with '_'.
     """
+
+    _cache_instance = True
 
     def __init__(self, name, configuration):
         """Initializes a BaseEnvironment.
@@ -269,6 +280,8 @@ class AirSimEnvironment(BaseEnvironment):
     Requires UE5 with CosysAirSim to be running.
     """
 
+    _cache_instance = False
+
     def __init__(self, name, configuration):
         super().__init__(name, configuration)
         
@@ -291,7 +304,13 @@ class AirSimEnvironment(BaseEnvironment):
         max_steps = int(cfg.get("max_steps", 14000))
         ip = cfg.get("ip", "")
         port = int(cfg.get("port", 41451))
-        simulation_speed = float(cfg.get("simulation_speed", 1.0))
+        use_airsim = bool(cfg.get("use_airsim", True))
+        timeout = float(cfg.get("timeout", 10.0))
+        max_retries = int(cfg.get("max_retries", 3))
+        health_check_interval = float(cfg.get("health_check_interval", 30.0))
+        csv_log_path = str(cfg.get("csv_log_path", ""))
+        save_slot = str(cfg.get("save_slot", DEFAULT_AIRSIM_SAVE_SLOT))
+        simulation_speed = float(cfg.get("simulation_speed", DEFAULT_AIRSIM_SIMULATION_SPEED))
 
         self._env = AirSimEnv(
             ship_pos=ship_pos,
@@ -299,6 +318,12 @@ class AirSimEnvironment(BaseEnvironment):
             max_steps=max_steps,
             ip=ip,
             port=port,
+            use_airsim=use_airsim,
+            timeout=timeout,
+            max_retries=max_retries,
+            health_check_interval=health_check_interval,
+            csv_log_path=csv_log_path,
+            save_slot=save_slot,
             simulation_speed=simulation_speed,
             training_mode=training_mode,
             use_pause_stepping=use_pause,
