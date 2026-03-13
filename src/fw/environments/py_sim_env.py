@@ -1,3 +1,4 @@
+import math
 import os
 import matplotlib
 import matplotlib.patches as patches
@@ -677,18 +678,18 @@ class PySimEnv(BaseEnv):
             next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
 
             # Distances to checkpoints
-            norm_distance = np.linalg.norm(self.ship_pos[i] - current_chkp_pos) / self.max_dist
-            norm_next_distance = np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
+            norm_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - current_chkp_pos)),
+                                                      range=(0, 8000),
+                                                      half_value=0.5 * 370)
+            norm_next_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - next_chkp_pos)),
+                                                           range=(0, 2 * 8000),
+                                                           half_value=1.5 * 370)
 
             # Cross-track error (normalized, signed)
-            norm_cross_error = (
-                    self._distance_from_point_to_line(
-                        self.ship_pos[i],
-                        prev_chkp_pos,
-                        current_chkp_pos
-                    )
-                    / (CHECKPOINTS_DISTANCE / 2.0)
-            )
+            norm_cross_error = self._logarithmic_scaling(
+                value=self._distance_from_point_to_line(self.ship_pos[i], prev_chkp_pos, current_chkp_pos),
+                range=(0, 2000),
+                half_value=50)
 
             track_vec = current_chkp_pos - prev_chkp_pos
             ship_vec = self.ship_pos[i] - prev_chkp_pos
@@ -917,6 +918,26 @@ class PySimEnv(BaseEnv):
 
         line_start, line_end = checkpoint['perpendicular_line']
         return self._distance_from_point_to_line(self.ship_pos[ship_index], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY * self.time
+
+    def _logarithmic_scaling(self, value: float, range: tuple, half_value: float = 10):
+        # Unpack the range, they correspondent with values that return 0 and 1
+        min_value, max_value = range
+
+        if value < min_value or value > max_value:
+            raise ValueError(f"value {value} exceeded the range [{min_value}, {max_value}]")
+
+        # Clamp to range
+
+        # Linear normalization
+        x = (value - min_value) / (max_value - min_value)
+
+        m = (half_value - min_value) / (max_value - min_value)
+
+        # compute curvature parameter
+        k = (1 - 2 * m) / (m ** 2)
+
+        # Logarithmic scaling
+        return math.log1p(k * x) / math.log1p(k)
 
     # -----------------------
     # Rendering
