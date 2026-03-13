@@ -27,7 +27,11 @@ from airsim.communication.control_mapping import (  # noqa: E402
     map_fossen_steering_visual_state,
     map_fossen_visual_actuator_state,
 )
-from airsim.config.airsim_config import AirSimConfig  # noqa: E402
+from airsim.config.airsim_config import (  # noqa: E402
+    AirSimConfig,
+    DEFAULT_AIRSIM_SAVE_SLOT,
+    DEFAULT_AIRSIM_SIMULATION_SPEED,
+)
 from airsim.inference.minimap_fossen_airsim import MinimapFossenAirsim  # noqa: E402
 from fw.environments.fh_sim_env import FhSimEnv  # noqa: E402
 from fw.environments.py_sim_env import PySimEnv  # noqa: E402
@@ -412,7 +416,7 @@ def _animate_framework_state(
     _prefetched_pose = None
     if not vehicle_object_name and not use_kinematics_in_ue5 and bridge.is_connected:
         try:
-            _prefetched_pose = bridge.client.simGetVehiclePose()
+            _prefetched_pose = bridge.get_vehicle_pose()
         except Exception:
             pass
 
@@ -456,8 +460,8 @@ def run_visualise_fossen(
     device: str = "cpu",
     draw_calibration_reference: bool = True,
     log_every: int = 50,
-    save_slot: str = "simulator_1",
-    simulation_speed: float = 1.0,
+    save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
+    simulation_speed: float = DEFAULT_AIRSIM_SIMULATION_SPEED,
     mirror_controls_in_ue5: bool = False,
     animate_steering_in_ue5: bool = True,
     animate_throttle_in_ue5: bool = True,
@@ -658,7 +662,7 @@ def run_visualise_fossen(
         # simulation speed after the visualisation script exits.
         try:
             if bridge.is_connected:
-                bridge.client.simSetSimulationSpeed(1.0)
+                bridge.set_simulation_speed(1.0)
         except Exception:
             pass
         if hasattr(env, "fh_sim"):

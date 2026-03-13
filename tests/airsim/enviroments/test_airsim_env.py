@@ -84,7 +84,7 @@ def _make_env(mock_module):
         bridge_module,
         "is_ue5_reachable",
         side_effect=reachability_sequence,
-    ), patch.object(env_module.time, "sleep", return_value=None):
+    ), patch.object(bridge_module.time, "sleep", return_value=None), patch.object(env_module.time, "sleep", return_value=None):
         from airsim.environments.airsim_env import AirSimEnv
 
         env = AirSimEnv(
@@ -121,7 +121,7 @@ def mock_airsim():
         bridge_module,
         "is_ue5_reachable",
         side_effect=reachability_sequence,
-    ), patch.object(env_module.time, "sleep", return_value=None):
+    ), patch.object(bridge_module.time, "sleep", return_value=None), patch.object(env_module.time, "sleep", return_value=None):
         from airsim.environments.airsim_env import AirSimEnv
 
         env = AirSimEnv(

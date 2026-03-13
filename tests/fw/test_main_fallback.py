@@ -2,7 +2,10 @@
 
 import runpy
 import sys
+import os
 from pathlib import Path
+
+import pytest
 
 
 _SRC_DIR = Path(__file__).resolve().parents[2] / "src"
@@ -104,3 +107,39 @@ def test_main_uses_framework_visualize_action(monkeypatch):
     assert trainer_calls.get("train_called") is not True
     assert trainer_calls["visualize_called"] is True
     assert trainer_calls["airsim_bridge"] is None
+
+
+def test_main_passes_action_override_to_airsim_extension(monkeypatch):
+    """Verify fw.main explicitly forwards the framework action to AirSim."""
+    import multiprocessing
+    import runpy as stdlib_runpy
+
+    import fw.config as fw_config
+    import fw.env_factory as env_factory
+
+    monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        fw_config,
+        "get_config_parameters",
+        lambda: {"env_type": env_factory.airsim_env_name, "action": "visualize"},
+    )
+    original_run_module = stdlib_runpy.run_module
+
+    captured = {}
+
+    def _capture_run_module(module_name, run_name=None):
+        if module_name == "fw.main_with_airsim":
+            captured["module_name"] = module_name
+            captured["forwarded_action"] = os.environ.get("FW_MAIN_ACTION_OVERRIDE")
+            raise SystemExit(0)
+        return original_run_module(module_name, run_name=run_name)
+
+    monkeypatch.setattr(stdlib_runpy, "run_module", _capture_run_module)
+
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("fw.main", run_name="__main__")
+
+    assert exc.value.code == 0
+    assert captured["module_name"] == "fw.main_with_airsim"
+    assert captured["forwarded_action"] == "visualize"
+    assert "FW_MAIN_ACTION_OVERRIDE" not in os.environ

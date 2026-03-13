@@ -43,9 +43,11 @@ if __name__ == "__main__" or __name__ == "fw.main":
         return configured_env_name == airsim_env_name
 
     if _should_delegate_to_airsim_extension():
+        import os
         import runpy
 
         try:
+            os.environ["FW_MAIN_ACTION_OVERRIDE"] = action
             runpy.run_module("fw.main_with_airsim", run_name="__main__")
             raise SystemExit(0)
         except SystemExit as exc:
@@ -55,6 +57,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 "[main] AirSim extension exited with an error; "
                 "falling back to the default framework entrypoint."
             )
+        finally:
+            os.environ.pop("FW_MAIN_ACTION_OVERRIDE", None)
 
     # Ensure all environments are registered once
     initialize_all_environments()

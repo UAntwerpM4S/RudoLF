@@ -11,6 +11,7 @@ set to ``"AirSimEnv"``.
 """
 
 if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
+    import os
     import logging
     import multiprocessing
 
@@ -26,7 +27,11 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     multiprocessing.set_start_method("spawn", force=True)
 
-    from airsim.config.airsim_config import get_runtime_settings
+    from airsim.config.airsim_config import (
+        get_default_runtime_settings,
+        get_runtime_settings,
+        merge_runtime_settings,
+    )
     from fw.env_factory import (
         airsim_env_name,
         fh_sim_env_name,
@@ -37,15 +42,17 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     # AirSim runtime only controls AirSim-specific behavior.
     # The selected framework environment is handled by fw.main / fw.config.
-    action = "train"
+    action = str(os.environ.get("FW_MAIN_ACTION_OVERRIDE", "train")).strip().lower()
+    if action not in {"train", "visualize"}:
+        action = "train"
     selected_environment_name = airsim_env_name
-    runtime_settings = {}
+    runtime_settings = get_default_runtime_settings()
 
     # Visualization flags switch the AirSim entrypoint into visualize mode.
     try:
-        runtime_settings = get_runtime_settings()
+        runtime_settings = merge_runtime_settings(get_runtime_settings())
     except Exception as exc:
-        print(f"[main] Could not load runtime settings ({exc}). Using hardcoded defaults.")
+        print(f"[main] Could not load runtime settings ({exc}). Using built-in defaults.")
 
     visualization_cfg = runtime_settings.get("visualization", {}) if isinstance(runtime_settings, dict) else {}
     airsim_runtime_cfg = runtime_settings.get("airsim", {}) if isinstance(runtime_settings, dict) else {}
@@ -74,8 +81,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
         ip = airsim_runtime_cfg.get("ip", "")
         port = int(airsim_runtime_cfg.get("port", 41451))
-        simulation_speed = float(airsim_runtime_cfg.get("simulation_speed", 1.0))
-        save_slot = str(airsim_runtime_cfg.get("save_slot", "simulator_1"))
+        simulation_speed = float(airsim_runtime_cfg["simulation_speed"])
+        save_slot = str(airsim_runtime_cfg["save_slot"])
 
         max_steps = int(visualization_cfg.get("max_steps", 14000))
         episodes = int(visualization_cfg.get("episodes", 1))
@@ -173,14 +180,13 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # Define simulator inputs. Keep hardcoded behavior by default, allow runtime override.
     if selected_environment_name == airsim_env_name:
         is_training = action == "train"
-        airsim_env_cfg = {
+        airsim_env_cfg = dict(airsim_runtime_cfg)
+        airsim_env_cfg.update({
             "training_mode": is_training,
             "use_pause_stepping": airsim_runtime_cfg.get("use_pause_stepping", is_training),
-            "ip": airsim_runtime_cfg.get("ip", ""),
-            "port": airsim_runtime_cfg.get("port", 41451),
-            "simulation_speed": airsim_runtime_cfg.get("simulation_speed", 10.0 if is_training else 1.0),
-            "max_steps": int(visualization_cfg.get("max_steps", 14000)),
-        }
+            "simulation_speed": airsim_runtime_cfg["simulation_speed"],
+            "max_steps": int(visualization_cfg["max_steps"]),
+        })
         envs = [get_environment(airsim_env_name, configuration=airsim_env_cfg)]
     else:
         envs = [get_environment(selected_environment_name)]
