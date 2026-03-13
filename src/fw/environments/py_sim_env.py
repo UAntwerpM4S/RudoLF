@@ -549,6 +549,7 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Previous rudder angle
+                -1.0,    # Optimal LOS guidance
             ],
             dtype=np.float32,
         )
@@ -568,7 +569,8 @@ class PySimEnv(BaseEnv):
                 1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
-                1.0,   # Previous rudder angle
+                1.0,    # Previous rudder angle
+                1.0,    # Optimal LOS guidance
             ],
             dtype=np.float32,
         )
@@ -762,6 +764,7 @@ class PySimEnv(BaseEnv):
                 [heading_error_parallel2 / np.pi],      # Normalized heading error
                 [heading_error_parallel3 / np.pi],      # Normalized heading error
                 self.performed_action[i][0],            # Previous rudder angle
+                self.los_guidance_heading(i=i) / np.pi, # Optimal LOS guidance
             ])
 
             # Add environmental observations if enabled
@@ -952,6 +955,105 @@ class PySimEnv(BaseEnv):
 
         line_start, line_end = checkpoint['perpendicular_line']
         return self._distance_from_point_to_line(self.ship_pos[ship_index], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY * self.time_step
+
+    def los_guidance_heading(self, i: int):
+        """
+        Compute desired LOS heading toward the current path segment.
+        These formulas were adopted from Changyuan Chen's PhD thesis
+        "Numerical and Experimental Study on Ship Motion Control Systems in Shallow Water" at Flanders Hydraulics (FH)
+        """
+
+        current_checkpoint_idx = self.checkpoint_index[i]
+        current_checkpoint_idx = min(current_checkpoint_idx, len(self.checkpoints) - 1)
+        P = self.ship_pos[i]
+        P_k = self.checkpoints[current_checkpoint_idx]['pos'].copy()
+        if current_checkpoint_idx + 1 > len(self.checkpoints) - 1:
+            P_k_plus_1 = self.checkpoints[len(self.checkpoints) - 1]['pos'].copy()
+            direction = P_k_plus_1 - self.checkpoints[len(self.checkpoints) - 2]['pos']
+            P_k_plus_1 += direction
+        else:
+            P_k_plus_1 = self.checkpoints[current_checkpoint_idx + 1]['pos'].copy()
+        x, y = P[:]
+        x_k, y_k = P_k[:]
+        x_k_plus_1, y_k_plus_1 = P_k_plus_1[:]
+
+        # previous checkpoint
+        if current_checkpoint_idx > 0:
+            P_k_min_1 = self.checkpoints[current_checkpoint_idx-1]['pos'].copy()
+            x_k_min_1, y_k_min_1 = P_k_min_1[:]
+        else:
+            # if none exists, create a virtual one behind the ship
+            P_k_min_1 = P
+            x_k_min_1, y_k_min_1 = ship_y
+
+        # Find the orthogonal projection A(x_A, y_A) of the ship on the path from the previous to the next checkpoint
+        x_A = x_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (x_k - x_k_min_1)
+        y_A = y_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (y_k - y_k_min_1)
+
+        # Calculate the look ahead distance L_A
+        c = 0.5  # Coefficient for LOS look ahead horizon (default is 0.5 according to FH PhD thesis p. 148)
+        delta_y = ((x - x_A)**2 + (y - y_A)**2) ** 0.5  # Cross-track error
+        L_pp = 0.95 * self.ships[i].specifications.length  # Length between perpendiculars (a little bit smaller than the ship length)
+        L_A = ((delta_y + c * L_pp)**2 - (delta_y)**2) ** 0.5
+
+        # Calculate the LOS position Ploss(x_loss, y_loss)
+        x_loss = x_A + ((x_k - x_k_min_1) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2) ** 0.5) * L_A
+        y_loss = y_A + ((y_k - y_k_min_1) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2) ** 0.5) * L_A
+
+        # 4.3.3 Selection of current waypoint
+        # Calculate radius of the current checkpoint's acceptance circle Rk
+        w_los = 0.5  # Tunable parameter for acceptance circle (default is 0.5 according to FH PhD thesis p. 148)
+        R_k = w_los * L_pp
+
+        heading_P_k_min_1_P_k = self._safe_heading_from_vector(P_k - P_k_min_1)
+        heading_P_k_P_k_plus_1 = self._safe_heading_from_vector(P_k_plus_1 - P_k)
+        heading_difference = self.normalize_angle(heading_P_k_min_1_P_k - heading_P_k_P_k_plus_1)
+        collinear = abs(heading_difference) < (5/57)   # Are the previous, current, and next checkpoint collinear
+        if collinear:
+            dist_A_Pk = ((x_A - x_k) ** 2 + (y_A - y_k) ** 2) ** 0.5  # Distance between and the current checkpoint
+            if dist_A_Pk > R_k:  # |A Pk| > Rk
+                # LOS angle (desired course angle) in radians
+                LOS_angle = math.atan2(y_loss - y, x_loss - x)
+            else:  # |A Pk| < Rk
+                # LOS position Ploss is replaced by current waypoint Pk+1
+                LOS_angle = math.atan2(y_k_plus_1 - y, x_k_plus_1 - x)
+        else:
+            dist_P_Pk = ((x - x_k) ** 2 + (y - y_k) ** 2) ** 0.5  # Distance between and the current checkpoint
+            if dist_P_Pk > 2 * R_k:  # |P Pk| > 2*Rk
+                if L_A < dist_P_Pk:  # LA < |P Pk|
+                    LOS_angle = math.atan2(y_loss - y, x_loss - x)
+                else:  # LA > |P Pk|
+                    # Change look ahead distance from LA to L'A
+                    L_accent_A = L_A - ((x_k - x_A)**2 + (y_k - y_A)**2)**0.5
+
+                    # Calculate new heading point P'loss
+                    x_accent_loss = x_k + ((x_k_plus_1 - x_k) / ((x_k_plus_1 - x_k) ** 2 + (y_k_plus_1 - y_k) ** 2) ** 0.5) * L_accent_A
+                    y_accent_loss = y_k + ((y_k_plus_1 - y_k) / ((x_k_plus_1 - x_k) ** 2 + (y_k_plus_1 - y_k) ** 2) ** 0.5) * L_accent_A
+
+                    # LOS angle (desired course angle) in radians
+                    LOS_angle = math.atan2(y_accent_loss - y, x_accent_loss - x)
+            else:  # |P Pk| < 2*Rk
+                # The checkpoint Pk becomes replaced by Pk+1 (next checkpoint becomes current checkpoint), same for Pk-1
+                x_k_min_1, y_k_min_1 = x_k, y_k
+                x_k, y_k = x_k_plus_1, y_k_plus_1
+
+                # Find the orthogonal projection A(x_A, y_A) of the ship on the path from the previous to the next checkpoint
+                x_A = x_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (x_k - x_k_min_1)
+                x_A = y_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (y_k - y_k_min_1)
+
+                # Calculate the look ahead distance L_A
+                c = 0.5  # Coefficient for LOS look ahead horizon (default is 0.5 according to FH PhD thesis p. 148)
+                delta_y = ((x - x_A) ** 2 + (y - y_A) ** 2) ** 0.5  # Cross-track error
+                L_pp = 0.95 * self.ships[i].specifications.length  # Length between perpendiculars (a little bit smaller than the ship length)
+                L_A = ((delta_y + c * L_pp) ** 2 - (delta_y) ** 2) ** 0.5
+
+                # Calculate the LOS position Ploss(x_loss, y_loss)
+                x_loss = x_A + ((x_k - x_k_min_1) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2) ** 0.5) * L_A
+                y_loss = y_A + ((y_k - y_k_min_1) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2) ** 0.5) * L_A
+
+                LOS_angle = math.atan2(y_loss - y, x_loss - x)
+
+        return LOS_angle
 
     def _logarithmic_scaling(self, value: float, range: tuple, half_value: float = 10):
         # Unpack the range, they correspondent with values that return 0 and 1
