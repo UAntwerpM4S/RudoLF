@@ -546,7 +546,10 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Yaw rate
                 -1.0,    # Distance to current checkpoint
                 -1.0,    # Distance to checkpoint+1
+                -1.0,    # Distance to checkpoint+5
                 -1.0,   # Cross-track error
+                -1.0,   # Heading error
+                -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
@@ -563,7 +566,10 @@ class PySimEnv(BaseEnv):
                 1.0,    # Yaw rate
                 1.0,    # Distance to current checkpoint
                 1.0,    # Distance to checkpoint+1
+                1.0,    # Distance to checkpoint+5
                 1.0,    # Cross-track error
+                1.0,    # Heading error
+                1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
@@ -673,11 +679,15 @@ class PySimEnv(BaseEnv):
             current_chkp_idx = min(self.checkpoint_index[i], len(self.checkpoints) - 1)
             prev_chkp_idx = max(0, current_chkp_idx - 1)
             next_chkp_idx = min(current_chkp_idx + 1, len(self.checkpoints) - 1)
+            four_chkp_idx = min(current_chkp_idx + 4, len(self.checkpoints) - 1)
+            five_chkp_idx = min(current_chkp_idx + 5, len(self.checkpoints) - 1)
 
             # Checkpoint positions
             current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
             prev_chkp_pos = self.checkpoints[prev_chkp_idx]['pos']
             next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
+            four_chkp_pos = self.checkpoints[four_chkp_idx]['pos']
+            five_chkp_pos = self.checkpoints[five_chkp_idx]['pos']
 
             # Distances to checkpoints
             norm_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - current_chkp_pos)),
@@ -727,16 +737,33 @@ class PySimEnv(BaseEnv):
                 0.0
             )
 
+            # To next checkpoint
+            heading_error3 = self._calculate_heading_error(
+                self._safe_heading_from_vector(five_chkp_pos - self.ship_pos[i]),
+                self.phys_sims[i].state.heading,
+                0.0
+            )
+
+            # Parallel to next checkpoint segment
+            heading_error_parallel3 = self._calculate_heading_error(
+                self._safe_heading_from_vector(five_chkp_pos - four_chkp_pos),
+                self.phys_sims[i].state.heading,
+                0.0
+            )
+
             # Build observation
             obs = np.hstack([
                 norm_velocities,                        # Normalized velocities
-                [norm_distance],                        # Distance to current checkpoint
-                [norm_next_distance],                   # Distance to next checkpoint
+                [2 * norm_distance - 1],                # Distance to current checkpoint
+                [2 * norm_next_distance - 1],           # Distance to next checkpoint
+                [2 * norm_five_distance - 1],           # Distance to next checkpoint
                 [norm_cross_error],                     # Normalized cross-track error
                 [heading_error / np.pi],                # Normalized heading error
                 [heading_error2 / np.pi],               # Normalized heading error
+                [heading_error3 / np.pi],               # Normalized heading error
                 [heading_error_parallel / np.pi],       # Normalized heading error
                 [heading_error_parallel2 / np.pi],      # Normalized heading error
+                [heading_error_parallel3 / np.pi],      # Normalized heading error
                 self.performed_action[i][0],            # Previous rudder angle
             ])
 
