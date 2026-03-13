@@ -690,7 +690,7 @@ class PySimEnv(BaseEnv):
             if current_chkp_idx <= len(self.checkpoints) - 1:
                 current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
             else:
-                multiplier = current_chkp_pos - (len(self.checkpoints) - 1)
+                multiplier = current_chkp_idx - (len(self.checkpoints) - 1)
                 current_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + multiplier * direction_last_path
             if next_chkp_idx <= len(self.checkpoints) - 1:
                 next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
