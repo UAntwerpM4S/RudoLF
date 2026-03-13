@@ -1014,21 +1014,25 @@ class PySimEnv(BaseEnv):
         heading_P_k_min_1_P_k = self._safe_heading_from_vector(P_k - P_k_min_1)
         heading_P_k_P_k_plus_1 = self._safe_heading_from_vector(P_k_plus_1 - P_k)
         heading_difference = self.normalize_angle(heading_P_k_min_1_P_k - heading_P_k_P_k_plus_1)
-        collinear = abs(heading_difference) < (5/57)   # Are the previous, current, and next checkpoint collinear
+        collinear = abs(heading_difference) < (1/57)   # Are the previous, current, and next checkpoint collinear
         if collinear:
             dist_A_Pk = ((x_A - x_k) ** 2 + (y_A - y_k) ** 2) ** 0.5  # Distance between and the current checkpoint
             if dist_A_Pk > R_k:  # |A Pk| > Rk
+                print(1)
                 # LOS angle (desired course angle) in radians
                 LOS_angle = math.atan2(y_loss - y, x_loss - x)
             else:  # |A Pk| < Rk
+                print(2)
                 # LOS position Ploss is replaced by current waypoint Pk+1
                 LOS_angle = math.atan2(y_k_plus_1 - y, x_k_plus_1 - x)
         else:
             dist_P_Pk = ((x - x_k) ** 2 + (y - y_k) ** 2) ** 0.5  # Distance between and the current checkpoint
             if dist_P_Pk > 2 * R_k:  # |P Pk| > 2*Rk
                 if L_A < dist_P_Pk:  # LA < |P Pk|
+                    print(3)
                     LOS_angle = math.atan2(y_loss - y, x_loss - x)
                 else:  # LA > |P Pk|
+                    print(4)
                     # Change look ahead distance from LA to L'A
                     L_accent_A = L_A - ((x_k - x_A)**2 + (y_k - y_A)**2)**0.5
 
@@ -1040,12 +1044,13 @@ class PySimEnv(BaseEnv):
                     LOS_angle = math.atan2(y_accent_loss - y, x_accent_loss - x)
             else:  # |P Pk| < 2*Rk
                 # The checkpoint Pk becomes replaced by Pk+1 (next checkpoint becomes current checkpoint), same for Pk-1
+                print(5)
                 x_k_min_1, y_k_min_1 = x_k, y_k
                 x_k, y_k = x_k_plus_1, y_k_plus_1
 
                 # Find the orthogonal projection A(x_A, y_A) of the ship on the path from the previous to the next checkpoint
                 x_A = x_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (x_k - x_k_min_1)
-                x_A = y_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (y_k - y_k_min_1)
+                y_A = y_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (y_k - y_k_min_1)
 
                 # Calculate the look ahead distance L_A
                 c = 0.5  # Coefficient for LOS look ahead horizon (default is 0.5 according to FH PhD thesis p. 148)
