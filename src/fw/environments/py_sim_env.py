@@ -674,18 +674,39 @@ class PySimEnv(BaseEnv):
             ], dtype=np.float32)
 
             # Clamp checkpoint indices
-            current_chkp_idx = min(self.checkpoint_index[i], len(self.checkpoints) - 1)
+            current_chkp_idx = self.checkpoint_index[i]
             prev_chkp_idx = max(0, current_chkp_idx - 1)
-            next_chkp_idx = min(current_chkp_idx + 1, len(self.checkpoints) - 1)
-            four_chkp_idx = min(current_chkp_idx + 4, len(self.checkpoints) - 1)
-            five_chkp_idx = min(current_chkp_idx + 5, len(self.checkpoints) - 1)
+            next_chkp_idx = current_chkp_idx + 1
+            four_chkp_idx = current_chkp_idx + 4
+            five_chkp_idx = current_chkp_idx + 5
+
+            # Calculate direction of last path segment
+            P_last = self.checkpoints[len(self.checkpoints) - 1]['pos'].copy()
+            P_before_last = self.checkpoints[len(self.checkpoints) - 2]['pos'].copy()
+            direction_last_path = P_last - P_before_last
 
             # Checkpoint positions
-            current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
             prev_chkp_pos = self.checkpoints[prev_chkp_idx]['pos']
-            next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
-            four_chkp_pos = self.checkpoints[four_chkp_idx]['pos']
-            five_chkp_pos = self.checkpoints[five_chkp_idx]['pos']
+            if current_chkp_idx <= len(self.checkpoints) - 1:
+                current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
+            else:
+                multiplier = current_chkp_pos - (len(self.checkpoints) - 1)
+                current_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + multiplier * direction_last_path
+            if next_chkp_idx <= len(self.checkpoints) - 1:
+                next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
+            else:
+                multiplier = next_chkp_idx - (len(self.checkpoints) - 1)
+                next_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + multiplier * direction_last_path
+            if four_chkp_idx <= len(self.checkpoints) - 1:
+                four_chkp_pos = self.checkpoints[four_chkp_idx]['pos']
+            else:
+                multiplier = four_chkp_idx - (len(self.checkpoints) - 1)
+                four_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + multiplier * direction_last_path
+            if five_chkp_idx <= len(self.checkpoints) - 1:
+                five_chkp_pos = self.checkpoints[five_chkp_idx]['pos']
+            else:
+                multiplier = five_chkp_idx - (len(self.checkpoints) - 1)
+                five_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + multiplier * direction_last_path
 
             # Distances to checkpoints
             norm_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - current_chkp_pos)),
@@ -1018,21 +1039,17 @@ class PySimEnv(BaseEnv):
         if collinear:
             dist_A_Pk = ((x_A - x_k) ** 2 + (y_A - y_k) ** 2) ** 0.5  # Distance between and the current checkpoint
             if dist_A_Pk > R_k:  # |A Pk| > Rk
-                print(1)
                 # LOS angle (desired course angle) in radians
                 LOS_angle = math.atan2(y_loss - y, x_loss - x)
             else:  # |A Pk| < Rk
-                print(2)
                 # LOS position Ploss is replaced by current waypoint Pk+1
                 LOS_angle = math.atan2(y_k_plus_1 - y, x_k_plus_1 - x)
         else:
             dist_P_Pk = ((x - x_k) ** 2 + (y - y_k) ** 2) ** 0.5  # Distance between and the current checkpoint
             if dist_P_Pk > 2 * R_k:  # |P Pk| > 2*Rk
                 if L_A < dist_P_Pk:  # LA < |P Pk|
-                    print(3)
                     LOS_angle = math.atan2(y_loss - y, x_loss - x)
                 else:  # LA > |P Pk|
-                    print(4)
                     # Change look ahead distance from LA to L'A
                     L_accent_A = L_A - ((x_k - x_A)**2 + (y_k - y_A)**2)**0.5
 
@@ -1044,7 +1061,6 @@ class PySimEnv(BaseEnv):
                     LOS_angle = math.atan2(y_accent_loss - y, x_accent_loss - x)
             else:  # |P Pk| < 2*Rk
                 # The checkpoint Pk becomes replaced by Pk+1 (next checkpoint becomes current checkpoint), same for Pk-1
-                print(5)
                 x_k_min_1, y_k_min_1 = x_k, y_k
                 x_k, y_k = x_k_plus_1, y_k_plus_1
 
