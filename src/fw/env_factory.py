@@ -20,15 +20,34 @@ class EnvironmentRegistryError(Exception):
 def _normalize_configuration(configuration):
     """Normalize placeholder configuration values to stable runtime objects.
 
-    The framework historically used ``[]`` as a stand-in for "no extra
-    configuration". Newer code expects dictionary-like configuration objects,
-    so an empty sequence must be treated the same as an empty mapping.
+    A 'configuration' is a dict of key-value pairs that callers pass when
+    requesting an environment, e.g. {"training_mode": True, "max_steps": 500}.
+    Inside the factory and environment constructors, configuration values are
+    read by key (cfg.get("training_mode", True)), so the object MUST behave
+    like a dict — supporting membership tests, equality comparisons and .get().
+
+    'Normalizing' means converting whatever the caller passed into a plain dict
+    so all downstream code can rely on a single, consistent type.  Three input
+    cases are handled:
+
+      - None          → returned as-is; signals "no configuration provided yet"
+                        (the factory will refuse to create a new instance without one).
+      - Mapping       → copied into a plain dict; this covers OrderedDict,
+                        MappingProxyType, custom mappings, etc.
+      - [] or ()      → converted to {}; historically callers used an empty list
+                        as a shorthand for "no configuration", but an empty list
+                        does not support .get() or key-based equality checks.
+                        Converting it to an empty dict makes it safe to use
+                        everywhere a dict is expected, without changing the
+                        semantic meaning ("no extra settings").
+      - anything else → returned unchanged (unknown type; let the caller decide).
     """
     if configuration is None:
         return None
     if isinstance(configuration, Mapping):
         return dict(configuration)
     if isinstance(configuration, (list, tuple)) and len(configuration) == 0:
+        # Empty list/tuple → empty dict. See docstring above for rationale.
         return {}
     return configuration
 
