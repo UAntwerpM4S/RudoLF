@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import patch
 
 from fw.env_factory import (
     _Factory,

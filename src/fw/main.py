@@ -70,7 +70,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
     if not configured_env_names:
         print("[main] No environments remaining after AirSim fallback. Exiting.")
         raise SystemExit(1)
-
     # Ensure all environments are registered once
     initialize_all_environments()
 

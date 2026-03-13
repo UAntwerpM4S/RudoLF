@@ -20,7 +20,7 @@ import json
 import ipaddress
 import logging
 from pathlib import Path
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)

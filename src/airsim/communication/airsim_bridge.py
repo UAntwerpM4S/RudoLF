@@ -41,8 +41,6 @@ import os
 from collections import deque
 from typing import Any, Dict, Optional
 
-import numpy as np
-
 from airsim.config.airsim_config import (
     AirSimConfig,
     DEFAULT_AIRSIM_SAVE_SLOT,
@@ -467,7 +465,9 @@ class AirSimBridge:
         computes the trajectory and we only use UE5 for rendering.
         
         Args:
-            x, y, z: Coordinates in AirSim NED frame.
+            x: X coordinate in AirSim NED frame.
+            y: Y coordinate in AirSim NED frame.
+            z: Z coordinate in AirSim NED frame.
             yaw: Yaw angle in radians in AirSim NED frame.
             preserve_current_z: Keep the current UE5 heave value instead of
                 forcing the supplied ``z`` each frame.
@@ -522,7 +522,9 @@ class AirSimBridge:
 
         Args:
             object_name: Exact actor name as shown in the UE5 Outliner.
-            x, y, z: Coordinates in AirSim NED frame.
+            x: X coordinate in AirSim NED frame.
+            y: Y coordinate in AirSim NED frame.
+            z: Z coordinate in AirSim NED frame.
             yaw: Yaw angle in radians in AirSim NED frame.
         """
         if not self._ensure_connected():
