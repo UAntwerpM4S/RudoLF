@@ -897,19 +897,22 @@ class PySimEnv(BaseEnv):
         max_speed = self.ships[i].specifications.surge_limits[1]
         rudder_change = abs(self.performed_action[i][0] - self.previous_action[i][0])
         max_rudder_change = self.ships[i].specifications.max_rudder_rate * self.time_step / self.ships[i].specifications.max_rudder_angle  # rad/s * s * action/rad
+        heading_error = self._calculate_heading_error(self.los_guidance_heading(i=i), self.phys_sims[i].state.heading)
 
         # Reward components
         R_forward = + raw_progress / (max_speed * self.time_step)
+        R_heading_alignment = - 2.0 * abs(heading_error)
         R_CTE_change = - 0.009 * ((cross_track_error - prev_cross_track_error) / max_speed) * min(120.0, cross_track_error)
         R_CTE_change = 3 * R_CTE_change if R_CTE_change < 0 else R_CTE_change
-        R_CTE = - 0.005 * cross_track_error
+        R_CTE = - 0.0025 * cross_track_error
         R_rudder_angle_change = - 0.025 * (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -10
         R_rudder_angle = - 0.05 * (abs(self.performed_action[i][0]) / 0.2) ** 2
 
         # Combine weighted rewards and penalties
         reward = (
                 R_forward +
-                R_CTE_change +
+                R_heading_alignment +
+                #R_CTE_change +
                 R_CTE +
                 R_rudder_angle_change +
                 R_rudder_angle
