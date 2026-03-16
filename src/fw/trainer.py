@@ -191,7 +191,7 @@ class Trainer:
                             other_env_name=policy_name,
                         )
 
-                        self._agent.visualize_trained_model(num_episodes=50, live_animation=self._config["live_animation"], airsim_bridge=airsim_bridge)
+                        self._agent.visualize_trained_model(num_episodes=5, live_animation=self._config["live_animation"], airsim_bridge=airsim_bridge)
                 except RuntimeError as e:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
 

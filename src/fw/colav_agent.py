@@ -333,6 +333,8 @@ class ColavAgent:
                 collisions_by_type = defaultdict(int)
                 collision_points = []
                 all_rewards = []
+                all_collision_sides = defaultdict(int)
+                all_collision_cte = []
 
 
                 for episode in range(num_episodes):
@@ -385,6 +387,9 @@ class ColavAgent:
                             ctype = info.get("collision_type", "unknown") if info else "unknown"
                             collisions_by_type[ctype] += 1
                             collision_points.append(np.copy(env.ship_pos))
+                            cside = info.get("collision_side","unknown") if info else "unknown"
+                            all_collision_sides[cside] += 1
+                            all_collision_cte.append(info.get("collision_cte", "unknown") if info else "unknown")
 
                             if replay_collision_episodes:
                                 first_collision_step = len(episode_actions)
@@ -441,6 +446,12 @@ class ColavAgent:
                 print(f"Mean Heading Error Integral (mHEI): {mHEI:.2f} rad")
                 print(f"Collisions: {collisions_total}/{num_episodes} "
                       f"({100.0 * collisions_total / max(1, num_episodes):.1f}%)")
+                if all_collision_cte and all_collision_sides:
+                    print(f"Max CTE at point of collision: {np.max(all_collision_cte)}")
+                    print(f"Min CTE at point of collision: {np.min(all_collision_cte)}")
+                    print(f"Average CTE at point of collision: {np.mean(all_collision_cte)}")
+                    print(f"Collision sides:", dict(all_collision_sides))
+
                 if collisions_by_type:
                     print("Collision types:", dict(collisions_by_type))
 
