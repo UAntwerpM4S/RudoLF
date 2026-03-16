@@ -3,12 +3,12 @@
 All tests are fully mocked — no UE5 or CosysAirSim is required.
 """
 
-import math
-import os
 import csv
+import importlib
+import sys
 import pytest
 import numpy as np
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 
 # ── Shared helpers ─────────────────────────────────────────
@@ -65,13 +65,24 @@ def _make_mock_airsim_module():
 
 
 def _make_env(mock_module):
-    """Build an ``AirSimEnv`` with cosysairsim fully mocked."""
-    import sys
+    """Build an ``AirSimEnv`` with cosysairsim fully mocked.
+
+    The real AirSimEnv constructor waits for a simulated UE5 reload cycle.
+    In tests we short-circuit that sequence by controlling reachability checks
+    and making sleeps return immediately.
+    """
     sys.modules["cosysairsim"] = mock_module
 
-    with patch(
-        "airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True
-    ):
+    bridge_module = importlib.import_module("airsim.communication.airsim_bridge")
+    env_module = importlib.import_module("airsim.environments.airsim_env")
+
+    reachability_sequence = [True, False, True, True]
+
+    with patch.object(
+        bridge_module,
+        "is_ue5_reachable",
+        side_effect=reachability_sequence,
+    ), patch.object(bridge_module.time, "sleep", return_value=None), patch.object(env_module.time, "sleep", return_value=None):
         from airsim.environments.airsim_env import AirSimEnv
 
         env = AirSimEnv(
@@ -96,14 +107,19 @@ def mock_airsim():
         A tuple ``(env, client)`` where ``env`` is the ready-to-use
         ``AirSimEnv`` and ``client`` is the mock ``CarClient``.
     """
-    import sys
-
     mock_module, client = _make_mock_airsim_module()
     sys.modules["cosysairsim"] = mock_module
 
-    with patch(
-        "airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True
-    ):
+    bridge_module = importlib.import_module("airsim.communication.airsim_bridge")
+    env_module = importlib.import_module("airsim.environments.airsim_env")
+
+    reachability_sequence = [True, False, True, True]
+
+    with patch.object(
+        bridge_module,
+        "is_ue5_reachable",
+        side_effect=reachability_sequence,
+    ), patch.object(bridge_module.time, "sleep", return_value=None), patch.object(env_module.time, "sleep", return_value=None):
         from airsim.environments.airsim_env import AirSimEnv
 
         env = AirSimEnv(
@@ -343,6 +359,18 @@ class TestCrossTrackCSV:
         assert "checkpoint_index" in info
         assert isinstance(info["checkpoint_index"], int)
 
+    def test_step_info_contains_latency_fields(self, mock_airsim):
+        """Lock-step telemetry must expose latency and UE5 timestamp info."""
+        env, _ = mock_airsim
+        action = np.array([0.0, 0.0], dtype=np.float32)
+        _, _, _, _, info = env.step(action)
+        assert "physics_wait_s" in info
+        assert "step_latency_s" in info
+        assert "ue5_timestamp" in info
+        assert isinstance(info["physics_wait_s"], float)
+        assert isinstance(info["step_latency_s"], float)
+        assert isinstance(info["ue5_timestamp"], int)
+
     def test_episode_csv_logging(self, mock_airsim, tmp_path):
         """T-012: step() must write one telemetry row to the episode CSV.
 
@@ -376,6 +404,7 @@ class TestCrossTrackCSV:
             "ship_x", "ship_y", "heading_deg", "speed",
             "cross_track_error", "checkpoint_index",
             "reward", "steering", "throttle",
+            "physics_wait_s", "step_latency_s", "ue5_timestamp",
         }
         assert required_columns.issubset(rows[0].keys()), (
             f"Missing columns: {required_columns - set(rows[0].keys())}"

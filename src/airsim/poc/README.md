@@ -8,7 +8,7 @@ modified.
 ## Contents
 
 | File                   | Original location                    | Description                                                                 |
-| ---------------------- | ------------------------------------ | --------------------------------------------------------------------------- |
+|------------------------|--------------------------------------|-----------------------------------------------------------------------------|
 | `airsim_bridge_PID.py` | `fw/simulators/airsim_bridge_PID.py` | PID heading-tracking bridge that maps Fossen outputs to AirSim CarControls. |
 | `train_airsim.py`      | `fw/air_sim/train_airsim.py`         | Entry point for RL training inside UE5 via CosysAirSim.                     |
 

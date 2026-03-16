@@ -1,4 +1,4 @@
-"""Coordinate calibration tool for Fossen ↔ AirSim mapping.
+"""Coordinate calibration tool for Fossen <-> AirSim mapping.
 
 Run this script while UE5 + CosysAirSim is running. It will:
 1. Ask you to drive the vehicle to 2 known reference points
@@ -16,7 +16,10 @@ import time
 import numpy as np
 from pathlib import Path
 
-from communication.coord_transform import CoordTransform
+try:
+    from airsim.communication.coord_transform import CoordTransform
+except ImportError:
+    from communication.coord_transform import CoordTransform
 
 _THIS_DIR = Path(__file__).resolve().parent
 _CONFIG_DIR = _THIS_DIR.parent / "config"
@@ -63,10 +66,10 @@ def _detect_origin_drift(client, saved_config: dict) -> np.ndarray:
 
     mag = np.linalg.norm(drift)
     if mag > 0.5:
-        print(f"\n  ⚠  AirSim origin drift detected: Δx={drift[0]:.2f}, Δy={drift[1]:.2f}  ({mag:.1f} m)")
-        print("      → Auto-correcting all coordinates.")
+        print(f"\n  WARNING: AirSim origin drift detected: dx={drift[0]:.2f}, dy={drift[1]:.2f}  ({mag:.1f} m)")
+        print("      -> Auto-correcting all coordinates.")
     else:
-        print(f"\n  ✓  No origin drift ({mag:.2f} m).")
+        print(f"\n  OK: No origin drift ({mag:.2f} m).")
 
     return drift
 
@@ -115,7 +118,7 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
         print(f"\n  Re-using saved calibration from: {cal_path}")
         return fossen_A, fossen_B, ue5_A, ue5_B, mirror_x, mirror_y, 0.0, 0.0
 
-    # ── Ask for Fossen reference points ──
+    # Ask for Fossen reference points
     print()
     custom_fossen = input("Use trajectory start/end as Fossen points? [Y/n]: ").strip().lower()
     if custom_fossen == "n":
@@ -129,7 +132,7 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
         fossen_A = traj_start
         fossen_B = traj_end
 
-    # ── Get AirSim points ──
+    # Get AirSim points
     if choice == "3":
         print()
         uax = float(input("AirSim point A — x: "))
@@ -154,7 +157,7 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
         ue5_B = np.array([pose_B.position.x_val, pose_B.position.y_val])
         print(f"  UE5 point B measured: x={ue5_B[0]:.2f}, y={ue5_B[1]:.2f}")
 
-    # ── Mirror & offset ──
+    # Mirror and offset
     print()
     flip_x = input("Is the UE5 X-axis flipped relative to Fossen? [y/N]: ").strip().lower()
     flip_y = input("Is the UE5 Y-axis flipped relative to Fossen? (Usually Yes for UE5) [Y/n]: ").strip().lower()
@@ -246,7 +249,7 @@ def _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B) -> None
     print(f"\n  Verification A: ({check_A[0]:.2f}, {check_A[1]:.2f}) vs ({ue5_A[0]:.2f}, {ue5_A[1]:.2f}) — error: {err_A:.4f}")
     print(f"  Verification B: ({check_B[0]:.2f}, {check_B[1]:.2f}) vs ({ue5_B[0]:.2f}, {ue5_B[1]:.2f}) — error: {err_B:.4f}")
 
-    # ── Draw polygon (green) ──
+    # Draw polygon (green)
     print("\nDrawing Fossen polygon in UE5 for visual verification...")
     csv_path = _ENVIRONMENTS_DIR / "env_Sche_no_scale.csv"
     polygon = np.loadtxt(csv_path, delimiter=",", skiprows=1)
@@ -267,7 +270,7 @@ def _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B) -> None
                 is_persistent=True,
             )
 
-    # ── Draw trajectory (yellow) ──
+    # Draw trajectory (yellow)
     ship_pos = np.array([2245.0, -47.0])
     traj_path = _ENVIRONMENTS_DIR / "trajectory_points_no_scale.csv"
     traj_data = np.loadtxt(traj_path, delimiter=",", skiprows=1)
@@ -291,7 +294,7 @@ def _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B) -> None
                 is_persistent=True,
             )
 
-    # ── Draw start (blue) and target (red) ──
+    # Draw start (blue) and target (red) dots
     start_ux, start_uy = coord.fossen_to_airsim_2d(ship_pos[0], ship_pos[1])
     target_ux, target_uy = coord.fossen_to_airsim_2d(*fossen_B)
 
@@ -316,6 +319,50 @@ def _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B) -> None
     print()
 
 
+def load_saved_calibration_reference(
+    client,
+    calibration_path: Path | None = None,
+    draw_reference: bool = True,
+) -> tuple[CoordTransform, dict]:
+    """Load saved calibration, apply drift correction, and optionally redraw it.
+
+    Args:
+        client: Active ``cosysairsim.CarClient`` instance.
+        calibration_path: Optional override for ``calibration.json``.
+        draw_reference: Whether to redraw the saved reference overlay in UE5.
+
+    Returns:
+        A tuple ``(coord, config)`` containing the corrected transform and
+        calibration dictionary after any drift adjustment.
+    """
+    cal_path = Path(calibration_path) if calibration_path else _CONFIG_DIR / "calibration.json"
+    with open(cal_path, "r") as f:
+        saved = json.load(f)
+
+    drift = _detect_origin_drift(client, saved)
+    config = dict(saved)
+
+    ue5_A = np.array(saved["airsim_origin"], dtype=np.float64) + drift
+    fossen_A = np.array(saved["fossen_origin"], dtype=np.float64)
+    config["airsim_origin"] = ue5_A.tolist()
+
+    _, traj_end = _load_trajectory_endpoints()
+    fossen_B = np.array(saved.get("fossen_endpoint", traj_end), dtype=np.float64)
+    if "airsim_endpoint" in saved:
+        ue5_B = np.array(saved["airsim_endpoint"], dtype=np.float64) + drift
+    else:
+        preview = CoordTransform(config)
+        ux, uy = preview.fossen_to_airsim_2d(fossen_B[0], fossen_B[1])
+        ue5_B = np.array([ux, uy], dtype=np.float64)
+    config["airsim_endpoint"] = ue5_B.tolist()
+
+    coord = CoordTransform(config)
+    if draw_reference:
+        _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B)
+
+    return coord, config
+
+
 def run_calibration() -> None:
     """Run the interactive Fossen ↔ AirSim calibration wizard.
 
@@ -335,7 +382,7 @@ def run_calibration() -> None:
     traj_start, traj_end = _load_trajectory_endpoints()
 
     print("=" * 60)
-    print("  FOSSEN ↔ AIRSIM COORDINATE CALIBRATION")
+    print("  FOSSEN <-> AIRSIM COORDINATE CALIBRATION")
     print("=" * 60)
     print()
     print(f"Trajectory START (Fossen): ({traj_start[0]:.1f}, {traj_start[1]:.1f})")
