@@ -1013,22 +1013,25 @@ class PySimEnv(BaseEnv):
 
         # previous checkpoint
         if current_checkpoint_idx > 0:
-            P_k_min_1 = self.checkpoints[current_checkpoint_idx-1]['pos'].copy()
+            P_k_min_1 = self.checkpoints[current_checkpoint_idx - 1]['pos'].copy()
             x_k_min_1, y_k_min_1 = P_k_min_1[:]
         else:
             # if none exists, create a virtual one behind the ship
-            P_k_min_1 = P
-            x_k_min_1, y_k_min_1 = ship_y
+            P_k_min_1 = P_k - (P_k_plus_1 - P_k)
+            x_k_min_1, y_k_min_1 = P_k_min_1[:]
 
         # Find the orthogonal projection A(x_A, y_A) of the ship on the path from the previous to the next checkpoint
-        x_A = x_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (x_k - x_k_min_1)
-        y_A = y_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (y_k - y_k_min_1)
+        x_A = x_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / (
+                    (x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (x_k - x_k_min_1)
+        y_A = y_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / (
+                    (x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (y_k - y_k_min_1)
 
         # Calculate the look ahead distance L_A
         c = 0.5  # Coefficient for LOS look ahead horizon (default is 0.5 according to FH PhD thesis p. 148)
-        delta_y = ((x - x_A)**2 + (y - y_A)**2) ** 0.5  # Cross-track error
-        L_pp = 0.95 * self.ships[i].specifications.length  # Length between perpendiculars (a little bit smaller than the ship length)
-        L_A = ((delta_y + c * L_pp)**2 - (delta_y)**2) ** 0.5
+        delta_y = ((x - x_A) ** 2 + (y - y_A) ** 2) ** 0.5  # Cross-track error
+        L_pp = 0.95 * self.ships[
+            i].specifications.length  # Length between perpendiculars (a little bit smaller than the ship length)
+        L_A = ((delta_y + c * L_pp) ** 2 - (delta_y) ** 2) ** 0.5
 
         # Calculate the LOS position Ploss(x_loss, y_loss)
         x_loss = x_A + ((x_k - x_k_min_1) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2) ** 0.5) * L_A
@@ -1042,7 +1045,7 @@ class PySimEnv(BaseEnv):
         heading_P_k_min_1_P_k = self._safe_heading_from_vector(P_k - P_k_min_1)
         heading_P_k_P_k_plus_1 = self._safe_heading_from_vector(P_k_plus_1 - P_k)
         heading_difference = self.normalize_angle(heading_P_k_min_1_P_k - heading_P_k_P_k_plus_1)
-        collinear = abs(heading_difference) < (1/57)   # Are the previous, current, and next checkpoint collinear
+        collinear = abs(heading_difference) < (1 / 57)  # Are the previous, current, and next checkpoint collinear
         if collinear:
             dist_A_Pk = ((x_A - x_k) ** 2 + (y_A - y_k) ** 2) ** 0.5  # Distance between and the current checkpoint
             if dist_A_Pk > R_k:  # |A Pk| > Rk
@@ -1058,11 +1061,13 @@ class PySimEnv(BaseEnv):
                     LOS_angle = math.atan2(y_loss - y, x_loss - x)
                 else:  # LA > |P Pk|
                     # Change look ahead distance from LA to L'A
-                    L_accent_A = L_A - ((x_k - x_A)**2 + (y_k - y_A)**2)**0.5
+                    L_accent_A = L_A - ((x_k - x_A) ** 2 + (y_k - y_A) ** 2) ** 0.5
 
                     # Calculate new heading point P'loss
-                    x_accent_loss = x_k + ((x_k_plus_1 - x_k) / ((x_k_plus_1 - x_k) ** 2 + (y_k_plus_1 - y_k) ** 2) ** 0.5) * L_accent_A
-                    y_accent_loss = y_k + ((y_k_plus_1 - y_k) / ((x_k_plus_1 - x_k) ** 2 + (y_k_plus_1 - y_k) ** 2) ** 0.5) * L_accent_A
+                    x_accent_loss = x_k + ((x_k_plus_1 - x_k) / (
+                                (x_k_plus_1 - x_k) ** 2 + (y_k_plus_1 - y_k) ** 2) ** 0.5) * L_accent_A
+                    y_accent_loss = y_k + ((y_k_plus_1 - y_k) / (
+                                (x_k_plus_1 - x_k) ** 2 + (y_k_plus_1 - y_k) ** 2) ** 0.5) * L_accent_A
 
                     # LOS angle (desired course angle) in radians
                     LOS_angle = math.atan2(y_accent_loss - y, x_accent_loss - x)
@@ -1072,13 +1077,16 @@ class PySimEnv(BaseEnv):
                 x_k, y_k = x_k_plus_1, y_k_plus_1
 
                 # Find the orthogonal projection A(x_A, y_A) of the ship on the path from the previous to the next checkpoint
-                x_A = x_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (x_k - x_k_min_1)
-                y_A = y_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (y_k - y_k_min_1)
+                x_A = x_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / (
+                            (x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (x_k - x_k_min_1)
+                y_A = y_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / (
+                            (x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (y_k - y_k_min_1)
 
                 # Calculate the look ahead distance L_A
                 c = 0.5  # Coefficient for LOS look ahead horizon (default is 0.5 according to FH PhD thesis p. 148)
                 delta_y = ((x - x_A) ** 2 + (y - y_A) ** 2) ** 0.5  # Cross-track error
-                L_pp = 0.95 * self.ships[i].specifications.length  # Length between perpendiculars (a little bit smaller than the ship length)
+                L_pp = 0.95 * self.ships[
+                    i].specifications.length  # Length between perpendiculars (a little bit smaller than the ship length)
                 L_A = ((delta_y + c * L_pp) ** 2 - (delta_y) ** 2) ** 0.5
 
                 # Calculate the LOS position Ploss(x_loss, y_loss)
