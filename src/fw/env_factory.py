@@ -387,16 +387,20 @@ class AirSimEnvironment(BaseEnvironment):
             else:
                 fallback_name = other_envs[0]
                 print(f"[env_factory] Falling back to {fallback_name}.")
+
+                # Ensure the environment name reflects what is actually being used.
+                # This affects logging output (e.g. "Switched to environment: ...").
+                self._name = fallback_name
                 fallback_name_lower = str(fallback_name).strip().lower()
-                
+
                 if fallback_name_lower in ("fhsimenv", "fhsim"):
-                    self._env = FhSimEnvironment(name, configuration)._env
+                    self._env = FhSimEnvironment(fallback_name, configuration)._env
                 elif fallback_name_lower in ("lunarlander", "lunar"):
-                    self._env = LunarEnvironment(name, configuration)._env
+                    self._env = LunarEnvironment(fallback_name, configuration)._env
                 elif fallback_name_lower in ("pysimpolarenv", "pysimpolar", "polar"):
-                    self._env = PySimPolarEnvironment(name, configuration)._env
+                    self._env = PySimPolarEnvironment(fallback_name, configuration)._env
                 else:
-                    self._env = PySimEnvironment(name, configuration)._env
+                    self._env = PySimEnvironment(fallback_name, configuration)._env
 
 
 class LunarEnvironment(BaseEnvironment):

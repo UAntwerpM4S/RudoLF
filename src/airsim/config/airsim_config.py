@@ -137,8 +137,8 @@ def get_default_runtime_settings() -> Dict[str, Any]:
         "visualization": {
             "fossen_visualise": False,
             "inference_visualise": False,
-            "fossen_model_path": "src/models/PySimEnv_PPO_policy.zip",
-            "inference_model_path": "src/models/AirSimEnv_PPO_policy.zip",
+            "fossen_model_path": "models/PySimEnv_PPO_policy.zip",
+            "inference_model_path": "models/AirSimEnv_PPO_policy.zip",
             "fossen_environment": "auto",
             "mirror_controls_in_ue5": False,
             "animate_steering_in_ue5": True,

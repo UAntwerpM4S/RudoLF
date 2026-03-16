@@ -75,8 +75,11 @@ def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("fw.main_with_airsim", run_name="__main__")
 
+    from pathlib import Path
+
     assert exc.value.code == 0
-    assert called["model_path"] == "src/models/PySimEnv_PPO_policy.zip"
+    assert Path(called["model_path"]).name == "PySimEnv_PPO_policy.zip"
+    assert "models" in Path(called["model_path"]).parts
     assert called["env_name"] == "auto"
     assert called["port"] == 41451
     assert called["num_episodes"] == 2

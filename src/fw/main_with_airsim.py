@@ -11,9 +11,10 @@ set to ``"AirSimEnv"``.
 """
 
 if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
-    import os
     import logging
     import multiprocessing
+    from pathlib import Path
+    import os
 
     logging.basicConfig(
         level=logging.INFO,
@@ -43,6 +44,19 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # AirSim runtime only controls AirSim-specific behavior.
     # The selected framework environment is handled by fw.main / fw.config.
     _action_was_explicit = "FW_MAIN_ACTION_OVERRIDE" in os.environ
+
+    def _resolve_model_path(p: str) -> str:
+        """Resolve model paths relative to the project src directory.
+
+        Supports legacy values like "src/models/..." while keeping runtime
+        behavior consistent regardless of the current working directory.
+        """
+        path = Path(p)
+        if path.is_absolute():
+            return str(path)
+        if path.parts and path.parts[0] == "src":
+            path = Path(*path.parts[1:])
+        return str((Path(__file__).resolve().parents[1] / path).resolve())
     action = str(os.environ.get("FW_MAIN_ACTION_OVERRIDE", "train")).strip().lower()
     if action not in {"train", "visualize"}:
         action = "train"
@@ -139,7 +153,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
             logging.getLogger("airsim").setLevel(logging.INFO)
             run_visualise_fossen(
-                model_path=str(visualization_cfg.get("fossen_model_path", "src/models/PySimEnv_PPO_policy.zip")),
+                model_path=_resolve_model_path(str(visualization_cfg.get("fossen_model_path", "models/PySimEnv_PPO_policy.zip"))),
                 env_name=str(visualization_cfg.get("fossen_environment", "auto")),
                 ip=ip,
                 port=port,
@@ -171,7 +185,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
             logging.getLogger("airsim").setLevel(logging.INFO)
             run_inference(
-                model_path=str(visualization_cfg.get("inference_model_path", "src/models/AirSimEnv_PPO_policy.zip")),
+                model_path=_resolve_model_path(str(visualization_cfg.get("inference_model_path", "models/AirSimEnv_PPO_policy.zip"))),
                 ip=ip,
                 port=port,
                 max_steps=max_steps,
