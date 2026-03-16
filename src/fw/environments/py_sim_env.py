@@ -565,7 +565,8 @@ class PySimEnv(BaseEnv):
                 1.0,    # Yaw rate
                 1.0,    # Distance to current checkpoint
                 1.0,    # Distance to checkpoint+1
-                1.0,    # Distance to checkpoint+5
+                1.0,    # Distance to checkpoint+2
+                1.0,    # Distance to checkpoint+3
                 1.0,    # Cross-track error
                 1.0,    # Heading error
                 1.0,    # Heading error
@@ -679,6 +680,8 @@ class PySimEnv(BaseEnv):
             current_chkp_idx = self.checkpoint_index[i]
             prev_chkp_idx = max(0, current_chkp_idx - 1)
             next_chkp_idx = current_chkp_idx + 1
+            next2_chkp_idx = current_chkp_idx + 2
+            next3_chkp_idx = current_chkp_idx + 3
             four_chkp_idx = current_chkp_idx + 4
             five_chkp_idx = current_chkp_idx + 5
 
@@ -699,6 +702,16 @@ class PySimEnv(BaseEnv):
             else:
                 multiplier = next_chkp_idx - (len(self.checkpoints) - 1)
                 next_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
+            if next2_chkp_idx <= len(self.checkpoints) - 1:
+                next2_chkp_pos = self.checkpoints[next2_chkp_idx]['pos']
+            else:
+                multiplier = next2_chkp_idx - (len(self.checkpoints) - 1)
+                next2_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
+            if next3_chkp_idx <= len(self.checkpoints) - 1:
+                next3_chkp_pos = self.checkpoints[next3_chkp_idx]['pos']
+            else:
+                multiplier = next3_chkp_idx - (len(self.checkpoints) - 1)
+                next3_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
             if four_chkp_idx <= len(self.checkpoints) - 1:
                 four_chkp_pos = self.checkpoints[four_chkp_idx]['pos']
             else:
@@ -717,6 +730,12 @@ class PySimEnv(BaseEnv):
             norm_next_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - next_chkp_pos)),
                                                            range=(0, 2 * 2000),
                                                            half_value=1.5 * 370)
+            norm_next2_distance = self._logarithmic_scaling(value=np.linalg.norm(self.ship_pos[i] - next2_chkp_pos),
+                                                            range=(0, 3 * 2000),
+                                                            half_value=2.5 * 370)  # np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
+            norm_next3_distance = self._logarithmic_scaling(value=np.linalg.norm(self.ship_pos[i] - next3_chkp_pos),
+                                                            range=(0, 4 * 2000),
+                                                            half_value=3.5 * 370)  # np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
             norm_five_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - five_chkp_pos)),
                                                            range=(0, 5 * 2000),
                                                            half_value=4.5 * 370)  # np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
@@ -761,8 +780,22 @@ class PySimEnv(BaseEnv):
                 0.0
             )
 
-            # To next checkpoint
+            # To checkpoint+2
             heading_error3 = self._calculate_heading_error(
+                self._safe_heading_from_vector(next2_chkp_pos - self.ship_pos[i]),
+                self.phys_sims[i].state.heading,
+                0.0
+            )
+
+            # To checkpoint+3
+            heading_error4 = self._calculate_heading_error(
+                self._safe_heading_from_vector(next3_chkp_pos - self.ship_pos[i]),
+                self.phys_sims[i].state.heading,
+                0.0
+            )
+
+            # To next checkpoint
+            heading_error5 = self._calculate_heading_error(
                 self._safe_heading_from_vector(five_chkp_pos - self.ship_pos[i]),
                 self.phys_sims[i].state.heading,
                 0.0
@@ -780,14 +813,15 @@ class PySimEnv(BaseEnv):
                 norm_velocities,                        # Normalized velocities
                 [2 * norm_distance - 1],                # Distance to current checkpoint
                 [2 * norm_next_distance - 1],           # Distance to next checkpoint
-                [2 * norm_five_distance - 1],           # Distance to next checkpoint
+                [2 * norm_next2_distance - 1],          # Distance to checkpoint+2
+                [2 * norm_next3_distance - 1],          # Distance to checkpoint+3
                 [norm_cross_error],                     # Normalized cross-track error
                 [heading_error / np.pi],                # Normalized heading error
                 [heading_error2 / np.pi],               # Normalized heading error
                 [heading_error3 / np.pi],               # Normalized heading error
+                [heading_error4 / np.pi],               # Normalized heading error
                 [heading_error_parallel / np.pi],       # Normalized heading error
                 [heading_error_parallel2 / np.pi],      # Normalized heading error
-                [heading_error_parallel3 / np.pi],      # Normalized heading error
                 self.performed_action[i][0],            # Previous rudder angle
                 self.los_guidance_heading(i=i) / np.pi, # Optimal LOS guidance
             ])
@@ -918,8 +952,8 @@ class PySimEnv(BaseEnv):
         self.ukc[i] = self.get_keel_clearance()
 
         # Ship information
-        max_speed = self.ships[i].specifications.surge_limits[1]
         rudder_change = abs(self.performed_action[i][0] - self.previous_action[i][0])
+        thrust_change = abs(self.performed_action[i][1] - self.previous_action[i][1])
         max_rudder_change = self.ships[i].specifications.max_rudder_rate * self.time_step / self.ships[i].specifications.max_rudder_angle  # rad/s * s * action/rad
         heading_error = self._calculate_heading_error(self.los_guidance_heading(i=i), self.phys_sims[i].state.heading)
         distance_traveled = abs(np.linalg.norm(self.ship_pos[i] - self.previous_ship_pos[i]))
@@ -927,23 +961,21 @@ class PySimEnv(BaseEnv):
         target_velocity = 4
 
         # Reward components
-        #R_forward = + raw_progress / (max_speed * self.time_step)
-        R_forward = - abs(target_velocity - velocity) / target_velocity
-        R_heading_alignment = - 2.0 * abs(heading_error)
-        R_CTE_change = - 0.009 * ((cross_track_error - prev_cross_track_error) / max_speed) * min(120.0, cross_track_error)
-        #R_CTE_change = 3 * R_CTE_change if R_CTE_change < 0 else R_CTE_change
-        R_CTE = - 0.0025 * cross_track_error
-        R_rudder_angle_change = - 0.2 * (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -10
-        R_rudder_angle = - 0.05 * (abs(self.performed_action[i][0]) / 0.2) ** 2
+        R_forward = - 0.25 * abs(target_velocity - velocity) / target_velocity
+        R_heading_alignment = - 0.5 * abs(heading_error)
+        R_CTE = - 0.00 * cross_track_error
+        R_rudder_angle_change = - 0.4 * (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -1
+        R_rudder_angle = - 0.05 * (abs(self.performed_action[i][0]) / 0.2) ** (2 if abs(self.performed_action[i][0]) < 0.2 else 4)
+        R_thrust_change = 0  # - 0.5 * thrust_change
 
         # Combine weighted rewards and penalties
         reward = (
                 R_forward +
                 R_heading_alignment +
-                #R_CTE_change +
                 R_CTE +
                 R_rudder_angle_change +
-                R_rudder_angle
+                R_rudder_angle +
+                R_thrust_change
         )
         reward = 1 + reward / 5
 
