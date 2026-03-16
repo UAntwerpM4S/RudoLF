@@ -160,7 +160,7 @@ When you launch through `fw.main`, the framework-level selector lives in `fw.con
 
 ```bash
 cd src
-python -m airsim.inference.run_inference --model src/models/AirSimEnv_PPO_policy.zip
+python -m airsim.inference.run_inference --model models/AirSimEnv_PPO_policy.zip
 ```
 
 This runs a saved PPO policy against `AirSimEnv`. For UE5-trained models, actions are mapped directly to `CarControls`. For older Fossen-trained models, the compatibility path inside `AirSimEnv.step()` is used.
@@ -171,7 +171,7 @@ To keep the framework physics authoritative and use UE5 as a renderer:
 
 ```bash
 cd src
-python -m airsim.inference.run_visualise_fossen --model src/models/PySimEnv_PPO_policy.zip
+python -m airsim.inference.run_visualise_fossen --model models/PySimEnv_PPO_policy.zip
 ```
 
 This path steps `PySimEnv` or `FhSimEnv`, converts the resulting framework state with `CoordTransform`, and mirrors it into UE5 through `AirSimBridge`.

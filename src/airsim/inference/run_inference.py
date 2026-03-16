@@ -85,6 +85,22 @@ import torch
 # ── Bootstrap the Python path when run directly (python run_inference.py) ──
 _SRC_DIR = Path(__file__).resolve().parent.parent.parent
 _REPO_ROOT = _SRC_DIR.parent
+
+
+def _resolve_model_path(model_path: str) -> str:
+    """Resolve a model path relative to the project src directory.
+
+    This allows users to keep using "src/models/..." paths (legacy) while
+    ensuring the path is correct regardless of the current working directory.
+    """
+    p = Path(model_path)
+    if p.is_absolute():
+        return str(p)
+    if p.parts and p.parts[0] == "src":
+        p = Path(*p.parts[1:])
+    return str((_SRC_DIR / p).resolve())
+
+
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
@@ -560,7 +576,7 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help=(
             "Path to the .zip model file.  "
-            "Example: src/fw/best_models/PySimEnv_PPO_policy"
+            "Example: models/PySimEnv_PPO_policy.zip"
         ),
     )
 
@@ -643,6 +659,8 @@ if __name__ == "__main__":
 
     args = _build_parser().parse_args()
     force_mode = "ue5" if args.ue5 else ("fossen" if args.fossen else None)
+
+    args.model = _resolve_model_path(args.model)
 
     run_inference(
         model_path=args.model,
