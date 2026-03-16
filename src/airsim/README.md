@@ -120,7 +120,7 @@ tests/
 ### Prerequisites
 
 | Requirement        | Version | Notes                                     |
-| ------------------ | ------- | ----------------------------------------- |
+|--------------------|---------|-------------------------------------------|
 | Python             | ≥ 3.12  |                                           |
 | CosysAirSim        | latest  | `pip install cosysairsim`                 |
 | Unreal Engine 5    | ≥ 5.3   | With the CosysAirSim plugin + water level |
@@ -255,7 +255,7 @@ For high replay speeds, the visualisation no longer insists on time-based interp
 The validated bridge settings live in `airsim/config/airsim_config.py`:
 
 | Parameter               | Default | Description                                 |
-| ----------------------- | ------- | ------------------------------------------- |
+|-------------------------|---------|---------------------------------------------|
 | `use_airsim`            | `True`  | Enable / disable the AirSim bridge          |
 | `ip`                    | `""`    | AirSim server IP, empty meaning localhost   |
 | `port`                  | `41451` | AirSim RPC port                             |
@@ -269,7 +269,7 @@ Higher-level AirSim runtime options for training, inference, and visualisation l
 Training runtime controls include:
 
 | Runtime key                       | Purpose                                                               |
-| --------------------------------- | --------------------------------------------------------------------- |
+|-----------------------------------|-----------------------------------------------------------------------|
 | `training.speed_profile`          | One-switch preset: `safe`, `fast`, `turbo`, or `custom`.              |
 | `training.simulation_speed`       | UE5 speed multiplier used in training mode (`custom` profile).        |
 | `training.frames_per_step`        | Number of UE5 physics frames advanced per RL step (`custom` profile). |
@@ -279,7 +279,7 @@ Training runtime controls include:
 Important visualisation-related settings include:
 
 | Runtime key                  | Purpose                                                                          |
-| ---------------------------- | -------------------------------------------------------------------------------- |
+|------------------------------|----------------------------------------------------------------------------------|
 | `simulation_speed`           | Multiplies UE5 replay speed during training or visualisation.                    |
 | `min_render_hz`              | Sets the minimum wall-clock cadence for UE5 pose pushes during framework replay. |
 | `render_interpolation_steps` | Requests smoothing steps for mirrored framework motion.                          |
@@ -292,7 +292,7 @@ These settings interact: at high `simulation_speed`, the replay may reach a poin
 ## Coordinate Frames
 
 | Frame  | X-axis | Y-axis | Heading reference | Positive direction |
-| ------ | ------ | ------ | ----------------- | ------------------ |
+|--------|--------|--------|-------------------|--------------------|
 | Fossen | East   | North  | From East         | Counter-clockwise  |
 | AirSim | North  | East   | From North (NED)  | Clockwise          |
 
@@ -307,7 +307,7 @@ The `CoordTransform` class handles all conversions, including scale, rotation, a
 When `csv_log_path` is configured, the bridge can export buffered vehicle telemetry with fields returned by `AirSimBridge.get_state()`, including:
 
 | Column                                | Unit  | Description                   |
-| ------------------------------------- | ----- | ----------------------------- |
+|---------------------------------------|-------|-------------------------------|
 | `timestamp`                           | —     | AirSim timestamp              |
 | `speed`                               | m/s   | AirSim-reported vehicle speed |
 | `gear`                                | —     | Current gear                  |
@@ -321,7 +321,7 @@ Use `python -m airsim.tools.analyze_telemetry` for offline inspection, and see [
 `AirSimEnv` can additionally write episode-scoped CSV telemetry with the following extra fields:
 
 | Column           | Unit | Description                                          |
-| ---------------- | ---- | ---------------------------------------------------- |
+|------------------|------|------------------------------------------------------|
 | `physics_wait_s` | s    | Time spent waiting for a newer UE5 physics timestamp |
 | `step_latency_s` | s    | Total wall-clock duration of the environment step    |
 | `ue5_timestamp`  | —    | Last timestamp reported by `getCarState()`           |
