@@ -297,7 +297,7 @@ class PySimEnv(BaseEnv):
         self.polygon_shape = Polygon(self.obstacles)
 
         # Load trajectory
-        self.path_name = 'trajectory_points_no_scale.csv'
+        self.path_name = 'trajectory_points_no_scale_alternative.csv'
         path = load_csv_strict(self.path_name)
 
         # Preprocess path (stub currently returns same path)
