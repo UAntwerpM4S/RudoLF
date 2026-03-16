@@ -542,9 +542,10 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Surge velocity
                 -1.0,   # Sway velocity
                 -1.0,   # Yaw rate
-                -1.0,    # Distance to current checkpoint
-                -1.0,    # Distance to checkpoint+1
-                -1.0,    # Distance to checkpoint+5
+                -1.0,   # Distance to current checkpoint
+                -1.0,   # Distance to checkpoint+1
+                -1.0,   # Distance to checkpoint+2
+                -1.0,   # Distance to checkpoint+3
                 -1.0,   # Cross-track error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
@@ -553,7 +554,7 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Previous rudder angle
-                -1.0,    # Optimal LOS guidance
+                -1.0,   # Optimal LOS guidance
             ],
             dtype=np.float32,
         )
