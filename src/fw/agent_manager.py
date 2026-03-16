@@ -217,7 +217,7 @@ class AgentManager:
 
 
     @staticmethod
-    def compute_metrics(cross_errors, rudder_angles, rudder_angle_changes, heading_errors):
+    def compute_metrics(cross_errors, rudder_angles, rudder_angle_changes, heading_errors, velocities):
         """
         Compute Mean Track Error Integral (mTEI), Maximum Track Error (MTE),
         and Mean Heading Error Integral (mHEI)
@@ -232,8 +232,10 @@ class AgentManager:
         all_MRAs = []
         all_mRACs = []
         all_mHEs = []
+        all_mus = []
+        all_Mus = []
 
-        for ct_errors, rudder_angle, rudder_angle_change, heading_errors in zip(cross_errors, rudder_angles, rudder_angle_changes, heading_errors):
+        for ct_errors, rudder_angle, rudder_angle_change, heading_errors, velocity in zip(cross_errors, rudder_angles, rudder_angle_changes, heading_errors, velocities):
             # Calculate mTEI
             n = len(ct_errors)
             mTEI = np.sum(np.abs(ct_errors)) / n
@@ -259,7 +261,15 @@ class AgentManager:
             mHE = np.sum(np.abs(heading_errors)) / n
             all_mHEs.append(mHE)
 
-        return np.mean(all_mTEIs), np.mean(all_MTEs), np.mean(all_mRAs), np.mean(all_MRAs), np.mean(all_mRACs), np.mean(all_mHEs)
+            # Calculate mu
+            mu = np.sum(np.abs(velocity)) / n
+            all_mus.append(mu)
+
+            # Calculate Mu
+            Mu = np.max(np.abs(velocity))
+            all_Mus.append(Mu)
+
+        return np.mean(all_mTEIs), np.mean(all_MTEs), np.mean(all_mRAs), np.mean(all_MRAs), np.mean(all_mRACs), np.mean(all_mHEs), np.mean(all_mus), np.mean(all_Mus)
 
 
     # Plot paths in the first subplot
