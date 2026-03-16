@@ -206,6 +206,7 @@ class PySimEnv(BaseEnv):
         self.checkpoint_index = []
         self.cross_error = []
         self.heading_error = []
+        self.velocities = []
         self.step_count = []
         self.ukc = []
 
@@ -218,6 +219,7 @@ class PySimEnv(BaseEnv):
             self.checkpoint_index.append(1)
             self.cross_error.append(0.0)
             self.heading_error.append(self._calculate_heading_error(self.los_guidance_heading(i=i), self.phys_sims[i].state.heading))
+            self.velocities.append(self.phys_sims[i].state.u)
             self.step_count.append(0)
             self.ukc.append(0.0)
 
@@ -910,6 +912,7 @@ class PySimEnv(BaseEnv):
         prev_cross_track_error = self._distance_from_point_to_line(self.previous_ship_pos[i], prev_checkpoint_pos, current_checkpoint_pos)
         self.cross_error[i] = cross_track_error
         self.heading_error[i] = self._calculate_heading_error(self.los_guidance_heading(i=i), self.phys_sims[i].state.heading)
+        self.velocities[i] = self.phys_sims[i].state.u
 
         # Keel clearance
         self.ukc[i] = self.get_keel_clearance()

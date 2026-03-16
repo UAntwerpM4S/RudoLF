@@ -337,6 +337,7 @@ class AgentManager:
                 all_cross_errors = []  # Store cross-track errors for each episode
                 all_rudder_angles = []
                 all_rudder_angle_changes = []
+                all_velocities = []
                 all_rudder_actions = []
                 all_ukc_measurements = []
                 start_pos = None
@@ -360,11 +361,13 @@ class AgentManager:
                     cross_errors = []
                     heading_errors = []
                     rudder_actions = []
+                    velocities = []
                     previous_rudder_action = 0.0
                     rudder_changes = []
                     ukc_measurements = []
                     path_positions = [np.copy(_s(env.ship_pos))]  # Store initial position
                     cross_errors.append(_s(env.cross_error))  # Store initial cross-track error
+                    velocities.append(_s(env.velocities))  # Store initial cross-track error
 
                     # Calculate initial heading error relative to desired path
                     initial_heading_error = self.compute_heading_error(env)
@@ -384,6 +387,7 @@ class AgentManager:
                             if _s(env.checkpoint_index) >= 2:
                                 cross_errors.append(_s(env.cross_error))
                             heading_errors.append(_s(env.heading_error))
+                            velocities.append(_s(env.velocities))
                             rudder_actions.append(_steer(env.performed_action))
                             rudder_changes.append(abs(_steer(env.performed_action) - previous_rudder_action))
                             previous_rudder_action = _steer(env.performed_action)
@@ -416,12 +420,13 @@ class AgentManager:
                     all_rudder_angles.append(np.array(rudder_actions))
                     all_rudder_angle_changes.append(np.array(rudder_changes))
                     all_heading_errors.append(np.array(heading_errors))
+                    all_velocities.append(np.array(velocities))
                     all_rudder_actions.append(np.array(rudder_actions))
                     all_ukc_measurements.append(np.array(ukc_measurements))
                     total_rewards.append(episode_reward)
 
                 # Calculate mTEI, MTE, and mHEI
-                mTEI, MTE, mRA, MRA, mRAC, mHE = self.compute_metrics(all_cross_errors, all_rudder_angles, all_rudder_angle_changes, all_heading_errors)
+                mTEI, MTE, mRA, MRA, mRAC, mHE, mu, Mu = self.compute_metrics(all_cross_errors, all_rudder_angles, all_rudder_angle_changes, all_heading_errors, all_velocities)
 
                 # Print summary statistics
                 avg_reward = np.mean(total_rewards)
@@ -429,11 +434,13 @@ class AgentManager:
                 print(f"Average reward: {avg_reward:.2f}")
                 print(f"Best episode reward: {max(total_rewards):.2f}")
                 print(f"Worst episode reward: {min(total_rewards):.2f}")
+                print(f"Mean Surge Velocity (mu): {mu:.2f}")
+                print(f"Maximum Surge Velocity (Mu): {Mu:.2f}")
                 print(f"Mean Track Error Integral (mTEI): {mTEI:.2f}")
-                print(f"Maximum Track Error (MTE): {MTE:.3f}")
+                print(f"Maximum Track Error (MTE): {MTE:.2f}")
                 print(f"Mean Rudder Angle (mRA): {mRA:.3f}")
                 print(f"Maximum Rudder Angle (MRA): {MRA:.3f}")
-                print(f"Mean Rudder Angle Change (mRAC): {mRAC:.3f}")
+                print(f"Mean Rudder Angle Change (mRAC): {mRAC:.4f}")
                 print(f"Mean LOS Guidance Heading Error (mHE): {mHE:.3f} rad")
 
                 try:
