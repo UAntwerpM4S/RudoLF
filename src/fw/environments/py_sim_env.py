@@ -299,7 +299,7 @@ class PySimEnv(BaseEnv):
         self.polygon_shape = Polygon(self.obstacles)
 
         # Load trajectory
-        self.path_name = 'trajectory_points_no_scale_alternative.csv'
+        self.path_name = 'trajectory_points_no_scale.csv'
         path = load_csv_strict(self.path_name)
 
         # Preprocess path (stub currently returns same path)
@@ -809,6 +809,13 @@ class PySimEnv(BaseEnv):
                 0.0
             )
 
+            # LOS guidance error
+            LOS_heading_error = self._calculate_heading_error(
+                self.los_guidance_heading(i=i),
+                self.phys_sims[i].state.heading,
+                0.0
+            )
+
             # Build observation
             obs = np.hstack([
                 norm_velocities,                        # Normalized velocities
@@ -824,7 +831,7 @@ class PySimEnv(BaseEnv):
                 [heading_error_parallel / np.pi],       # Normalized heading error
                 [heading_error_parallel2 / np.pi],      # Normalized heading error
                 self.performed_action[i][0],            # Previous rudder angle
-                self.los_guidance_heading(i=i) / np.pi, # Optimal LOS guidance
+                LOS_heading_error / np.pi, # Optimal LOS guidance
             ])
 
             # Add environmental observations if enabled
