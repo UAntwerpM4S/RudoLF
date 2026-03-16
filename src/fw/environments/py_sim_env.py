@@ -1,3 +1,4 @@
+import math
 import os
 import matplotlib
 import matplotlib.patches as patches
@@ -21,7 +22,6 @@ from fw.ships.ship_factory import create_ship, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
-from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.dynamics_model import Model
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.nomoto import Nomoto
@@ -49,7 +49,7 @@ DPI = 100
 
 # Constants definition
 PERPENDICULAR_LINE_LENGTH = 50.0
-PERPENDICULAR_LINE_PROXIMITY = 2.0
+PERPENDICULAR_LINE_PROXIMITY = 5.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
 EPSILON = 1e-9  # Small epsilon for numerical stability
@@ -187,14 +187,6 @@ class PySimEnv(BaseEnv):
         )
         self.observation_space = self._initialize_observation_space()
 
-        # Reward component weights
-        self.reward_weights = {
-            'forward': 1.0,
-            'alignment': 1.8,
-            'cross_track': 1.5,
-            'rudder': 0.03,
-        }
-
         # Rendering flag
         self.initialize_plots = True
 
@@ -206,12 +198,15 @@ class PySimEnv(BaseEnv):
 
         self.ship_pos = []
         self.ship_heading = []
+        self.previous_action = []
         self.previous_ship_pos = []
         self.previous_heading = []
         self.performed_action = []
 
         self.checkpoint_index = []
         self.cross_error = []
+        self.heading_error = []
+        self.velocities = []
         self.step_count = []
         self.ukc = []
 
@@ -219,9 +214,12 @@ class PySimEnv(BaseEnv):
         for i in range(self.num_ships):
             self.ship_pos.append(self.initial_ship_pos[i].copy())
             self.previous_ship_pos.append(self.initial_ship_pos[i].copy())
+            self.previous_action.append(np.zeros(2, dtype=np.float32))
             self.previous_heading.append(0.0)
             self.checkpoint_index.append(1)
             self.cross_error.append(0.0)
+            self.heading_error.append(self._calculate_heading_error(self.los_guidance_heading(i=i), self.phys_sims[i].state.heading))
+            self.velocities.append(self.phys_sims[i].state.u)
             self.step_count.append(0)
             self.ukc.append(0.0)
 
@@ -254,8 +252,6 @@ class PySimEnv(BaseEnv):
             self.dynamics = Fossen(self.ships[ship_index].specifications)
         elif self.dynamics_model == Model.NOMOTO:
             self.dynamics = Nomoto(self.ships[ship_index].specifications)
-        elif self.dynamics_model == Model.UGENT_SURROGATE:
-            self.dynamics = UGentSurrogate(self.ships[ship_index].specifications)
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
@@ -507,7 +503,7 @@ class PySimEnv(BaseEnv):
             return np.arctan2(vec[1], vec[0])
         return 0.0
 
-    def _calculate_heading_error(self, target_heading: float, current_heading: float, dead_zone_deg: float = 5.0) -> float:
+    def _calculate_heading_error(self, target_heading: float, current_heading: float, dead_zone_deg: float = 0.0) -> float:
         """
         Calculate heading error with dead zone handling.
 
@@ -546,13 +542,19 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Surge velocity
                 -1.0,   # Sway velocity
                 -1.0,   # Yaw rate
-                0.0,    # Distance to current checkpoint
-                0.0,    # Distance to checkpoint+1
-                -2.0,   # Cross-track error
+                -1.0,   # Distance to current checkpoint
+                -1.0,   # Distance to checkpoint+1
+                -1.0,   # Distance to checkpoint+2
+                -1.0,   # Distance to checkpoint+3
+                -1.0,   # Cross-track error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
+                -1.0,   # Heading error
+                -1.0,   # Heading error
+                -1.0,   # Previous rudder angle
+                -1.0,   # Optimal LOS guidance
             ],
             dtype=np.float32,
         )
@@ -564,11 +566,17 @@ class PySimEnv(BaseEnv):
                 1.0,    # Yaw rate
                 1.0,    # Distance to current checkpoint
                 1.0,    # Distance to checkpoint+1
-                2.0,    # Cross-track error
+                1.0,    # Distance to checkpoint+2
+                1.0,    # Distance to checkpoint+3
+                1.0,    # Cross-track error
                 1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
+                1.0,    # Heading error
+                1.0,    # Heading error
+                1.0,    # Previous rudder angle
+                1.0,    # Optimal LOS guidance
             ],
             dtype=np.float32,
         )
@@ -670,28 +678,74 @@ class PySimEnv(BaseEnv):
             ], dtype=np.float32)
 
             # Clamp checkpoint indices
-            current_chkp_idx = min(self.checkpoint_index[i], len(self.checkpoints) - 1)
+            current_chkp_idx = self.checkpoint_index[i]
             prev_chkp_idx = max(0, current_chkp_idx - 1)
-            next_chkp_idx = min(current_chkp_idx + 1, len(self.checkpoints) - 1)
+            next_chkp_idx = current_chkp_idx + 1
+            next2_chkp_idx = current_chkp_idx + 2
+            next3_chkp_idx = current_chkp_idx + 3
+            four_chkp_idx = current_chkp_idx + 4
+            five_chkp_idx = current_chkp_idx + 5
+
+            # Calculate direction of last path segment
+            P_last = self.checkpoints[len(self.checkpoints) - 1]['pos'].copy()
+            P_before_last = self.checkpoints[len(self.checkpoints) - 2]['pos'].copy()
+            direction_last_path = P_last - P_before_last
 
             # Checkpoint positions
-            current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
             prev_chkp_pos = self.checkpoints[prev_chkp_idx]['pos']
-            next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
+            if current_chkp_idx <= len(self.checkpoints) - 1:
+                current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
+            else:
+                multiplier = current_chkp_idx - (len(self.checkpoints) - 1)
+                current_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
+            if next_chkp_idx <= len(self.checkpoints) - 1:
+                next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
+            else:
+                multiplier = next_chkp_idx - (len(self.checkpoints) - 1)
+                next_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
+            if next2_chkp_idx <= len(self.checkpoints) - 1:
+                next2_chkp_pos = self.checkpoints[next2_chkp_idx]['pos']
+            else:
+                multiplier = next2_chkp_idx - (len(self.checkpoints) - 1)
+                next2_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
+            if next3_chkp_idx <= len(self.checkpoints) - 1:
+                next3_chkp_pos = self.checkpoints[next3_chkp_idx]['pos']
+            else:
+                multiplier = next3_chkp_idx - (len(self.checkpoints) - 1)
+                next3_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
+            if four_chkp_idx <= len(self.checkpoints) - 1:
+                four_chkp_pos = self.checkpoints[four_chkp_idx]['pos']
+            else:
+                multiplier = four_chkp_idx - (len(self.checkpoints) - 1)
+                four_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
+            if five_chkp_idx <= len(self.checkpoints) - 1:
+                five_chkp_pos = self.checkpoints[five_chkp_idx]['pos']
+            else:
+                multiplier = five_chkp_idx - (len(self.checkpoints) - 1)
+                five_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
 
             # Distances to checkpoints
-            norm_distance = np.linalg.norm(self.ship_pos[i] - current_chkp_pos) / self.max_dist
-            norm_next_distance = np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
+            norm_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - current_chkp_pos)),
+                                                      range=(0, 2000),
+                                                      half_value=0.5 * 370)
+            norm_next_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - next_chkp_pos)),
+                                                           range=(0, 2 * 2000),
+                                                           half_value=1.5 * 370)
+            norm_next2_distance = self._logarithmic_scaling(value=np.linalg.norm(self.ship_pos[i] - next2_chkp_pos),
+                                                            range=(0, 3 * 2000),
+                                                            half_value=2.5 * 370)  # np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
+            norm_next3_distance = self._logarithmic_scaling(value=np.linalg.norm(self.ship_pos[i] - next3_chkp_pos),
+                                                            range=(0, 4 * 2000),
+                                                            half_value=3.5 * 370)  # np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
+            norm_five_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - five_chkp_pos)),
+                                                           range=(0, 5 * 2000),
+                                                           half_value=4.5 * 370)  # np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
 
             # Cross-track error (normalized, signed)
-            norm_cross_error = (
-                    self._distance_from_point_to_line(
-                        self.ship_pos[i],
-                        prev_chkp_pos,
-                        current_chkp_pos
-                    )
-                    / (CHECKPOINTS_DISTANCE / 2.0)
-            )
+            norm_cross_error = self._logarithmic_scaling(
+                value=self._distance_from_point_to_line(self.ship_pos[i], prev_chkp_pos, current_chkp_pos),
+                range=(0, 2000),
+                half_value=50)
 
             track_vec = current_chkp_pos - prev_chkp_pos
             ship_vec = self.ship_pos[i] - prev_chkp_pos
@@ -727,16 +781,57 @@ class PySimEnv(BaseEnv):
                 0.0
             )
 
+            # To checkpoint+2
+            heading_error3 = self._calculate_heading_error(
+                self._safe_heading_from_vector(next2_chkp_pos - self.ship_pos[i]),
+                self.phys_sims[i].state.heading,
+                0.0
+            )
+
+            # To checkpoint+3
+            heading_error4 = self._calculate_heading_error(
+                self._safe_heading_from_vector(next3_chkp_pos - self.ship_pos[i]),
+                self.phys_sims[i].state.heading,
+                0.0
+            )
+
+            # To next checkpoint
+            heading_error5 = self._calculate_heading_error(
+                self._safe_heading_from_vector(five_chkp_pos - self.ship_pos[i]),
+                self.phys_sims[i].state.heading,
+                0.0
+            )
+
+            # Parallel to next checkpoint segment
+            heading_error_parallel3 = self._calculate_heading_error(
+                self._safe_heading_from_vector(five_chkp_pos - four_chkp_pos),
+                self.phys_sims[i].state.heading,
+                0.0
+            )
+
+            # LOS guidance error
+            LOS_heading_error = self._calculate_heading_error(
+                self.los_guidance_heading(i=i),
+                self.phys_sims[i].state.heading,
+                0.0
+            )
+
             # Build observation
             obs = np.hstack([
                 norm_velocities,                        # Normalized velocities
-                [norm_distance],                        # Distance to current checkpoint
-                [norm_next_distance],                   # Distance to next checkpoint
+                [2 * norm_distance - 1],                # Distance to current checkpoint
+                [2 * norm_next_distance - 1],           # Distance to next checkpoint
+                [2 * norm_next2_distance - 1],          # Distance to checkpoint+2
+                [2 * norm_next3_distance - 1],          # Distance to checkpoint+3
                 [norm_cross_error],                     # Normalized cross-track error
                 [heading_error / np.pi],                # Normalized heading error
                 [heading_error2 / np.pi],               # Normalized heading error
+                [heading_error3 / np.pi],               # Normalized heading error
+                [heading_error4 / np.pi],               # Normalized heading error
                 [heading_error_parallel / np.pi],       # Normalized heading error
                 [heading_error_parallel2 / np.pi],      # Normalized heading error
+                self.performed_action[i][0],            # Previous rudder angle
+                LOS_heading_error / np.pi, # Optimal LOS guidance
             ])
 
             # Add environmental observations if enabled
@@ -777,6 +872,7 @@ class PySimEnv(BaseEnv):
         for i in range(self.num_ships):
             if not self.phys_sims[i].state.terminated and not self.phys_sims[i].state.truncated:
                 action = actions[i]
+                self.previous_action[i] = self.performed_action[i].copy()
 
                 # Save previous values
                 self.previous_ship_pos[i] = self.ship_pos[i].copy()
@@ -852,31 +948,44 @@ class PySimEnv(BaseEnv):
 
         # Forward progress
         raw_progress = (proj_now - proj_prev)
-        forward_reward = 0.4 * raw_progress / self.time_step
 
-        # Heading alignment towards current checkpoint
-        heading_error = self._calculate_heading_error(self._safe_heading_from_vector(path_vec), self.phys_sims[i].state.heading)
-        heading_alignment_reward = abs(np.exp(-abs(heading_error))) - 1
-
-        # Cross-track penalty (uses distance to segment)
-        cross_track_error = self._distance_from_point_to_line(self.ship_pos[i], prev_checkpoint_pos,
-                                                              current_checkpoint_pos)
+        # Cross-track errors
+        cross_track_error = self._distance_from_point_to_line(self.ship_pos[i], prev_checkpoint_pos, current_checkpoint_pos)
+        prev_cross_track_error = self._distance_from_point_to_line(self.previous_ship_pos[i], prev_checkpoint_pos, current_checkpoint_pos)
         self.cross_error[i] = cross_track_error
-        cross_track_penalty = cross_track_error / 100.0
-        cross_track_penalty = -abs(cross_track_penalty) ** 1.0
+        self.heading_error[i] = self._calculate_heading_error(self.los_guidance_heading(i=i), self.phys_sims[i].state.heading)
+        self.velocities[i] = self.phys_sims[i].state.u
 
+        # Keel clearance
         self.ukc[i] = self.get_keel_clearance()
 
-        # Action penalty (rudder magnitude)
-        rudder_penalty = -0.2 * abs(self.performed_action[i][0])
+        # Ship information
+        rudder_change = abs(self.performed_action[i][0] - self.previous_action[i][0])
+        thrust_change = abs(self.performed_action[i][1] - self.previous_action[i][1])
+        max_rudder_change = self.ships[i].specifications.max_rudder_rate * self.time_step / self.ships[i].specifications.max_rudder_angle  # rad/s * s * action/rad
+        heading_error = self._calculate_heading_error(self.los_guidance_heading(i=i), self.phys_sims[i].state.heading)
+        distance_traveled = abs(np.linalg.norm(self.ship_pos[i] - self.previous_ship_pos[i]))
+        velocity = distance_traveled / self.time_step
+        target_velocity = 4
+
+        # Reward components
+        R_forward = - 0.25 * abs(target_velocity - velocity) / target_velocity
+        R_heading_alignment = - 0.5 * abs(heading_error)
+        R_CTE = - 0.00 * cross_track_error
+        R_rudder_angle_change = - 0.4 * (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -1
+        R_rudder_angle = - 0.05 * (abs(self.performed_action[i][0]) / 0.2) ** (2 if abs(self.performed_action[i][0]) < 0.2 else 4)
+        R_thrust_change = 0  # - 0.5 * thrust_change
 
         # Combine weighted rewards and penalties
         reward = (
-                self.reward_weights['forward'] * forward_reward +
-                self.reward_weights['alignment'] * heading_alignment_reward +
-                self.reward_weights['cross_track'] * cross_track_penalty +
-                self.reward_weights['rudder'] * rudder_penalty
+                R_forward +
+                R_heading_alignment +
+                R_CTE +
+                R_rudder_angle_change +
+                R_rudder_angle +
+                R_thrust_change
         )
+        reward = 1 + reward / 5
 
         # Checkpoint handling (may increment checkpoint_index)
         checkpoint_distance = np.linalg.norm(self.ship_pos[i] - current_checkpoint["pos"])
@@ -906,7 +1015,7 @@ class PySimEnv(BaseEnv):
         ]
 
         if any(termination_conditions):
-            reward = -250
+            #reward = -250
             done = True
 
         # Normal completion (reached or passed all checkpoints)
@@ -919,7 +1028,134 @@ class PySimEnv(BaseEnv):
         """Check if ship is close enough to checkpoint's perpendicular line."""
 
         line_start, line_end = checkpoint['perpendicular_line']
-        return self._distance_from_point_to_line(self.ship_pos[ship_index], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY * (self.time_step / 0.1)
+        return self._distance_from_point_to_line(self.ship_pos[ship_index], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY * self.time_step
+
+    def los_guidance_heading(self, i: int):
+        """
+        Compute desired LOS heading toward the current path segment.
+        These formulas were adopted from Changyuan Chen's PhD thesis
+        "Numerical and Experimental Study on Ship Motion Control Systems in Shallow Water" at Flanders Hydraulics (FH)
+        """
+
+        current_checkpoint_idx = self.checkpoint_index[i]
+        current_checkpoint_idx = min(current_checkpoint_idx, len(self.checkpoints) - 1)
+        P = self.ship_pos[i]
+        P_k = self.checkpoints[current_checkpoint_idx]['pos'].copy()
+        if current_checkpoint_idx + 1 > len(self.checkpoints) - 1:
+            P_k_plus_1 = self.checkpoints[len(self.checkpoints) - 1]['pos'].copy()
+            direction = P_k_plus_1 - self.checkpoints[len(self.checkpoints) - 2]['pos']
+            P_k_plus_1 += direction
+        else:
+            P_k_plus_1 = self.checkpoints[current_checkpoint_idx + 1]['pos'].copy()
+        x, y = P[:]
+        x_k, y_k = P_k[:]
+        x_k_plus_1, y_k_plus_1 = P_k_plus_1[:]
+
+        # previous checkpoint
+        if current_checkpoint_idx > 0:
+            P_k_min_1 = self.checkpoints[current_checkpoint_idx - 1]['pos'].copy()
+            x_k_min_1, y_k_min_1 = P_k_min_1[:]
+        else:
+            # if none exists, create a virtual one behind the ship
+            P_k_min_1 = P_k - (P_k_plus_1 - P_k)
+            x_k_min_1, y_k_min_1 = P_k_min_1[:]
+
+        # Find the orthogonal projection A(x_A, y_A) of the ship on the path from the previous to the next checkpoint
+        x_A = x_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / (
+                    (x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (x_k - x_k_min_1)
+        y_A = y_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / (
+                    (x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (y_k - y_k_min_1)
+
+        # Calculate the look ahead distance L_A
+        c = 0.5  # Coefficient for LOS look ahead horizon (default is 0.5 according to FH PhD thesis p. 148)
+        delta_y = ((x - x_A) ** 2 + (y - y_A) ** 2) ** 0.5  # Cross-track error
+        L_pp = 0.95 * self.ships[
+            i].specifications.length  # Length between perpendiculars (a little bit smaller than the ship length)
+        L_A = ((delta_y + c * L_pp) ** 2 - (delta_y) ** 2) ** 0.5
+
+        # Calculate the LOS position Ploss(x_loss, y_loss)
+        x_loss = x_A + ((x_k - x_k_min_1) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2) ** 0.5) * L_A
+        y_loss = y_A + ((y_k - y_k_min_1) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2) ** 0.5) * L_A
+
+        # 4.3.3 Selection of current waypoint
+        # Calculate radius of the current checkpoint's acceptance circle Rk
+        w_los = 0.5  # Tunable parameter for acceptance circle (default is 0.5 according to FH PhD thesis p. 148)
+        R_k = w_los * L_pp
+
+        heading_P_k_min_1_P_k = self._safe_heading_from_vector(P_k - P_k_min_1)
+        heading_P_k_P_k_plus_1 = self._safe_heading_from_vector(P_k_plus_1 - P_k)
+        heading_difference = self.normalize_angle(heading_P_k_min_1_P_k - heading_P_k_P_k_plus_1)
+        collinear = abs(heading_difference) < (1 / 57)  # Are the previous, current, and next checkpoint collinear
+        if collinear:
+            dist_A_Pk = ((x_A - x_k) ** 2 + (y_A - y_k) ** 2) ** 0.5  # Distance between and the current checkpoint
+            if dist_A_Pk > R_k:  # |A Pk| > Rk
+                # LOS angle (desired course angle) in radians
+                LOS_angle = math.atan2(y_loss - y, x_loss - x)
+            else:  # |A Pk| < Rk
+                # LOS position Ploss is replaced by current waypoint Pk+1
+                LOS_angle = math.atan2(y_k_plus_1 - y, x_k_plus_1 - x)
+        else:
+            dist_P_Pk = ((x - x_k) ** 2 + (y - y_k) ** 2) ** 0.5  # Distance between and the current checkpoint
+            if dist_P_Pk > 2 * R_k:  # |P Pk| > 2*Rk
+                if L_A < dist_P_Pk:  # LA < |P Pk|
+                    LOS_angle = math.atan2(y_loss - y, x_loss - x)
+                else:  # LA > |P Pk|
+                    # Change look ahead distance from LA to L'A
+                    L_accent_A = L_A - ((x_k - x_A) ** 2 + (y_k - y_A) ** 2) ** 0.5
+
+                    # Calculate new heading point P'loss
+                    x_accent_loss = x_k + ((x_k_plus_1 - x_k) / (
+                                (x_k_plus_1 - x_k) ** 2 + (y_k_plus_1 - y_k) ** 2) ** 0.5) * L_accent_A
+                    y_accent_loss = y_k + ((y_k_plus_1 - y_k) / (
+                                (x_k_plus_1 - x_k) ** 2 + (y_k_plus_1 - y_k) ** 2) ** 0.5) * L_accent_A
+
+                    # LOS angle (desired course angle) in radians
+                    LOS_angle = math.atan2(y_accent_loss - y, x_accent_loss - x)
+            else:  # |P Pk| < 2*Rk
+                # The checkpoint Pk becomes replaced by Pk+1 (next checkpoint becomes current checkpoint), same for Pk-1
+                x_k_min_1, y_k_min_1 = x_k, y_k
+                x_k, y_k = x_k_plus_1, y_k_plus_1
+
+                # Find the orthogonal projection A(x_A, y_A) of the ship on the path from the previous to the next checkpoint
+                x_A = x_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / (
+                            (x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (x_k - x_k_min_1)
+                y_A = y_k_min_1 + (((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / (
+                            (x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2)) * (y_k - y_k_min_1)
+
+                # Calculate the look ahead distance L_A
+                c = 0.5  # Coefficient for LOS look ahead horizon (default is 0.5 according to FH PhD thesis p. 148)
+                delta_y = ((x - x_A) ** 2 + (y - y_A) ** 2) ** 0.5  # Cross-track error
+                L_pp = 0.95 * self.ships[
+                    i].specifications.length  # Length between perpendiculars (a little bit smaller than the ship length)
+                L_A = ((delta_y + c * L_pp) ** 2 - (delta_y) ** 2) ** 0.5
+
+                # Calculate the LOS position Ploss(x_loss, y_loss)
+                x_loss = x_A + ((x_k - x_k_min_1) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2) ** 0.5) * L_A
+                y_loss = y_A + ((y_k - y_k_min_1) / ((x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2) ** 0.5) * L_A
+
+                LOS_angle = math.atan2(y_loss - y, x_loss - x)
+
+        return LOS_angle
+
+    def _logarithmic_scaling(self, value: float, range: tuple, half_value: float = 10):
+        # Unpack the range, they correspondent with values that return 0 and 1
+        min_value, max_value = range
+
+        if value < min_value or value > max_value:
+            raise ValueError(f"value {value} exceeded the range [{min_value}, {max_value}]")
+
+        # Clamp to range
+
+        # Linear normalization
+        x = (value - min_value) / (max_value - min_value)
+
+        m = (half_value - min_value) / (max_value - min_value)
+
+        # compute curvature parameter
+        k = (1 - 2 * m) / (m ** 2)
+
+        # Logarithmic scaling
+        return math.log1p(k * x) / math.log1p(k)
 
     # -----------------------
     # Rendering

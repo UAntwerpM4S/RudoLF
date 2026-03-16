@@ -15,14 +15,14 @@ In the long term this should be moved to a config-file which will then be read.
 
 DEFAULT_HYPERPARAMETERS = {
     PPO_POLICY_NAME: {
-        'learning_rate': 3e-4,
-        'gamma': 0.99,
+        'learning_rate': 1e-4,
+        'gamma': 0.95,
         'gae_lambda': 0.95,
         'entropy_coef': 0.01,
         'value_loss_coef': 0.5,
         'max_grad_norm': 0.5,
-        'clip_range': 0.2,
-        'eval_frequency': 100,
+        'clip_range': 0.05,
+        'eval_frequency': 1,
         'num_envs': 1,
         'num_epochs': 10,
         'normalize': False,
