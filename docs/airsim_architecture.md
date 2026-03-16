@@ -7,6 +7,9 @@ This document describes the current AirSim subsystem as implemented in `src/airs
 ```text
 src/airsim/
 |-- __init__.py
+|-- common/
+|   |-- classes/
+|   `-- tools/
 |-- communication/
 |   |-- airsim_bridge.py
 |   |-- control_mapping.py
@@ -41,10 +44,14 @@ flowchart TB
     airsim[airsim package]
 
     airsim --> config[config]
+    airsim --> common[common]
     airsim --> comms[communication]
     airsim --> envs[environments]
     airsim --> infer[inference]
     airsim --> tools[tools]
+        common --> commonTools[common/tools\nshared path, angle, calibration, telemetry helpers]
+        common --> commonClasses[common/classes\nshared data classes for resolution context]
+
     airsim --> train[train]
     airsim --> poc[poc]
 
@@ -63,8 +70,8 @@ flowchart TB
     infer --> minimap[minimap_fossen_airsim.py\nlive minimap process]
     infer --> plotpath[plot_airsim_path.py\npath plotting]
 
-    tools --> calib[calibrate_coords.py\ninteractive calibration wizard]
-    tools --> telemetry[analyze_telemetry.py\noffline CSV analysis]
+    tools --> calib[calibrate_coords.py\ncompatibility wrapper]
+    tools --> telemetry[analyze_telemetry.py\ncompatibility wrapper]
 
     train --> trainue5[train_airsim.py\ntrainer entry point for UE5]
 
@@ -97,9 +104,12 @@ flowchart TB
 
 Framework routing is split across two configuration layers:
 
-- `fw.config.CONFIG_PARAMETERS['env_type']` selects the generic environment and determines whether `fw.main` stays in the framework flow or delegates to `fw.main_with_airsim`.
+- `fw.config.CONFIG_PARAMETERS['env_type']` can be a single environment or a list of environments.
 - `fw.config.CONFIG_PARAMETERS['action']` controls `train` versus `visualize` for the generic non-AirSim framework flow.
-- `airsim/config/runtime_settings.json` controls AirSim-specific visualize dispatch (`fossen_visualise`, `inference_visualise`) and training-speed controls through `training.speed_profile` (`safe`, `fast`, `turbo`, `custom`) after the AirSim branch has been selected.
+- For both actions, `fw.main` executes selected environments in configured order.
+- When AirSim is present in the selected list, `fw.main_with_airsim` runs as the ordered AirSim step, while non-AirSim entries remain in the framework trainer flow.
+- If the ordered AirSim step fails (for example UE5 unavailable), that AirSim step is skipped and already-completed framework steps are not rerun.
+- `airsim/config/runtime_settings.json` controls AirSim-specific visualize dispatch (`fossen_visualise`, `inference_visualise`) and training-speed controls through `training.speed_profile` (`normal`, `safe`, `fast`, `turbo`, `custom`) after the AirSim branch has been selected.
 - `runtime_settings.json` is strict JSON; documentation comments are stored in `_remarks` objects.
 
 ```mermaid
@@ -261,8 +271,9 @@ Key points:
 - `inference/run_inference.py`: policy replay entry point that can drive UE5-backed inference using `AirSimEnv`.
 - `inference/run_visualise_fossen.py`: framework replay entry point that mirrors external physics into UE5.
 - `inference/minimap_fossen_airsim.py`: process-isolated visual aid for framework replay episodes, with UE5-aware docking and a local follow-view.
-- `tools/calibrate_coords.py`: interactive production of `calibration.json` and overlay verification in UE5.
-- `tools/analyze_telemetry.py`: post-run inspection of logged bridge telemetry.
+- `common/tools/calibrate_coords.py`: implementation of the interactive production of `calibration.json` and overlay verification in UE5.
+- `common/tools/analyze_telemetry.py`: implementation of post-run inspection of logged bridge telemetry.
+- `tools/calibrate_coords.py` and `tools/analyze_telemetry.py`: compatibility wrappers that preserve old module entry points.
 - `train/train_airsim.py`: minimal bridge from the framework trainer into `AirSimEnv`.
 
 ## Important Current Constraints

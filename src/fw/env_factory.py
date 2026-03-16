@@ -5,6 +5,7 @@ from airsim.config.airsim_config import (
     DEFAULT_AIRSIM_SAVE_SLOT,
     DEFAULT_AIRSIM_SIMULATION_SPEED,
 )
+from fw.common.tools.config_utils import normalize_configuration
 from fw.config import get_config_parameters
 from fw.environments.py_sim_env import PySimEnv
 from fw.environments.fh_sim_env import FhSimEnv
@@ -18,38 +19,8 @@ class EnvironmentRegistryError(Exception):
 
 
 def _normalize_configuration(configuration):
-    """Normalize placeholder configuration values to stable runtime objects.
-
-    A 'configuration' is a dict of key-value pairs that callers pass when
-    requesting an environment, e.g. {"training_mode": True, "max_steps": 500}.
-    Inside the factory and environment constructors, configuration values are
-    read by key (cfg.get("training_mode", True)), so the object MUST behave
-    like a dict — supporting membership tests, equality comparisons and .get().
-
-    'Normalizing' means converting whatever the caller passed into a plain dict
-    so all downstream code can rely on a single, consistent type.  Three input
-    cases are handled:
-
-      - None          → returned as-is; signals "no configuration provided yet"
-                        (the factory will refuse to create a new instance without one).
-      - Mapping       → copied into a plain dict; this covers OrderedDict,
-                        MappingProxyType, custom mappings, etc.
-      - [] or ()      → converted to {}; historically callers used an empty list
-                        as a shorthand for "no configuration", but an empty list
-                        does not support .get() or key-based equality checks.
-                        Converting it to an empty dict makes it safe to use
-                        everywhere a dict is expected, without changing the
-                        semantic meaning ("no extra settings").
-      - anything else → returned unchanged (unknown type; let the caller decide).
-    """
-    if configuration is None:
-        return None
-    if isinstance(configuration, Mapping):
-        return dict(configuration)
-    if isinstance(configuration, (list, tuple)) and len(configuration) == 0:
-        # Empty list/tuple → empty dict. See docstring above for rationale.
-        return {}
-    return configuration
+    """Backward-compatible shim to fw.common.tools.config_utils."""
+    return normalize_configuration(configuration)
 
 
 class _Factory:
@@ -251,6 +222,13 @@ class PySimEnvironment(BaseEnvironment):
     """
 
     def __init__(self, name, configuration):
+        """Create the default PySim environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Optional runtime configuration forwarded by the
+                environment factory.
+        """
         super().__init__(name, configuration)
 
         """
@@ -276,6 +254,13 @@ class FhSimEnvironment(BaseEnvironment):
     """
 
     def __init__(self, name, configuration):
+        """Create the default FH simulator environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Optional runtime configuration forwarded by the
+                environment factory.
+        """
         super().__init__(name, configuration)
 
         """
@@ -302,6 +287,13 @@ class AirSimEnvironment(BaseEnvironment):
     _cache_instance = False
 
     def __init__(self, name, configuration):
+        """Create the AirSim environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Optional runtime configuration. When AirSim is
+                unavailable, fallback behavior is resolved by this wrapper.
+        """
         super().__init__(name, configuration)
         
         # Factory calls __init__("", []) to extract the type name during class registration.
@@ -409,6 +401,13 @@ class LunarEnvironment(BaseEnvironment):
     """
 
     def __init__(self, name, configuration):
+        """Create the default continuous LunarLander wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Optional runtime configuration forwarded by the
+                environment factory.
+        """
         super().__init__(name, configuration)
 
         self._env = LunarLander(continuous=True)
@@ -420,6 +419,13 @@ class PySimPolarEnvironment(BaseEnvironment):
     """
 
     def __init__(self, name, configuration):
+        """Create the default PySim polar environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Optional runtime configuration forwarded by the
+                environment factory.
+        """
         super().__init__(name, configuration)
 
         """
@@ -531,6 +537,11 @@ def build_default_environment(environment_name):
     return get(environment_name, configuration={})
 
 def initialize_all_environments():
+    """Register and warm up all supported environments.
+
+    This helper forces environment class registration and validates that each
+    environment can be instantiated with default-safe configuration objects.
+    """
     get(py_sim_env_name, configuration={})
     get(fh_sim_env_name, configuration={})
     get(lunar_env_name, configuration={})

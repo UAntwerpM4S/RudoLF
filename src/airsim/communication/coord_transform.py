@@ -11,22 +11,10 @@ import math
 import numpy as np
 from pathlib import Path
 from typing import Optional, Tuple
+from airsim.common.tools.angles import normalize_angle as _normalize_angle
 
 _THIS_DIR = Path(__file__).resolve().parent
 _DEFAULT_CALIBRATION_PATH = _THIS_DIR.parent / "config" / "calibration.json"
-
-
-def _normalize_angle(a: float) -> float:
-    """Wrap an angle to the interval [-π, π].
-
-    Args:
-        a: Angle in radians.
-
-    Returns:
-        The equivalent angle wrapped into [-π, π].
-    """
-    return (a + math.pi) % (2.0 * math.pi) - math.pi
-
 
 class CoordTransform:
     """Bidirectional coordinate transform between Fossen and AirSim frames.

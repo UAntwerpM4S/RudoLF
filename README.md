@@ -19,10 +19,13 @@ RudoLF can now train and visualise navigation policies in **Unreal Engine 5** th
 
 ### Recent Updates
 
+- Shared utility code was consolidated into `airsim/common` and `fw/common` (`tools` and `classes`) to reduce duplicate path, angle, and configuration logic.
+- AirSim utilities `airsim.tools.calibrate_coords` and `airsim.tools.analyze_telemetry` now act as compatibility wrappers over implementations in `airsim.common.tools`.
 - The live UE5 minimap now runs in a separate child process instead of a thread, which prevents GUI redraws from stalling the main replay loop.
 - Fossen replay in UE5 now skips blocking interpolation when `simulation_speed` makes the available wall-clock update time shorter than the effective render interval.
 - The minimap now docks itself near the top-right of the UE5 monitor, uses a local follow-view around the vessel, and recenters when the ship approaches the edge of the visible section.
 - The AirSim documentation and architecture notes were updated to match the current split between `fw.main`, `fw.main_with_airsim`, `AirSimEnv`, and Fossen replay.
+- `fw.main` visualisation now respects the configured environment order for list-based `env_type` (for example `['PySimEnv', 'AirSimEnv']` runs `PySimEnv` first, then AirSim).
 - The risk-based test planning document now includes broader risk coverage, detection signals, planned test types, acceptance thresholds, and a forward outlook for later roadmap tasks.
 
 ### Architecture
@@ -74,8 +77,10 @@ flowchart LR
 
 - `python -m fw.main` is the default launcher.
 - `src/fw/config.py` controls the generic framework flow through `env_type` and `action` (`train` or `visualize`).
-- `fw.main` delegates to `fw.main_with_airsim` when `src/fw/config.py` selects `env_type = "AirSimEnv"`.
-- For non-AirSim environments, `fw.main` handles both training and visualisation itself based on `src/fw/config.py`.
+- For both `action = "train"` and `action = "visualize"`, `fw.main` executes environments in the configured order from `env_type`.
+- When AirSim appears in an `env_type` list, `fw.main_with_airsim` is executed as the AirSim step at its position in sequence.
+- Non-AirSim environments continue through the generic framework trainer flow.
+- If the ordered AirSim step fails (for example UE5 unavailable), that AirSim step is skipped and already-completed non-AirSim steps are not retrained.
 - If the AirSim extension fails with a non-zero exit code, `fw.main` falls back to the default framework entrypoint.
 - `src/fw/config.py` now supports `env_type`, so the generic framework flow can select `PySimEnv`, `FhSimEnv`, `AirSimEnv`, `PySimPolarEnv`, or `LunarLander` without breaking the current 2D default.
 
@@ -99,10 +104,11 @@ Telemetry data can be visualized with `plot_airsim_path.py`, which reconstructs 
 1. Ensure **CosysAirSim** is running with the UE5 environment.
 2. Choose the generic framework run in `src/fw/config.py`:
    - Set `env_type` to one of `PySimEnv`, `FhSimEnv`, `PySimPolarEnv`, `LunarLander`, or `AirSimEnv`.
+   - Use an ordered list in `env_type` (for example `['PySimEnv', 'AirSimEnv']`) to run multiple environments sequentially in that same order.
    - Set `action` to `train` or `visualize`.
-3. Set `env_type` to `"AirSimEnv"` when you want `fw.main` to route into AirSim.
+3. Set `env_type` to `"AirSimEnv"` when you want only the AirSim step.
 4. For AirSim training through `fw.main`, leave both `fossen_visualise` and `inference_visualise` disabled in `src/airsim/config/runtime_settings.json`.
-5. Tune training speed via `training.speed_profile` (`safe`, `fast`, `turbo`, `custom`) in `src/airsim/config/runtime_settings.json`.
+5. Tune training speed via `training.speed_profile` (`normal`, `safe`, `fast`, `turbo`, `custom`) in `src/airsim/config/runtime_settings.json`.
 6. For AirSim visualisation through `fw.main`, keep `env_type = "AirSimEnv"` and enable either `fossen_visualise` or `inference_visualise` in `src/airsim/config/runtime_settings.json`.
 7. Run the default framework entrypoint:
    ```bash
@@ -118,6 +124,17 @@ Telemetry data can be visualized with `plot_airsim_path.py`, which reconstructs 
    ```bash
    python -m airsim.inference.plot_airsim_path
    ```
+10. Calibration launcher options:
+
+```bash
+cd src
+python -m airsim.tools.calibrate_coords
+```
+
+```bash
+cd src/airsim
+python -m common.tools.calibrate_coords
+```
 
 ### Configuration Reference
 
@@ -195,12 +212,13 @@ The `src/airsim/` package is a self-contained module that encapsulates all Cosys
 
 | Subpackage       | Purpose                                                              |
 | ---------------- | -------------------------------------------------------------------- |
+| `common/`        | Shared utilities and data classes (`tools/` and `classes/`)          |
 | `config/`        | Runtime settings, connection settings, and calibration files         |
 | `communication/` | Bridge transport and coordinate transform between Fossen and AirSim  |
 | `environments/`  | Gymnasium RL environment that uses UE5 physics via CosysAirSim       |
 | `train/`         | Entry points for RL training inside UE5                              |
 | `inference/`     | Live and headless telemetry visualisation                            |
-| `tools/`         | Interactive calibration wizard and offline telemetry analysis        |
+| `tools/`         | Backward-compatible wrappers for calibration and telemetry utilities |
 | `poc/`           | Frozen proof-of-concept snapshots of the original bridge and trainer |
 | `tests/`         | Pytest unit, integration, and regression tests plus test planning    |
 

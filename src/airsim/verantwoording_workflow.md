@@ -66,7 +66,7 @@ De AirSim-runtime-instellingen in `airsim/config/runtime_settings.json` bepalen 
 
 - `fossen_visualise`;
 - `inference_visualise`;
-- `training.speed_profile` (`safe`, `fast`, `turbo`, `custom`);
+- `training.speed_profile` (`normal`, `safe`, `fast`, `turbo`, `custom`);
 - `training.simulation_speed` en `training.frames_per_step` (bij `custom`);
 - `save_slot` en andere UE5/AirSim-instellingen.
 

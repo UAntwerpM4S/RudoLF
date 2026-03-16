@@ -7,23 +7,31 @@ Run this script while UE5 + CosysAirSim is running. It will:
 4. Visually verify by drawing the Fossen polygon in UE5
 
 Usage:
-    python -m airsim.tools.calibrate_coords
+    python -m airsim.common.tools.calibrate_coords
 """
 
 import json
 import math
+import sys
 import time
 import numpy as np
 from pathlib import Path
 
+_THIS_FILE = Path(__file__).resolve()
+_SRC_DIR = _THIS_FILE.parents[3]
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
 try:
     from airsim.communication.coord_transform import CoordTransform
-except ImportError:
+except ModuleNotFoundError:
+    # Support execution from inside src/airsim via:
+    #   python -m common.tools.calibrate_coords
     from communication.coord_transform import CoordTransform
 
 _THIS_DIR = Path(__file__).resolve().parent
-_CONFIG_DIR = _THIS_DIR.parent / "config"
-_ENVIRONMENTS_DIR = Path(__file__).resolve().parent.parent.parent / "fw" / "environments"
+_CONFIG_DIR = _THIS_DIR.parents[1] / "config"
+_ENVIRONMENTS_DIR = _THIS_DIR.parents[2] / "fw" / "environments"
 
 
 def _load_trajectory_endpoints() -> tuple:

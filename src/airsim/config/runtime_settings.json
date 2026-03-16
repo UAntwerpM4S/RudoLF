@@ -38,7 +38,7 @@
   },
   "training": {
     "_remarks": {
-      "speed_profile": "safe|fast|turbo|custom. safe/fast/turbo apply built-in presets. custom uses explicit values below.",
+      "speed_profile": "normal|safe|fast|turbo|custom. normal runs near real-time ship movement. safe/fast/turbo apply built-in accelerated presets. custom uses explicit values below.",
       "simulation_speed": "UE5 simulation speed multiplier during training.",
       "use_pause_stepping": "true => deterministic frame stepping (recommended for training throughput/stability).",
       "frames_per_step": "How many UE5 physics frames are advanced per RL step.",
@@ -47,7 +47,7 @@
       "state_poll_interval": "Polling cadence while waiting for UE5 to re-pause.",
       "max_steps": "Episode step cap for AirSim training."
     },
-    "speed_profile": "turbo",
+    "speed_profile": "normal",
     "max_steps": 30000,
     "simulation_speed": 100.0,
     "use_pause_stepping": true,
@@ -72,6 +72,6 @@
     "health_check_interval": 30.0,
     "csv_log_path": "",
     "save_slot": "simulator_1",
-    "simulation_speed": 20.0
+    "simulation_speed": 1.0
   }
 }
