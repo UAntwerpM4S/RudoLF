@@ -16,7 +16,7 @@ In the long term this should be moved to a config-file which will then be read.
 DEFAULT_HYPERPARAMETERS = {
     PPO_POLICY_NAME: {
         'learning_rate': 1e-4,
-        'gamma': 0.99,
+        'gamma': 0.95,
         'gae_lambda': 0.95,
         'entropy_coef': 0.01,
         'value_loss_coef': 0.5,
