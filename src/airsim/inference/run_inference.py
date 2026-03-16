@@ -84,21 +84,6 @@ import torch
 
 # ── Bootstrap the Python path when run directly (python run_inference.py) ──
 _SRC_DIR = Path(__file__).resolve().parent.parent.parent
-_REPO_ROOT = _SRC_DIR.parent
-
-
-def _resolve_model_path(model_path: str) -> str:
-    """Resolve a model path relative to the project src directory.
-
-    This allows users to keep using "src/models/..." paths (legacy) while
-    ensuring the path is correct regardless of the current working directory.
-    """
-    p = Path(model_path)
-    if p.is_absolute():
-        return str(p)
-    if p.parts and p.parts[0] == "src":
-        p = Path(*p.parts[1:])
-    return str((_SRC_DIR / p).resolve())
 
 
 if str(_SRC_DIR) not in sys.path:
@@ -107,6 +92,7 @@ if str(_SRC_DIR) not in sys.path:
 from airsim.environments.airsim_env import AirSimEnv          # noqa: E402
 from airsim.communication.airsim_bridge import AirSimBridge   # noqa: E402
 from airsim.communication.control_mapping import map_direct_policy_action  # noqa: E402
+from airsim.common.tools.path_utils import resolve_model_path  # noqa: E402
 from fw.policies.ppo_policy import PPOPolicy                   # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -156,31 +142,6 @@ def detect_model_origin(model_path: str) -> str:
 # Policy loader
 # ─────────────────────────────────────────────────────────
 
-def _resolve_model_path(model_path: str) -> Path:
-    """Resolve a model path against the common repository search roots.
-
-    Args:
-        model_path: User-supplied model path, absolute or relative.
-
-    Returns:
-        A resolved filesystem path. If the file is not found in the search
-        roots, the repository-root candidate is returned unchanged.
-    """
-    path = Path(model_path)
-    if path.is_absolute() and path.exists():
-        return path
-
-    candidates = [
-        Path.cwd() / path,
-        _REPO_ROOT / path,
-        _SRC_DIR / path,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-
-    return (_REPO_ROOT / path).resolve()
-
 def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     """Load a :class:`PPOPolicy` from a saved ``.zip`` file.
 
@@ -197,7 +158,7 @@ def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     Raises:
         RuntimeError: If the model file cannot be found or parsed.
     """
-    path = _resolve_model_path(model_path)
+    path = resolve_model_path(model_path, _SRC_DIR)
     stem = str(path.with_suffix("")) if path.suffix == ".zip" else str(path)
     policy = PPOPolicy.load(stem, device=device)
     policy.network.eval()
@@ -660,7 +621,7 @@ if __name__ == "__main__":
     args = _build_parser().parse_args()
     force_mode = "ue5" if args.ue5 else ("fossen" if args.fossen else None)
 
-    args.model = _resolve_model_path(args.model)
+    args.model = str(resolve_model_path(args.model, _SRC_DIR))
 
     run_inference(
         model_path=args.model,

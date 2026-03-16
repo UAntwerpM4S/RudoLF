@@ -37,7 +37,11 @@ from airsim.config.airsim_config import (
     DEFAULT_AIRSIM_SAVE_SLOT,
     DEFAULT_AIRSIM_SIMULATION_SPEED,
 )
-from airsim.communication.coord_transform import CoordTransform, _normalize_angle
+from airsim.communication.coord_transform import CoordTransform
+from airsim.common.tools.angles import (
+    normalize_angle as _normalize_angle,
+    yaw_from_quaternion as _yaw_from_quaternion,
+)
 from airsim.communication.control_mapping import (
     map_fossen_policy_action,
     validate_policy_action,
@@ -71,17 +75,6 @@ _ENVIRONMENTS_DIR = Path(__file__).resolve().parent.parent.parent / "fw" / "envi
 # ----------------
 # Helpers
 # ----------------
-def _yaw_from_quaternion(q) -> float:
-    """Extract yaw (in radians) from an AirSim Quaternionr."""
-    return math.atan2(
-        2.0 * (q.w_val * q.z_val + q.x_val * q.y_val),
-        1.0 - 2.0 * (q.y_val ** 2 + q.z_val ** 2),
-    )
-
-
-# _normalize_angle is imported from coord_transform
-
-
 def _safe_heading_from_vector(vec: np.ndarray) -> float:
     """Return heading angle for a 2D vector, or 0 if near-zero."""
     n = np.linalg.norm(vec)
@@ -94,6 +87,15 @@ def _calculate_perpendicular_lines(
 ) -> List[Tuple[np.ndarray, np.ndarray]]:
     """Compute perpendicular guidance lines for checkpoint list."""
     def smooth_tangent(cps, idx):
+        """Estimate a smoothed tangent vector at a checkpoint index.
+
+        Args:
+            cps: Ordered checkpoint dictionaries containing ``pos`` vectors.
+            idx: Checkpoint index to evaluate.
+
+        Returns:
+            A normalized tangent vector in ``float32`` when possible.
+        """
         if len(cps) == 1:
             return np.array([1.0, 0.0], dtype=np.float32)
         if idx == 0:

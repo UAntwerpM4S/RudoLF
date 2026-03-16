@@ -17,11 +17,12 @@ from typing import Optional
 import numpy as np
 
 _SRC_DIR = Path(__file__).resolve().parent.parent.parent
-_REPO_ROOT = _SRC_DIR.parent
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from airsim.communication.airsim_bridge import AirSimBridge  # noqa: E402
+from airsim.common.tools.angles import interpolate_angle, wrapped_angle_delta  # noqa: E402
+from airsim.common.tools.path_utils import resolve_model_path  # noqa: E402
 from airsim.communication.control_mapping import (  # noqa: E402
     map_fossen_actuator_state,
     map_fossen_steering_visual_state,
@@ -38,34 +39,6 @@ from fw.environments.py_sim_env import PySimEnv  # noqa: E402
 from fw.policies.ppo_policy import PPOPolicy  # noqa: E402
 
 logger = logging.getLogger(__name__)
-
-
-def _wrapped_angle_delta(start: float, end: float) -> float:
-    """Return the shortest signed angular delta from ``start`` to ``end``.
-
-    Args:
-        start: Start angle in radians.
-        end: End angle in radians.
-
-    Returns:
-        Signed wrapped delta in radians within ``[-pi, pi]``.
-    """
-    return (end - start + np.pi) % (2.0 * np.pi) - np.pi
-
-
-def _interpolate_angle(start: float, end: float, alpha: float) -> float:
-    """Interpolate between two angles while respecting wrap-around.
-
-    Args:
-        start: Start angle in radians.
-        end: End angle in radians.
-        alpha: Interpolation factor in ``[0, 1]``.
-
-    Returns:
-        Interpolated angle in radians.
-    """
-    wrapped_delta = _wrapped_angle_delta(start, end)
-    return start + alpha * wrapped_delta
 
 
 def _interpolate_actuator_state(
@@ -90,32 +63,6 @@ def _interpolate_actuator_state(
     return previous_state + alpha * (target_state - previous_state)
 
 
-def _resolve_model_path(model_path: str) -> Path:
-    """Resolve a model path against the standard repository search roots.
-
-    Args:
-        model_path: User-supplied model path, absolute or relative.
-
-    Returns:
-        A resolved filesystem path. If the file is not found in the search
-        roots, the repository-root candidate is returned unchanged.
-    """
-    path = Path(model_path)
-    if path.is_absolute() and path.exists():
-        return path
-
-    candidates = [
-        Path.cwd() / path,
-        _REPO_ROOT / path,
-        _SRC_DIR / path,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-
-    return (_REPO_ROOT / path).resolve()
-
-
 def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     """Load a PPO policy for framework-driven Fossen visualisation.
 
@@ -127,7 +74,7 @@ def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     Returns:
         A loaded ``PPOPolicy`` with its network switched to eval mode.
     """
-    path = _resolve_model_path(model_path)
+    path = resolve_model_path(model_path, _SRC_DIR)
     stem = str(path.with_suffix("")) if path.suffix == ".zip" else str(path)
     policy = PPOPolicy.load(stem, device=device)
     policy.network.eval()
@@ -249,7 +196,7 @@ def _resolve_interpolation_steps(
     delta_x = float(target_motion_state[0] - previous_motion_state[0])
     delta_y = float(target_motion_state[1] - previous_motion_state[1])
     translation = float(np.hypot(delta_x, delta_y))
-    yaw_delta = abs(_wrapped_angle_delta(float(previous_motion_state[2]), float(target_motion_state[2])))
+    yaw_delta = abs(wrapped_angle_delta(float(previous_motion_state[2]), float(target_motion_state[2])))
 
     if max_translation_step > 0.0:
         steps = max(steps, int(np.ceil(translation / max_translation_step)))
@@ -346,9 +293,14 @@ def _animate_framework_state(
     _prefetched_pose = None
 
     def _send_pose(alpha: float) -> None:
+        """Push an interpolated motion state to UE5.
+
+        Args:
+            alpha: Interpolation factor in the range ``[0, 1]``.
+        """
         ix = start_x + alpha * (target_x - start_x)
         iy = start_y + alpha * (target_y - start_y)
-        iyaw = _interpolate_angle(start_yaw, target_yaw, alpha)
+        iyaw = interpolate_angle(start_yaw, target_yaw, alpha)
         if vehicle_object_name:
             # Object-pose path: moves a non-physics mesh actor - no water ripple,
             # no collision response, no buoyancy reactions.
@@ -371,6 +323,11 @@ def _animate_framework_state(
             )
 
     def _send_controls(alpha: float) -> None:
+        """Send interpolated control animation for the current frame.
+
+        Args:
+            alpha: Interpolation factor in the range ``[0, 1]``.
+        """
         if vehicle_object_name:
             # Object-pose mode: the actor is a non-physics mesh with no vehicle
             # controls. Skip setCarControls to save an RPC round-trip per step.

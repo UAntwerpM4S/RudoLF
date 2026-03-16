@@ -61,6 +61,9 @@ For the full tree structure and runtime diagrams, see [../../docs/airsim_archite
 ```
 airsim/
 ├── __init__.py                   # Re-exports CoordTransform, get_airsim_config
+├── common/                       # Shared utilities and helper classes
+│   ├── tools/                    # Shared path, angle, calibration, telemetry logic
+│   └── classes/                  # Shared data classes used across entrypoints
 │
 ├── config/                       # Configuration & calibration data
 │   ├── airsim_config.py          # Validated connection and runtime settings
@@ -86,9 +89,9 @@ airsim/
 │   ├── run_visualise_fossen.py   # Fossen replay mirrored into UE5
 │   └── verify_headless_plot.py   # CI-friendly headless plot export
 │
-├── tools/                        # Calibration & telemetry utilities
-│   ├── calibrate_coords.py       # Interactive Fossen↔AirSim calibration wizard
-│   └── analyze_telemetry.py      # Offline telemetry statistics
+├── tools/                        # Backward-compatible utility wrappers
+│   ├── calibrate_coords.py       # Wrapper to airsim.common.tools.calibrate_coords
+│   └── analyze_telemetry.py      # Wrapper to airsim.common.tools.analyze_telemetry
 │
 ├── poc/                          # Frozen proof-of-concept snapshots
 │   ├── README.md                 # Documents the POC scope
@@ -120,7 +123,7 @@ tests/
 ### Prerequisites
 
 | Requirement        | Version | Notes                                     |
-|--------------------|---------|-------------------------------------------|
+| ------------------ | ------- | ----------------------------------------- |
 | Python             | ≥ 3.12  |                                           |
 | CosysAirSim        | latest  | `pip install cosysairsim`                 |
 | Unreal Engine 5    | ≥ 5.3   | With the CosysAirSim plugin + water level |
@@ -132,6 +135,12 @@ tests/
 ```bash
 cd src
 python -m airsim.tools.calibrate_coords
+```
+
+Alternative launcher when your working directory is `src/airsim`:
+
+```bash
+python -m common.tools.calibrate_coords
 ```
 
 Follow the prompts to drive the vehicle to two reference points. The wizard writes `calibration.json` and draws the Fossen polygon overlay in UE5 for visual verification.
@@ -151,10 +160,13 @@ This reads `airsim/config/runtime_settings.json` and launches the AirSim-specifi
 
 When you launch through `fw.main`, the framework-level selector lives in `fw.config.CONFIG_PARAMETERS`:
 
-- `env_type = "AirSimEnv"` routes into `fw.main_with_airsim`.
+- `env_type` can be a single value or a list (for example `['PySimEnv', 'AirSimEnv']`).
 - `action = "train"` or `"visualize"` controls the generic non-AirSim framework path.
+- For both actions, environments run in configured list order.
+- AirSim runs via `fw.main_with_airsim` at its list position; non-AirSim entries run in the framework trainer flow.
+- If the ordered AirSim step fails (for example UE5 unavailable), that AirSim step is skipped and already-completed framework steps are not rerun.
 - AirSim visualisation itself is selected through `fossen_visualise` or `inference_visualise` in `airsim/config/runtime_settings.json` after the AirSim branch has been selected.
-- AirSim training throughput is tuned through `training.speed_profile` (`safe`, `fast`, `turbo`, `custom`) in `airsim/config/runtime_settings.json`.
+- AirSim training throughput is tuned through `training.speed_profile` (`normal`, `safe`, `fast`, `turbo`, `custom`) in `airsim/config/runtime_settings.json`.
 
 ### 3 — Run inference inside UE5
 
@@ -255,7 +267,7 @@ For high replay speeds, the visualisation no longer insists on time-based interp
 The validated bridge settings live in `airsim/config/airsim_config.py`:
 
 | Parameter               | Default | Description                                 |
-|-------------------------|---------|---------------------------------------------|
+| ----------------------- | ------- | ------------------------------------------- |
 | `use_airsim`            | `True`  | Enable / disable the AirSim bridge          |
 | `ip`                    | `""`    | AirSim server IP, empty meaning localhost   |
 | `port`                  | `41451` | AirSim RPC port                             |
@@ -269,8 +281,8 @@ Higher-level AirSim runtime options for training, inference, and visualisation l
 Training runtime controls include:
 
 | Runtime key                       | Purpose                                                               |
-|-----------------------------------|-----------------------------------------------------------------------|
-| `training.speed_profile`          | One-switch preset: `safe`, `fast`, `turbo`, or `custom`.              |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `training.speed_profile`          | One-switch preset: `normal`, `safe`, `fast`, `turbo`, or `custom`.    |
 | `training.simulation_speed`       | UE5 speed multiplier used in training mode (`custom` profile).        |
 | `training.frames_per_step`        | Number of UE5 physics frames advanced per RL step (`custom` profile). |
 | `training.use_pause_stepping`     | Deterministic paused stepping toggle (`custom` profile).              |
@@ -279,7 +291,7 @@ Training runtime controls include:
 Important visualisation-related settings include:
 
 | Runtime key                  | Purpose                                                                          |
-|------------------------------|----------------------------------------------------------------------------------|
+| ---------------------------- | -------------------------------------------------------------------------------- |
 | `simulation_speed`           | Multiplies UE5 replay speed during training or visualisation.                    |
 | `min_render_hz`              | Sets the minimum wall-clock cadence for UE5 pose pushes during framework replay. |
 | `render_interpolation_steps` | Requests smoothing steps for mirrored framework motion.                          |
@@ -292,7 +304,7 @@ These settings interact: at high `simulation_speed`, the replay may reach a poin
 ## Coordinate Frames
 
 | Frame  | X-axis | Y-axis | Heading reference | Positive direction |
-|--------|--------|--------|-------------------|--------------------|
+| ------ | ------ | ------ | ----------------- | ------------------ |
 | Fossen | East   | North  | From East         | Counter-clockwise  |
 | AirSim | North  | East   | From North (NED)  | Clockwise          |
 
@@ -307,7 +319,7 @@ The `CoordTransform` class handles all conversions, including scale, rotation, a
 When `csv_log_path` is configured, the bridge can export buffered vehicle telemetry with fields returned by `AirSimBridge.get_state()`, including:
 
 | Column                                | Unit  | Description                   |
-|---------------------------------------|-------|-------------------------------|
+| ------------------------------------- | ----- | ----------------------------- |
 | `timestamp`                           | —     | AirSim timestamp              |
 | `speed`                               | m/s   | AirSim-reported vehicle speed |
 | `gear`                                | —     | Current gear                  |
@@ -321,7 +333,7 @@ Use `python -m airsim.tools.analyze_telemetry` for offline inspection, and see [
 `AirSimEnv` can additionally write episode-scoped CSV telemetry with the following extra fields:
 
 | Column           | Unit | Description                                          |
-|------------------|------|------------------------------------------------------|
+| ---------------- | ---- | ---------------------------------------------------- |
 | `physics_wait_s` | s    | Time spent waiting for a newer UE5 physics timestamp |
 | `step_latency_s` | s    | Total wall-clock duration of the environment step    |
 | `ue5_timestamp`  | —    | Last timestamp reported by `getCarState()`           |

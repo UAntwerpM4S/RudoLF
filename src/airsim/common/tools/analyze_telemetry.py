@@ -5,14 +5,14 @@ mean / max distance error, mean / max heading error, and derived accuracy
 percentages.  Results are printed to stdout.
 
 Usage:
-    python -m airsim.tools.analyze_telemetry
+    python -m airsim.common.tools.analyze_telemetry
 """
 
 import csv
 import os
 from pathlib import Path
 
-_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
 
 # Search for telemetry in multiple locations
 POSSIBLE_PATHS = [
