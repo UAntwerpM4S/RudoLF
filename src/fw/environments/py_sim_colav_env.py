@@ -123,9 +123,8 @@ class PySimColavEnv(BaseEnv):
             wind: bool = False,
             current: bool = False,
             numerical_damping: bool = False,
-            static_ship: bool = True,
+            enable_obstacles: bool = True,
             use_polar_scan: bool = True,
-            enable_mirror_augmentation: bool = False,
             enable_variable_ship_size: bool = False,
             episode_type: Optional[str] = "overtaking" # "static", "overtaking", "head-on"
     ) -> None:
@@ -165,14 +164,14 @@ class PySimColavEnv(BaseEnv):
         self.background = None
         self.dynamics = None
         self.ship_pos = None
-        self.static_ship = bool(static_ship)
+        self.enable_obstacles = bool(enable_obstacles)
         self.episode_type = str(episode_type)
         self.collision_entities: List["CollisionEntity"] = []
-        self.static_ship_count = 0
-        self.static_ship_pos = None
-        self.static_ship_population = [0, 1, 2, 3] # min() ships at least, max() at most
-        self.static_ship_weights = [50, 25, 15, 10] # likeliness of ships being present
-        self._static_ship_probs = np.asarray(self.static_ship_weights, dtype=np.float32) / np.sum(self.static_ship_weights) # static ship probability
+        self.obstacle_count = 0
+        self.obstacle_pos = None
+        self.obstacle_population = [0, 1, 2, 3] # min() ships at least, max() at most
+        self.obstacle_weights = [50, 25, 15, 10] # likeliness of ships being present
+        self.obstacle_probs = np.asarray(self.obstacle_weights, dtype=np.float32) / np.sum(self.obstacle_weights) # static ship probability
         self.static_ship_lateral_max = 150  # max lateral deviation off path for static ships
         self.eval_static_ship_count = None
         self.enable_variable_ship_size = bool(enable_variable_ship_size)
@@ -194,11 +193,12 @@ class PySimColavEnv(BaseEnv):
         self.polar_fov = np.radians(270) # determines how "forward facing" the polar scan is
         self.polar_max_range: float = 250.0 # max range for ray casting (m)
         self.polar_obs_max: float = 0.1  # max value in observation when distance is ~0
-        self.enable_mirror_augmentation = bool(enable_mirror_augmentation) # enables mirroring of the environment during training
-        self.mirror_probability = 0.5 # mirror with probability
-        self._mirror_this_episode = False # mirroring current episode
-        self._mirror_axis_x = None
         self.scenario_builder = ScenarioBuilder(self)
+        self.scenario_types = ["static", "overtaking", "head-on"] # currently supported scenario types
+        self.scenario_probs = [1/3, 1/3, 1/3] # probabilities of a scenario occurring during a training episode
+        self.eval_obstacle_count = 5
+        self.eval_scenario = "head-on"
+
 
         # Precompute sector center angles in ship frame, spanning exactly the FOV
         bin_width = float(self.polar_fov) / float(self.polar_n_sectors)
@@ -227,10 +227,6 @@ class PySimColavEnv(BaseEnv):
 
         # Cache static checkpoints
         self.scenario_builder.cache_checkpoint_segments()
-
-        # Mirror around the center x-coordinate of the navigable area
-        minx, _, maxx, _ = self.polygon_shape.bounds
-        self._mirror_axis_x = 0.5 * (minx + maxx)
 
         # Cache original episode geometry once
         self._base_initial_ship_pos = self.initial_ship_pos.copy()
@@ -431,142 +427,6 @@ class PySimColavEnv(BaseEnv):
     # -----------------------
     # Utility & math helpers
     # -----------------------
-    def _advance_entity_along_checkpoints(self, entity, dt: float) -> None:
-        remaining_dist = float(entity.path_speed) * float(dt)
-        path_direction = int(getattr(entity, "path_direction", 1))
-        path_offset = float(getattr(entity, "path_offset", 0.0))
-
-        while remaining_dist > EPSILON and not getattr(entity, "route_finished", False):
-            next_idx = int(getattr(entity, "next_checkpoint_index", -1))
-
-            # valid range depends on travel direction
-            if next_idx < 0 or next_idx >= len(self.checkpoints):
-                entity.route_finished = True
-                entity.set_speed(0.0)
-                return
-
-            # Centerline travel direction for the current segment
-            # Used in the takeover scenario
-            if path_direction >= 0:
-                # moving forward toward checkpoint[next_idx]
-                if next_idx <= 0:
-                    entity.route_finished = True
-                    entity.set_speed(0.0)
-                    return
-                cp_a = np.asarray(self.checkpoints[next_idx - 1]["pos"], dtype=np.float32)
-                cp_b = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
-                travel_dir = cp_b - cp_a
-            else:
-                # moving backward toward checkpoint[next_idx]
-                # used in the head-on scenario
-                if next_idx >= len(self.checkpoints) - 1:
-                    entity.route_finished = True
-                    entity.set_speed(0.0)
-                    return
-                cp_a = np.asarray(self.checkpoints[next_idx + 1]["pos"], dtype=np.float32)
-                cp_b = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
-                travel_dir = cp_b - cp_a
-
-
-            travel_norm = float(np.linalg.norm(travel_dir))
-            if travel_norm <= EPSILON:
-                entity.path_segment_index += path_direction
-                entity.next_checkpoint_index += path_direction
-                continue
-
-            travel_dir = travel_dir / travel_norm
-
-            # Starboard relative to the entity heading/travel direction
-            starboard = np.array([travel_dir[1], -travel_dir[0]], dtype=np.float32)
-
-            # Offset target point from the path centerline
-            target_center = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
-            target = target_center + path_offset * starboard
-
-            pos = entity.get_position()
-            delta = target - pos
-            dist = float(np.linalg.norm(delta))
-
-            if dist <= EPSILON:
-                entity.set_position(float(target[0]), float(target[1]))
-                entity.path_segment_index += path_direction
-                entity.next_checkpoint_index += path_direction
-
-                if entity.next_checkpoint_index < 0 or entity.next_checkpoint_index >= len(self.checkpoints):
-                    entity.route_finished = True
-                    entity.set_speed(0.0)
-                    return
-                continue
-
-            direction = delta / dist
-            entity.set_heading(float(math.atan2(direction[1], direction[0])))
-            entity.set_speed(float(entity.path_speed))
-
-            move_dist = min(remaining_dist, dist)
-            entity.step(move_dist / max(entity.get_speed(), EPSILON))
-            remaining_dist -= move_dist
-
-            if move_dist >= dist - EPSILON:
-                entity.set_position(float(target[0]), float(target[1]))
-                entity.path_segment_index += path_direction
-                entity.next_checkpoint_index += path_direction
-
-                if entity.next_checkpoint_index < 0 or entity.next_checkpoint_index >= len(self.checkpoints):
-                    entity.route_finished = True
-                    entity.set_speed(0.0)
-                    return
-
-    def _mirror_x(self, arr: np.ndarray) -> np.ndarray:
-        """
-        Mirror point(s) across the vertical axis x = self._mirror_axis_x.
-        Works for shape (2,) and (N, 2).
-        """
-        out = np.array(arr, dtype=np.float32).copy()
-        out[..., 0] = 2.0 * float(self._mirror_axis_x) - out[..., 0]
-        return out
-
-    def _apply_episode_geometry(self, mirrored: bool) -> None:
-        """
-        Restore original geometry or its mirrored counterpart for the current episode.
-        """
-        if mirrored:
-            self.initial_ship_pos = self._mirror_x(self._base_initial_ship_pos)
-            self.target_pos = self._mirror_x(self._base_target_pos)
-            self.overall = self._mirror_x(self._base_overall)
-            self.obstacles = self._mirror_x(self._base_obstacles)
-
-            self.checkpoints = []
-            for cp in self._base_checkpoints:
-                self.checkpoints.append({
-                    'pos': self._mirror_x(cp['pos']),
-                    'radius': float(cp['radius']),
-                    'reward': float(cp['reward']),
-                    'perpendicular_line': (
-                        self._mirror_x(cp['perpendicular_line'][0]),
-                        self._mirror_x(cp['perpendicular_line'][1]),
-                    ),
-                })
-        else:
-            self.initial_ship_pos = self._base_initial_ship_pos.copy()
-            self.target_pos = self._base_target_pos.copy()
-            self.overall = self._base_overall.copy()
-            self.obstacles = self._base_obstacles.copy()
-
-            self.checkpoints = []
-            for cp in self._base_checkpoints:
-                self.checkpoints.append({
-                    'pos': cp['pos'].copy(),
-                    'radius': float(cp['radius']),
-                    'reward': float(cp['reward']),
-                    'perpendicular_line': (
-                        cp['perpendicular_line'][0].copy(),
-                        cp['perpendicular_line'][1].copy(),
-                    ),
-                })
-
-        # Rebuild polygon because obstacle coordinates changed
-        self.polygon_shape = Polygon(self.obstacles)
-
     def sample_point_in_river(self, nbr_samples: int = 1, max_tries: int = 20000) -> np.ndarray:
         """
         Sample N random points INSIDE the river polygon using rejection sampling.
@@ -1177,17 +1037,17 @@ class PySimColavEnv(BaseEnv):
         current_checkpoint = self.checkpoints[self.checkpoint_index]
         current_checkpoint_pos = current_checkpoint['pos']
 
-        if getattr(self, "episode_type", None) == "overtaking" and not getattr(self, "_overtaking_pass_reported", False):
-            # Check whether OS has passed
-            os_next_checkpoint_idx_for_pass_check = int(self.checkpoint_index)
-            entities = getattr(self, "collision_entities", []) or []
-            ts_entity = next((e for e in entities if getattr(e, "entity_type", None) == "overtaking"), None)
-            ts_next_idx = int(getattr(ts_entity, "next_checkpoint_index", len(self.checkpoints)))
-            os_remaining = self.scenario_builder.remaining_distance_to_goal(self.ship_pos, os_next_checkpoint_idx_for_pass_check)
-            ts_remaining = self.scenario_builder.remaining_distance_to_goal(ts_entity.get_position(), ts_next_idx)
-            if os_remaining < ts_remaining:
-                print(f"OS has passed TS")
-                self._overtaking_pass_reported = True
+        # if getattr(self, "episode_type", None) == "overtaking" and not getattr(self, "_overtaking_pass_reported", False):
+        #     # Check whether OS has passed
+        #     os_next_checkpoint_idx_for_pass_check = int(self.checkpoint_index)
+        #     entities = getattr(self, "collision_entities", []) or []
+        #     ts_entity = next((e for e in entities if getattr(e, "entity_type", None) == "overtaking"), None)
+        #     ts_next_idx = int(getattr(ts_entity, "next_checkpoint_index", len(self.checkpoints)))
+        #     os_remaining = self.scenario_builder.remaining_distance_to_goal(self.ship_pos, os_next_checkpoint_idx_for_pass_check)
+        #     ts_remaining = self.scenario_builder.remaining_distance_to_goal(ts_entity.get_position(), ts_next_idx)
+        #     if os_remaining < ts_remaining:
+        #         print(f"OS has passed TS")
+        #         self._overtaking_pass_reported = True
 
         # Path vector and unit vector
         path_vec = current_checkpoint_pos - prev_checkpoint_pos
@@ -1586,13 +1446,13 @@ class PySimColavEnv(BaseEnv):
     # -----------------------
     def _sync_collision_entity_views(self) -> None:
         if not getattr(self, "collision_entities", None):
-            self.static_ship_pos = np.zeros((0, 2), dtype=np.float32)
+            self.obstacle_pos = np.zeros((0, 2), dtype=np.float32)
             self.static_ship_radii = np.zeros((0,), dtype=np.float32)
-            self.static_ship_count = 0
+            self.obstacle_count = 0
             return
 
-        self.static_ship_count = len(self.collision_entities)
-        self.static_ship_pos = np.array(
+        self.obstacle_count = len(self.collision_entities)
+        self.obstacle_pos = np.array(
             [entity.get_position() for entity in self.collision_entities],
             dtype=np.float32,
         )
@@ -1637,33 +1497,109 @@ class PySimColavEnv(BaseEnv):
                 self._rebuild_polar_scan_geometries()
                 self.polar_scan_cached = None
 
+    def _advance_entity_along_checkpoints(self, entity, dt: float) -> None:
+        remaining_dist = float(entity.path_speed) * float(dt)
+        path_direction = int(getattr(entity, "path_direction", 1))
+        path_offset = float(getattr(entity, "path_offset", 0.0))
+
+        while remaining_dist > EPSILON and not getattr(entity, "route_finished", False):
+            next_idx = int(getattr(entity, "next_checkpoint_index", -1))
+
+            # valid range depends on travel direction
+            if next_idx < 0 or next_idx >= len(self.checkpoints):
+                entity.route_finished = True
+                entity.set_speed(0.0)
+                return
+
+            # Centerline travel direction for the current segment
+            # Used in the takeover scenario
+            if path_direction >= 0:
+                # moving forward toward checkpoint[next_idx]
+                if next_idx <= 0:
+                    entity.route_finished = True
+                    entity.set_speed(0.0)
+                    return
+                cp_a = np.asarray(self.checkpoints[next_idx - 1]["pos"], dtype=np.float32)
+                cp_b = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
+                travel_dir = cp_b - cp_a
+            else:
+                # moving backward toward checkpoint[next_idx]
+                # used in the head-on scenario
+                if next_idx >= len(self.checkpoints) - 1:
+                    entity.route_finished = True
+                    entity.set_speed(0.0)
+                    return
+                cp_a = np.asarray(self.checkpoints[next_idx + 1]["pos"], dtype=np.float32)
+                cp_b = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
+                travel_dir = cp_b - cp_a
+
+
+            travel_norm = float(np.linalg.norm(travel_dir))
+            if travel_norm <= EPSILON:
+                entity.path_segment_index += path_direction
+                entity.next_checkpoint_index += path_direction
+                continue
+
+            travel_dir = travel_dir / travel_norm
+
+            # Starboard relative to the entity heading/travel direction
+            starboard = np.array([travel_dir[1], -travel_dir[0]], dtype=np.float32)
+
+            # Offset target point from the path centerline
+            target_center = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
+            target = target_center + path_offset * starboard
+
+            pos = entity.get_position()
+            delta = target - pos
+            dist = float(np.linalg.norm(delta))
+
+            if dist <= EPSILON:
+                entity.set_position(float(target[0]), float(target[1]))
+                entity.path_segment_index += path_direction
+                entity.next_checkpoint_index += path_direction
+
+                if entity.next_checkpoint_index < 0 or entity.next_checkpoint_index >= len(self.checkpoints):
+                    entity.route_finished = True
+                    entity.set_speed(0.0)
+                    return
+                continue
+
+            direction = delta / dist
+            entity.set_heading(float(math.atan2(direction[1], direction[0])))
+            entity.set_speed(float(entity.path_speed))
+
+            move_dist = min(remaining_dist, dist)
+            entity.step(move_dist / max(entity.get_speed(), EPSILON))
+            remaining_dist -= move_dist
+
+            if move_dist >= dist - EPSILON:
+                entity.set_position(float(target[0]), float(target[1]))
+                entity.path_segment_index += path_direction
+                entity.next_checkpoint_index += path_direction
+
+                if entity.next_checkpoint_index < 0 or entity.next_checkpoint_index >= len(self.checkpoints):
+                    entity.route_finished = True
+                    entity.set_speed(0.0)
+                    return
+
     def env_specific_reset(self) -> None:
         """Reset episode-specific geometry and build collision entities for the episode."""
         if getattr(self, "use_polar_scan", False):
             self.polar_scan_cached = None
 
-        if getattr(self, "eval_static_ship_count", None) is None:
-            if self.enable_mirror_augmentation:
-                self._mirror_this_episode = bool(self._rng.random() < self.mirror_probability)
-            else:
-                self._mirror_this_episode = False
-        else:
-            self._mirror_this_episode = False
-
-        self._apply_episode_geometry(self._mirror_this_episode)
-        #self.scenario_builder.cache_checkpoint_segments() # only makes sense if mirroring is used, but mirroring might get removed
-
         self.collision_entities = []
-        self.static_ship_count = 0
-        self.static_ship_pos = None
+        self.obstacle_count = 0
+        self.obstacle_pos = None
         self.static_ship_radii = []
 
-        if getattr(self, "static_ship", False):
-            if getattr(self, "eval_static_ship_count", None) is not None:
-                self.static_ship_count = int(self.eval_static_ship_count)
-                self.collision_entities = self.scenario_builder.compute_collision_entity_positions(self.episode_type, 20) or []
+        if getattr(self, "enable_obstacles", False):
+            if getattr(self, "eval", False):
+                # Evaluation (visualization)
+                self.obstacle_count = int(self.eval_obstacle_count)
+                self.collision_entities = self.scenario_builder.compute_collision_entity_positions(self.eval_scenario, self.obstacle_count) or []
                 self._sync_collision_entity_views()
             else:
+                # Training
                 self.scenario_builder.sample_collision_entity_scenario()
 
         if getattr(self, "use_polar_scan", False):

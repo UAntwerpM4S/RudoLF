@@ -10,6 +10,8 @@ EPSILON = 1e-9
 class ScenarioBuilder:
     def __init__(self, env) -> None:
         self.env = env
+        self.scenario_types = ["static", "overtaking", "head-on"]
+        self.scenario_probs = [1/3, 1/3, 1/3]
 
     def cache_checkpoint_segments(self) -> None:
         """
@@ -86,13 +88,15 @@ class ScenarioBuilder:
     def sample_collision_entity_scenario(self) -> None:
         """Sample the current episode's collision entities."""
         env = self.env
-        if not getattr(self, "static_ship", False):
+        if not getattr(env, "enable_obstacles", False):
             self.collision_entities = []
             env._sync_collision_entity_views()
             return
 
-        env.static_ship_count = int(env._rng.choice(env.static_ship_population, p=env._static_ship_probs))
-        env.collision_entities = self.compute_collision_entity_positions(env.episode_type, 2) or []
+        env.obstacle_count = env._rng.choice(env.obstacle_population, p=env.obstacle_probs)
+        chosen_scenario = env._rng.choice(self.scenario_types, p=self.scenario_probs)
+
+        env.collision_entities = self.compute_collision_entity_positions(chosen_scenario, env.obstacle_count) or []
         env._sync_collision_entity_views()
 
     def compute_collision_entity_positions(self, episode_type: Optional[str] = None, n: int = 1):
@@ -107,7 +111,6 @@ class ScenarioBuilder:
             case "head-on":
                 for i in range(n):
                     entities.extend(self.compute_headon_collision_entities())
-                    print(f"entities: {entities}")
             case "crossing":
                 raise NotImplementedError("Crossing scenario is not implemented yet.")
             case _:
@@ -124,7 +127,7 @@ class ScenarioBuilder:
         max_lat = float(getattr(env, "static_ship_lateral_max", 0.0))
         segment_margin_frac = float(getattr(env, "static_ship_segment_margin_frac", 0.0))
 
-        for _ in range(env.static_ship_count):
+        for _ in range(env.obstacle_count):
             eligible_indices = list(range(3, len(env.checkpoints) - 2))
             if not eligible_indices:
                 break

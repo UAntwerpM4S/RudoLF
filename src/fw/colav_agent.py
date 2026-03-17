@@ -314,7 +314,7 @@ class ColavAgent:
 
         self.model.set_policy_eval()
         env = self.get_env()
-        env.eval_static_ship_count = 5
+        env.eval = True
 
         if replay_collision_episodes:
             self._collision_episode_records = []
