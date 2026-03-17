@@ -197,7 +197,7 @@ class PySimColavEnv(BaseEnv):
         self.scenario_types = ["static", "overtaking", "head-on"] # currently supported scenario types
         self.scenario_probs = [1/3, 1/3, 1/3] # probabilities of a scenario occurring during a training episode
         self.eval_obstacle_count = 5
-        self.eval_scenario = "head-on"
+        self.eval_scenario = "static"
 
 
         # Precompute sector center angles in ship frame, spanning exactly the FOV

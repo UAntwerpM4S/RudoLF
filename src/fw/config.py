@@ -64,7 +64,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': True,
+    'live_animation': False,
     'use_airsim': False,
     'airsim_ip': '',
     'airsim_port': 41451,
