@@ -8,7 +8,7 @@ class ShipModel(Enum):
     MYZAKO_DEFAULT = auto()
     MYZAKO_29 = auto()
     MYZAKO_37 = auto()
-    DESEO = auto()
+    TRIPOLI = auto()
 
 
 class MyzakoShip:
@@ -73,6 +73,20 @@ class MyzakoShip:
             N_rr_coeff = -0.0362
             Y_uv_coeff = -0.00467
             N_uv_coeff = -0.00007
+        elif ship_model == ShipModel.TRIPOLI:
+            mass = 6161870.27   # 7.16e6
+            length = 110.0  # 109.0
+            X_udot_coeff = -0.05
+            Y_vdot_coeff = -0.5
+            N_rdot_coeff = -0.05
+            X_u_coeff = -0.002
+            Y_v_coeff = -0.02
+            N_r_coeff = -0.001
+            X_uu_coeff = -0.0005
+            Y_vv_coeff = -0.005
+            N_rr_coeff = -0.0005
+            Y_uv_coeff = -0.005
+            N_uv_coeff = -0.0005
         else:
             mass = 3.86e6
             length = 110.0
@@ -133,7 +147,8 @@ def create_ship(ship_model: ShipModel = ShipModel.MYZAKO_DEFAULT) -> MyzakoShip:
 
     if (ship_model == ShipModel.MYZAKO_DEFAULT or
         ship_model == ShipModel.MYZAKO_29 or
-        ship_model == ShipModel.MYZAKO_37):
+        ship_model == ShipModel.MYZAKO_37 or
+        ship_model == ShipModel.TRIPOLI):
         return MyzakoShip(ship_model)
     else:
         raise ValueError(f"Ship model '{ship_model}' not supported yet.")
