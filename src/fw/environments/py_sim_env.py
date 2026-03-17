@@ -50,7 +50,7 @@ DPI = 100
 
 # Constants definition
 PERPENDICULAR_LINE_LENGTH = 50.0
-PERPENDICULAR_LINE_PROXIMITY = 5.0
+PERPENDICULAR_LINE_PROXIMITY = 2.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
 EPSILON = 1e-9  # Small epsilon for numerical stability
@@ -506,7 +506,7 @@ class PySimEnv(BaseEnv):
             return np.arctan2(vec[1], vec[0])
         return 0.0
 
-    def _calculate_heading_error(self, target_heading: float, current_heading: float, dead_zone_deg: float = 0.0) -> float:
+    def _calculate_heading_error(self, target_heading: float, current_heading: float, dead_zone_deg: float = 5.0) -> float:
         """
         Calculate heading error with dead zone handling.
 
@@ -547,11 +547,7 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Yaw rate
                 -1.0,   # Distance to current checkpoint
                 -1.0,   # Distance to checkpoint+1
-                -1.0,   # Distance to checkpoint+2
-                -1.0,   # Distance to checkpoint+3
                 -1.0,   # Cross-track error
-                -1.0,   # Heading error
-                -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
                 -1.0,   # Heading error
@@ -569,11 +565,7 @@ class PySimEnv(BaseEnv):
                 1.0,    # Yaw rate
                 1.0,    # Distance to current checkpoint
                 1.0,    # Distance to checkpoint+1
-                1.0,    # Distance to checkpoint+2
-                1.0,    # Distance to checkpoint+3
                 1.0,    # Cross-track error
-                1.0,    # Heading error
-                1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
                 1.0,    # Heading error
@@ -684,8 +676,6 @@ class PySimEnv(BaseEnv):
             current_chkp_idx = self.checkpoint_index[i]
             prev_chkp_idx = max(0, current_chkp_idx - 1)
             next_chkp_idx = current_chkp_idx + 1
-            next2_chkp_idx = current_chkp_idx + 2
-            next3_chkp_idx = current_chkp_idx + 3
 
             # Calculate direction of last path segment
             p_last = self.checkpoints[len(self.checkpoints) - 1]['pos'].copy()
@@ -704,16 +694,6 @@ class PySimEnv(BaseEnv):
             else:
                 multiplier = next_chkp_idx - (len(self.checkpoints) - 1)
                 next_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
-            if next2_chkp_idx <= len(self.checkpoints) - 1:
-                next2_chkp_pos = self.checkpoints[next2_chkp_idx]['pos']
-            else:
-                multiplier = next2_chkp_idx - (len(self.checkpoints) - 1)
-                next2_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
-            if next3_chkp_idx <= len(self.checkpoints) - 1:
-                next3_chkp_pos = self.checkpoints[next3_chkp_idx]['pos']
-            else:
-                multiplier = next3_chkp_idx - (len(self.checkpoints) - 1)
-                next3_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
 
             # Distances to checkpoints
             norm_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - current_chkp_pos)),
@@ -722,12 +702,6 @@ class PySimEnv(BaseEnv):
             norm_next_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - next_chkp_pos)),
                                                            value_range=(0, 2 * 2000),
                                                            half_value=1.5 * 370)
-            norm_next2_distance = self._logarithmic_scaling(value=np.linalg.norm(self.ship_pos[i] - next2_chkp_pos),
-                                                            value_range=(0, 3 * 2000),
-                                                            half_value=2.5 * 370)  # np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
-            norm_next3_distance = self._logarithmic_scaling(value=np.linalg.norm(self.ship_pos[i] - next3_chkp_pos),
-                                                            value_range=(0, 4 * 2000),
-                                                            half_value=3.5 * 370)  # np.linalg.norm(self.ship_pos[i] - next_chkp_pos) / self.max_dist
 
             # Cross-track error (normalized, signed)
             norm_cross_error = self._logarithmic_scaling(
@@ -769,20 +743,6 @@ class PySimEnv(BaseEnv):
                 0.0
             )
 
-            # To checkpoint+2
-            heading_error3 = self._calculate_heading_error(
-                self._safe_heading_from_vector(next2_chkp_pos - self.ship_pos[i]),
-                self.phys_sims[i].state.heading,
-                0.0
-            )
-
-            # To checkpoint+3
-            heading_error4 = self._calculate_heading_error(
-                self._safe_heading_from_vector(next3_chkp_pos - self.ship_pos[i]),
-                self.phys_sims[i].state.heading,
-                0.0
-            )
-
             # LOS guidance error
             los_heading_error = self._calculate_heading_error(
                 self.los_guidance_heading(i=i),
@@ -795,13 +755,9 @@ class PySimEnv(BaseEnv):
                 norm_velocities,                        # Normalized velocities
                 [2 * norm_distance - 1],                # Distance to current checkpoint
                 [2 * norm_next_distance - 1],           # Distance to next checkpoint
-                [2 * norm_next2_distance - 1],          # Distance to checkpoint+2
-                [2 * norm_next3_distance - 1],          # Distance to checkpoint+3
                 [norm_cross_error],                     # Normalized cross-track error
                 [heading_error / np.pi],                # Normalized heading error
                 [heading_error2 / np.pi],               # Normalized heading error
-                [heading_error3 / np.pi],               # Normalized heading error
-                [heading_error4 / np.pi],               # Normalized heading error
                 [heading_error_parallel / np.pi],       # Normalized heading error
                 [heading_error_parallel2 / np.pi],      # Normalized heading error
                 self.performed_action[i][0],            # Previous rudder angle
@@ -929,7 +885,7 @@ class PySimEnv(BaseEnv):
         # Reward components
         r_forward = - 0.25 * abs(target_velocity - velocity) / target_velocity
         r_heading_alignment = - 0.5 * abs(heading_error)
-        r_cte = - 0.00 * cross_track_error
+        r_cte = - 0.05 * cross_track_error
         r_rudder_angle_change = - 0.4 * (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -1
         r_rudder_angle = - 0.05 * (abs(self.performed_action[i][0]) / 0.2) ** (2 if abs(self.performed_action[i][0]) < 0.2 else 4)
         r_thrust_change = 0  # - 0.5 * thrust_change
@@ -986,7 +942,7 @@ class PySimEnv(BaseEnv):
         """Check if ship is close enough to checkpoint's perpendicular line."""
 
         line_start, line_end = checkpoint['perpendicular_line']
-        return self._distance_from_point_to_line(self.ship_pos[ship_index], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY * self.time_step
+        return self._distance_from_point_to_line(self.ship_pos[ship_index], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY * (self.time_step / 0.1)
 
     def los_guidance_heading(self, i: int):
         """
