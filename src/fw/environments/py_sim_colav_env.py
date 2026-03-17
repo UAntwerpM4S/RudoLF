@@ -1,14 +1,11 @@
-import os
-from random import randrange, randint
-
 import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import gymnasium as gym
 import tkinter as tk
-import numpy as np
-from numpy import ndarray, dtype
-from sympy.codegen.cnodes import static
+from fw.collision_avoidance.scenario_builder import ScenarioBuilder
+from fw.collision_avoidance.collision_entity import CollisionEntity
+
 import math
 
 # First try interactive backend
@@ -19,9 +16,8 @@ except ImportError:
     matplotlib.use('Agg')  # Use non-interactive backend as fallback
 
 from functools import lru_cache
-from shapely.geometry import Point, Polygon, LineString
-from shapely.ops import unary_union
-from typing import Dict, List, Optional, Tuple, Union, Any
+from shapely.geometry import Point, Polygon
+from typing import List, Optional, Union
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
@@ -30,8 +26,6 @@ from fw.environments.base_env import BaseEnv
 from fw.dynamics.dynamics_model import Model
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.nomoto import Nomoto
-
-import time
 import os
 from typing import Tuple, Dict
 import numpy as np
@@ -190,6 +184,8 @@ class PySimColavEnv(BaseEnv):
         self.os_nominal_speed = 2.0
         self.overtaking_ts_v_min = 1.0 # minimal constant speed of TS in overtaking scenario
         self.overtaking_ts_v_max = self.os_nominal_speed - 0.3 # maximal constant speed of TS in overtaking scenario
+        self.headon_ts_v_min = self.os_nominal_speed - 1.0
+        self.headon_ts_v_max = self.os_nominal_speed + 1.0
         self.own_ship_radius = 0.0 # keep point-ship model for now; set >0 for hull clearance
         self.use_polar_scan = bool(use_polar_scan) # Enable/disable polar scan representation
         self.polar_scan_cached = None # polar scan of current env step
@@ -202,6 +198,7 @@ class PySimColavEnv(BaseEnv):
         self.mirror_probability = 0.5 # mirror with probability
         self._mirror_this_episode = False # mirroring current episode
         self._mirror_axis_x = None
+        self.scenario_builder = ScenarioBuilder(self)
 
         # Precompute sector center angles in ship frame, spanning exactly the FOV
         bin_width = float(self.polar_fov) / float(self.polar_n_sectors)
@@ -227,6 +224,10 @@ class PySimColavEnv(BaseEnv):
 
         # Load environment static data and build checkpoints/polygons
         self._load_environment_data(target_pos)
+
+        # Cache static checkpoints
+        self.scenario_builder.cache_checkpoint_segments()
+
         # Mirror around the center x-coordinate of the navigable area
         minx, _, maxx, _ = self.polygon_shape.bounds
         self._mirror_axis_x = 0.5 * (minx + maxx)
@@ -248,7 +249,7 @@ class PySimColavEnv(BaseEnv):
             }
             for cp in self.checkpoints
         ]
-        self._sample_collision_entity_scenario()
+        self.scenario_builder.sample_collision_entity_scenario()
 
         # Build union geometry once (bank boundary + static ships) to speed up per-step ray casting
         if self.use_polar_scan:
@@ -430,47 +431,68 @@ class PySimColavEnv(BaseEnv):
     # -----------------------
     # Utility & math helpers
     # -----------------------
-    def _remaining_distance_to_goal(self, pos: np.ndarray, next_checkpoint_idx: int) -> float:
-        """
-        Remaining path distance from a position to the goal, assuming the vessel
-        is currently heading toward checkpoints[next_checkpoint_idx].
-        """
-        if next_checkpoint_idx >= len(self.checkpoints):
-            return 0.0
-
-        pos = np.asarray(pos, dtype=np.float32)
-
-        rem = float(np.linalg.norm(
-            np.asarray(self.checkpoints[next_checkpoint_idx]["pos"], dtype=np.float32) - pos
-        ))
-
-        for i in range(next_checkpoint_idx + 1, len(self.checkpoints)):
-            pa = np.asarray(self.checkpoints[i - 1]["pos"], dtype=np.float32)
-            pb = np.asarray(self.checkpoints[i]["pos"], dtype=np.float32)
-            rem += float(np.linalg.norm(pb - pa))
-
-        return rem
-
     def _advance_entity_along_checkpoints(self, entity, dt: float) -> None:
         remaining_dist = float(entity.path_speed) * float(dt)
+        path_direction = int(getattr(entity, "path_direction", 1))
+        path_offset = float(getattr(entity, "path_offset", 0.0))
 
         while remaining_dist > EPSILON and not getattr(entity, "route_finished", False):
-            next_idx = getattr(entity, "next_checkpoint_index", None)
-            if next_idx is None or next_idx >= len(self.checkpoints):
+            next_idx = int(getattr(entity, "next_checkpoint_index", -1))
+
+            # valid range depends on travel direction
+            if next_idx < 0 or next_idx >= len(self.checkpoints):
                 entity.route_finished = True
                 entity.set_speed(0.0)
                 return
 
-            target = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
+            # Centerline travel direction for the current segment
+            # Used in the takeover scenario
+            if path_direction >= 0:
+                # moving forward toward checkpoint[next_idx]
+                if next_idx <= 0:
+                    entity.route_finished = True
+                    entity.set_speed(0.0)
+                    return
+                cp_a = np.asarray(self.checkpoints[next_idx - 1]["pos"], dtype=np.float32)
+                cp_b = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
+                travel_dir = cp_b - cp_a
+            else:
+                # moving backward toward checkpoint[next_idx]
+                # used in the head-on scenario
+                if next_idx >= len(self.checkpoints) - 1:
+                    entity.route_finished = True
+                    entity.set_speed(0.0)
+                    return
+                cp_a = np.asarray(self.checkpoints[next_idx + 1]["pos"], dtype=np.float32)
+                cp_b = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
+                travel_dir = cp_b - cp_a
+
+
+            travel_norm = float(np.linalg.norm(travel_dir))
+            if travel_norm <= EPSILON:
+                entity.path_segment_index += path_direction
+                entity.next_checkpoint_index += path_direction
+                continue
+
+            travel_dir = travel_dir / travel_norm
+
+            # Starboard relative to the entity heading/travel direction
+            starboard = np.array([travel_dir[1], -travel_dir[0]], dtype=np.float32)
+
+            # Offset target point from the path centerline
+            target_center = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
+            target = target_center + path_offset * starboard
+
             pos = entity.get_position()
             delta = target - pos
             dist = float(np.linalg.norm(delta))
 
             if dist <= EPSILON:
                 entity.set_position(float(target[0]), float(target[1]))
-                entity.path_segment_index += 1
-                entity.next_checkpoint_index += 1
-                if entity.next_checkpoint_index >= len(self.checkpoints):
+                entity.path_segment_index += path_direction
+                entity.next_checkpoint_index += path_direction
+
+                if entity.next_checkpoint_index < 0 or entity.next_checkpoint_index >= len(self.checkpoints):
                     entity.route_finished = True
                     entity.set_speed(0.0)
                     return
@@ -486,9 +508,10 @@ class PySimColavEnv(BaseEnv):
 
             if move_dist >= dist - EPSILON:
                 entity.set_position(float(target[0]), float(target[1]))
-                entity.path_segment_index += 1
-                entity.next_checkpoint_index += 1
-                if entity.next_checkpoint_index >= len(self.checkpoints):
+                entity.path_segment_index += path_direction
+                entity.next_checkpoint_index += path_direction
+
+                if entity.next_checkpoint_index < 0 or entity.next_checkpoint_index >= len(self.checkpoints):
                     entity.route_finished = True
                     entity.set_speed(0.0)
                     return
@@ -1132,10 +1155,6 @@ class PySimColavEnv(BaseEnv):
             truncated = True
 
         obs = self._get_obs()
-        self._os_speed_samples.append(float(np.hypot(self.phys_sim.state.u, self.phys_sim.state.v)))
-
-        if terminated and self._os_speed_samples:
-            print(f"Average OS speed this episode: {np.mean(self._os_speed_samples):.2f} m/s")
         return obs, reward, terminated, truncated, info
 
     # -------------------
@@ -1164,8 +1183,8 @@ class PySimColavEnv(BaseEnv):
             entities = getattr(self, "collision_entities", []) or []
             ts_entity = next((e for e in entities if getattr(e, "entity_type", None) == "overtaking"), None)
             ts_next_idx = int(getattr(ts_entity, "next_checkpoint_index", len(self.checkpoints)))
-            os_remaining = self._remaining_distance_to_goal(self.ship_pos, os_next_checkpoint_idx_for_pass_check)
-            ts_remaining = self._remaining_distance_to_goal(ts_entity.get_position(), ts_next_idx)
+            os_remaining = self.scenario_builder.remaining_distance_to_goal(self.ship_pos, os_next_checkpoint_idx_for_pass_check)
+            ts_remaining = self.scenario_builder.remaining_distance_to_goal(ts_entity.get_position(), ts_next_idx)
             if os_remaining < ts_remaining:
                 print(f"OS has passed TS")
                 self._overtaking_pass_reported = True
@@ -1271,7 +1290,7 @@ class PySimColavEnv(BaseEnv):
 
         collision_entity_collision = False
         if getattr(self, "collision_entities", None):
-            collision_entity_collision = self._check_collision_entity_collision()
+            collision_entity_collision = self.scenario_builder.check_collision_entity_collision()
             termination_conditions.append(collision_entity_collision)
 
         info = {}
@@ -1594,7 +1613,15 @@ class PySimColavEnv(BaseEnv):
 
             old_pos = entity.get_position().copy()
 
+            if getattr(entity, "entity_type", None) == "head-on":
+                # Increase lateral distance to starboard of head-on TS
+                dist_to_os = float(np.linalg.norm(entity.get_position() - self.ship_pos))
+                if dist_to_os <= self.polar_max_range:
+                    entity.set_lateral_speed(1)
+                    entity.route_mode = None # stop following the route when performing COLREG maneuver
+
             route_mode = getattr(entity, "route_mode", None)
+
             if route_mode == "follow_checkpoints":
                 self._advance_entity_along_checkpoints(entity, self.time_step)
             else:
@@ -1610,302 +1637,6 @@ class PySimColavEnv(BaseEnv):
                 self._rebuild_polar_scan_geometries()
                 self.polar_scan_cached = None
 
-    def _sample_collision_entity_scenario(self) -> None:
-        """Sample the current episode's collision entities."""
-        if not getattr(self, "static_ship", False):
-            self.collision_entities = []
-            self._sync_collision_entity_views()
-            return
-
-        self.static_ship_count = int(self._rng.choice(self.static_ship_population, p=self._static_ship_probs))
-        self.collision_entities = self._compute_collision_entity_positions(self.episode_type) or []
-        self._sync_collision_entity_views()
-
-    def _sample_static_ship_scenario(self) -> None:
-        """Backward-compatible wrapper around collision-entity scenario generation."""
-        self._sample_collision_entity_scenario()
-
-    def _compute_collision_entity_positions(
-            self,
-            episode_type: Optional[str] = None
-    ) -> list["CollisionEntity"]:
-        """
-        Compute collision entities for the configured episode type.
-        """
-        episode_type = self.episode_type if episode_type is None else episode_type
-
-        match episode_type:
-            case "static":
-                return self._compute_static_collision_entities()
-
-            case "overtaking":
-                entities = self._compute_overtaking_collision_entities()
-                return entities
-
-            case "head-on":
-                raise NotImplementedError(
-                    f"Episode type '{episode_type}' is not implemented yet."
-                )
-
-            case "crossing":
-                raise NotImplementedError(
-                    f"Episode type '{episode_type}' is not implemented yet."
-                )
-
-            case _:
-                raise ValueError(f"Unknown episode_type '{episode_type}'")
-
-    def _compute_static_collision_entities(self) -> list["CollisionEntity"] | None:
-        """Compute the default static episode as a set of collision entities."""
-        if not hasattr(self, "checkpoints") or len(self.checkpoints) < 2:
-            return None
-
-        collision_entities: list["CollisionEntity"] = []
-
-        max_lat = float(getattr(self, "static_ship_lateral_max", 0.0))
-        segment_margin_frac = float(getattr(self, "static_ship_segment_margin_frac", 0.0))
-
-        for _ in range(self.static_ship_count):
-            eligible_indices = list(range(3, len(self.checkpoints) - 2))
-            if not eligible_indices:
-                break
-
-            seg_lengths = np.array([
-                np.linalg.norm(
-                    np.asarray(self.checkpoints[i]["pos"], dtype=np.float32) -
-                    np.asarray(self.checkpoints[i - 1]["pos"], dtype=np.float32)
-                )
-                for i in eligible_indices
-            ], dtype=np.float32)
-
-            seg_lengths = np.maximum(seg_lengths, EPSILON)
-            probs = seg_lengths / seg_lengths.sum()
-
-            random_seg = int(eligible_indices[int(self._rng.choice(len(eligible_indices), p=probs))])
-            pa = np.asarray(self.checkpoints[random_seg - 1]["pos"], dtype=np.float32)
-            pb = np.asarray(self.checkpoints[random_seg]["pos"], dtype=np.float32)
-
-            seg = (pb - pa).astype(np.float32)
-            seg_len = float(np.linalg.norm(seg))
-            if seg_len <= EPSILON:
-                continue
-
-            tangent = seg / seg_len
-            normal = np.array([-tangent[1], tangent[0]], dtype=np.float32)
-
-            ship_radius = float(self._rng.uniform(self.static_ship_radius_min, self.static_ship_radius_max))
-            pos = (0.5 * (pa + pb)).astype(np.float32)
-            candidate_entity = CollisionEntity(
-                velocity=np.zeros(2, dtype=np.float32),
-                radius=ship_radius,
-                x=float(pos[0]),
-                y=float(pos[1]),
-                entity_type="static",
-            )
-
-            t_min = max(0.0, segment_margin_frac)
-            t_max = min(1.0, 1.0 - segment_margin_frac)
-            if t_min > t_max:
-                t_min, t_max = 0.0, 1.0
-
-            for _ in range(30):
-                t = float(self._rng.uniform(t_min, t_max))
-                base = pa + tangent * (t * seg_len)
-
-                lat = float(np.clip(self._rng.normal(0.0, max_lat / 3.0), -max_lat, max_lat)) if max_lat > 0.0 else 0.0
-                cand = base + normal * lat
-                candidate_entity.set_position(float(cand[0]), float(cand[1]))
-
-                if not candidate_entity.is_fully_inside_polygon(self.polygon_shape, own_radius=self.own_ship_radius):
-                    continue
-
-                too_close = any(
-                    candidate_entity.overlaps_with(existing, own_radius=self.own_ship_radius)
-                    for existing in collision_entities
-                )
-                if too_close:
-                    continue
-
-                break
-
-            collision_entities.append(candidate_entity)
-
-        return collision_entities
-
-    def _compute_overtaking_collision_entities(self) -> list["CollisionEntity"] | None:
-        """
-        Build a single overtaking target-ship (TS) collision entity.
-
-        Placement logic:
-        - sample one TS speed uniformly in [v_min, v_max] m/s
-        - place the TS on one of the trajectory segments with no lateral offset
-        - only allow spawn locations from which the TS still needs more travel time
-          to reach the goal than the OS needs from the default start position
-        """
-
-        if not hasattr(self, "checkpoints") or len(self.checkpoints) < 2:
-            return None
-
-        checkpoints = self.checkpoints
-        n_segments = len(checkpoints) - 1
-        if n_segments <= 0:
-            return None
-
-        # segment geometry
-        seg_starts: list[np.ndarray] = []
-        seg_ends: list[np.ndarray] = []
-        seg_lengths: list[float] = []
-        seg_tangents: list[np.ndarray] = []
-
-        # skip first few segments, prevents TS from spawning on/close  to the OS and or goal.
-        for i in range(3, len(checkpoints) - 2):
-            pa = np.asarray(checkpoints[i - 1]["pos"], dtype=np.float32)
-            pb = np.asarray(checkpoints[i]["pos"], dtype=np.float32)
-            seg = (pb - pa).astype(np.float32)
-            seg_len = float(np.linalg.norm(seg))
-
-            if seg_len <= EPSILON:
-                continue
-
-            seg_starts.append(pa)
-            seg_ends.append(pb)
-            seg_lengths.append(seg_len)
-            seg_tangents.append((seg / seg_len).astype(np.float32))
-
-        if not seg_lengths:
-            return None
-
-        seg_lengths_arr = np.asarray(seg_lengths, dtype=np.float32)
-        total_route_length = float(np.sum(seg_lengths_arr))
-
-        # OS speed should be 5 m/s in theory, but measured 2.47 m/s in practice
-        os_nominal_speed = self.os_nominal_speed
-        os_time_to_goal = total_route_length / max(os_nominal_speed, EPSILON)
-
-        # TS speed for this episode, randomly sampl
-        ts_speed = float(self._rng.uniform(self.overtaking_ts_v_min, self.overtaking_ts_v_max))
-
-        # Safety radius of the overtaking entity
-        ship_radius = float(
-            self._rng.uniform(self.static_ship_radius_min, self.static_ship_radius_max)
-        )
-
-        # Use the same endpoint margin idea as for static entities
-        segment_margin_frac = float(getattr(self, "static_ship_segment_margin_frac", 0.0))
-        t_min_global = max(0.0, segment_margin_frac)
-        t_max_global = min(1.0, 1.0 - segment_margin_frac)
-        if t_min_global > t_max_global:
-            t_min_global, t_max_global = 0.0, 1.0
-
-        # It is required that the remaining length from the spawn point of the TS, divided
-        # by its speed, is larger than the time it takes for the OS to reach the goal. Otherwise the OS
-        # will never pass the TS.
-        # Based on this restriction, spawnable segments are selected
-        candidate_segments: list[dict] = []
-
-        suffix_after = 0.0
-        # iterate backwards so suffix_after = sum(lengths of later segments)
-        for rev_idx in range(len(seg_lengths_arr) - 1, -1, -1):
-            seg_len = float(seg_lengths_arr[rev_idx])
-
-            required_remaining_len = os_time_to_goal * ts_speed
-            t_upper_time = 1.0 - ((required_remaining_len - suffix_after) / max(seg_len, EPSILON))
-
-            t_lo = t_min_global
-            t_hi = min(t_max_global, t_upper_time)
-
-            if t_hi > t_lo:
-                feasible_len = (t_hi - t_lo) * seg_len
-                candidate_segments.append({
-                    "seg_idx": rev_idx,  # index into seg_starts / seg_ends / seg_tangents
-                    "t_lo": float(t_lo),
-                    "t_hi": float(t_hi),
-                    "weight": float(max(feasible_len, EPSILON)),
-                    "suffix_after": float(suffix_after),
-                })
-
-            suffix_after += seg_len
-
-        if not candidate_segments:
-            # No valid spawn location for this sampled speed
-            return []
-
-        # Sample a valid segment, weighted by feasible spawn arc length
-        weights = np.asarray([c["weight"] for c in candidate_segments], dtype=np.float32)
-        weights = weights / np.sum(weights)
-        choice_idx = int(self._rng.choice(len(candidate_segments), p=weights))
-        choice = candidate_segments[choice_idx]
-
-        seg_idx = int(choice["seg_idx"])
-        pa = seg_starts[seg_idx]
-        pb = seg_ends[seg_idx]
-        tangent = seg_tangents[seg_idx]
-        seg_len = float(seg_lengths_arr[seg_idx])
-
-        # Sample actual spawn point within the feasible part of the chosen segment
-        t_spawn = float(self._rng.uniform(choice["t_lo"], choice["t_hi"]))
-        spawn_pos = pa + tangent * (t_spawn * seg_len)
-        ts_heading = float(math.atan2(tangent[1], tangent[0]))
-
-        candidate_entity = CollisionEntity(
-            radius=ship_radius,
-            x=float(spawn_pos[0]),
-            y=float(spawn_pos[1]),
-            entity_type="overtaking",
-            heading=ts_heading,
-            speed=float(ts_speed),
-            is_dynamic=True,
-        )
-
-        candidate_entity.path_speed = float(ts_speed)
-        candidate_entity.path_segment_index = int(seg_idx)
-        candidate_entity.next_checkpoint_index = int(seg_idx + 1)
-        candidate_entity.path_progress_t = float(t_spawn)
-        candidate_entity.route_mode = "follow_checkpoints"
-        candidate_entity.route_finished = False
-
-        # Keep the full safety circle inside navigable water
-        if hasattr(candidate_entity, "is_fully_inside_polygon"):
-            if not candidate_entity.is_fully_inside_polygon(self.polygon_shape, own_radius=self.own_ship_radius):
-                return []
-
-        # Optional overlap check against already-present entities
-        existing_entities = getattr(self, "collision_entities", []) or []
-        if hasattr(candidate_entity, "overlaps_with"):
-            too_close = any(
-                candidate_entity.overlaps_with(existing, own_radius=self.own_ship_radius)
-                for existing in existing_entities
-            )
-            if too_close:
-                return []
-
-        # Information for per-step updates:
-        # The TS is on segment: checkpoints[seg_idx] -> checkpoints[seg_idx + 1]
-        # So the next waypoint it should head toward is checkpoints[seg_idx + 1].
-        candidate_entity.path_speed = float(ts_speed)
-        candidate_entity.path_segment_index = int(seg_idx)  # index in segment arrays
-        candidate_entity.next_checkpoint_index = int(seg_idx + 1)  # index in self.checkpoints
-        candidate_entity.path_progress_t = float(t_spawn)
-        candidate_entity.route_mode = "follow_checkpoints"
-        candidate_entity.route_finished = False
-
-        return [candidate_entity]
-
-    def _get_min_collision_entity_clearance(self) -> Optional[float]:
-        entities = getattr(self, "collision_entities", []) or []
-        if not entities:
-            return None
-        return min(entity.clearance_to_point(self.ship_pos, own_radius=self.own_ship_radius) for entity in entities)
-
-    def _check_collision_entity_collision(self) -> bool:
-        """Return True if the own ship intersects with any collision entity safety circle."""
-        entities = getattr(self, "collision_entities", []) or []
-        return any(entity.collides_with_point(self.ship_pos, own_radius=self.own_ship_radius) for entity in entities)
-
-    def _check_static_ship_collision(self) -> bool:
-        """Backward-compatible wrapper around collision-entity collision checks."""
-        return self._check_collision_entity_collision()
-
     def env_specific_reset(self) -> None:
         """Reset episode-specific geometry and build collision entities for the episode."""
         if getattr(self, "use_polar_scan", False):
@@ -1920,6 +1651,7 @@ class PySimColavEnv(BaseEnv):
             self._mirror_this_episode = False
 
         self._apply_episode_geometry(self._mirror_this_episode)
+        #self.scenario_builder.cache_checkpoint_segments() # only makes sense if mirroring is used, but mirroring might get removed
 
         self.collision_entities = []
         self.static_ship_count = 0
@@ -1929,109 +1661,13 @@ class PySimColavEnv(BaseEnv):
         if getattr(self, "static_ship", False):
             if getattr(self, "eval_static_ship_count", None) is not None:
                 self.static_ship_count = int(self.eval_static_ship_count)
-                self.collision_entities = self._compute_collision_entity_positions(self.episode_type) or []
+                self.collision_entities = self.scenario_builder.compute_collision_entity_positions(self.episode_type, 20) or []
                 self._sync_collision_entity_views()
             else:
-                self._sample_collision_entity_scenario()
+                self.scenario_builder.sample_collision_entity_scenario()
 
         if getattr(self, "use_polar_scan", False):
             self._rebuild_polar_scan_geometries()
 
         self._overtaking_pass_reported = False
         self._os_speed_samples = []
-
-
-class CollisionEntity:
-    def __init__(
-        self,
-        velocity=None,
-        radius=0.0,
-        x=0.0,
-        y=0.0,
-        entity_type="static",
-        heading=None,
-        speed=None,
-        is_dynamic=False,
-    ):
-        self.radius = float(radius)
-        self.x = float(x)
-        self.y = float(y)
-        self.entity_type = entity_type
-        self.is_dynamic = bool(is_dynamic)
-
-        if velocity is not None:
-            vel = np.asarray(velocity, dtype=np.float32)
-            vx = float(vel[0])
-            vy = float(vel[1])
-            inferred_speed = float(np.linalg.norm(vel))
-            inferred_heading = float(math.atan2(vy, vx)) if inferred_speed > 1e-9 else 0.0
-
-            self.speed = inferred_speed if speed is None else float(speed)
-            self.heading = inferred_heading if heading is None else float(heading)
-        else:
-            self.speed = 0.0 if speed is None else float(speed)
-            self.heading = 0.0 if heading is None else float(heading)
-
-    def get_position(self) -> np.ndarray:
-        return np.array([self.x, self.y], dtype=np.float32)
-
-    def set_position(self, x: float, y: float) -> None:
-        self.x = float(x)
-        self.y = float(y)
-
-    def update_position(self, x: float, y: float) -> None:
-        self.set_position(x, y)
-
-    def set_heading(self, heading: float) -> None:
-        self.heading = float(heading)
-
-    def get_heading(self) -> float:
-        return float(self.heading)
-
-    def set_speed(self, speed: float) -> None:
-        self.speed = float(speed)
-
-    def get_speed(self) -> float:
-        return float(self.speed)
-
-    def set_velocity(self, velocity: np.ndarray) -> None:
-        vel = np.asarray(velocity, dtype=np.float32)
-        vx = float(vel[0])
-        vy = float(vel[1])
-        self.speed = float(np.linalg.norm(vel))
-        self.heading = float(math.atan2(vy, vx)) if self.speed > 1e-9 else self.heading
-
-    def get_velocity(self) -> np.ndarray:
-        return np.array(
-            [
-                self.speed * math.cos(self.heading),
-                self.speed * math.sin(self.heading),
-            ],
-            dtype=np.float32,
-        )
-
-    def step(self, dt: float) -> None:
-        self.x += self.speed * math.cos(self.heading) * dt
-        self.y += self.speed * math.sin(self.heading) * dt
-
-    def distance_to_point(self, point: np.ndarray) -> float:
-        point = np.asarray(point, dtype=np.float32)
-        return float(np.linalg.norm(self.get_position() - point))
-
-    def clearance_to_point(self, point: np.ndarray, own_radius: float) -> float:
-        return self.distance_to_point(point) - (self.radius + float(own_radius))
-
-    def collides_with_point(self, point: np.ndarray, own_radius: float) -> bool:
-        return self.clearance_to_point(point, own_radius) <= 0.0
-
-    def collision_check(self, point: np.ndarray, own_radius: float) -> bool:
-        return self.collides_with_point(point, own_radius)
-
-    def is_fully_inside_polygon(self, polygon: Polygon, own_radius: float) -> bool:
-        inflated = float(self.radius) + float(own_radius)
-        return bool(polygon.contains(Point(self.x, self.y).buffer(inflated)))
-
-    def overlaps_with(self, other: "CollisionEntity", own_radius: float, margin: float = 0.0) -> bool:
-        distance = float(np.linalg.norm(self.get_position() - other.get_position()))
-        min_distance = float(self.radius) + float(other.radius) + 2.0 * float(own_radius) + float(margin)
-        return distance < min_distance
