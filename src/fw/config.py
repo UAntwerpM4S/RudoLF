@@ -22,7 +22,7 @@ DEFAULT_HYPERPARAMETERS = {
         'value_loss_coef': 0.5,
         'max_grad_norm': 0.5,
         'clip_range': 0.05,
-        'eval_frequency': 1,
+        'eval_frequency': 100,
         'num_envs': 1,
         'num_epochs': 10,
         'normalize': False,
