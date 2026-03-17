@@ -289,7 +289,7 @@ class FhSimEnvironment(BaseEnvironment):
         # self._env = DummyVecEnv([lambda: Monitor(FhSimEnv(render_mode='human', max_steps=1200, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = FhSimEnv(time_step=0.1, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
+        self._env = FhSimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
                              ship_model=config["ship_model"], scenario=config["scenario"])
 
 
