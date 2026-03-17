@@ -87,19 +87,20 @@ class FhSimWrapper(BaseSimulator):
         """
 
         # Apply smoothing to actions
-        actuator = self._actuators.apply_smoothing(action, enable_smoothing)
+        actuator = self._actuators.apply_smoothing(action, False)   # disable smoothing for now
 
         # Update FH engine controls
         # Update rudder controls based on the turning action.
         for rudder in self._engine.ship_interface.getRudderControls():
-            rudder.setControlValue(float(-actuator.rudder_angle))   # this is to compensate for opposite behavior
+            rudder.setControlValue(float(-(actuator.rudder_angle * np.rad2deg(self._specs.max_rudder_angle)) /
+                                         rudder.getMaximumAngle())) # this is to compensate for opposite behavior
                                                                     # of the Python environment
                                                                     # in Python: -1 is turn right ; 1 is turn left
                                                                     # FH sim: -1 is turn left ; 1 is turn right
         # Update propeller controls based on the thrust action.
         for propeller in self._engine.ship_interface.getPropellerControls():
-            propeller.setEngineLeverValue(float(actuator.thrust))
-
+            propeller.setEngineLeverValue(float(actuator.thrust) if enable_smoothing else 1.0)  # full thrust
+                                                                                                # during visualization
         # Simulate FH physics
         self._engine.math_model.simulateSeconds(self.dt)
 
