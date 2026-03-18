@@ -6,14 +6,14 @@ import pytest
 
 
 def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
-    """Run fw.main_with_airsim and verify it routes to run_visualise_fossen.
+    """Run fw.main_with_airsim and verify it routes to run_visualise_models.
 
     Args:
         monkeypatch: Pytest monkeypatch fixture.
 
     Verifies:
         - runtime settings enable fossen_visualise.
-        - run_visualise_fossen receives expected arguments.
+        - run_visualise_models receives expected arguments.
         - main_with_airsim exits early with code 0 after dispatch.
         - run_inference is not called in this mode.
     """
@@ -55,12 +55,12 @@ def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
 
     called = {}
 
-    import airsim.inference.run_visualise_fossen as run_visualise_fossen_module
+    import airsim.inference.run_visualise_models as run_visualise_models_module
 
-    def _fake_run_visualise_fossen(**kwargs):
+    def _fake_run_visualise_models(**kwargs):
         called.update(kwargs)
 
-    monkeypatch.setattr(run_visualise_fossen_module, "run_visualise_fossen", _fake_run_visualise_fossen)
+    monkeypatch.setattr(run_visualise_models_module, "run_visualise_models", _fake_run_visualise_models)
 
     import airsim.inference.run_inference as run_inference_module
 
@@ -114,14 +114,14 @@ def test_main_with_airsim_exits_cleanly_when_ue5_is_unreachable(monkeypatch, cap
     import airsim.config.airsim_config as airsim_config
     monkeypatch.setattr(airsim_config, "get_runtime_settings", lambda: runtime)
 
-    import airsim.inference.run_visualise_fossen as run_visualise_fossen_module
+    import airsim.inference.run_visualise_models as run_visualise_models_module
 
     def _raise_connection_error(**kwargs):
         raise ConnectionError("AirSimBridge could not connect to UE5 at 127.0.0.1:41451.")
 
     monkeypatch.setattr(
-        run_visualise_fossen_module,
-        "run_visualise_fossen",
+        run_visualise_models_module,
+        "run_visualise_models",
         _raise_connection_error,
     )
 

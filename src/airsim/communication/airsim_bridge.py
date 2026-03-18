@@ -40,7 +40,7 @@ import csv
 import os
 from collections import deque
 from typing import Any, Dict, Optional
-from airsim.common.tools.angles import (
+from fw.common.airsim.tools.angles import (
     normalize_angle as _normalize_angle,
     yaw_from_quaternion as _yaw_from_quaternion,
 )
@@ -419,6 +419,94 @@ class AirSimBridge:
             is_persistent=is_persistent,
         )
 
+    def get_camera_info(self, camera_name: str, vehicle_name: str = "") -> Any:
+        """Return camera extrinsics/intrinsics metadata from AirSim.
+
+        Args:
+            camera_name: Camera identifier configured in AirSim settings.
+            vehicle_name: Optional AirSim vehicle name.
+
+        Returns:
+            Camera info object from ``simGetCameraInfo``.
+
+        Raises:
+            ConnectionError: If the bridge is not connected.
+        """
+        if not self._ensure_connected():
+            raise ConnectionError("Cannot read camera info: bridge disconnected.")
+        return self._client.simGetCameraInfo(camera_name, vehicle_name=vehicle_name)
+
+    def set_camera_pose(self, camera_name: str, pose: Any, vehicle_name: str = "") -> None:
+        """Set a camera pose in AirSim.
+
+        Args:
+            camera_name: Camera identifier configured in AirSim settings.
+            pose: ``airsim.Pose`` instance in AirSim world coordinates.
+            vehicle_name: Optional AirSim vehicle name.
+        """
+        if not self._ensure_connected():
+            return
+        self._client.simSetCameraPose(camera_name, pose, vehicle_name=vehicle_name)
+
+    def set_camera_fov(self, camera_name: str, fov_degrees: float, vehicle_name: str = "") -> None:
+        """Set camera field-of-view in degrees.
+
+        Args:
+            camera_name: Camera identifier configured in AirSim settings.
+            fov_degrees: Horizontal field-of-view in degrees.
+            vehicle_name: Optional AirSim vehicle name.
+        """
+        if not self._ensure_connected():
+            return
+        self._client.simSetCameraFov(camera_name, float(fov_degrees), vehicle_name=vehicle_name)
+
+    def get_camera_image(
+        self,
+        camera_name: str,
+        image_type: Any,
+        vehicle_name: str = "",
+        annotation_name: str = "",
+    ) -> Any:
+        """Request one image frame from a camera.
+
+        Args:
+            camera_name: Camera identifier configured in AirSim settings.
+            image_type: ``airsim.ImageType`` enum value.
+            vehicle_name: Optional AirSim vehicle name.
+            annotation_name: Optional annotation channel name.
+
+        Returns:
+            Raw return value from ``simGetImage`` (typically PNG bytes or base64 string).
+
+        Raises:
+            ConnectionError: If the bridge is not connected.
+        """
+        if not self._ensure_connected():
+            raise ConnectionError("Cannot read camera image: bridge disconnected.")
+        return self._client.simGetImage(
+            camera_name,
+            image_type,
+            vehicle_name=vehicle_name,
+            annotation_name=annotation_name,
+        )
+
+    def get_camera_images(self, requests: list[Any], vehicle_name: str = "") -> list[Any]:
+        """Request a batched set of camera frames from AirSim.
+
+        Args:
+            requests: List of ``airsim.ImageRequest`` objects.
+            vehicle_name: Optional AirSim vehicle name.
+
+        Returns:
+            List of image responses from ``simGetImages``.
+
+        Raises:
+            ConnectionError: If the bridge is not connected.
+        """
+        if not self._ensure_connected():
+            raise ConnectionError("Cannot read camera images: bridge disconnected.")
+        return self._client.simGetImages(requests, vehicle_name=vehicle_name)
+
     def set_pose(
         self,
         x: float,
@@ -696,7 +784,7 @@ class AirSimBridge:
         draw_reference: bool = True,
     ):
         """Prepare UE5 for framework-driven Fossen visualisation."""
-        from airsim.common.tools.calibrate_coords import load_saved_calibration_reference
+        from fw.common.airsim.tools.calibrate_coords import load_saved_calibration_reference
 
         self.load_world_save(save_slot=save_slot)
         self._client.simSetSimulationSpeed(simulation_speed)

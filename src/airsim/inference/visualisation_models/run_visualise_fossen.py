@@ -21,8 +21,8 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from airsim.communication.airsim_bridge import AirSimBridge  # noqa: E402
-from airsim.common.tools.angles import interpolate_angle, wrapped_angle_delta  # noqa: E402
-from airsim.common.tools.path_utils import resolve_model_path  # noqa: E402
+from fw.common.airsim.tools.angles import interpolate_angle, wrapped_angle_delta  # noqa: E402
+from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 from airsim.communication.control_mapping import (  # noqa: E402
     map_fossen_actuator_state,
     map_fossen_steering_visual_state,
@@ -33,7 +33,7 @@ from airsim.config.airsim_config import (  # noqa: E402
     DEFAULT_AIRSIM_SAVE_SLOT,
     DEFAULT_AIRSIM_SIMULATION_SPEED,
 )
-from airsim.inference.minimap_fossen_airsim import MinimapFossenAirsim  # noqa: E402
+from airsim.inference.minimap_models_ue5 import VisualiseModelsMinimap  # noqa: E402
 from fw.environments.fh_sim_env import FhSimEnv  # noqa: E402
 from fw.environments.py_sim_env import PySimEnv  # noqa: E402
 from fw.policies.ppo_policy import PPOPolicy  # noqa: E402
@@ -409,6 +409,7 @@ def _animate_framework_state(
 
 def run_visualise_fossen(
     model_path: str,
+    model_family: str = "auto",
     env_name: str = "auto",
     ip: str = "",
     port: int = 41451,
@@ -432,7 +433,56 @@ def run_visualise_fossen(
     lock_path_in_ue5: bool = False,
     vehicle_object_name: str = "",
     show_minimap: bool = True,
+    use_ue5_camera_minimap: bool = False,
+    ue5_camera_name: str = "TopDownCam",
+    ue5_camera_fov_deg: float = 38.0,
+    ue5_camera_height_m: float = 120.0,
+    ue5_camera_follow_heading: bool = False,
+    ue5_preview_window: bool = True,
 ) -> None:
+    """Run legacy Fossen visualisation entrypoint.
+
+    This compatibility wrapper now forwards to
+    ``airsim.inference.run_visualise_models.run_visualise_models`` so existing
+    callers keep working while the modular visualisation API is used internally.
+    """
+    from airsim.inference.run_visualise_models import run_visualise_models as _run_visualise_models
+
+    _run_visualise_models(
+        model_path=model_path,
+        model_family=model_family,
+        env_name=env_name,
+        ip=ip,
+        port=port,
+        max_steps=max_steps,
+        num_episodes=num_episodes,
+        device=device,
+        draw_calibration_reference=draw_calibration_reference,
+        log_every=log_every,
+        save_slot=save_slot,
+        simulation_speed=simulation_speed,
+        mirror_controls_in_ue5=mirror_controls_in_ue5,
+        animate_steering_in_ue5=animate_steering_in_ue5,
+        animate_throttle_in_ue5=animate_throttle_in_ue5,
+        render_interpolation_steps=render_interpolation_steps,
+        steering_visual_gain=steering_visual_gain,
+        throttle_visual_gain=throttle_visual_gain,
+        use_kinematics_in_ue5=use_kinematics_in_ue5,
+        min_render_hz=min_render_hz,
+        max_translation_step=max_translation_step,
+        max_yaw_step_deg=max_yaw_step_deg,
+        lock_path_in_ue5=lock_path_in_ue5,
+        vehicle_object_name=vehicle_object_name,
+        show_minimap=show_minimap,
+        use_ue5_camera_minimap=use_ue5_camera_minimap,
+        ue5_camera_name=ue5_camera_name,
+        ue5_camera_fov_deg=ue5_camera_fov_deg,
+        ue5_camera_height_m=ue5_camera_height_m,
+        ue5_camera_follow_heading=ue5_camera_follow_heading,
+        ue5_preview_window=ue5_preview_window,
+    )
+    return
+
     """Run a Fossen-trained PPO policy and mirror it into UE5 in real time."""
     selected_env = _detect_fossen_environment(model_path, env_name)
     banner = "=" * 62
@@ -473,7 +523,7 @@ def run_visualise_fossen(
 
     env = _build_fossen_environment(selected_env, max_steps=max_steps)
     max_yaw_step_rad = np.deg2rad(max_yaw_step_deg)
-    minimap: Optional[MinimapFossenAirsim] = None
+    minimap: Optional[VisualiseModelsMinimap] = None
 
     try:
         bridge.prepare_fossen_visualisation(
@@ -501,7 +551,7 @@ def run_visualise_fossen(
                 if minimap is not None:
                     minimap.close()
                 try:
-                    minimap = MinimapFossenAirsim(env, save_dir=".")
+                    minimap = VisualiseModelsMinimap(env, save_dir=".")
                 except Exception as _mm_exc:
                     logger.warning("Minimap unavailable: %s", _mm_exc)
                     minimap = None

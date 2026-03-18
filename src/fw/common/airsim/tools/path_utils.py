@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from airsim.common.classes.path_resolution import PathResolutionContext
+from fw.common.airsim.classes.path_resolution import PathResolutionContext
 
 
 def resolve_model_path(model_path: str, src_dir: Path) -> Path:

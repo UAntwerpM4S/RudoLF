@@ -19,8 +19,8 @@ RudoLF can now train and visualise navigation policies in **Unreal Engine 5** th
 
 ### Recent Updates
 
-- Shared utility code was consolidated into `airsim/common` and `fw/common` (`tools` and `classes`) to reduce duplicate path, angle, and configuration logic.
-- AirSim utilities `airsim.tools.calibrate_coords` and `airsim.tools.analyze_telemetry` now act as compatibility wrappers over implementations in `airsim.common.tools`.
+- Shared utility code was consolidated into `fw/common/airsim` (`tools` and `classes`) to reduce duplicate path, angle, and configuration logic.
+- AirSim calibration and telemetry utilities now live under `fw.common.airsim.tools`.
 - The live UE5 minimap now runs in a separate child process instead of a thread, which prevents GUI redraws from stalling the main replay loop.
 - Fossen replay in UE5 now skips blocking interpolation when `simulation_speed` makes the available wall-clock update time shorter than the effective render interval.
 - The minimap now docks itself near the top-right of the UE5 monitor, uses a local follow-view around the vessel, and recenters when the ship approaches the edge of the visible section.
@@ -70,7 +70,7 @@ flowchart LR
 | **RL Environment**  | `src/airsim/environments/airsim_env.py`       | Gymnasium env for training inside UE5             |
 | **Configuration**   | `src/airsim/config/airsim_config.py`          | Connection and runtime settings                   |
 | **Path Plotter**    | `src/airsim/inference/plot_airsim_path.py`    | Dead-reckoning path reconstruction from telemetry |
-| **Calibration**     | `src/airsim/tools/calibrate_coords.py`        | Interactive Fossen↔AirSim coordinate calibration  |
+| **Calibration**     | `src/fw/common/airsim/tools/calibrate_coords.py` | Interactive Fossen↔AirSim coordinate calibration  |
 | **Telemetry Log**   | `src/airsim/config/airsim_telemetry.csv`      | Optional bridge-level telemetry export            |
 
 ### Runtime Strategy
@@ -128,12 +128,12 @@ Telemetry data can be visualized with `plot_airsim_path.py`, which reconstructs 
 
 ```bash
 cd src
-python -m airsim.tools.calibrate_coords
+python -m fw.common.airsim.tools.calibrate_coords
 ```
 
 ```bash
-cd src/airsim
-python -m common.tools.calibrate_coords
+cd src
+python -m fw.common.airsim.tools.calibrate_coords
 ```
 
 ### Configuration Reference

@@ -59,8 +59,8 @@ Usage::
     python -m airsim.inference.run_inference \\
         --model src/fw/best_models/AirSimEnv_PPO_policy --ue5
 
-    # Dedicated Fossen visualisation runner
-    python -m airsim.inference.run_visualise_fossen \
+    # Dedicated framework-to-UE5 visualisation runner
+    python -m airsim.inference.run_visualise_models \
         --model src/fw/best_models/PySimEnv_PPO_policy
 
     # Override start/target position
@@ -92,7 +92,7 @@ if str(_SRC_DIR) not in sys.path:
 from airsim.environments.airsim_env import AirSimEnv          # noqa: E402
 from airsim.communication.airsim_bridge import AirSimBridge   # noqa: E402
 from airsim.communication.control_mapping import map_direct_policy_action  # noqa: E402
-from airsim.common.tools.path_utils import resolve_model_path  # noqa: E402
+from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 from fw.policies.ppo_policy import PPOPolicy                   # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -414,7 +414,7 @@ def run_inference(
         print("  FOSSEN-TRANSLATION MODE  [compatibility path]")
         print(f"  Model  : {Path(model_path).name}")
         print("  Actions: Fossen→UE5 affine formula → bridge.set_controls()")
-        print("  Prefer : python -m airsim.inference.run_visualise_fossen")
+        print("  Prefer : python -m airsim.inference.run_visualise_models")
         print("  PID    : NOT USED")
         print(_BANNER)
 
@@ -526,7 +526,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
             "Inference runner: load a trained PPO policy and control the "
-            "UE5 MYZAKO ship in real-time. Use run_visualise_fossen for "
+            "UE5 MYZAKO ship in real-time. Use run_visualise_models for "
             "Fossen-trained policies; this entry point is kept for UE5-direct "
             "inference and backwards compatibility. PID control is not used."
         ),
