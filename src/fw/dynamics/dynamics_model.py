@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 class Model(Enum):
     NOMOTO = auto()
     FOSSEN = auto()
+    UGENT_SURROGATE = auto()
 
 
 class DynamicsBase(ABC):

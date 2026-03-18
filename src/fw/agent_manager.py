@@ -217,7 +217,7 @@ class AgentManager:
 
 
     @staticmethod
-    def compute_metrics(cross_errors, heading_errors):
+    def compute_metrics(cross_errors, rudder_angles, rudder_angle_changes, heading_errors, velocities):
         """
         Compute Mean Track Error Integral (mTEI), Maximum Track Error (MTE),
         and Mean Heading Error Integral (mHEI)
@@ -228,23 +228,48 @@ class AgentManager:
         """
         all_mTEIs = []
         all_MTEs = []
-        all_mHEIs = []
+        all_mRAs = []
+        all_MRAs = []
+        all_mRACs = []
+        all_mHEs = []
+        all_mus = []
+        all_Mus = []
 
-        for errors, heading_errs in zip(cross_errors, heading_errors):
+        for ct_errors, rudder_angle, rudder_angle_change, heading_errors, velocity in zip(cross_errors, rudder_angles, rudder_angle_changes, heading_errors, velocities):
             # Calculate mTEI
-            n = len(errors)
-            mTEI = np.sum(np.abs(errors)) / n
+            n = len(ct_errors)
+            mTEI = np.sum(np.abs(ct_errors)) / n
             all_mTEIs.append(mTEI)
 
             # Calculate MTE
-            MTE = np.max(np.abs(errors))
+            MTE = np.max(np.abs(ct_errors))
             all_MTEs.append(MTE)
 
-            # Calculate mHEI
-            mHEI = np.sum(np.abs(heading_errs)) / n
-            all_mHEIs.append(mHEI)
+            # Calculate mRA
+            mRA = np.sum(np.abs(rudder_angle)) / n
+            all_mRAs.append(mRA)
 
-        return np.mean(all_mTEIs), np.mean(all_MTEs), np.mean(all_mHEIs)
+            # Calculate MRA
+            MRA = np.max(np.abs(rudder_angle))
+            all_MRAs.append(MRA)
+
+            # Calculate mRAC
+            mRAC = np.sum(np.abs(rudder_angle_change)) / n
+            all_mRACs.append(mRAC)
+
+            # Calculate mHE
+            mHE = np.sum(np.abs(heading_errors)) / n
+            all_mHEs.append(mHE)
+
+            # Calculate mu
+            mu = np.sum(np.abs(velocity)) / n
+            all_mus.append(mu)
+
+            # Calculate Mu
+            Mu = np.max(np.abs(velocity))
+            all_Mus.append(Mu)
+
+        return np.mean(all_mTEIs), np.mean(all_MTEs), np.mean(all_mRAs), np.mean(all_MRAs), np.mean(all_mRACs), np.mean(all_mHEs), np.mean(all_mus), np.mean(all_Mus)
 
 
     # Plot paths in the first subplot
@@ -320,6 +345,9 @@ class AgentManager:
                 all_heading_errors = []
                 total_rewards = []
                 all_cross_errors = []  # Store cross-track errors for each episode
+                all_rudder_angles = []
+                all_rudder_angle_changes = []
+                all_velocities = []
                 all_rudder_actions = []
                 all_ukc_measurements = []
                 start_pos = None
@@ -343,9 +371,13 @@ class AgentManager:
                     cross_errors = []
                     heading_errors = []
                     rudder_actions = []
+                    velocities = []
+                    previous_rudder_action = 0.0
+                    rudder_changes = []
                     ukc_measurements = []
                     path_positions = [np.copy(_s(env.ship_pos))]  # Store initial position
                     cross_errors.append(_s(env.cross_error))  # Store initial cross-track error
+                    velocities.append(_s(env.velocities))  # Store initial cross-track error
 
                     # Calculate initial heading error relative to desired path
                     initial_heading_error = self.compute_heading_error(env)
@@ -364,9 +396,11 @@ class AgentManager:
                             path_positions.append(np.copy(_s(env.ship_pos)))
                             if _s(env.checkpoint_index) >= 2:
                                 cross_errors.append(_s(env.cross_error))
-                            heading_error = self.compute_heading_error(env)
-                            heading_errors.append(heading_error)
+                            heading_errors.append(_s(env.heading_error))
+                            velocities.append(_s(env.velocities))
                             rudder_actions.append(_steer(env.performed_action))
+                            rudder_changes.append(abs(_steer(env.performed_action) - previous_rudder_action))
+                            previous_rudder_action = _steer(env.performed_action)
                             ukc_measurements.append(env.ukc[0] if _ms else 0.0)
 
                             episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
@@ -393,13 +427,16 @@ class AgentManager:
 
                     all_paths.append(np.array(path_positions))
                     all_cross_errors.append(np.array(cross_errors))
+                    all_rudder_angles.append(np.array(rudder_actions))
+                    all_rudder_angle_changes.append(np.array(rudder_changes))
                     all_heading_errors.append(np.array(heading_errors))
+                    all_velocities.append(np.array(velocities))
                     all_rudder_actions.append(np.array(rudder_actions))
                     all_ukc_measurements.append(np.array(ukc_measurements))
                     total_rewards.append(episode_reward)
 
                 # Calculate mTEI, MTE, and mHEI
-                mTEI, MTE, mHEI = self.compute_metrics(all_cross_errors, all_heading_errors)
+                mTEI, MTE, mRA, MRA, mRAC, mHE, mu, Mu = self.compute_metrics(all_cross_errors, all_rudder_angles, all_rudder_angle_changes, all_heading_errors, all_velocities)
 
                 # Print summary statistics
                 avg_reward = np.mean(total_rewards)
@@ -407,9 +444,14 @@ class AgentManager:
                 print(f"Average reward: {avg_reward:.2f}")
                 print(f"Best episode reward: {max(total_rewards):.2f}")
                 print(f"Worst episode reward: {min(total_rewards):.2f}")
+                print(f"Mean Surge Velocity (mu): {mu:.2f}")
+                print(f"Maximum Surge Velocity (Mu): {Mu:.2f}")
                 print(f"Mean Track Error Integral (mTEI): {mTEI:.2f}")
                 print(f"Maximum Track Error (MTE): {MTE:.2f}")
-                print(f"Mean Heading Error Integral (mHEI): {mHEI:.2f} rad")
+                print(f"Mean Rudder Angle (mRA): {mRA:.3f}")
+                print(f"Maximum Rudder Angle (MRA): {MRA:.3f}")
+                print(f"Mean Rudder Angle Change (mRAC): {mRAC:.4f}")
+                print(f"Mean LOS Guidance Heading Error (mHE): {mHE:.3f} rad")
 
                 try:
                     # AirSimEnv has no obstacles/overall for matplotlib — skip trajectory plot.
