@@ -328,3 +328,96 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
         "train:framework",
         "train:airsim:failed",
     ]
+
+
+def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(monkeypatch):
+    """Verify repeated list stages are preserved around a failed AirSim step.
+
+    Expected order for env_type=[PySimEnv, AirSimEnv, PySimEnv]:
+    1) first PySim framework stage trains
+    2) AirSim delegated stage fails and is skipped
+    3) second PySim framework stage still trains
+    """
+    import multiprocessing
+    import runpy as stdlib_runpy
+
+    import fw.config as fw_config
+    import fw.env_factory as env_factory
+    import fw.trainer as trainer_module
+
+    monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        fw_config,
+        "get_config_parameters",
+        lambda: {
+            "env_type": [
+                env_factory.py_sim_env_name,
+                env_factory.airsim_env_name,
+                env_factory.py_sim_env_name,
+            ],
+            "action": "train",
+        },
+    )
+    monkeypatch.setattr(env_factory, "initialize_all_environments", lambda: None)
+
+    call_order = []
+
+    def _build_env(name):
+        """Build a fake environment and log creation order.
+
+        Args:
+            name: Canonical environment name.
+        """
+        call_order.append(f"build:{name}")
+        return object()
+
+    monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
+
+    class _FakeTrainer:
+        """ FakeTrainer."""
+        def __init__(self, *args, **kwargs):
+            """Create a no-op trainer test double.
+
+            Args:
+                *args: Positional constructor arguments.
+                **kwargs: Keyword constructor arguments.
+            """
+            pass
+
+        def train(self, configuration):
+            """Record framework training invocation.
+
+            Args:
+                configuration: Scheduler configuration payload.
+            """
+            call_order.append("train:framework")
+            return {"ok": True}
+
+    monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
+
+    original_run_module = stdlib_runpy.run_module
+
+    def _capture_run_module(module_name, run_name=None):
+        """Simulate a failing AirSim delegated run.
+
+        Args:
+            module_name: Name of the module being executed.
+            run_name: Run target name passed to run_module.
+        """
+        if module_name == "fw.main_with_airsim":
+            call_order.append("train:airsim:failed")
+            raise SystemExit(1)
+        return original_run_module(module_name, run_name=run_name)
+
+    monkeypatch.setattr(stdlib_runpy, "run_module", _capture_run_module)
+
+    runpy.run_module("fw.main", run_name="__main__")
+
+    assert call_order == [
+        f"build:{env_factory.py_sim_env_name}",
+        "train:framework",
+        "train:airsim:failed",
+        f"build:{env_factory.py_sim_env_name}",
+        "train:framework",
+    ]
+

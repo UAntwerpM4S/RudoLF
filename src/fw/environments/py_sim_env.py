@@ -283,6 +283,11 @@ class PySimEnv(BaseEnv):
         base_path = os.path.dirname(os.path.abspath(__file__))
 
         def load_csv_strict(name: str) -> np.ndarray:
+            """Load csv strict.
+
+            Args:
+                name: Description.
+            """
             csv_path = os.path.join(base_path, name)
             try:
                 data = np.loadtxt(csv_path, delimiter=',', skiprows=1)
@@ -384,6 +389,8 @@ class PySimEnv(BaseEnv):
         return np.array(samples, dtype=np.float32)
 
     def get_keel_clearance(self) -> float:
+        """Get keel clearance.
+        """
         return 0.0
 
     def _has_enough_keel_clearance(self, depth_threshold: float = 0.5) -> bool:
@@ -1053,6 +1060,13 @@ class PySimEnv(BaseEnv):
 
     @staticmethod
     def _logarithmic_scaling(value: float, value_range: tuple, half_value: float = 10):
+        """ logarithmic scaling.
+
+        Args:
+            value: Description.
+            value_range: Description.
+            half_value: Description.
+        """
         # Unpack the range, they correspondent with values that return 0 and 1
         min_value, max_value = value_range
 
@@ -1188,6 +1202,11 @@ class PySimEnv(BaseEnv):
 
         # --- Helper: safe execution without aborting the simulation ---
         def _safe(callable_obj):
+            """ safe.
+
+            Args:
+                callable_obj: Description.
+            """
             try:
                 callable_obj()
             except (RuntimeError, AttributeError, TypeError, ValueError):
@@ -1228,3 +1247,4 @@ class PySimEnv(BaseEnv):
                 plt.close(self.fig)
             except (RuntimeError, AttributeError):
                 pass
+

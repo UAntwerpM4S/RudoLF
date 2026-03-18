@@ -44,6 +44,8 @@ def split_and_save(X, Y, save_prefix, train=0.8, val=0.1):
 # MAIN CLI ENTRYPOINT
 # ================================================================
 def main():
+    """Main.
+    """
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--mode",

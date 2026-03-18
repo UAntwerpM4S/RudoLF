@@ -30,6 +30,12 @@ class ActorCriticNetwork(nn.Module):
 
         # Helper to initialize layers orthogonally
         def init_layer(layer, gain=np.sqrt(2)):
+            """Init layer.
+
+            Args:
+                layer: Description.
+                gain: Description.
+            """
             nn.init.orthogonal_(layer.weight, gain=gain)
             nn.init.constant_(layer.bias, 0)
             return layer
@@ -79,3 +85,4 @@ class ActorCriticNetwork(nn.Module):
         state_value = self.critic(shared_features)
 
         return action_mean, action_std, state_value
+

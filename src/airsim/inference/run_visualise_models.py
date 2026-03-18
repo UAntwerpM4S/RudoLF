@@ -43,12 +43,28 @@ class VisualiseFossen:
     """Framework-physics visualiser that mirrors model output into UE5."""
 
     def __init__(self, env_name: str = "auto") -> None:
+        """Initialize the instance.
+
+        Args:
+            env_name: Description.
+        """
         self.env_name = env_name
 
     def _resolve_environment_name(self, model_path: str) -> str:
+        """ resolve environment name.
+
+        Args:
+            model_path: Description.
+        """
         return _detect_fossen_environment(model_path, self.env_name)
 
     def _build_environment(self, selected_env: str, max_steps: int):
+        """ build environment.
+
+        Args:
+            selected_env: Description.
+            max_steps: Description.
+        """
         return _build_fossen_environment(selected_env, max_steps)
 
     def run(
@@ -83,6 +99,40 @@ class VisualiseFossen:
         ue5_camera_follow_heading: bool = False,
         ue5_preview_window: bool = True,
     ) -> None:
+        """Run.
+
+        Args:
+            model_path: Description.
+            ip: Description.
+            port: Description.
+            max_steps: Description.
+            num_episodes: Description.
+            device: Description.
+            draw_calibration_reference: Description.
+            log_every: Description.
+            save_slot: Description.
+            simulation_speed: Description.
+            mirror_controls_in_ue5: Description.
+            animate_steering_in_ue5: Description.
+            animate_throttle_in_ue5: Description.
+            render_interpolation_steps: Description.
+            steering_visual_gain: Description.
+            throttle_visual_gain: Description.
+            use_kinematics_in_ue5: Description.
+            min_render_hz: Description.
+            max_translation_step: Description.
+            max_yaw_step_deg: Description.
+            lock_path_in_ue5: Description.
+            vehicle_object_name: Description.
+            show_minimap: Description.
+            use_ue5_camera_minimap: Description.
+            ue5_camera_name: Description.
+            ue5_camera_fov_deg: Description.
+            ue5_camera_height_m: Description.
+            ue5_camera_follow_heading: Description.
+            ue5_preview_window: Description.
+            ,: Description.
+        """
         selected_env = self._resolve_environment_name(model_path)
         banner = "=" * 62
         print(banner)
@@ -256,6 +306,8 @@ class VisualiseFhSim(VisualiseFossen):
     """FhSim-specialized visualiser with a fixed framework environment."""
 
     def __init__(self) -> None:
+        """Initialize the instance.
+        """
         super().__init__(env_name="FhSimEnv")
 
 
@@ -271,6 +323,8 @@ def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) 
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """ build parser.
+    """
     parser = argparse.ArgumentParser(
         description="Visualise framework model playback in UE5.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -349,3 +403,4 @@ if __name__ == "__main__":
         ue5_camera_follow_heading=args.ue5_camera_follow_heading,
         ue5_preview_window=args.ue5_preview_window,
     )
+

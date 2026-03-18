@@ -44,6 +44,23 @@ class UE5TopDownMinimap:
         draw_trail: bool = True,
         trail_thickness: float = 8.0,
     ) -> None:
+        """Initialize the instance.
+
+        Args:
+            bridge: Description.
+            camera_name: Description.
+            vehicle_name: Description.
+            fov_degrees: Description.
+            height_offset_m: Description.
+            follow_heading: Description.
+            enable_preview_window: Description.
+            preview_window_name: Description.
+            preview_width: Description.
+            preview_height: Description.
+            draw_trail: Description.
+            trail_thickness: Description.
+            ,: Description.
+        """
         self.bridge = bridge
         self.camera_name = camera_name
         self.vehicle_name = vehicle_name
@@ -83,6 +100,13 @@ class UE5TopDownMinimap:
                 self.enable_preview_window = False
 
     def _quaternion_from_euler(self, roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
+        """ quaternion from euler.
+
+        Args:
+            roll: Description.
+            pitch: Description.
+            yaw: Description.
+        """
         cy = np.cos(yaw * 0.5)
         sy = np.sin(yaw * 0.5)
         cp = np.cos(pitch * 0.5)
@@ -97,6 +121,11 @@ class UE5TopDownMinimap:
         return float(x), float(y), float(z), float(w)
 
     def _decode_png(self, image_payload) -> Optional[np.ndarray]:
+        """ decode png.
+
+        Args:
+            image_payload: Description.
+        """
         if image_payload is None:
             return None
 
@@ -123,6 +152,11 @@ class UE5TopDownMinimap:
         return frame
 
     def _ship_pose_from_env(self, env) -> tuple[float, float, float]:
+        """ ship pose from env.
+
+        Args:
+            env: Description.
+        """
         if self.bridge.coord_transform is None:
             raise RuntimeError("UE5 minimap needs an active coordinate transform.")
 
@@ -191,3 +225,4 @@ class UE5TopDownMinimap:
                 self._cv2.destroyWindow(self.preview_window_name)
             except Exception:
                 pass
+
