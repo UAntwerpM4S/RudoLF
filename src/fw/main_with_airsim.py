@@ -33,7 +33,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         get_runtime_settings,
         merge_runtime_settings,
     )
-    from airsim.common.tools.path_utils import resolve_path_relative_to_src
+    from fw.common.airsim.tools.path_utils import resolve_path_relative_to_src
     from fw.env_factory import (
         airsim_env_name,
         fh_sim_env_name,
@@ -146,11 +146,12 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         draw_ref = bool(visualization_cfg.get("draw_calibration_reference", True))
 
         if fossen_visualise:
-            from airsim.inference.run_visualise_fossen import run_visualise_fossen
+            from airsim.inference.run_visualise_models import run_visualise_models
 
             logging.getLogger("airsim").setLevel(logging.INFO)
-            run_visualise_fossen(
+            run_visualise_models(
                 model_path=str(resolve_path_relative_to_src(str(visualization_cfg.get("fossen_model_path", "models/PySimEnv_PPO_policy.zip")), _SRC_DIR)),
+                model_family=str(visualization_cfg.get("model_family", "auto")),
                 env_name=str(visualization_cfg.get("fossen_environment", "auto")),
                 ip=ip,
                 port=port,
@@ -174,6 +175,12 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 lock_path_in_ue5=bool(visualization_cfg.get("lock_path_in_ue5", False)),
                 vehicle_object_name=str(visualization_cfg.get("vehicle_object_name", "")),
                 show_minimap=bool(visualization_cfg.get("show_minimap", True)),
+                use_ue5_camera_minimap=bool(visualization_cfg.get("use_ue5_camera_minimap", False)),
+                ue5_camera_name=str(visualization_cfg.get("ue5_camera_name", "TopDownCam")),
+                ue5_camera_fov_deg=float(visualization_cfg.get("ue5_camera_fov_deg", 38.0)),
+                ue5_camera_height_m=float(visualization_cfg.get("ue5_camera_height_m", 120.0)),
+                ue5_camera_follow_heading=bool(visualization_cfg.get("ue5_camera_follow_heading", False)),
+                ue5_preview_window=bool(visualization_cfg.get("ue5_preview_window", True)),
             )
             return True
 

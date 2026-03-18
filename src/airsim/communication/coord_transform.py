@@ -11,7 +11,7 @@ import math
 import numpy as np
 from pathlib import Path
 from typing import Optional, Tuple
-from airsim.common.tools.angles import normalize_angle as _normalize_angle
+from fw.common.airsim.tools.angles import normalize_angle as _normalize_angle
 
 _THIS_DIR = Path(__file__).resolve().parent
 _DEFAULT_CALIBRATION_PATH = _THIS_DIR.parent / "config" / "calibration.json"

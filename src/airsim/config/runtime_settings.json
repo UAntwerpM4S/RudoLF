@@ -7,19 +7,24 @@
   "visualization": {
     "_remarks": {
       "fossen_visualise": "true => visualize framework/Fossen path in UE5.",
+      "model_family": "Model visualiser family selector for run_visualise_models (auto|fossen|fhsim).",
       "inference_visualise": "true => run UE5 inference model visualization.",
       "mode_priority": "If both fossen_visualise and inference_visualise are true, fossen_visualise wins.",
       "max_steps": "Episode step cap for visualize entry points.",
-      "render_interpolation_steps": "Higher values smooth mirrored motion but can increase visual overhead."
+      "render_interpolation_steps": "Higher values smooth mirrored motion but can increase visual overhead.",
+      "show_minimap": "Enable or disable minimap support during model visualization.",
+      "use_ue5_camera_minimap": "true => use a UE5 top-down camera minimap path instead of matplotlib map window.",
+      "ue5_preview_window": "When true and camera minimap is enabled, shows the camera feed in a small desktop window."
     },
     "fossen_visualise": true,
+    "model_family": "auto",
     "inference_visualise": false,
     "fossen_model_path": "models/PySimEnv_PPO_policy.zip",
     "inference_model_path": "models/AirSimEnv_PPO_policy.zip",
     "fossen_environment": "auto",
     "mirror_controls_in_ue5": false,
     "animate_steering_in_ue5": true,
-    "animate_throttle_in_ue5": false,
+    "animate_throttle_in_ue5": true,
     "render_interpolation_steps": 8,
     "steering_visual_gain": 0.35,
     "throttle_visual_gain": 1.0,
@@ -28,7 +33,13 @@
     "max_translation_step": 0.15,
     "max_yaw_step_deg": 1.5,
     "vehicle_object_name": "",
-    "show_minimap": true,
+    "show_minimap": false,
+    "use_ue5_camera_minimap": true,
+    "ue5_camera_name": "TopDownCam",
+    "ue5_camera_fov_deg": 38.0,
+    "ue5_camera_height_m": 120.0,
+    "ue5_camera_follow_heading": false,
+    "ue5_preview_window": true,
     "lock_path_in_ue5": false,
     "episodes": 1,
     "max_steps": 30000,
@@ -47,7 +58,7 @@
       "state_poll_interval": "Polling cadence while waiting for UE5 to re-pause.",
       "max_steps": "Episode step cap for AirSim training."
     },
-    "speed_profile": "normal",
+    "speed_profile": "turbo",
     "max_steps": 30000,
     "simulation_speed": 100.0,
     "use_pause_stepping": true,
@@ -72,6 +83,6 @@
     "health_check_interval": 30.0,
     "csv_log_path": "",
     "save_slot": "simulator_1",
-    "simulation_speed": 1.0
+    "simulation_speed": 20.0
   }
 }

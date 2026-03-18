@@ -38,7 +38,7 @@ from airsim.config.airsim_config import (
     DEFAULT_AIRSIM_SIMULATION_SPEED,
 )
 from airsim.communication.coord_transform import CoordTransform
-from airsim.common.tools.angles import (
+from fw.common.airsim.tools.angles import (
     normalize_angle as _normalize_angle,
     yaw_from_quaternion as _yaw_from_quaternion,
 )
