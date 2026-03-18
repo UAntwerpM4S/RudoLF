@@ -242,7 +242,7 @@ class PySimEnvironment(BaseEnvironment):
         # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = PySimEnv(time_step=0.7, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
+        self._env = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
                              dynamics_model=config["dynamics_model"], ship_model=config["ship_model"],
                              wind=config["wind"], current=config["current"],
                              numerical_damping=config["numerical_damping"])
@@ -274,7 +274,7 @@ class FhSimEnvironment(BaseEnvironment):
         # self._env = DummyVecEnv([lambda: Monitor(FhSimEnv(render_mode='human', max_steps=1200, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = FhSimEnv(time_step=0.1, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
+        self._env = FhSimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
                              ship_model=config["ship_model"], scenario=config["scenario"])
 
 
