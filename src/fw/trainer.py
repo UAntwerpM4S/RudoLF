@@ -4,10 +4,8 @@ import importlib
 
 from enum import Enum
 from pathlib import Path
-from fw.agent import Agent
-from fw.colav_agent import ColavAgent
-from fw.agent import PolicyStrategy as PfPolicyStrategy
-from fw.colav_agent import PolicyStrategy as COLAVPolicyStrategy
+from fw.agent_manager import AgentManager
+from fw.agent_manager import PolicyStrategy
 from fw.config import get_config_parameters, get_hyperparameters
 from contextlib import contextmanager
 
@@ -82,14 +80,14 @@ def find_existing_filename(class_name: str, directory: str = ".") -> str:
 class Trainer:
     """Handles the training of an agent across multiple environments.
 
-    Responsible for creating the agent, initializing the scheduler, and managing the training loop.
+    Responsible for creating the agent manager, initializing the scheduler, and managing the training loop.
     """
 
-    def __init__(self, model_type: str, envs, scheduler_type: str):
+    def __init__(self, agent_type: str, envs, scheduler_type: str):
         """Initializes the Trainer.
 
         Args:
-            model_type (str): The type of model to create (e.g., 'PPO', 'DQN').
+            agent_type (str): The type of agent to create (e.g., 'PPO', 'DQN').
             envs (Gym.Env): List of environments for the agent to train in.
             scheduler_type (str): The name of the scheduler class to use.
 
@@ -99,17 +97,14 @@ class Trainer:
         """
         self._envs = envs
         self._config = get_config_parameters()
-
-        # TODO: choosing an agent should be done in a cleaner fashion
-        #self._agent = Agent(model_type, get_hyperparameters(model_type))
-        self._agent = ColavAgent(model_type, get_hyperparameters(model_type))
+        self._agent_mgr = AgentManager(agent_type, get_hyperparameters(agent_type))
 
         # Dynamically load the scheduler based on its name
         try:
             scheduler_file = Path(find_existing_filename(scheduler_type))
             scheduler_module = importlib.import_module(f"fw.{scheduler_file.stem}")
             scheduler_class = getattr(scheduler_module, scheduler_type)
-            scheduler = scheduler_class(self._agent, self._envs)
+            scheduler = scheduler_class(self._agent_mgr, self._envs)
         except ModuleNotFoundError:
             raise RuntimeError(f"Cannot create unknown scheduler class '{scheduler_type}'.")
         except Exception as e:
@@ -164,39 +159,33 @@ class Trainer:
     def visualize(self, envs, airsim_bridge=None):
         if envs is not None:
             # Start shared figure
-            self._agent.begin_overlay_plot()
+            self._agent_mgr.begin_overlay_plot()
 
             for env_idx, env in enumerate(envs):
                 gym_env = env.gym_env
                 try:
                     with self.render(gym_env):
-                        if hasattr(gym_env, "phys_sim"):
-                            if hasattr(gym_env.phys_sim, "_dynamics"):
+                        if hasattr(gym_env, "phys_sims"):
+                            if hasattr(gym_env.phys_sims[0], "_dynamics"):
                                 print(f"Visualization of {gym_env.ship_model.name} in a {gym_env.dynamics_model.name}-based simulator.")
-                            elif hasattr(gym_env.phys_sim, "_engine"):
-                                print(f"Visualization of {gym_env.ship_model.name} in an {gym_env.phys_sim._engine} simulator.")
+                            elif hasattr(gym_env.phys_sims[0], "_engine"):
+                                print(f"Visualization of {gym_env.ship_model.name} in an {gym_env.phys_sims[0]._engine} simulator.")
 
                         policy_name = f"Best_{gym_env.type_name}" if self._config[
                             "visualize_best_trained"] else gym_env.type_name
 
-                        #self._agent.set_environment(
-                        #    env=gym_env,
-                        #    policy_strategy=PfPolicyStrategy.REUSE_OTHER_POLICY,
-                        #    other_env_name=policy_name,
-                        #)
-
-                        self._agent.set_environment(
+                        self._agent_mgr.set_environment(
                             env=gym_env,
-                            policy_strategy=COLAVPolicyStrategy.REUSE_OTHER_POLICY,
+                            policy_strategy=PolicyStrategy.REUSE_OTHER_POLICY,
                             other_env_name=policy_name,
                         )
 
-                        self._agent.visualize_trained_model(num_episodes=100, live_animation=self._config["live_animation"], airsim_bridge=airsim_bridge)
+                        self._agent_mgr.visualize_trained_agent(num_episodes=5, live_animation=self._config["live_animation"], airsim_bridge=airsim_bridge)
                 except RuntimeError as e:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
 
             # Finalize shared figure
-            self._agent.end_overlay_plot()
+            self._agent_mgr.end_overlay_plot()
         else:
             print("No data found to visualize.")
 

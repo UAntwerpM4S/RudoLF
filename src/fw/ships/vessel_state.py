@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass()
 class VesselState:
     """
     Container for the complete vessel state.
@@ -22,6 +22,18 @@ class VesselState:
         u: Surge velocity along the vessel's x-axis (forward) [m/s].
         v: Sway velocity along the vessel's y-axis (starboard) [m/s].
         r: Yaw rate (rotation about the z-axis) [rad/s].
+    """
+
+    terminated: bool
+    """
+    Indicates whether the ship’s episode ended due to a terminal condition,
+    such as collision, goal achievement, or other criterion.
+    """
+
+    truncated: bool
+    """
+    Indicates whether the ship’s episode ended due to truncation, e.g., because the
+    maximum allowed number of steps was reached without meeting a terminal condition.
     """
 
     x: float

@@ -2,21 +2,21 @@ import time
 import logging
 import traceback
 
-from fw.agent import PolicyStrategy
+from fw.agent_manager import PolicyStrategy
 from fw.base_scheduler import BaseScheduler
 
 
 class SimpleScheduler(BaseScheduler):
     """Scheduler class to manage environment switching and coordinate multi-environment training."""
 
-    def __init__(self, agent, envs):
-        """Initializes the Scheduler with an agent and a list of environments.
+    def __init__(self, agent_mgr, envs):
+        """Initializes the Scheduler with an agent manager and a list of environments.
 
         Args:
-            agent: The Agent instance responsible for training and policy management.
+            agent_mgr: The AgentManager instance responsible for training and policy management.
             envs (list): List of environments used for training.
         """
-        super().__init__(agent, envs)
+        super().__init__(agent_mgr, envs)
 
         self.current_env = None
         self._previous_env_name = None
@@ -28,7 +28,7 @@ class SimpleScheduler(BaseScheduler):
         policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
         other_policy_name: str = None
     ):
-        """Switches the agent to a different environment.
+        """Switches to a different environment.
 
         Args:
             env_index (int): Index of the environment to switch to.
@@ -48,14 +48,14 @@ class SimpleScheduler(BaseScheduler):
                 f"Invalid environment index '{env_index}'. Only {len(self.envs)} environment(s) available."
             )
 
-        if hasattr(self.current_env.gym_env, "phys_sim"):
-            if hasattr(self.current_env.gym_env.phys_sim, "_dynamics"):
-                print(f"Setting up a {self.current_env.gym_env.dynamics_model.name}-based simulator for {self.current_env.gym_env.ship_model.name}.")
-            elif hasattr(self.current_env.gym_env.phys_sim, "_engine"):
-                print(f"Setting up an {self.current_env.gym_env.phys_sim._engine} simulator for {self.current_env.gym_env.ship_model.name}.")
+        if hasattr(self.current_env.gym_env, "phys_sims"):
+            if hasattr(self.current_env.gym_env.phys_sims[0], "_dynamics"):
+                print(f"Setting up a {self.current_env.gym_env.dynamics_model.name}-based simulator for {self.current_env.gym_env.num_ships} {self.current_env.gym_env.ship_model.name} ship(s).")
+            elif hasattr(self.current_env.gym_env.phys_sims[0], "_engine"):
+                print(f"Setting up an {self.current_env.gym_env.phys_sims[0]._engine} simulator for {self.current_env.gym_env.num_ships} {self.current_env.gym_env.ship_model.name} ship(s).")
 
-        # Set the agent's environment and prepare policy according to the strategy
-        self.agent.set_environment(
+        # Set the desired environment and prepare policy according to the strategy
+        self.agent_mgr.set_environment(
             env=self.current_env.gym_env,
             policy_strategy=policy_strategy,
             other_env_name=other_policy_name
@@ -74,7 +74,7 @@ class SimpleScheduler(BaseScheduler):
         Returns:
             dict: Metrics for each environment, including training status and duration.
         """
-        agent_metrics = {}
+        metrics = {}
         policy_strategy = PolicyStrategy.REUSE_OTHER_POLICY
 
         for i in range(len(self.envs)):
@@ -82,7 +82,7 @@ class SimpleScheduler(BaseScheduler):
                 # Switch to the next environment
                 self._switch_environment(i, policy_strategy, self._previous_env_name)
 
-                logging.info(f"Training agent '{getattr(self.agent, 'model', 'Unknown')}' in environment '{self.current_env}'.")
+                logging.info(f"Training agent '{getattr(self.agent_mgr, 'agent', 'Unknown')}' in environment '{self.current_env}'.")
 
                 # Look up how many steps to train in this environment
                 stop_condition = configuration[str(self.current_env)]
@@ -90,11 +90,11 @@ class SimpleScheduler(BaseScheduler):
 
                 # Indicate if starting from scratch
                 if not self._previous_env_name:
-                    print(f"Starting to train a new {self.agent.model_type} policy.")
+                    print(f"Starting to train a new {self.agent_mgr.agent_type} policy.")
 
                 # Train the agent
                 start_time = time.time()
-                self.agent.train(stop_condition=stop_condition)
+                self.agent_mgr.train(stop_condition=stop_condition)
                 duration = time.time() - start_time
 
                 # Save policy if reusing it later
@@ -102,20 +102,20 @@ class SimpleScheduler(BaseScheduler):
 
                 if self._previous_env_name:
                     try:
-                        save_name = f"{self.current_env}_{self.agent.model_type}_policy"
-                        self.agent.model.save_policy(save_name)
+                        save_name = f"{self.current_env}_{self.agent_mgr.agent_type}_policy"
+                        self.agent_mgr.agent.save_policy(save_name)
                     except Exception as e:
                         self._previous_env_name = None
                         raise RuntimeError("Failed to save the policy.") from e
 
                 # Log successful training
-                agent_metrics[str(self.current_env)] = {"status": "success", "duration": duration}
+                metrics[str(self.current_env)] = {"status": "success", "duration": duration}
 
             except Exception as e:
                 traceback.print_exc()
-                logging.error(f"Training failed for agent '{getattr(self.agent, 'model', 'Unknown')}' in '{self.current_env}': {e}")
-                agent_metrics[str(self.current_env)] = {"status": "failure", "error": str(e)}
+                logging.error(f"Training failed for agent '{getattr(self.agent_mgr, 'agent', 'Unknown')}' in '{self.current_env}': {e}")
+                metrics[str(self.current_env)] = {"status": "failure", "error": str(e)}
 
         print("[Scheduler] Training complete!")
 
-        return agent_metrics
+        return metrics

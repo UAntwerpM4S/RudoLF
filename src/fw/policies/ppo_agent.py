@@ -6,25 +6,18 @@ import torch.nn as nn
 import torch.optim as optim
 import gymnasium as gym
 import numpy as np
-import time
-import math
 
 from typing import Optional, Tuple
-
-from fontTools.merge.util import first
-
 from fw.stop_condition import StopCondition
-from fw.policies.base_model import BaseModel
+from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo_policy import PPOPolicy
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
-import matplotlib.pyplot as plt
 
 
-
-class PPOModel(BaseModel):
+class PPOAgent(BaseAgent):
     """
-    Proximal Policy Optimization (PPO) Model for reinforcement learning.
+    Proximal Policy Optimization (PPO) Agent for reinforcement learning.
 
     This class handles the training, evaluation, and policy management for PPO-based reinforcement learning agents.
     """
@@ -64,7 +57,8 @@ class PPOModel(BaseModel):
             next_non_terminal = 1.0 - dones[t]
             next_values = next_value if t == len(rewards) - 1 else values[t + 1]
             delta = rewards[t] + gamma * next_values * next_non_terminal - values[t]
-            advantages[t] = last_gae = delta + gamma * lambda_ * next_non_terminal * last_gae
+            last_gae = delta + gamma * lambda_ * next_non_terminal * last_gae
+            advantages[t] = last_gae
 
         return advantages
 
@@ -77,18 +71,18 @@ class PPOModel(BaseModel):
         **kwargs
     ):
         """
-        Initialize PPOModel with environment and training hyperparameters.
+        Initialize PPOAgent with environment and training hyperparameters.
 
-        This constructor passes core arguments to the BaseModel and adds two specific options
+        This constructor passes core arguments to the BaseAgent and adds two specific options
         for training behavior: maximum number of iterations and reward normalization.
 
         Args:
-            *args: Positional arguments passed to the BaseModel initializer.
+            *args: Positional arguments passed to the BaseAgent initializer.
             max_nbr_iterations (int, optional): The maximum number of environment steps before terminating training.
                 Used as a safeguard to prevent infinite loops. Defaults to 200000.
             normalize (bool, optional): Whether to normalize rewards using running statistics.
                 Helps stabilize learning when reward scales vary significantly. Defaults to False.
-            **kwargs: Keyword arguments passed to the BaseModel initializer.
+            **kwargs: Keyword arguments passed to the BaseAgent initializer.
         """
         super().__init__(*args, **kwargs)
 
@@ -98,7 +92,10 @@ class PPOModel(BaseModel):
         else:
             self.output_dim = self.action_space.shape[0]
 
-        self.input_dim = self.observation_space.shape[0]
+        if len(self.observation_space.shape) > 1:
+            self.input_dim = self.observation_space.shape[-1]
+        else:
+            self.input_dim = self.observation_space.shape[0]
         self.policy = PPOPolicy(self.input_dim, self.output_dim, self.device)
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         self.max_nbr_iterations = max_nbr_iterations
@@ -151,8 +148,8 @@ class PPOModel(BaseModel):
         Returns:
             Tuple: A tuple containing the predicted action and log probability.
         """
-        actions, log_probs, _ = self.policy.predict(state, deterministic)
-        return actions[0], log_probs.item()
+        actions, log_probs, values = self.policy.predict(state, deterministic)
+        return actions, log_probs, values
 
 
     def train(self, all_episodes_data) -> float:
@@ -178,58 +175,56 @@ class PPOModel(BaseModel):
         self.policy.network.train()
 
         # Concatenate all episode data into single arrays for batch processing
-        all_states = np.concatenate([ep['states'] for ep in all_episodes_data])
-        all_actions = np.concatenate([ep['actions'] for ep in all_episodes_data])
-        all_advantages = np.concatenate([ep['advantages'] for ep in all_episodes_data])
-        all_old_log_probs = np.concatenate([ep['log_probs'] for ep in all_episodes_data])
-        all_returns = np.concatenate([ep['returns'] for ep in all_episodes_data])
+        all_states = torch.as_tensor(np.concatenate([ep['states'] for ep in all_episodes_data]),
+                                     dtype=torch.float32).to(self.device)
+        all_actions = torch.as_tensor(np.concatenate([ep['actions'] for ep in all_episodes_data]),
+                                      dtype=torch.float32).to(self.device)
+        all_advantages = torch.as_tensor(np.concatenate([ep['advantages'] for ep in all_episodes_data]),
+                                         dtype=torch.float32).to(self.device)
+        all_old_log_probs = torch.as_tensor(np.concatenate([ep['log_probs'] for ep in all_episodes_data]),
+                                            dtype=torch.float32).to(self.device)
+        all_returns = torch.as_tensor(np.concatenate([ep['returns'] for ep in all_episodes_data]),
+                                      dtype=torch.float32).to(self.device)
 
-        # Convert data to tensors
-        states = torch.as_tensor(all_states, dtype=torch.float32).to(self.device)
-        actions = torch.as_tensor(all_actions, dtype=torch.float32).to(self.device)
-        advantages = torch.as_tensor(all_advantages, dtype=torch.float32).to(self.device)
-        old_log_probs = torch.as_tensor(all_old_log_probs, dtype=torch.float32).to(self.device)
-        returns = torch.as_tensor(all_returns, dtype=torch.float32).to(self.device)
-
-        if advantages.numel() <= 1:
-            print(f"[Warning] Very short trajectory detected. Length: {advantages.numel()}")
+        if all_advantages.numel() <= 1:
+            print(f"[Warning] Very short trajectory detected. Length: {all_advantages.numel()}")
             return float('nan')
 
         # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
 
         # Train over multiple epochs
-        batch_size = states.shape[0]
-        minibatch_size = self.batch_size
-
+        batch_size = all_states.shape[0]
         loss_per_epoch = []
 
         for _ in range(self.num_epochs):
             # Shuffle indices
             indices = torch.randperm(batch_size)
 
-            for start in range(0, batch_size, minibatch_size):
-                end = start + minibatch_size
+            for start in range(0, batch_size, self.batch_size):
+                end = start + self.batch_size
                 mb_idx = indices[start:end]
 
-                mb_states = states[mb_idx]
-                mb_actions = actions[mb_idx]
-                mb_old_log_probs = old_log_probs[mb_idx]
-                mb_returns = returns[mb_idx]
-                mb_advantages = advantages[mb_idx]
+                # Slicing existing tensors is faster than re-creating them
+                mb_states = all_states[mb_idx]
+                mb_actions = all_actions[mb_idx]
+                mb_old_log_probs = all_old_log_probs[mb_idx]
+                mb_returns = all_returns[mb_idx]
+                mb_advantages = all_advantages[mb_idx]
 
                 # Get current policy distribution
                 action_mean, action_std, state_values = self.policy.network(mb_states)
                 dist = torch.distributions.Normal(action_mean, action_std)
 
-                # Adjust actions if action space is continuous
+                # Use the raw actions logic safely
                 if isinstance(self.action_space, gym.spaces.Box):
-                    raw_actions = torch.atanh(mb_actions.clamp(-0.99, 0.99))
+                    # Numerical safety for atanh
+                    raw_actions = torch.atanh(mb_actions.clamp(-0.999, 0.999))
                 else:
                     raw_actions = mb_actions
                 log_probs = self.policy.calc_log_probs(dist, raw_actions, mb_actions)
 
-                # PPO clipped loss
+                # PPO Objective
                 ratios = torch.exp(log_probs - mb_old_log_probs)
 
                 surrogate_1 = ratios * mb_advantages
@@ -237,12 +232,12 @@ class PPOModel(BaseModel):
 
                 policy_loss = -torch.min(surrogate_1, surrogate_2).mean()
 
-                # Value loss
+                # Value Loss: MSE between predicted value and GAE-based returns
                 value_loss = torch.nn.functional.mse_loss(state_values.squeeze(-1), mb_returns)
-                entropy = dist.entropy().sum(dim=-1).mean()
+                entropy_loss = dist.entropy().sum(dim=-1).mean()    # Encourage exploration
 
                 # Total loss
-                loss = policy_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy
+                loss = policy_loss + (self.value_loss_coef * value_loss) - (self.entropy_coef * entropy_loss)
 
                 # Optimize
                 self.optimizer.zero_grad()
@@ -250,7 +245,7 @@ class PPOModel(BaseModel):
                 nn.utils.clip_grad_norm_(self.policy.network.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
-                loss_per_epoch.append(loss.detach().cpu().item())
+                loss_per_epoch.append(loss.item())
 
         # Return mean loss over all updates
         return np.mean(loss_per_epoch)
@@ -285,19 +280,18 @@ class PPOModel(BaseModel):
         # Return the first index if it exists, otherwise return -1
         return true_indices[0] if true_indices.size > 0 else -1
 
-
-    def run_parallel_episodes(self, num_envs, fixed_horizon) -> list:
+    def run_parallel_episodes(self, num_envs, fixed_horizon=False) -> list:
         """
         Run multiple episodes in parallel using Gym vectorized environments.
+        Collect trajectories per (env_id, agent_id) and compute GAE.
 
         Args:
             num_envs (int): Number of parallel environments to run.
-            fixed_horizon (bool): If true, runs a fixed number of iterations per env
-                                  as opposed to waiting for all envs to finish
 
         Returns:
             list: A list of dictionaries containing episode data for each environment.
         """
+
         if num_envs <= 0:
             raise ValueError("num_envs must be greater than 0.")
 
@@ -307,11 +301,7 @@ class PPOModel(BaseModel):
         if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
             # Recreate vec_env only if it does not exist or if the requested number of envs changed
             env_fns = [self.make_env() for _ in range(num_envs)]
-
-            if num_envs > 1:
-                self._vec_env = SubprocVecEnv(env_fns)
-            else:
-                self._vec_env = DummyVecEnv(env_fns)
+            self._vec_env = SubprocVecEnv(env_fns) if num_envs > 1 else DummyVecEnv(env_fns)
 
         # ------------------------------------------------------------------
         # Optional environment randomization
@@ -321,115 +311,198 @@ class PPOModel(BaseModel):
 
         # Reset all environments
         states = self._vec_env.reset()
+
+        if states.ndim == 3:
+            # Multi-agent case: (num_envs, num_agents, obs_dim)
+            num_envs, num_agents, obs_dim = states.shape
+        elif states.ndim == 2:
+            # Single-agent case: (num_envs, obs_dim)
+            num_envs, obs_dim = states.shape
+            states = states[:, None, :]
+            num_agents = 1
+        else:
+            raise ValueError(
+                f"Unexpected states shape {states.shape}. "
+                "Expected 2D (num_envs, obs_dim) or 3D (num_envs, num_agents, obs_dim)."
+            )
+
+        # Track which environments are finished
         envs_done = np.zeros(num_envs, dtype=bool)
 
         # Storage for episode data
-        collected_data = {k: [] for k in ["states", "actions", "rewards", "dones", "values", "log_probs"]}
+        collected_data = [
+            [
+                {
+                    "states": [],
+                    "actions": [],
+                    "rewards": [],
+                    "terminations": [],
+                    "truncations": [],
+                    "values": [],
+                    "log_probs": [],
+                    "next_states": [],
+                }
+                for _ in range(num_agents)
+            ]
+            for _ in range(num_envs)
+        ]
+
         safeguard = 0
 
         if fixed_horizon:
             # follows the definition of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/ppo/ppo.html
-            n_steps = max(1, self.steps_per_update // self.num_envs)
-
-            for _ in range(min(n_steps, self.max_nbr_iterations)):
-                # Select actions and get value predictions
-                actions, log_probs, values = self.policy.predict(states)
-
-                # Step all environments
-                next_states, rewards, terminations, _ = self._vec_env.step(actions)
-                envs_done = np.logical_or(envs_done, terminations)
-
-                # Store episode data
-                collected_data["states"].append(states)
-                collected_data["actions"].append(actions)
-                collected_data["rewards"].append(rewards)
-                collected_data["dones"].append(terminations)
-                collected_data["values"].append(values)
-                collected_data["log_probs"].append(log_probs)
-
-                # Update states for the next step
-                states = next_states
-                safeguard += 1
+            n_steps = min(max(1, self.steps_per_update // num_envs), self.max_nbr_iterations)
         else:
-            while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
-                # Select actions and get value predictions
-                actions, log_probs, values = self.policy.predict(states)
+            # Base implementation: run all environments until they terminate
+            n_steps = self.max_nbr_iterations
 
-                # Step all environments
-                next_states, rewards, terminations, _ = self._vec_env.step(actions)
-                envs_done = np.logical_or(envs_done, terminations)
+        safeguard = 0
+        for _ in range(n_steps):
+            # In non-fixed-horizon mode, stop once all environments are done
+            if not fixed_horizon and np.all(envs_done):
+                break
+            actions, log_probs, values = self.predict(states, deterministic=False)
 
-                # Store episode data
-                collected_data["states"].append(states)
-                collected_data["actions"].append(actions)
-                collected_data["rewards"].append(rewards)
-                collected_data["dones"].append(terminations)
-                collected_data["values"].append(values)
-                collected_data["log_probs"].append(log_probs)
+            if len(self.observation_space.shape) == 1 and actions.ndim == 3 and actions.shape[1] == 1:
+                actions = actions[:, 0, :]
 
-                # Update states for the next step
-                states = next_states
-                safeguard += 1
+            # Step all environments
+            next_states, next_rewards, next_terminations, infos = self._vec_env.step(actions)
+
+            if infos and all(
+                    all(k in env_info for k in ("rewards", "terminations", "truncations"))
+                    for env_info in infos
+            ):
+                rewards = np.stack([env_info["rewards"] for env_info in infos]).astype(np.float32)
+                terminations = np.stack([env_info["terminations"] for env_info in infos]).astype(bool)
+                truncations = np.stack([env_info["truncations"] for env_info in infos]).astype(bool)
+            else:
+                rewards = next_rewards
+                terminations = next_terminations
+                truncations = np.zeros((num_envs, num_agents), dtype=bool)
+
+            if len(self.observation_space.shape) == 1:
+                if actions.ndim == 2:  # (num_envs, action_dim)
+                    actions = actions[:, None, :]  # → (num_envs, 1, action_dim)
+
+                if log_probs.ndim == 1:  # (num_envs,)
+                    log_probs = log_probs[:, None]  # → (num_envs, 1)
+
+                if values.ndim == 1:  # (num_envs,)
+                    values = values[:, None]  # → (num_envs, 1)
+
+                if next_states.ndim == 2:
+                    next_states = next_states[:, None, :]
+                    rewards = next_rewards[:, None]
+                    terminations = next_terminations[:, None]
+
+            # Store per-agent transitions
+            for env_id in range(num_envs):
+                if envs_done[env_id]:
+                    continue  # Skip already completed environments
+
+                for agent_id in range(num_agents):
+                    collected_data[env_id][agent_id]["states"].append(states[env_id, agent_id])
+                    collected_data[env_id][agent_id]["actions"].append(actions[env_id, agent_id])
+                    collected_data[env_id][agent_id]["rewards"].append(rewards[env_id, agent_id])
+                    collected_data[env_id][agent_id]["terminations"].append(terminations[env_id, agent_id])
+                    collected_data[env_id][agent_id]["truncations"].append(truncations[env_id, agent_id])
+                    collected_data[env_id][agent_id]["values"].append(values[env_id, agent_id])
+                    collected_data[env_id][agent_id]["log_probs"].append(log_probs[env_id, agent_id])
+                    collected_data[env_id][agent_id]["next_states"].append(next_states[env_id, agent_id])
+
+            # Update done flags at environment level
+            env_done = np.all(terminations | truncations, axis=1)
+            envs_done = np.logical_or(envs_done, env_done)
+
+            # Update states for the next step
+            states = next_states
+            safeguard += 1
 
         if safeguard >= 135000:
             print(f"Safeguard surpassed the 135000 boundary: {safeguard}.")
 
-        if safeguard == self.max_nbr_iterations:
+        if safeguard >= self.max_nbr_iterations:
             print(f"Safeguard triggered due to reaching max_iterations ({self.max_nbr_iterations}).")
 
         # self._vec_env.close()
 
-        # Compute next values for the last state in each environment
-        with torch.no_grad():
-            _, _, next_values = self.policy.network(torch.FloatTensor(states).to(self.device))
-            next_values = next_values.cpu().numpy()
-
-        # Process episode data
+        # Process episode data with proper trimming
         episode_data = []
-        for i in range(num_envs):
-            if fixed_horizon:
-                # Keep full rollout when in fixed-horizon mode, no padding needed
-                episode_dones = np.array([step[i] for step in collected_data["dones"]])
-                first_true = self.find_first_true(episode_dones)
-                if first_true == -1:
-                    first_true = len(episode_dones) - 1
-            else:
+        for env_id in range(num_envs):
+            for agent_id in range(num_agents):
+                trajectory = collected_data[env_id][agent_id]
+
+                if len(trajectory["states"]) == 0:
+                    continue
+
+                # ----------------------------------------------------------
+                # Determine episode end (termination OR truncation)
+                # ----------------------------------------------------------
+
                 # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
                 # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
 
                 # Find the first True in dones for this environment
-                episode_dones = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in collected_data["dones"]])
-                first_true = self.find_first_true(episode_dones)
+                done_mask = np.logical_or(trajectory["terminations"], trajectory["truncations"])
+                first_done = self.find_first_true(done_mask)
 
                 # Handle cases where no True is found (episode did not terminate)
-                if first_true == -1:
-                    first_true = len(episode_dones) - 1  # Use the entire episode
+                if first_done == -1:
+                    first_done = len(done_mask) - 1  # Use the entire episode
 
-            episode = {}
-            for key in collected_data:
-                # Extract only the relevant portion of the data for this environment
-                relevant_steps = collected_data[key][:first_true + 1]
+                # ----------------------------------------------------------
+                # Determine bootstrap condition
+                # ----------------------------------------------------------
+                last_step_terminated = trajectory["terminations"][first_done]
 
-                if key in ["states", "actions"]:
-                    episode[key] = np.stack([step[i] for step in relevant_steps])
-                else:
-                    episode[key] = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in relevant_steps])
+                next_value = 0.0
+                if not last_step_terminated:
+                    # We bootstrap for:
+                    # - truncation
+                    # - safeguard stop
+                    with torch.no_grad():
+                        last_state = torch.FloatTensor(trajectory["next_states"][first_done]).unsqueeze(0).to(self.device)
+                        _, _, next_values = self.policy.network(last_state)
+                        next_value = next_values.squeeze(0).item()
 
-            if self.normalize:
-                episode["rewards"] = self.normalize_rewards(episode["rewards"])
+                # ----------------------------------------------------------
+                # Trim trajectory to valid region
+                # ----------------------------------------------------------
+                episode = {}
 
-            # Compute advantages and returns
-            episode["advantages"] = self.compute_gae(
-                episode["rewards"],
-                episode["values"],
-                episode["dones"],
-                next_values[i],
-                self.gamma,
-                self.gae_lambda,
-            )
+                for key in trajectory:
+                    relevant_steps = trajectory[key][:first_done + 1]
 
-            episode["returns"] = episode["advantages"] + episode["values"]
-            episode_data.append(episode)
+                    if key in ["states", "actions", "next_states"]:
+                        episode[key] = np.stack(relevant_steps)
+                    elif key in ["terminations", "truncations"]:
+                        episode[key] = np.asarray(relevant_steps, dtype=bool)
+                    else:
+                        episode[key] = np.asarray(relevant_steps, dtype=np.float32)
+
+                # ----------------------------------------------------------
+                # Optional reward normalization
+                # ----------------------------------------------------------
+                if self.normalize:
+                    episode["rewards"] = self.normalize_rewards(episode["rewards"])
+
+                # ----------------------------------------------------------
+                # Compute GAE (ONLY true terminations zero bootstrap)
+                # ----------------------------------------------------------
+
+                # Compute advantages and returns
+                episode["advantages"] = self.compute_gae(
+                    episode["rewards"],
+                    episode["values"],
+                    episode["terminations"],  # only real terminals
+                    next_value,
+                    self.gamma,
+                    self.gae_lambda,
+                )
+
+                episode["returns"] = episode["advantages"] + episode["values"]
+                episode_data.append(episode)
 
         return episode_data
 
@@ -443,17 +516,15 @@ class PPOModel(BaseModel):
 
         This method runs the training loop for the specified number of timesteps using parallel environments.
         It collects experience from the environments, updates the policy, logs training metrics, and saves
-        model checkpoints at regular intervals.
+        agent checkpoints at regular intervals.
 
         Args:
             stop_condition (StopCondition): Condition that defines when training should stop.
         """
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
-        training_start = time.perf_counter()
 
         last_save_index = 0
         training_metrics = []
-        episode_returns = []
         best_mean_reward = float('-inf')
         best_policy_file = f"Best_{self.env.type_name}_PPO_policy"
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
@@ -474,14 +545,14 @@ class PPOModel(BaseModel):
                 episode_data.append(episode_result)
                 total_reward += np.mean(episode_result['rewards'])
                 total_advantage += np.mean(episode_result['advantages'])
-                episode_returns.append(np.sum(episode_result['rewards']))
 
             # Update policy using all collected episodes
             loss = self.train(episode_data)
 
             # Log results
-            mean_reward = total_reward / self.num_envs
-            mean_advantage = total_advantage / self.num_envs
+            mean_reward = total_reward / len(batch_data) if batch_data else 0
+            mean_advantage = total_advantage / len(batch_data) if batch_data else 0
+
             training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
 
             # Save best policy so far
@@ -519,11 +590,7 @@ class PPOModel(BaseModel):
             self._vec_env.close()
             self._vec_env = None
 
-        training_time = time.perf_counter() - training_start
         print("Training completed!")
-        print(f"Training took: {training_time:.3f}s")
-        print("Visualizing training process")
-        self.plot_reward_metrics(episode_returns)
 
 
     def dump_metrics_to_csv(self, csv_filename, training_metrics):
@@ -555,13 +622,13 @@ class PPOModel(BaseModel):
 
     def load_policy(self, policy_file_name: str) -> None:
         """
-        Load a trained model's policy.
+        Load a trained agent's policy.
 
         Args:
             policy_file_name (str): Name of the policy file to load.
 
         Raises:
-            RuntimeError: If no model is created or the policy fails to load.
+            RuntimeError: If no agent is created or the policy fails to load.
         """
         try:
             if self.model_dir:
@@ -574,13 +641,13 @@ class PPOModel(BaseModel):
 
     def save_policy(self, policy_file_name: str) -> None:
         """
-        Save the trained model's policy.
+        Save the trained agent's policy.
 
         Args:
             policy_file_name (str): Name of the policy file to save.
 
         Raises:
-            RuntimeError: If no model is created or the policy fails to save.
+            RuntimeError: If no agent is created or the policy fails to save.
         """
         try:
             if self.model_dir:
@@ -596,25 +663,3 @@ class PPOModel(BaseModel):
         Set policy in evaluation mode.
         """
         self.policy.network.eval()
-
-    # TODO: does not really follow the workflow; previous workflow used exporting to a CSV. Cleaner solution
-    #       may be to read the CSV in the visualization code of the environment and plot it there.
-    def plot_reward_metrics(self, episode_returns):
-        plt.figure()
-        plt.plot(episode_returns, alpha=0.3, color='steelblue', label='Raw episode return')
-
-        window = 50
-        if len(episode_returns) >= window:
-            smoothed = np.convolve(episode_returns, np.ones(window) / window, mode='valid')
-            smoothed_x = range(window - 1, window - 1 + len(smoothed))
-            plt.plot(smoothed_x, smoothed, color='steelblue', linewidth=2, label=f'Rolling avg (n={window})')
-
-        plt.xlabel("Episode")
-        plt.ylabel("Total Episode Return")
-        plt.title("PPO: Episode Return over iterations")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
-
-

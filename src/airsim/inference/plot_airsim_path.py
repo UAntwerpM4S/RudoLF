@@ -13,12 +13,16 @@ import os
 
 # Configuration
 DT = 0.1  # Simulation time step
-POSSIBLE_PATHS = ["airsim_telemetry.csv", "src/fw/air_sim/airsim_telemetry.csv", "../src/fw/air_sim/airsim_telemetry.csv"]
+POSSIBLE_PATHS = [
+    "airsim_telemetry.csv",
+    "src/airsim/config/airsim_telemetry.csv",
+    "src/fw/air_sim/airsim_telemetry.csv",
+    "../src/airsim/config/airsim_telemetry.csv",
+]
 
 
 def find_telemetry_file():
     """Search for the telemetry CSV in a list of candidate locations.
-
     Returns:
         The first existing path from ``POSSIBLE_PATHS``, or ``None``
         if no file is found.
@@ -76,11 +80,11 @@ class LivePlotter:
             print(f"Warning: airsim_telemetry.csv not found in {POSSIBLE_PATHS}. Waiting for file...")
 
         self.fig, self.ax = plt.subplots(figsize=(10, 8))
-        
+
         # Initialize plots with empty data
         self.ship_line, = self.ax.plot([], [], label='Reference Ship', linewidth=2, linestyle='--', color='blue')
         self.car_line, = self.ax.plot([], [], label='AirSim Vehicle (Aligned Start)', linewidth=2, alpha=0.8, color='orange')
-        
+
         self.ship_start = self.ax.scatter([], [], c='green', marker='o', label='Start')
         self.ship_end = self.ax.scatter([], [], c='blue', marker='x', label='Ship End')
         self.car_end = self.ax.scatter([], [], c='red', marker='x', label='Car End')
@@ -91,14 +95,14 @@ class LivePlotter:
         self.ax.legend()
         self.ax.grid(True)
         self.ax.axis('equal')
-        
+
         self.ani = None
         self.is_running = True
-        
+
         # Connect events
         self.fig.canvas.mpl_connect('close_event', self.on_close)
         self.fig.canvas.mpl_connect('key_press_event', self.on_key)
-        
+
         print("Live Plotting Started.")
         print("Press 'q' or close the window to stop and save the plot.")
 
@@ -118,7 +122,7 @@ class LivePlotter:
         if not self.telemetry_file:
             self.telemetry_file = find_telemetry_file()
             if not self.telemetry_file:
-                return # Still waiting
+                return  # Still waiting
 
         try:
             ship_speeds = []
@@ -126,9 +130,6 @@ class LivePlotter:
             ship_headings = []
             car_headings = []
 
-            # Re-read the file to get the latest data
-            # Note: For very large files, this should be optimized to seek to last position.
-            # But for telemetry of a few minutes/hours, re-reading is robust and fast enough.
             with open(self.telemetry_file, 'r') as f:
                 reader = csv.DictReader(f)
                 if not reader.fieldnames:
@@ -138,33 +139,21 @@ class LivePlotter:
                     try:
                         ship_speeds.append(float(row['ship_speed']))
                         car_speeds.append(float(row['car_speed']))
-                        
-                        # Coordinate System Fix:
-                        # Fossen: 0=East, CCW. -> Convert to 0=North, CW (Standard Map N=0, E=90)
                         ship_headings.append(90.0 - float(row['ship_heading_deg']))
-                        
-                        # AirSim: 0=North, CW (Matches Map). 
                         car_headings.append(float(row['car_yaw_deg']))
-                        
                     except ValueError:
-                        continue # Skip bad lines
-            
+                        continue
+
             if not ship_speeds:
                 return
 
             # --- ALIGNMENT LOGIC ---
-            # Calculate initial headings
-            # Use average of first few steps to be robust
             n_avg = min(10, len(ship_headings))
             if n_avg > 0:
                 start_ship_h = sum(ship_headings[:n_avg]) / n_avg
                 start_car_h = sum(car_headings[:n_avg]) / n_avg
-                
                 heading_offset = start_ship_h - start_car_h
-                
-                # Rotated Car Headings = Car Headings + Offset
                 car_headings_aligned = [h + heading_offset for h in car_headings]
-                
                 title = f"Live Path Reconstruction (Aligned)\nOffset Removed: {heading_offset:.1f} deg | Steps: {len(ship_speeds)}"
             else:
                 car_headings_aligned = car_headings
@@ -179,35 +168,26 @@ class LivePlotter:
             # Update Plot Data
             self.ship_line.set_data(ship_y, ship_x)
             self.car_line.set_data(car_y, car_x)
-            
+
             if ship_x:
-                # Update markers
                 self.ship_start.set_offsets([[ship_y[0], ship_x[0]]])
                 self.ship_end.set_offsets([[ship_y[-1], ship_x[-1]]])
                 self.car_end.set_offsets([[car_y[-1], car_x[-1]]])
 
-                # Rescale view to fit data
                 self.ax.relim()
                 self.ax.autoscale_view()
-                # Optional: Ensure equal aspect ratio is maintained after autoscale
-                self.ax.axis('equal') 
+                self.ax.axis('equal')
 
         except Exception as e:
             print(f"Update error: {e}")
-            # Don't crash the loop, just wait for next frame
 
     def save_plot(self):
-        """Save the current figure to ``airsim_path_reconstruction.png``.
-
-        The file is written next to the telemetry CSV.  If no telemetry
-        file has been found yet, this method does nothing.
-        """
+        """Save the current figure to ``airsim_path_reconstruction.png``."""
         if self.telemetry_file:
             output_file = os.path.join(os.path.dirname(self.telemetry_file), "airsim_path_reconstruction.png")
-            # Fallback if dirname is empty
-            if not os.path.dirname(output_file): 
+            if not os.path.dirname(output_file):
                 output_file = "airsim_path_reconstruction.png"
-                
+
             self.fig.savefig(output_file)
             print(f"Plot saved to {os.path.abspath(output_file)}")
 
@@ -230,7 +210,7 @@ class LivePlotter:
         """
         if event.key == 'q':
             print("Stop requested. Closing...")
-            plt.close(self.fig)  # This will trigger on_close
+            plt.close(self.fig)
 
     def start(self):
         """Start the live animation loop (updates every 1 second)."""

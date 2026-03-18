@@ -11,7 +11,7 @@ class ScenarioBuilder:
     def __init__(self, env) -> None:
         self.env = env
         self.scenario_types = ["static", "overtaking", "head-on"]
-        self.scenario_probs = [1/3, 1/3, 1/3]
+        self.scenario_probs = [1, 0, 0]
 
     def cache_checkpoint_segments(self) -> None:
         """
@@ -89,7 +89,7 @@ class ScenarioBuilder:
         """Sample the current episode's collision entities."""
         env = self.env
         if not getattr(env, "enable_obstacles", False):
-            self.collision_entities = []
+            env.collision_entities = []
             env._sync_collision_entity_views()
             return
 
@@ -103,8 +103,7 @@ class ScenarioBuilder:
         entities = []
         match episode_type:
             case "static":
-                for i in range(n):
-                    entities.extend(self.compute_static_collision_entities())
+                entities.extend(self.compute_static_collision_entities())
             case "overtaking":
                 for i in range(n):
                     entities.extend(self.compute_overtaking_collision_entities())
@@ -317,7 +316,10 @@ class ScenarioBuilder:
             return []
         return [entity]
 
-    def check_collision_entity_collision(self) -> bool:
+    def check_collision_entity_collision(self, ship_index: int = 0) -> bool:
         env = self.env
         entities = getattr(env, "collision_entities", []) or []
-        return any(entity.collides_with_point(env.ship_pos, own_radius=env.own_ship_radius) for entity in entities)
+        return any(
+            entity.collides_with_point(env.ship_pos[ship_index], own_radius=env.own_ship_radius)
+            for entity in entities
+        )

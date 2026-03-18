@@ -5,7 +5,7 @@ import numpy as np
 from typing import Optional
 from fw.ships.ship_factory import ShipModel
 from fw.environments.py_sim_env import PySimEnv
-from fw.simulators.fh_sim_adapter import FhSimAdapter
+from fw.simulators.fh_sim_wrapper import FhSimWrapper
 
 
 class FhSimEnv(PySimEnv):
@@ -43,9 +43,9 @@ class FhSimEnv(PySimEnv):
             scenario (str, optional): The scenario name. Defaults to "DDShip_scenario1_nowindnocurrent".
         """
         try:
-            fh_wrapper_module = importlib.import_module('fw.simulators.fh_sim_wrapper')
-            fh_wrapper_class = getattr(fh_wrapper_module, "FhSimWrapper")
-            self._fh_sim = fh_wrapper_class(ship_model, scenario)
+            fh_bridge_module = importlib.import_module('fw.simulators.fh_sim_bridge')
+            fh_bridge_class = getattr(fh_bridge_module, "FhSimBridge")
+            self._fh_sim = fh_bridge_class(ship_model, scenario)
         except ModuleNotFoundError:
             self._fh_sim = None
 
@@ -53,10 +53,10 @@ class FhSimEnv(PySimEnv):
                          start_pos=start_pos, target_pos=target_pos, ship_model=ship_model)
 
         if self._fh_sim is not None:
-            self._fh_sim.initial_vessel_state = self.phys_sim.state
+            self._fh_sim.initial_vessel_state = self.phys_sims[0].state
 
 
-    def create_simulator(self):
+    def create_simulator(self, ship_index):
         """Create and return a configured FH-based ship simulator.
 
         This factory method instantiates an `FhSimulator` using the current
@@ -68,7 +68,7 @@ class FhSimEnv(PySimEnv):
             with the specified initial state and the current model parameters.
         """
 
-        return FhSimAdapter(self.ship.specifications, self._fh_sim, self.time_step)
+        return FhSimWrapper(self.ships[ship_index].specifications, self._fh_sim, self.time_step)
 
 
     def __deepcopy__(self, memo):

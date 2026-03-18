@@ -1,5 +1,4 @@
 import os
-import time
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -9,11 +8,11 @@ from gymnasium import Env
 from enum import auto, Enum
 from contextlib import contextmanager
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
-from fw.simulators.airsim_bridge import AirSimBridge
+from airsim.communication.airsim_bridge import AirSimBridge
 from fw.stop_condition import StopCondition
-from fw.policies.base_model import BaseModel
-from fw.policies.ppo2_model import PPO2Model
-from fw.policies.ppo_model import PPOModel
+from fw.policies.base_agent import BaseAgent
+from fw.policies.ppo2_agent import PPO2Agent
+from fw.policies.ppo_agent import PPOAgent
 
 
 MIN_GRID_POS = -11700
@@ -33,8 +32,8 @@ class PolicyStrategy(Enum):
     REUSE_OTHER_POLICY = auto()
 
 
-class Agent:
-    """Agent class for managing models and environments during training.
+class AgentManager:
+    """AgentManager class for managing agents and environments during training.
 
     This class includes methods for training, saving/loading policies, and
     visualizing paths taken by the agent during evaluation.
@@ -128,8 +127,8 @@ class Agent:
             ax.set_aspect('equal', adjustable='box')
 
             trajectory_file_name = (
-                f'{self._model.model_dir}/trajectory.png'
-                if self._model.model_dir
+                f'{self._agent.model_dir}/trajectory.png'
+                if self._agent.model_dir
                 else 'trajectory.png'
             )
 
@@ -140,15 +139,15 @@ class Agent:
             pass
 
 
-    def __init__(self, model_type: str, hyperparameters: dict):
+    def __init__(self, agent_type: str, hyperparameters: dict):
         """Initialize the Agent.
 
         Args:
-            model_type (str): Type of model to use (e.g., 'PPO').
-            hyperparameters (dict): Hyperparameters for configuring the model.
+            agent_type (str): Type of agent to use (e.g., 'PPO').
+            hyperparameters (dict): Hyperparameters for configuring the agent.
         """
-        self._model = None
-        self._model_type = model_type
+        self._agent = None
+        self._agent_type = agent_type
         self.prev_smoothing_setting = None
         self._hyperparameters = hyperparameters
 
@@ -177,31 +176,31 @@ class Agent:
 
 
     @property
-    def model_type(self) -> str:
+    def agent_type(self) -> str:
         """
-        Get the type of model being used by the agent.
+        Get the type of agent being used by the agent manager.
 
         Returns:
-            str: The model type.
+            str: The agent type.
         """
-        return self._model_type
+        return self._agent_type
 
 
     @property
-    def model(self) -> BaseModel:
+    def agent(self) -> BaseAgent:
         """
-        Get the model that is used by the agent.
+        Get the agent that is used by the agent manager.
 
         Returns:
-            BaseModel: The model.
+            BaseAgent: The agent.
         """
-        return self._model
+        return self._agent
 
 
     def set_environment(self, env: Env, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
                         other_env_name: str = None) -> None:
         """
-        Assign an environment to the model and configure the policy strategy.
+        Assign an environment to the agent and configure the policy strategy.
 
         Args:
             env (Env): The environment to set.
@@ -213,27 +212,27 @@ class Agent:
         """
         policy_file_name = None
 
-        if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._model:
-            policy_file_name = f'{self.get_env().type_name}_{self._model_type}_policy'
-            self._model.save_policy(policy_file_name)
+        if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._agent:
+            policy_file_name = f'{self.get_env().type_name}_{self._agent_type}_policy'
+            self._agent.save_policy(policy_file_name)
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
-            policy_file_name = f'{other_env_name}_{self._model_type}_policy'
+            policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
 
-        if PPO_POLICY_NAME == self._model_type:
-            self._model = PPOModel(environment=env, **self._hyperparameters)
-        elif PPO2_POLICY_NAME == self._model_type:
-            self._model = PPO2Model(environment=env, **self._hyperparameters)
+        if PPO_POLICY_NAME == self._agent_type:
+            self._agent = PPOAgent(environment=env, **self._hyperparameters)
+        elif PPO2_POLICY_NAME == self._agent_type:
+            self._agent = PPO2Agent(environment=env, **self._hyperparameters)
         else:
-            raise RuntimeError(f"Unknown {self._model_type} policy type.")
+            raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 
         if policy_file_name:
             full_policy_file_name = f"{policy_file_name}.zip"
-            if self.model.model_dir:
-                full_policy_file_name = os.path.join(self.model.model_dir, full_policy_file_name)
+            if self.agent.model_dir:
+                full_policy_file_name = os.path.join(self.agent.model_dir, full_policy_file_name)
 
             if Path(full_policy_file_name).exists():
                 print(f"Reusing {policy_file_name}.")
-                self._model.load_policy(policy_file_name)
+                self._agent.load_policy(policy_file_name)
             else:
                 raise RuntimeError(f"The policy file {policy_file_name} does not exist.")
 
@@ -246,13 +245,13 @@ class Agent:
             stop_condition (StopCondition): The condition that determines when training should stop.
 
         Raises:
-            RuntimeError: If no model is created.
+            RuntimeError: If no agent is created.
         """
-        if not self._model:
-            raise RuntimeError("No model has been created yet!")
+        if not self._agent:
+            raise RuntimeError("No agent has been created yet!")
 
         # Start training
-        self._model.learn(
+        self._agent.learn(
             stop_condition=stop_condition,
         )
 
@@ -272,7 +271,7 @@ class Agent:
                 env.enable_smoothing = self.prev_smoothing_setting
                 self.prev_smoothing_setting = None
 
-    def visualize_trained_model(
+    def visualize_trained_agent(
             self,
             num_episodes: int = 1,
             live_animation: bool = False,
@@ -280,7 +279,7 @@ class Agent:
             airsim_bridge: AirSimBridge = None,
     ) -> None:
         """
-        Run and visualize a trained model in the environment over multiple episodes.
+        Run and visualize a trained agent in the environment over multiple episodes.
 
         Args:
             num_episodes (int, optional): Number of episodes to visualize (default is 5).
@@ -289,18 +288,24 @@ class Agent:
             airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
 
         Raises:
-            RuntimeError: If no model is created.
+            RuntimeError: If no agent is created.
         """
         # Load checkpoint
-        # self._model.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
+        # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
 
-        if not self._model:
-            raise RuntimeError("No model has been created yet!")
+        if not self._agent:
+            raise RuntimeError("No agent has been created yet!")
 
         print(f"\nRunning {num_episodes} episodes...")
 
-        self.model.set_policy_eval()
+        self.agent.set_policy_eval()
         env = self.get_env()
+
+        # Prepare Fossen->AirSim coordinate transform if bridge is active
+        coord_transform = None
+        if airsim_bridge and airsim_bridge.is_connected:
+            from airsim.communication.coord_transform import CoordTransform
+            coord_transform = CoordTransform()
 
         with self.smoothing(env):
             if hasattr(env, "ship_pos"):
@@ -309,9 +314,6 @@ class Agent:
                 total_rewards = []
                 start_pos = None
 
-                # Determine simulation time step for AirSim sync
-                _sim_dt = getattr(env, 'time_step', 0.1)
-
                 try:
                     for episode in range(num_episodes):
                         state, _ = env.reset()
@@ -319,29 +321,14 @@ class Agent:
                         done = False
                         steps = 0
 
-                        start_pos = np.copy(env.ship_pos)
-
-                        # Reset AirSim vehicle at the start of each episode
-                        if airsim_bridge is not None:
-                            airsim_bridge.reset()
+                        start_pos = np.copy(env.ship_pos[0])
 
                         # Store positions for this episode
-                        path_positions = [np.copy(env.ship_pos)]
+                        path_positions = [np.copy(env.ship_pos[0])]
 
                         while not done:
                             # Select action
-                            action, _ = self._model.predict(state=state, deterministic=True)
-
-                            # Forward action to AirSim (if bridge is active)
-                            if airsim_bridge is not None:
-                                ship_state = env.phys_sim.state
-                                airsim_bridge.send_action(
-                                    action,
-                                    ship_speed=float(ship_state.u),
-                                    ship_heading=float(ship_state.heading),
-                                    ship_yaw_rate=float(ship_state.r),
-                                    ship_state=ship_state,
-                                )
+                            action, _, _ = self._agent.predict(state=state, deterministic=True)
 
                             # Take step in environment
                             state, reward, terminated, truncated, _ = env.step(action)
@@ -349,7 +336,7 @@ class Agent:
 
                             if not done:
                                 # Store current position
-                                path_positions.append(np.copy(env.ship_pos))
+                                path_positions.append(np.copy(env.ship_pos[0]))
 
                                 # Calculate the average episode reward
                                 episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
@@ -359,10 +346,16 @@ class Agent:
                                 if live_animation:
                                     env.render()
 
-                                # Brief pause to let AirSim process commands smoothly
-                                if airsim_bridge is not None and airsim_bridge.is_connected:
-                                    dt = getattr(env, "time_step", 0.1)
-                                    time.sleep(dt)
+                                # Bridge ship position and heading to UE5 via coordinate transform
+                                if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
+                                    ax, ay, _ = coord_transform.fossen_to_airsim(
+                                        float(env.ship_pos[0][0]),
+                                        float(env.ship_pos[0][1])
+                                    )
+                                    ayaw = coord_transform.fossen_heading_to_airsim_yaw(
+                                        float(env.phys_sims[0].state.heading)
+                                    )
+                                    airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
                             else:
                                 print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
                                 break
@@ -395,7 +388,7 @@ class Agent:
                 done = False
                 while not done:
                     # The agent chooses an action based on the current observation
-                    prediction = self._model.predict(state=obs, deterministic=True)
+                    prediction = self._agent.predict(state=obs, deterministic=True)
                     action = prediction[0]
                     obs, _, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
@@ -412,9 +405,9 @@ class Agent:
 
     def get_env(self):
         """
-        Retrieve the environment associated with the agent's model.
+        Retrieve the environment associated with the agent.
 
         Returns:
             The environment object.
         """
-        return self._model.get_env()
+        return self._agent.get_env()

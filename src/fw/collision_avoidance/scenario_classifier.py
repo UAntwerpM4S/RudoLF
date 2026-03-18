@@ -52,4 +52,5 @@ class ScenarioClassifier:
 
     def classify_scenario(self, ts_heading, ts_pos, os_heading, os_pos, dist_to_ts):
         if self.classification_active(dist_to_ts):
+            print("test")
 
