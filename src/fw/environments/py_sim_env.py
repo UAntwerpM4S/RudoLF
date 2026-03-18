@@ -899,7 +899,7 @@ class PySimEnv(BaseEnv):
                 r_rudder_angle +
                 r_thrust_change
         )
-        reward = 1 + reward / 5
+        reward = 1.0 + reward / 5.0     # reward = 0.9 + reward
 
         # Checkpoint handling (may increment checkpoint_index)
         checkpoint_distance = np.linalg.norm(self.ship_pos[i] - current_checkpoint["pos"])
