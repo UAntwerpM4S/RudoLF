@@ -29,21 +29,35 @@ class BaseEnv(gym.Env):
 
     @property
     def render_mode(self):
+        """Render mode.
+        """
         return self._render_mode
 
 
     @render_mode.setter
     def render_mode(self, value):
+        """Render mode.
+
+        Args:
+            value: Description.
+        """
         self._render_mode = value
 
 
     @property
     def enable_smoothing(self):
+        """Enable smoothing.
+        """
         return self._smoothing_enabled
 
 
     @enable_smoothing.setter
     def enable_smoothing(self, value):
+        """Enable smoothing.
+
+        Args:
+            value: Description.
+        """
         self._smoothing_enabled = value
 
 
@@ -80,3 +94,4 @@ class BaseEnv(gym.Env):
         that is specific to a subclass (e.g., setting custom internal state).
         """
         pass
+

@@ -58,6 +58,11 @@ def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
     import airsim.inference.run_visualise_models as run_visualise_models_module
 
     def _fake_run_visualise_models(**kwargs):
+        """ fake run visualise models.
+
+        Args:
+            kwargs: Description.
+        """
         called.update(kwargs)
 
     monkeypatch.setattr(run_visualise_models_module, "run_visualise_models", _fake_run_visualise_models)
@@ -65,6 +70,11 @@ def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
     import airsim.inference.run_inference as run_inference_module
 
     def _fail_run_inference(**kwargs):
+        """ fail run inference.
+
+        Args:
+            kwargs: Description.
+        """
         raise AssertionError("run_inference should not be called when fossen_visualise=True")
 
     monkeypatch.setattr(run_inference_module, "run_inference", _fail_run_inference)
@@ -117,6 +127,11 @@ def test_main_with_airsim_exits_cleanly_when_ue5_is_unreachable(monkeypatch, cap
     import airsim.inference.run_visualise_models as run_visualise_models_module
 
     def _raise_connection_error(**kwargs):
+        """ raise connection error.
+
+        Args:
+            kwargs: Description.
+        """
         raise ConnectionError("AirSimBridge could not connect to UE5 at 127.0.0.1:41451.")
 
     monkeypatch.setattr(

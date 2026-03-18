@@ -52,6 +52,7 @@ def _find_ue5_window_context():
         import ctypes.wintypes
 
         class _MONITORINFO(ctypes.Structure):
+            """ MONITORINFO."""
             _fields_ = [
                 ("cbSize", ctypes.wintypes.DWORD),
                 ("rcMonitor", ctypes.wintypes.RECT),
@@ -389,6 +390,11 @@ def _minimap_process_main(
     pending_reframe = [False]
 
     def on_draw(_event):
+        """On draw.
+
+        Args:
+            _event: Description.
+        """
         bg[0] = fig.canvas.copy_from_bbox(ax.bbox)
         pending_reframe[0] = False
 
@@ -490,6 +496,15 @@ class MinimapFossenAirsim:
         window_title: str = "RudoLF - Live Minimap",
         max_fps: float = 15.0,
     ) -> None:
+        """Initialize the instance.
+
+        Args:
+            env: Description.
+            save_dir: Description.
+            window_title: Description.
+            max_fps: Description.
+            ,: Description.
+        """
         self._save_dir = Path(save_dir)
         self._window_title = window_title
         self._update_interval = 1.0 / max(max_fps, 1.0)
@@ -549,3 +564,4 @@ class MinimapFossenAirsim:
             self._proc.join(timeout=2.0)
 
         self._proc = None
+

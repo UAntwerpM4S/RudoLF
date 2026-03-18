@@ -498,8 +498,8 @@ def resolve_environment_names(env_type):
     """Resolve one or more configured environment selectors to canonical names.
 
     Accepts either a single environment selector string or a list/tuple of
-    selectors, and returns a deduplicated list of canonical environment names
-    in the order they were specified.
+    selectors, and returns the canonical environment names in the exact order
+    they were specified.
 
     Args:
         env_type: A single environment selector string, or a list/tuple of them.
@@ -512,12 +512,7 @@ def resolve_environment_names(env_type):
             environment name or alias.
     """
     if isinstance(env_type, (list, tuple)):
-        seen = []
-        for name in env_type:
-            resolved = resolve_environment_name(name)
-            if resolved not in seen:
-                seen.append(resolved)
-        return seen
+        return [resolve_environment_name(name) for name in env_type]
     return [resolve_environment_name(env_type)]
 
 

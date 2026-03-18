@@ -10,6 +10,12 @@ class SurrogatePredictor:
     """
 
     def __init__(self, checkpoint, device=None):
+        """Initialize the instance.
+
+        Args:
+            checkpoint: Description.
+            device: Description.
+        """
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         ckpt = torch.load(checkpoint, map_location=self.device, weights_only=False)
 
@@ -34,9 +40,19 @@ class SurrogatePredictor:
         self.model.eval()
 
     def _normalize_x(self, X):
+        """ normalize x.
+
+        Args:
+            X: Description.
+        """
         return (X - self.x_mean) / self.x_std
 
     def _unnormalize_y(self, Ynorm):
+        """ unnormalize y.
+
+        Args:
+            Ynorm: Description.
+        """
         return Ynorm * self.y_std + self.y_mean
 
     def predict(self, X):
@@ -58,4 +74,10 @@ class SurrogatePredictor:
         return pred_raw
 
     def predict_single(self, X):
+        """Predict single.
+
+        Args:
+            X: Description.
+        """
         return self.predict(np.array(X))[0]
+
