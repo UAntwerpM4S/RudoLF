@@ -824,7 +824,7 @@ class PySimEnv(BaseEnv):
                 # Set truncated True when episode exceeded max_steps but not terminated by failure or success.
                 truncated = False
                 if self.step_count[i] >= self.max_steps and not terminated:
-                    reward = -250
+                    # reward = -250
                     truncated = True
 
                 # Update ship state
