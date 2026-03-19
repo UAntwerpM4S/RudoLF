@@ -11,9 +11,10 @@ set to ``"AirSimEnv"``.
 """
 
 if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
-    import os
     import logging
     import multiprocessing
+    from pathlib import Path
+    import os
 
     logging.basicConfig(
         level=logging.INFO,
@@ -32,6 +33,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         get_runtime_settings,
         merge_runtime_settings,
     )
+    from fw.common.tools.path_utils import resolve_path_relative_to_src
     from fw.env_factory import (
         airsim_env_name,
         fh_sim_env_name,
@@ -43,6 +45,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # AirSim runtime only controls AirSim-specific behavior.
     # The selected framework environment is handled by fw.main / fw.config.
     _action_was_explicit = "FW_MAIN_ACTION_OVERRIDE" in os.environ
+    _SRC_DIR = Path(__file__).resolve().parents[1]
     action = str(os.environ.get("FW_MAIN_ACTION_OVERRIDE", "train")).strip().lower()
     if action not in {"train", "visualize"}:
         action = "train"
@@ -60,6 +63,14 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     airsim_runtime_cfg = runtime_settings.get("airsim", {}) if isinstance(runtime_settings, dict) else {}
 
     training_speed_profiles = {
+        "normal": {
+            "simulation_speed": 1.0,
+            "use_pause_stepping": False,
+            "frames_per_step": 1,
+            "time_step": 0.1,
+            "physics_update_timeout": 1.0,
+            "state_poll_interval": 0.01,
+        },
         "safe": {
             "simulation_speed": 20.0,
             "use_pause_stepping": True,
@@ -135,11 +146,12 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         draw_ref = bool(visualization_cfg.get("draw_calibration_reference", True))
 
         if fossen_visualise:
-            from airsim.inference.run_visualise_fossen import run_visualise_fossen
+            from airsim.inference.run_visualise_models import run_visualise_models
 
             logging.getLogger("airsim").setLevel(logging.INFO)
-            run_visualise_fossen(
-                model_path=str(visualization_cfg.get("fossen_model_path", "src/models/PySimEnv_PPO_policy.zip")),
+            run_visualise_models(
+                model_path=str(resolve_path_relative_to_src(str(visualization_cfg.get("fossen_model_path", "models/PySimEnv_PPO_policy.zip")), _SRC_DIR)),
+                model_family=str(visualization_cfg.get("model_family", "auto")),
                 env_name=str(visualization_cfg.get("fossen_environment", "auto")),
                 ip=ip,
                 port=port,
@@ -163,6 +175,12 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 lock_path_in_ue5=bool(visualization_cfg.get("lock_path_in_ue5", False)),
                 vehicle_object_name=str(visualization_cfg.get("vehicle_object_name", "")),
                 show_minimap=bool(visualization_cfg.get("show_minimap", True)),
+                use_ue5_camera_minimap=bool(visualization_cfg.get("use_ue5_camera_minimap", False)),
+                ue5_camera_name=str(visualization_cfg.get("ue5_camera_name", "TopDownCam")),
+                ue5_camera_fov_deg=float(visualization_cfg.get("ue5_camera_fov_deg", 38.0)),
+                ue5_camera_height_m=float(visualization_cfg.get("ue5_camera_height_m", 120.0)),
+                ue5_camera_follow_heading=bool(visualization_cfg.get("ue5_camera_follow_heading", False)),
+                ue5_preview_window=bool(visualization_cfg.get("ue5_preview_window", True)),
             )
             return True
 
@@ -171,7 +189,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
             logging.getLogger("airsim").setLevel(logging.INFO)
             run_inference(
-                model_path=str(visualization_cfg.get("inference_model_path", "src/models/AirSimEnv_PPO_policy.zip")),
+                model_path=str(resolve_path_relative_to_src(str(visualization_cfg.get("inference_model_path", "models/AirSimEnv_PPO_policy.zip")), _SRC_DIR)),
                 ip=ip,
                 port=port,
                 max_steps=max_steps,
@@ -250,6 +268,17 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         envs = [get_environment(airsim_env_name, configuration=airsim_env_cfg)]
     else:
         envs = [get_environment(selected_environment_name)]
+
+    # When delegated from fw.main as an ordered AirSim step, fail fast if
+    # AirSim resolved to a framework fallback environment (e.g. PySimEnv).
+    # This prevents duplicate training/visualization of a non-Airsim env.
+    if _action_was_explicit and selected_environment_name == airsim_env_name and not _is_airsim_selected(envs):
+        print(
+            "[main_with_airsim] AirSimEnv requested via fw.main, "
+            "but UE5 is unavailable and env_factory returned a fallback env. "
+            "Skipping this AirSim step."
+        )
+        raise SystemExit(1)
 
     # Create a Trainer and pass on a list of agents that you want to train
     trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")

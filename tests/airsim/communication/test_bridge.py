@@ -8,6 +8,8 @@ from airsim.communication.airsim_bridge import AirSimBridge, is_ue5_reachable
 
 @pytest.fixture
 def mock_car_client():
+    """Mock car client.
+    """
     from unittest.mock import MagicMock
     client_mock = MagicMock()
     # Ensure client.getCarState() works for health check
@@ -37,6 +39,11 @@ def mock_car_client():
 
 @pytest.fixture
 def mock_cosysairsim_module(mock_car_client):
+    """Mock cosysairsim module.
+
+    Args:
+        mock_car_client: Description.
+    """
     from unittest.mock import MagicMock
     import sys
     
@@ -117,8 +124,15 @@ def test_bridge_retry_exhausted(_, mock_sleep, mock_cosysairsim_module, mock_car
 
 
 class TestBridgeHealthAndControl:
+    """TestBridgeHealthAndControl."""
     @pytest.fixture(autouse=True)
     def setup_bridge(self, mock_cosysairsim_module, mock_car_client):
+        """Setup bridge.
+
+        Args:
+            mock_cosysairsim_module: Description.
+            mock_car_client: Description.
+        """
         with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True), patch(
             "airsim.communication.airsim_bridge.time.sleep",
             return_value=None,
@@ -241,3 +255,4 @@ def test_csv_logging_buffer(mock_open, mock_isfile, mock_cosysairsim_module, moc
             mock_open.assert_called_once_with("test_log.csv", mode='a', newline='')
             mock_writer_inst.writeheader.assert_called_once()
             mock_writer_inst.writerows.assert_called_once_with([{"a": 1, "b": 2}])
+

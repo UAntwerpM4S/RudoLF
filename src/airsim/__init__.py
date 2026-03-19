@@ -4,12 +4,13 @@ Provides all components needed to connect the RudoLF reinforcement-learning
 framework to CosysAirSim / Unreal Engine 5:
 
 Subpackages:
+    common: Reusable shared classes and utility helpers.
     config: Validated connection configuration (IP, port, timeout, retries).
     communication: Bridge adapter (with UE5 detection) and coordinate transform.
     environments: Gymnasium RL environment using UE5 physics.
     train: Entry points for RL training inside UE5.
     inference: Live and headless telemetry visualisation.
-    tools: Coordinate calibration wizard and telemetry analysis.
+    tools: Backward-compatible wrappers for utility scripts.
     poc: Frozen snapshots of the original proof-of-concept scripts.
     tests: Pytest unit tests (no UE5 required).
 

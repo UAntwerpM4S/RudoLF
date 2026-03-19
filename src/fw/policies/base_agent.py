@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+
 import torch
 import numpy as np
 import gymnasium as gym
@@ -6,6 +8,7 @@ import gymnasium as gym
 from typing import Optional, Tuple
 from abc import ABC, abstractmethod
 from fw.stop_condition import StopCondition
+from fw.common.tools.path_utils import resolve_path_relative_to_src
 
 
 class BaseAgent(ABC):
@@ -77,7 +80,12 @@ class BaseAgent(ABC):
         self.device = torch.device(device)
         self.model_dir = model_dir
 
+        # Normalize relative model paths so they always land under src/models.
+        # This prevents cases where training from inside src/ creates src/src/models.
         if self.model_dir:
+            project_src_dir = Path(__file__).resolve().parents[2]
+            model_dir_path = resolve_path_relative_to_src(self.model_dir, project_src_dir)
+            self.model_dir = str(model_dir_path)
             os.makedirs(self.model_dir, exist_ok=True)
 
 

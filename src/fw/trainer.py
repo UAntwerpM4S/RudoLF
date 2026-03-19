@@ -120,6 +120,11 @@ class Trainer:
 
     @contextmanager
     def render(self, env):
+        """Render.
+
+        Args:
+            env: Description.
+        """
         if hasattr(env, "render_mode"):
             try:
                 self.prev_render_mode = env.render_mode
@@ -157,6 +162,12 @@ class Trainer:
         return metrics
 
     def visualize(self, envs, airsim_bridge=None):
+        """Visualize.
+
+        Args:
+            envs: Description.
+            airsim_bridge: Description.
+        """
         if envs is not None:
             # Start shared figure
             self._agent_mgr.begin_overlay_plot()
@@ -188,4 +199,5 @@ class Trainer:
             self._agent_mgr.end_overlay_plot()
         else:
             print("No data found to visualize.")
+
 

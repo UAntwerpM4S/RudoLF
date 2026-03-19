@@ -5,6 +5,13 @@ from fw.environments.py_sim_env import PySimEnv
 
 
 def plot_xy_points_and_trajectories(env, xy, trajectories):
+    """Plot xy points and trajectories.
+
+    Args:
+        env: Description.
+        xy: Description.
+        trajectories: Description.
+    """
     try:
         fig, ax = plt.subplots(figsize=(10, 10))
 
@@ -62,6 +69,14 @@ def collect_supervised_dataset(
     dt=0.1,
     output_file="ship_dynamics_dataset.csv"
 ):
+    """Collect supervised dataset.
+
+    Args:
+        N_samples: Description.
+        horizon_seconds: Description.
+        dt: Description.
+        output_file: Description.
+    """
     env = PySimEnv(render_mode=None, time_step=dt, wind=False, current=False)
     env.time_step = dt
 
@@ -143,3 +158,4 @@ if __name__ == "__main__":
     print("Y:", Y.shape)  # [N, 6] → final state
     np.save("ship_dynamics_inputs.npy", X)
     np.save("ship_dynamics_outputs.npy", Y)
+

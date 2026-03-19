@@ -38,6 +38,7 @@ def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
     original_run_module = stdlib_runpy.run_module
 
     def _failing_run_module(module_name, run_name=None):
+        """Raise a non-zero exit for fw.main_with_airsim to simulate failure."""
         if module_name == "fw.main_with_airsim":
             raise SystemExit(1)
         return original_run_module(module_name, run_name=run_name)
@@ -76,14 +77,19 @@ def test_main_uses_framework_visualize_action(monkeypatch):
     trainer_calls = {}
 
     class _FakeTrainer:
+        """Minimal trainer test double used to capture call flow."""
+
         def __init__(self, *args, **kwargs):
+            """Record constructor usage."""
             trainer_calls["constructed"] = True
 
         def train(self, configuration):
+            """Record unexpected train invocation in visualize mode."""
             trainer_calls["train_called"] = True
             return {"status": "unexpected-train"}
 
         def visualize(self, envs, airsim_bridge=None):
+            """Record visualize invocation and forwarded bridge argument."""
             trainer_calls["visualize_called"] = True
             trainer_calls["airsim_bridge"] = airsim_bridge
 
@@ -116,6 +122,7 @@ def test_main_passes_action_override_to_airsim_extension(monkeypatch):
     captured = {}
 
     def _capture_run_module(module_name, run_name=None):
+        """Capture forwarded action when fw.main delegates to AirSim."""
         if module_name == "fw.main_with_airsim":
             captured["module_name"] = module_name
             captured["forwarded_action"] = os.environ.get("FW_MAIN_ACTION_OVERRIDE")
@@ -124,10 +131,293 @@ def test_main_passes_action_override_to_airsim_extension(monkeypatch):
 
     monkeypatch.setattr(stdlib_runpy, "run_module", _capture_run_module)
 
-    with pytest.raises(SystemExit) as exc:
-        runpy.run_module("fw.main", run_name="__main__")
+    runpy.run_module("fw.main", run_name="__main__")
 
-    assert exc.value.code == 0
     assert captured["module_name"] == "fw.main_with_airsim"
     assert captured["forwarded_action"] == "visualize"
     assert "FW_MAIN_ACTION_OVERRIDE" not in os.environ
+
+
+def test_main_visualize_respects_environment_order(monkeypatch):
+    """Verify visualize runs in env_type order and includes AirSim in-place."""
+    import multiprocessing
+    import runpy as stdlib_runpy
+
+    import fw.config as fw_config
+    import fw.env_factory as env_factory
+    import fw.trainer as trainer_module
+
+    monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        fw_config,
+        "get_config_parameters",
+        lambda: {
+            "env_type": [env_factory.py_sim_env_name, env_factory.airsim_env_name],
+            "action": "visualize",
+        },
+    )
+    monkeypatch.setattr(env_factory, "initialize_all_environments", lambda: None)
+
+    call_order = []
+
+    def _build_env(name):
+        """Track framework environment construction order."""
+        call_order.append(f"build:{name}")
+        return object()
+
+    monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
+
+    class _FakeTrainer:
+        """Test double for framework visualize execution."""
+
+        def __init__(self, *args, **kwargs):
+            """No-op constructor for parity with Trainer API."""
+            pass
+
+        def visualize(self, envs, airsim_bridge=None):
+            """Record framework visualize call in ordered execution."""
+            call_order.append("visualize:framework")
+
+    monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
+
+    original_run_module = stdlib_runpy.run_module
+
+    def _capture_run_module(module_name, run_name=None):
+        """Inject ordered AirSim visualize step signal."""
+        if module_name == "fw.main_with_airsim":
+            call_order.append("visualize:airsim")
+            raise SystemExit(0)
+        return original_run_module(module_name, run_name=run_name)
+
+    monkeypatch.setattr(stdlib_runpy, "run_module", _capture_run_module)
+
+    runpy.run_module("fw.main", run_name="__main__")
+
+    assert call_order == [
+        f"build:{env_factory.py_sim_env_name}",
+        "visualize:framework",
+        "visualize:airsim",
+    ]
+
+
+def test_main_train_respects_environment_order(monkeypatch):
+    """Verify train runs in env_type order and keeps AirSim in sequence."""
+    import multiprocessing
+    import runpy as stdlib_runpy
+
+    import fw.config as fw_config
+    import fw.env_factory as env_factory
+    import fw.trainer as trainer_module
+
+    monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        fw_config,
+        "get_config_parameters",
+        lambda: {
+            "env_type": [env_factory.py_sim_env_name, env_factory.airsim_env_name],
+            "action": "train",
+        },
+    )
+    monkeypatch.setattr(env_factory, "initialize_all_environments", lambda: None)
+
+    call_order = []
+
+    def _build_env(name):
+        """Track framework train environment construction order."""
+        call_order.append(f"build:{name}")
+        return object()
+
+    monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
+
+    class _FakeTrainer:
+        """Test double for framework training execution."""
+
+        def __init__(self, *args, **kwargs):
+            """No-op constructor for parity with Trainer API."""
+            pass
+
+        def train(self, configuration):
+            """Record framework train call in ordered execution."""
+            call_order.append("train:framework")
+            return {"ok": True}
+
+    monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
+
+    original_run_module = stdlib_runpy.run_module
+
+    def _capture_run_module(module_name, run_name=None):
+        """Inject ordered AirSim train step signal."""
+        if module_name == "fw.main_with_airsim":
+            call_order.append("train:airsim")
+            raise SystemExit(0)
+        return original_run_module(module_name, run_name=run_name)
+
+    monkeypatch.setattr(stdlib_runpy, "run_module", _capture_run_module)
+
+    runpy.run_module("fw.main", run_name="__main__")
+
+    assert call_order == [
+        f"build:{env_factory.py_sim_env_name}",
+        "train:framework",
+        "train:airsim",
+    ]
+
+
+def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
+    """Verify mixed env training continues without duplicating fallback env work.
+
+    If the delegated AirSim step exits non-zero, fw.main should keep already
+    completed framework training and not perform an extra fallback training pass.
+    """
+    import multiprocessing
+    import runpy as stdlib_runpy
+
+    import fw.config as fw_config
+    import fw.env_factory as env_factory
+    import fw.trainer as trainer_module
+
+    monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        fw_config,
+        "get_config_parameters",
+        lambda: {
+            "env_type": [env_factory.py_sim_env_name, env_factory.airsim_env_name],
+            "action": "train",
+        },
+    )
+    monkeypatch.setattr(env_factory, "initialize_all_environments", lambda: None)
+
+    call_order = []
+
+    def _build_env(name):
+        """Track framework train setup for mixed-list fallback scenario."""
+        call_order.append(f"build:{name}")
+        return object()
+
+    monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
+
+    class _FakeTrainer:
+        """Test double for framework training in fallback scenario."""
+
+        def __init__(self, *args, **kwargs):
+            """No-op constructor for parity with Trainer API."""
+            pass
+
+        def train(self, configuration):
+            """Record framework train call before AirSim step failure."""
+            call_order.append("train:framework")
+            return {"ok": True}
+
+    monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
+
+    original_run_module = stdlib_runpy.run_module
+
+    def _capture_run_module(module_name, run_name=None):
+        """Simulate AirSim step failure without replaying framework training."""
+        if module_name == "fw.main_with_airsim":
+            call_order.append("train:airsim:failed")
+            raise SystemExit(1)
+        return original_run_module(module_name, run_name=run_name)
+
+    monkeypatch.setattr(stdlib_runpy, "run_module", _capture_run_module)
+
+    runpy.run_module("fw.main", run_name="__main__")
+
+    assert call_order == [
+        f"build:{env_factory.py_sim_env_name}",
+        "train:framework",
+        "train:airsim:failed",
+    ]
+
+
+def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(monkeypatch):
+    """Verify repeated list stages are preserved around a failed AirSim step.
+
+    Expected order for env_type=[PySimEnv, AirSimEnv, PySimEnv]:
+    1) first PySim framework stage trains
+    2) AirSim delegated stage fails and is skipped
+    3) second PySim framework stage still trains
+    """
+    import multiprocessing
+    import runpy as stdlib_runpy
+
+    import fw.config as fw_config
+    import fw.env_factory as env_factory
+    import fw.trainer as trainer_module
+
+    monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        fw_config,
+        "get_config_parameters",
+        lambda: {
+            "env_type": [
+                env_factory.py_sim_env_name,
+                env_factory.airsim_env_name,
+                env_factory.py_sim_env_name,
+            ],
+            "action": "train",
+        },
+    )
+    monkeypatch.setattr(env_factory, "initialize_all_environments", lambda: None)
+
+    call_order = []
+
+    def _build_env(name):
+        """Build a fake environment and log creation order.
+
+        Args:
+            name: Canonical environment name.
+        """
+        call_order.append(f"build:{name}")
+        return object()
+
+    monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
+
+    class _FakeTrainer:
+        """ FakeTrainer."""
+        def __init__(self, *args, **kwargs):
+            """Create a no-op trainer test double.
+
+            Args:
+                *args: Positional constructor arguments.
+                **kwargs: Keyword constructor arguments.
+            """
+            pass
+
+        def train(self, configuration):
+            """Record framework training invocation.
+
+            Args:
+                configuration: Scheduler configuration payload.
+            """
+            call_order.append("train:framework")
+            return {"ok": True}
+
+    monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
+
+    original_run_module = stdlib_runpy.run_module
+
+    def _capture_run_module(module_name, run_name=None):
+        """Simulate a failing AirSim delegated run.
+
+        Args:
+            module_name: Name of the module being executed.
+            run_name: Run target name passed to run_module.
+        """
+        if module_name == "fw.main_with_airsim":
+            call_order.append("train:airsim:failed")
+            raise SystemExit(1)
+        return original_run_module(module_name, run_name=run_name)
+
+    monkeypatch.setattr(stdlib_runpy, "run_module", _capture_run_module)
+
+    runpy.run_module("fw.main", run_name="__main__")
+
+    assert call_order == [
+        f"build:{env_factory.py_sim_env_name}",
+        "train:framework",
+        "train:airsim:failed",
+        f"build:{env_factory.py_sim_env_name}",
+        "train:framework",
+    ]
+
