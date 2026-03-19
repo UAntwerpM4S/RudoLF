@@ -168,9 +168,14 @@ class AgentManager:
 
             if Path(full_policy_file_name).exists():
                 print(f"Reusing {policy_file_name}.")
-                self._agent.load_policy(policy_file_name)
+                try:
+                    self._agent.load_policy(policy_file_name)
+                except ValueError as e:
+                    print(f"[Fallback] Incompatible model: {e}")
+                    print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
             else:
-                raise RuntimeError(f"The policy file {policy_file_name} does not exist.")
+                print(f"[Fallback] The policy file {policy_file_name} does not exist.")
+                print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
 
 
     def train(self, stop_condition: StopCondition) -> None:
