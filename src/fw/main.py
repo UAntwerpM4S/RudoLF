@@ -19,7 +19,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
     from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, get_config_parameters
     from fw.env_factory import (
         build_default_environment,
-        get as get_environment,
         py_sim_env_name,
         fh_sim_env_name,
         airsim_env_name,
@@ -112,8 +111,10 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     initialize_all_environments()
 
-    # Both visualize and train now follow env_type order exactly.
+    # Both visualize and train now follow env_type order exactly (for airsim),
+    # but standard environments are batched to preserve Trainer functionality.
     executed_any_step = False
+    standard_envs = []
 
     for env_name in configured_env_names:
         if env_name == airsim_env_name:
@@ -124,16 +125,18 @@ if __name__ == "__main__" or __name__ == "fw.main":
             continue
 
         env = build_default_environment(env_name)
-        trainer = Trainer(PPO_POLICY_NAME, [env], "SimpleScheduler")
+        standard_envs.append(env)
 
+    if standard_envs:
+        trainer = Trainer(PPO_POLICY_NAME, standard_envs, "SimpleScheduler")
+        
         if action == "visualize":
-            trainer.visualize([env], airsim_bridge=None)
+            trainer.visualize(standard_envs, airsim_bridge=None)
             executed_any_step = True
-            continue
-
-        metrics = trainer.train(configuration)
-        print(f"Training metrics ({env_name}): {metrics}")
-        executed_any_step = True
+        else:
+            metrics = trainer.train(configuration)
+            print(f"Training metrics (grouped): {metrics}")
+            executed_any_step = True
 
     if not executed_any_step:
         print("[main] No environments remaining after AirSim fallback. Exiting.")
