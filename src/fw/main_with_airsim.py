@@ -33,7 +33,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         get_runtime_settings,
         merge_runtime_settings,
     )
-    from fw.common.airsim.tools.path_utils import resolve_path_relative_to_src
+    from fw.common.tools.path_utils import resolve_path_relative_to_src
     from fw.env_factory import (
         airsim_env_name,
         fh_sim_env_name,

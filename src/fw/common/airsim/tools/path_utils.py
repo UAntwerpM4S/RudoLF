@@ -30,13 +30,3 @@ def resolve_model_path(model_path: str, src_dir: Path) -> Path:
             return candidate.resolve()
 
     return (context.repo_root / path).resolve()
-
-
-def resolve_path_relative_to_src(raw_path: str, src_dir: Path) -> Path:
-    """Resolve a path relative to src while supporting legacy src-prefixed input."""
-    path = Path(raw_path)
-    if path.is_absolute():
-        return path.resolve()
-    if path.parts and path.parts[0] == "src":
-        path = Path(*path.parts[1:])
-    return (src_dir.resolve() / path).resolve()

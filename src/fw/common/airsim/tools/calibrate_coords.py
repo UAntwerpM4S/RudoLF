@@ -4,6 +4,7 @@ Run this script while UE5 + CosysAirSim is running. It will:
 1. Ask you to drive the vehicle to 2 known reference points
 2. Compute the transform (scale, rotation, mirror, offset)
 3. Save calibration as ``calibration.json``
+
 4. Visually verify by drawing the Fossen polygon in UE5
 
 Usage:
@@ -22,16 +23,11 @@ _SRC_DIR = _THIS_FILE.parents[4]
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-try:
-    from airsim.communication.coord_transform import CoordTransform
-except ModuleNotFoundError:
-    # Support direct execution contexts where package resolution differs.
-    from communication.coord_transform import CoordTransform
+from airsim.communication.coord_transform import CoordTransform
 
 _THIS_DIR = Path(__file__).resolve().parent
 _CONFIG_DIR = _SRC_DIR / "airsim" / "config"
 _ENVIRONMENTS_DIR = _SRC_DIR / "fw" / "environments"
-
 
 def _load_trajectory_endpoints() -> tuple:
     """Load the first and last waypoints from the trajectory CSV.

@@ -28,4 +28,4 @@ class PathResolutionContext:
     def default_search_roots(self, cwd: Path | None = None) -> Iterable[Path]:
         """Return the default ordered roots used for relative-path lookup."""
         current = (cwd or Path.cwd()).resolve()
-        return (current, self.repo_root, self.src_dir)
+        return current, self.repo_root, self.src_dir
