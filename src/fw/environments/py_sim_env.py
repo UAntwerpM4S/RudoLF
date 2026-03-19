@@ -34,6 +34,7 @@ from fw.dynamics.nomoto import Nomoto
 # Physical limits / config
 
 # Grid limits
+MAX_CHECKPOINTS_DISTANCE = 2000
 CHECKPOINTS_DISTANCE = 350
 MIN_GRID_POS = -11700
 MAX_GRID_POS = 14500
@@ -50,7 +51,6 @@ DPI = 100
 
 # Constants definition
 PERPENDICULAR_LINE_LENGTH = 50.0
-PERPENDICULAR_LINE_PROXIMITY = 2.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
 EPSILON = 1e-9  # Small epsilon for numerical stability
@@ -341,6 +341,11 @@ class PySimEnv(BaseEnv):
         for cp, line in zip(checkpoints, lines):
             cp['perpendicular_line'] = line
             self.checkpoints.append(cp)
+
+        # Calculate direction of last path segment
+        p_last = self.checkpoints[len(self.checkpoints) - 1]['pos'].copy()
+        p_before_last = self.checkpoints[len(self.checkpoints) - 2]['pos'].copy()
+        self.direction_last_path = p_last - p_before_last
 
         # Navigation and counters
         # Safe handling when no checkpoints are present:
@@ -677,37 +682,36 @@ class PySimEnv(BaseEnv):
             prev_chkp_idx = max(0, current_chkp_idx - 1)
             next_chkp_idx = current_chkp_idx + 1
 
-            # Calculate direction of last path segment
-            p_last = self.checkpoints[len(self.checkpoints) - 1]['pos'].copy()
-            p_before_last = self.checkpoints[len(self.checkpoints) - 2]['pos'].copy()
-            direction_last_path = p_last - p_before_last
-
             # Checkpoint positions
             prev_chkp_pos = self.checkpoints[prev_chkp_idx]['pos']
             if current_chkp_idx <= len(self.checkpoints) - 1:
                 current_chkp_pos = self.checkpoints[current_chkp_idx]['pos']
             else:
                 multiplier = current_chkp_idx - (len(self.checkpoints) - 1)
-                current_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
+                current_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * self.direction_last_path
+
             if next_chkp_idx <= len(self.checkpoints) - 1:
                 next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
             else:
                 multiplier = next_chkp_idx - (len(self.checkpoints) - 1)
-                next_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * direction_last_path
+                next_chkp_pos = self.checkpoints[len(self.checkpoints) - 1]['pos'] + 2 * multiplier * self.direction_last_path
 
             # Distances to checkpoints
-            norm_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - current_chkp_pos)),
-                                                      value_range=(0, 2000),
-                                                      half_value=0.5 * 370)
-            norm_next_distance = self._logarithmic_scaling(value=float(np.linalg.norm(self.ship_pos[i] - next_chkp_pos)),
-                                                           value_range=(0, 2 * 2000),
-                                                           half_value=1.5 * 370)
+            norm_distance = self._logarithmic_scaling(
+                value=float(np.linalg.norm(self.ship_pos[i] - current_chkp_pos)),
+                value_range=(0, MAX_CHECKPOINTS_DISTANCE),
+                half_value=0.5 * CHECKPOINTS_DISTANCE)
+
+            norm_next_distance = self._logarithmic_scaling(
+                value=float(np.linalg.norm(self.ship_pos[i] - next_chkp_pos)),
+                value_range=(0, 2 * MAX_CHECKPOINTS_DISTANCE),
+                half_value=1.5 * CHECKPOINTS_DISTANCE)
 
             # Cross-track error (normalized, signed)
             norm_cross_error = self._logarithmic_scaling(
                 value=self._distance_from_point_to_line(self.ship_pos[i], prev_chkp_pos, current_chkp_pos),
-                value_range=(0, 2000),
-                half_value=50)
+                value_range=(0, MAX_CHECKPOINTS_DISTANCE),
+                half_value=50.0)
 
             track_vec = current_chkp_pos - prev_chkp_pos
             ship_vec = self.ship_pos[i] - prev_chkp_pos
@@ -761,7 +765,7 @@ class PySimEnv(BaseEnv):
                 [heading_error_parallel / np.pi],       # Normalized heading error
                 [heading_error_parallel2 / np.pi],      # Normalized heading error
                 self.performed_action[i][0],            # Previous rudder angle
-                los_heading_error / np.pi, # Optimal LOS guidance
+                los_heading_error / np.pi,              # Optimal LOS guidance
             ])
 
             # Add environmental observations if enabled
@@ -820,7 +824,7 @@ class PySimEnv(BaseEnv):
                 # Set truncated True when episode exceeded max_steps but not terminated by failure or success.
                 truncated = False
                 if self.step_count[i] >= self.max_steps and not terminated:
-                    reward = -250
+                    # reward = -250
                     truncated = True
 
                 # Update ship state
@@ -905,7 +909,7 @@ class PySimEnv(BaseEnv):
         checkpoint_distance = np.linalg.norm(self.ship_pos[i] - current_checkpoint["pos"])
 
         # Reached checkpoint circle
-        if checkpoint_distance <= current_checkpoint['radius']:
+        if self.segment_point_distance(self.previous_ship_pos[i], self.ship_pos[i], current_checkpoint["pos"]) <= current_checkpoint['radius']:
             if self.checkpoint_index[i] == len(self.checkpoints) - 1:
                 print(f"Target REACHED at distance {checkpoint_distance:.2f}")
             self.checkpoint_index[i] += 1
@@ -938,11 +942,63 @@ class PySimEnv(BaseEnv):
 
         return reward, done
 
+    @staticmethod
+    def segment_point_distance(p1, p2, c):
+        # project c onto segment p1-p2
+        if np.allclose(p1, p2):
+            return np.linalg.norm(c - p1)
+
+        v = p2 - p1
+        w = c - p1
+
+        t = np.dot(w, v) / np.dot(v, v)
+        t = np.clip(t, 0.0, 1.0)
+
+        closest = p1 + t * v
+        return np.linalg.norm(c - closest)
+
+    @staticmethod
+    def _orientation(a, b, c):
+        """
+        Signed area (2D cross product):
+        > 0 : c is left of line ab
+        < 0 : c is right of line ab
+        = 0 : co-linear
+        """
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    @lru_cache(maxsize=1024)
+    def _segments_intersect_cached(self, prev_point_tuple: tuple, curr_point_tuple: tuple, line_seg_start_tuple: tuple,
+                                   line_seg_end_tuple: tuple) -> float:
+        """
+        Returns True if segment p1-p2 intersects the infinite line through q1-q2.
+        """
+
+        o1 = self._orientation(line_seg_start_tuple, line_seg_end_tuple, prev_point_tuple)
+        o2 = self._orientation(line_seg_start_tuple, line_seg_end_tuple, curr_point_tuple)
+
+        # If either point is on the line → intersection
+        if abs(o1) <= EPSILON or abs(o2) <= EPSILON:
+            return True
+
+        # If signs differ → segment crosses the line
+        return (o1 > 0 > o2) or (o1 < 0 < o2)
+
+    def _segments_intersect(self, prev_point: np.ndarray, curr_point: np.ndarray, line_start: np.ndarray, line_end: np.ndarray) -> float:
+        """Calculate distance with caching wrapper."""
+
+        return self._segments_intersect_cached(
+            tuple(prev_point.astype(np.float32)),
+            tuple(curr_point.astype(np.float32)),
+            tuple(line_start.astype(np.float32)),
+            tuple(line_end.astype(np.float32)),
+        )
+
     def _is_near_perpendicular_line(self, checkpoint: dict, ship_index) -> bool:
         """Check if ship is close enough to checkpoint's perpendicular line."""
 
         line_start, line_end = checkpoint['perpendicular_line']
-        return self._distance_from_point_to_line(self.ship_pos[ship_index], line_start, line_end) <= PERPENDICULAR_LINE_PROXIMITY * (self.time_step / 0.1)
+        return self._segments_intersect(self.previous_ship_pos[ship_index], self.ship_pos[ship_index], line_start, line_end)
 
     def los_guidance_heading(self, i: int):
         """
