@@ -199,11 +199,20 @@ class PPO2Agent(BaseAgent):
 
         Raises:
             RuntimeError: If no agent is created or the policy fails to load.
+            ValueError: If the loaded policy dimensions do not match the environment.
         """
         if self.model_dir:
             policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-        self.ppo = PPO.load(policy_file_name, device=self.device)
+        loaded_ppo = PPO.load(policy_file_name, device=self.device)
+        
+        if loaded_ppo.observation_space.shape != self.env.observation_space.shape:
+            raise ValueError(f"Observation space dimension mismatch: loaded policy expects {loaded_ppo.observation_space.shape}, but environment provides {self.env.observation_space.shape}.")
+            
+        if loaded_ppo.action_space.shape != self.env.action_space.shape:
+            raise ValueError(f"Action space dimension mismatch: loaded policy expects {loaded_ppo.action_space.shape}, but environment requires {self.env.action_space.shape}.")
+            
+        self.ppo = loaded_ppo
 
 
     def save_policy(self, policy_file_name: str) -> None:
