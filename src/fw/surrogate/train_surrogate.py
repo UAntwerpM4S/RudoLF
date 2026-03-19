@@ -12,6 +12,13 @@ from fw.surrogate.utils import load_checkpoint, data_path, get_device, save_chec
 
 
 def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> float:
+    """Evaluate.
+
+    Args:
+        model: Description.
+        loader: Description.
+        device: Description.
+    """
     model.eval()
     total_loss = 0.0
 
@@ -27,6 +34,15 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -
 
 
 def make_dataloaders(train_file, val_file, test_file, batch_size=256, num_workers=0):
+    """Make dataloaders.
+
+    Args:
+        train_file: Description.
+        val_file: Description.
+        test_file: Description.
+        batch_size: Description.
+        num_workers: Description.
+    """
     # compute input stats from train file and ensure same normalization applied to val/test
     # in make_dataloaders():
     x_mean, x_std, y_mean, y_std = ShipDynamicsDataset.compute_stats(train_file)
@@ -43,6 +59,11 @@ def make_dataloaders(train_file, val_file, test_file, batch_size=256, num_worker
 
 
 def set_seed(seed: int = 42):
+    """Set seed.
+
+    Args:
+        seed: Description.
+    """
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -51,6 +72,11 @@ def set_seed(seed: int = 42):
 
 
 def main(argv=None):
+    """Main.
+
+    Args:
+        argv: Description.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--train-file", default=data_path("ship_dynamics_dataset_train.npz"))
     parser.add_argument("--val-file", default=data_path("ship_dynamics_dataset_val.npz"))
@@ -161,3 +187,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+

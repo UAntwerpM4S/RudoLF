@@ -4,27 +4,30 @@ Run this script while UE5 + CosysAirSim is running. It will:
 1. Ask you to drive the vehicle to 2 known reference points
 2. Compute the transform (scale, rotation, mirror, offset)
 3. Save calibration as ``calibration.json``
+
 4. Visually verify by drawing the Fossen polygon in UE5
 
 Usage:
-    python -m airsim.tools.calibrate_coords
+    python -m fw.common.airsim.tools.calibrate_coords
 """
 
 import json
 import math
+import sys
 import time
 import numpy as np
 from pathlib import Path
 
-try:
-    from airsim.communication.coord_transform import CoordTransform
-except ImportError:
-    from communication.coord_transform import CoordTransform
+_THIS_FILE = Path(__file__).resolve()
+_SRC_DIR = _THIS_FILE.parents[4]
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+from airsim.communication.coord_transform import CoordTransform
 
 _THIS_DIR = Path(__file__).resolve().parent
-_CONFIG_DIR = _THIS_DIR.parent / "config"
-_ENVIRONMENTS_DIR = Path(__file__).resolve().parent.parent.parent / "fw" / "environments"
-
+_CONFIG_DIR = _SRC_DIR / "airsim" / "config"
+_ENVIRONMENTS_DIR = _SRC_DIR / "fw" / "environments"
 
 def _load_trajectory_endpoints() -> tuple:
     """Load the first and last waypoints from the trajectory CSV.
@@ -92,7 +95,7 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
         An 8-tuple ``(fossen_A, fossen_B, ue5_A, ue5_B,
         mirror_x, mirror_y, offset_x, offset_y)``.
     """
-    if choice in ["1", "4"] and has_existing:
+    if choice in ["1", "4", "5"] and has_existing:
         cal_path = _CONFIG_DIR / "calibration.json"
         with open(cal_path, "r") as f:
             saved = json.load(f)
@@ -221,7 +224,16 @@ def _compute_calibration(fossen_A, fossen_B, ue5_A, ue5_B,
     }
 
 
-def _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B) -> None:
+def _draw_visualization(
+    client,
+    coord,
+    fossen_A,
+    fossen_B,
+    ue5_A,
+    ue5_B,
+    ridge_overlay_offset: tuple[float, float] = (0.0, 0.0),
+    ridge_overlay_rot_z_deg: float = 0.0,
+) -> None:
     """Draw polygon, trajectory, and reference dots in UE5.
 
     Uses the AirSim ``simPlotLineStrip`` and ``simPlotPoints`` APIs to
@@ -239,6 +251,15 @@ def _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B) -> None
     """
     import cosysairsim as airsim
 
+    # Draw overlays high above the water so they remain visible in top-down cameras.
+    overlay_z = -50.0
+    ridge_dx, ridge_dy = ridge_overlay_offset
+    ridge_rot_z_rad = math.radians(ridge_overlay_rot_z_deg)
+    cos_rz = math.cos(ridge_rot_z_rad)
+    sin_rz = math.sin(ridge_rot_z_rad)
+    ridge_pivot_x = float(ue5_A[0])
+    ridge_pivot_y = float(ue5_A[1])
+
     client.simFlushPersistentMarkers()
     time.sleep(0.3)
 
@@ -249,26 +270,42 @@ def _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B) -> None
     print(f"\n  Verification A: ({check_A[0]:.2f}, {check_A[1]:.2f}) vs ({ue5_A[0]:.2f}, {ue5_A[1]:.2f}) — error: {err_A:.4f}")
     print(f"  Verification B: ({check_B[0]:.2f}, {check_B[1]:.2f}) vs ({ue5_B[0]:.2f}, {ue5_B[1]:.2f}) — error: {err_B:.4f}")
 
-    # Draw polygon (green)
-    print("\nDrawing Fossen polygon in UE5 for visual verification...")
-    csv_path = _ENVIRONMENTS_DIR / "env_Sche_no_scale.csv"
-    polygon = np.loadtxt(csv_path, delimiter=",", skiprows=1)
+    # Draw reference ridges from both polygons:
+    # - river banks (overall map) in green
+    # - navigation channel / waterway ridges in bright red
+    print("\nDrawing Fossen polygons in UE5 for visual verification...")
 
-    points_3d = []
-    for p in polygon[::2]:
-        ux, uy = coord.fossen_to_airsim_2d(p[0], p[1])
-        points_3d.append(airsim.Vector3r(ux, uy, -2.0))
+    def _plot_polygon_ridges(csv_name: str, color_rgba: list[float], thickness: float, z: float = overlay_z) -> None:
+        """Render a polygon CSV as persistent line-strip chunks in UE5."""
+        csv_path = _ENVIRONMENTS_DIR / csv_name
+        polygon = np.loadtxt(csv_path, delimiter=",", skiprows=1)
 
+        points_3d = []
+        for p in polygon[::2]:
+            ux, uy = coord.fossen_to_airsim_2d(p[0], p[1])
+            ux += ridge_dx
+            uy += ridge_dy
+            # Optional overlay-only Z-axis rotation for ridge fine tuning (top-down orientation).
+            dx_rel = ux - ridge_pivot_x
+            dy_rel = uy - ridge_pivot_y
+            ux_rot = ridge_pivot_x + (cos_rz * dx_rel - sin_rz * dy_rel)
+            uy_rot = ridge_pivot_y + (sin_rz * dx_rel + cos_rz * dy_rel)
+            points_3d.append(airsim.Vector3r(ux_rot, uy_rot, z))
+
+        chunk_size = 500
+        for i in range(0, len(points_3d), chunk_size - 1):
+            chunk = points_3d[i:i + chunk_size]
+            if len(chunk) > 1:
+                client.simPlotLineStrip(
+                    chunk,
+                    color_rgba=color_rgba,
+                    thickness=thickness,
+                    is_persistent=True,
+                )
+
+    _plot_polygon_ridges("env_Sche_no_scale.csv", color_rgba=[0.35, 1.0, 0.35, 1.0], thickness=12.0)
+    _plot_polygon_ridges("env_Sche_250cm_no_scale.csv", color_rgba=[1.0, 0.0, 0.0, 1.0], thickness=18.0)
     chunk_size = 500
-    for i in range(0, len(points_3d), chunk_size - 1):
-        chunk = points_3d[i:i + chunk_size]
-        if len(chunk) > 1:
-            client.simPlotLineStrip(
-                chunk,
-                color_rgba=[0, 1, 0, 0.8],
-                thickness=5.0,
-                is_persistent=True,
-            )
 
     # Draw trajectory (yellow)
     ship_pos = np.array([2245.0, -47.0])
@@ -282,15 +319,15 @@ def _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B) -> None
     traj_points = []
     for p in traj_data:
         ux, uy = coord.fossen_to_airsim_2d(p[0], p[1])
-        traj_points.append(airsim.Vector3r(ux, uy, -3.0))
+        traj_points.append(airsim.Vector3r(ux, uy, overlay_z))
 
     for i in range(0, len(traj_points), chunk_size - 1):
         chunk = traj_points[i:i + chunk_size]
         if len(chunk) > 1:
             client.simPlotLineStrip(
                 chunk,
-                color_rgba=[1, 1, 0, 1.0],
-                thickness=8.0,
+                color_rgba=[1.0, 1.0, 0.35, 1.0],
+                thickness=14.0,
                 is_persistent=True,
             )
 
@@ -312,10 +349,14 @@ def _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B) -> None
     )
 
     print()
-    print("  Green line  = Fossen polygon (should overlay kades)")
+    print("  Green line  = River ridges / overall polygon (should overlay kades)")
+    print("  Red line    = Navigation channel / waterway ridges")
     print("  Yellow line = Trajectory (ship route)")
     print("  Blue dot    = Start position")
     print("  Red dot     = End position")
+    print(f"  Overlay Z   = {abs(overlay_z):.0f} m above water for top-down visibility")
+    print(f"  Ridge shift = dx={ridge_dx:.2f} m, dy={ridge_dy:.2f} m (overlay only)")
+    print(f"  Ridge rotZ  = {ridge_overlay_rot_z_deg:.2f} deg (overlay only)")
     print()
 
 
@@ -358,7 +399,18 @@ def load_saved_calibration_reference(
 
     coord = CoordTransform(config)
     if draw_reference:
-        _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B)
+        ridge_overlay_offset = tuple(config.get("ridge_overlay_offset", [0.0, 0.0]))
+        ridge_overlay_rot_z_deg = float(config.get("ridge_overlay_rot_z_deg", 0.0))
+        _draw_visualization(
+            client,
+            coord,
+            fossen_A,
+            fossen_B,
+            ue5_A,
+            ue5_B,
+            ridge_overlay_offset=ridge_overlay_offset,
+            ridge_overlay_rot_z_deg=ridge_overlay_rot_z_deg,
+        )
 
     return coord, config
 
@@ -397,17 +449,18 @@ def run_calibration() -> None:
     if has_existing:
         print("  [1] Re-use saved calibration (just redraw visualization)")
         print("  [4] Live tune existing calibration offsets (Interactive)")
+        print("  [5] Live tune river/waterway ridge overlay only (keeps ideal path fixed)")
     print("  [2] Drive to points interactively in UE5")
     print("  [3] Enter AirSim coordinates manually")
     print()
 
-    choice = input(f"Choose [{'1/4/' if has_existing else ''}2/3]: ").strip()
+    choice = input(f"Choose [{'1/4/5/' if has_existing else ''}2/3]: ").strip()
 
     fossen_A, fossen_B, ue5_A, ue5_B, mirror_x, mirror_y, offset_x, offset_y = (
         _collect_reference_points(client, traj_start, traj_end, has_existing, choice)
     )
 
-    if choice in ["1", "4"] and has_existing:
+    if choice in ["1", "4", "5"] and has_existing:
         with open(existing_cal, "r") as f:
             config = json.load(f)
         drift = ue5_A - np.array(config["airsim_origin"])
@@ -422,6 +475,11 @@ def run_calibration() -> None:
             mirror_x, mirror_y, offset_x, offset_y,
             spawn_position,
         )
+
+    if "ridge_overlay_offset" not in config:
+        config["ridge_overlay_offset"] = [0.0, 0.0]
+    if "ridge_overlay_rot_z_deg" not in config:
+        config["ridge_overlay_rot_z_deg"] = 0.0
 
     print()
     print("=" * 40)
@@ -438,34 +496,75 @@ def run_calibration() -> None:
         print(f"\n  Calibration saved to: {out_path}")
 
         coord = CoordTransform(config)
-        _draw_visualization(client, coord, fossen_A, fossen_B, ue5_A, ue5_B)
+        _draw_visualization(
+            client,
+            coord,
+            fossen_A,
+            fossen_B,
+            ue5_A,
+            ue5_B,
+            ridge_overlay_offset=tuple(config.get("ridge_overlay_offset", [0.0, 0.0])),
+            ridge_overlay_rot_z_deg=float(config.get("ridge_overlay_rot_z_deg", 0.0)),
+        )
 
-        if choice != "4":
+        if choice not in ["4", "5"]:
             print("To clear markers: client.simFlushPersistentMarkers()")
             print("Done!")
             break
 
         print("=" * 40)
-        print("  LIVE TUNING MODE")
-        print("  Shift the polygon in UE5 by entering an X and Y offset in meters.")
+        if choice == "4":
+            print("  LIVE TUNING MODE (FULL CALIBRATION)")
+            print("  Shift the full Fossen overlay in UE5 by entering an X and Y offset in meters.")
+            print("  This updates airsim_origin and affects all transformed data.")
+        else:
+            print("  LIVE TUNING MODE (RIDGE OVERLAY ONLY)")
+            print("  Shift ridges:   X, Y")
+            print("  Rotate ridges Z-axis only: RZ, degrees")
+            print("  This updates ridge_overlay_offset / ridge_overlay_rot_z_deg only and does NOT move the ideal path.")
         print("  Leave blank and press Enter to save and exit.")
         print("=" * 40)
-        offset_val = input("Enter shift as 'X, Y' (e.g. '10.5, -5.0') or leave empty: ").strip()
+        offset_val = input("Enter 'X, Y' or 'RZ, deg' (e.g. '10.5, -5.0' or 'RZ, 2.5'), or leave empty: ").strip()
 
         if not offset_val:
-            print("\nTo clear markers: client.simFlushPersistentMarkers()")
+            # Always save the latest config before exit
+            with open(out_path, "w") as f:
+                json.dump(config, f, indent=2)
+            print("\nCalibration saved to:", out_path)
+            print("To clear markers: client.simFlushPersistentMarkers()")
             print("Done!")
             break
 
         try:
             parts = offset_val.split(",")
-            dx = float(parts[0].strip())
-            dy = float(parts[1].strip())
-            config["airsim_origin"][0] += dx
-            config["airsim_origin"][1] += dy
-            print(f"\nApplied shift: +{dx} X, +{dy} Y. Redrawing...")
+            if len(parts) != 2:
+                raise ValueError("Expected 2 comma-separated values")
+
+            cmd = parts[0].strip().lower()
+            val = float(parts[1].strip())
+
+            if choice == "4":
+                dx = float(parts[0].strip())
+                dy = val
+                config["airsim_origin"][0] += dx
+                config["airsim_origin"][1] += dy
+                print(f"\nApplied full calibration shift: +{dx} X, +{dy} Y. Redrawing...")
+            else:
+                if cmd == "rz":
+                    config["ridge_overlay_rot_z_deg"] += val
+                    print(
+                        f"\nApplied ridge-only Z-axis rotation: +{val} deg "
+                        f"(total {config['ridge_overlay_rot_z_deg']:.2f} deg). "
+                        "Ideal path remains fixed. Redrawing..."
+                    )
+                else:
+                    dx = float(parts[0].strip())
+                    dy = val
+                    config["ridge_overlay_offset"][0] += dx
+                    config["ridge_overlay_offset"][1] += dy
+                    print(f"\nApplied ridge-only shift: +{dx} X, +{dy} Y. Ideal path remains fixed. Redrawing...")
         except Exception:
-            print("\nInvalid format. Please enter 'X, Y' like '10.5, -3.2'")
+            print("\nInvalid format. Use 'X, Y' (e.g. '10.5, -3.2') or 'RZ, deg' (e.g. 'RZ, 2.5')")
 
 
 if __name__ == "__main__":

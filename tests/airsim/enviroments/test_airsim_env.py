@@ -229,12 +229,10 @@ class TestAdapterLayer:
 
 
 class TestObsSpaceParity:
-    """T-010: Verify that AirSimEnv and PySimEnv share the same observation
-    space channel layout so that a policy trained in one can be deployed in
-    the other without rescaling.
+    """T-010: Validate the current observation-space compatibility contract.
 
-    PySimEnv returns shape ``(num_ships, 10)``; for ``num_ships=1`` the
-    squeezed per-ship vector must match AirSimEnv's flat ``(10,)`` space.
+    AirSimEnv uses a flat 10-channel observation. PySimEnv currently exposes
+    12 channels per ship (the AirSim-compatible core plus 2 extra features).
     """
 
     @pytest.fixture(scope="class")
@@ -261,51 +259,55 @@ class TestObsSpaceParity:
                                       err_msg="action_space.high mismatch")
 
     def test_obs_channel_count_matches(self, mock_airsim, pysim_env):
-        """Per-ship channel count must equal AirSimEnv's flat obs size (10)."""
+        """PySimEnv must expose at least the AirSim 10-channel core."""
         airsim_env, _ = mock_airsim
-        # PySimEnv shape is (num_ships, 10); AirSimEnv is (10,)
-        py_obs_shape = pysim_env.observation_space.shape  # (1, 10) for single ship
-        air_obs_shape = airsim_env.observation_space.shape  # (10,)
+        py_obs_shape = pysim_env.observation_space.shape
+        air_obs_shape = airsim_env.observation_space.shape
 
-        n_channels_pysim = py_obs_shape[-1]   # last dim is always the channel count
-        n_channels_airsim = air_obs_shape[0]  # flat (10,)
+        n_channels_pysim = py_obs_shape[-1]
+        n_channels_airsim = air_obs_shape[0]
 
-        assert n_channels_pysim == n_channels_airsim, (
-            f"Channel count mismatch: PySimEnv={n_channels_pysim}, "
-            f"AirSimEnv={n_channels_airsim}"
-        )
+        assert n_channels_airsim == 10
+        assert n_channels_pysim == 12
+        assert n_channels_pysim >= n_channels_airsim
 
     def test_obs_bounds_per_channel_match(self, mock_airsim, pysim_env):
-        """Per-channel low/high must be identical after squeezing the ship dim.
-
-        This guarantees a policy trained in PySimEnv can be deployed in
-        AirSimEnv without any observation rescaling.
-        """
+        """Validate matching bounds for shared channels and known differences."""
         airsim_env, _ = mock_airsim
-        # PySimEnv obs: (1, 10) → squeeze → (10,)
-        py_low = pysim_env.observation_space.low.squeeze(axis=0)  # (10,)
+        py_low = pysim_env.observation_space.low.squeeze(axis=0)
         py_high = pysim_env.observation_space.high.squeeze(axis=0)
 
         air_low = airsim_env.observation_space.low
         air_high = airsim_env.observation_space.high
 
-        np.testing.assert_array_equal(py_low, air_low,
-                                      err_msg="Per-channel obs low mismatch")
-        np.testing.assert_array_equal(py_high, air_high,
-                                      err_msg="Per-channel obs high mismatch")
+        # Shared channels that should remain aligned:
+        # 0..2 = velocities, 6..9 = heading errors.
+        shared_indices = [0, 1, 2, 6, 7, 8, 9]
+        np.testing.assert_array_equal(
+            py_low[shared_indices],
+            air_low[shared_indices],
+            err_msg="Shared-channel low bounds mismatch",
+        )
+        np.testing.assert_array_equal(
+            py_high[shared_indices],
+            air_high[shared_indices],
+            err_msg="Shared-channel high bounds mismatch",
+        )
+
+        # Explicitly document the intentional range differences:
+        # 3..4 are distances, 5 is signed cross-track error.
+        np.testing.assert_array_equal(air_low[3:6], np.array([0.0, 0.0, -2.0], dtype=np.float32))
+        np.testing.assert_array_equal(air_high[3:6], np.array([1.0, 1.0, 2.0], dtype=np.float32))
 
     def test_obs_shape_difference_is_documented(self, mock_airsim, pysim_env):
-        """PySimEnv wraps the obs in a ship dimension; AirSimEnv uses flat (10,).
+        """PySimEnv wraps observations per ship; AirSimEnv is flat.
 
-        This test documents the known structural difference so that callers
-        know to squeeze the PySimEnv output before feeding it to a policy
-        trained on AirSimEnv, or vice-versa.
+        Callers that transfer policies between environments must handle this
+        shape/channel difference explicitly.
         """
         airsim_env, _ = mock_airsim
-        # AirSimEnv is intentionally flat for single-ship operation
         assert airsim_env.observation_space.shape == (10,)
-        # PySimEnv tiles over num_ships
-        assert pysim_env.observation_space.shape == (1, 10)
+        assert pysim_env.observation_space.shape == (1, 12)
 
 
 

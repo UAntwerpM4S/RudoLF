@@ -91,11 +91,18 @@ class FhSimBridge:
 
     @property
     def initial_vessel_state(self):
+        """Initial vessel state.
+        """
         return self._initial_vessel_state
 
 
     @initial_vessel_state.setter
     def initial_vessel_state(self, value):
+        """Initial vessel state.
+
+        Args:
+            value: Description.
+        """
         self._initial_vessel_state = value
 
 
@@ -232,3 +239,4 @@ class FhSimBridge:
             self._math_model.Dispose()
             #Sim.MathModel = None               # should not be required
         #Sim.disconnect_logger()                # is handled by the module's at-exit event
+

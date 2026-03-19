@@ -262,6 +262,11 @@ class AgentManager:
 
     @contextmanager
     def smoothing(self, env):
+        """Smoothing.
+
+        Args:
+            env: Description.
+        """
         if hasattr(env, "enable_smoothing"):
             try:
                 self.prev_smoothing_setting = env.enable_smoothing
@@ -411,3 +416,4 @@ class AgentManager:
             The environment object.
         """
         return self._agent.get_env()
+

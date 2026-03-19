@@ -276,6 +276,12 @@ class AgentManager:
     # Create hashed pattern for the area between obstacles and Western Scheldt
     @staticmethod
     def create_hashed_area(obstacles, overall):
+        """Create hashed area.
+
+        Args:
+            obstacles: Description.
+            overall: Description.
+        """
         obstacle_poly = Polygon(obstacles)
         overall_poly = Polygon(overall)
         difference = overall_poly.difference(obstacle_poly)
@@ -292,6 +298,11 @@ class AgentManager:
 
     @contextmanager
     def smoothing(self, env):
+        """Smoothing.
+
+        Args:
+            env: Description.
+        """
         if hasattr(env, "enable_smoothing"):
             try:
                 self.prev_smoothing_setting = env.enable_smoothing
@@ -687,3 +698,4 @@ class AgentManager:
             The environment object.
         """
         return self._agent.get_env()
+

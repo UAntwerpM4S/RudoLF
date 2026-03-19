@@ -58,11 +58,22 @@ VIEWPORT_H = 400
 
 
 class ContactDetector(contactListener):
+    """ContactDetector."""
     def __init__(self, env):
+        """Initialize the instance.
+
+        Args:
+            env: Description.
+        """
         contactListener.__init__(self)
         self.env = env
 
     def BeginContact(self, contact):
+        """BeginContact.
+
+        Args:
+            contact: Description.
+        """
         if (
             self.env.lander == contact.fixtureA.body
             or self.env.lander == contact.fixtureB.body
@@ -73,6 +84,11 @@ class ContactDetector(contactListener):
                 self.env.legs[i].ground_contact = True
 
     def EndContact(self, contact):
+        """EndContact.
+
+        Args:
+            contact: Description.
+        """
         for i in range(2):
             if self.env.legs[i] in [contact.fixtureA.body, contact.fixtureB.body]:
                 self.env.legs[i].ground_contact = False
@@ -221,6 +237,17 @@ class LunarLander(BaseEnv, EzPickle):
         wind_power: float = 15.0,
         turbulence_power: float = 1.5,
     ):
+        """Initialize the instance.
+
+        Args:
+            render_mode: Description.
+            continuous: Description.
+            gravity: Description.
+            enable_wind: Description.
+            wind_power: Description.
+            turbulence_power: Description.
+            ,: Description.
+        """
         BaseEnv.__init__(self, render_mode)
         EzPickle.__init__(
             self,
@@ -309,6 +336,8 @@ class LunarLander(BaseEnv, EzPickle):
             self.action_space = spaces.Discrete(4)
 
     def _destroy(self):
+        """ destroy.
+        """
         if not self.moon:
             return
         self.world.contactListener = None
@@ -326,6 +355,12 @@ class LunarLander(BaseEnv, EzPickle):
         seed: Optional[int] = None,
         options: Optional[dict] = None,
     ):
+        """Reset the environment state.
+
+        Args:
+            seed: Optional RNG seed.
+            options: Optional reset options.
+        """
         super().reset(seed=seed)
         self._destroy()
 
@@ -450,6 +485,14 @@ class LunarLander(BaseEnv, EzPickle):
         return self.step(np.array([0, 0]) if self.continuous else 0)[0], {}
 
     def _create_particle(self, mass, x, y, ttl):
+        """ create particle.
+
+        Args:
+            mass: Description.
+            x: Description.
+            y: Description.
+            ttl: Description.
+        """
         p = self.world.CreateDynamicBody(
             position=(x, y),
             angle=0.0,
@@ -468,10 +511,20 @@ class LunarLander(BaseEnv, EzPickle):
         return p
 
     def _clean_particles(self, all_particle):
+        """ clean particles.
+
+        Args:
+            all_particle: Description.
+        """
         while self.particles and (all_particle or self.particles[0].ttl < 0):
             self.world.DestroyBody(self.particles.pop(0))
 
     def step(self, action):
+        """Step.
+
+        Args:
+            action: Description.
+        """
         assert self.lander is not None
 
         # Update wind and apply to the lander
@@ -668,6 +721,8 @@ class LunarLander(BaseEnv, EzPickle):
         return np.array(state, dtype=np.float32), reward, terminated, False, {}
 
     def render(self):
+        """Render.
+        """
         if self.render_mode is None:
             assert self.spec is not None
             gym.logger.warn(
@@ -784,6 +839,8 @@ class LunarLander(BaseEnv, EzPickle):
             )
 
     def close(self):
+        """Close.
+        """
         if self.screen is not None:
             import pygame
 
@@ -847,6 +904,13 @@ def heuristic(env, s):
 
 
 def demo_heuristic_lander(env, seed=None, render=False):
+    """Demo heuristic lander.
+
+    Args:
+        env: Description.
+        seed: Description.
+        render: Description.
+    """
     total_reward = 0
     steps = 0
     s, info = env.reset(seed=seed)
@@ -872,10 +936,14 @@ def demo_heuristic_lander(env, seed=None, render=False):
 
 
 class LunarLanderContinuous:
+    """LunarLanderContinuous."""
     def __init__(self):
+        """Initialize the instance.
+        """
         raise error.Error(
             "Error initializing LunarLanderContinuous Environment.\n"
             "Currently, we do not support initializing this mode of environment by calling the class directly.\n"
             "To use this environment, instead create it by specifying the continuous keyword in gym.make, i.e.\n"
             'gym.make("LunarLander-v3", continuous=True)'
         )
+

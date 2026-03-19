@@ -19,7 +19,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
     from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, get_config_parameters
     from fw.env_factory import (
         build_default_environment,
-        get as get_environment,
         py_sim_env_name,
         fh_sim_env_name,
         airsim_env_name,
@@ -38,61 +37,107 @@ if __name__ == "__main__" or __name__ == "fw.main":
         print(f"[main] Unknown action '{action}'. Falling back to 'train'.")
         action = "train"
 
-    def _should_delegate_to_airsim_extension() -> bool:
-        """Return whether any of the selected environments is AirSim."""
-        return airsim_env_name in configured_env_names
+    def _run_airsim_extension(selected_action: str) -> bool:
+        """Run the AirSim entrypoint as an ordered step.
 
-    if _should_delegate_to_airsim_extension():
+        Args:
+            selected_action: Framework action to forward to the AirSim
+                entrypoint ("train" or "visualize").
+
+        Returns:
+            True when the AirSim step completed successfully. False when the
+            AirSim step failed and the caller should continue with remaining
+            framework steps.
+        """
         import os
         import runpy
 
         try:
-            os.environ["FW_MAIN_ACTION_OVERRIDE"] = action
+            os.environ["FW_MAIN_ACTION_OVERRIDE"] = selected_action
             runpy.run_module("fw.main_with_airsim", run_name="__main__")
-            raise SystemExit(0)
+            return True
         except SystemExit as exc:
             if exc.code in (None, 0):
-                raise
+                return True
             print(
                 "[main] AirSim extension exited with an error; "
                 "falling back to the default framework entrypoint."
             )
-            configured_env_names[:] = [n for n in configured_env_names if n != airsim_env_name]
+            return False
         except (ConnectionError, OSError) as exc:
             print(
                 f"[main] AirSim extension failed to connect to UE5 ({exc}); "
                 "falling back to the default framework entrypoint."
             )
-            configured_env_names[:] = [n for n in configured_env_names if n != airsim_env_name]
+            return False
         finally:
             os.environ.pop("FW_MAIN_ACTION_OVERRIDE", None)
 
+    configuration = {
+        py_sim_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=1.75,
+            patience=4,
+            max_time_steps=1300,
+        ),
+        airsim_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=1.75,
+            patience=4,
+            max_time_steps=1300,
+        ),
+        fh_sim_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=3.80,
+            patience=4,
+            max_time_steps=1300,
+        ),
+        lunar_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD_AND_LOSS,
+            target_reward=0.20,
+            target_loss=0.8,
+            patience=1,
+            max_time_steps=300,
+        ),
+        py_sim_polar_env_name: StopCondition(
+            stop_criterion=Criterion.NBR_POLICY_UPDATES,
+            max_time_steps=600,
+        ),
+    }
+
     if not configured_env_names:
-        print("[main] No environments remaining after AirSim fallback. Exiting.")
+        print(f"[main] No environments configured for {action}. Exiting.")
         raise SystemExit(1)
-    # Ensure all environments are registered once
+
     initialize_all_environments()
 
-    # Define simulator inputs. Builds one environment per configured env_type entry.
-    envs = [build_default_environment(name) for name in configured_env_names]
+    # Both visualize and train now follow env_type order exactly (for airsim),
+    # but standard environments are batched to preserve Trainer functionality.
+    executed_any_step = False
+    standard_envs = []
 
-    # Create a Trainer and pass on a list of agents that you want to train
-    trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+    for env_name in configured_env_names:
+        if env_name == airsim_env_name:
+            if action == "train":
+                logging.getLogger("airsim").setLevel(logging.INFO)
+            if _run_airsim_extension(action):
+                executed_any_step = True
+            continue
 
-    if "train" == action:
-        # Re-enable airsim logging only when the airsim environment is selected
-        if any(env.__class__.__name__ == airsim_env_name for env in envs):
-            logging.getLogger("airsim").setLevel(logging.INFO)
+        env = build_default_environment(env_name)
+        standard_envs.append(env)
 
-        configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
-                         airsim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
-                         fh_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=3.80, patience=4, max_time_steps=1300),
-                         lunar_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD_AND_LOSS, target_reward=0.20, target_loss=0.8, patience=1, max_time_steps=300),
-                         py_sim_polar_env_name: StopCondition(stop_criterion=Criterion.NBR_POLICY_UPDATES, max_time_steps=600)}
-        metrics = trainer.train(configuration)
+    if standard_envs:
+        trainer = Trainer(PPO_POLICY_NAME, standard_envs, "SimpleScheduler")
+        
+        if action == "visualize":
+            trainer.visualize(standard_envs, airsim_bridge=None)
+            executed_any_step = True
+        else:
+            metrics = trainer.train(configuration)
+            print(f"Training metrics (grouped): {metrics}")
+            executed_any_step = True
 
-        print(f"Training metrics: {metrics}")
-    elif "visualize" == action:
-        trainer.visualize(envs, airsim_bridge=None)
-    else:
-        print(f"Unable to execute unknown action '{action}'")
+    if not executed_any_step:
+        print("[main] No environments remaining after AirSim fallback. Exiting.")
+        raise SystemExit(1)

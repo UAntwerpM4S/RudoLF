@@ -59,8 +59,8 @@ Usage::
     python -m airsim.inference.run_inference \\
         --model src/fw/best_models/AirSimEnv_PPO_policy --ue5
 
-    # Dedicated Fossen visualisation runner
-    python -m airsim.inference.run_visualise_fossen \
+    # Dedicated framework-to-UE5 visualisation runner
+    python -m airsim.inference.run_visualise_models \
         --model src/fw/best_models/PySimEnv_PPO_policy
 
     # Override start/target position
@@ -84,13 +84,15 @@ import torch
 
 # ── Bootstrap the Python path when run directly (python run_inference.py) ──
 _SRC_DIR = Path(__file__).resolve().parent.parent.parent
-_REPO_ROOT = _SRC_DIR.parent
+
+
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from airsim.environments.airsim_env import AirSimEnv          # noqa: E402
 from airsim.communication.airsim_bridge import AirSimBridge   # noqa: E402
 from airsim.communication.control_mapping import map_direct_policy_action  # noqa: E402
+from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 from fw.policies.ppo_policy import PPOPolicy                   # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -140,31 +142,6 @@ def detect_model_origin(model_path: str) -> str:
 # Policy loader
 # ─────────────────────────────────────────────────────────
 
-def _resolve_model_path(model_path: str) -> Path:
-    """Resolve a model path against the common repository search roots.
-
-    Args:
-        model_path: User-supplied model path, absolute or relative.
-
-    Returns:
-        A resolved filesystem path. If the file is not found in the search
-        roots, the repository-root candidate is returned unchanged.
-    """
-    path = Path(model_path)
-    if path.is_absolute() and path.exists():
-        return path
-
-    candidates = [
-        Path.cwd() / path,
-        _REPO_ROOT / path,
-        _SRC_DIR / path,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-
-    return (_REPO_ROOT / path).resolve()
-
 def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     """Load a :class:`PPOPolicy` from a saved ``.zip`` file.
 
@@ -181,7 +158,7 @@ def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     Raises:
         RuntimeError: If the model file cannot be found or parsed.
     """
-    path = _resolve_model_path(model_path)
+    path = resolve_model_path(model_path, _SRC_DIR)
     stem = str(path.with_suffix("")) if path.suffix == ".zip" else str(path)
     policy = PPOPolicy.load(stem, device=device)
     policy.network.eval()
@@ -437,7 +414,7 @@ def run_inference(
         print("  FOSSEN-TRANSLATION MODE  [compatibility path]")
         print(f"  Model  : {Path(model_path).name}")
         print("  Actions: Fossen→UE5 affine formula → bridge.set_controls()")
-        print("  Prefer : python -m airsim.inference.run_visualise_fossen")
+        print("  Prefer : python -m airsim.inference.run_visualise_models")
         print("  PID    : NOT USED")
         print(_BANNER)
 
@@ -549,7 +526,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
             "Inference runner: load a trained PPO policy and control the "
-            "UE5 MYZAKO ship in real-time. Use run_visualise_fossen for "
+            "UE5 MYZAKO ship in real-time. Use run_visualise_models for "
             "Fossen-trained policies; this entry point is kept for UE5-direct "
             "inference and backwards compatibility. PID control is not used."
         ),
@@ -560,7 +537,7 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help=(
             "Path to the .zip model file.  "
-            "Example: src/fw/best_models/PySimEnv_PPO_policy"
+            "Example: models/PySimEnv_PPO_policy.zip"
         ),
     )
 
@@ -643,6 +620,8 @@ if __name__ == "__main__":
 
     args = _build_parser().parse_args()
     force_mode = "ue5" if args.ue5 else ("fossen" if args.fossen else None)
+
+    args.model = str(resolve_model_path(args.model, _SRC_DIR))
 
     run_inference(
         model_path=args.model,
