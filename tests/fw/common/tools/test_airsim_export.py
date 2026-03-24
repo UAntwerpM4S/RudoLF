@@ -11,7 +11,7 @@ _SRC_DIR = Path(__file__).resolve().parents[4] / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from fw.common.tools.airsim_export import AirSimSessionExporter, build_framework_visualisation_row
+from fw.common.airsim.tools.airsim_export import AirSimSessionExporter, build_framework_visualisation_row
 
 
 def test_airsim_session_exporter_writes_into_session_folder(tmp_path: Path) -> None:

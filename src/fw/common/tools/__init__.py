@@ -1,6 +1,6 @@
 """Reusable utility functions for fw modules."""
 
-from .airsim_export import (
+from ..airsim.tools.airsim_export import (
     AirSimSessionExporter,
     build_airsim_env_snapshot,
     build_framework_visualisation_row,
