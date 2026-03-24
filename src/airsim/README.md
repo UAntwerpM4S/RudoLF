@@ -88,6 +88,15 @@ In `fw.main_with_airsim`, runtime flags under `visualization` choose mode:
 - `inference_visualise = true` -> runs `airsim.inference.run_inference`.
 - If both are true, Fossen visualisation is prioritized.
 
+### Export behavior
+
+Both AirSim runtime paths now write session exports under the workspace-level `exports/` directory:
+
+- `run_inference.py` writes `inference_session.csv`, `airsim_telemetry.csv`, and `metadata.json`.
+- `run_visualise_models.py` writes `visualisation_session.csv`, `airsim_telemetry.csv`, and `metadata.json`.
+
+These exports are buffered asynchronously so logging does not become the primary bottleneck during long runs.
+
 ## Configuration
 
 ### 1) Framework-level selection (`src/fw/config.py`)
@@ -110,6 +119,14 @@ Important training controls:
 - `training.use_pause_stepping`
 - `training.frames_per_step`
 - `training.physics_update_timeout`
+
+Important visualisation controls:
+
+- `visualization.save_matplotlib_minimap`
+- `visualization.min_log_interval_s`
+- `visualization.minimap_update_hz`
+- `visualization.bridge_telemetry_hz`
+- `visualization.startup_settle_s`
 
 ## Coordinate Calibration and Telemetry Utilities
 

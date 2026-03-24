@@ -48,6 +48,7 @@ If both are true:
 - Selects framework environment family (`PySimEnv` or `FhSimEnv`, or explicit `model_family`).
 - Steps framework environment.
 - Mirrors state into UE5 through `AirSimBridge` pose/kinematics/object APIs.
+- Writes a session export bundle under `exports/`.
 - Optionally displays:
   - matplotlib minimap (`VisualiseModelsMinimap`) or
   - UE5 camera minimap (`UE5TopDownMinimap`) using camera pose/FOV/image APIs.
@@ -60,6 +61,25 @@ If both are true:
   - Fossen-compatible mode: uses compatibility observation/control path.
   - UE5-direct mode: maps policy action directly to UE5 control.
 - Runs episode loop directly on UE5-backed environment state.
+- Writes a session export bundle under `exports/`.
+
+## Export Artifacts
+
+Each run creates a timestamped session folder in `exports/`.
+
+Inference sessions contain:
+
+- `inference_session.csv`
+- `airsim_telemetry.csv`
+- `metadata.json`
+
+Visualisation sessions contain:
+
+- `visualisation_session.csv`
+- `airsim_telemetry.csv`
+- `metadata.json`
+
+`metadata.json` includes the used model, selected environment, and the relevant runtime configuration.
 
 ## Key Runtime Settings
 
@@ -78,6 +98,7 @@ The control file is `airsim/config/runtime_settings.json`.
 - `visualization.episodes`
 - `visualization.device`
 - `visualization.log_every`
+- `visualization.min_log_interval_s`
 
 ### Model visualisation selector
 
@@ -113,6 +134,10 @@ The control file is `airsim/config/runtime_settings.json`.
 - `visualization.ue5_camera_height_m`
 - `visualization.ue5_camera_follow_heading`
 - `visualization.ue5_preview_window`
+- `visualization.save_matplotlib_minimap`
+- `visualization.minimap_update_hz`
+- `visualization.bridge_telemetry_hz`
+- `visualization.startup_settle_s`
 
 ## How to Run
 
@@ -155,5 +180,8 @@ This route uses `runtime_settings.json` flags to choose between the two modes.
 - Minimap not visible:
   - Set `visualization.show_minimap=true`.
   - For camera minimap, also set `visualization.use_ue5_camera_minimap=true` and verify camera name/FOV.
+- Visualisation feels slower than the requested simulation speed:
+  - The configured `simulation_speed` is the target playback ratio, but actual throughput still depends on UE5 render cost, minimap use, and control animation settings.
+  - To reduce visual overhead, try disabling the minimap, lowering `render_interpolation_steps`, or disabling throttle animation.
 - Model family mismatch in replay:
   - Set `visualization.model_family` and `visualization.fossen_environment` explicitly instead of `auto`.
