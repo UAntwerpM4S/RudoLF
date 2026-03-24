@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 from typing import Optional
 
 import numpy as np
@@ -43,6 +44,8 @@ class UE5TopDownMinimap:
         preview_height: int = 520,
         draw_trail: bool = True,
         trail_thickness: float = 8.0,
+        max_update_hz: float = 15.0,
+        preview_max_hz: float = 10.0,
     ) -> None:
         """Initialize the instance.
 
@@ -73,9 +76,13 @@ class UE5TopDownMinimap:
         self.preview_height = int(preview_height)
         self.draw_trail = bool(draw_trail)
         self.trail_thickness = float(trail_thickness)
+        self.max_update_interval_s = 1.0 / max(float(max_update_hz), 1.0)
+        self.preview_update_interval_s = 1.0 / max(float(preview_max_hz), 1.0)
 
         self._prev_trail_point = None
         self._cv2 = None
+        self._last_update_at = 0.0
+        self._last_preview_at = 0.0
 
         if self.bridge.is_connected:
             try:
@@ -174,6 +181,10 @@ class UE5TopDownMinimap:
         """Update UE5 top-down camera position and optional preview image."""
         if not self.bridge.is_connected:
             return
+        now = time.perf_counter()
+        if now - self._last_update_at < self.max_update_interval_s:
+            return
+        self._last_update_at = now
 
         try:
             x, y, yaw = self._ship_pose_from_env(env)
@@ -204,7 +215,12 @@ class UE5TopDownMinimap:
                     )
                 self._prev_trail_point = current
 
-            if self.enable_preview_window and self._cv2 is not None:
+            if (
+                self.enable_preview_window
+                and self._cv2 is not None
+                and (now - self._last_preview_at >= self.preview_update_interval_s)
+            ):
+                self._last_preview_at = now
                 payload = self.bridge.get_camera_image(
                     self.camera_name,
                     self.bridge._airsim.ImageType.Scene,
@@ -220,6 +236,8 @@ class UE5TopDownMinimap:
     def close(self) -> None:
         """Dispose minimap resources."""
         self._prev_trail_point = None
+        self._last_update_at = 0.0
+        self._last_preview_at = 0.0
         if self.enable_preview_window and self._cv2 is not None:
             try:
                 self._cv2.destroyWindow(self.preview_window_name)
