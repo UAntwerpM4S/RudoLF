@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from common_tools.telemetry_exporter import TelemetryExporter
+from telemetry_exporter import TelemetryExporter
 
 
 def get_export_directory(export_dir: Optional[str | Path] = None) -> Path:
