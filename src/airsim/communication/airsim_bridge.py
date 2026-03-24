@@ -38,6 +38,7 @@ import time
 import logging
 import csv
 import os
+from datetime import datetime, timezone
 from collections import deque
 from typing import Any, Dict, Optional
 from fw.common.airsim.tools.angles import (
@@ -165,6 +166,7 @@ class AirSimBridge:
         self._last_health_check: float = time.monotonic()
         self._step_count: int = 0
         self._sensor_buffer: deque = deque(maxlen=1000)
+        self._simulation_speed: float = 1.0
         self.coord_transform = None
         self.render_z: float = 0.0
 
@@ -377,6 +379,7 @@ class AirSimBridge:
         """Set the UE5 simulation speed multiplier."""
         if not self._ensure_connected():
             return
+        self._simulation_speed = float(simulation_speed)
         self._client.simSetSimulationSpeed(simulation_speed)
 
     def flush_persistent_markers(self) -> None:
@@ -680,13 +683,18 @@ class AirSimBridge:
             pos = kinematics.position
             lin_vel = kinematics.linear_velocity
             ang_vel = kinematics.angular_velocity
+            lin_acc = getattr(kinematics, "linear_acceleration", None)
             
             # T-007: Quaternion to Yaw conversion & validation
             quat = kinematics.orientation
+            roll, pitch = _roll_pitch_from_quaternion(quat)
             yaw = _yaw_from_quaternion(quat)
             yaw_norm = _normalize_angle(yaw)
+            controls = self._controls
 
             state_dict = {
+                "step": self._step_count,
+                "wall_time_utc": datetime.now(timezone.utc).isoformat(),
                 "timestamp": s.timestamp,
                 "speed": s.speed,
                 "gear": s.gear,
@@ -696,10 +704,19 @@ class AirSimBridge:
                 "vel_x": lin_vel.x_val,
                 "vel_y": lin_vel.y_val,
                 "vel_z": lin_vel.z_val,
+                "accel_x": float(getattr(lin_acc, "x_val", 0.0)),
+                "accel_y": float(getattr(lin_acc, "y_val", 0.0)),
+                "accel_z": float(getattr(lin_acc, "z_val", 0.0)),
                 "ang_vel_x": ang_vel.x_val,
                 "ang_vel_y": ang_vel.y_val,
                 "ang_vel_z": ang_vel.z_val,
-                "yaw": yaw_norm
+                "roll": roll,
+                "pitch": pitch,
+                "yaw": yaw_norm,
+                "control_steering": float(getattr(controls, "steering", 0.0) if controls is not None else 0.0),
+                "control_throttle": float(getattr(controls, "throttle", 0.0) if controls is not None else 0.0),
+                "control_brake": float(getattr(controls, "brake", 0.0) if controls is not None else 0.0),
+                "simulation_speed": self._simulation_speed,
             }
 
             # T-008: Buffer sensor data
@@ -720,6 +737,9 @@ class AirSimBridge:
             return
 
         try:
+            csv_dir = os.path.dirname(self.config.csv_log_path)
+            if csv_dir:
+                os.makedirs(csv_dir, exist_ok=True)
             file_exists = os.path.isfile(self.config.csv_log_path)
             with open(self.config.csv_log_path, mode='a', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=list(self._sensor_buffer[0].keys()))
@@ -771,6 +791,7 @@ class AirSimBridge:
         self._connected = False
         self._client = None
         self._controls = None
+        self._simulation_speed = 1.0
         if self._airsim is None:
             raise ConnectionError("Cannot reconnect: cosysairsim module not available.")
         self._connect_with_retry(self._airsim)
@@ -787,7 +808,7 @@ class AirSimBridge:
         from fw.common.airsim.tools.calibrate_coords import load_saved_calibration_reference
 
         self.load_world_save(save_slot=save_slot)
-        self._client.simSetSimulationSpeed(simulation_speed)
+        self.set_simulation_speed(simulation_speed)
         spawn_pose = self._client.simGetVehiclePose()
         self.render_z = float(spawn_pose.position.z_val)
         self.coord_transform, _ = load_saved_calibration_reference(
