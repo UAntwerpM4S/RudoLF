@@ -77,7 +77,7 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -92,6 +92,10 @@ if str(_SRC_DIR) not in sys.path:
 from airsim.environments.airsim_env import AirSimEnv          # noqa: E402
 from airsim.communication.airsim_bridge import AirSimBridge   # noqa: E402
 from airsim.communication.control_mapping import map_direct_policy_action  # noqa: E402
+from fw.common.airsim.tools.airsim_export import (  # noqa: E402
+    AirSimSessionExporter,
+    build_airsim_env_snapshot,
+)
 from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 from fw.policies.ppo_policy import PPOPolicy                   # noqa: E402
 
@@ -237,6 +241,9 @@ def _run_episode_fossen(
     env: AirSimEnv,
     policy: PPOPolicy,
     max_steps: int,
+    episode_index: int = 1,
+    exporter: Optional[AirSimSessionExporter] = None,
+    model_origin: str = "fossen",
 ) -> Tuple[List[float], List[float], float]:
     """Run one inference episode in Fossen-translation mode.
 
@@ -275,6 +282,19 @@ def _run_episode_fossen(
 
         traj_x.append(float(env.ship_pos[0]))
         traj_y.append(float(env.ship_pos[1]))
+        if exporter is not None:
+            exporter.log_inference_step(
+                _build_inference_row(
+                    env=env,
+                    episode_index=episode_index,
+                    step_index=step,
+                    reward=float(reward),
+                    action=action,
+                    model_origin=model_origin,
+                    control_mode="fossen_translation",
+                    outcome="terminated" if done else ("truncated" if truncated else "running"),
+                )
+            )
 
         if step % 200 == 0:
             logger.info(
@@ -298,6 +318,9 @@ def _run_episode_ue5_direct(
     env: AirSimEnv,
     policy: PPOPolicy,
     max_steps: int,
+    episode_index: int = 1,
+    exporter: Optional[AirSimSessionExporter] = None,
+    model_origin: str = "ue5",
 ) -> Tuple[List[float], List[float], float]:
     """Run one inference episode in UE5-direct control mode.
 
@@ -341,6 +364,19 @@ def _run_episode_ue5_direct(
 
         traj_x.append(float(env.ship_pos[0]))
         traj_y.append(float(env.ship_pos[1]))
+        if exporter is not None:
+            exporter.log_inference_step(
+                _build_inference_row(
+                    env=env,
+                    episode_index=episode_index,
+                    step_index=step,
+                    reward=0.0,
+                    action=action,
+                    model_origin=model_origin,
+                    control_mode="ue5_direct",
+                    outcome="running",
+                )
+            )
 
         if step % 200 == 0:
             logger.info(
@@ -352,6 +388,44 @@ def _run_episode_ue5_direct(
             )
 
     return traj_x, traj_y, 0.0
+
+
+def _build_inference_row(
+    env: AirSimEnv,
+    episode_index: int,
+    step_index: int,
+    reward: float,
+    action: np.ndarray,
+    model_origin: str,
+    control_mode: str,
+    outcome: str,
+) -> Dict[str, float | int | str]:
+    """Build one inference telemetry row for CSV export."""
+    snapshot = build_airsim_env_snapshot(env)
+    return {
+        "step": int(step_index),
+        "sim_time": float(step_index * env.time_step),
+        "episode": int(episode_index),
+        "episode_step": int(step_index),
+        "x": float(snapshot["ship_x"]),
+        "y": float(snapshot["ship_y"]),
+        "pos_x": float(snapshot["ship_x"]),
+        "pos_y": float(snapshot["ship_y"]),
+        "heading_deg": float(snapshot["heading_deg"]),
+        "speed": float(snapshot["speed"]),
+        "reward": float(reward),
+        "steering": float(action[0]),
+        "throttle": float(action[1]),
+        "brake": float(env.last_controls.get("brake", 0.0)),
+        "checkpoint_index": int(snapshot["checkpoint_index"]),
+        "cross_track_error": float(snapshot["cross_track_error"]),
+        "physics_wait_s": float(snapshot["physics_wait_s"]),
+        "step_latency_s": float(snapshot["step_latency_s"]),
+        "ue5_timestamp": int(snapshot["ue5_timestamp"]),
+        "outcome": str(outcome),
+        "model_origin": str(model_origin),
+        "control_mode": str(control_mode),
+    }
 
 
 # ─────────────────────────────────────────────────────────
@@ -398,6 +472,7 @@ def run_inference(
         force_mode: ``"fossen"`` or ``"ue5"`` to override auto-detection.
     """
     _BANNER = "=" * 62
+    resolved_model_path = resolve_model_path(model_path, _SRC_DIR)
 
     # ── Detect / resolve control mode ──────────────────────────────────────
     mode = force_mode if force_mode in ("fossen", "ue5") else detect_model_origin(model_path)
@@ -420,6 +495,27 @@ def run_inference(
 
     # ── Load PPO policy ─────────────────────────────────────────────────────
     policy = load_policy(model_path, device=device)
+    session_exporter = AirSimSessionExporter(
+        session_name=f"inference_{resolved_model_path.stem}",
+        metadata={
+            "script": "airsim.inference.run_inference",
+            "model_path": str(resolved_model_path),
+            "model_name": resolved_model_path.name,
+            "environment_name": "AirSimEnv",
+            "model_origin": mode,
+            "configuration": {
+                "ship_pos": ship_pos,
+                "target_pos": target_pos,
+                "ip": ip or "127.0.0.1",
+                "port": port,
+                "max_steps": max_steps,
+                "num_episodes": num_episodes,
+                "device": device,
+                "force_mode": force_mode,
+                "simulation_speed": 1.0,
+            },
+        },
+    )
 
     # ── Initialise AirSimEnv ────────────────────────────────────────────────
     # AirSimEnv.__init__ performs:
@@ -437,6 +533,14 @@ def run_inference(
         training_mode=False,
         use_pause_stepping=False,
         simulation_speed=1.0,
+        csv_log_path=str(session_exporter.bridge_log_path),
+    )
+    session_exporter.update_metadata(
+        {
+            "resolved_model_path": str(resolved_model_path),
+            "export_directory": str(session_exporter.export_dir),
+            "bridge_telemetry_path": str(session_exporter.bridge_log_path),
+        }
     )
 
     bridge: AirSimBridge = env.bridge
@@ -475,14 +579,24 @@ def run_inference(
                 # Fossen-trained policy: AirSimEnv.step() applies the
                 # Fossen→UE5 affine throttle formula before calling bridge.
                 traj_x, traj_y, total_reward = _run_episode_fossen(
-                    env, policy, max_steps
+                    env,
+                    policy,
+                    max_steps,
+                    episode_index=ep + 1,
+                    exporter=session_exporter,
+                    model_origin=mode,
                 )
                 outcome = f"reward={total_reward:+.1f}"
             else:
                 # UE5-trained policy: actions sent directly to bridge via
                 # _ue5_direct_step() – no Fossen mapping applied.
                 traj_x, traj_y, total_reward = _run_episode_ue5_direct(
-                    env, policy, max_steps
+                    env,
+                    policy,
+                    max_steps,
+                    episode_index=ep + 1,
+                    exporter=session_exporter,
+                    model_origin=mode,
                 )
                 outcome = "direct-control (no reward)"
 
@@ -497,16 +611,29 @@ def run_inference(
                 ax.plot(traj_x[0], traj_y[0], "o", color=col, markersize=7)
                 ax.plot(traj_x[-1], traj_y[-1], "x", color=col,
                         markersize=9, markeredgewidth=2)
+            session_exporter.update_metadata(
+                {
+                    "last_episode_index": ep + 1,
+                    "last_outcome": outcome,
+                    "last_episode_steps": steps_run,
+                    "last_ship_position": {
+                        "x": float(traj_x[-1]) if traj_x else None,
+                        "y": float(traj_y[-1]) if traj_y else None,
+                    },
+                }
+            )
     finally:
         # Always close cleanly: stops the vehicle, restores real-time speed
         env.close()
+        session_exporter.save()
+        session_exporter.close()
         print("\nInference complete – AirSim connection closed.")
 
     # ── Save & show trajectory plot ─────────────────────────────────────────
     if _HAS_MPL and last_traj_x:
         ax.legend(loc="best")
         plt.tight_layout()
-        out_path = "inference_trajectory.png"
+        out_path = session_exporter.export_dir / "inference_trajectory.png"
         plt.savefig(out_path, dpi=150)
         print(f"Trajectory plot saved to '{out_path}'.")
         plt.show()
