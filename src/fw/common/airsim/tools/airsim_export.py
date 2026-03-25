@@ -250,12 +250,12 @@ def build_framework_visualisation_row(
         A flat CSV-friendly dictionary describing the current visualisation
         step.
     """
-    ship_pos = (0.0, 0.0)
+    ship_pos = None
     if hasattr(env, "ship_pos") and env.ship_pos:
         try:
             ship_pos = env.ship_pos[ship_index]
         except Exception:
-            ship_pos = env.ship_pos[0] if env.ship_pos else (0.0, 0.0)
+            ship_pos = env.ship_pos[0] if env.ship_pos else None
     if ship_pos is None or (isinstance(ship_pos, (list, tuple, np.ndarray)) and len(ship_pos) == 0):
         ship_pos = (0.0, 0.0)
 
