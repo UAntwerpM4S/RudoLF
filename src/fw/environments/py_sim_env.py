@@ -18,7 +18,7 @@ from functools import lru_cache
 from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
 from fw.environments.tools import create_checkpoints_from_simple_path
-from fw.environments.py_sim_reward import Reward
+from fw.reward.reward import Reward
 from fw.ships.ship_factory import create_ship, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.vessel_state import VesselState

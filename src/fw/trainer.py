@@ -2,8 +2,10 @@ import os
 import re
 import csv
 import importlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from datetime import datetime
+from threading import Lock
 
 from enum import Enum
 from pathlib import Path
@@ -24,7 +26,7 @@ from fw.env_factory import (
     LunarEnvironment,
     PySimPolarEnvironment,
 )
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 # logging.basicConfig(level=logging.INFO)  # Configure logging once, possibly in main script.
 
@@ -153,12 +155,14 @@ class Trainer:
                 self.prev_render_mode = None
 
 
-    def train(self, configuration: dict = None) -> dict:
+    def train(self, configuration: dict = None, show_plots: bool = True) -> dict:
         """Starts the training process.
 
         Args:
             configuration (dict, optional): Additional configuration parameters
                 for training, such as number of steps per environment.
+            show_plots (bool, optional): Show interactive visualization windows.
+                If False, only save outputs without opening matplotlib windows.
 
         Returns:
             dict: Training metrics collected during execution.
@@ -171,7 +175,11 @@ class Trainer:
 
         if env_metrics and env_metrics.get("status") == "success":
             try:
-                summaries = self.visualize([last_env], collect_evaluation_summary=True)
+                summaries = self.visualize(
+                    [last_env],
+                    collect_evaluation_summary=True,
+                    show_plots=show_plots,
+                )
                 if summaries and env_type in summaries:
                     env_metrics["evaluation_summary"] = summaries[env_type]
             except AttributeError as e:
@@ -182,23 +190,32 @@ class Trainer:
         return metrics
     
 
-    def visualize(self, envs, airsim_bridge=None, collect_evaluation_summary: bool = False):
+    def visualize(
+        self,
+        envs,
+        airsim_bridge=None,
+        collect_evaluation_summary: bool = False,
+        show_plots: bool = True,
+    ):
         """Visualize.
 
         Args:
             envs: Description.
             airsim_bridge: Description.
             collect_evaluation_summary: Whether to return final evaluation metrics.
+            show_plots: Whether to show interactive matplotlib windows.
         """
         summaries = {} if collect_evaluation_summary else None
         if envs is not None:
-            # Start shared figure
-            self._agent_mgr.begin_overlay_plot()
+            if show_plots:
+                # Start shared figure
+                self._agent_mgr.begin_overlay_plot()
 
             for env_idx, env in enumerate(envs):
                 gym_env = env.gym_env
                 try:
-                    with self.render(gym_env):
+                    render_context = self.render(gym_env) if show_plots else nullcontext()
+                    with render_context:
                         if hasattr(gym_env, "phys_sims"):
                             if hasattr(gym_env.phys_sims[0], "_dynamics"):
                                 print(f"Visualization of {gym_env.ship_model.name} in a {gym_env.dynamics_model.name}-based simulator.")
@@ -216,7 +233,7 @@ class Trainer:
 
                         eval_summary = self._agent_mgr.visualize_trained_agent(
                             num_episodes=1,
-                            live_animation=self._config["live_animation"],
+                            live_animation=self._config["live_animation"] if show_plots else False,
                             airsim_bridge=airsim_bridge,
                             return_summary=collect_evaluation_summary,
                         )
@@ -225,8 +242,9 @@ class Trainer:
                 except RuntimeError as e:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
 
-            # Finalize shared figure
-            self._agent_mgr.end_overlay_plot()
+            if show_plots:
+                # Finalize shared figure
+                self._agent_mgr.end_overlay_plot()
         else:
             print("No data found to visualize.")
 
@@ -240,6 +258,7 @@ class Trainer:
         This bypasses the factory cache so each reward configuration gets
         its own independent environment instance.
         """
+        # Avoid factory-level caching so each reward config is isolated.
         if canonical_name == py_sim_env_name:
             return PySimEnvironment(canonical_name, config)
         if canonical_name == fh_sim_env_name:
@@ -257,7 +276,8 @@ class Trainer:
         self,
         reward_configs: List[Dict[str, Any]],
         training_configuration: Dict[str, Any] = None,
-        verbose: bool = True
+        verbose: bool = True,
+        max_workers: int | None = None,
     ) -> Dict[int, Dict[str, Any]]:
         """Evaluate and compare different reward configurations.
 
@@ -279,6 +299,8 @@ class Trainer:
                 }
 
             verbose: Print progress information.
+            max_workers: Maximum number of parallel workers. Defaults to number
+                of CPUs (capped at number of configurations).
 
         Returns:
             Dict mapping config index to:
@@ -291,23 +313,31 @@ class Trainer:
                 "status": success/failure status
             }
         """
+        # Enforce explicit configs to avoid silent no-op evaluations.
         if not reward_configs:
             raise ValueError("reward_configs must not be empty")
 
+        # Allow caller to pass only reward configs and use default stop conditions.
         if training_configuration is None:
             training_configuration = {}
 
+        # Print a header once to make multi-config output readable.
         if verbose:
             print(f"\n{'='*80}")
             print(f"Starting Reward Evaluation: {len(reward_configs)} configurations")
             print(f"{'='*80}\n")
 
+        # Accumulate results keyed by config index for stable reporting.
         results = {}
+        # Track success order for summaries (only successful configs).
         evaluation_order = []
+        # Serialize console output across threads for clean logs.
+        print_lock = Lock()
 
-        for config_idx, config in enumerate(reward_configs):
+        def _evaluate_single_config(config_idx: int, config: Dict[str, Any]) -> tuple[int, Dict[str, Any], bool]:
+            """Train one reward configuration in an isolated trainer instance."""
             try:
-                # Extract environment type
+                # Extract environment type (required for building the env).
                 if "type" not in config:
                     raise ValueError("Configuration missing required 'type' key")
 
@@ -317,30 +347,34 @@ class Trainer:
                 reward_weights = config.get("reward_weights", None)
 
                 if verbose:
-                    print(f"\n[{config_idx + 1}] Environment: {canonical_name}")
-                    print(f"    Reward Profile: {reward_name}")
-                    if reward_weights:
-                        for key, value in reward_weights.items():
-                            print(f"      - {key}: {value}")
+                    with print_lock:
+                        print(f"\n[{config_idx + 1}] Environment: {canonical_name}")
+                        print(f"    Reward Profile: {reward_name}")
+                        if reward_weights:
+                            # Print custom weights so differences are visible in logs.
+                            for key, value in reward_weights.items():
+                                print(f"      - {key}: {value}")
+                        print("    Starting training...")
 
-                # Build a fresh environment per configuration (no factory cache reuse)
+                # Build a fresh environment per configuration (no factory cache reuse).
                 env = self._build_eval_environment(canonical_name, config)
 
-                # Create independent trainer for this config
+                # Create an independent trainer to avoid shared state.
                 trainer = Trainer(self._agent_type, [env], "SimpleScheduler")
 
-                # Train
-                if verbose:
-                    print(f"    Starting training...")
-
-                metrics = trainer.train(training_configuration)
-
+                # Train once and keep plots off to avoid multi-threaded UI issues.
+                metrics = trainer.train(training_configuration, show_plots=False)
+                # Snapshot the trajectory image with a unique name per config.
                 trajectory_file = self._save_evaluation_trajectory_snapshot(trainer, config_idx + 1)
-                if verbose and trajectory_file is not None:
-                    print(f"    Saved trajectory: {trajectory_file}")
 
-                # Store results
-                results[config_idx] = {
+                if verbose:
+                    with print_lock:
+                        if trajectory_file is not None:
+                            print(f"    Saved trajectory: {trajectory_file}")
+                        print("    ✓ Training completed")
+
+                # Return a normalized success payload for downstream summary/export.
+                return config_idx, {
                     "config": config,
                     "env_type": canonical_name,
                     "reward_name": reward_name,
@@ -348,18 +382,15 @@ class Trainer:
                     "metrics": metrics,
                     "trajectory_file": trajectory_file,
                     "status": "success"
-                }
-
-                if verbose:
-                    print(f"    ✓ Training completed")
-
-                evaluation_order.append(config_idx)
+                }, True
 
             except Exception as e:
                 if verbose:
-                    print(f"    ✗ Training failed: {e}")
+                    with print_lock:
+                        print(f"    ✗ Training failed: {e}")
 
-                results[config_idx] = {
+                # Keep a consistent shape on failure so downstream code can continue.
+                return config_idx, {
                     "config": config,
                     "env_type": config.get("type", "Unknown"),
                     "reward_name": config.get("reward_name", "unknown"),
@@ -367,7 +398,34 @@ class Trainer:
                     "metrics": None,
                     "trajectory_file": None,
                     "status": f"failed: {str(e)}"
-                }
+                }, False
+
+        # Choose worker count: cap by number of configs, minimum 1.
+        worker_count = max_workers if max_workers is not None else (os.cpu_count() or 1)
+        worker_count = max(1, min(worker_count, len(reward_configs)))
+
+        # Single-threaded path keeps logs in order and avoids thread overhead.
+        if worker_count == 1:
+            for config_idx, config in enumerate(reward_configs):
+                idx, result, is_success = _evaluate_single_config(config_idx, config)
+                results[idx] = result
+                if is_success:
+                    evaluation_order.append(idx)
+        else:
+            # Multi-threaded execution speeds up independent trainings.
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = [
+                    executor.submit(_evaluate_single_config, config_idx, config)
+                    for config_idx, config in enumerate(reward_configs)
+                ]
+                for future in as_completed(futures):
+                    idx, result, is_success = future.result()
+                    results[idx] = result
+                    if is_success:
+                        evaluation_order.append(idx)
+
+        # Normalize ordering so summaries are deterministic.
+        evaluation_order.sort()
 
         if verbose:
             self._print_comparison_summary(results, evaluation_order)
@@ -382,6 +440,7 @@ class Trainer:
             results: Results dictionary from evaluate_reward.
             evaluation_order: Order in which configs were evaluated.
         """
+        # Human-friendly summary header.
         print(f"\n{'='*80}")
         print("REWARD CONFIGURATION COMPARISON SUMMARY")
         print(f"{'='*80}\n")
@@ -390,7 +449,7 @@ class Trainer:
             print("No configurations evaluated.")
             return
 
-        # Print detailed results for each configuration
+        # Print detailed results for each successful configuration.
         for idx in evaluation_order:
             result = results[idx]
             print(f"Configuration {idx}: {result['env_type']}")
@@ -416,6 +475,7 @@ class Trainer:
         Args:
             metrics: Metrics dictionary from training.
         """
+        # Guard against empty metrics so the summary doesn't crash.
         if not metrics:
             print("  Metrics: None")
             return
@@ -441,17 +501,21 @@ class Trainer:
         Returns:
             Saved file path or None when no trajectory file exists.
         """
+        # Access the agent model directory to locate the latest trajectory output.
         agent = getattr(eval_trainer._agent_mgr, "agent", None)
         model_dir = getattr(agent, "model_dir", None) if agent is not None else None
         source_path = os.path.join(model_dir, "trajectory.png") if model_dir else "trajectory.png"
 
+        # If no trajectory image was produced, do nothing.
         if not os.path.exists(source_path):
             return None
 
+        # Timestamp to avoid name collisions when running multiple configs quickly.
         time_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         target_name = f"trajectory_{sequence_index}_{time_stamp}.png"
         target_path = os.path.join(model_dir, target_name) if model_dir else target_name
 
+        # Atomic rename/replace to keep the latest file consistent.
         os.replace(source_path, target_path)
         return target_path
 
