@@ -9,7 +9,13 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from .telemetry_exporter import TelemetryExporter
+from .telemetry_exporter import TelemetryExporter, _DEFAULT_EXPORT_DIR
+from .util import _timestamp_utc
+from fw.config import (
+    AIRSIM_BRIDGE_LOG_FILENAME,
+    AIRSIM_METADATA_FILENAME,
+    AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE,
+)
 
 
 def get_export_directory(export_dir: Optional[str | Path] = None) -> Path:
@@ -17,14 +23,9 @@ def get_export_directory(export_dir: Optional[str | Path] = None) -> Path:
     if export_dir is not None:
         path = Path(export_dir)
     else:
-        path = Path(__file__).resolve().parents[4] / "exports"
+        path = _DEFAULT_EXPORT_DIR
     path.mkdir(parents=True, exist_ok=True)
     return path
-
-
-def _timestamp_utc() -> str:
-    """Return the current UTC timestamp in ISO-8601 format."""
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _slugify(value: str) -> str:
@@ -125,10 +126,15 @@ class AirSimSessionExporter:
         self.export_dir = get_export_directory(export_dir) / self.session_name
         self.export_dir.mkdir(parents=True, exist_ok=True)
 
-        telemetry_name = telemetry_filename or f"{self.session_type}_session.csv"
+        telemetry_name = (
+            telemetry_filename
+            or AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE.format(
+                session_type=self.session_type
+            )
+        )
         self.telemetry_path = self.export_dir / telemetry_name
-        self.bridge_log_path = self.export_dir / "airsim_telemetry.csv"
-        self.metadata_path = self.export_dir / "metadata.json"
+        self.bridge_log_path = self.export_dir / AIRSIM_BRIDGE_LOG_FILENAME
+        self.metadata_path = self.export_dir / AIRSIM_METADATA_FILENAME
 
         self._exporter = TelemetryExporter(
             session_type=self.session_type,
@@ -194,6 +200,22 @@ class AirSimSessionExporter:
         """Flush everything and close the underlying exporter."""
         self._exporter.close()
 
+    def __enter__(self) -> "AirSimSessionExporter":
+        """Enter runtime context for automatic resource management."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type,
+        exc_value,
+        traceback,
+    ) -> None:
+        """Ensure exporter is closed when exiting context manager."""
+        try:
+            self.save()
+        finally:
+            self.close()
+
 
 def build_framework_visualisation_row(
     env,
@@ -228,8 +250,30 @@ def build_framework_visualisation_row(
         A flat CSV-friendly dictionary describing the current visualisation
         step.
     """
-    ship_pos = env.ship_pos[0]
-    state = env.phys_sims[0].state
+    ship_pos = (0.0, 0.0)
+    if hasattr(env, "ship_pos") and env.ship_pos:
+        try:
+            ship_pos = env.ship_pos[ship_index]
+        except Exception:
+            ship_pos = env.ship_pos[0] if env.ship_pos else (0.0, 0.0)
+    if ship_pos is None or (isinstance(ship_pos, (list, tuple, np.ndarray)) and len(ship_pos) == 0):
+        ship_pos = (0.0, 0.0)
+
+    state = None
+    if hasattr(env, "phys_sims") and env.phys_sims:
+        try:
+            state = env.phys_sims[ship_index].state
+        except Exception:
+            state = env.phys_sims[0].state if env.phys_sims else None
+    if state is None:
+        class _DefaultState:
+            """Default motion state used when AirSim state is unavailable."""
+
+            heading = 0.0
+            u = 0.0
+
+        state = _DefaultState()
+
     action_arr = np.asarray(action).reshape(-1)
     controls = getattr(bridge, "_controls", None)
     checkpoint_index = _get_ship_scalar(getattr(env, "checkpoint_index", 0), ship_index=ship_index, default=0)
@@ -243,8 +287,8 @@ def build_framework_visualisation_row(
         "y": float(ship_pos[1]),
         "pos_x": float(ship_pos[0]),
         "pos_y": float(ship_pos[1]),
-        "heading_deg": float(np.rad2deg(float(state.heading))),
-        "speed": float(state.u),
+        "heading_deg": float(np.rad2deg(float(getattr(state, "heading", 0.0)))),
+        "speed": float(getattr(state, "u", 0.0)),
         "reward": float(reward),
         "steering": float(action_arr[0]) if action_arr.size >= 1 else 0.0,
         "throttle": float(action_arr[1]) if action_arr.size >= 2 else 0.0,
