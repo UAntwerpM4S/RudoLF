@@ -17,22 +17,24 @@ def test_prepare_fossen_visualisation_updates_internal_simulation_speed(monkeypa
     """Preparing visualisation should update the cached bridge speed value."""
     bridge = AirSimBridge.__new__(AirSimBridge)
     bridge._connected = True
+    bridge._last_health_check = 0.0
+    bridge.config = SimpleNamespace(health_check_interval=10)
     bridge._simulation_speed = 1.0
     bridge._controls = None
     bridge.coord_transform = None
     bridge.render_z = 0.0
+    client_speed_values = []
     bridge._client = SimpleNamespace(
         simGetVehiclePose=lambda: SimpleNamespace(position=SimpleNamespace(z_val=12.5)),
         setCarControls=lambda controls: None,
+        simSetSimulationSpeed=lambda value: client_speed_values.append(float(value)),
     )
+    bridge._client_speed = None
+
     bridge._airsim = SimpleNamespace(CarControls=lambda: SimpleNamespace(throttle=0.0, steering=0.0, brake=0.0))
 
     monkeypatch.setattr(bridge, "load_world_save", lambda save_slot: None)
-    monkeypatch.setattr(
-        bridge,
-        "set_simulation_speed",
-        lambda value: setattr(bridge, "_simulation_speed", float(value)),
-    )
+    monkeypatch.setattr(AirSimBridge, "_ensure_connected", lambda self: True)
 
     def _fake_load_saved_calibration_reference(client, draw_reference=True):
         """Return a dummy coordinate transform and metadata payload.
@@ -62,3 +64,4 @@ def test_prepare_fossen_visualisation_updates_internal_simulation_speed(monkeypa
             _sys.modules[module_name] = previous_module
 
     assert bridge._simulation_speed == 20.0
+    assert client_speed_values == [20.0]
