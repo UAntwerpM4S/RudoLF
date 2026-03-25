@@ -15,13 +15,14 @@ import logging
 import queue
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+from .util import _timestamp_utc
+
 logger = logging.getLogger(__name__)
 
-_DEFAULT_EXPORT_DIR = Path(__file__).resolve().parents[2] / "exports"
+_DEFAULT_EXPORT_DIR = Path(__file__).resolve().parents[4] / "exports"
 _STOP_SENTINEL = object()
 _DEFAULT_FIELDNAMES = [
     "step",
@@ -49,11 +50,6 @@ _DEFAULT_FIELDNAMES = [
 ]
 
 
-def _timestamp_utc() -> str:
-    """Return the current UTC timestamp in ISO-8601 format."""
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _json_safe(value: Any) -> Any:
     """Recursively convert values into JSON-serializable structures.
 
@@ -76,7 +72,12 @@ def _json_safe(value: Any) -> Any:
 
 
 class TelemetryExporter:
-    """Append-safe CSV telemetry writer with metadata export and crash guard."""
+    """Append-safe CSV telemetry writer with metadata export and crash guard.
+
+    This class makes use of a background writer thread to flush buffered rows.
+    Callers must call :meth:`close` explicitly to stop the worker thread cleanly
+    (or use :func:`atexit` guard if relying on process shutdown behavior).
+    """
 
     def __init__(
         self,
@@ -179,10 +180,12 @@ class TelemetryExporter:
             payload.update(row)
         payload.update(kwargs)
         serialized = {name: payload.get(name, "") for name in self._fieldnames}
-        self._buffer.append(serialized)
-        self._total_steps += 1
-        if len(self._buffer) >= self._flush_interval:
-            self._flush_buffer()
+
+        with self._lock:
+            self._buffer.append(serialized)
+            self._total_steps += 1
+            if len(self._buffer) >= self._flush_interval:
+                self._flush_buffer()
 
     def _flush_buffer(self) -> None:
         """Hand buffered rows to the background writer thread."""
@@ -236,7 +239,13 @@ class TelemetryExporter:
         self._saved = True
 
     def close(self) -> None:
-        """Flush pending rows, stop the worker thread, and close the CSV file."""
+        """Flush pending rows, stop the worker thread, and close the CSV file.
+
+        Important:
+            This method must be called explicitly once the exporter is no longer
+            needed, to ensure the background writer thread is stopped reliably
+            and file handles are closed.
+        """
         if self._closed:
             return
 
