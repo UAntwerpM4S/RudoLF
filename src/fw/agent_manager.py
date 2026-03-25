@@ -323,7 +323,8 @@ class AgentManager:
             live_animation: bool = False,
             env_color_index: int = 0,
             airsim_bridge: AirSimBridge = None,
-    ) -> None:
+            return_summary: bool = False,
+        ) -> dict | None:
 
         """
         Run and visualize a trained agent in the environment over multiple episodes.
@@ -333,6 +334,7 @@ class AgentManager:
             live_animation (bool, optional): Enable live animation of the agent in the environment.
             env_color_index (int, optional): Index of the environment color.
             airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
+            return_summary (bool, optional): Return evaluation summary metrics when available.
 
         Raises:
             RuntimeError: If no agent is created.
@@ -356,6 +358,7 @@ class AgentManager:
 
         with self.smoothing(env):
             if hasattr(env, "ship_pos"):
+                evaluation_summary = None
                 # Store results for each episode
                 all_paths = []
                 all_heading_errors = []
@@ -469,10 +472,24 @@ class AgentManager:
                 print(f"Mean Rudder Angle Change (mRAC): {mRAC:.4f}")
                 print(f"Mean LOS Guidance Heading Error (mHE): {mHE:.3f} rad")
 
+                evaluation_summary = {
+                    "average_reward": float(avg_reward),
+                    "best_episode_reward": float(max(total_rewards)),
+                    "worst_episode_reward": float(min(total_rewards)),
+                    "mu": float(mu),
+                    "Mu": float(Mu),
+                    "mTEI": float(mTEI),
+                    "MTE": float(MTE),
+                    "mRA": float(mRA),
+                    "MRA": float(MRA),
+                    "mRAC": float(mRAC),
+                    "mHE": float(mHE),
+                }
+
                 try:
                     # AirSimEnv has no obstacles/overall for matplotlib — skip trajectory plot.
                     if not _ms:
-                        return
+                        return evaluation_summary if return_summary else None
 
                     # Create a figure with two subplots
                     if self._overlay_active and self._fig is not None:
@@ -657,6 +674,9 @@ class AgentManager:
                     # Cleanup the environment
                     if hasattr(env, "fh_sim"):
                         env.fh_sim.dispose()
+
+                if return_summary:
+                    return evaluation_summary
             else:
                 # Reset the environment
                 obs, _ = env.reset()
@@ -693,6 +713,8 @@ class AgentManager:
                     self._fig = None
                     self._axes = None
                     self._overlay_active = False
+
+                return None
 
 
     def get_env(self):
