@@ -49,6 +49,7 @@ class PPOAgent(BaseAgent):
         Returns:
             np.ndarray: Computed advantages as a NumPy array.
         """
+
         advantages = np.zeros_like(rewards, dtype=np.float32)
         last_gae = 0.0
 
@@ -84,6 +85,7 @@ class PPOAgent(BaseAgent):
                 Helps stabilize learning when reward scales vary significantly. Defaults to False.
             **kwargs: Keyword arguments passed to the BaseAgent initializer.
         """
+
         super().__init__(*args, **kwargs)
 
         # Handle discrete and continuous action spaces
@@ -111,6 +113,7 @@ class PPOAgent(BaseAgent):
     def policy(self):
         """Policy.
         """
+
         return self._policy
 
 
@@ -121,6 +124,7 @@ class PPOAgent(BaseAgent):
         Args:
             value: the policy.
         """
+
         self._policy = value
 
 
@@ -133,6 +137,7 @@ class PPOAgent(BaseAgent):
         Returns:
             Normalized rewards with zero mean and unit variance.
         """
+
         # Welford's algorithm for running stats
         batch_mean = np.mean(rewards)
         batch_var = np.var(rewards)
@@ -165,6 +170,7 @@ class PPOAgent(BaseAgent):
         Returns:
             Tuple: A tuple containing the predicted action and log probability.
         """
+
         actions, log_probs, values = self.policy.predict(state, deterministic)
         return actions, log_probs, values
 
@@ -186,6 +192,7 @@ class PPOAgent(BaseAgent):
         Returns:
             float: Average loss value after training.
         """
+
         if not all_episodes_data:
             return float('nan')
 
@@ -291,6 +298,7 @@ class PPOAgent(BaseAgent):
         Returns:
             int: The index of the first True value, or -1 if not found.
         """
+
         # Find the index of the first True value
         true_indices = np.where(bool_array)[0]
 
@@ -528,6 +536,7 @@ class PPOAgent(BaseAgent):
         Args:
             stop_condition (StopCondition): Condition that defines when training should stop.
         """
+
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
 
         last_save_index = 0
@@ -611,6 +620,7 @@ class PPOAgent(BaseAgent):
             training_metrics (list): A list of dictionaries containing the training metrics.
 
         """
+
         if not training_metrics:
             print("Warning: No training metrics to write.")
             return
@@ -637,6 +647,7 @@ class PPOAgent(BaseAgent):
             RuntimeError: If no agent is created or the policy fails to load.
             ValueError: If the loaded policy dimensions do not match the environment.
         """
+
         try:
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
@@ -667,6 +678,7 @@ class PPOAgent(BaseAgent):
         Raises:
             RuntimeError: If no agent is created or the policy fails to save.
         """
+
         try:
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
@@ -680,4 +692,5 @@ class PPOAgent(BaseAgent):
         """
         Set policy in evaluation mode.
         """
+
         self.policy.network.eval()
