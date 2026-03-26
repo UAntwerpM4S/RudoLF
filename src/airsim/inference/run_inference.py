@@ -96,6 +96,7 @@ from fw.common.airsim.tools.airsim_export import (  # noqa: E402
     AirSimSessionExporter,
     build_airsim_env_snapshot,
 )
+from fw.config import AIRSIM_INFERENCE_TRAJECTORY_PLOT_FILENAME  # noqa: E402
 from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 from fw.policies.ppo_policy import PPOPolicy                   # noqa: E402
 
@@ -449,15 +450,7 @@ def run_inference(
     :class:`AirSimBridge`, loads the world save ``"simulator_1"`` automatically
     inside :class:`AirSimEnv`, and runs ``num_episodes`` of live ship control.
 
-    The control mode is detected from the model filename:
-
-    * Filename contains ``pysimenv`` / ``fhsimenv`` / ``fossen``
-      → Fossen-translation mode (Fossen→UE5 action formula applied)
-
-    * Filename contains ``airsimenv`` / ``ue5``
-      → UE5-direct mode (actions sent straight to bridge, no Fossen formula)
-
-    This can be overridden with ``force_mode="fossen"`` or ``force_mode="ue5"``.
+    The control mode is detected from the model filename.
 
     Args:
         model_path: Path to the ``.zip`` PPO model file.
@@ -473,29 +466,26 @@ def run_inference(
     """
     _BANNER = "=" * 62
     resolved_model_path = resolve_model_path(model_path, _SRC_DIR)
-
-    # ── Detect / resolve control mode ──────────────────────────────────────
     mode = force_mode if force_mode in ("fossen", "ue5") else detect_model_origin(model_path)
 
     if mode == "ue5":
         print(_BANNER)
         print("  UE5-NATIVE DIRECT CONTROL MODE")
         print(f"  Model  : {Path(model_path).name}")
-        print("  Actions: bridge.set_controls() – linear mapping  [ NO Fossen formula ]")
+        print("  Actions: bridge.set_controls() - linear mapping  [ NO Fossen formula ]")
         print("  PID    : NOT USED")
         print(_BANNER)
     else:
         print(_BANNER)
         print("  FOSSEN-TRANSLATION MODE  [compatibility path]")
         print(f"  Model  : {Path(model_path).name}")
-        print("  Actions: Fossen→UE5 affine formula → bridge.set_controls()")
+        print("  Actions: Fossen->UE5 affine formula -> bridge.set_controls()")
         print("  Prefer : python -m airsim.inference.run_visualise_models")
         print("  PID    : NOT USED")
         print(_BANNER)
 
-    # ── Load PPO policy ─────────────────────────────────────────────────────
     policy = load_policy(model_path, device=device)
-    session_exporter = AirSimSessionExporter(
+    with AirSimSessionExporter(
         session_name=f"inference_{resolved_model_path.stem}",
         metadata={
             "script": "airsim.inference.run_inference",
@@ -515,133 +505,118 @@ def run_inference(
                 "simulation_speed": 1.0,
             },
         },
-    )
+    ) as session_exporter:
+        logger.info("Connecting to UE5 and loading world save 'simulator_1'...")
+        env = AirSimEnv(
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            ip=ip,
+            port=port,
+            max_steps=max_steps,
+            training_mode=False,
+            use_pause_stepping=False,
+            simulation_speed=1.0,
+            csv_log_path=str(session_exporter.bridge_log_path),
+        )
+        session_exporter.update_metadata(
+            {
+                "resolved_model_path": str(resolved_model_path),
+                "export_directory": str(session_exporter.export_dir),
+                "bridge_telemetry_path": str(session_exporter.bridge_log_path),
+            }
+        )
 
-    # ── Initialise AirSimEnv ────────────────────────────────────────────────
-    # AirSimEnv.__init__ performs:
-    #   1. AirSimBridge connection (no PID in the bridge)
-    #   2. simSetSaveSlot("simulator_1") + simRequestLoad()
-    #      → restores MYZAKO ship to its exact Fossen starting position
-    #   3. simSetSimulationSpeed(1.0)  → real-time for visualization
-    logger.info("Connecting to UE5 and loading world save 'simulator_1'…")
-    env = AirSimEnv(
-        ship_pos=ship_pos,
-        target_pos=target_pos,
-        ip=ip,
-        port=port,
-        max_steps=max_steps,
-        training_mode=False,
-        use_pause_stepping=False,
-        simulation_speed=1.0,
-        csv_log_path=str(session_exporter.bridge_log_path),
-    )
-    session_exporter.update_metadata(
-        {
-            "resolved_model_path": str(resolved_model_path),
-            "export_directory": str(session_exporter.export_dir),
-            "bridge_telemetry_path": str(session_exporter.bridge_log_path),
-        }
-    )
+        bridge: AirSimBridge = env.bridge
+        logger.info(
+            "AirSimBridge connected=%s | mode=%s | episodes=%d",
+            bridge.is_connected,
+            mode.upper(),
+            num_episodes,
+        )
 
-    bridge: AirSimBridge = env.bridge
-    logger.info(
-        "AirSimBridge connected=%s | mode=%s | episodes=%d",
-        bridge.is_connected,
-        mode.upper(),
-        num_episodes,
-    )
+        try:
+            import matplotlib.pyplot as plt
+            has_mpl = True
+        except ImportError:
+            has_mpl = False
+            logger.warning("matplotlib not installed - trajectory plotting disabled.")
 
-    # ── Optional matplotlib trajectory plot ────────────────────────────────
-    try:
-        import matplotlib.pyplot as plt
-        _HAS_MPL = True
-    except ImportError:
-        _HAS_MPL = False
-        logger.warning("matplotlib not installed – trajectory plotting disabled.")
+        if has_mpl:
+            fig, ax = plt.subplots(figsize=(10, 10))
+            ax.set_title(f"RudoLF Inference  [{mode.upper()}]  -  {Path(model_path).name}", fontsize=11)
+            ax.set_xlabel("Fossen X / East (m)")
+            ax.set_ylabel("Fossen Y / North (m)")
+            ax.set_aspect("equal", adjustable="datalim")
+            colors = plt.cm.tab10.colors  # type: ignore[attr-defined]
 
-    if _HAS_MPL:
-        fig, ax = plt.subplots(figsize=(10, 10))
-        ax.set_title(f"RudoLF Inference  [{mode.upper()}]  –  {Path(model_path).name}", fontsize=11)
-        ax.set_xlabel("Fossen X / East (m)")
-        ax.set_ylabel("Fossen Y / North (m)")
-        ax.set_aspect("equal", adjustable="datalim")
-        _colors = plt.cm.tab10.colors  # type: ignore[attr-defined]
+        last_traj_x: List[float] = []
+        last_traj_y: List[float] = []
 
-    last_traj_x: List[float] = []
-    last_traj_y: List[float] = []
+        try:
+            for ep in range(num_episodes):
+                print(f"\n-- Episode {ep + 1}/{num_episodes}  [{mode.upper()}] --")
 
-    # ── Episode loop ────────────────────────────────────────────────────────
-    try:
-        for ep in range(num_episodes):
-            print(f"\n── Episode {ep + 1}/{num_episodes}  [{mode.upper()}] ──")
+                if mode == "fossen":
+                    traj_x, traj_y, total_reward = _run_episode_fossen(
+                        env,
+                        policy,
+                        max_steps,
+                        episode_index=ep + 1,
+                        exporter=session_exporter,
+                        model_origin=mode,
+                    )
+                    outcome = f"reward={total_reward:+.1f}"
+                else:
+                    traj_x, traj_y, total_reward = _run_episode_ue5_direct(
+                        env,
+                        policy,
+                        max_steps,
+                        episode_index=ep + 1,
+                        exporter=session_exporter,
+                        model_origin=mode,
+                    )
+                    outcome = "direct-control (no reward)"
 
-            if mode == "fossen":
-                # Fossen-trained policy: AirSimEnv.step() applies the
-                # Fossen→UE5 affine throttle formula before calling bridge.
-                traj_x, traj_y, total_reward = _run_episode_fossen(
-                    env,
-                    policy,
-                    max_steps,
-                    episode_index=ep + 1,
-                    exporter=session_exporter,
-                    model_origin=mode,
+                steps_run = len(traj_x) - 1
+                print(f"   Finished: {steps_run} steps | {outcome}")
+                last_traj_x, last_traj_y = traj_x, traj_y
+
+                if has_mpl and traj_x:
+                    col = colors[ep % len(colors)]
+                    label = f"Ep {ep + 1}  r={total_reward:.0f}" if mode == "fossen" else f"Ep {ep + 1}"
+                    ax.plot(traj_x, traj_y, color=col, linewidth=1.3, label=label)
+                    ax.plot(traj_x[0], traj_y[0], "o", color=col, markersize=7)
+                    ax.plot(
+                        traj_x[-1],
+                        traj_y[-1],
+                        "x",
+                        color=col,
+                        markersize=9,
+                        markeredgewidth=2,
+                    )
+                session_exporter.update_metadata(
+                    {
+                        "last_episode_index": ep + 1,
+                        "last_outcome": outcome,
+                        "last_episode_steps": steps_run,
+                        "last_ship_position": {
+                            "x": float(traj_x[-1]) if traj_x else None,
+                            "y": float(traj_y[-1]) if traj_y else None,
+                        },
+                    }
                 )
-                outcome = f"reward={total_reward:+.1f}"
-            else:
-                # UE5-trained policy: actions sent directly to bridge via
-                # _ue5_direct_step() – no Fossen mapping applied.
-                traj_x, traj_y, total_reward = _run_episode_ue5_direct(
-                    env,
-                    policy,
-                    max_steps,
-                    episode_index=ep + 1,
-                    exporter=session_exporter,
-                    model_origin=mode,
-                )
-                outcome = "direct-control (no reward)"
 
-            steps_run = len(traj_x) - 1
-            print(f"   Finished: {steps_run} steps | {outcome}")
-            last_traj_x, last_traj_y = traj_x, traj_y
+            if has_mpl and last_traj_x:
+                ax.legend(loc="best")
+                plt.tight_layout()
+                out_path = session_exporter.export_dir / AIRSIM_INFERENCE_TRAJECTORY_PLOT_FILENAME
+                plt.savefig(out_path, dpi=150)
+                print(f"Trajectory plot saved to '{out_path}'.")
+                plt.show()
+        finally:
+            env.close()
+            print("\nInference complete - AirSim connection closed.")
 
-            if _HAS_MPL and traj_x:
-                col = _colors[ep % len(_colors)]
-                label = f"Ep {ep + 1}  r={total_reward:.0f}" if mode == "fossen" else f"Ep {ep + 1}"
-                ax.plot(traj_x, traj_y, color=col, linewidth=1.3, label=label)
-                ax.plot(traj_x[0], traj_y[0], "o", color=col, markersize=7)
-                ax.plot(traj_x[-1], traj_y[-1], "x", color=col,
-                        markersize=9, markeredgewidth=2)
-            session_exporter.update_metadata(
-                {
-                    "last_episode_index": ep + 1,
-                    "last_outcome": outcome,
-                    "last_episode_steps": steps_run,
-                    "last_ship_position": {
-                        "x": float(traj_x[-1]) if traj_x else None,
-                        "y": float(traj_y[-1]) if traj_y else None,
-                    },
-                }
-            )
-    finally:
-        # Always close cleanly: stops the vehicle, restores real-time speed
-        env.close()
-        session_exporter.save()
-        session_exporter.close()
-        print("\nInference complete – AirSim connection closed.")
-
-    # ── Save & show trajectory plot ─────────────────────────────────────────
-    if _HAS_MPL and last_traj_x:
-        ax.legend(loc="best")
-        plt.tight_layout()
-        out_path = session_exporter.export_dir / "inference_trajectory.png"
-        plt.savefig(out_path, dpi=150)
-        print(f"Trajectory plot saved to '{out_path}'.")
-        plt.show()
-
-
-# ─────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser for AirSim inference runs.

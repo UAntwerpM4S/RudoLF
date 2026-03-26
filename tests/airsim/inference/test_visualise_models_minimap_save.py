@@ -6,10 +6,16 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import airsim.inference.run_visualise_models as module
+from fw.config import (
+    AIRSIM_BRIDGE_LOG_FILENAME,
+    AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE,
+)
 
 
 class _FakeBridge:
     """Minimal bridge stub for visualisation tests."""
+
+    created = []
 
     def __init__(self, *args, **kwargs) -> None:
         """Initialise the fake bridge.
@@ -22,6 +28,7 @@ class _FakeBridge:
         self.is_connected = True
         self._controls = None
         self._airsim = SimpleNamespace(CarControls=lambda: SimpleNamespace(throttle=0.0, steering=0.0, brake=0.0))
+        type(self).created.append(self)
 
     def prepare_fossen_visualisation(self, **kwargs) -> None:
         """Pretend to prepare UE5 visualisation state.
@@ -110,7 +117,7 @@ class _FakePolicy:
 class _FakeMinimap:
     """Minimap stub exposing finish/close for verification."""
 
-    finished = False
+    created = []
 
     def __init__(self, env, save_dir=".", **kwargs) -> None:
         """Initialise the fake minimap.
@@ -121,6 +128,8 @@ class _FakeMinimap:
             **kwargs: Ignored minimap options.
         """
         self.env = env
+        self.finished = False
+        type(self).created.append(self)
 
     def update(self, env) -> None:
         """Accept a minimap update call.
@@ -137,7 +146,7 @@ class _FakeMinimap:
             total_reward: Episode reward.
             episode: One-based episode index.
         """
-        type(self).finished = True
+        self.finished = True
 
     def close(self) -> None:
         """Close the fake minimap."""
@@ -172,8 +181,11 @@ class _FakeExporter:
         self.session_type = session_type
         self.metadata = dict(metadata or {})
         self.export_dir = Path(export_dir or "exports") / session_name
-        self.telemetry_path = self.export_dir / (telemetry_filename or f"{session_type}_session.csv")
-        self.bridge_log_path = self.export_dir / "airsim_telemetry.csv"
+        self.telemetry_path = self.export_dir / (
+            telemetry_filename
+            or AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE.format(session_type=session_type)
+        )
+        self.bridge_log_path = self.export_dir / AIRSIM_BRIDGE_LOG_FILENAME
         self.rows = []
         self.saved = False
         self.closed = False
@@ -222,6 +234,15 @@ class _FakeExporter:
         """Mark the fake exporter as closed."""
         self.closed = True
 
+    def __enter__(self):
+        """Support exporter context-manager usage."""
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        """Mirror real exporter cleanup semantics."""
+        self.save()
+        self.close()
+
 
 def test_visualise_models_does_not_save_matplotlib_minimap_by_default(monkeypatch):
     """Default visualisation should not save a matplotlib minimap snapshot."""
@@ -235,7 +256,9 @@ def test_visualise_models_does_not_save_matplotlib_minimap_by_default(monkeypatc
     monkeypatch.setattr(module, "_animate_framework_state", lambda *args, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
     monkeypatch.setattr(module, "VisualiseModelsMinimap", _FakeMinimap)
 
-    _FakeMinimap.finished = False
+    _FakeBridge.created = []
+    _FakeMinimap.created = []
+    _FakeBridge.created = []
     _FakeExporter.created = []
     module.run_visualise_models(
         model_path="models/PySimEnv_PPO_policy.zip",
@@ -245,7 +268,9 @@ def test_visualise_models_does_not_save_matplotlib_minimap_by_default(monkeypatc
         max_steps=1,
     )
 
-    assert _FakeMinimap.finished is False
+    assert len(_FakeMinimap.created) == 1
+    assert _FakeMinimap.created[0].finished is False
+    assert _FakeBridge.created[-1]._controls is not None
 
 
 def test_visualise_models_exports_rows_and_bridge_log_path(monkeypatch):
@@ -269,8 +294,41 @@ def test_visualise_models_exports_rows_and_bridge_log_path(monkeypatch):
 
     exporter = _FakeExporter.created[-1]
     assert exporter.rows
+    row = exporter.rows[0]
+    assert isinstance(row, dict)
+    assert "reward" in row
+    assert "outcome" in row
     assert exporter.saved is True
     assert exporter.closed is True
     assert exporter.session_type == "visualisation"
-    assert exporter.telemetry_path.name == "visualisation_session.csv"
-    assert exporter.bridge_log_path.name == "airsim_telemetry.csv"
+    assert exporter.telemetry_path.name == AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE.format(session_type="visualisation")
+    assert exporter.bridge_log_path.name == AIRSIM_BRIDGE_LOG_FILENAME
+    assert _FakeBridge.created[-1]._controls is not None
+
+
+def test_visualise_models_saves_matplotlib_minimap_when_enabled(monkeypatch):
+    """Visualisation should finish the minimap when save is enabled."""
+    monkeypatch.setattr(module, "load_policy", lambda *args, **kwargs: _FakePolicy())
+    monkeypatch.setattr(module, "AirSimBridge", _FakeBridge)
+    monkeypatch.setattr(module, "AirSimSessionExporter", _FakeExporter)
+    monkeypatch.setattr(module, "resolve_model_path", lambda model_path, src_dir: Path(model_path))
+    monkeypatch.setattr(module.VisualiseFossen, "_build_environment", lambda self, selected_env, max_steps: _FakeEnv())
+    monkeypatch.setattr(module.VisualiseFossen, "_resolve_environment_name", lambda self, model_path: "PySimEnv")
+    monkeypatch.setattr(module, "_framework_motion_state_from_env", lambda env, bridge: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(module, "_animate_framework_state", lambda *args, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
+    monkeypatch.setattr(module, "VisualiseModelsMinimap", _FakeMinimap)
+
+    _FakeBridge.created = []
+    _FakeMinimap.created = []
+    _FakeExporter.created = []
+    module.run_visualise_models(
+        model_path="models/PySimEnv_PPO_policy.zip",
+        show_minimap=True,
+        use_ue5_camera_minimap=False,
+        save_matplotlib_minimap=True,
+        num_episodes=1,
+        max_steps=1,
+    )
+
+    assert len(_FakeMinimap.created) == 1
+    assert _FakeMinimap.created[0].finished is True
