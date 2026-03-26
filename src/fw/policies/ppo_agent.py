@@ -96,8 +96,8 @@ class PPOAgent(BaseAgent):
             self.input_dim = self.observation_space.shape[-1]
         else:
             self.input_dim = self.observation_space.shape[0]
-        self.policy = PPOPolicy(self.input_dim, self.output_dim, self.device)
-        self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
+        self._policy = PPOPolicy(self.input_dim, self.output_dim, self.device)
+        self.optimizer = optim.Adam(self._policy.network.parameters(), lr=self.learning_rate)
         self.max_nbr_iterations = max_nbr_iterations
         self.normalize = normalize
         self._vec_env = None
@@ -105,6 +105,23 @@ class PPOAgent(BaseAgent):
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4  # avoid division by zero
+
+
+    @property
+    def policy(self):
+        """Policy.
+        """
+        return self._policy
+
+
+    @policy.setter
+    def policy(self, value):
+        """Policy.
+
+        Args:
+            value: the policy.
+        """
+        self._policy = value
 
 
     def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
@@ -137,7 +154,7 @@ class PPOAgent(BaseAgent):
         return (rewards - self.reward_mean) / (np.sqrt(self.reward_var) + 1e-8)
 
 
-    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple:
+    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Predict an action for a given state using the policy.
 

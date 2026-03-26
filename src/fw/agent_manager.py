@@ -12,6 +12,7 @@ from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
 from airsim.communication.airsim_bridge import AirSimBridge
+from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
@@ -155,7 +156,8 @@ class AgentManager:
             policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
 
         if PPO_POLICY_NAME == self._agent_type:
-            self._agent = PPOAgent(environment=env, **self._hyperparameters)
+            single_ppo = PPOAgent(environment=env.environments[0], **self._hyperparameters)
+            self._agent = MultiPPOAgent(agents=[single_ppo],env=env)
         elif PPO2_POLICY_NAME == self._agent_type:
             self._agent = PPO2Agent(environment=env, **self._hyperparameters)
         else:
