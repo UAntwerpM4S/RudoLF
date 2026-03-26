@@ -227,6 +227,7 @@ def build_framework_visualisation_row(
     outcome: str,
     control_mode: str = "framework_visualisation",
     ship_index: int = 0,
+    model_origin: str = "framework",
 ) -> Dict[str, Any]:
     """Build one lightweight visualisation telemetry row from framework state.
 
@@ -299,6 +300,6 @@ def build_framework_visualisation_row(
         "step_latency_s": "",
         "ue5_timestamp": "",
         "outcome": str(outcome),
-        "model_origin": "fossen",
+        "model_origin": str(model_origin),
         "control_mode": str(control_mode),
     }

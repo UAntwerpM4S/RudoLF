@@ -1,8 +1,4 @@
-"""Modular model visualisation runner for UE5.
-
-This entrypoint generalizes the previous Fossen-only visualiser so multiple
-framework model families can reuse the same UE5 mirroring pipeline.
-"""
+"""Modular model visualisation runner for UE5."""
 
 from __future__ import annotations
 
@@ -25,22 +21,26 @@ from airsim.config.airsim_config import (  # noqa: E402
     DEFAULT_AIRSIM_SAVE_SLOT,
     DEFAULT_AIRSIM_SIMULATION_SPEED,
 )
-from airsim.inference.visualisation_models.run_visualise_fossen import (  # noqa: E402
-    _animate_framework_state,
-    _build_fossen_environment,
-    _detect_fossen_environment,
-    _framework_motion_state_from_env,
-    load_policy,
-)
 from airsim.inference.minimap_models_ue5 import (  # noqa: E402
     UE5TopDownMinimap,
     VisualiseModelsMinimap,
 )
-from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
+from airsim.inference.visualisation_models import (  # noqa: E402
+    ModelVisualisationAdapter,
+    get_supported_environment_names,
+    get_supported_model_families,
+    resolve_visualisation_adapter,
+)
+from airsim.inference.visualisation_models.model_adapters import (  # noqa: E402
+    _animate_framework_state,
+    _framework_motion_state_from_env,
+    load_policy,
+)
 from fw.common.airsim.tools.airsim_export import (  # noqa: E402
     AirSimSessionExporter,
     build_framework_visualisation_row,
 )
+from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -50,33 +50,33 @@ _DEFAULT_BRIDGE_TELEMETRY_HZ = 12.0
 _DEFAULT_STARTUP_SETTLE_S = 0.4
 
 
-class VisualiseFossen:
+class VisualiseModelsRunner:
     """Framework-physics visualiser that mirrors model output into UE5."""
 
-    def __init__(self, env_name: str = "auto") -> None:
-        """Initialize the instance.
-
-        Args:
-            env_name: Description.
-        """
+    def __init__(self, adapter: ModelVisualisationAdapter, env_name: str = "auto") -> None:
+        """Initialize the generic runner with a model-family adapter."""
+        self.adapter = adapter
         self.env_name = env_name
 
     def _resolve_environment_name(self, model_path: str) -> str:
-        """ resolve environment name.
+        """Resolve which framework environment should back the visualisation."""
+        return self.adapter.resolve_environment_name(model_path, self.env_name)
 
-        Args:
-            model_path: Description.
-        """
-        return _detect_fossen_environment(model_path, self.env_name)
+    def _load_policy(self, model_path: str, device: str):
+        """Load the framework policy used for replay."""
+        return self.adapter.load_policy(model_path, device=device)
 
     def _build_environment(self, selected_env: str, max_steps: int):
-        """ build environment.
+        """Construct the framework environment for replay."""
+        return self.adapter.build_environment(selected_env, max_steps=max_steps)
 
-        Args:
-            selected_env: Description.
-            max_steps: Description.
-        """
-        return _build_fossen_environment(selected_env, max_steps)
+    def _motion_state_from_env(self, env, bridge: AirSimBridge):
+        """Extract the current framework motion state."""
+        return self.adapter.motion_state_from_env(env, bridge)
+
+    def _animate_state(self, env, bridge: AirSimBridge, **kwargs):
+        """Mirror one framework state transition into UE5."""
+        return self.adapter.animate_state(env, bridge, **kwargs)
 
     def run(
         self,
@@ -115,60 +115,30 @@ class VisualiseFossen:
         bridge_telemetry_hz: float = _DEFAULT_BRIDGE_TELEMETRY_HZ,
         startup_settle_s: float = _DEFAULT_STARTUP_SETTLE_S,
     ) -> None:
-        """Run.
-
-        Args:
-            model_path: Description.
-            ip: Description.
-            port: Description.
-            max_steps: Description.
-            num_episodes: Description.
-            device: Description.
-            draw_calibration_reference: Description.
-            log_every: Description.
-            save_slot: Description.
-            simulation_speed: Description.
-            mirror_controls_in_ue5: Description.
-            animate_steering_in_ue5: Description.
-            animate_throttle_in_ue5: Description.
-            render_interpolation_steps: Description.
-            steering_visual_gain: Description.
-            throttle_visual_gain: Description.
-            use_kinematics_in_ue5: Description.
-            min_render_hz: Description.
-            max_translation_step: Description.
-            max_yaw_step_deg: Description.
-            lock_path_in_ue5: Description.
-            vehicle_object_name: Description.
-            show_minimap: Description.
-            use_ue5_camera_minimap: Description.
-            ue5_camera_name: Description.
-            ue5_camera_fov_deg: Description.
-            ue5_camera_height_m: Description.
-            ue5_camera_follow_heading: Description.
-            ue5_preview_window: Description.
-            ,: Description.
-        """
+        """Run one or more framework-model visualisation episodes."""
         selected_env = self._resolve_environment_name(model_path)
         resolved_model_path = resolve_model_path(model_path, _SRC_DIR)
+
         banner = "=" * 62
         print(banner)
         print("  MODEL VISUALISATION IN UE5")
         print(f"  Model      : {resolved_model_path.name}")
-        print(f"  Framework  : {selected_env}")
+        print(f"  Family     : {self.adapter.family}")
+        print(f"  Environment: {selected_env}")
         print(f"  Save slot  : {save_slot}")
         print(f"  Camera map : {'UE5 top-down' if use_ue5_camera_minimap else 'matplotlib minimap'}")
         print(banner)
 
-        policy = load_policy(model_path, device=device)
-        session_exporter = AirSimSessionExporter(
-            session_name=f"visualisation_{resolved_model_path.stem}",
+        policy = self._load_policy(model_path, device=device)
+        with AirSimSessionExporter(
+            session_name=f"visualisation_{self.adapter.family}_{resolved_model_path.stem}",
             metadata={
                 "script": "airsim.inference.run_visualise_models",
                 "model_path": str(resolved_model_path),
                 "model_name": resolved_model_path.name,
+                "model_family": self.adapter.family,
                 "environment_name": selected_env,
-                "model_origin": "fossen",
+                "model_origin": self.adapter.model_origin,
                 "configuration": {
                     "ip": ip or "127.0.0.1",
                     "port": port,
@@ -206,289 +176,306 @@ class VisualiseFossen:
                 },
             },
             session_type="visualisation",
-        )
-        session_exporter.update_metadata(
-            {
-                "resolved_model_path": str(resolved_model_path),
-                "export_directory": str(session_exporter.export_dir),
-                "bridge_telemetry_path": str(session_exporter.bridge_log_path),
-            }
-        )
-        bridge = None
-        env = None
-        minimap = None
+        ) as session_exporter:
+            session_exporter.update_metadata(
+                {
+                    "resolved_model_path": str(resolved_model_path),
+                    "export_directory": str(session_exporter.export_dir),
+                    "bridge_telemetry_path": str(session_exporter.bridge_log_path),
+                }
+            )
 
-        try:
-            bridge = AirSimBridge(
-                AirSimConfig(
-                    ip=ip,
-                    port=port,
-                    csv_log_path=str(session_exporter.bridge_log_path),
+            bridge = None
+            env = None
+            minimap = None
+
+            try:
+                bridge = AirSimBridge(
+                    AirSimConfig(
+                        ip=ip,
+                        port=port,
+                        csv_log_path=str(session_exporter.bridge_log_path),
+                    )
                 )
-            )
-            if not bridge.is_connected:
-                raise ConnectionError(
-                    f"AirSimBridge could not connect to UE5 at {ip or '127.0.0.1'}:{port}."
+                if not bridge.is_connected:
+                    raise ConnectionError(
+                        f"AirSimBridge could not connect to UE5 at {ip or '127.0.0.1'}:{port}."
+                    )
+
+                env = self._build_environment(selected_env, max_steps=max_steps)
+                max_yaw_step_rad = np.deg2rad(max_yaw_step_deg)
+                minimap_update_interval_s = 1.0 / max(float(minimap_update_hz), 1.0)
+                bridge_telemetry_interval_s = 1.0 / max(float(bridge_telemetry_hz), 1.0)
+                target_step_interval_s = env.time_step / max(float(simulation_speed), 1e-6)
+                target_step_rate_hz = 1.0 / max(target_step_interval_s, 1e-6)
+                steps_per_ue5_update = max(
+                    1,
+                    int(math.ceil(target_step_rate_hz / max(float(min_render_hz), 1.0))),
+                )
+                adaptive_settle_s = min(
+                    max(float(startup_settle_s), 0.0),
+                    max(0.05, target_step_interval_s * float(steps_per_ue5_update)),
+                )
+                last_minimap_update_at = 0.0
+                last_bridge_telemetry_at = 0.0
+
+                bridge.prepare_fossen_visualisation(
+                    save_slot=save_slot,
+                    simulation_speed=simulation_speed,
+                    draw_reference=draw_calibration_reference,
                 )
 
-            env = self._build_environment(selected_env, max_steps=max_steps)
-            max_yaw_step_rad = np.deg2rad(max_yaw_step_deg)
-            minimap_update_interval_s = 1.0 / max(float(minimap_update_hz), 1.0)
-            bridge_telemetry_interval_s = 1.0 / max(float(bridge_telemetry_hz), 1.0)
-            target_step_interval_s = env.time_step / max(float(simulation_speed), 1e-6)
-            target_step_rate_hz = 1.0 / max(target_step_interval_s, 1e-6)
-            steps_per_ue5_update = max(1, int(math.ceil(target_step_rate_hz / max(float(min_render_hz), 1.0))))
-            adaptive_settle_s = min(
-                max(float(startup_settle_s), 0.0),
-                max(0.05, target_step_interval_s * float(steps_per_ue5_update)),
-            )
-            last_minimap_update_at = 0.0
-            last_bridge_telemetry_at = 0.0
+                if not mirror_controls_in_ue5 and not animate_steering_in_ue5 and not animate_throttle_in_ue5:
+                    neutral_controls = bridge._airsim.CarControls()
+                    neutral_controls.throttle = 0.0
+                    neutral_controls.steering = 0.0
+                    neutral_controls.brake = 0.0
+                    bridge.set_controls(neutral_controls)
 
-            bridge.prepare_fossen_visualisation(
-                save_slot=save_slot,
-                simulation_speed=simulation_speed,
-                draw_reference=draw_calibration_reference,
-            )
+                for episode in range(num_episodes):
+                    print(f"\n-- Visualisation episode {episode + 1}/{num_episodes} --")
+                    obs, _ = env.reset()
 
-            if not mirror_controls_in_ue5 and not animate_steering_in_ue5 and not animate_throttle_in_ue5:
-                neutral_controls = bridge._airsim.CarControls()
-                neutral_controls.throttle = 0.0
-                neutral_controls.steering = 0.0
-                neutral_controls.brake = 0.0
-                bridge.set_controls(neutral_controls)
+                    if show_minimap:
+                        if minimap is not None:
+                            minimap.close()
+                        try:
+                            if use_ue5_camera_minimap:
+                                minimap = UE5TopDownMinimap(
+                                    bridge,
+                                    camera_name=ue5_camera_name,
+                                    fov_degrees=ue5_camera_fov_deg,
+                                    height_offset_m=ue5_camera_height_m,
+                                    follow_heading=ue5_camera_follow_heading,
+                                    enable_preview_window=ue5_preview_window,
+                                )
+                            else:
+                                minimap = VisualiseModelsMinimap(
+                                    env,
+                                    save_dir=str(session_exporter.export_dir),
+                                    max_fps=float(minimap_update_hz),
+                                )
+                        except Exception as exc:
+                            logger.warning("Minimap unavailable: %s", exc)
+                            minimap = None
 
-            for episode in range(num_episodes):
-                print(f"\n-- Visualisation episode {episode + 1}/{num_episodes} --")
-                obs, _ = env.reset()
+                    previous_motion_state = self._motion_state_from_env(env, bridge)
+                    previous_actuator_state = None
+                    previous_motion_state, previous_actuator_state = self._animate_state(
+                        env,
+                        bridge,
+                        target_motion_state=previous_motion_state,
+                        previous_motion_state=None,
+                        total_duration=0.0,
+                        interpolation_steps=1,
+                        mirror_controls_in_ue5=False,
+                        animate_steering_in_ue5=animate_steering_in_ue5,
+                        animate_throttle_in_ue5=animate_throttle_in_ue5,
+                        previous_actuator_state=None,
+                        steering_visual_gain=steering_visual_gain,
+                        throttle_visual_gain=throttle_visual_gain,
+                        use_kinematics_in_ue5=use_kinematics_in_ue5,
+                        min_render_hz=min_render_hz,
+                        max_translation_step=max_translation_step,
+                        max_yaw_step_rad=max_yaw_step_rad,
+                        lock_path_in_ue5=lock_path_in_ue5,
+                        vehicle_object_name=vehicle_object_name,
+                    )
 
-                if show_minimap:
-                    if minimap is not None:
-                        minimap.close()
+                    if bridge.is_connected and not vehicle_object_name:
+                        parked_controls = bridge._airsim.CarControls()
+                        parked_controls.throttle = 0.0
+                        parked_controls.steering = 0.0
+                        parked_controls.brake = 1.0
+                        bridge.set_controls(parked_controls)
+                    if adaptive_settle_s > 0.0:
+                        time.sleep(adaptive_settle_s)
                     try:
-                        if use_ue5_camera_minimap:
-                            minimap = UE5TopDownMinimap(
-                                bridge,
-                                camera_name=ue5_camera_name,
-                                fov_degrees=ue5_camera_fov_deg,
-                                height_offset_m=ue5_camera_height_m,
-                                follow_heading=ue5_camera_follow_heading,
-                                enable_preview_window=ue5_preview_window,
-                            )
-                        else:
-                            minimap = VisualiseModelsMinimap(
+                        bridge.get_state()
+                        last_bridge_telemetry_at = time.perf_counter()
+                    except Exception:
+                        pass
+
+                    total_reward = 0.0
+                    step = 0
+                    steps_since_ue5_update = 0
+                    last_log_t = 0.0
+                    episode_wall_start = time.perf_counter()
+
+                    while step < max_steps:
+                        policy_obs = obs[0] if isinstance(obs, np.ndarray) and obs.ndim > 1 else obs
+                        action, _, _ = policy.predict(policy_obs, deterministic=True)
+                        action = np.asarray(action).reshape(-1)
+
+                        obs, reward, done, truncated, _ = env.step(action)
+                        total_reward += float(reward)
+                        step += 1
+
+                        now = time.perf_counter()
+                        if minimap is not None and (now - last_minimap_update_at) >= minimap_update_interval_s:
+                            last_minimap_update_at = now
+                            minimap.update(env)
+
+                        target_motion_state = self._motion_state_from_env(env, bridge)
+                        steps_since_ue5_update += 1
+                        batched_steps = steps_since_ue5_update
+                        should_push_ue5 = (
+                            steps_since_ue5_update >= steps_per_ue5_update
+                            or done
+                            or truncated
+                        )
+                        if should_push_ue5:
+                            steps_since_ue5_update = 0
+                            previous_motion_state, previous_actuator_state = self._animate_state(
                                 env,
-                                save_dir=str(session_exporter.export_dir),
-                                max_fps=float(minimap_update_hz),
+                                bridge,
+                                target_motion_state=target_motion_state,
+                                previous_motion_state=previous_motion_state,
+                                total_duration=target_step_interval_s * max(1, batched_steps),
+                                interpolation_steps=max(1, int(render_interpolation_steps)),
+                                mirror_controls_in_ue5=mirror_controls_in_ue5,
+                                animate_steering_in_ue5=animate_steering_in_ue5,
+                                animate_throttle_in_ue5=animate_throttle_in_ue5,
+                                previous_actuator_state=previous_actuator_state,
+                                steering_visual_gain=steering_visual_gain,
+                                throttle_visual_gain=throttle_visual_gain,
+                                use_kinematics_in_ue5=use_kinematics_in_ue5,
+                                min_render_hz=min_render_hz,
+                                max_translation_step=max_translation_step,
+                                max_yaw_step_rad=max_yaw_step_rad,
+                                lock_path_in_ue5=lock_path_in_ue5,
+                                vehicle_object_name=vehicle_object_name,
                             )
-                    except Exception as exc:
-                        logger.warning("Minimap unavailable: %s", exc)
-                        minimap = None
+                            if (now - last_bridge_telemetry_at) >= bridge_telemetry_interval_s or done or truncated:
+                                try:
+                                    bridge.get_state()
+                                    last_bridge_telemetry_at = now
+                                except Exception:
+                                    pass
+                        else:
+                            previous_motion_state = target_motion_state
 
-                previous_motion_state = _framework_motion_state_from_env(env, bridge)
-                previous_actuator_state = None
-                previous_motion_state, previous_actuator_state = _animate_framework_state(
-                    env,
-                    bridge,
-                    target_motion_state=previous_motion_state,
-                    previous_motion_state=None,
-                    total_duration=0.0,
-                    interpolation_steps=1,
-                    mirror_controls_in_ue5=False,
-                    animate_steering_in_ue5=animate_steering_in_ue5,
-                    animate_throttle_in_ue5=animate_throttle_in_ue5,
-                    previous_actuator_state=None,
-                    steering_visual_gain=steering_visual_gain,
-                    throttle_visual_gain=throttle_visual_gain,
-                    use_kinematics_in_ue5=use_kinematics_in_ue5,
-                    min_render_hz=min_render_hz,
-                    max_translation_step=max_translation_step,
-                    max_yaw_step_rad=max_yaw_step_rad,
-                    lock_path_in_ue5=lock_path_in_ue5,
-                    vehicle_object_name=vehicle_object_name,
-                )
+                        session_exporter.log_visualisation_step(
+                            build_framework_visualisation_row(
+                                env=env,
+                                bridge=bridge,
+                                episode_index=episode + 1,
+                                step_index=step,
+                                reward=float(reward),
+                                action=action,
+                                outcome="terminated" if done else ("truncated" if truncated else "running"),
+                                model_origin=self.adapter.model_origin,
+                            )
+                        )
 
-                if bridge.is_connected and not vehicle_object_name:
-                    _park = bridge._airsim.CarControls()
-                    _park.throttle = 0.0
-                    _park.steering = 0.0
-                    _park.brake = 1.0
-                    bridge.set_controls(_park)
-                if adaptive_settle_s > 0.0:
-                    time.sleep(adaptive_settle_s)
+                        if (
+                            log_every > 0
+                            and step % log_every == 0
+                            and ((now - last_log_t) >= max(float(min_log_interval_s), 0.0) or done or truncated)
+                        ):
+                            last_log_t = now
+                            logger.info(
+                                "step=%d pos=(%.0f, %.0f) speed=%.2f steer=%+.3f throttle=%.3f reward=%+.2f",
+                                step,
+                                env.ship_pos[0][0],
+                                env.ship_pos[0][1],
+                                env.phys_sims[0].state.u,
+                                bridge._controls.steering if bridge._controls is not None else 0.0,
+                                bridge._controls.throttle if bridge._controls is not None else 0.0,
+                                reward,
+                            )
+
+                        if done or truncated:
+                            break
+
+                        target_elapsed_s = step * target_step_interval_s
+                        actual_elapsed_s = time.perf_counter() - episode_wall_start
+                        remaining_budget_s = target_elapsed_s - actual_elapsed_s
+                        if remaining_budget_s > 0.001:
+                            time.sleep(min(remaining_budget_s, target_step_interval_s))
+
+                    print(
+                        f"   Finished: {step} steps | reward={total_reward:+.1f} | "
+                        f"end=({env.ship_pos[0][0]:.1f}, {env.ship_pos[0][1]:.1f})"
+                    )
+                    session_exporter.update_metadata(
+                        {
+                            "last_episode_index": episode + 1,
+                            "last_episode_steps": step,
+                            "last_reward": float(total_reward),
+                            "last_ship_position": {
+                                "x": float(env.ship_pos[0][0]),
+                                "y": float(env.ship_pos[0][1]),
+                            },
+                        }
+                    )
+
+                    if save_matplotlib_minimap and minimap is not None and hasattr(minimap, "finish"):
+                        minimap.finish(total_reward, episode=episode + 1)
+            finally:
+                if minimap is not None:
+                    minimap.close()
                 try:
-                    bridge.get_state()
-                    last_bridge_telemetry_at = time.perf_counter()
+                    if bridge is not None and bridge.is_connected:
+                        bridge.set_simulation_speed(1.0)
                 except Exception:
                     pass
+                if env is not None:
+                    self.adapter.cleanup_environment(env)
+                if bridge is not None:
+                    bridge.disconnect()
+                print(f"Exports saved to '{session_exporter.export_dir}'.")
+                print("\nVisualisation complete - AirSim connection closed.")
 
-                total_reward = 0.0
-                step = 0
-                _steps_since_ue5_update = 0
-                _last_log_t = 0.0
-                episode_wall_start = time.perf_counter()
 
-                while step < max_steps:
-                    policy_obs = obs[0] if isinstance(obs, np.ndarray) and obs.ndim > 1 else obs
-                    action, _, _ = policy.predict(policy_obs, deterministic=True)
-                    action = np.asarray(action).reshape(-1)
+class VisualiseFossen(VisualiseModelsRunner):
+    """Compatibility wrapper that preserves legacy test monkeypatch points."""
 
-                    obs, reward, done, truncated, _ = env.step(action)
-                    total_reward += float(reward)
-                    step += 1
+    def _load_policy(self, model_path: str, device: str):
+        """Load a replay policy through the legacy module-level helper."""
+        return load_policy(model_path, device=device)
 
-                    now = time.perf_counter()
-                    if minimap is not None and (now - last_minimap_update_at) >= minimap_update_interval_s:
-                        last_minimap_update_at = now
-                        minimap.update(env)
+    def _motion_state_from_env(self, env, bridge: AirSimBridge):
+        """Extract framework motion through the legacy module-level helper."""
+        return _framework_motion_state_from_env(env, bridge)
 
-                    target_motion_state = _framework_motion_state_from_env(env, bridge)
-                    _steps_since_ue5_update += 1
-                    _batched_steps = _steps_since_ue5_update
-                    should_push_ue5 = (
-                        _steps_since_ue5_update >= steps_per_ue5_update
-                        or done
-                        or truncated
-                    )
-                    if should_push_ue5:
-                        _steps_since_ue5_update = 0
-                        previous_motion_state, previous_actuator_state = _animate_framework_state(
-                            env,
-                            bridge,
-                            target_motion_state=target_motion_state,
-                            previous_motion_state=previous_motion_state,
-                            total_duration=target_step_interval_s * max(1, _batched_steps),
-                            interpolation_steps=max(1, int(render_interpolation_steps)),
-                            mirror_controls_in_ue5=mirror_controls_in_ue5,
-                            animate_steering_in_ue5=animate_steering_in_ue5,
-                            animate_throttle_in_ue5=animate_throttle_in_ue5,
-                            previous_actuator_state=previous_actuator_state,
-                            steering_visual_gain=steering_visual_gain,
-                            throttle_visual_gain=throttle_visual_gain,
-                            use_kinematics_in_ue5=use_kinematics_in_ue5,
-                            min_render_hz=min_render_hz,
-                            max_translation_step=max_translation_step,
-                            max_yaw_step_rad=max_yaw_step_rad,
-                            lock_path_in_ue5=lock_path_in_ue5,
-                            vehicle_object_name=vehicle_object_name,
-                        )
-                        if (now - last_bridge_telemetry_at) >= bridge_telemetry_interval_s or done or truncated:
-                            try:
-                                bridge.get_state()
-                                last_bridge_telemetry_at = now
-                            except Exception:
-                                pass
-                    else:
-                        previous_motion_state = target_motion_state
-
-                    session_exporter.log_visualisation_step(
-                        build_framework_visualisation_row(
-                            env=env,
-                            bridge=bridge,
-                            episode_index=episode + 1,
-                            step_index=step,
-                            reward=float(reward),
-                            action=action,
-                            outcome="terminated" if done else ("truncated" if truncated else "running"),
-                        )
-                    )
-
-                    if (
-                        log_every > 0
-                        and step % log_every == 0
-                        and ((now - _last_log_t) >= max(float(min_log_interval_s), 0.0) or done or truncated)
-                    ):
-                        _last_log_t = now
-                        logger.info(
-                            "step=%d pos=(%.0f, %.0f) speed=%.2f steer=%+.3f throttle=%.3f reward=%+.2f",
-                            step,
-                            env.ship_pos[0][0],
-                            env.ship_pos[0][1],
-                            env.phys_sims[0].state.u,
-                            bridge._controls.steering if bridge._controls is not None else 0.0,
-                            bridge._controls.throttle if bridge._controls is not None else 0.0,
-                            reward,
-                        )
-
-                    if done or truncated:
-                        break
-
-                    target_elapsed_s = step * target_step_interval_s
-                    actual_elapsed_s = time.perf_counter() - episode_wall_start
-                    remaining_budget_s = target_elapsed_s - actual_elapsed_s
-                    if remaining_budget_s > 0.001:
-                        time.sleep(min(remaining_budget_s, target_step_interval_s))
-
-                print(
-                    f"   Finished: {step} steps | reward={total_reward:+.1f} | "
-                    f"end=({env.ship_pos[0][0]:.1f}, {env.ship_pos[0][1]:.1f})"
-                )
-                session_exporter.update_metadata(
-                    {
-                        "last_episode_index": episode + 1,
-                        "last_episode_steps": step,
-                        "last_reward": float(total_reward),
-                        "last_ship_position": {
-                            "x": float(env.ship_pos[0][0]),
-                            "y": float(env.ship_pos[0][1]),
-                        },
-                    }
-                )
-
-                if (
-                    save_matplotlib_minimap
-                    and minimap is not None
-                    and hasattr(minimap, "finish")
-                ):
-                    minimap.finish(total_reward, episode=episode + 1)
-        finally:
-            if minimap is not None:
-                minimap.close()
-            try:
-                if bridge is not None and bridge.is_connected:
-                    bridge.set_simulation_speed(1.0)
-            except Exception:
-                pass
-            if env is not None and hasattr(env, "fh_sim"):
-                env.fh_sim.dispose()
-            if bridge is not None:
-                bridge.disconnect()
-            session_exporter.save()
-            session_exporter.close()
-            print(f"Exports saved to '{session_exporter.export_dir}'.")
-            print("\nVisualisation complete - AirSim connection closed.")
+    def _animate_state(self, env, bridge: AirSimBridge, **kwargs):
+        """Animate framework motion through the legacy module-level helper."""
+        return _animate_framework_state(env, bridge, **kwargs)
 
 
 class VisualiseFhSim(VisualiseFossen):
-    """FhSim-specialized visualiser with a fixed framework environment."""
+    """Compatibility wrapper for FhSim-specific visualisation selection."""
 
-    def __init__(self) -> None:
-        """Initialize the instance.
-        """
-        super().__init__(env_name="FhSimEnv")
+    def __init__(self, adapter: ModelVisualisationAdapter) -> None:
+        """Initialise the wrapper with a fixed FhSim environment default."""
+        super().__init__(adapter=adapter, env_name="FhSimEnv")
 
 
 def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) -> None:
-    """Dispatch visualization to the selected model visualiser class."""
-    family = str(model_family).strip().lower()
-    if family == "fhsim":
-        runner = VisualiseFhSim()
+    """Dispatch visualization to the selected model-family adapter."""
+    env_name = str(kwargs.pop("env_name", "auto"))
+    adapter = resolve_visualisation_adapter(
+        model_family=model_family,
+        model_path=model_path,
+        env_name=env_name,
+    )
+    if adapter.family == "fhsim":
+        runner = VisualiseFhSim(adapter=adapter)
     else:
-        env_name = str(kwargs.pop("env_name", "auto"))
-        runner = VisualiseFossen(env_name=env_name)
+        runner = VisualiseFossen(adapter=adapter, env_name=env_name)
     runner.run(model_path=model_path, **kwargs)
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """ build parser.
-    """
+    """Build the command-line parser for framework-model replay."""
     parser = argparse.ArgumentParser(
         description="Visualise framework model playback in UE5.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--model", required=True, help="Path to model .zip file.")
-    parser.add_argument("--model-family", default="auto", choices=["auto", "fossen", "fhsim"])
-    parser.add_argument("--env", default="auto", choices=["auto", "PySimEnv", "FhSimEnv"])
+    parser.add_argument("--model-family", default="auto", choices=["auto", *get_supported_model_families()])
+    parser.add_argument("--env", default="auto", choices=["auto", *get_supported_environment_names()])
     parser.add_argument("--ip", default="")
     parser.add_argument("--port", type=int, default=41451)
     parser.add_argument("--episodes", type=int, default=1)
@@ -570,4 +557,3 @@ if __name__ == "__main__":
         bridge_telemetry_hz=args.bridge_telemetry_hz,
         startup_settle_s=args.startup_settle_s,
     )
-

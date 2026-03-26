@@ -199,6 +199,7 @@ class AirSimEnv(BaseEnv):
         self.time_step = time_step
         self.frames_per_step = frames_per_step
         self.use_pause_stepping = use_pause_stepping
+        self.training_mode = bool(training_mode)
         self.verbose = verbose
         self._physics_update_timeout = float(physics_update_timeout)
         self._state_poll_interval = float(state_poll_interval)
