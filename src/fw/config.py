@@ -90,26 +90,14 @@ CONFIG_PARAMETERS = {
             "type": "PySimEnv",
             "reward_name": "default",
             "reward_weights": {
-                "forward": -0.1,
-                "heading_alignment": -0.5,
-                "cross_track": -0.0511,
+                "forward": -0.23,
+                "heading_alignment": -500,
+                "cross_track": -100,
                 "rudder_change": -0.42,
                 "rudder_angle": -0.05,
                 "thrust_change": 0.1,
             },
         },
-        {
-            "type": "PySimEnv",
-            "reward_name": "default",
-            "reward_weights": {
-                "forward": -0.65,
-                "heading_alignment": -0.5,
-                "cross_track": -0.05,
-                "rudder_change": -0.54,
-                "rudder_angle": -0.705,
-                "thrust_change": 0.0,
-            },
-        }
     ],
 }
 
