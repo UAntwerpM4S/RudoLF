@@ -44,6 +44,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     # AirSim runtime only controls AirSim-specific behavior.
     # The selected framework environment is handled by fw.main / fw.config.
+    _called_directly = __name__ == "__main__"
     _action_was_explicit = "FW_MAIN_ACTION_OVERRIDE" in os.environ
     _SRC_DIR = Path(__file__).resolve().parents[1]
     action = str(os.environ.get("FW_MAIN_ACTION_OVERRIDE", "train")).strip().lower()
@@ -106,13 +107,14 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             f"[main_with_airsim] Unknown training.speed_profile '{profile_name}'. "
             "Using explicit training settings."
         )
-    # Only let runtime visualization flags drive the mode when main_with_airsim is
-    # called directly (no explicit FW_MAIN_ACTION_OVERRIDE).  When delegated from
-    # fw.main, the action set in fw.config takes precedence.
-    if not _action_was_explicit and (
-        bool(visualization_cfg.get("fossen_visualise", False)) or bool(
-            visualization_cfg.get("inference_visualise", False)
-        )
+    # When this module is run directly, the runtime visualization flags should
+    # always win so the entrypoint behaves as a dedicated AirSim launcher even if
+    # an unrelated action override leaked into the process environment. When
+    # delegated from fw.main, the explicit override still takes precedence.
+    if (_called_directly or not _action_was_explicit) and (
+        bool(visualization_cfg.get("model_visualise", False))
+        or bool(visualization_cfg.get("fossen_visualise", False))
+        or bool(visualization_cfg.get("inference_visualise", False))
     ):
         action = "visualize"
 
@@ -123,15 +125,17 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             bool: True when a dedicated AirSim visualize runner was executed,
             False when caller should continue with generic trainer.visualize.
         """
-        fossen_visualise = bool(visualization_cfg.get("fossen_visualise", False))
+        model_visualise = bool(visualization_cfg.get("model_visualise", False)) or bool(
+            visualization_cfg.get("fossen_visualise", False)
+        )
         inference_visualise = bool(visualization_cfg.get("inference_visualise", False))
 
-        if not (fossen_visualise or inference_visualise):
+        if not (model_visualise or inference_visualise):
             return False
 
-        if fossen_visualise and inference_visualise:
-            print("[main] Both fossen_visualise and inference_visualise are true. "
-                  "Running fossen_visualise and skipping inference_visualise.")
+        if model_visualise and inference_visualise:
+            print("[main] Both model_visualise and inference_visualise are true. "
+                  "Running model_visualise and skipping inference_visualise.")
             inference_visualise = False
 
         ip = airsim_runtime_cfg.get("ip", "")
@@ -145,14 +149,29 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         log_every = int(visualization_cfg.get("log_every", 50))
         draw_ref = bool(visualization_cfg.get("draw_calibration_reference", True))
 
-        if fossen_visualise:
-            from airsim.inference.run_visualise_models import run_visualise_models
+        if model_visualise:
+            import airsim.inference.run_visualise_models as run_visualise_models_module
 
             logging.getLogger("airsim").setLevel(logging.INFO)
-            run_visualise_models(
-                model_path=str(resolve_path_relative_to_src(str(visualization_cfg.get("fossen_model_path", "models/PySimEnv_PPO_policy.zip")), _SRC_DIR)),
+            run_visualise_models_module.run_visualise_models(
+                model_path=str(
+                    resolve_path_relative_to_src(
+                        str(
+                            visualization_cfg.get(
+                                "model_path",
+                                visualization_cfg.get("fossen_model_path", "models/PySimEnv_PPO_policy.zip"),
+                            )
+                        ),
+                        _SRC_DIR,
+                    )
+                ),
                 model_family=str(visualization_cfg.get("model_family", "auto")),
-                env_name=str(visualization_cfg.get("fossen_environment", "auto")),
+                env_name=str(
+                    visualization_cfg.get(
+                        "environment_name",
+                        visualization_cfg.get("fossen_environment", "auto"),
+                    )
+                ),
                 ip=ip,
                 port=port,
                 max_steps=max_steps,
@@ -190,10 +209,10 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             return True
 
         if inference_visualise:
-            from airsim.inference.run_inference import run_inference
+            import airsim.inference.run_inference as run_inference_module
 
             logging.getLogger("airsim").setLevel(logging.INFO)
-            run_inference(
+            run_inference_module.run_inference(
                 model_path=str(resolve_path_relative_to_src(str(visualization_cfg.get("inference_model_path", "models/AirSimEnv_PPO_policy.zip")), _SRC_DIR)),
                 ip=ip,
                 port=port,

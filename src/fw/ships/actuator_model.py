@@ -99,7 +99,7 @@ class ActuatorModel:
 
         self._initialized = True
 
-        return ActuatorState(self._rudder, self._thrust)
+        return ActuatorState(self._rudder, 1.0 )# self._thrust)
 
 
     def step(self, action: ActuatorCommand, dt: float, enable_smoothing: bool) -> ActuatorState:
