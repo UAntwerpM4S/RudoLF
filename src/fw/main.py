@@ -80,7 +80,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=1.75,
             patience=4,
-            max_time_steps=1,
+            max_time_steps=10,
         ),
         airsim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,

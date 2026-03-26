@@ -2,10 +2,10 @@ import os
 import re
 import csv
 import importlib
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from datetime import datetime
 from threading import Lock
+from joblib import Parallel, delayed
 
 from enum import Enum
 from pathlib import Path
@@ -289,13 +289,11 @@ class Trainer:
                 - "type": Environment type (e.g., "PySimEnvironment")
                 - "reward_name": Reward profile name (e.g., "default", "heading_only")
                 - "reward_weights": Dict of component weights (optional)
-                - Any other environment-specific config
 
             training_configuration: Dict of Stop Conditions keyed by environment type.
                 Example:
                 {
                     "PySimEnvironment": StopCondition(...),
-                    "FhSimEnvironment": StopCondition(...)
                 }
 
             verbose: Print progress information.
@@ -365,7 +363,7 @@ class Trainer:
                 # Train once and keep plots off to avoid multi-threaded UI issues.
                 metrics = trainer.train(training_configuration, show_plots=False)
                 # Snapshot the trajectory image with a unique name per config.
-                trajectory_file = self._save_evaluation_trajectory_snapshot(trainer, config_idx + 1)
+                trajectory_file = self._save_evaluation_trajectory_snapshot(trainer, reward_weights)
 
                 if verbose:
                     with print_lock:
@@ -404,25 +402,19 @@ class Trainer:
         worker_count = max_workers if max_workers is not None else (os.cpu_count() or 1)
         worker_count = max(1, min(worker_count, len(reward_configs)))
 
-        # Single-threaded path keeps logs in order and avoids thread overhead.
-        if worker_count == 1:
-            for config_idx, config in enumerate(reward_configs):
-                idx, result, is_success = _evaluate_single_config(config_idx, config)
-                results[idx] = result
-                if is_success:
-                    evaluation_order.append(idx)
-        else:
-            # Multi-threaded execution speeds up independent trainings.
-            with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                futures = [
-                    executor.submit(_evaluate_single_config, config_idx, config)
-                    for config_idx, config in enumerate(reward_configs)
-                ]
-                for future in as_completed(futures):
-                    idx, result, is_success = future.result()
-                    results[idx] = result
-                    if is_success:
-                        evaluation_order.append(idx)
+        # Use joblib for parallel execution across reward configurations.
+        # n_jobs=1 runs sequentially, n_jobs>1 uses threading (no pickling needed).
+        # backend='threading' avoids pickling issues with non-picklable trainer objects.
+        job_results = Parallel(n_jobs=worker_count, backend='threading', verbose=10 if verbose else 0)(
+            delayed(_evaluate_single_config)(config_idx, config)
+            for config_idx, config in enumerate(reward_configs)
+        )
+
+        # Collect results from parallel execution.
+        for idx, result, is_success in job_results:
+            results[idx] = result
+            if is_success:
+                evaluation_order.append(idx)
 
         # Normalize ordering so summaries are deterministic.
         evaluation_order.sort()
@@ -491,12 +483,12 @@ class Trainer:
 
 
     @staticmethod
-    def _save_evaluation_trajectory_snapshot(eval_trainer: "Trainer", sequence_index: int) -> str | None:
-        """Rename evaluate_reward trajectory output to trajectory_n_time.png.
+    def _save_evaluation_trajectory_snapshot(eval_trainer: "Trainer", reward_weights: dict | None) -> str | None:
+        """Rename evaluate_reward trajectory output to trajectory_weights_time.png.
 
         Args:
             eval_trainer: Trainer instance that just completed one evaluation run.
-            sequence_index: 1-based index in the evaluation sequence.
+            reward_weights: Dictionary of reward weights used in this configuration (or None for default).
 
         Returns:
             Saved file path or None when no trajectory file exists.
@@ -510,9 +502,19 @@ class Trainer:
         if not os.path.exists(source_path):
             return None
 
+        # Create a compact string representation of reward weights for the filename.
+        # Format: key1-value1_key2-value2 (with underscores replacing dots in values).
+        if reward_weights:
+            weights_str = "_".join(
+                f"{key}{str(value).replace('.', '')}"
+                for key, value in sorted(reward_weights.items())
+            )
+        else:
+            weights_str = "default"
+
         # Timestamp to avoid name collisions when running multiple configs quickly.
         time_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        target_name = f"trajectory_{sequence_index}_{time_stamp}.png"
+        target_name = f"trajectory_{weights_str}_{time_stamp}.png"
         target_path = os.path.join(model_dir, target_name) if model_dir else target_name
 
         # Atomic rename/replace to keep the latest file consistent.
@@ -532,6 +534,17 @@ class Trainer:
             return
 
         try:
+            # Create models folder if it doesn't exist and prepare filepath with timestamp
+            models_dir = Path("models")
+            models_dir.mkdir(exist_ok=True)
+            
+            # Extract filename and add timestamp
+            base_path = Path(filepath)
+            stem = base_path.stem
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_filename = f"{stem}_{timestamp}.csv"
+            filepath = str(models_dir / new_filename)
+            
             metric_fields = [
                 "Average reward",
                 "Best episode reward",
