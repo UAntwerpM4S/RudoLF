@@ -12,12 +12,21 @@ from fw.environments.multi_py_sim_env import MultiPySimEnv
 
 class MultiPPOAgent(BaseAgent):
     """
-    Proximal Policy Optimization (PPO) Agent for reinforcement learning.
+    Multi-agent PPO wrapper that coordinates multiple independent PPO agents.
 
-    This class handles the training, evaluation, and policy management for PPO-based reinforcement learning agents.
+    Each agent operates on a slice of the global observation space and produces
+    a corresponding slice of the global action space.
     """
 
     def __init__(self, agents: list[BaseAgent], env: MultiPySimEnv):
+        """
+        Initialize the multi-agent PPO wrapper.
+
+        Args:
+            agents (list[BaseAgent]): Individual PPO agents.
+            env (MultiPySimEnv): Combined multi-environment.
+        """
+
         super().__init__(environment=env)
 
         self.agents = agents
@@ -34,14 +43,17 @@ class MultiPPOAgent(BaseAgent):
 
     def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Predict an action for a given state using the policy.
+        Predict actions, log probabilities, and values for all agents.
 
         Args:
-            state (np.ndarray): Current state as a NumPy array.
-            deterministic (boolean): Whether the action should be deterministic or not.
+            state (np.ndarray): Flattened global observation.
+            deterministic (bool): Whether to use deterministic actions.
 
         Returns:
-            Tuple: A tuple containing the predicted action and log probability.
+            Tuple:
+                - np.ndarray: Concatenated actions
+                - np.ndarray: Concatenated log probabilities
+                - np.ndarray: Concatenated value estimates
         """
 
         actions = []
@@ -68,14 +80,10 @@ class MultiPPOAgent(BaseAgent):
         stop_condition: Optional[StopCondition] = None,
     ):
         """
-        Train the policy using multiple parallel environments.
-
-        This method runs the training loop for the specified number of timesteps using parallel environments.
-        It collects experience from the environments, updates the policy, logs training metrics, and saves
-        agent checkpoints at regular intervals.
+        Train all underlying agents independently.
 
         Args:
-            stop_condition (StopCondition): Condition that defines when training should stop.
+            stop_condition (Optional[StopCondition]): Condition to stop training.
         """
 
         for agent in self.agents:
@@ -84,15 +92,18 @@ class MultiPPOAgent(BaseAgent):
 
     def load_policy(self, policy_file_name: str) -> None:
         """
-        Load a trained agent's policy.
+        Load a multi-agent policy from a ZIP archive.
+
+        The archive must contain one policy file per agent.
 
         Args:
-            policy_file_name (str): Name of the policy file to load.
+            policy_file_name (str): Path to the policy archive.
 
         Raises:
-            RuntimeError: If no agent is created or the policy fails to load.
-            ValueError: If the loaded policy dimensions do not match the environment.
+            FileNotFoundError: If the archive does not exist.
+            RuntimeError: If loading fails.
         """
+
         if not policy_file_name.endswith(".zip"):
             policy_file_name += ".zip"
 
@@ -124,14 +135,16 @@ class MultiPPOAgent(BaseAgent):
 
     def save_policy(self, policy_file_name: str) -> None:
         """
-        Save the trained agent's policy.
+        Save all agent policies into a single ZIP archive.
 
         Args:
-            policy_file_name (str): Name of the policy file to save.
+            policy_file_name (str): Output file name.
 
         Raises:
-            RuntimeError: If no agent is created or the policy fails to save.
+            RuntimeError: If saving fails.
+            FileNotFoundError: If an expected agent policy file is missing.
         """
+
         # Ensure the parent file has the .zip extension
         if not policy_file_name.endswith(".zip"):
             policy_file_name += ".zip"
@@ -165,7 +178,8 @@ class MultiPPOAgent(BaseAgent):
 
     def set_policy_eval(self):
         """
-        Set policy in evaluation mode.
+        Set all agent policies to evaluation mode.
         """
+
         for agent in self.agents:
             agent.policy.network.eval()
