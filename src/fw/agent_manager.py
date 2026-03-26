@@ -156,8 +156,7 @@ class AgentManager:
             policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
 
         if PPO_POLICY_NAME == self._agent_type:
-            single_ppo = PPOAgent(environment=env.environments[0], **self._hyperparameters)
-            self._agent = MultiPPOAgent(agents=[single_ppo],env=env)
+            self._agent = PPOAgent(environment=env, **self._hyperparameters)
         elif PPO2_POLICY_NAME == self._agent_type:
             self._agent = PPO2Agent(environment=env, **self._hyperparameters)
         else:
