@@ -175,12 +175,17 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 lock_path_in_ue5=bool(visualization_cfg.get("lock_path_in_ue5", False)),
                 vehicle_object_name=str(visualization_cfg.get("vehicle_object_name", "")),
                 show_minimap=bool(visualization_cfg.get("show_minimap", True)),
+                save_matplotlib_minimap=bool(visualization_cfg.get("save_matplotlib_minimap", False)),
                 use_ue5_camera_minimap=bool(visualization_cfg.get("use_ue5_camera_minimap", False)),
                 ue5_camera_name=str(visualization_cfg.get("ue5_camera_name", "TopDownCam")),
                 ue5_camera_fov_deg=float(visualization_cfg.get("ue5_camera_fov_deg", 38.0)),
                 ue5_camera_height_m=float(visualization_cfg.get("ue5_camera_height_m", 120.0)),
                 ue5_camera_follow_heading=bool(visualization_cfg.get("ue5_camera_follow_heading", False)),
                 ue5_preview_window=bool(visualization_cfg.get("ue5_preview_window", True)),
+                min_log_interval_s=float(visualization_cfg.get("min_log_interval_s", 0.25)),
+                minimap_update_hz=float(visualization_cfg.get("minimap_update_hz", 20.0)),
+                bridge_telemetry_hz=float(visualization_cfg.get("bridge_telemetry_hz", 12.0)),
+                startup_settle_s=float(visualization_cfg.get("startup_settle_s", 0.4)),
             )
             return True
 
