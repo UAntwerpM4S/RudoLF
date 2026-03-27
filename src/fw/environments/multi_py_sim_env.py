@@ -137,7 +137,7 @@ class MultiPySimEnv(BaseEnv):
         return (
             np.concatenate(observations),
             np.array(rewards, dtype=np.float32),
-            np.all(terminateds),   # design choice
-            np.all(truncateds),
+            np.array(terminateds, dtype=bool),
+            np.array(truncateds, dtype=bool),
             infos
         )
