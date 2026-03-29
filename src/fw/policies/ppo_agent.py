@@ -98,8 +98,10 @@ class PPOAgent(BaseAgent):
             self.input_dim = self.observation_space.shape[-1]
         else:
             self.input_dim = self.observation_space.shape[0]
-        self._policy = PPOPolicy(self.input_dim, self.output_dim, self.device)
-        self.optimizer = optim.Adam(self._policy.network.parameters(), lr=self.learning_rate)
+        self._policies = [PPOPolicy(self.input_dim, self.output_dim, self.device)]
+        self.num_policies = len(self._policies)
+        for policy in self._policies:
+            self.optimizer = optim.Adam(policy.network.parameters(), lr=self.learning_rate)
         self.max_nbr_iterations = max_nbr_iterations
         self.normalize = normalize
         self._vec_env = None
@@ -108,24 +110,32 @@ class PPOAgent(BaseAgent):
         self.reward_var = 1.0
         self.reward_count = 1e-4  # avoid division by zero
 
+        # self.observation_slices: list[slice] = []
+        # self.action_slices: list[slice] = []
+        #
+        # # --- Build observation slices ---
+        # start = 0
+        # for sub_env in [self.env]:
+        #     dim = sub_env.observation_space.shape[0]
+        #     end = start + dim
+        #     self.observation_slices.append(slice(start, end))
+        #     start = end
+        #
+        # # --- Build action slices ---
+        # start = 0
+        # for sub_env in [self.env]:
+        #     dim = sub_env.action_space.shape[0]
+        #     end = start + dim
+        #     self.action_slices.append(slice(start, end))
+        #     start = end
+
 
     @property
-    def policy(self):
+    def policies(self):
         """Policy.
         """
 
-        return self._policy
-
-
-    @policy.setter
-    def policy(self, value):
-        """Policy.
-
-        Args:
-            value: the policy.
-        """
-
-        self._policy = value
+        return self._policies
 
 
     def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
@@ -171,11 +181,46 @@ class PPOAgent(BaseAgent):
             Tuple: A tuple containing the predicted action and log probability.
         """
 
-        actions, log_probs, values = self.policy.predict(state, deterministic)
+        actions, log_probs, values = self.policies[0].predict(state, deterministic)
         return actions, log_probs, values
 
 
-    def train(self, all_episodes_data) -> float:
+    # def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    #     """
+    #     Predict an action for a given state using the policy.
+    #
+    #     Args:
+    #         state (np.ndarray): Current state as a NumPy array.
+    #         deterministic (boolean): Whether the action should be deterministic or not.
+    #
+    #     Returns:
+    #         Tuple: A tuple containing the predicted action and log probability.
+    #     """
+    #
+    #     actions = []
+    #     log_probs = []
+    #     values = []
+    #
+    #     for policy, obs_slice in zip(self.policies, self.observation_slices):
+    #         sub_state = state[obs_slice]
+    #
+    #         action, log_prob, value = policy.predict(
+    #             state=sub_state,
+    #             deterministic=deterministic
+    #         )
+    #
+    #         actions.append(np.asarray(action).reshape(-1))
+    #         log_probs.append(float(np.asarray(log_prob)))
+    #         values.append(float(np.asarray(value)))
+    #
+    #     return (
+    #         np.concatenate(actions, axis=0),
+    #         np.array(log_probs, dtype=np.float32),
+    #         np.array(values, dtype=np.float32),
+    #     )
+
+
+    def train(self, all_episodes_data, policy_id) -> float:
         """
         Train the PPO policy on a batch of data.
 
@@ -188,6 +233,7 @@ class PPOAgent(BaseAgent):
                 - advantages: numpy array of advantages
                 - old_log_probs: numpy array of old log probabilities
                 - returns: numpy array of returns
+            policy_id: The index of the policy that will be trained on.
 
         Returns:
             float: Average loss value after training.
@@ -196,7 +242,8 @@ class PPOAgent(BaseAgent):
         if not all_episodes_data:
             return float('nan')
 
-        self.policy.network.train()
+        policy = self.policies[policy_id]
+        policy.network.train()
 
         # Concatenate all episode data into single arrays for batch processing
         all_states = torch.as_tensor(np.concatenate([ep['states'] for ep in all_episodes_data]),
@@ -237,7 +284,7 @@ class PPOAgent(BaseAgent):
                 mb_advantages = all_advantages[mb_idx]
 
                 # Get current policy distribution
-                action_mean, action_std, state_values = self.policy.network(mb_states)
+                action_mean, action_std, state_values = policy.network(mb_states)
                 dist = torch.distributions.Normal(action_mean, action_std)
 
                 # Use the raw actions logic safely
@@ -246,7 +293,7 @@ class PPOAgent(BaseAgent):
                     raw_actions = torch.atanh(mb_actions.clamp(-0.999, 0.999))
                 else:
                     raw_actions = mb_actions
-                log_probs = self.policy.calc_log_probs(dist, raw_actions, mb_actions)
+                log_probs = policy.calc_log_probs(dist, raw_actions, mb_actions)
 
                 # PPO Objective
                 ratios = torch.exp(log_probs - mb_old_log_probs)
@@ -266,7 +313,7 @@ class PPOAgent(BaseAgent):
                 # Optimize
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.policy.network.parameters(), self.max_grad_norm)
+                nn.utils.clip_grad_norm_(policy.network.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
                 loss_per_epoch.append(loss.item())
@@ -358,19 +405,22 @@ class PPOAgent(BaseAgent):
         # Storage for episode data
         collected_data = [
             [
-                {
-                    "states": [],
-                    "actions": [],
-                    "rewards": [],
-                    "terminations": [],
-                    "truncations": [],
-                    "values": [],
-                    "log_probs": [],
-                    "next_states": [],
-                }
-                for _ in range(num_agents)
+                [
+                    {
+                        "states": [],
+                        "actions": [],
+                        "rewards": [],
+                        "terminations": [],
+                        "truncations": [],
+                        "values": [],
+                        "log_probs": [],
+                        "next_states": [],
+                    }
+                    for _ in range(num_agents)
+                ]
+                for _ in range(num_envs)
             ]
-            for _ in range(num_envs)
+            for _ in range(self.num_policies)
         ]
 
         safeguard = 0
@@ -412,19 +462,20 @@ class PPOAgent(BaseAgent):
                     terminations = next_terminations[:, None]
 
             # Store per-agent transitions
-            for env_id in range(num_envs):
-                if envs_done[env_id]:
-                    continue  # Skip already completed environments
+            for policy_id in range(self.num_policies):
+                for env_id in range(num_envs):
+                    if envs_done[env_id]:
+                        continue  # Skip already completed environments
 
-                for agent_id in range(num_agents):
-                    collected_data[env_id][agent_id]["states"].append(states[env_id, agent_id])
-                    collected_data[env_id][agent_id]["actions"].append(actions[env_id, agent_id])
-                    collected_data[env_id][agent_id]["rewards"].append(rewards[env_id, agent_id])
-                    collected_data[env_id][agent_id]["terminations"].append(terminations[env_id, agent_id])
-                    collected_data[env_id][agent_id]["truncations"].append(truncations[env_id, agent_id])
-                    collected_data[env_id][agent_id]["values"].append(values[env_id, agent_id])
-                    collected_data[env_id][agent_id]["log_probs"].append(log_probs[env_id, agent_id])
-                    collected_data[env_id][agent_id]["next_states"].append(next_states[env_id, agent_id])
+                    for agent_id in range(num_agents):
+                        collected_data[policy_id][env_id][agent_id]["states"].append(states[env_id, agent_id])
+                        collected_data[policy_id][env_id][agent_id]["actions"].append(actions[env_id, agent_id])
+                        collected_data[policy_id][env_id][agent_id]["rewards"].append(rewards[env_id, agent_id])
+                        collected_data[policy_id][env_id][agent_id]["terminations"].append(terminations[env_id, agent_id])
+                        collected_data[policy_id][env_id][agent_id]["truncations"].append(truncations[env_id, agent_id])
+                        collected_data[policy_id][env_id][agent_id]["values"].append(values[env_id, agent_id])
+                        collected_data[policy_id][env_id][agent_id]["log_probs"].append(log_probs[env_id, agent_id])
+                        collected_data[policy_id][env_id][agent_id]["next_states"].append(next_states[env_id, agent_id])
 
             # Update done flags at environment level
             env_done = np.all(terminations | truncations, axis=1)
@@ -443,83 +494,85 @@ class PPOAgent(BaseAgent):
         # self._vec_env.close()
 
         # Process episode data with proper trimming
-        episode_data = []
-        for env_id in range(num_envs):
-            for agent_id in range(num_agents):
-                trajectory = collected_data[env_id][agent_id]
+        episode_data_by_policy = [[] for _ in range(self.num_policies)]
 
-                if len(trajectory["states"]) == 0:
-                    continue
+        for policy_id in range(self.num_policies):
+            for env_id in range(num_envs):
+                for agent_id in range(num_agents):
+                    trajectory = collected_data[policy_id][env_id][agent_id]
 
-                # ----------------------------------------------------------
-                # Determine episode end (termination OR truncation)
-                # ----------------------------------------------------------
+                    if len(trajectory["states"]) == 0:
+                        continue
 
-                # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
-                # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
+                    # ----------------------------------------------------------
+                    # Determine episode end (termination OR truncation)
+                    # ----------------------------------------------------------
 
-                # Find the first True in dones for this environment
-                done_mask = np.logical_or(trajectory["terminations"], trajectory["truncations"])
-                first_done = self.find_first_true(done_mask)
+                    # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
+                    # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
 
-                # Handle cases where no True is found (episode did not terminate)
-                if first_done == -1:
-                    first_done = len(done_mask) - 1  # Use the entire episode
+                    # Find the first True in dones for this environment
+                    done_mask = np.logical_or(trajectory["terminations"], trajectory["truncations"])
+                    first_done = self.find_first_true(done_mask)
 
-                # ----------------------------------------------------------
-                # Determine bootstrap condition
-                # ----------------------------------------------------------
-                last_step_terminated = trajectory["terminations"][first_done]
+                    # Handle cases where no True is found (episode did not terminate)
+                    if first_done == -1:
+                        first_done = len(done_mask) - 1  # Use the entire episode
 
-                next_value = 0.0
-                if not last_step_terminated:
-                    # We bootstrap for:
-                    # - truncation
-                    # - safeguard stop
-                    with torch.no_grad():
-                        last_state = torch.FloatTensor(trajectory["next_states"][first_done]).unsqueeze(0).to(self.device)
-                        _, _, next_values = self.policy.network(last_state)
-                        next_value = next_values.squeeze(0).item()
+                    # ----------------------------------------------------------
+                    # Determine bootstrap condition
+                    # ----------------------------------------------------------
+                    last_step_terminated = trajectory["terminations"][first_done]
 
-                # ----------------------------------------------------------
-                # Trim trajectory to valid region
-                # ----------------------------------------------------------
-                episode = {}
+                    next_value = 0.0
+                    if not last_step_terminated:
+                        # We bootstrap for:
+                        # - truncation
+                        # - safeguard stop
+                        with torch.no_grad():
+                            last_state = torch.FloatTensor(trajectory["next_states"][first_done]).unsqueeze(0).to(self.device)
+                            _, _, next_values = self.policies[policy_id].network(last_state)
+                            next_value = next_values.squeeze(0).item()
 
-                for key in trajectory:
-                    relevant_steps = trajectory[key][:first_done + 1]
+                    # ----------------------------------------------------------
+                    # Trim trajectory to valid region
+                    # ----------------------------------------------------------
+                    episode = {}
 
-                    if key in ["states", "actions", "next_states"]:
-                        episode[key] = np.stack(relevant_steps)
-                    elif key in ["terminations", "truncations"]:
-                        episode[key] = np.asarray(relevant_steps, dtype=bool)
-                    else:
-                        episode[key] = np.asarray(relevant_steps, dtype=np.float32)
+                    for key in trajectory:
+                        relevant_steps = trajectory[key][:first_done + 1]
 
-                # ----------------------------------------------------------
-                # Optional reward normalization
-                # ----------------------------------------------------------
-                if self.normalize:
-                    episode["rewards"] = self.normalize_rewards(episode["rewards"])
+                        if key in ["states", "actions", "next_states"]:
+                            episode[key] = np.stack(relevant_steps)
+                        elif key in ["terminations", "truncations"]:
+                            episode[key] = np.asarray(relevant_steps, dtype=bool)
+                        else:
+                            episode[key] = np.asarray(relevant_steps, dtype=np.float32)
 
-                # ----------------------------------------------------------
-                # Compute GAE (ONLY true terminations zero bootstrap)
-                # ----------------------------------------------------------
+                    # ----------------------------------------------------------
+                    # Optional reward normalization
+                    # ----------------------------------------------------------
+                    if self.normalize:
+                        episode["rewards"] = self.normalize_rewards(episode["rewards"])
 
-                # Compute advantages and returns
-                episode["advantages"] = self.compute_gae(
-                    episode["rewards"],
-                    episode["values"],
-                    episode["terminations"],  # only real terminals
-                    next_value,
-                    self.gamma,
-                    self.gae_lambda,
-                )
+                    # ----------------------------------------------------------
+                    # Compute GAE (ONLY true terminations zero bootstrap)
+                    # ----------------------------------------------------------
 
-                episode["returns"] = episode["advantages"] + episode["values"]
-                episode_data.append(episode)
+                    # Compute advantages and returns
+                    episode["advantages"] = self.compute_gae(
+                        episode["rewards"],
+                        episode["values"],
+                        episode["terminations"],  # only real terminals
+                        next_value,
+                        self.gamma,
+                        self.gae_lambda,
+                    )
 
-        return episode_data
+                    episode["returns"] = episode["advantages"] + episode["values"]
+                    episode_data_by_policy[policy_id].append(episode)
+
+        return episode_data_by_policy
 
 
     def learn(
@@ -546,7 +599,7 @@ class PPOAgent(BaseAgent):
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
         for iteration in range(stopping_condition.max_time_steps):
-            self.policy.network.eval()
+            self.set_policy_eval()
 
             # Prepare batch for training
             episode_data = []
@@ -556,44 +609,45 @@ class PPOAgent(BaseAgent):
             # Collect batch data from multiple parallel environments
             batch_data = self.run_parallel_episodes(self.num_envs)
 
-            for episode_result in batch_data:
-                episode_data.append(episode_result)
-                total_reward += np.mean(episode_result['rewards'])
-                total_advantage += np.mean(episode_result['advantages'])
+            for policy_id in range(self.num_policies):
+                for episode_result in batch_data[policy_id]:
+                    episode_data.append(episode_result)
+                    total_reward += np.mean(episode_result['rewards'])
+                    total_advantage += np.mean(episode_result['advantages'])
 
-            # Update policy using all collected episodes
-            loss = self.train(episode_data)
+                # Update policy using all collected episodes
+                loss = self.train(episode_data, policy_id)
 
-            # Log results
-            mean_reward = total_reward / len(batch_data) if batch_data else 0
-            mean_advantage = total_advantage / len(batch_data) if batch_data else 0
+                # Log results
+                mean_reward = total_reward / len(batch_data) if batch_data else 0
+                mean_advantage = total_advantage / len(batch_data) if batch_data else 0
 
-            training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
+                training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
 
-            # Save best policy so far
-            if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:
-                best_mean_reward = mean_reward
-                self.save_policy(best_policy_file)
+                # Save best policy so far
+                if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:
+                    best_mean_reward = mean_reward
+                    self.save_policy(best_policy_file)
 
-            should_stop, reason = stopping_condition.should_stop(
-                current_step=iteration,
-                mean_reward=mean_reward,
-                mean_loss=loss
-            )
+                should_stop, reason = stopping_condition.should_stop(
+                    current_step=iteration,
+                    mean_reward=mean_reward,
+                    mean_loss=loss
+                )
 
-            # Check if the condition is met for early stopping
-            if should_stop:
-                print(f"Stopping: {reason}")
-                last_save_index = iteration
-                break
+                # Check if the condition is met for early stopping
+                if should_stop:
+                    print(f"Stopping: {reason}")
+                    last_save_index = iteration
+                    break
 
-            # Log evaluation results periodically
-            if iteration % self.eval_frequency == 0:
-                print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
+                # Log evaluation results periodically
+                if iteration % self.eval_frequency == 0:
+                    print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
 
-                # Save checkpoint every 'self.eval_frequency' iterations
-                if iteration > 0 and iteration % self.eval_frequency == 0:
-                    self.save_policy(f"ppo_checkpoint_{iteration}")
+                    # Save checkpoint every 'self.eval_frequency' iterations
+                    if iteration > 0 and iteration % self.eval_frequency == 0:
+                        self.save_policy(f"ppo_checkpoint_{iteration}")
 
         # Save final checkpoint
         self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
@@ -652,7 +706,7 @@ class PPOAgent(BaseAgent):
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-            loaded_policy = self.policy.load(policy_file_name, self.device)
+            loaded_policy = self.policies[0].load(policy_file_name, self.device)
             
             if loaded_policy.input_dim != self.input_dim:
                 raise ValueError(f"Observation space dimension mismatch: loaded policy expects {loaded_policy.input_dim}D, but environment provides {self.input_dim}D.")
@@ -660,7 +714,7 @@ class PPOAgent(BaseAgent):
             if loaded_policy.output_dim != self.output_dim:
                 raise ValueError(f"Action space dimension mismatch: loaded policy expects {loaded_policy.output_dim}D, but environment requires {self.output_dim}D.")
             
-            self.policy = loaded_policy
+            self.policies[0] = loaded_policy
         except ValueError as e:
             # Re-raise ValueError directly to let the caller handle the dimension mismatch fallback
             raise e
@@ -683,7 +737,7 @@ class PPOAgent(BaseAgent):
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-            self.policy.save(policy_file_name)
+            self.policies[0].save(policy_file_name)
         except Exception as e:
             raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
 
@@ -693,4 +747,5 @@ class PPOAgent(BaseAgent):
         Set policy in evaluation mode.
         """
 
-        self.policy.network.eval()
+        for policy in self.policies:
+            policy.network.eval()
