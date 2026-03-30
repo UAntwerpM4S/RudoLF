@@ -27,7 +27,9 @@ class _FakeBridge:
         self.config = args[0] if args else None
         self.is_connected = True
         self._controls = None
-        self._airsim = SimpleNamespace(CarControls=lambda: SimpleNamespace(throttle=0.0, steering=0.0, brake=0.0))
+        self._airsim = SimpleNamespace(
+            CarControls=lambda: SimpleNamespace(throttle=0.0, steering=0.0, brake=0.0)
+        )
         type(self).created.append(self)
 
     def prepare_fossen_visualisation(self, **kwargs) -> None:
@@ -258,7 +260,6 @@ def test_visualise_models_does_not_save_matplotlib_minimap_by_default(monkeypatc
 
     _FakeBridge.created = []
     _FakeMinimap.created = []
-    _FakeBridge.created = []
     _FakeExporter.created = []
     module.run_visualise_models(
         model_path="models/PySimEnv_PPO_policy.zip",
@@ -284,6 +285,7 @@ def test_visualise_models_exports_rows_and_bridge_log_path(monkeypatch):
     monkeypatch.setattr(module, "_framework_motion_state_from_env", lambda env, bridge: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     monkeypatch.setattr(module, "_animate_framework_state", lambda *args, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
 
+    _FakeBridge.created = []
     _FakeExporter.created = []
     module.run_visualise_models(
         model_path="models/PySimEnv_PPO_policy.zip",

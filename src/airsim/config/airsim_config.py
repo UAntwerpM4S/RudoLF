@@ -135,11 +135,15 @@ def get_default_runtime_settings() -> Dict[str, Any]:
     """Return the built-in runtime defaults used when JSON is absent or invalid."""
     return {
         "visualization": {
+            "model_visualise": False,
             "fossen_visualise": False,
             "inference_visualise": False,
+            "model_path": "models/PySimEnv_PPO_policy.zip",
             "fossen_model_path": "models/PySimEnv_PPO_policy.zip",
             "inference_model_path": "models/AirSimEnv_PPO_policy.zip",
+            "environment_name": "auto",
             "fossen_environment": "auto",
+            "model_family": "auto",
             "mirror_controls_in_ue5": False,
             "animate_steering_in_ue5": True,
             "animate_throttle_in_ue5": True,
@@ -178,6 +182,7 @@ def get_default_runtime_settings() -> Dict[str, Any]:
             **AirSimConfig().to_dict(),
             "save_slot": DEFAULT_AIRSIM_SAVE_SLOT,
             "simulation_speed": DEFAULT_AIRSIM_SIMULATION_SPEED,
+            "status_context": "",
         },
     }
 

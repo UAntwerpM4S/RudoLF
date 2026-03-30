@@ -1,6 +1,6 @@
-"""Pure timing helper tests for Fossen visualisation smoothing."""
+"""Pure timing helper tests for framework visualisation smoothing."""
 
-from airsim.inference.visualisation_models.run_visualise_fossen import _should_snap_visual_update
+from airsim.inference.visualisation_models.model_adapters import _should_snap_visual_update
 
 
 def test_should_snap_visual_update_when_duration_is_shorter_than_render_interval():
