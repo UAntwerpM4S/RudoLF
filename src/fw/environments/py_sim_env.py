@@ -185,14 +185,6 @@ class PySimEnv(BaseEnv):
         )
         self.observation_space = self._initialize_observation_space()
 
-        # Reward component weights
-        self.reward_weights = {
-            'forward': 1.0,
-            'alignment': 1.8,
-            'cross_track': 1.5,
-            'rudder': 0.03,
-        }
-
         # Rendering flag
         self.initialize_plots = True
 
@@ -805,6 +797,10 @@ class PySimEnv(BaseEnv):
         if self.step_count >= self.max_steps and not terminated:
             # reward = -250
             truncated = True
+
+        # Update ship state
+        self.phys_sim.state.terminated = terminated
+        self.phys_sim.state.truncated = truncated
 
         return self._get_obs(), reward, terminated | truncated, False, {}
 
