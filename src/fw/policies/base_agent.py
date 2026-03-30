@@ -89,23 +89,6 @@ class BaseAgent(ABC):
             os.makedirs(self.model_dir, exist_ok=True)
 
 
-    @property
-    def policy(self):
-        """Policy.
-        """
-        return None
-
-
-    @policy.setter
-    def policy(self, value):
-        """Policy.
-
-        Args:
-            value: the policy.
-        """
-        pass
-
-
     @abstractmethod
     def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
