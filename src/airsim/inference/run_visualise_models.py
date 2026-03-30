@@ -1,8 +1,4 @@
-"""Modular model visualisation runner for UE5.
-
-This entrypoint generalizes the previous Fossen-only visualiser so multiple
-framework model families can reuse the same UE5 mirroring pipeline.
-"""
+"""Modular model visualisation runner for UE5."""
 
 from __future__ import annotations
 
@@ -25,22 +21,26 @@ from airsim.config.airsim_config import (  # noqa: E402
     DEFAULT_AIRSIM_SAVE_SLOT,
     DEFAULT_AIRSIM_SIMULATION_SPEED,
 )
-from airsim.inference.visualisation_models.run_visualise_fossen import (  # noqa: E402
-    _animate_framework_state,
-    _build_fossen_environment,
-    _detect_fossen_environment,
-    _framework_motion_state_from_env,
-    load_policy,
-)
 from airsim.inference.minimap_models_ue5 import (  # noqa: E402
     UE5TopDownMinimap,
     VisualiseModelsMinimap,
 )
-from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
+from airsim.inference.visualisation_models import (  # noqa: E402
+    ModelVisualisationAdapter,
+    get_supported_environment_names,
+    get_supported_model_families,
+    resolve_visualisation_adapter,
+)
+from airsim.inference.visualisation_models.model_adapters import (  # noqa: E402
+    _animate_framework_state,
+    _framework_motion_state_from_env,
+    load_policy,
+)
 from fw.common.airsim.tools.airsim_export import (  # noqa: E402
     AirSimSessionExporter,
     build_framework_visualisation_row,
 )
+from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -50,33 +50,33 @@ _DEFAULT_BRIDGE_TELEMETRY_HZ = 12.0
 _DEFAULT_STARTUP_SETTLE_S = 0.4
 
 
-class VisualiseFossen:
+class VisualiseModelsRunner:
     """Framework-physics visualiser that mirrors model output into UE5."""
 
-    def __init__(self, env_name: str = "auto") -> None:
-        """Initialize the instance.
-
-        Args:
-            env_name: Description.
-        """
+    def __init__(self, adapter: ModelVisualisationAdapter, env_name: str = "auto") -> None:
+        """Initialize the generic runner with a model-family adapter."""
+        self.adapter = adapter
         self.env_name = env_name
 
     def _resolve_environment_name(self, model_path: str) -> str:
-        """ resolve environment name.
+        """Resolve which framework environment should back the visualisation."""
+        return self.adapter.resolve_environment_name(model_path, self.env_name)
 
-        Args:
-            model_path: Description.
-        """
-        return _detect_fossen_environment(model_path, self.env_name)
+    def _load_policy(self, model_path: str, device: str):
+        """Load the framework policy used for replay."""
+        return self.adapter.load_policy(model_path, device=device)
 
     def _build_environment(self, selected_env: str, max_steps: int):
-        """ build environment.
+        """Construct the framework environment for replay."""
+        return self.adapter.build_environment(selected_env, max_steps=max_steps)
 
-        Args:
-            selected_env: Description.
-            max_steps: Description.
-        """
-        return _build_fossen_environment(selected_env, max_steps)
+    def _motion_state_from_env(self, env, bridge: AirSimBridge):
+        """Extract the current framework motion state."""
+        return self.adapter.motion_state_from_env(env, bridge)
+
+    def _animate_state(self, env, bridge: AirSimBridge, **kwargs):
+        """Mirror one framework state transition into UE5."""
+        return self.adapter.animate_state(env, bridge, **kwargs)
 
     def run(
         self,
@@ -155,24 +155,27 @@ class VisualiseFossen:
         """
         selected_env = self._resolve_environment_name(model_path)
         resolved_model_path = resolve_model_path(model_path, _SRC_DIR)
+
         banner = "=" * 62
         print(banner)
         print("  MODEL VISUALISATION IN UE5")
         print(f"  Model      : {resolved_model_path.name}")
-        print(f"  Framework  : {selected_env}")
+        print(f"  Family     : {self.adapter.family}")
+        print(f"  Environment: {selected_env}")
         print(f"  Save slot  : {save_slot}")
         print(f"  Camera map : {'UE5 top-down' if use_ue5_camera_minimap else 'matplotlib minimap'}")
         print(banner)
 
-        policy = load_policy(model_path, device=device)
+        policy = self._load_policy(model_path, device=device)
         with AirSimSessionExporter(
-            session_name=f"visualisation_{resolved_model_path.stem}",
+            session_name=f"visualisation_{self.adapter.family}_{resolved_model_path.stem}",
             metadata={
                 "script": "airsim.inference.run_visualise_models",
                 "model_path": str(resolved_model_path),
                 "model_name": resolved_model_path.name,
+                "model_family": self.adapter.family,
                 "environment_name": selected_env,
-                "model_origin": "fossen",
+                "model_origin": self.adapter.model_origin,
                 "configuration": {
                     "ip": ip or "127.0.0.1",
                     "port": port,
@@ -241,7 +244,10 @@ class VisualiseFossen:
                 bridge_telemetry_interval_s = 1.0 / max(float(bridge_telemetry_hz), 1.0)
                 target_step_interval_s = env.time_step / max(float(simulation_speed), 1e-6)
                 target_step_rate_hz = 1.0 / max(target_step_interval_s, 1e-6)
-                steps_per_ue5_update = max(1, int(math.ceil(target_step_rate_hz / max(float(min_render_hz), 1.0))))
+                steps_per_ue5_update = max(
+                    1,
+                    int(math.ceil(target_step_rate_hz / max(float(min_render_hz), 1.0))),
+                )
                 adaptive_settle_s = min(
                     max(float(startup_settle_s), 0.0),
                     max(0.05, target_step_interval_s * float(steps_per_ue5_update)),
@@ -289,9 +295,9 @@ class VisualiseFossen:
                             logger.warning("Minimap unavailable: %s", exc)
                             minimap = None
 
-                    previous_motion_state = _framework_motion_state_from_env(env, bridge)
+                    previous_motion_state = self._motion_state_from_env(env, bridge)
                     previous_actuator_state = None
-                    previous_motion_state, previous_actuator_state = _animate_framework_state(
+                    previous_motion_state, previous_actuator_state = self._animate_state(
                         env,
                         bridge,
                         target_motion_state=previous_motion_state,
@@ -313,11 +319,11 @@ class VisualiseFossen:
                     )
 
                     if bridge.is_connected and not vehicle_object_name:
-                        park = bridge._airsim.CarControls()
-                        park.throttle = 0.0
-                        park.steering = 0.0
-                        park.brake = 1.0
-                        bridge.set_controls(park)
+                        parked_controls = bridge._airsim.CarControls()
+                        parked_controls.throttle = 0.0
+                        parked_controls.steering = 0.0
+                        parked_controls.brake = 1.0
+                        bridge.set_controls(parked_controls)
                     if adaptive_settle_s > 0.0:
                         time.sleep(adaptive_settle_s)
                     try:
@@ -346,13 +352,17 @@ class VisualiseFossen:
                             last_minimap_update_at = now
                             minimap.update(env)
 
-                        target_motion_state = _framework_motion_state_from_env(env, bridge)
+                        target_motion_state = self._motion_state_from_env(env, bridge)
                         steps_since_ue5_update += 1
                         batched_steps = steps_since_ue5_update
-                        should_push_ue5 = steps_since_ue5_update >= steps_per_ue5_update or done or truncated
+                        should_push_ue5 = (
+                            steps_since_ue5_update >= steps_per_ue5_update
+                            or done
+                            or truncated
+                        )
                         if should_push_ue5:
                             steps_since_ue5_update = 0
-                            previous_motion_state, previous_actuator_state = _animate_framework_state(
+                            previous_motion_state, previous_actuator_state = self._animate_state(
                                 env,
                                 bridge,
                                 target_motion_state=target_motion_state,
@@ -390,6 +400,7 @@ class VisualiseFossen:
                                 reward=float(reward),
                                 action=action,
                                 outcome="terminated" if done else ("truncated" if truncated else "running"),
+                                model_origin=self.adapter.model_origin,
                             )
                         )
 
@@ -445,43 +456,62 @@ class VisualiseFossen:
                         bridge.set_simulation_speed(1.0)
                 except Exception:
                     pass
-                if env is not None and hasattr(env, "fh_sim"):
-                    env.fh_sim.dispose()
+                if env is not None:
+                    self.adapter.cleanup_environment(env)
                 if bridge is not None:
                     bridge.disconnect()
                 print(f"Exports saved to '{session_exporter.export_dir}'.")
                 print("\nVisualisation complete - AirSim connection closed.")
 
-class VisualiseFhSim(VisualiseFossen):
-    """FhSim-specialized visualiser with a fixed framework environment."""
 
-    def __init__(self) -> None:
-        """Initialize the instance.
-        """
-        super().__init__(env_name="FhSimEnv")
+class VisualiseFossen(VisualiseModelsRunner):
+    """Compatibility wrapper that preserves legacy test monkeypatch points."""
+
+    def _load_policy(self, model_path: str, device: str):
+        """Load a replay policy through the legacy module-level helper."""
+        return load_policy(model_path, device=device)
+
+    def _motion_state_from_env(self, env, bridge: AirSimBridge):
+        """Extract framework motion through the legacy module-level helper."""
+        return _framework_motion_state_from_env(env, bridge)
+
+    def _animate_state(self, env, bridge: AirSimBridge, **kwargs):
+        """Animate framework motion through the legacy module-level helper."""
+        return _animate_framework_state(env, bridge, **kwargs)
+
+
+class VisualiseFhSim(VisualiseFossen):
+    """Compatibility wrapper for FhSim-specific visualisation selection."""
+
+    def __init__(self, adapter: ModelVisualisationAdapter) -> None:
+        """Initialise the wrapper with a fixed FhSim environment default."""
+        super().__init__(adapter=adapter, env_name="FhSimEnv")
 
 
 def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) -> None:
-    """Dispatch visualization to the selected model visualiser class."""
-    family = str(model_family).strip().lower()
-    if family == "fhsim":
-        runner = VisualiseFhSim()
+    """Dispatch visualization to the selected model-family adapter."""
+    env_name = str(kwargs.pop("env_name", "auto"))
+    adapter = resolve_visualisation_adapter(
+        model_family=model_family,
+        model_path=model_path,
+        env_name=env_name,
+    )
+    if adapter.family == "fhsim":
+        runner = VisualiseFhSim(adapter=adapter)
     else:
-        env_name = str(kwargs.pop("env_name", "auto"))
-        runner = VisualiseFossen(env_name=env_name)
+        runner = VisualiseFossen(adapter=adapter, env_name=env_name)
     runner.run(model_path=model_path, **kwargs)
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """ build parser.
-    """
+    """Build the command-line parser for framework-model replay."""
     parser = argparse.ArgumentParser(
         description="Visualise framework model playback in UE5.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--model", required=True, help="Path to model .zip file.")
-    parser.add_argument("--model-family", default="auto", choices=["auto", "fossen", "fhsim"])
-    parser.add_argument("--env", default="auto", choices=["auto", "PySimEnv", "FhSimEnv"])
+    parser.add_argument("--model-family", default="auto", choices=["auto", *get_supported_model_families()])
+    parser.add_argument("--env", default="auto", choices=["auto", *get_supported_environment_names()])
     parser.add_argument("--ip", default="")
     parser.add_argument("--port", type=int, default=41451)
     parser.add_argument("--episodes", type=int, default=1)
@@ -563,4 +593,3 @@ if __name__ == "__main__":
         bridge_telemetry_hz=args.bridge_telemetry_hz,
         startup_settle_s=args.startup_settle_s,
     )
-
