@@ -53,10 +53,10 @@ class FhSimEnv(PySimEnv):
                          start_pos=start_pos, target_pos=target_pos, ship_model=ship_model)
 
         if self._fh_sim is not None:
-            self._fh_sim.initial_vessel_state = self.phys_sims[0].state
+            self._fh_sim.initial_vessel_state = self.phys_sim.state
 
 
-    def create_simulator(self, ship_index):
+    def create_simulator(self):
         """Create and return a configured FH-based ship simulator.
 
         This factory method instantiates an `FhSimulator` using the current
@@ -68,7 +68,7 @@ class FhSimEnv(PySimEnv):
             with the specified initial state and the current model parameters.
         """
 
-        return FhSimWrapper(self.ships[ship_index].specifications, self._fh_sim, self.time_step)
+        return FhSimWrapper(self.ship.specifications, self._fh_sim, self.time_step)
 
 
     def __deepcopy__(self, memo):
@@ -142,4 +142,3 @@ class FhSimEnv(PySimEnv):
             depth_threshold: Description.
         """
         return self._fh_sim.ship_interface.getKeelClearance() >= depth_threshold
-
