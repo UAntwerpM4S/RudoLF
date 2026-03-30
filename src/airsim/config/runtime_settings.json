@@ -20,7 +20,7 @@
     "model_visualise": true,
     "model_family": "auto",
     "inference_visualise": false,
-    "model_path": "models/FhSimEnv_PPO_policy.zip",
+    "model_path": "models/PySimEnv_PPO_policy.zip",
     "inference_model_path": "models/AirSimEnv_PPO_policy.zip",
     "environment_name": "auto",
     "mirror_controls_in_ue5": false,
