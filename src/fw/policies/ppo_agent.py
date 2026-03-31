@@ -1,5 +1,4 @@
 import os
-import csv
 import copy
 import torch
 import torch.nn as nn
@@ -23,46 +22,6 @@ class PPOAgent(BaseAgent):
     """
 
     MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20
-
-    @staticmethod
-    def compute_gae(
-        rewards: np.ndarray,
-        values: np.ndarray,
-        dones: np.ndarray,
-        next_value: float,
-        gamma: float,
-        lambda_: float,
-    ) -> np.ndarray:
-        """
-        Compute Generalized Advantage Estimation (GAE).
-
-        GAE helps in reducing the variance of the policy gradient estimates by using both bootstrapping and Monte Carlo estimates.
-
-        Args:
-            rewards (np.ndarray): Array of rewards for the batch.
-            values (np.ndarray): Array of value estimates for each state.
-            dones (np.ndarray): Array of done flags indicating if the episode ended.
-            next_value (float): Value estimate for the state after the batch.
-            gamma (float): Discount factor for future rewards.
-            lambda_ (float): GAE parameter that controls bias-variance tradeoff (default: 0.95).
-
-        Returns:
-            np.ndarray: Computed advantages as a NumPy array.
-        """
-
-        advantages = np.zeros_like(rewards, dtype=np.float32)
-        last_gae = 0.0
-
-        # Reverse iteration for GAE calculation
-        for t in reversed(range(len(rewards))):
-            next_non_terminal = 1.0 - dones[t]
-            next_values = next_value if t == len(rewards) - 1 else values[t + 1]
-            delta = rewards[t] + gamma * next_values * next_non_terminal - values[t]
-            last_gae = delta + gamma * lambda_ * next_non_terminal * last_gae
-            advantages[t] = last_gae
-
-        return advantages
-
 
     def __init__(
         self,
@@ -106,44 +65,14 @@ class PPOAgent(BaseAgent):
         self.reward_count = 1e-4  # avoid division by zero
 
 
-    def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
-        """Normalize rewards using running statistics (Welford's algorithm).
-
-        Args:
-            rewards: Raw rewards array of shape (batch_size,).
-
-        Returns:
-            Normalized rewards with zero mean and unit variance.
-        """
-
-        # Welford's algorithm for running stats
-        batch_mean = np.mean(rewards)
-        batch_var = np.var(rewards)
-        batch_count = len(rewards)
-
-        delta = batch_mean - self.reward_mean
-        tot_count = self.reward_count + batch_count
-
-        new_mean = self.reward_mean + delta * batch_count / tot_count
-        m_a = self.reward_var * self.reward_count
-        m_b = batch_var * batch_count
-        m2 = m_a + m_b + delta ** 2 * self.reward_count * batch_count / tot_count
-        new_var = m2 / tot_count
-
-        self.reward_mean = new_mean
-        self.reward_var = new_var
-        self.reward_count = tot_count
-
-        return (rewards - self.reward_mean) / (np.sqrt(self.reward_var) + 1e-8)
-
-
-    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def predict(self, state: np.ndarray, deterministic: bool = False, policy_id: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Predict an action for a given state using the policy.
 
         Args:
             state (np.ndarray): Current state as a NumPy array.
             deterministic (boolean): Whether the action should be deterministic or not.
+            policy_id (int, optional): The id of the policy to get a prediction from.
 
         Returns:
             Tuple: A tuple containing the predicted action and log probability.
@@ -259,26 +188,6 @@ class PPOAgent(BaseAgent):
             return Monitor(copy.deepcopy(self.env))
 
         return _init
-
-
-    @staticmethod
-    def find_first_true(bool_array):
-        """
-        Find the index of the first True value in a boolean array.
-        If no True value exists, return -1.
-
-        Args:
-            bool_array (np.ndarray): A NumPy array of boolean values.
-
-        Returns:
-            int: The index of the first True value, or -1 if not found.
-        """
-
-        # Find the index of the first True value
-        true_indices = np.where(bool_array)[0]
-
-        # Return the first index if it exists, otherwise return -1
-        return true_indices[0] if true_indices.size > 0 else -1
 
 
     def run_parallel_episodes(self, num_envs) -> list:
@@ -441,7 +350,7 @@ class PPOAgent(BaseAgent):
 
             training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
 
-            # Save best policy so far
+            # Save the best policy so far
             if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:
                 best_mean_reward = mean_reward
                 self.save_policy(best_policy_file)
@@ -470,41 +379,13 @@ class PPOAgent(BaseAgent):
         self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
 
         # Dump training metrics to CSV
-        self.dump_metrics_to_csv("training_metrics.csv", training_metrics)
+        self.dump_metrics_to_csv(self.model_dir, "training_metrics.csv", training_metrics)
 
         if getattr(self, "_vec_env", None) is not None:
             self._vec_env.close()
             self._vec_env = None
 
         print("Training completed!")
-
-
-    def dump_metrics_to_csv(self, csv_filename, training_metrics):
-        """
-        Save training metrics to a CSV file.
-
-        This method writes the training metrics (such as loss, advantage, reward)
-        to a CSV file with headers.
-
-        Args:
-            csv_filename (str): The name of the CSV file to write.
-            training_metrics (list): A list of dictionaries containing the training metrics.
-
-        """
-
-        if not training_metrics:
-            print("Warning: No training metrics to write.")
-            return
-
-        filepath = os.path.join(self.model_dir, csv_filename)
-
-        with open(filepath, mode="w", newline="") as file:
-            # Get all possible keys (assuming all dicts have the same structure)
-            fieldnames = training_metrics[0].keys()
-
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(training_metrics)
 
 
     def load_policy(self, policy_file_name: str) -> None:
