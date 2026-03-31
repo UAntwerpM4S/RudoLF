@@ -11,7 +11,7 @@ class ScenarioBuilder:
     def __init__(self, env) -> None:
         self.env = env
         self.scenario_types = ["static", "overtaking", "head-on"]
-        self.scenario_probs = [1, 0, 0]
+        self.scenario_probs = [1, 0.0, 0.0]
 
     def cache_checkpoint_segments(self) -> None:
         """
@@ -118,6 +118,9 @@ class ScenarioBuilder:
         return entities
 
     def compute_static_collision_entities(self):
+        """
+        Randomly placed obstacle_count static obstacles along the path, laterally randomized (uniform)
+        """
         env = self.env
         if not hasattr(env, "checkpoints") or len(env.checkpoints) < 2:
             return None
@@ -182,11 +185,31 @@ class ScenarioBuilder:
                     continue
                 break
 
+            # Compute signed CTE of this obstacle relative to its path segment
+            obs_pos = candidate_entity.get_position()
+            to_obs = obs_pos - pa
+            signed_cte = float(np.dot(to_obs, normal))
+            candidate_entity.path_cte = signed_cte
+            if signed_cte > EPSILON:
+                candidate_entity.path_side = "port"
+            elif signed_cte < -EPSILON:
+                candidate_entity.path_side = "starboard"
+            else:
+                candidate_entity.path_side = "on_path"
+
             collision_entities.append(candidate_entity)
 
         return collision_entities
 
     def compute_overtaking_collision_entities(self):
+        """
+        Places obstacles along the path, on segments that guarantee an overtaking scenario will take place.
+        This is based off the speed of the OS vs the speed of the TS. In other words, the TS is placed on a segment
+        that guarantees that the OS will pass it before the TS has reached the goal checkpoint.
+
+        Speed of the TS is randomized between overtaking_ts_v_min and overtaking_ts_v_max. The collision entities
+        that this function creates, can be advanced along the checkpoints at that speed by the environment.
+        """
         env = self.env
         seg_indices = getattr(env, "_eligible_dynamic_seg_indices", np.array([], dtype=np.int32))
         if len(seg_indices) == 0:
@@ -264,6 +287,14 @@ class ScenarioBuilder:
         return [entity]
 
     def compute_headon_collision_entities(self):
+        """
+        Speed of the TS is randomized between headon_ts_v_min and headon_ts_v_max. The collision entities
+        that this function creates, can be advanced along the checkpoints at that speed by the environment
+        in reversed order, such that they approacch the TS head-on.
+
+        The head-on entities are made to allow for a lateral speed, that simulates dodging to starboard from the
+        perspective of the TS
+        """
         env = self.env
         seg_indices = getattr(env, "_eligible_dynamic_seg_indices", np.array([], dtype=np.int32))
         if len(seg_indices) == 0:
@@ -308,6 +339,7 @@ class ScenarioBuilder:
         entity.dodge_trigger_range = float(env.polar_max_range)
         entity.dodge_lateral_speed = 1.0
         entity.lateral_speed = 0.0
+        entity.dodged = False
 
         if not entity.is_fully_inside_polygon(env.polygon_shape, own_radius=env.own_ship_radius):
             return []
@@ -317,6 +349,7 @@ class ScenarioBuilder:
         return [entity]
 
     def check_collision_entity_collision(self, ship_index: int = 0) -> bool:
+        """Checks collision between OS and TS"""
         env = self.env
         entities = getattr(env, "collision_entities", []) or []
         return any(

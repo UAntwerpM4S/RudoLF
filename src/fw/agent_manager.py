@@ -1,4 +1,6 @@
 import os
+from collections import defaultdict
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -351,6 +353,10 @@ class AgentManager:
                 all_rudder_actions = []
                 all_ukc_measurements = []
                 start_pos = None
+                collision_count = 0
+                collision_type_count = defaultdict(int)
+                collision_side_count = defaultdict(int)
+                colreg_violation_count = 0
 
                 # AirSimEnv is single-ship (flat scalar/array attributes).
                 # PySimEnv/FhSimEnv is multi-ship (list-of-arrays).
@@ -388,7 +394,7 @@ class AgentManager:
                         action, _, _ = self._agent.predict(state=state, deterministic=True)
 
                         # Take step in environment
-                        state, reward, terminated, truncated, _ = env.step(action)
+                        state, reward, terminated, truncated, info = env.step(action)
                         done = terminated or truncated
 
                         if not done:
@@ -422,6 +428,16 @@ class AgentManager:
                                 airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
                                 
                         else:
+                            collision_info = info.get('collision_info')[0]
+                            if collision_info:
+                                collision_count += 1
+                                ctype = collision_info.get('collision_type')
+                                collision_type_count[ctype] += 1
+                                cside = collision_info.get('collision_side')
+                                collision_side_count[cside] += 1
+                            colreg_violations = info.get('colreg_violations')[0]
+                            if colreg_violations:
+                                colreg_violation_count += 1
                             print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
                             break
 
@@ -452,6 +468,10 @@ class AgentManager:
                 print(f"Maximum Rudder Angle (MRA): {MRA:.3f}")
                 print(f"Mean Rudder Angle Change (mRAC): {mRAC:.4f}")
                 print(f"Mean LOS Guidance Heading Error (mHE): {mHE:.3f} rad")
+                print(f"Collision rate (CR): {collision_count / num_episodes * 100:.2f}%")
+                print(f"Collision per type: {dict(collision_type_count)}")
+                print(f"Collision per side: {dict(collision_side_count)}")
+                print(f"COLREG violation count: {colreg_violation_count}")
 
                 try:
                     # AirSimEnv has no obstacles/overall for matplotlib — skip trajectory plot.

@@ -77,6 +77,9 @@ class SimpleScheduler(BaseScheduler):
         metrics = {}
         policy_strategy = PolicyStrategy.REUSE_OTHER_POLICY
 
+        # TODO: starts from previous policy, do not forget to remove
+        #self._previous_env_name = "PySimColavEnv"
+
         for i in range(len(self.envs)):
             try:
                 # Switch to the next environment

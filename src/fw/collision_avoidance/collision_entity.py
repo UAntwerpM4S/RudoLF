@@ -24,6 +24,8 @@ class CollisionEntity:
         self.entity_type = entity_type
         self.is_dynamic = bool(is_dynamic)
         self.lateral_speed = 0.0
+        self.path_cte = 0.0  # signed cross-track error to path segment (positive = port)
+        self.path_side = "on_path"  # "port", "starboard", or "on_path"
 
         if velocity is not None:
             vel = np.asarray(velocity, dtype=np.float32)
@@ -114,3 +116,29 @@ class CollisionEntity:
         distance = float(np.linalg.norm(self.get_position() - other.get_position()))
         min_distance = float(self.radius) + float(other.radius) + 2.0 * float(own_radius) + float(margin)
         return distance < min_distance
+
+    def passed_by_os(self, os_pos, os_heading):
+        # Check if TS is now abaft OS beam (OS has passed it)
+        dx = self.x - float(os_pos[0])
+        dy = self.y - float(os_pos[1])
+        rel_bearing = math.atan2(dy, dx) - os_heading
+        rel_bearing = (rel_bearing + math.pi) % (2.0 * math.pi) - math.pi
+        return abs(rel_bearing) > math.pi / 2.0
+
+    def ts_side_from_os_perspective(self, os_pos: np.ndarray, os_heading: float) -> str:
+        """
+        Which side of the OS is this TS on?
+
+        Uses cross product of OS forward vector with the vector from OS to TS.
+        Returns "port", "starboard", or "ahead".
+        """
+        dx = self.x - float(os_pos[0])
+        dy = self.y - float(os_pos[1])
+        cross_z = math.cos(os_heading) * dy - math.sin(os_heading) * dx
+
+        if cross_z > EPSILON:
+            return "port"
+        elif cross_z < -EPSILON:
+            return "starboard"
+        return "ahead"
+

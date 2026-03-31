@@ -24,11 +24,11 @@ DEFAULT_HYPERPARAMETERS = {
         'clip_range': 0.2,
         'eval_frequency': 100,
         'num_envs': 8,
-        'num_epochs': 10,
+        'num_epochs': 4,
         'normalize': False,
         'max_nbr_iterations': 200000,
-        'batch_size': 2048,
-        'device': "cuda",
+        'batch_size': 4096,
+        'device': "cpu",
         'model_dir': "models",
         'fixed_horizon': True,
         'steps_per_update': 8192
@@ -62,7 +62,7 @@ CONFIG_PARAMETERS = {
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["PySimColav"],
-    'action': "train",  # Valid action values: "train", "visualize"
+    'action': "visualize",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
     'numerical_damping': False,
@@ -70,7 +70,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': False,
+    'live_animation': True,
     # AirSim settings are now in airsim.config.airsim_config
     # Use get_airsim_config() to access them.
 }
