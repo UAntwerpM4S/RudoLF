@@ -252,7 +252,7 @@ def _draw_visualization(
     import cosysairsim as airsim
 
     # Draw overlays high above the water so they remain visible in top-down cameras.
-    overlay_z = -50.0
+    overlay_z = -110.0
     ridge_dx, ridge_dy = ridge_overlay_offset
     ridge_rot_z_rad = math.radians(ridge_overlay_rot_z_deg)
     cos_rz = math.cos(ridge_rot_z_rad)
@@ -303,8 +303,8 @@ def _draw_visualization(
                     is_persistent=True,
                 )
 
-    _plot_polygon_ridges("env_Sche_no_scale.csv", color_rgba=[0.35, 1.0, 0.35, 1.0], thickness=12.0)
-    _plot_polygon_ridges("env_Sche_250cm_no_scale.csv", color_rgba=[1.0, 0.0, 0.0, 1.0], thickness=18.0)
+    _plot_polygon_ridges("env_Sche_no_scale.csv", color_rgba=[0.75, 1.0, 0.75, 1.0], thickness=56.0)
+    _plot_polygon_ridges("env_Sche_250cm_no_scale.csv", color_rgba=[1.0, 0.3, 0.3, 1.0], thickness=56.0)
     chunk_size = 500
 
     # Draw trajectory (yellow)
@@ -326,8 +326,8 @@ def _draw_visualization(
         if len(chunk) > 1:
             client.simPlotLineStrip(
                 chunk,
-                color_rgba=[1.0, 1.0, 0.35, 1.0],
-                thickness=14.0,
+                color_rgba=[1.0, 1.0, 0.55, 1.0],
+                thickness=56.0,
                 is_persistent=True,
             )
 

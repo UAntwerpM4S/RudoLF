@@ -4,7 +4,7 @@ import pytest
 
 from airsim.inference.visualisation_models.model_adapters import (
     FhSimVisualisationAdapter,
-    FossenVisualisationAdapter,
+    PySimVisualisationAdapter,
     resolve_visualisation_adapter,
 )
 
@@ -19,14 +19,14 @@ def test_auto_detects_fhsim_adapter_from_model_name():
     assert isinstance(adapter, FhSimVisualisationAdapter)
 
 
-def test_auto_detects_fossen_adapter_from_model_name():
-    """PySim/Fossen model names should select the Fossen adapter automatically."""
+def test_auto_detects_pysim_adapter_from_model_name():
+    """PySim model names should select the PySim adapter automatically."""
     adapter = resolve_visualisation_adapter(
         model_family="auto",
         model_path="models/PySimEnv_PPO_policy.zip",
         env_name="auto",
     )
-    assert isinstance(adapter, FossenVisualisationAdapter)
+    assert isinstance(adapter, PySimVisualisationAdapter)
 
 
 def test_explicit_environment_selects_matching_adapter():

@@ -113,7 +113,7 @@ The current automated baseline in the repository is organised around the highest
 - `tests/airsim/communication/test_bridge.py` validates bridge-side behaviour and connection-related logic.
 - `tests/airsim/communication/test_control_mapping.py` validates policy action checks and control mapping.
 - `tests/airsim/enviroments/test_airsim_env.py` validates the Gymnasium wrapper, step/reset behaviour and telemetry fields.
-- `tests/airsim/inference/test_fossen_visualisation_dispatch.py` validates dedicated AirSim visualisation dispatch logic.
+- `tests/airsim/inference/test_model_visualisation_dispatch.py` validates dedicated AirSim visualisation dispatch logic.
 - `tests/fw/test_env_factory_config.py` validates environment-name resolution and default environment selection.
 - `tests/fw/test_main_fallback.py` validates the fallback flow from AirSim-specific runtime errors back to the default framework entrypoint.
 
