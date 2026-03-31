@@ -215,14 +215,13 @@ class BaseAgent(ABC):
 
 
     @abstractmethod
-    def predict(self, state: np.ndarray, deterministic: bool = False, policy_id: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Predict an action for a given state.
 
         Args:
             state (np.ndarray): Current state observation.
             deterministic (boolean): Whether the action should be deterministic or not.
-            policy_id (int, optional): The id of the policy to get a prediction from.
 
         Returns:
             Tuple[np.ndarray, float]: A tuple containing the selected action and its log probability.

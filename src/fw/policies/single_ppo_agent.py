@@ -14,7 +14,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 
 
-class PPOAgent(BaseAgent):
+class SinglePPOAgent(BaseAgent):
     """
     Proximal Policy Optimization (PPO) Agent for reinforcement learning.
 
@@ -65,20 +65,19 @@ class PPOAgent(BaseAgent):
         self.reward_count = 1e-4  # avoid division by zero
 
 
-    def predict(self, state: np.ndarray, deterministic: bool = False, policy_id: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Predict an action for a given state using the policy.
 
         Args:
             state (np.ndarray): Current state as a NumPy array.
             deterministic (boolean): Whether the action should be deterministic or not.
-            policy_id (int, optional): The id of the policy to get a prediction from.
 
         Returns:
             Tuple: A tuple containing the predicted action and log probability.
         """
-        actions, log_probs, _ = self.policy.predict(state, deterministic)
-        return actions[0], log_probs.item()
+        actions, log_probs, values = self.policy.predict(state, deterministic)
+        return actions[0], log_probs.item(), values.item()
 
 
     def train(self, all_episodes_data) -> float:

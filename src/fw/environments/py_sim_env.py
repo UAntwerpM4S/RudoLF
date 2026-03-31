@@ -778,29 +778,34 @@ class PySimEnv(BaseEnv):
         if action.shape != (2,):
             raise ValueError(f"Action must be shape (2,), got {action.shape} with values {action}")
 
-        # Save previous values
-        self.previous_action = self.performed_action.copy()
-        self.previous_ship_pos = self.ship_pos.copy()
-        self.previous_heading = self.phys_sim.state.heading
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            # Save previous values
+            self.previous_action = self.performed_action.copy()
+            self.previous_ship_pos = self.ship_pos.copy()
+            self.previous_heading = self.phys_sim.state.heading
 
-        # Update state vector
-        self.phys_sim.step(action, self.enable_smoothing)
-        self.ship_pos = np.array([self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32)
-        self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
-        self.step_count += 1
+            # Update state vector
+            self.phys_sim.step(action, self.enable_smoothing)
+            self.ship_pos = np.array([self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32)
+            self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
+            self.step_count += 1
 
-        # Reward and termination check
-        reward, terminated = self._calculate_reward()
+            # Reward and termination check
+            reward, terminated = self._calculate_reward()
 
-        # Set truncated True when episode exceeded max_steps but not terminated by failure or success.
-        truncated = False
-        if self.step_count >= self.max_steps and not terminated:
-            # reward = -250
-            truncated = True
+            # Set truncated True when episode exceeded max_steps but not terminated by failure or success.
+            truncated = False
+            if self.step_count >= self.max_steps and not terminated:
+                # reward = -250
+                truncated = True
 
-        # Update ship state
-        self.phys_sim.state.terminated = terminated
-        self.phys_sim.state.truncated = truncated
+            # Update ship state
+            self.phys_sim.state.terminated = terminated
+            self.phys_sim.state.truncated = truncated
+        else:
+            reward = 0.0
+            terminated = False
+            truncated = False
 
         return self._get_obs(), reward, terminated | truncated, False, {}
 
