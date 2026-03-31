@@ -29,6 +29,13 @@ It is not responsible for:
 - framework environment registration logic
 - long-term analytics outside exported CSV/metadata bundles
 
+## Getting Started
+
+If you need the full environment/bootstrap flow, start with:
+
+- [AirSim Step-By-Step Setup Guide](../../docs/airsim_setup_step_by_step.md)
+- [AirSim Architecture](../../docs/airsim_architecture.md)
+
 ## Top-Level Architecture
 
 ```mermaid
@@ -45,7 +52,7 @@ flowchart LR
     H --> I["AirSimEnv"]
     I --> F
 
-    C -->|model_visualise / fossen_visualise| J["airsim.inference.run_visualise_models"]
+    C -->|model_visualise| J["airsim.inference.run_visualise_models"]
     J --> K["Model adapter registry"]
     K --> L["PySimEnv or FhSimEnv"]
     L --> F
@@ -93,6 +100,19 @@ When `env_type` contains `AirSimEnv`, `fw.main` delegates that stage to `fw.main
 ["PySimEnv", "AirSimEnv", "PySimEnv"]
 ```
 
+### Real source of truth
+
+The execution decision is made in this order:
+
+1. `src/fw/config.py`
+   - `env_type`
+   - `action`
+2. `src/fw/main.py`
+   - resolves ordered environments
+   - delegates `AirSimEnv` steps to `fw.main_with_airsim`
+3. `src/fw/main_with_airsim.py`
+   - refines the selected AirSim step using `runtime_settings.json`
+
 ### AirSim-specialized entrypoint
 
 `fw.main_with_airsim` reads `src/airsim/config/runtime_settings.json` and decides whether it should:
@@ -101,7 +121,19 @@ When `env_type` contains `AirSimEnv`, `fw.main` delegates that stage to `fw.main
 - run UE5 inference through `run_inference.py`
 - run framework replay through `run_visualise_models.py`
 
-Legacy `fossen_visualise` is still accepted as an alias for `model_visualise`.
+`model_visualise` is the primary runtime switch for modular framework-model replay in UE5.
+
+Current checked-in defaults in the source are not neutral:
+
+- `src/fw/config.py`
+  - `env_type = ["AirSimEnv"]`
+  - `action = "visualize"`
+- `src/airsim/config/runtime_settings.json`
+  - `visualization.model_visualise = true`
+  - `visualization.inference_visualise = false`
+
+So the repository currently defaults to an AirSim model-visualisation workflow
+unless those values are changed.
 
 ## Package Layout
 
@@ -148,11 +180,19 @@ src/fw/common/airsim/
 
 Training uses `AirSimEnv` as the authoritative environment.
 
+This path is selected by:
+
+- `src/fw/config.py`
+  - `env_type` includes `AirSimEnv`
+  - `action = "train"`
+- `src/airsim/config/runtime_settings.json`
+  - `training.*` refines the AirSim training behavior
+
 Control flow:
 
 1. policy action enters `AirSimEnv.step()`
 2. action is validated and smoothed
-3. Fossen-compatible throttle mapping is applied
+3. the AirSimEnv control mapping is applied
 4. `AirSimBridge.set_controls()` sends controls to UE5
 5. UE5 advances physics
 6. AirSim state is read back
@@ -168,6 +208,15 @@ Key code:
 
 `run_inference.py` is now dedicated to models trained directly in `AirSimEnv`.
 
+This path is selected by:
+
+- `src/fw/config.py`
+  - `env_type` includes `AirSimEnv`
+  - `action = "visualize"`
+- `src/airsim/config/runtime_settings.json`
+  - `visualization.inference_visualise = true`
+  - `visualization.model_visualise = false`
+
 Its runtime loop intentionally mirrors training:
 
 1. `AirSimEnv.reset()` starts each episode and restores the ship pose
@@ -181,11 +230,19 @@ This means:
 - `T-026` is implemented through the native `AirSimEnv` send-action and feedback loop
 - `T-027` is implemented through native episode reset, stop detection, and ship repositioning
 
-For Fossen-trained models, `run_visualise_models.py` remains the preferred and supported replay path.
+For framework-trained models such as `PySimEnv` and `FhSimEnv`, `run_visualise_models.py` remains the preferred and supported replay path.
 
 ### 3. Framework replay mirrored into UE5
 
 `run_visualise_models.py` keeps framework physics authoritative and mirrors the resulting motion into UE5.
+
+This path is selected by:
+
+- `src/fw/config.py`
+  - `env_type` includes `AirSimEnv`
+  - `action = "visualize"`
+- `src/airsim/config/runtime_settings.json`
+  - `visualization.model_visualise = true`
 
 Control flow:
 
@@ -221,7 +278,6 @@ In `src/airsim/config/runtime_settings.json`:
 Important keys:
 
 - `visualization.model_visualise`
-- `visualization.fossen_visualise`
 - `visualization.inference_visualise`
 - `visualization.model_family`
 - `visualization.environment_name`
@@ -297,6 +353,7 @@ python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_poli
 
 ## Related Docs
 
+- [AirSim Step-By-Step Setup Guide](../../docs/airsim_setup_step_by_step.md)
 - [AirSim Inference and Visualisation Runbook](inference/README.md)
 - [Workflow rationale](verantwoording_workflow.md)
 - [Repository-level AirSim architecture](../../docs/airsim_architecture.md)
@@ -313,7 +370,7 @@ python -m pytest tests/fw/test_env_factory_config.py -v
 
 Important modules:
 
-- `tests/airsim/inference/test_fossen_visualisation_dispatch.py`
+- `tests/airsim/inference/test_model_visualisation_dispatch.py`
 - `tests/airsim/inference/test_visualisation_model_adapters.py`
 - `tests/airsim/inference/test_visualise_models_minimap_save.py`
 - `tests/fw/test_main_fallback.py`

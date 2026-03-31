@@ -32,7 +32,7 @@ class _FakeBridge:
         )
         type(self).created.append(self)
 
-    def prepare_fossen_visualisation(self, **kwargs) -> None:
+    def prepare_model_visualisation(self, **kwargs) -> None:
         """Pretend to prepare UE5 visualisation state.
 
         Args:
@@ -248,14 +248,14 @@ class _FakeExporter:
 
 def test_visualise_models_does_not_save_matplotlib_minimap_by_default(monkeypatch):
     """Default visualisation should not save a matplotlib minimap snapshot."""
-    monkeypatch.setattr(module, "load_policy", lambda *args, **kwargs: _FakePolicy())
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_load_policy", lambda self, model_path, device: _FakePolicy())
     monkeypatch.setattr(module, "AirSimBridge", _FakeBridge)
     monkeypatch.setattr(module, "AirSimSessionExporter", _FakeExporter)
     monkeypatch.setattr(module, "resolve_model_path", lambda model_path, src_dir: Path(model_path))
-    monkeypatch.setattr(module.VisualiseFossen, "_build_environment", lambda self, selected_env, max_steps: _FakeEnv())
-    monkeypatch.setattr(module.VisualiseFossen, "_resolve_environment_name", lambda self, model_path: "PySimEnv")
-    monkeypatch.setattr(module, "_framework_motion_state_from_env", lambda env, bridge: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    monkeypatch.setattr(module, "_animate_framework_state", lambda *args, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_build_environment", lambda self, selected_env, max_steps: _FakeEnv())
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_resolve_environment_name", lambda self, model_path: "PySimEnv")
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_motion_state_from_env", lambda self, env, bridge: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_animate_state", lambda self, env, bridge, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
     monkeypatch.setattr(module, "VisualiseModelsMinimap", _FakeMinimap)
 
     _FakeBridge.created = []
@@ -276,14 +276,14 @@ def test_visualise_models_does_not_save_matplotlib_minimap_by_default(monkeypatc
 
 def test_visualise_models_exports_rows_and_bridge_log_path(monkeypatch):
     """Visualisation should initialize an export session and emit telemetry rows."""
-    monkeypatch.setattr(module, "load_policy", lambda *args, **kwargs: _FakePolicy())
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_load_policy", lambda self, model_path, device: _FakePolicy())
     monkeypatch.setattr(module, "AirSimBridge", _FakeBridge)
     monkeypatch.setattr(module, "AirSimSessionExporter", _FakeExporter)
     monkeypatch.setattr(module, "resolve_model_path", lambda model_path, src_dir: Path(model_path))
-    monkeypatch.setattr(module.VisualiseFossen, "_build_environment", lambda self, selected_env, max_steps: _FakeEnv())
-    monkeypatch.setattr(module.VisualiseFossen, "_resolve_environment_name", lambda self, model_path: "PySimEnv")
-    monkeypatch.setattr(module, "_framework_motion_state_from_env", lambda env, bridge: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    monkeypatch.setattr(module, "_animate_framework_state", lambda *args, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_build_environment", lambda self, selected_env, max_steps: _FakeEnv())
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_resolve_environment_name", lambda self, model_path: "PySimEnv")
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_motion_state_from_env", lambda self, env, bridge: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_animate_state", lambda self, env, bridge, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
 
     _FakeBridge.created = []
     _FakeExporter.created = []
@@ -310,14 +310,14 @@ def test_visualise_models_exports_rows_and_bridge_log_path(monkeypatch):
 
 def test_visualise_models_saves_matplotlib_minimap_when_enabled(monkeypatch):
     """Visualisation should finish the minimap when save is enabled."""
-    monkeypatch.setattr(module, "load_policy", lambda *args, **kwargs: _FakePolicy())
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_load_policy", lambda self, model_path, device: _FakePolicy())
     monkeypatch.setattr(module, "AirSimBridge", _FakeBridge)
     monkeypatch.setattr(module, "AirSimSessionExporter", _FakeExporter)
     monkeypatch.setattr(module, "resolve_model_path", lambda model_path, src_dir: Path(model_path))
-    monkeypatch.setattr(module.VisualiseFossen, "_build_environment", lambda self, selected_env, max_steps: _FakeEnv())
-    monkeypatch.setattr(module.VisualiseFossen, "_resolve_environment_name", lambda self, model_path: "PySimEnv")
-    monkeypatch.setattr(module, "_framework_motion_state_from_env", lambda env, bridge: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    monkeypatch.setattr(module, "_animate_framework_state", lambda *args, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_build_environment", lambda self, selected_env, max_steps: _FakeEnv())
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_resolve_environment_name", lambda self, model_path: "PySimEnv")
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_motion_state_from_env", lambda self, env, bridge: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_animate_state", lambda self, env, bridge, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
     monkeypatch.setattr(module, "VisualiseModelsMinimap", _FakeMinimap)
 
     _FakeBridge.created = []

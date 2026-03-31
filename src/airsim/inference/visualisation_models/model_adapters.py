@@ -311,11 +311,11 @@ class ModelVisualisationAdapter(ABC):
             env.fh_sim.dispose()
 
 
-class FossenVisualisationAdapter(ModelVisualisationAdapter):
-    """Adapter for Python-simulator Fossen models."""
+class PySimVisualisationAdapter(ModelVisualisationAdapter):
+    """Adapter for PySimEnv framework-model visualisation."""
 
-    family = "fossen"
-    model_origin = "fossen"
+    family = "pysim"
+    model_origin = "pysim"
     supported_environment_names = ("PySimEnv",)
     filename_keywords = ("pysimenv", "py_sim", "fossen")
 
@@ -348,10 +348,10 @@ class FhSimVisualisationAdapter(ModelVisualisationAdapter):
 
 
 _VISUALISATION_ADAPTERS: dict[str, ModelVisualisationAdapter] = {
-    "fossen": FossenVisualisationAdapter(),
+    "pysim": PySimVisualisationAdapter(),
     "fhsim": FhSimVisualisationAdapter(),
 }
-_AUTO_DETECTION_ORDER = ("fhsim", "fossen")
+_AUTO_DETECTION_ORDER = ("fhsim", "pysim")
 
 
 def get_supported_model_families() -> tuple[str, ...]:
@@ -398,4 +398,4 @@ def resolve_visualisation_adapter(
         if model_path and adapter.matches_model_path(model_path):
             return adapter
 
-    return _VISUALISATION_ADAPTERS["fossen"]
+    return _VISUALISATION_ADAPTERS["pysim"]

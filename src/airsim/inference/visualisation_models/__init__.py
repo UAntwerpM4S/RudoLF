@@ -2,8 +2,8 @@
 
 from .model_adapters import (
     FhSimVisualisationAdapter,
-    FossenVisualisationAdapter,
     ModelVisualisationAdapter,
+    PySimVisualisationAdapter,
     get_supported_environment_names,
     get_supported_model_families,
     resolve_visualisation_adapter,
@@ -11,8 +11,8 @@ from .model_adapters import (
 
 __all__ = [
     "FhSimVisualisationAdapter",
-    "FossenVisualisationAdapter",
     "ModelVisualisationAdapter",
+    "PySimVisualisationAdapter",
     "get_supported_environment_names",
     "get_supported_model_families",
     "resolve_visualisation_adapter",

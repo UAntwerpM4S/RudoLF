@@ -5,6 +5,11 @@ This folder contains the two runtime entrypoints that stay intentionally separat
 - `run_inference.py`
 - `run_visualise_models.py`
 
+Related docs:
+
+- [AirSim Step-By-Step Setup Guide](../../../docs/airsim_setup_step_by_step.md)
+- [AirSim Architecture](../../../docs/airsim_architecture.md)
+
 ## Choose The Right Runner
 
 ### Use `run_inference.py` when
@@ -28,7 +33,6 @@ This folder contains the two runtime entrypoints that stay intentionally separat
 Decision rules:
 
 - `visualization.model_visualise=true` -> run `run_visualise_models.py`
-- `visualization.fossen_visualise=true` -> same as above, legacy alias
 - `visualization.inference_visualise=true` -> run `run_inference.py`
 - if both replay and inference flags are true, replay wins
 
@@ -38,7 +42,7 @@ Decision rules:
 
 `run_inference.py` is now AirSim-only.
 
-It is meant for PPO policies trained inside the UE5-backed `AirSimEnv`. It no longer contains a Fossen compatibility path or a separate direct-control mode.
+It is meant for PPO policies trained inside the UE5-backed `AirSimEnv`. It no longer contains a framework-replay compatibility path or a separate direct-control mode.
 
 ### Effective control loop
 
@@ -83,7 +87,7 @@ It is meant for PPO policies trained inside the UE5-backed `AirSimEnv`. It no lo
 
 Current adapter families:
 
-- `fossen`
+- `pysim`
 - `fhsim`
 
 The adapter registry lives in `visualisation_models/model_adapters.py`.
@@ -92,7 +96,7 @@ The adapter registry lives in `visualisation_models/model_adapters.py`.
 
 ### Matplotlib minimap
 
-`VisualiseModelsMinimap` is a child-process matplotlib minimap based on `MinimapFossenAirsim`.
+`VisualiseModelsMinimap` is a child-process matplotlib minimap. Internally it currently reuses the `MinimapFossenAirsim` implementation, but the public runtime concept is modular model visualisation.
 
 It currently shows:
 
@@ -156,7 +160,6 @@ python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_poli
 ### Replay selection
 
 - `visualization.model_visualise`
-- `visualization.fossen_visualise`
 - `visualization.model_family`
 - `visualization.environment_name`
 

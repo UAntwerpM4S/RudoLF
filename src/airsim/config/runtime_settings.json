@@ -6,9 +6,8 @@
   },
   "visualization": {
     "_remarks": {
-      "model_visualise": "true => visualize framework-model replay in UE5 (preferred alias).",
-      "fossen_visualise": "Legacy alias for model_visualise.",
-      "model_family": "Model visualiser family selector for run_visualise_models (auto|fossen|fhsim).",
+      "model_visualise": "true => visualize framework-model replay in UE5.",
+      "model_family": "Model visualiser family selector for run_visualise_models (auto|pysim|fhsim).",
       "inference_visualise": "true => run UE5 inference model visualization.",
       "mode_priority": "If both model_visualise and inference_visualise are true, model_visualise wins.",
       "max_steps": "Episode step cap for visualize entry points.",
@@ -24,7 +23,7 @@
     "inference_model_path": "models/AirSimEnv_PPO_policy.zip",
     "environment_name": "auto",
     "mirror_controls_in_ue5": false,
-    "animate_steering_in_ue5": true,
+    "animate_steering_in_ue5": false,
     "animate_throttle_in_ue5": false,
     "render_interpolation_steps": 8,
     "steering_visual_gain": 0.35,
@@ -74,9 +73,7 @@
       "ip": "AirSim RPC host. Empty string means localhost.",
       "port": "AirSim RPC port.",
       "save_slot": "UE5 save slot loaded before training/visualization.",
-      "simulation_speed": "Base UE5 speed used by visualize path and as fallback when training overrides are absent.",
-      "status_context": "Optional custom text prefix for the UE5 top-left AirSim status banner.",
-      "status_world_fallback": "When true, also draw the status text as a world-space string near the mirrored vehicle/object."
+      "simulation_speed": "Base UE5 speed used by visualize path and as fallback when training overrides are absent."
     },
     "use_airsim": true,
     "ip": "",
@@ -86,8 +83,6 @@
     "health_check_interval": 30.0,
     "csv_log_path": "",
     "save_slot": "simulator_1",
-    "simulation_speed": 100.0,
-    "status_context": "",
-    "status_world_fallback": true
+    "simulation_speed": 100.0
   }
 }

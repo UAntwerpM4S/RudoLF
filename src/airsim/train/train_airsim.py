@@ -34,11 +34,6 @@ if __name__ == "__main__":
     # training_mode=False → full UE5 rendering + real-time stepping (required for visualize)
     env_config = {
         "training_mode": ACTION == "train",
-        "status_context": (
-            "Training AirSim model"
-            if ACTION == "train"
-            else "Visualisation AirSim model"
-        ),
     }
 
     # Register the AirSim environment (creates AirSimEnv, connects to UE5)

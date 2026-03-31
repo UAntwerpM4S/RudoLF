@@ -8,6 +8,7 @@ import math
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -31,11 +32,6 @@ from airsim.inference.visualisation_models import (  # noqa: E402
     get_supported_model_families,
     resolve_visualisation_adapter,
 )
-from airsim.inference.visualisation_models.model_adapters import (  # noqa: E402
-    _animate_framework_state,
-    _framework_motion_state_from_env,
-    load_policy,
-)
 from fw.common.airsim.tools.airsim_export import (  # noqa: E402
     AirSimSessionExporter,
     build_framework_visualisation_row,
@@ -48,6 +44,7 @@ _DEFAULT_MIN_LOG_INTERVAL_S = 0.25
 _DEFAULT_MINIMAP_UPDATE_HZ = 20.0
 _DEFAULT_BRIDGE_TELEMETRY_HZ = 12.0
 _DEFAULT_STARTUP_SETTLE_S = 0.4
+_DEFAULT_TRAIL_MIN_SEGMENT_M = 1.5
 
 
 class VisualiseModelsRunner:
@@ -110,6 +107,9 @@ class VisualiseModelsRunner:
         ue5_camera_follow_heading: bool = False,
         ue5_preview_window: bool = True,
         save_matplotlib_minimap: bool = False,
+        draw_ship_trail_in_ue5: bool = True,
+        ship_trail_thickness: float = 14.0,
+        ship_trail_min_segment_m: float = _DEFAULT_TRAIL_MIN_SEGMENT_M,
         min_log_interval_s: float = _DEFAULT_MIN_LOG_INTERVAL_S,
         minimap_update_hz: float = _DEFAULT_MINIMAP_UPDATE_HZ,
         bridge_telemetry_hz: float = _DEFAULT_BRIDGE_TELEMETRY_HZ,
@@ -148,6 +148,9 @@ class VisualiseModelsRunner:
             ue5_camera_follow_heading: Whether the UE5 minimap camera follows heading.
             ue5_preview_window: Whether to show the UE5 camera preview window.
             save_matplotlib_minimap: Whether to save the matplotlib minimap snapshot when supported.
+            draw_ship_trail_in_ue5: Whether to draw a persistent blue trail behind the ship in UE5.
+            ship_trail_thickness: Thickness of the persistent blue ship trail in UE5.
+            ship_trail_min_segment_m: Minimum movement before adding a new UE5 trail segment.
             min_log_interval_s: Minimum wall-clock interval between info logs.
             minimap_update_hz: Maximum minimap refresh rate.
             bridge_telemetry_hz: Maximum bridge telemetry polling rate.
@@ -207,6 +210,9 @@ class VisualiseModelsRunner:
                     "ue5_camera_follow_heading": ue5_camera_follow_heading,
                     "ue5_preview_window": ue5_preview_window,
                     "save_matplotlib_minimap": save_matplotlib_minimap,
+                    "draw_ship_trail_in_ue5": draw_ship_trail_in_ue5,
+                    "ship_trail_thickness": float(ship_trail_thickness),
+                    "ship_trail_min_segment_m": float(ship_trail_min_segment_m),
                     "minimap_update_hz": float(minimap_update_hz),
                     "bridge_telemetry_hz": float(bridge_telemetry_hz),
                     "startup_settle_s": float(startup_settle_s),
@@ -224,6 +230,22 @@ class VisualiseModelsRunner:
             bridge = None
             env = None
             minimap = None
+
+            def _trail_point_from_motion_state(motion_state: np.ndarray):
+                """Return the current UE5 trail point for the ship path marker."""
+                trail_offset_m = 8.0
+                trail_x = float(motion_state[0] - np.cos(float(motion_state[2])) * trail_offset_m)
+                trail_y = float(motion_state[1] - np.sin(float(motion_state[2])) * trail_offset_m)
+                render_z = float(getattr(bridge, "render_z", 0.0))
+                trail_z = float(render_z - 12.0)
+                vector3r_factory = getattr(bridge._airsim, "Vector3r", None)
+                if callable(vector3r_factory):
+                    return vector3r_factory(trail_x, trail_y, trail_z)
+                return SimpleNamespace(
+                    x_val=trail_x,
+                    y_val=trail_y,
+                    z_val=trail_z,
+                )
 
             try:
                 bridge = AirSimBridge(
@@ -255,7 +277,7 @@ class VisualiseModelsRunner:
                 last_minimap_update_at = 0.0
                 last_bridge_telemetry_at = 0.0
 
-                bridge.prepare_fossen_visualisation(
+                bridge.prepare_model_visualisation(
                     save_slot=save_slot,
                     simulation_speed=simulation_speed,
                     draw_reference=draw_calibration_reference,
@@ -271,6 +293,7 @@ class VisualiseModelsRunner:
                 for episode in range(num_episodes):
                     print(f"\n-- Visualisation episode {episode + 1}/{num_episodes} --")
                     obs, _ = env.reset()
+                    previous_trail_point = None
 
                     if show_minimap:
                         if minimap is not None:
@@ -317,6 +340,8 @@ class VisualiseModelsRunner:
                         lock_path_in_ue5=lock_path_in_ue5,
                         vehicle_object_name=vehicle_object_name,
                     )
+                    if draw_ship_trail_in_ue5:
+                        previous_trail_point = _trail_point_from_motion_state(previous_motion_state)
 
                     if bridge.is_connected and not vehicle_object_name:
                         parked_controls = bridge._airsim.CarControls()
@@ -388,6 +413,21 @@ class VisualiseModelsRunner:
                                     last_bridge_telemetry_at = now
                                 except Exception:
                                     pass
+                            if draw_ship_trail_in_ue5:
+                                current_trail_point = _trail_point_from_motion_state(previous_motion_state)
+                                if previous_trail_point is not None:
+                                    moved_dx = float(current_trail_point.x_val - previous_trail_point.x_val)
+                                    moved_dy = float(current_trail_point.y_val - previous_trail_point.y_val)
+                                    if np.hypot(moved_dx, moved_dy) >= float(ship_trail_min_segment_m):
+                                        bridge.plot_line_strip(
+                                            [previous_trail_point, current_trail_point],
+                                            color_rgba=[0.12, 0.52, 1.0, 1.0],
+                                            thickness=float(ship_trail_thickness),
+                                            is_persistent=True,
+                                        )
+                                        previous_trail_point = current_trail_point
+                                else:
+                                    previous_trail_point = current_trail_point
                         else:
                             previous_motion_state = target_motion_state
 
@@ -462,32 +502,6 @@ class VisualiseModelsRunner:
                     bridge.disconnect()
                 print(f"Exports saved to '{session_exporter.export_dir}'.")
                 print("\nVisualisation complete - AirSim connection closed.")
-
-
-class VisualiseFossen(VisualiseModelsRunner):
-    """Compatibility wrapper that preserves legacy test monkeypatch points."""
-
-    def _load_policy(self, model_path: str, device: str):
-        """Load a replay policy through the legacy module-level helper."""
-        return load_policy(model_path, device=device)
-
-    def _motion_state_from_env(self, env, bridge: AirSimBridge):
-        """Extract framework motion through the legacy module-level helper."""
-        return _framework_motion_state_from_env(env, bridge)
-
-    def _animate_state(self, env, bridge: AirSimBridge, **kwargs):
-        """Animate framework motion through the legacy module-level helper."""
-        return _animate_framework_state(env, bridge, **kwargs)
-
-
-class VisualiseFhSim(VisualiseFossen):
-    """Compatibility wrapper for FhSim-specific visualisation selection."""
-
-    def __init__(self, adapter: ModelVisualisationAdapter) -> None:
-        """Initialise the wrapper with a fixed FhSim environment default."""
-        super().__init__(adapter=adapter, env_name="FhSimEnv")
-
-
 def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) -> None:
     """Dispatch visualization to the selected model-family adapter."""
     env_name = str(kwargs.pop("env_name", "auto"))
@@ -496,10 +510,8 @@ def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) 
         model_path=model_path,
         env_name=env_name,
     )
-    if adapter.family == "fhsim":
-        runner = VisualiseFhSim(adapter=adapter)
-    else:
-        runner = VisualiseFossen(adapter=adapter, env_name=env_name)
+    resolved_env_name = "FhSimEnv" if adapter.family == "fhsim" else env_name
+    runner = VisualiseModelsRunner(adapter=adapter, env_name=resolved_env_name)
     runner.run(model_path=model_path, **kwargs)
 
 
@@ -541,6 +553,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ue5-camera-follow-heading", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--ue5-preview-window", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save-matplotlib-minimap", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--draw-ship-trail-in-ue5", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--ship-trail-thickness", type=float, default=14.0)
+    parser.add_argument("--ship-trail-min-segment-m", type=float, default=_DEFAULT_TRAIL_MIN_SEGMENT_M)
     parser.add_argument("--min-log-interval-s", type=float, default=_DEFAULT_MIN_LOG_INTERVAL_S)
     parser.add_argument("--minimap-update-hz", type=float, default=_DEFAULT_MINIMAP_UPDATE_HZ)
     parser.add_argument("--bridge-telemetry-hz", type=float, default=_DEFAULT_BRIDGE_TELEMETRY_HZ)
@@ -588,6 +603,9 @@ if __name__ == "__main__":
         ue5_camera_follow_heading=args.ue5_camera_follow_heading,
         ue5_preview_window=args.ue5_preview_window,
         save_matplotlib_minimap=args.save_matplotlib_minimap,
+        draw_ship_trail_in_ue5=args.draw_ship_trail_in_ue5,
+        ship_trail_thickness=args.ship_trail_thickness,
+        ship_trail_min_segment_m=args.ship_trail_min_segment_m,
         min_log_interval_s=args.min_log_interval_s,
         minimap_update_hz=args.minimap_update_hz,
         bridge_telemetry_hz=args.bridge_telemetry_hz,

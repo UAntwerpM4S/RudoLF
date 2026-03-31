@@ -7,7 +7,7 @@ This runner is intentionally single-purpose:
 - it relies on ``AirSimEnv.reset()`` and ``AirSimEnv.close()`` for
   episode lifecycle handling
 
-Framework-driven replay for Fossen/PySim/FhSim models lives in
+Framework-driven replay for modular framework-model visualisation lives in
 ``run_visualise_models.py`` and is kept separate on purpose.
 """
 
@@ -48,7 +48,7 @@ def _warn_if_model_name_looks_non_airsim(model_path: Path) -> None:
     logger.warning(
         "Model '%s' does not look like an AirSimEnv-trained policy. "
         "run_inference.py now targets UE5/AirSimEnv inference only; "
-        "use run_visualise_models.py for framework/Fossen replay.",
+        "use run_visualise_models.py for framework-model replay.",
         model_path.name,
     )
 
@@ -195,7 +195,7 @@ def run_inference(
     print("  Loop   : policy -> AirSimEnv.step() -> UE5 physics -> state feedback")
     print("  Reset  : AirSimEnv.reset() per episode")
     print("  Close  : AirSimEnv.close() on shutdown")
-    print("  Replay : use run_visualise_models.py for Fossen/framework models")
+    print("  Replay : use run_visualise_models.py for modular framework-model replay")
     print(banner)
 
     policy = load_policy(str(resolved_model_path), device=device)
@@ -334,7 +334,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Run inference for PPO models trained directly in AirSimEnv. "
-            "For framework/Fossen replay, use run_visualise_models instead."
+            "For modular framework-model replay, use run_visualise_models instead."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

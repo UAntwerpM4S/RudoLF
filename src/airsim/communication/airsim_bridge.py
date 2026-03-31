@@ -750,43 +750,35 @@ class AirSimBridge:
         except Exception as exc:
             logger.warning("Failed to dump sensor buffer to CSV: %s", exc)
 
-    def load_world_save(
-        self,
-        save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
-        reload_timeout: float = 90.0,
-        poll_interval: float = 0.5,
-        reconnect_delay: float = 1.5,
-    ) -> None:
-        """Load a UE5 save slot and reconnect after the level reload completes."""
-        if not self._ensure_connected():
-            raise ConnectionError("Cannot load world save: bridge disconnected.")
+    def _snapshot_vehicle_position(self) -> Optional[tuple[float, float, float]]:
+        """Return the current vehicle position when available."""
+        if self._client is None:
+            return None
+        try:
+            pose = self._client.simGetVehiclePose()
+        except Exception:
+            return None
+        return (
+            float(pose.position.x_val),
+            float(pose.position.y_val),
+            float(pose.position.z_val),
+        )
 
-        logger.info("Loading world save '%s'...", save_slot)
-        self._client.simSetSaveSlot(save_slot)
-        self._client.simRequestLoad()
+    @staticmethod
+    def _position_delta_m(
+        before: Optional[tuple[float, float, float]],
+        after: Optional[tuple[float, float, float]],
+    ) -> Optional[float]:
+        """Return the Euclidean distance between two vehicle positions."""
+        if before is None or after is None:
+            return None
+        dx = float(after[0] - before[0])
+        dy = float(after[1] - before[1])
+        dz = float(after[2] - before[2])
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
 
-        start = time.monotonic()
-        went_down = False
-        while time.monotonic() - start < 10.0:
-            if not is_ue5_reachable(self.config.ip, self.config.port):
-                went_down = True
-                logger.info("UE5 RPC port went offline - level is reloading...")
-                break
-            time.sleep(poll_interval)
-
-        if not went_down:
-            logger.debug("UE5 RPC port never went down after save-load request.")
-
-        logger.info("Waiting for UE5 to finish reloading (timeout=%ds)...", int(reload_timeout))
-        while time.monotonic() - start < reload_timeout:
-            if is_ue5_reachable(self.config.ip, self.config.port):
-                break
-            time.sleep(poll_interval)
-        else:
-            raise TimeoutError(
-                f"UE5 did not finish reloading within {reload_timeout:.0f} s."
-            )
-
+    def _reconnect_after_world_reload(self, reconnect_delay: float) -> None:
+        """Reconnect the AirSim client after a world reload or reload attempt."""
         time.sleep(reconnect_delay)
         self._connected = False
         self._client = None
@@ -798,13 +790,125 @@ class AirSimBridge:
         if not self._connected:
             raise ConnectionError("AirSimBridge failed to reconnect after level reload.")
 
-    def prepare_fossen_visualisation(
+    def _fallback_reset_after_unconfirmed_reload(self, settle_s: float = 1.0) -> None:
+        """Reset the active session when a save-slot reload could not be confirmed."""
+        if not self._connected or self._client is None or self._airsim is None:
+            raise ConnectionError(
+                "Cannot apply fallback reset: AirSim bridge is not connected."
+            )
+
+        logger.warning(
+            "Falling back to an in-session vehicle reset because save-slot reload "
+            "was not clearly observed."
+        )
+        try:
+            self._client.reset()
+            time.sleep(max(float(settle_s), 0.0))
+            self._client.enableApiControl(True)
+            self._controls = self._airsim.CarControls()
+            self._step_count = 0
+        except Exception as exc:
+            raise ConnectionError(
+                "Fallback reset failed after an unconfirmed save-slot reload."
+            ) from exc
+
+    def load_world_save(
+        self,
+        save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
+        reload_timeout: float = 90.0,
+        poll_interval: float = 0.5,
+        reconnect_delay: float = 1.5,
+        max_reload_attempts: int = 2,
+        min_observed_pose_shift_m: float = 1.0,
+        fallback_reset_settle_s: float = 1.0,
+    ) -> None:
+        """Load a UE5 save slot and reconnect after the level reload completes.
+
+        Some UE5/CosysAirSim sessions do not always expose a clean RPC drop when
+        ``simRequestLoad()`` is issued. In that case this method retries the
+        reload once and, if the reload still cannot be confirmed, falls back to
+        a local vehicle reset so the caller does not continue blindly in a stale
+        moved-away session.
+        """
+        if not self._ensure_connected():
+            raise ConnectionError("Cannot load world save: bridge disconnected.")
+
+        attempts = max(1, int(max_reload_attempts))
+        for attempt_index in range(attempts):
+            logger.info(
+                "Loading world save '%s' (attempt %d/%d)...",
+                save_slot,
+                attempt_index + 1,
+                attempts,
+            )
+            position_before_reload = self._snapshot_vehicle_position()
+            self._client.simSetSaveSlot(save_slot)
+            self._client.simRequestLoad()
+
+            start = time.monotonic()
+            went_down = False
+            while time.monotonic() - start < 10.0:
+                if not is_ue5_reachable(self.config.ip, self.config.port):
+                    went_down = True
+                    logger.info("UE5 RPC port went offline - level is reloading...")
+                    break
+                time.sleep(poll_interval)
+
+            if not went_down:
+                logger.warning(
+                    "UE5 RPC port never went down after save-load request on attempt %d/%d.",
+                    attempt_index + 1,
+                    attempts,
+                )
+
+            logger.info(
+                "Waiting for UE5 to finish reloading (timeout=%ds)...",
+                int(reload_timeout),
+            )
+            while time.monotonic() - start < reload_timeout:
+                if is_ue5_reachable(self.config.ip, self.config.port):
+                    break
+                time.sleep(poll_interval)
+            else:
+                raise TimeoutError(
+                    f"UE5 did not finish reloading within {reload_timeout:.0f} s."
+                )
+
+            self._reconnect_after_world_reload(reconnect_delay)
+            position_after_reload = self._snapshot_vehicle_position()
+            observed_shift_m = self._position_delta_m(
+                position_before_reload,
+                position_after_reload,
+            )
+
+            if went_down or observed_shift_m is None:
+                return
+            if observed_shift_m >= float(min_observed_pose_shift_m):
+                logger.info(
+                    "Observed %.2f m pose shift after save-load request; accepting reload.",
+                    observed_shift_m,
+                )
+                return
+
+            logger.warning(
+                "Save-load attempt %d/%d did not clearly reload the session "
+                "(RPC stayed up, pose shift %.2f m).",
+                attempt_index + 1,
+                attempts,
+                observed_shift_m,
+            )
+
+        self._fallback_reset_after_unconfirmed_reload(
+            settle_s=fallback_reset_settle_s
+        )
+
+    def prepare_model_visualisation(
         self,
         save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
         simulation_speed: float = DEFAULT_AIRSIM_SIMULATION_SPEED,
         draw_reference: bool = True,
     ):
-        """Prepare UE5 for framework-driven Fossen visualisation."""
+        """Prepare UE5 for framework-model visualisation."""
         from fw.common.airsim.tools.calibrate_coords import load_saved_calibration_reference
 
         self.load_world_save(save_slot=save_slot)
@@ -818,7 +922,7 @@ class AirSimBridge:
 
         # Park vehicle immediately after world load so its physics engine does
         # not drift around (and disturb the water surface) during the window
-        # between the save-slot reload and the first Fossen pose update.
+        # between the save-slot reload and the first framework pose update.
         try:
             _park = self._airsim.CarControls()
             _park.throttle = 0.0

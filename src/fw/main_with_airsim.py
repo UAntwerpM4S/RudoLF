@@ -3,7 +3,8 @@
 This module centralizes AirSim orchestration from AirSim-specific runtime
 settings:
 - Training with AirSimEnv through the framework trainer.
-- Visualization dispatch to either Fossen replay or UE5-direct inference.
+- Visualization dispatch to either modular framework-model replay or
+  AirSimEnv inference.
 
 It is intended to be called directly (``python -m fw.main_with_airsim``) or via
 delegation from ``fw.main`` when ``fw.config.CONFIG_PARAMETERS['env_type']`` is
@@ -44,13 +45,11 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     # AirSim runtime only controls AirSim-specific behavior.
     # The selected framework environment is handled by fw.main / fw.config.
-    _called_directly = __name__ == "__main__"
     _action_was_explicit = "FW_MAIN_ACTION_OVERRIDE" in os.environ
     _SRC_DIR = Path(__file__).resolve().parents[1]
     action = str(os.environ.get("FW_MAIN_ACTION_OVERRIDE", "train")).strip().lower()
     if action not in {"train", "visualize"}:
         action = "train"
-    selected_environment_name = airsim_env_name
     runtime_settings = get_default_runtime_settings()
 
     # Visualization flags switch the AirSim entrypoint into visualize mode.
@@ -107,13 +106,13 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             f"[main_with_airsim] Unknown training.speed_profile '{profile_name}'. "
             "Using explicit training settings."
         )
-    # When this module is run directly, the runtime visualization flags should
-    # always win so the entrypoint behaves as a dedicated AirSim launcher even if
-    # an unrelated action override leaked into the process environment. When
-    # delegated from fw.main, the explicit override still takes precedence.
-    if (_called_directly or not _action_was_explicit) and (
+    # Runtime visualization flags may promote the AirSim entrypoint into
+    # visualize mode only when fw.main did not pass an explicit action override.
+    # This keeps ordered framework execution honest: a delegated AirSim train
+    # step must remain a train step even though runpy executes this module with
+    # __name__ == "__main__".
+    if not _action_was_explicit and (
         bool(visualization_cfg.get("model_visualise", False))
-        or bool(visualization_cfg.get("fossen_visualise", False))
         or bool(visualization_cfg.get("inference_visualise", False))
     ):
         action = "visualize"
@@ -125,9 +124,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             bool: True when a dedicated AirSim visualize runner was executed,
             False when caller should continue with generic trainer.visualize.
         """
-        model_visualise = bool(visualization_cfg.get("model_visualise", False)) or bool(
-            visualization_cfg.get("fossen_visualise", False)
-        )
+        model_visualise = bool(visualization_cfg.get("model_visualise", False))
         inference_visualise = bool(visualization_cfg.get("inference_visualise", False))
 
         if not (model_visualise or inference_visualise):
@@ -156,22 +153,12 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             run_visualise_models_module.run_visualise_models(
                 model_path=str(
                     resolve_path_relative_to_src(
-                        str(
-                            visualization_cfg.get(
-                                "model_path",
-                                visualization_cfg.get("fossen_model_path", "models/PySimEnv_PPO_policy.zip"),
-                            )
-                        ),
+                        str(visualization_cfg.get("model_path", "models/PySimEnv_PPO_policy.zip")),
                         _SRC_DIR,
                     )
                 ),
                 model_family=str(visualization_cfg.get("model_family", "auto")),
-                env_name=str(
-                    visualization_cfg.get(
-                        "environment_name",
-                        visualization_cfg.get("fossen_environment", "auto"),
-                    )
-                ),
+                env_name=str(visualization_cfg.get("environment_name", "auto")),
                 ip=ip,
                 port=port,
                 max_steps=max_steps,
@@ -255,7 +242,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # Ensure all environments are registered once
     from fw.trainer import Trainer
     from fw.stop_condition import StopCondition, Criterion
-    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+    from fw.config import PPO_POLICY_NAME
     from fw.env_factory import (
         get as get_environment,
         initialize_all_environments,
@@ -263,40 +250,37 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     initialize_all_environments()
 
-    # Define simulator inputs. Keep hardcoded behavior by default, allow runtime override.
-    if selected_environment_name == airsim_env_name:
-        is_training = action == "train"
-        airsim_env_cfg = dict(airsim_runtime_cfg)
-        effective_max_steps = (
-            int(effective_training_cfg.get("max_steps", 14000))
-            if is_training
-            else int(visualization_cfg.get("max_steps", 14000))
-        )
-        effective_simulation_speed = (
-            float(effective_training_cfg.get("simulation_speed", airsim_runtime_cfg["simulation_speed"]))
-            if is_training
-            else float(airsim_runtime_cfg["simulation_speed"])
-        )
-        airsim_env_cfg.update({
-            "training_mode": is_training,
-            "use_pause_stepping": bool(effective_training_cfg.get("use_pause_stepping", is_training)),
-            "simulation_speed": effective_simulation_speed,
-            "max_steps": effective_max_steps,
-            "frames_per_step": int(effective_training_cfg.get("frames_per_step", 10)),
-            "time_step": float(effective_training_cfg.get("time_step", 0.1)),
-            "physics_update_timeout": float(effective_training_cfg.get("physics_update_timeout", 1.0)),
-            "state_poll_interval": float(effective_training_cfg.get("state_poll_interval", 0.005)),
-        })
-        if "latency_warning_threshold" in effective_training_cfg:
-            airsim_env_cfg["latency_warning_threshold"] = float(effective_training_cfg["latency_warning_threshold"])
-        envs = [get_environment(airsim_env_name, configuration=airsim_env_cfg)]
-    else:
-        envs = [get_environment(selected_environment_name)]
+    # This entrypoint always orchestrates the AirSim environment itself.
+    is_training = action == "train"
+    airsim_env_cfg = dict(airsim_runtime_cfg)
+    effective_max_steps = (
+        int(effective_training_cfg.get("max_steps", 14000))
+        if is_training
+        else int(visualization_cfg.get("max_steps", 14000))
+    )
+    effective_simulation_speed = (
+        float(effective_training_cfg.get("simulation_speed", airsim_runtime_cfg["simulation_speed"]))
+        if is_training
+        else float(airsim_runtime_cfg["simulation_speed"])
+    )
+    airsim_env_cfg.update({
+        "training_mode": is_training,
+        "use_pause_stepping": bool(effective_training_cfg.get("use_pause_stepping", is_training)),
+        "simulation_speed": effective_simulation_speed,
+        "max_steps": effective_max_steps,
+        "frames_per_step": int(effective_training_cfg.get("frames_per_step", 10)),
+        "time_step": float(effective_training_cfg.get("time_step", 0.1)),
+        "physics_update_timeout": float(effective_training_cfg.get("physics_update_timeout", 1.0)),
+        "state_poll_interval": float(effective_training_cfg.get("state_poll_interval", 0.005)),
+    })
+    if "latency_warning_threshold" in effective_training_cfg:
+        airsim_env_cfg["latency_warning_threshold"] = float(effective_training_cfg["latency_warning_threshold"])
+    envs = [get_environment(airsim_env_name, configuration=airsim_env_cfg)]
 
     # When delegated from fw.main as an ordered AirSim step, fail fast if
     # AirSim resolved to a framework fallback environment (e.g. PySimEnv).
     # This prevents duplicate training/visualization of a non-Airsim env.
-    if _action_was_explicit and selected_environment_name == airsim_env_name and not _is_airsim_selected(envs):
+    if _action_was_explicit and not _is_airsim_selected(envs):
         print(
             "[main_with_airsim] AirSimEnv requested via fw.main, "
             "but UE5 is unavailable and env_factory returned a fallback env. "
@@ -320,7 +304,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         metrics = trainer.train(configuration)
 
         print(f"Training metrics: {metrics}")
-    elif "visualize" == action:
+    else:
         # Optionally create AirSim bridge for simultaneous vehicle control
         from airsim.config.airsim_config import get_airsim_config, AirSimConfig
         airsim_cfg = get_airsim_config()
@@ -339,7 +323,4 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 print("[main] AirSim bridge not connected - running without.")
         elif _is_airsim_selected(envs):
             logging.getLogger("airsim").setLevel(logging.INFO)
-
         trainer.visualize(envs, airsim_bridge=airsim_bridge)
-    else:
-        print(f"Unable to execute unknown action '{action}'")

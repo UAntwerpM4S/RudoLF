@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class VisualiseModelsMinimap(MinimapFossenAirsim):
-    """Backward-compatible alias for the process-based matplotlib minimap."""
+    """Process-based matplotlib minimap used by model visualisation."""
 
 
 class UE5TopDownMinimap:

@@ -69,6 +69,7 @@ python -m fw.common.airsim.tools.analyze_telemetry
 
 For full AirSim technical documentation, use:
 
+- [AirSim Step-By-Step Setup Guide](docs/airsim_setup_step_by_step.md)
 - [AirSim Package Reference](src/airsim/README.md)
 - [AirSim Inference and Visualisation Runbook](src/airsim/inference/README.md)
 - [AirSim Workflow Rationale](src/airsim/verantwoording_workflow.md)
