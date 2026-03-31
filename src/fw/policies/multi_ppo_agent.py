@@ -28,7 +28,6 @@ class MultiPPOAgent(BaseAgent):
         num_envs (int): Number of parallel environments/agents.
         max_nbr_iterations (int): Maximum steps per rollout to prevent infinite loops.
         normalize (bool): Whether to normalize rewards per episode.
-        _vec_env (Optional[Any]): Optional vectorized environment handle (if used externally).
     """
 
     MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20
@@ -64,7 +63,6 @@ class MultiPPOAgent(BaseAgent):
         self.num_envs = len(self.env.environments)
         self.max_nbr_iterations = max_nbr_iterations
         self.normalize = normalize
-        self._vec_env = None
 
 
     def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -154,9 +152,9 @@ class MultiPPOAgent(BaseAgent):
         while not np.all(dones) and safeguard < self.max_nbr_iterations:
             actions, log_probs, values = self.predict(states, deterministic=False)
 
-            # ✅ unified step
-            next_states, rewards, terms, truncs, _ = self.env.step(actions)
-            step_dones = np.logical_or(terms, truncs)
+            # unified step
+            next_states, rewards, terminations, truncations, _ = self.env.step(actions)
+            step_dones = np.logical_or(terminations, truncations)
 
             for i in range(num_envs):
                 if dones[i]:
@@ -178,6 +176,7 @@ class MultiPPOAgent(BaseAgent):
 
         for i in range(num_envs):
             data = buffers[i]
+            next_value = 0.0
 
             # convert to arrays safely
             for key in data:
@@ -247,10 +246,14 @@ class MultiPPOAgent(BaseAgent):
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
 
         last_save_index = 0
-        training_metrics = []
-        best_mean_reward = float('-inf')
-        best_policy_file = f"Best_{self.env.type_name}_PPO_policy"
+        best_rewards = [float('-inf') for _ in range(len(self._agents))]
+        training_metrics = {f"agent{i}": [] for i in range(len(self._agents))}
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
+
+        best_policy_files = [
+            f"Best_{self.env.type_name}_PPO_agent{i}_policy"
+            for i in range(len(self._agents))
+        ]
 
         for iteration in range(stopping_condition.max_time_steps):
             self.set_policy_eval()
@@ -258,31 +261,39 @@ class MultiPPOAgent(BaseAgent):
             # Collect batch data from multiple parallel environments
             batch_data = self.run_parallel_episodes(self.num_envs)
 
-            for agent_id in range(len(self._agents)):
-                episode = batch_data[agent_id]
+            # Validate batch_data length matches number of agents
+            if len(batch_data) != len(self._agents):
+                raise RuntimeError(
+                    f"Batch data size ({len(batch_data)}) does not match "
+                    f"number of agents ({len(self._agents)})"
+                )
+
+            mean_rewards = []
+            mean_losses = []
+
+            # Train each agent
+            for agent_id, (agent, episode) in enumerate(zip(self._agents, batch_data)):
                 mean_reward = np.mean(episode['rewards'])
                 mean_advantage = np.mean(episode['advantages'])
 
-                loss = self._agents[agent_id].train([episode])
+                # Train agent on its episode
+                loss = agent.train([episode])
 
-                training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
+                # Store metrics
+                mean_rewards.append(mean_reward)
+                mean_losses.append(loss)
 
-                # Save the best policy so far
-                if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:
-                    best_mean_reward = mean_reward
-                    self.save_policy(best_policy_file)
+                training_metrics[f"agent{agent_id}"].append({
+                    'iteration': iteration,
+                    'loss': loss,
+                    'advantage': mean_advantage,
+                    'reward': mean_reward
+                })
 
-                should_stop, reason = stopping_condition.should_stop(
-                    current_step=iteration,
-                    mean_reward=mean_reward,
-                    mean_loss=loss
-                )
-
-                # Check if the condition is met for early stopping
-                if should_stop:
-                    print(f"Stopping: {reason}")
-                    last_save_index = iteration
-                    break
+                # Save the best policy per agent
+                if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_rewards[agent_id]:
+                    best_rewards[agent_id] = mean_reward
+                    agent.save_policy(best_policy_files[agent_id])
 
                 # Log evaluation results periodically
                 if iteration % self.eval_frequency == 0:
@@ -290,19 +301,47 @@ class MultiPPOAgent(BaseAgent):
 
                     # Save checkpoint every 'self.eval_frequency' iterations
                     if iteration > 0 and iteration % self.eval_frequency == 0:
-                        self.save_policy(f"ppo_checkpoint_{iteration}")
+                        agent.save_policy(f"agent{agent_id}_ppo_checkpoint_{iteration}")
+
+            # Aggregate metrics for stopping condition
+            mean_reward_all_agents = np.mean(mean_rewards) if mean_rewards else 0.0
+            mean_loss_all_agents = np.mean(mean_losses) if mean_losses else 0.0
+
+            # Check if the condition is met for early stopping
+            should_stop, reason = stopping_condition.should_stop(
+                current_step=iteration,
+                mean_reward=mean_reward_all_agents,
+                mean_loss=mean_loss_all_agents
+            )
+
+            if should_stop:
+                print(f"Stopping: {reason}")
+                last_save_index = iteration
+                break
 
         # Save final checkpoint
         self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
 
         # Dump training metrics to CSV
-        self.dump_metrics_to_csv(self.model_dir, "training_metrics.csv", training_metrics)
-
-        if getattr(self, "_vec_env", None) is not None:
-            self._vec_env.close()
-            self._vec_env = None
+        self._dump_multi_agent_metrics(training_metrics)
 
         print("Training completed!")
+
+
+    def _dump_multi_agent_metrics(self, metrics_dict: dict):
+        """
+        Helper method to flatten multi-agent metrics for CSV export.
+        """
+        flat_metrics = []
+        for agent_name, agent_metrics in metrics_dict.items():
+            agent_id = int(agent_name.replace('agent', ''))
+            for metric in agent_metrics:
+                flat_metrics.append({
+                    'agent_id': agent_id,
+                    **metric
+                })
+
+        self.dump_metrics_to_csv(self.model_dir, "training_metrics.csv", flat_metrics)
 
 
     def load_policy(self, policy_file_name: str) -> None:
