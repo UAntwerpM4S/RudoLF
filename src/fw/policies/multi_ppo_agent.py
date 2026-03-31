@@ -1,21 +1,34 @@
 import os
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import gymnasium as gym
 import numpy as np
 
 from typing import Optional, Tuple
 from fw.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
-from fw.policies.ppo_policy import PPOPolicy
+from fw.policies.single_ppo_agent import SinglePPOAgent
 
 
 class MultiPPOAgent(BaseAgent):
     """
-    Proximal Policy Optimization (PPO) Agent for reinforcement learning.
+    Multi-agent Proximal Policy Optimization (PPO) trainer operating over a
+    tuple-structured multi-environment.
 
-    This class handles the training, evaluation, and policy management for PPO-based reinforcement learning agents.
+    This class coordinates multiple independent `SinglePPOAgent` instances,
+    each controlling one sub-environment within a `MultiPySimEnv`. Experience
+    is collected in parallel across all environments, after which each agent is
+    trained independently on its own trajectory.
+
+    The interaction model is *synchronous but factorized*:
+    - Environments are stepped together using tuple-based actions.
+    - Each agent receives only its corresponding observation.
+    - No parameter sharing or centralized critic is used.
+
+    Attributes:
+        _agents (list[SinglePPOAgent]): List of independent PPO agents, one per environment.
+        num_envs (int): Number of parallel environments/agents.
+        max_nbr_iterations (int): Maximum steps per rollout to prevent infinite loops.
+        normalize (bool): Whether to normalize rewards per episode.
+        _vec_env (Optional[Any]): Optional vectorized environment handle (if used externally).
     """
 
     MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20
@@ -23,196 +36,114 @@ class MultiPPOAgent(BaseAgent):
     def __init__(
         self,
         *args,
+        agents: list[SinglePPOAgent],
         max_nbr_iterations: int = 200000,
         normalize: bool = False,
         **kwargs
     ):
         """
-        Initialize PPOAgent with environment and training hyperparameters.
-
-        This constructor passes core arguments to the BaseAgent and adds two specific options
-        for training behavior: maximum number of iterations and reward normalization.
+        Initialize the multi-agent PPO trainer.
 
         Args:
-            *args: Positional arguments passed to the BaseAgent initializer.
-            max_nbr_iterations (int, optional): The maximum number of environment steps before terminating training.
-                Used as a safeguard to prevent infinite loops. Defaults to 200000.
-            normalize (bool, optional): Whether to normalize rewards using running statistics.
-                Helps stabilize learning when reward scales vary significantly. Defaults to False.
-            **kwargs: Keyword arguments passed to the BaseAgent initializer.
+            *args: Positional arguments forwarded to `BaseAgent`.
+            agents (list[SinglePPOAgent]): List of initialized PPO agents. The
+                length must match the number of sub-environments in `self.env`.
+            max_nbr_iterations (int, optional): Maximum number of environment
+                steps per rollout before forced termination. Defaults to 200000.
+            normalize (bool, optional): If True, apply reward normalization per
+                episode before advantage computation. Defaults to False.
+            **kwargs: Keyword arguments forwarded to `BaseAgent`.
+
+        Raises:
+            ValueError: If the number of agents does not match the number of environments.
         """
 
         super().__init__(*args, **kwargs)
 
-        self._policies = []
-        self.optimizers = []
-
-        for env in self.env.environments:
-            input_dim = env.observation_space.shape[0]
-
-            if isinstance(env.action_space, gym.spaces.Discrete):
-                output_dim = env.action_space.n
-            else:
-                output_dim = env.action_space.shape[0]
-
-            policy = PPOPolicy(input_dim, output_dim, self.device)
-            self._policies.append(policy)
-
-            self.optimizers.append(
-                optim.Adam(policy.network.parameters(), lr=self.learning_rate)
-            )
-        self.num_policies = len(self._policies)
+        self._agents = agents
+        self.num_envs = len(self.env.environments)
         self.max_nbr_iterations = max_nbr_iterations
         self.normalize = normalize
         self._vec_env = None
 
 
-    @property
-    def policies(self):
-        """Policy.
+    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
+        Compute actions, log-probabilities, and value estimates for all agents.
 
-        return self._policies
-
-
-    def predict(self, state: np.ndarray, deterministic: bool = False, policy_id: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Predict an action for a given state using the policy.
+        Each agent receives its corresponding observation and produces an action
+        independently. The outputs are aggregated into tuple/array structures.
 
         Args:
-            state (np.ndarray): Current state as a NumPy array.
-            policy_id (int): Policy index
-            deterministic (boolean): Whether the action should be deterministic or not.
-            policy_id (int, optional): The id of the policy to get a prediction from.
+            state (tuple[np.ndarray, ...]): Tuple of observations, one per environment.
+            deterministic (bool, optional): If True, use deterministic policy actions.
+                Otherwise, sample from the action distribution.
 
         Returns:
-            Tuple: A tuple containing the predicted action and log probability.
+            tuple:
+                - actions (tuple): Tuple of actions, one per agent/environment.
+                - log_probs (np.ndarray): Array of shape (num_envs,) containing
+                  log-probabilities of the sampled actions.
+                - values (np.ndarray): Array of shape (num_envs,) containing
+                  state-value estimates.
+
+        Notes:
+            The structure of `state` must match `env.observation_space`.
         """
 
-        actions, log_probs, values = self.policies[policy_id].predict(state, deterministic)
-        return actions, log_probs, values
+        actions = []
+        log_probs = []
+        values = []
+
+        for i, agent in enumerate(self._agents):
+            action, log_prob, value = agent.predict(
+                state[i],
+                deterministic=deterministic
+            )
+
+            actions.append(action)
+            log_probs.append(log_prob)
+            values.append(value)
+
+        return (
+            tuple(actions),
+            np.stack(log_probs),
+            np.stack(values),
+        )
 
 
-    def train(self, all_episodes_data, policy_id) -> float:
+    def run_parallel_episodes(self, num_envs) -> list:
         """
-        Train the PPO policy on a batch of data.
+        Collect one episode per environment in parallel.
 
-        This method trains the policy network on the provided batch of episode data by optimizing the PPO objective.
+        All environments are reset and stepped synchronously until each has
+        reached a terminal or truncated state, or until the maximum number of
+        iterations is reached. Trajectories are stored separately per environment.
 
         Args:
-            all_episodes_data (list): List of dictionaries, each containing episode data:
-                - states: numpy array of states
-                - actions: numpy array of actions
-                - advantages: numpy array of advantages
-                - old_log_probs: numpy array of old log probabilities
-                - returns: numpy array of returns
-            policy_id: The index of the policy that will be trained on.
+            num_envs (int): Number of environments to simulate (must match `self.num_envs`).
 
         Returns:
-            float: Average loss value after training.
+            list[dict]: List of per-environment trajectory dictionaries. Each dict contains:
+                - states (np.ndarray): Sequence of observations.
+                - actions (np.ndarray): Sequence of actions.
+                - rewards (np.ndarray): Sequence of rewards.
+                - dones (np.ndarray): Episode termination flags.
+                - values (np.ndarray): Value function estimates.
+                - log_probs (np.ndarray): Log-probabilities of actions.
+                - advantages (np.ndarray): Generalized Advantage Estimates (GAE).
+                - returns (np.ndarray): Discounted returns (advantages + values).
+
+        Notes:
+            - Episodes may have different lengths across environments.
+            - Bootstrapping is applied if an episode does not terminate within
+              `max_nbr_iterations`.
+            - Reward normalization (if enabled) is applied per trajectory.
         """
 
-        if not all_episodes_data:
-            return float('nan')
-
-        policy = self.policies[policy_id]
-        optimizer = self.optimizers[policy_id]
-        policy.network.train()
-
-        # Concatenate all episode data into single arrays for batch processing
-        all_states = torch.as_tensor(np.concatenate([ep['states'] for ep in all_episodes_data]),
-                                     dtype=torch.float32).to(self.device)
-        all_actions = torch.as_tensor(np.concatenate([ep['actions'] for ep in all_episodes_data]),
-                                      dtype=torch.float32).to(self.device)
-        all_advantages = torch.as_tensor(np.concatenate([ep['advantages'] for ep in all_episodes_data]),
-                                         dtype=torch.float32).to(self.device)
-        all_old_log_probs = torch.as_tensor(np.concatenate([ep['log_probs'] for ep in all_episodes_data]),
-                                            dtype=torch.float32).to(self.device)
-        all_returns = torch.as_tensor(np.concatenate([ep['returns'] for ep in all_episodes_data]),
-                                      dtype=torch.float32).to(self.device)
-
-        if all_advantages.numel() <= 1:
-            print(f"[Warning] Very short trajectory detected. Length: {all_advantages.numel()}")
-            return float('nan')
-
-        # Normalize advantages
-        all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
-
-        # Train over multiple epochs
-        batch_size = all_states.shape[0]
-        loss_per_epoch = []
-
-        for _ in range(self.num_epochs):
-            # Shuffle indices
-            indices = torch.randperm(batch_size)
-
-            for start in range(0, batch_size, self.batch_size):
-                end = start + self.batch_size
-                mb_idx = indices[start:end]
-
-                mb_states = all_states[mb_idx]
-                mb_actions = all_actions[mb_idx]
-                mb_old_log_probs = all_old_log_probs[mb_idx]
-                mb_returns = all_returns[mb_idx]
-                mb_advantages = all_advantages[mb_idx]
-
-                # Get current policy distribution
-                action_mean, action_std, state_values = policy.network(mb_states)
-                dist = torch.distributions.Normal(action_mean, action_std)
-
-                # Adjust actions if action space is continuous
-                if isinstance(self.action_space, gym.spaces.Box):
-                    raw_actions = torch.atanh(mb_actions.clamp(-0.999, 0.999))
-                else:
-                    raw_actions = mb_actions
-                log_probs = policy.calc_log_probs(dist, raw_actions, mb_actions)
-
-                # PPO clipped loss
-                ratios = torch.exp(log_probs - mb_old_log_probs)
-
-                surrogate_1 = ratios * mb_advantages
-                surrogate_2 = torch.clamp(ratios, 1.0 - self.clip_range, 1.0 + self.clip_range) * mb_advantages
-
-                policy_loss = -torch.min(surrogate_1, surrogate_2).mean()
-
-                # Value loss
-                value_loss = torch.nn.functional.mse_loss(state_values.squeeze(-1), mb_returns)
-                entropy_loss = dist.entropy().sum(dim=-1).mean()    # Encourage exploration
-
-                # Total loss
-                loss = policy_loss + (self.value_loss_coef * value_loss) - (self.entropy_coef * entropy_loss)
-
-                # Optimize
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(policy.network.parameters(), self.max_grad_norm)
-                optimizer.step()
-
-                loss_per_epoch.append(loss.item())
-
-        # Return mean loss over all updates
-        return np.mean(loss_per_epoch)
-
-
-    def run_parallel_episodes(self) -> list:
-        """
-        Run multiple episodes in parallel using Gym vectorized environments.
-
-        Returns:
-            list: A list of dictionaries containing episode data for each environment.
-        """
-
-        num_envs = len(self.env.environments)
-
-        states = []
+        states, _ = self.env.reset()
         dones = np.zeros(num_envs, dtype=bool)
 
-        # Reset all envs first
-        for env in self.env.environments:
-            state, _ = env.reset()
-            states.append(state)
-
-        # Per-env storage
         buffers = [
             {k: [] for k in ["states", "actions", "rewards", "dones", "values", "log_probs"]}
             for _ in range(num_envs)
@@ -221,48 +152,24 @@ class MultiPPOAgent(BaseAgent):
         safeguard = 0
 
         while not np.all(dones) and safeguard < self.max_nbr_iterations:
+            actions, log_probs, values = self.predict(states, deterministic=False)
 
-            actions = []
-            log_probs = []
-            values = []
-
-            for i in range(num_envs):
-                if dones[i]:
-                    actions.append(None)
-                    log_probs.append(None)
-                    values.append(None)
-                    continue
-
-                action, log_prob, value = self.policies[i].predict(states[i], deterministic=False)
-
-                action = action.squeeze(0)
-                log_prob = log_prob.squeeze(0)
-                value = value.squeeze(0)
-
-                actions.append(action)
-                log_probs.append(log_prob)
-                values.append(value)
-
-            next_states = [None] * num_envs
+            # ✅ unified step
+            next_states, rewards, terms, truncs, _ = self.env.step(actions)
+            step_dones = np.logical_or(terms, truncs)
 
             for i in range(num_envs):
                 if dones[i]:
-                    next_states[i] = states[i]
                     continue
 
-                next_state, reward, terminated, truncated, _ = self.env.environments[i].step(actions[i])
-                done = terminated or truncated
-
-                # store transition
                 buffers[i]["states"].append(states[i])
                 buffers[i]["actions"].append(actions[i])
-                buffers[i]["rewards"].append(reward)
-                buffers[i]["dones"].append(done)
+                buffers[i]["rewards"].append(rewards[i])
+                buffers[i]["dones"].append(step_dones[i])
                 buffers[i]["values"].append(values[i])
                 buffers[i]["log_probs"].append(log_probs[i])
 
-                next_states[i] = next_state
-                dones[i] = done
+                dones[i] = step_dones[i]
 
             states = next_states
             safeguard += 1
@@ -271,22 +178,22 @@ class MultiPPOAgent(BaseAgent):
 
         for i in range(num_envs):
             data = buffers[i]
-            next_value = 0.0
 
-            # convert to arrays
+            # convert to arrays safely
             for key in data:
                 data[key] = np.array(data[key])
 
             if self.normalize:
                 data["rewards"] = self.normalize_rewards(data["rewards"])
 
-            # compute next value
+            # bootstrap value
             last_state = states[i]
-            if last_state is None:
+
+            if dones[i]:
                 next_value = 0.0
             else:
                 with torch.no_grad():
-                    _, _, next_value = self.policies[i].network(
+                    _, _, next_value = self._agents[i].policy.network(
                         torch.FloatTensor(last_state).to(self.device)
                     )
                     next_value = next_value.cpu().numpy()
@@ -312,14 +219,29 @@ class MultiPPOAgent(BaseAgent):
         stop_condition: Optional[StopCondition] = None,
     ):
         """
-        Train the policy using multiple parallel environments.
+        Train all agents using parallel environment rollouts.
 
-        This method runs the training loop for the specified number of timesteps using parallel environments.
-        It collects experience from the environments, updates the policy, logs training metrics, and saves
-        agent checkpoints at regular intervals.
+        The training loop alternates between:
+        1. Collecting trajectories from all environments.
+        2. Updating each agent independently using its own trajectory.
+
+        Training continues until the provided stopping condition is met or the
+        maximum number of iterations is reached.
 
         Args:
-            stop_condition (StopCondition): Condition that defines when training should stop.
+            stop_condition (Optional[StopCondition]): Stopping criterion based on
+                iteration count, reward, or loss. If None, a default condition is used.
+
+        Side Effects:
+            - Updates agent policies in-place.
+            - Saves best-performing and periodic checkpoint policies to disk.
+            - Logs training metrics to CSV.
+
+        Notes:
+            - Policy evaluation mode is enabled during rollout collection.
+            - Best model saving is delayed until a minimum number of iterations
+              (`MINIMUM_ITERATIONS_FOR_BEST_SAVE`) is reached.
+            - Early stopping is evaluated per agent using its own metrics.
         """
 
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
@@ -334,14 +256,14 @@ class MultiPPOAgent(BaseAgent):
             self.set_policy_eval()
 
             # Collect batch data from multiple parallel environments
-            batch_data = self.run_parallel_episodes()
+            batch_data = self.run_parallel_episodes(self.num_envs)
 
-            for policy_id in range(self.num_policies):
-                episode = batch_data[policy_id]
+            for agent_id in range(len(self._agents)):
+                episode = batch_data[agent_id]
                 mean_reward = np.mean(episode['rewards'])
                 mean_advantage = np.mean(episode['advantages'])
 
-                loss = self.train([episode], policy_id)
+                loss = self._agents[agent_id].train([episode])
 
                 training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
 
@@ -398,7 +320,7 @@ class MultiPPOAgent(BaseAgent):
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-            self.policies[0] = self.policies[0].load(policy_file_name, self.device)
+            self._agents[0].policy = self._agents[0].policy.load(policy_file_name, self.device)
         except Exception as e:
             raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
 
@@ -418,15 +340,18 @@ class MultiPPOAgent(BaseAgent):
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-            self.policies[0].save(policy_file_name)
+            self._agents[0].policy.save(policy_file_name)
         except Exception as e:
             raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
 
 
     def set_policy_eval(self):
         """
-        Set policy in evaluation mode.
+        Set all agent policies to evaluation mode.
+
+        This disables training-specific behavior such as dropout and ensures
+        deterministic forward passes where applicable.
         """
 
-        for policy in self.policies:
-            policy.network.eval()
+        for agent in self._agents:
+            agent.policy.network.eval()

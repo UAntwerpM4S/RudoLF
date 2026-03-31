@@ -15,7 +15,7 @@ from airsim.communication.airsim_bridge import AirSimBridge
 from fw.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
-from fw.policies.ppo_agent import PPOAgent
+from fw.policies.single_ppo_agent import SinglePPOAgent
 
 
 class PolicyStrategy(Enum):
@@ -174,7 +174,7 @@ class AgentManager:
             policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
 
         if PPO_POLICY_NAME == self._agent_type:
-            self._agent = PPOAgent(environment=env, **self._hyperparameters)
+            self._agent = SinglePPOAgent(environment=env, **self._hyperparameters)
         elif PPO2_POLICY_NAME == self._agent_type:
             self._agent = PPO2Agent(environment=env, **self._hyperparameters)
         else:

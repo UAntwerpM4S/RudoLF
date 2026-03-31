@@ -7,11 +7,22 @@ from fw.environments.base_env import BaseEnv
 
 class MultiPySimEnv(BaseEnv):
     """
-    Composite environment that combines multiple independent environments
-    into a single flattened observation and action space.
+    Wrapper environment that composes multiple independent `BaseEnv` instances
+    into a single vectorized environment with structured (tuple-based) spaces.
 
-    Each sub-environment operates independently, while observations and actions
-    are concatenated into a single vector interface.
+    Each sub-environment is stepped independently, while observations and actions
+    are grouped using `gymnasium.spaces.Tuple`. This preserves structural
+    information and ensures compatibility with Gymnasium's space validation.
+
+    The environment behaves as a synchronous vectorized environment:
+    all sub-environments are stepped together, and results are returned as
+    tuples (observations) or NumPy arrays (rewards, termination flags).
+
+    Attributes:
+        environments (list[BaseEnv]): List of wrapped sub-environments.
+        num_envs (int): Number of sub-environments.
+        observation_space (spaces.Tuple): Tuple of sub-environment observation spaces.
+        action_space (spaces.Tuple): Tuple of sub-environment action spaces.
     """
 
     def __init__(self, environments: list[BaseEnv], render_mode: Optional[str] = None):
@@ -19,125 +30,129 @@ class MultiPySimEnv(BaseEnv):
         Initialize the multi-environment wrapper.
 
         Args:
-            environments (list[BaseEnv]): List of environments to combine.
-            render_mode (Optional[str]): Rendering mode passed to BaseEnv.
+            environments (list[BaseEnv]): Non-empty list of environments to wrap.
+                Each environment must define compatible Gymnasium observation
+                and action spaces.
+            render_mode (Optional[str]): Rendering mode passed to `BaseEnv`.
 
         Raises:
-            TypeError: If any observation or action space is not a Box space.
+            ValueError: If `environments` is empty.
+            TypeError: If any sub-environment does not define valid Gymnasium
+                observation or action spaces.
         """
 
         super().__init__(render_mode=render_mode)
+
+        if len(environments) == 0:
+            raise ValueError("MultiPySimEnv requires at least one environment")
+
         self.environments = environments
+        self.num_envs = len(environments)
 
-        self.obs_slices = []
-        self.act_slices = []
-
-        # --- Build observation space ---
-        obs_lows, obs_highs = [], []
-        start = 0
-
-        for env in self.environments:
-            space = env.observation_space
-            if not isinstance(space, spaces.Box):
-                raise TypeError("All observation spaces must be Box spaces.")
-
-            flat_dim = space.shape[0]
-            end = start + flat_dim
-
-            self.obs_slices.append((start, end))
-            start = end
-
-            obs_lows.append(space.low.flatten())
-            obs_highs.append(space.high.flatten())
-
-        self.observation_space = spaces.Box(
-            low=np.concatenate(obs_lows),
-            high=np.concatenate(obs_highs),
-            dtype=np.float32
+        # --- Structured observation space ---
+        self.observation_space = spaces.Tuple(
+            tuple(env.observation_space for env in environments)
         )
 
-        # --- Build action space ---
-        act_lows, act_highs = [], []
-        start = 0
-
-        for env in self.environments:
-            space = env.action_space
-            if not isinstance(space, spaces.Box):
-                raise TypeError("All action spaces must be Box spaces.")
-
-            flat_dim = space.shape[0]
-            end = start + flat_dim
-
-            self.act_slices.append((start, end))
-            start = end
-
-            act_lows.append(space.low.flatten())
-            act_highs.append(space.high.flatten())
-
-        self.action_space = spaces.Box(
-            low=np.concatenate(act_lows),
-            high=np.concatenate(act_highs),
-            dtype=np.float32
+        # --- Structured action space ---
+        self.action_space = spaces.Tuple(
+            tuple(env.action_space for env in environments)
         )
+
 
     def reset(self, seed: int = None, options=None):
         """
-        Reset all sub-environments and return a concatenated observation.
+        Reset all sub-environments.
+
+        Each sub-environment is reset independently. If a seed is provided,
+        it is deterministically offset per environment (`seed + i`) to ensure
+        reproducibility while avoiding identical trajectories.
 
         Args:
-            seed (int, optional): Base seed for reproducibility. Each sub-env
-                receives an incremented seed.
-            options (dict, optional): Additional reset options.
+            seed (int, optional): Base random seed.
+            options (dict, optional): Additional environment-specific reset options.
 
         Returns:
-            Tuple[np.ndarray, dict]: Concatenated observations and empty info dict.
+            tuple:
+                - observations (tuple[np.ndarray, ...]): Tuple containing the
+                  initial observation of each sub-environment.
+                - infos (list[dict]): List of info dictionaries returned by each
+                  sub-environment reset.
+
+        Notes:
+            The returned observation structure matches `observation_space`.
         """
 
         super().reset(seed=seed, options=options)
 
         observations = []
+        infos = []
+
         for i, env in enumerate(self.environments):
             env_seed = None if seed is None else seed + i
-            obs, _ = env.reset(seed=env_seed, options=options)
-            observations.append(obs)
+            obs, info = env.reset(seed=env_seed, options=options)
 
-        return np.concatenate(observations), {}
+            observations.append(obs)
+            infos.append(info)
+
+        return tuple(observations), infos
+
 
     def step(self, action: np.ndarray):
         """
-        Step all sub-environments using sliced actions.
+        Step all sub-environments with the provided actions.
+
+        The input action must be a tuple (or list) containing one action per
+        sub-environment, matching the structure of `action_space`.
 
         Args:
-            action (np.ndarray): Flattened action vector for all environments.
+            action (Sequence): Tuple or list of actions, where `action[i]` is
+                applied to the i-th sub-environment.
 
         Returns:
-            Tuple:
-                - np.ndarray: Concatenated observations
-                - np.ndarray: Rewards per sub-environment
-                - bool: True if any environment is terminated
-                - bool: True if any environment is truncated
-                - list: Info dicts from each sub-environment
+            tuple:
+                - observations (tuple[np.ndarray, ...]): Tuple of next observations.
+                - rewards (np.ndarray): Array of shape (num_envs,) containing rewards.
+                - terminations (np.ndarray): Boolean array indicating per-env termination.
+                - truncations (np.ndarray): Boolean array indicating per-env truncation.
+                - infos (list[dict]): List of info dictionaries from each sub-environment.
+
+        Raises:
+            AssertionError: If the action is not a sequence of length `num_envs`.
+            ValueError: If the action does not conform to `action_space`.
+
+        Notes:
+            - Termination and truncation signals are returned per environment
+              (vectorized), not aggregated.
+            - No automatic resetting is performed for terminated environments.
         """
 
-        observations, rewards = [], []
-        terminateds, truncateds, infos = [], [], []
+        assert isinstance(action, (tuple, list)), "Action must be tuple or list"
+        assert len(action) == self.num_envs, "Action count mismatch"
+
+        # Optional strict validation (recommended in debug mode)
+        if not self.action_space.contains(action):
+            raise ValueError("Action does not match action_space")
+
+        observations = []
+        rewards = []
+        terminations = []
+        truncations = []
+        infos = []
 
         for i, env in enumerate(self.environments):
-            start, end = self.act_slices[i]
-            sub_action = action[start:end]
-
-            obs, reward, terminated, truncated, info = env.step(sub_action)
+            obs, reward, terminated, truncated, info = env.step(action[i])
 
             observations.append(obs)
             rewards.append(reward)
-            terminateds.append(terminated)
-            truncateds.append(truncated)
+            terminations.append(terminated)
+            truncations.append(truncated)
             infos.append(info)
 
         return (
-            np.concatenate(observations),
-            np.array(rewards, dtype=np.float32),
-            np.array(terminateds, dtype=bool),
-            np.array(truncateds, dtype=bool),
-            infos
+            tuple(observations),
+            np.asarray(rewards, dtype=np.float32),
+            np.asarray(terminations, dtype=bool),
+            np.asarray(truncations, dtype=bool),
+            infos,
         )
