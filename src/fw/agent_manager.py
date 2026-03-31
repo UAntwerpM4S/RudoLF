@@ -413,7 +413,7 @@ class AgentManager:
 
                     while not done:
                         # Select action
-                        action, _ = self._agent.predict(state=state, deterministic=True)
+                        action, _, _ = self._agent.predict(state=state, deterministic=True)
 
                         # Take step in environment
                         state, reward, terminated, truncated, _ = env.step(action)
