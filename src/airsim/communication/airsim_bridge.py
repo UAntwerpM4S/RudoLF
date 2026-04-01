@@ -264,6 +264,40 @@ class AirSimBridge:
             raise ConnectionError("Cannot access AirSim client: bridge disconnected.")
         return self._client
 
+    def get_client(self) -> Any:
+        """Return the active AirSim client via a method-style public API.
+
+        Returns:
+            Any: Active AirSim ``CarClient`` instance.
+
+        Raises:
+            ConnectionError: If the bridge is currently disconnected.
+        """
+        return self.client
+
+    @property
+    def airsim(self) -> Any:
+        """Expose the imported ``cosysairsim`` module without using private state.
+
+        Returns:
+            Any: Imported ``cosysairsim`` module used by the bridge.
+
+        Raises:
+            ConnectionError: If the AirSim module was never initialized.
+        """
+        if self._airsim is None:
+            raise ConnectionError("Cannot access AirSim module: bridge not initialized.")
+        return self._airsim
+
+    @property
+    def current_controls(self) -> Any:
+        """Return the latest control payload sent to AirSim, if any.
+
+        Returns:
+            Any: Most recently forwarded AirSim control object, or ``None``.
+        """
+        return self._controls
+
     # -- Health check --
 
     def health_check(self) -> bool:
