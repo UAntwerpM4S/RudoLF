@@ -108,7 +108,6 @@ class PySimEnv(BaseEnv):
 
     def __init__(
             self,
-            env_index: int,
             render_mode: Optional[str] = None,
             time_step: float = 0.1,
             max_steps: int = 1500,
@@ -141,7 +140,6 @@ class PySimEnv(BaseEnv):
         super().__init__(render_mode)
 
         # Core parameters
-        self.env_index = env_index
         self.wind = bool(wind)
         self.current = bool(current)
         self.start_pos = start_pos
@@ -876,7 +874,7 @@ class PySimEnv(BaseEnv):
         # Reached checkpoint circle
         if self.segment_point_distance(self.previous_ship_pos, self.ship_pos, current_checkpoint["pos"]) <= current_checkpoint['radius']:
             if self.checkpoint_index == len(self.checkpoints) - 1:
-                print(f"Env {self.env_index} - target REACHED at distance {checkpoint_distance:.2f}")
+                print(f"Target REACHED at distance {checkpoint_distance:.2f}")
             self.checkpoint_index += 1
             self.step_count = 0
 
