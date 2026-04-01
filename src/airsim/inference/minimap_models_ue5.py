@@ -195,7 +195,12 @@ class UE5TopDownMinimap:
         return x, y, yaw
 
     def update(self, env) -> None:
-        """Update UE5 top-down camera position and optional preview image."""
+        """Update UE5 top-down camera position and optional preview image.
+
+        Args:
+            env: Active framework environment exposing ship position and
+                heading.
+        """
         if not self.bridge.is_connected:
             return
         now = time.perf_counter()
