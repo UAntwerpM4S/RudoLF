@@ -1,9 +1,12 @@
 import os
 import torch
+import zipfile
+import tempfile
 import numpy as np
 
 from typing import Optional, Tuple, Union
 from fw.stop_condition import StopCondition
+from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_agent import BaseAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.environments.multi_py_sim_env import MultiPySimEnv
@@ -360,42 +363,128 @@ class MultiPPOAgent(BaseAgent):
 
     def load_policy(self, policy_file_name: str) -> None:
         """
-        Load a trained agent's policy.
+        Load a multi-agent policy from a ZIP archive.
+
+        The archive must contain one policy file per agent.
 
         Args:
-            policy_file_name (str): Name of the policy file to load.
+            policy_file_name (str): Path to the policy archive.
 
         Raises:
-            RuntimeError: If no agent is created or the policy fails to load.
+            FileNotFoundError: If the archive does not exist.
+            RuntimeError: If loading fails.
         """
 
-        try:
-            if self.model_dir:
-                policy_file_name = os.path.join(self.model_dir, policy_file_name)
+        # Ensure the parent file has the .zip extension
+        if not policy_file_name.endswith(".zip"):
+            policy_file_name += ".zip"
 
-            self.agents[0].policy = self.agents[0].policy.load(policy_file_name, self.device)
-        except Exception as e:
-            raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
+        if self.model_dir:
+            policy_file_name = os.path.join(self.model_dir, policy_file_name)
+
+        if not os.path.exists(policy_file_name):
+            raise FileNotFoundError(f"Policy archive not found: {policy_file_name}")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            try:
+                # 1. Extract the main archive
+                with zipfile.ZipFile(policy_file_name, 'r') as main_zip:
+                    # Validate archive contents
+                    file_list = main_zip.namelist()
+                    expected_files = {f"agent_{i}.pth" for i in range(len(self.agents))}
+                    if not expected_files.issubset(set(file_list)):
+                        missing = expected_files - set(file_list)
+                        raise RuntimeError(f"Archive missing required files: {missing}")
+
+                    main_zip.extractall(tmp_dir)
+
+                # 2. Load each agent
+                for i, agent in enumerate(self.agents):
+                    agent_path = os.path.join(tmp_dir, f"agent_{i}.pth")
+
+                    if not os.path.exists(agent_path):
+                        raise FileNotFoundError(f"Missing policy file: agent_{i}.pth")
+
+                    saved_variables = torch.load(agent_path, map_location=self.device, weights_only=False)
+
+                    if agent.policy is None:
+                        raise RuntimeError(f"Agent {i} has no initialized policy.")
+
+                    data = saved_variables.get("data", {})
+                    if not data:
+                        # Infer missing data from model state_dict
+                        model_state_dict = saved_variables["model_state_dict"]
+                        data = {
+                            "input_dim": model_state_dict["shared_network.0.weight"].shape[1],
+                            "output_dim": model_state_dict["actor_mean.weight"].shape[0],
+                            "device": self.device.type,
+                        }
+
+                    model = PPOPolicy(**data)
+                    model.network.load_state_dict(saved_variables["model_state_dict"])  # Load the model weights
+                    model.network.to(self.device)  # Move model to the specified device
+                    agent.policy = model
+
+                # Verify all agents loaded
+                if any(agent.policy is None for agent in self.agents):
+                    raise RuntimeError("Some agents failed to load policies")
+
+            except Exception as e:
+                raise RuntimeError(f"Failed to load multi-agent policy: {e}") from e
 
 
     def save_policy(self, policy_file_name: str) -> None:
         """
-        Save the trained agent's policy.
+        Save all agent policies into a single ZIP archive.
 
         Args:
-            policy_file_name (str): Name of the policy file to save.
+            policy_file_name (str): Output file name.
 
         Raises:
-            RuntimeError: If no agent is created or the policy fails to save.
+            RuntimeError: If saving fails.
+            FileNotFoundError: If an expected agent policy file is missing.
         """
 
-        try:
-            if self.model_dir:
-                policy_file_name = os.path.join(self.model_dir, policy_file_name)
+        # Ensure the parent file has the .zip extension
+        if not policy_file_name.endswith(".zip"):
+            policy_file_name += ".zip"
 
-            self.agents[0].policy.save(policy_file_name)
-        except Exception as e:
-            raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
+        full_path = os.path.join(self.model_dir, policy_file_name) if self.model_dir else policy_file_name
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            try:
+                # 1. Save each agent as a .pth file (state_dict only)
+                for i, agent in enumerate(self.agents):
+                    agent_path = os.path.join(tmp_dir, f"agent_{i}.pth")
+
+                    if agent.policy is None:
+                        raise RuntimeError(f"Agent {i} has no policy to save.")
+
+                    torch.save(
+                        {
+                            "model_state_dict": agent.policy.network.state_dict(),
+                            "data": {
+                                "input_dim": agent.policy.input_dim,
+                                "output_dim": agent.policy.output_dim,
+                                "device": self.device.type,
+                            },
+                        },
+                        agent_path,
+                    )
+
+                # 2. Zip all .pth files into one archive
+                with zipfile.ZipFile(full_path, 'w', compression=zipfile.ZIP_DEFLATED) as main_zip:
+                    for i in range(len(self.agents)):
+                        file_name = f"agent_{i}.pth"
+                        file_path = os.path.join(tmp_dir, file_name)
+
+                        if not os.path.exists(file_path):
+                            raise FileNotFoundError(f"Expected policy file {file_name} not found.")
+
+                        main_zip.write(file_path, arcname=file_name)
+
+            except Exception as e:
+                raise RuntimeError(f"Failed to save multi-agent policy to '{full_path}'.") from e
 
 
     def set_policy_eval(self):
