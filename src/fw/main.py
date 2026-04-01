@@ -16,7 +16,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     from fw.trainer import Trainer
     from fw.stop_condition import StopCondition, Criterion
-    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, get_config_parameters
+    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, get_config_parameters
     from fw.env_factory import (
         build_default_environment,
         py_sim_env_name,
@@ -24,6 +24,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         airsim_env_name,
         lunar_env_name,
         py_sim_polar_env_name,
+        multi_py_sim_env_name,
         resolve_environment_names,
         initialize_all_environments
     )
@@ -75,6 +76,12 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     configuration = {
         py_sim_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=1.75,
+            patience=4,
+            max_time_steps=1300,
+        ),
+        multi_py_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=1.75,
             patience=4,
