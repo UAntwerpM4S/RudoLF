@@ -24,7 +24,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         airsim_env_name,
         lunar_env_name,
         py_sim_polar_env_name,
-        multi_py_sim_env_name,
+        multi_sim_env_name,
         resolve_environment_names,
         initialize_all_environments
     )
@@ -81,7 +81,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             patience=4,
             max_time_steps=1300,
         ),
-        multi_py_sim_env_name: StopCondition(
+        multi_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=1.75,
             patience=4,
