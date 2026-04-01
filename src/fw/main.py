@@ -16,7 +16,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     from fw.trainer import Trainer
     from fw.stop_condition import StopCondition, Criterion
-    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, get_config_parameters
+    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, get_config_parameters
     from fw.env_factory import (
         build_default_environment,
         py_sim_env_name,

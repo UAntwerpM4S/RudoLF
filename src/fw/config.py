@@ -4,6 +4,7 @@ from airsim.config.airsim_config import get_airsim_config  # re-export
 
 PPO_POLICY_NAME = "PPO"
 PPO2_POLICY_NAME = "PPO2"
+MULTI_PPO_POLICY_NAME = "MPPO"
 
 
 """
@@ -52,7 +53,24 @@ DEFAULT_HYPERPARAMETERS = {
         'log_dir': "logs",
         'tensorboard_log': "logs/tensorboard",
         'verbose': True
-    }
+    },
+    MULTI_PPO_POLICY_NAME: {
+        'learning_rate': 1e-4,
+        'gamma': 0.95,
+        'gae_lambda': 0.95,
+        'entropy_coef': 0.01,
+        'value_loss_coef': 0.5,
+        'max_grad_norm': 0.5,
+        'clip_range': 0.05,
+        'eval_frequency': 100,
+        'num_envs': 1,
+        'num_epochs': 10,
+        'normalize': False,
+        'max_nbr_iterations': 200000,
+        'batch_size': 64,
+        'device': "cpu",
+        'model_dir': "models"
+    },
 }
 
 CONFIG_PARAMETERS = {
