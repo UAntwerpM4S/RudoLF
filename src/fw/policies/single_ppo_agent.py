@@ -6,7 +6,7 @@ import torch.optim as optim
 import gymnasium as gym
 import numpy as np
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 from fw.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo_policy import PPOPolicy
@@ -64,8 +64,11 @@ class SinglePPOAgent(BaseAgent):
         self.reward_var = 1.0
         self.reward_count = 1e-4  # avoid division by zero
 
-
-    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def predict(
+            self,
+            state: Union[np.ndarray, Tuple[np.ndarray, ...]],
+            deterministic: bool = False
+    ) -> Tuple[Union[np.ndarray, Tuple[np.ndarray, ...]], np.ndarray, np.ndarray]:
         """
         Predict an action for a given state using the policy.
 
@@ -371,7 +374,7 @@ class SinglePPOAgent(BaseAgent):
                 print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
 
                 # Save checkpoint every 'self.eval_frequency' iterations
-                if iteration > 0 and iteration % self.eval_frequency == 0:
+                if iteration > 0:
                     self.save_policy(f"ppo_checkpoint_{iteration}")
 
         # Save final checkpoint

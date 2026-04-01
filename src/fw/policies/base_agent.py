@@ -2,12 +2,12 @@ import os
 import csv
 import torch
 import numpy as np
-import gymnasium as gym
 
 from pathlib import Path
-from typing import Optional, Tuple
 from abc import ABC, abstractmethod
+from typing import Optional, Tuple, Union
 from fw.stop_condition import StopCondition
+from fw.environments.base_env import BaseEnv
 from fw.common.tools.path_utils import resolve_path_relative_to_src
 
 
@@ -112,7 +112,7 @@ class BaseAgent(ABC):
 
     def __init__(
         self,
-        environment: gym.Env,
+        environment: BaseEnv,
         num_envs: int = 1,
         eval_frequency: int = 1000,
         learning_rate: float = 3e-4,
@@ -131,7 +131,7 @@ class BaseAgent(ABC):
         Initialize the base agent with environment and hyperparameters.
 
         Args:
-            environment (gym.Env): The training environment.
+            environment (BaseEnv): The training environment.
             num_envs (int): The number of training environments (for parallel training).
             eval_frequency (int): Number of training iterations between evaluations.
             learning_rate (float, optional): Learning rate for the optimizer. Default is 3e-4.
@@ -215,7 +215,11 @@ class BaseAgent(ABC):
 
 
     @abstractmethod
-    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def predict(
+            self,
+            state: Union[np.ndarray, Tuple[np.ndarray, ...]],
+            deterministic: bool = False
+    ) -> Tuple[Union[np.ndarray, Tuple[np.ndarray, ...]], np.ndarray, np.ndarray]:
         """
         Predict an action for a given state.
 
@@ -273,11 +277,11 @@ class BaseAgent(ABC):
         pass
 
 
-    def get_env(self) -> gym.Env:
+    def get_env(self) -> BaseEnv:
         """
         Get the training environment.
 
         Returns:
-            gym.Env: The training environment instance.
+            BaseEnv: The training environment instance.
         """
         return self.env
