@@ -12,7 +12,7 @@ from fw.environments.fh_sim_env import FhSimEnv
 from airsim.environments.airsim_env import AirSimEnv
 from fw.environments.lunar_lander import LunarLander
 from fw.environments.py_sim_polar_env import PySimPolarEnv
-from fw.environments.multi_py_sim_env import MultiPySimEnv
+from fw.environments.multi_sim_env import MultiSimEnv
 
 
 class EnvironmentRegistryError(Exception):
@@ -285,7 +285,7 @@ class MultiPySimEnvironment(BaseEnvironment):
                              wind=config["wind"], current=config["current"],
                              numerical_damping=config["numerical_damping"])
 
-        self._env = MultiPySimEnv(sub_environments=[single_pysim_env1, single_pysim_env2])
+        self._env = MultiSimEnv(sub_environments=[single_pysim_env1, single_pysim_env2])
 
 
 class FhSimEnvironment(BaseEnvironment):
@@ -431,7 +431,7 @@ class AirSimEnvironment(BaseEnvironment):
                     self._env = LunarEnvironment(fallback_name, configuration)._env
                 elif fallback_name_lower in ("pysimpolarenv", "pysimpolar", "polar"):
                     self._env = PySimPolarEnvironment(fallback_name, configuration)._env
-                elif fallback_name_lower in ("multipysimenv", "multipysim"):
+                elif fallback_name_lower in ("multisimenv", "multipysim"):
                     self._env = MultiPySimEnvironment(fallback_name, configuration)._env
                 else:
                     self._env = PySimEnvironment(fallback_name, configuration)._env
@@ -491,7 +491,7 @@ fh_sim_env_name = "FhSimEnv"
 airsim_env_name = "AirSimEnv"
 lunar_env_name = "LunarLander"
 py_sim_polar_env_name = "PySimPolarEnv"
-multi_py_sim_env_name = "MultiPySimEnv"
+multi_py_sim_env_name = "MultiSimEnv"
 
 _ENVIRONMENT_NAME_ALIASES = {
     py_sim_env_name.lower(): py_sim_env_name,

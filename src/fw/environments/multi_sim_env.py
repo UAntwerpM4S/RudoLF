@@ -5,7 +5,7 @@ from gymnasium import spaces
 from fw.environments.base_env import BaseEnv
 
 
-class MultiPySimEnv(BaseEnv):
+class MultiSimEnv(BaseEnv):
     """
     Wrapper environment that composes multiple independent `BaseEnv` instances
     into a single vectorized environment with structured (tuple-based) spaces.
@@ -47,7 +47,7 @@ class MultiPySimEnv(BaseEnv):
         self.num_envs = len(sub_environments)
 
         if self.num_envs == 0:
-            raise ValueError("MultiPySimEnv requires at least one environment")
+            raise ValueError("MultiSimEnv requires at least one environment")
 
         # --- Structured observation space ---
         self.observation_space = spaces.Tuple(
