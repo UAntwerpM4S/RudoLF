@@ -72,7 +72,7 @@ class PySimColavEnv(PySimEnv):
             use_polar_scan: bool = True,
             enable_variable_ship_size: bool = True,
             eval: bool = True,
-            eval_scenario: Optional[str] = "head-on", # "static", "overtaking", "head-on"
+            eval_scenario: Optional[str] = "overtaking", # "static", "overtaking", "head-on"
             eval_obstacle_count: int = 5,
             num_ships: int = 1
     ) -> None:
@@ -127,6 +127,9 @@ class PySimColavEnv(PySimEnv):
         self._colreg_correct = [0] * self.num_ships
         self._colreg_initial_heading = [None] * self.num_ships
 
+        # Passing snapshot: list of dicts with OS/TS positions at the moment of passing
+        self._passing_snapshots: list[dict] = []
+
         bin_width = float(self.polar_fov) / float(self.polar_n_sectors)
         self._polar_rel_angles = (
                 -(self.polar_fov / 2.0) + (np.arange(self.polar_n_sectors, dtype=np.float32) + 0.5) * bin_width
@@ -160,7 +163,7 @@ class PySimColavEnv(PySimEnv):
         # Per-ship scenario classifiers
         self.scenario_classifiers = [ScenarioClassifier() for _ in range(self.num_ships)]
         # Track which TS index the one-time COLREG reward was already given for (None = not given)
-        self._colreg_reward_given_for_ts = [None] * self.num_ships
+        self.ts_passed = [None] * self.num_ships
 
         self._base_initial_ship_pos = self.initial_ship_pos.copy()
         self._base_target_pos = self.target_pos.copy()
@@ -540,7 +543,7 @@ class PySimColavEnv(PySimEnv):
                 terminations[i] = self.phys_sims[i].state.terminated
                 truncations[i] = self.phys_sims[i].state.truncated
 
-        # Mark collision so the min distance for this episode is excluded from the png
+        # Mark collision so the min distance for this episode is excluded from the PDF
         if any(self._last_collision_info[i].get("collision") for i in range(self.num_ships)):
             self._current_episode_collided = True
 
@@ -616,12 +619,38 @@ class PySimColavEnv(PySimEnv):
 
                 # Logging only — no reward effect
                 side = ts.ts_side_from_os_perspective(os_pos, os_heading)
-                if ts.passed_by_os(os_pos, os_heading) and self._colreg_reward_given_for_ts[i] != ts_idx:
-                    self._colreg_reward_given_for_ts[i] = ts_idx
+                if ts.passed_by_os(os_pos, os_heading) and self.ts_passed[i] != ts_idx:
+                    self.ts_passed[i] = ts_idx
                     if side == "port":
                         self._colreg_correct[i] += 1
                     elif side == "starboard":
                         self._colreg_violations[i] += 1
+
+                    # Record passing snapshot for rendering
+                    self._passing_snapshots.append({
+                        "os_pos": np.copy(os_pos),
+                        "ts_pos": ts_pos.copy(),
+                        "dist": dist,
+                        "scenario": scenario,
+                    })
+
+            elif scenario == "overtaking":
+                side = ts.ts_side_from_os_perspective(os_pos, os_heading)
+                if ts.passed_by_os(os_pos, os_heading) and self.ts_passed[i] != ts_idx:
+                    self.ts_passed[i] = ts_idx
+                    if side == "port":
+                        self._colreg_correct[i] += 1
+                    elif side == "starboard":
+                        self._colreg_violations[i] += 1
+
+                    # Record passing snapshot for rendering
+                    dist = ts.distance_to_point(os_pos)
+                    self._passing_snapshots.append({
+                        "os_pos": np.copy(os_pos),
+                        "ts_pos": ts.get_position().copy(),
+                        "dist": dist,
+                        "scenario": scenario,
+                    })
 
         # ------------------------------------------------------------------ #
         #  Collision detection                                                 #
@@ -713,6 +742,9 @@ class PySimColavEnv(PySimEnv):
         # TS (collision entity) trail lines — created dynamically
         self.ts_trails = []
         self.ts_trail_history = []
+
+        # Passing snapshot artists (afterimages at the moment OS passes TS)
+        self._passing_snapshot_artists = []
 
     def _get_collision_entity_render_key(self):
         """Small hashable signature of current collision-entity layout for render updates."""
@@ -871,6 +903,52 @@ class PySimColavEnv(PySimEnv):
                         [sy, sy + length * np.sin(angle)]
                     )
 
+        # Create artists for any new passing snapshots
+        while len(self._passing_snapshot_artists) < len(self._passing_snapshots):
+            idx = len(self._passing_snapshot_artists)
+            snap = self._passing_snapshots[idx]
+            os_p = snap["os_pos"]
+            ts_p = snap["ts_pos"]
+            dist = snap["dist"]
+
+            # Afterimage markers (hollow, larger)
+            os_marker, = self.ax.plot(
+                [os_p[0]], [os_p[1]], 'o',
+                markersize=12, markerfacecolor='none', markeredgecolor='blue',
+                markeredgewidth=2, zorder=5,
+            )
+            ts_marker, = self.ax.plot(
+                [ts_p[0]], [ts_p[1]], 'o',
+                markersize=12, markerfacecolor='none', markeredgecolor='red',
+                markeredgewidth=2, zorder=5,
+            )
+            # Dashed line between the two
+            dist_line, = self.ax.plot(
+                [os_p[0], ts_p[0]], [os_p[1], ts_p[1]],
+                color='gray', linestyle='--', linewidth=1.2, zorder=4,
+            )
+            # Distance label at midpoint
+            mid_x = (os_p[0] + ts_p[0]) / 2.0
+            mid_y = (os_p[1] + ts_p[1]) / 2.0
+            dist_text = self.ax.text(
+                mid_x, mid_y, f"{dist:.0f}m",
+                fontsize=7, color='gray', fontweight='bold',
+                ha='center', va='bottom', zorder=6,
+            )
+            # OS / TS labels
+            os_label = self.ax.text(
+                os_p[0] + 2, os_p[1] + 2, "OS", fontsize=7, color='blue',
+                fontweight='bold', ha='center', va='top', zorder=6,
+            )
+            ts_label = self.ax.text(
+                ts_p[0] + 2, ts_p[1] + 2, "TS", fontsize=7, color='red',
+                fontweight='bold', ha='center', va='top', zorder=6,
+            )
+
+            self._passing_snapshot_artists.append(
+                (os_marker, ts_marker, dist_line, dist_text, os_label, ts_label)
+            )
+
         # Blit all artists
         try:
             if hasattr(self.fig.canvas, 'blit'):
@@ -879,6 +957,11 @@ class PySimColavEnv(PySimEnv):
                     self.ax.draw_artist(self.os_trails[i])
                 for tl in self.ts_trails:
                     self.ax.draw_artist(tl)
+
+                # Draw passing snapshot afterimages
+                for artists in self._passing_snapshot_artists:
+                    for artist in artists:
+                        self.ax.draw_artist(artist)
 
                 # Draw ships, headings, and beams on top
                 for i in range(self.num_ships):
@@ -1075,10 +1158,17 @@ class PySimColavEnv(PySimEnv):
         # Reset scenario classifiers and COLREG reward tracking
         for clf in self.scenario_classifiers:
             clf.reset()
-        self._colreg_reward_given_for_ts = [None] * self.num_ships
+        self.ts_passed = [None] * self.num_ships
         self._colreg_violations = [0] * self.num_ships
         self._colreg_correct = [0] * self.num_ships
         self._colreg_initial_heading = [None] * self.num_ships
+
+        # Remove passing snapshot artists from the plot and reset
+        for artists in getattr(self, "_passing_snapshot_artists", []):
+            for artist in artists:
+                artist.remove()
+        self._passing_snapshot_artists = []
+        self._passing_snapshots = []
 
         if getattr(self, "enable_obstacles", False):
             if getattr(self, "eval", False):
@@ -1098,15 +1188,12 @@ class PySimColavEnv(PySimEnv):
 
         # Clear trail histories for the new episode
         self.os_trail_history = [[] for _ in range(self.num_ships)]
+        for trail_line in getattr(self, "ts_trails", []):
+            trail_line.remove()
         self.ts_trail_history = []
         self.ts_trails = []
 
-    def finalize_eval_min_distances(self) -> None:
-        """Call after the last evaluation episode to flush the final episode's min distance."""
-        if not self._current_episode_collided and self._current_episode_min_dist < float("inf"):
-            self._episode_min_distances.append(self._current_episode_min_dist)
-
-    def plot_min_distance_png(self, save_path: str = "min_distance.png") -> None:
+    def plot_min_distance_PDF(self, save_path: str = "min_distance_PDF.png") -> None:
         """
         Plot a probability density estimate of the minimum center-to-center
         distance kept to collision entities across non-collision evaluation
@@ -1114,7 +1201,8 @@ class PySimColavEnv(PySimEnv):
 
         Call ``finalize_eval_min_distances()`` first to include the last episode.
         """
-        from scipy.stats import gaussian_kde
+        if not self._current_episode_collided and self._current_episode_min_dist < float("inf"):
+            self._episode_min_distances.append(self._current_episode_min_dist)
 
         distances = np.array(self._episode_min_distances)
         if len(distances) == 0:
@@ -1195,11 +1283,11 @@ class PySimColavEnv(PySimEnv):
 
         ax.set_xlabel("Minimum center-to-center distance to collision entity [m]")
         ax.set_ylabel("Probability density")
-        ax.set_title(f"Min-distance png ({len(distances)} non-collision episodes)")
+        ax.set_title(f"Min-distance PDF ({len(distances)} non-collision episodes)")
         ax.legend(loc="upper right")
         ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        print(f"Min-distance png saved as '{save_path}'")
+        print(f"Min-distance PDF saved as '{save_path}'")
         plt.close(fig)

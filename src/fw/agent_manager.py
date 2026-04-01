@@ -474,9 +474,8 @@ class AgentManager:
                 print(f"COLREG violation count: {colreg_violation_count}")
 
                 # plot min distances kept during episodes if available
-                if hasattr(env, "finalize_eval_min_distances"):
-                    env.finalize_eval_min_distances()
-                    env.plot_min_distance_png(f'{self.agent.model_dir}/min_distance.png')
+                if hasattr(env, "plot_min_distance_PDF"):
+                    env.plot_min_distance_PDF(f'{self.agent.model_dir}/min_distance_PDF.png')
 
                 try:
                     # AirSimEnv has no obstacles/overall for matplotlib — skip trajectory plot.
