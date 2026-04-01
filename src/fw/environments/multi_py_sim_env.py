@@ -25,12 +25,12 @@ class MultiPySimEnv(BaseEnv):
         action_space (spaces.Tuple): Tuple of sub-environment action spaces.
     """
 
-    def __init__(self, environments: list[BaseEnv], render_mode: Optional[str] = None):
+    def __init__(self, sub_environments: list[BaseEnv], render_mode: Optional[str] = None):
         """
         Initialize the multi-environment wrapper.
 
         Args:
-            environments (list[BaseEnv]): Non-empty list of environments to wrap.
+            sub_environments (list[BaseEnv]): Non-empty list of environments to wrap.
                 Each environment must define compatible Gymnasium observation
                 and action spaces.
             render_mode (Optional[str]): Rendering mode passed to `BaseEnv`.
@@ -43,20 +43,20 @@ class MultiPySimEnv(BaseEnv):
 
         super().__init__(render_mode=render_mode)
 
-        if len(environments) == 0:
+        if len(sub_environments) == 0:
             raise ValueError("MultiPySimEnv requires at least one environment")
 
-        self.environments = environments
-        self.num_envs = len(environments)
+        self._sub_environments = sub_environments
+        self.num_envs = len(sub_environments)
 
         # --- Structured observation space ---
         self.observation_space = spaces.Tuple(
-            tuple(env.observation_space for env in environments)
+            tuple(env.observation_space for env in sub_environments)
         )
 
         # --- Structured action space ---
         self.action_space = spaces.Tuple(
-            tuple(env.action_space for env in environments)
+            tuple(env.action_space for env in sub_environments)
         )
 
 
@@ -88,7 +88,7 @@ class MultiPySimEnv(BaseEnv):
         observations = []
         infos = []
 
-        for i, env in enumerate(self.environments):
+        for i, env in enumerate(self.sub_environments):
             env_seed = None if seed is None else seed + i
             obs, info = env.reset(seed=env_seed, options=options)
 
@@ -140,7 +140,7 @@ class MultiPySimEnv(BaseEnv):
         truncations = []
         infos = []
 
-        for i, env in enumerate(self.environments):
+        for i, env in enumerate(self.sub_environments):
             obs, reward, terminated, truncated, info = env.step(action[i])
 
             observations.append(obs)

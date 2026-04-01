@@ -776,7 +776,10 @@ class PySimEnv(BaseEnv):
 
         action = np.asarray(action, dtype=np.float32)
         if action.shape != (2,):
-            raise ValueError(f"Action must be shape (2,), got {action.shape} with values {action}")
+            raise ValueError(
+                f"Expected action shape (2,), got {action.shape}. "
+                f"Action values: {action}. Use [-1,1] for [rudder, thrust]."
+            )
 
         if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
             # Save previous values

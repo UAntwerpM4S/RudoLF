@@ -2,10 +2,11 @@ import os
 import torch
 import numpy as np
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 from fw.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.environments.multi_py_sim_env import MultiPySimEnv
 
 
 class MultiPPOAgent(BaseAgent):
@@ -24,7 +25,7 @@ class MultiPPOAgent(BaseAgent):
     - No parameter sharing or centralized critic is used.
 
     Attributes:
-        _agents (list[SinglePPOAgent]): List of independent PPO agents, one per environment.
+        agents (list[SinglePPOAgent]): List of independent PPO agents, one per environment.
         num_envs (int): Number of parallel environments/agents.
         max_nbr_iterations (int): Maximum steps per rollout to prevent infinite loops.
         normalize (bool): Whether to normalize rewards per episode.
@@ -59,13 +60,26 @@ class MultiPPOAgent(BaseAgent):
 
         super().__init__(*args, **kwargs)
 
-        self._agents = agents
-        self.num_envs = len(self.env.environments)
+        self.agents = agents
+        self.num_envs = len(self.env.sub_environments)
+
+        if not isinstance(self.env, MultiPySimEnv):
+            raise TypeError("MultiPPOAgent requires MultiPySimEnv")
+
+        if len(agents) != self.num_envs:
+            raise ValueError(
+                f"Number of agents ({len(agents)}) must match "
+                f"number of sub-environments ({self.num_envs})"
+            )
+
         self.max_nbr_iterations = max_nbr_iterations
         self.normalize = normalize
 
-
-    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def predict(
+            self,
+            state: Union[np.ndarray, Tuple[np.ndarray, ...]],
+            deterministic: bool = False
+    ) -> Tuple[Union[np.ndarray, Tuple[np.ndarray, ...]], np.ndarray, np.ndarray]:
         """
         Compute actions, log-probabilities, and value estimates for all agents.
 
@@ -93,7 +107,7 @@ class MultiPPOAgent(BaseAgent):
         log_probs = []
         values = []
 
-        for i, agent in enumerate(self._agents):
+        for i, agent in enumerate(self.agents):
             action, log_prob, value = agent.predict(
                 state[i],
                 deterministic=deterministic
@@ -192,7 +206,7 @@ class MultiPPOAgent(BaseAgent):
                 next_value = 0.0
             else:
                 with torch.no_grad():
-                    _, _, next_value = self._agents[i].policy.network(
+                    _, _, next_value = self.agents[i].policy.network(
                         torch.FloatTensor(last_state).to(self.device)
                     )
                     next_value = next_value.cpu().numpy()
@@ -246,13 +260,13 @@ class MultiPPOAgent(BaseAgent):
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
 
         last_save_index = 0
-        best_rewards = [float('-inf') for _ in range(len(self._agents))]
-        training_metrics = {f"agent{i}": [] for i in range(len(self._agents))}
+        best_rewards = [float('-inf') for _ in range(len(self.agents))]
+        training_metrics = {f"agent{i}": [] for i in range(len(self.agents))}
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
         best_policy_files = [
             f"Best_{self.env.type_name}_PPO_agent{i}_policy"
-            for i in range(len(self._agents))
+            for i in range(len(self.agents))
         ]
 
         for iteration in range(stopping_condition.max_time_steps):
@@ -262,17 +276,17 @@ class MultiPPOAgent(BaseAgent):
             batch_data = self.run_parallel_episodes(self.num_envs)
 
             # Validate batch_data length matches number of agents
-            if len(batch_data) != len(self._agents):
+            if len(batch_data) != len(self.agents):
                 raise RuntimeError(
                     f"Batch data size ({len(batch_data)}) does not match "
-                    f"number of agents ({len(self._agents)})"
+                    f"number of agents ({len(self.agents)})"
                 )
 
             mean_rewards = []
             mean_losses = []
 
             # Train each agent
-            for agent_id, (agent, episode) in enumerate(zip(self._agents, batch_data)):
+            for agent_id, (agent, episode) in enumerate(zip(self.agents, batch_data)):
                 mean_reward = np.mean(episode['rewards'])
                 mean_advantage = np.mean(episode['advantages'])
 
@@ -300,7 +314,7 @@ class MultiPPOAgent(BaseAgent):
                     print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
 
                     # Save checkpoint every 'self.eval_frequency' iterations
-                    if iteration > 0 and iteration % self.eval_frequency == 0:
+                    if iteration > 0:
                         agent.save_policy(f"agent{agent_id}_ppo_checkpoint_{iteration}")
 
             # Aggregate metrics for stopping condition
@@ -359,7 +373,7 @@ class MultiPPOAgent(BaseAgent):
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-            self._agents[0].policy = self._agents[0].policy.load(policy_file_name, self.device)
+            self.agents[0].policy = self.agents[0].policy.load(policy_file_name, self.device)
         except Exception as e:
             raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
 
@@ -379,7 +393,7 @@ class MultiPPOAgent(BaseAgent):
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-            self._agents[0].policy.save(policy_file_name)
+            self.agents[0].policy.save(policy_file_name)
         except Exception as e:
             raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
 
@@ -392,5 +406,5 @@ class MultiPPOAgent(BaseAgent):
         deterministic forward passes where applicable.
         """
 
-        for agent in self._agents:
+        for agent in self.agents:
             agent.policy.network.eval()
