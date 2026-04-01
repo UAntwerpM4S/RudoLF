@@ -19,7 +19,7 @@ class MultiPySimEnv(BaseEnv):
     tuples (observations) or NumPy arrays (rewards, termination flags).
 
     Attributes:
-        environments (list[BaseEnv]): List of wrapped sub-environments.
+        _sub_environments (list[BaseEnv]): List of wrapped sub-environments.
         num_envs (int): Number of sub-environments.
         observation_space (spaces.Tuple): Tuple of sub-environment observation spaces.
         action_space (spaces.Tuple): Tuple of sub-environment action spaces.
@@ -43,11 +43,11 @@ class MultiPySimEnv(BaseEnv):
 
         super().__init__(render_mode=render_mode)
 
-        if len(sub_environments) == 0:
-            raise ValueError("MultiPySimEnv requires at least one environment")
-
         self._sub_environments = sub_environments
         self.num_envs = len(sub_environments)
+
+        if self.num_envs == 0:
+            raise ValueError("MultiPySimEnv requires at least one environment")
 
         # --- Structured observation space ---
         self.observation_space = spaces.Tuple(
