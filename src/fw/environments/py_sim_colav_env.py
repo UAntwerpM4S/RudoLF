@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 from fw.collision_avoidance.scenario_builder import ScenarioBuilder
 from fw.collision_avoidance.scenario_classifier import ScenarioClassifier, NUM_SCENARIOS
+from scipy.stats import gaussian_kde
 
 import math
 
@@ -69,9 +70,9 @@ class PySimColavEnv(PySimEnv):
             numerical_damping: bool = False,
             enable_obstacles: bool = True,
             use_polar_scan: bool = True,
-            enable_variable_ship_size: bool = False,
+            enable_variable_ship_size: bool = True,
             eval: bool = True,
-            eval_scenario: Optional[str] = "static", # "static", "overtaking", "head-on"
+            eval_scenario: Optional[str] = "head-on", # "static", "overtaking", "head-on"
             eval_obstacle_count: int = 5,
             num_ships: int = 1
     ) -> None:
@@ -115,6 +116,11 @@ class PySimColavEnv(PySimEnv):
         self.eval_scenario = str(eval_scenario)
         self.eval = bool(eval)
         self.min_distance = float("inf")
+
+        # Per-episode minimum distance tracking for evaluation
+        self._episode_min_distances: list[float] = []  # completed non-collision episodes
+        self._current_episode_min_dist: float = float("inf")
+        self._current_episode_collided: bool = False
 
         self._last_collision_info = [{} for _ in range(self.num_ships)]
         self._colreg_violations = [0] * self.num_ships
@@ -183,7 +189,6 @@ class PySimColavEnv(PySimEnv):
         self.reward_weights = {
             "polar_distance": 0.7,
             "colreg_bearing": 0.4,
-            "static_bearing": 10.0
         }
 
         self._collision_entity_patches = []
@@ -257,66 +262,6 @@ class PySimColavEnv(PySimEnv):
         if best_bounded_abs < float('inf'):
             return best_bounded_signed
         return best_unbounded_signed
-
-    def _path_side_aggregate(self, ship_index: int) -> float:
-        """
-        Proximity-weighted aggregate of path-relative lateral offsets for all
-        static obstacles within polar_max_range.
-
-        For each obstacle within rangefinder range, finds the nearest path
-        segment ahead of the OS (bounded by polar_max_range along the path)
-        and uses the cross product to determine which side of the path the
-        obstacle is on. Direction-agnostic: a ship navigating the reverse
-        path has reversed segment vectors, so the cross product sign flips
-        automatically.
-
-        Value in [-1, 1]:
-          +1  => nearby obstacles are to port of this ship's path
-          -1  => nearby obstacles are to starboard of this ship's path
-           0  => no obstacles in range, on centerline, or symmetric
-        """
-        os_pos = self.ship_pos[ship_index]
-        cte_half_value = max(float(getattr(self, "static_cte_half_value", 15.0)), EPSILON)
-
-        weighted_sum = 0.0
-        weight_total = 0.0
-
-        for entity in (self.collision_entities or []):
-            if entity.is_dynamic:
-                continue
-
-            dx = entity.x - float(os_pos[0])
-            dy = entity.y - float(os_pos[1])
-            dist = math.sqrt(dx * dx + dy * dy)
-
-            if dist > self.polar_max_range or dist < EPSILON:
-                continue
-
-            # Use live signed CTE cached in step() (computed once, shared with reward)
-            live_cache = getattr(self, "_live_signed_cte", None)
-            if live_cache and ship_index < len(live_cache):
-                signed_cte = live_cache[ship_index].get(id(entity), 0.0)
-            else:
-                # Fallback for first obs before any step (e.g. after reset)
-                obs_pos = np.array([entity.x, entity.y], dtype=np.float32)
-                signed_cte = self._nearest_segment_signed_cte(obs_pos, ship_index)
-
-            # Hyperbolic normalization: smooth saturation in (-1, 1)
-            abs_cte = abs(signed_cte)
-            magnitude = abs_cte / (abs_cte + cte_half_value)
-            sign = 1.0 if signed_cte >= 0.0 else -1.0
-            path_side = sign * magnitude
-
-            # Linear proximity weight: 1 at contact, 0 at max range
-            weight = max(0.0, 1.0 - dist / self.polar_max_range)
-
-            weighted_sum += path_side * weight
-            weight_total += weight
-
-        if weight_total < EPSILON:
-            return 0.0
-
-        return float(np.clip(weighted_sum / weight_total, -1.0, 1.0))
 
     def _intersect_rays_with_segments(self, origins, ray_ends, seg_starts, seg_ends):
         """
@@ -472,12 +417,6 @@ class PySimColavEnv(PySimEnv):
         extended_low = np.hstack([extended_low, scenario_low])
         extended_high = np.hstack([extended_high, scenario_high])
 
-        # Append static CPA aggregate (1 scalar per ship, range [-1, 1])
-        cpa_low = np.full((self.num_ships, 1), -1.0, dtype=np.float32)
-        cpa_high = np.full((self.num_ships, 1), 1.0, dtype=np.float32)
-        extended_low = np.hstack([extended_low, cpa_low])
-        extended_high = np.hstack([extended_high, cpa_high])
-
         return gym.spaces.Box(low=extended_low, high=extended_high, dtype=np.float32)
 
     def _get_obs(self) -> np.ndarray:
@@ -519,17 +458,6 @@ class PySimColavEnv(PySimEnv):
             scenario_block[i] = self.scenario_classifiers[i].get_one_hot()
 
         obs = np.hstack([obs, scenario_block]).astype(np.float32)
-
-        #Append static CPA aggregate for each ship
-        cpa_block = np.zeros((self.num_ships, 1), dtype=np.float32)
-        for i in range(self.num_ships):
-            if not self.phys_sims[i].state.terminated and not self.phys_sims[i].state.truncated:
-                # TODO: switch back if CPA contributes
-                #cpa_block[i, 0] = np.random.uniform(-1.0, 1.0) # generate random noise to see if CPA obs contributes
-                #cpa_block = np.zeros((self.num_ships, 1), dtype=np.float32) # zero the observation to see if CPA obs contributes
-                cpa_block[i, 0] = self._path_side_aggregate(i)
-
-        obs = np.hstack([obs, cpa_block]).astype(np.float32)
         return obs
 
     # -----------------------
@@ -564,6 +492,13 @@ class PySimColavEnv(PySimEnv):
 
         # Step collision entities (once, after all ships have moved)
         self._step_collision_entities()
+
+        # Track minimum center-to-center distance to collision entities (for OS, ship index 0)
+        if getattr(self, "collision_entities", None) and getattr(self, "eval", False):
+            for entity in self.collision_entities:
+                dist = entity.distance_to_point(self.ship_pos[self.os_i])
+                if dist < self._current_episode_min_dist:
+                    self._current_episode_min_dist = dist
 
         # Update polar scans for all active ships
         if self.use_polar_scan:
@@ -605,6 +540,10 @@ class PySimColavEnv(PySimEnv):
                 terminations[i] = self.phys_sims[i].state.terminated
                 truncations[i] = self.phys_sims[i].state.truncated
 
+        # Mark collision so the min distance for this episode is excluded from the png
+        if any(self._last_collision_info[i].get("collision") for i in range(self.num_ships)):
+            self._current_episode_collided = True
+
         info = {
             "rewards": rewards,
             "terminations": terminations,
@@ -612,6 +551,7 @@ class PySimColavEnv(PySimEnv):
             "collision_info": [self._last_collision_info[i] for i in range(self.num_ships)],
             "colreg_violations": [self._colreg_violations[i] for i in range(self.num_ships)],
             "colreg_correct": [self._colreg_correct[i] for i in range(self.num_ships)],
+            "min_distance": self._current_episode_min_dist,
         }
 
         return self._get_obs(), rewards[0], np.all(terminations | truncations), False, info
@@ -682,8 +622,6 @@ class PySimColavEnv(PySimEnv):
                         self._colreg_correct[i] += 1
                     elif side == "starboard":
                         self._colreg_violations[i] += 1
-
-            reward += self.reward_weights["static_bearing"] * static_bearing_reward
 
         # ------------------------------------------------------------------ #
         #  Collision detection                                                 #
@@ -1116,6 +1054,13 @@ class PySimColavEnv(PySimEnv):
 
     def env_specific_reset(self) -> None:
         """Reset episode-specific geometry and build collision entities for the episode."""
+        # Finalize previous episode's min distance (skip the very first reset and collisions)
+        if hasattr(self, "_current_episode_min_dist") and getattr(self, "eval", False):
+            if not self._current_episode_collided and self._current_episode_min_dist < float("inf"):
+                self._episode_min_distances.append(self._current_episode_min_dist)
+        self._current_episode_min_dist = float("inf")
+        self._current_episode_collided = False
+
         if getattr(self, "use_polar_scan", False):
             self.polar_scan_cached = [None] * self.num_ships  # was: None
 
@@ -1156,4 +1101,105 @@ class PySimColavEnv(PySimEnv):
         self.ts_trail_history = []
         self.ts_trails = []
 
+    def finalize_eval_min_distances(self) -> None:
+        """Call after the last evaluation episode to flush the final episode's min distance."""
+        if not self._current_episode_collided and self._current_episode_min_dist < float("inf"):
+            self._episode_min_distances.append(self._current_episode_min_dist)
 
+    def plot_min_distance_png(self, save_path: str = "min_distance.png") -> None:
+        """
+        Plot a probability density estimate of the minimum center-to-center
+        distance kept to collision entities across non-collision evaluation
+        episodes, with arrows on the x-axis indicating the collision boundaries.
+
+        Call ``finalize_eval_min_distances()`` first to include the last episode.
+        """
+        from scipy.stats import gaussian_kde
+
+        distances = np.array(self._episode_min_distances)
+        if len(distances) == 0:
+            print("No non-collision episodes to plot min-distance png for.")
+            return
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Histogram as density (area sums to 1)
+        n_bins = max(10, len(distances) // 3)
+        ax.hist(distances, bins=n_bins, density=True, alpha=0.6, color="steelblue",
+                edgecolor="white", label="Histogram (density)")
+
+        # KDE overlay for a smooth estimate
+        kde = gaussian_kde(distances)
+        x_grid = np.linspace(max(0, distances.min() - 5), distances.max() + 10, 300)
+        ax.plot(x_grid, kde(x_grid), color="darkblue", linewidth=2, label="KDE")
+
+        arrow_coords = ("data", "axes fraction")
+        arrow_kwargs = dict(arrowstyle="<->", lw=1.5)
+        text_kwargs = dict(ha="center", va="top", fontsize=8, fontweight="bold")
+
+        os_r = float(self.own_ship_radius)
+        ts_r_min = float(self.static_ship_radius_min)
+        ts_r_max = float(self.static_ship_radius_max)
+        variable_ts = ts_r_min != ts_r_max
+
+        # Row 1: OS radius arrow from 0 to own_ship_radius
+        row1_y = -0.06
+        if os_r > 0:
+            ax.annotate("", xy=(os_r, row1_y), xytext=(0, row1_y),
+                         arrowprops=dict(**arrow_kwargs, color="red"),
+                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
+            ax.text(os_r / 2, row1_y - 0.02, f"OS radius = {os_r:.0f}m",
+                    transform=ax.get_xaxis_transform(), color="red",
+                    clip_on=False, **text_kwargs)
+
+        # Row 2: TS radius arrow(s) starting at OS radius
+        row2_y = row1_y - 0.08
+        if variable_ts:
+            # Min TS radius arrow
+            ax.annotate("", xy=(os_r + ts_r_min, row2_y), xytext=(os_r, row2_y),
+                         arrowprops=dict(**arrow_kwargs, color="orange"),
+                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
+            ax.text(os_r + ts_r_min / 2, row2_y - 0.02,
+                    f"min TS radius = {ts_r_min:.0f}m",
+                    transform=ax.get_xaxis_transform(), color="orange",
+                    clip_on=False, **text_kwargs)
+            # Max TS radius arrow (one more row down)
+            row3_y = row2_y - 0.08
+            ax.annotate("", xy=(os_r + ts_r_max, row3_y), xytext=(os_r, row3_y),
+                         arrowprops=dict(**arrow_kwargs, color="darkorange"),
+                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
+            ax.text(os_r + ts_r_max / 2, row3_y - 0.02,
+                    f"max TS radius = {ts_r_max:.0f}m",
+                    transform=ax.get_xaxis_transform(), color="darkorange",
+                    clip_on=False, **text_kwargs)
+        else:
+            ax.annotate("", xy=(os_r + ts_r_min, row2_y), xytext=(os_r, row2_y),
+                         arrowprops=dict(**arrow_kwargs, color="orange"),
+                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
+            ax.text(os_r + ts_r_min / 2, row2_y - 0.02,
+                    f"TS radius = {ts_r_min:.0f}m",
+                    transform=ax.get_xaxis_transform(), color="orange",
+                    clip_on=False, **text_kwargs)
+
+        # Vertical dashed lines at collision boundaries
+        collision_dist_min = os_r + ts_r_min
+        collision_dist_max = os_r + ts_r_max
+        ax.axvline(collision_dist_min, color="red", linestyle="--", alpha=0.6,
+                   label=f"Collision boundary (min) = {collision_dist_min:.0f}m")
+        if variable_ts:
+            ax.axvline(collision_dist_max, color="darkorange", linestyle="--", alpha=0.6,
+                       label=f"Collision boundary (max) = {collision_dist_max:.0f}m")
+
+        ax.set_ylim(bottom=0)
+        ax.set_xlim(left=0)
+
+        ax.set_xlabel("Minimum center-to-center distance to collision entity [m]")
+        ax.set_ylabel("Probability density")
+        ax.set_title(f"Min-distance png ({len(distances)} non-collision episodes)")
+        ax.legend(loc="upper right")
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"Min-distance png saved as '{save_path}'")
+        plt.close(fig)
