@@ -491,7 +491,7 @@ fh_sim_env_name = "FhSimEnv"
 airsim_env_name = "AirSimEnv"
 lunar_env_name = "LunarLander"
 py_sim_polar_env_name = "PySimPolarEnv"
-multi_py_sim_env_name = "MultiSimEnv"
+multi_sim_env_name = "MultiSimEnv"
 
 _ENVIRONMENT_NAME_ALIASES = {
     py_sim_env_name.lower(): py_sim_env_name,
@@ -505,8 +505,8 @@ _ENVIRONMENT_NAME_ALIASES = {
     py_sim_polar_env_name.lower(): py_sim_polar_env_name,
     "pysimpolar": py_sim_polar_env_name,
     "polar": py_sim_polar_env_name,
-    multi_py_sim_env_name.lower(): multi_py_sim_env_name,
-    "multipysim": multi_py_sim_env_name,
+    multi_sim_env_name.lower(): multi_sim_env_name,
+    "multipysim": multi_sim_env_name,
 }
 
 
@@ -586,4 +586,4 @@ def initialize_all_environments():
     get(fh_sim_env_name, configuration={})
     get(lunar_env_name, configuration={})
     get(py_sim_polar_env_name, configuration={})
-    get(multi_py_sim_env_name, configuration={})
+    get(multi_sim_env_name, configuration={})
