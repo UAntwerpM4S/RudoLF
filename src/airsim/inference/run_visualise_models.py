@@ -48,32 +48,105 @@ _DEFAULT_TRAIL_MIN_SEGMENT_M = 1.5
 
 
 class VisualiseModelsRunner:
-    """Framework-physics visualiser that mirrors model output into UE5."""
+    """Framework-physics visualiser that mirrors model output into UE5.
+
+    The runner stays model-family agnostic by delegating policy loading,
+    environment construction, and state extraction to a
+    ``ModelVisualisationAdapter``.
+    """
 
     def __init__(self, adapter: ModelVisualisationAdapter, env_name: str = "auto") -> None:
-        """Initialize the generic runner with a model-family adapter."""
+        """Initialize the generic runner with a model-family adapter.
+
+        Args:
+            adapter: Adapter implementing family-specific replay behavior.
+            env_name: Requested framework environment name, or ``"auto"``.
+        """
         self.adapter = adapter
         self.env_name = env_name
 
     def _resolve_environment_name(self, model_path: str) -> str:
-        """Resolve which framework environment should back the visualisation."""
+        """Resolve which framework environment should back the visualisation.
+
+        Args:
+            model_path: Model checkpoint path used for replay.
+
+        Returns:
+            str: Canonical framework environment name.
+        """
         return self.adapter.resolve_environment_name(model_path, self.env_name)
 
     def _load_policy(self, model_path: str, device: str):
-        """Load the framework policy used for replay."""
+        """Load the framework policy used for replay.
+
+        Args:
+            model_path: Model checkpoint path used for replay.
+            device: Torch device selector.
+
+        Returns:
+            Any: Loaded policy object exposing ``predict``.
+        """
         return self.adapter.load_policy(model_path, device=device)
 
     def _build_environment(self, selected_env: str, max_steps: int):
-        """Construct the framework environment for replay."""
+        """Construct the framework environment for replay.
+
+        Args:
+            selected_env: Canonical framework environment name.
+            max_steps: Maximum number of environment steps for replay.
+
+        Returns:
+            Any: Instantiated framework environment.
+        """
         return self.adapter.build_environment(selected_env, max_steps=max_steps)
 
     def _motion_state_from_env(self, env, bridge: AirSimBridge):
-        """Extract the current framework motion state."""
+        """Extract the current framework motion state.
+
+        Args:
+            env: Active framework environment.
+            bridge: AirSim bridge providing coordinate transforms.
+
+        Returns:
+            Any: AirSim-frame motion state returned by the adapter.
+        """
         return self.adapter.motion_state_from_env(env, bridge)
 
     def _animate_state(self, env, bridge: AirSimBridge, **kwargs):
-        """Mirror one framework state transition into UE5."""
+        """Mirror one framework state transition into UE5.
+
+        Args:
+            env: Active framework environment.
+            bridge: AirSim bridge used for visual playback.
+            **kwargs: Interpolation and animation parameters.
+
+        Returns:
+            Any: Adapter return value describing the mirrored state.
+        """
         return self.adapter.animate_state(env, bridge, **kwargs)
+
+    def _extract_pose(self, env) -> tuple[float, float, float]:
+        """Extract the current framework pose through the adapter surface.
+
+        Args:
+            env: Active framework environment.
+
+        Returns:
+            tuple[float, float, float]: Framework-frame ``(x, y, heading)``.
+        """
+        return self.adapter.extract_pose(env)
+
+    def _extract_velocity(self, env) -> tuple[float, float, float]:
+        """Extract the current framework velocity through the adapter surface.
+
+        Args:
+            env: Active framework environment.
+
+        Returns:
+            tuple[float, float, float]: Framework-frame
+            ``(surge, sway, yaw_rate)``.
+        """
+        return self.adapter.extract_velocity(env)
 
     def run(
         self,
@@ -232,13 +305,22 @@ class VisualiseModelsRunner:
             minimap = None
 
             def _trail_point_from_motion_state(motion_state: np.ndarray):
-                """Return the current UE5 trail point for the ship path marker."""
+                """Return the current UE5 trail point for the ship path marker.
+
+                Args:
+                    motion_state: AirSim-frame motion vector
+                        ``[x, y, yaw, vx, vy, yaw_rate]``.
+
+                Returns:
+                    Any: ``Vector3r``-compatible point for persistent trail
+                    plotting.
+                """
                 trail_offset_m = 8.0
                 trail_x = float(motion_state[0] - np.cos(float(motion_state[2])) * trail_offset_m)
                 trail_y = float(motion_state[1] - np.sin(float(motion_state[2])) * trail_offset_m)
                 render_z = float(getattr(bridge, "render_z", 0.0))
                 trail_z = float(render_z - 12.0)
-                vector3r_factory = getattr(bridge._airsim, "Vector3r", None)
+                vector3r_factory = getattr(bridge.airsim, "Vector3r", None)
                 if callable(vector3r_factory):
                     return vector3r_factory(trail_x, trail_y, trail_z)
                 return SimpleNamespace(
@@ -284,7 +366,7 @@ class VisualiseModelsRunner:
                 )
 
                 if not mirror_controls_in_ue5 and not animate_steering_in_ue5 and not animate_throttle_in_ue5:
-                    neutral_controls = bridge._airsim.CarControls()
+                    neutral_controls = bridge.airsim.CarControls()
                     neutral_controls.throttle = 0.0
                     neutral_controls.steering = 0.0
                     neutral_controls.brake = 0.0
@@ -340,11 +422,11 @@ class VisualiseModelsRunner:
                         lock_path_in_ue5=lock_path_in_ue5,
                         vehicle_object_name=vehicle_object_name,
                     )
-                    if draw_ship_trail_in_ue5:
+                    if draw_ship_trail_in_ue5 and bridge.is_connected:
                         previous_trail_point = _trail_point_from_motion_state(previous_motion_state)
 
                     if bridge.is_connected and not vehicle_object_name:
-                        parked_controls = bridge._airsim.CarControls()
+                        parked_controls = bridge.airsim.CarControls()
                         parked_controls.throttle = 0.0
                         parked_controls.steering = 0.0
                         parked_controls.brake = 1.0
@@ -413,7 +495,7 @@ class VisualiseModelsRunner:
                                     last_bridge_telemetry_at = now
                                 except Exception:
                                     pass
-                            if draw_ship_trail_in_ue5:
+                            if draw_ship_trail_in_ue5 and bridge.is_connected:
                                 current_trail_point = _trail_point_from_motion_state(previous_motion_state)
                                 if previous_trail_point is not None:
                                     moved_dx = float(current_trail_point.x_val - previous_trail_point.x_val)
@@ -450,14 +532,17 @@ class VisualiseModelsRunner:
                             and ((now - last_log_t) >= max(float(min_log_interval_s), 0.0) or done or truncated)
                         ):
                             last_log_t = now
+                            ship_x, ship_y, _ = self._extract_pose(env)
+                            surge_speed, _, _ = self._extract_velocity(env)
+                            controls = getattr(bridge, "current_controls", getattr(bridge, "_controls", None))
                             logger.info(
                                 "step=%d pos=(%.0f, %.0f) speed=%.2f steer=%+.3f throttle=%.3f reward=%+.2f",
                                 step,
-                                env.ship_pos[0][0],
-                                env.ship_pos[0][1],
-                                env.phys_sims[0].state.u,
-                                bridge._controls.steering if bridge._controls is not None else 0.0,
-                                bridge._controls.throttle if bridge._controls is not None else 0.0,
+                                ship_x,
+                                ship_y,
+                                surge_speed,
+                                getattr(controls, "steering", 0.0) if controls is not None else 0.0,
+                                getattr(controls, "throttle", 0.0) if controls is not None else 0.0,
                                 reward,
                             )
 
@@ -470,9 +555,10 @@ class VisualiseModelsRunner:
                         if remaining_budget_s > 0.001:
                             time.sleep(min(remaining_budget_s, target_step_interval_s))
 
+                    end_x, end_y, _ = self._extract_pose(env)
                     print(
                         f"   Finished: {step} steps | reward={total_reward:+.1f} | "
-                        f"end=({env.ship_pos[0][0]:.1f}, {env.ship_pos[0][1]:.1f})"
+                        f"end=({end_x:.1f}, {end_y:.1f})"
                     )
                     session_exporter.update_metadata(
                         {
@@ -480,8 +566,8 @@ class VisualiseModelsRunner:
                             "last_episode_steps": step,
                             "last_reward": float(total_reward),
                             "last_ship_position": {
-                                "x": float(env.ship_pos[0][0]),
-                                "y": float(env.ship_pos[0][1]),
+                                "x": float(end_x),
+                                "y": float(end_y),
                             },
                         }
                     )
@@ -502,8 +588,17 @@ class VisualiseModelsRunner:
                     bridge.disconnect()
                 print(f"Exports saved to '{session_exporter.export_dir}'.")
                 print("\nVisualisation complete - AirSim connection closed.")
+
+
 def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) -> None:
-    """Dispatch visualization to the selected model-family adapter."""
+    """Dispatch visualization to the selected model-family adapter.
+
+    Args:
+        model_path: Model checkpoint path used for replay.
+        model_family: Requested adapter family, or ``"auto"``.
+        **kwargs: Additional runner options forwarded to
+            ``VisualiseModelsRunner.run``.
+    """
     env_name = str(kwargs.pop("env_name", "auto"))
     adapter = resolve_visualisation_adapter(
         model_family=model_family,
@@ -516,7 +611,11 @@ def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) 
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser for framework-model replay."""
+    """Build the command-line parser for framework-model replay.
+
+    Returns:
+        argparse.ArgumentParser: Configured CLI parser for UE5 replay runs.
+    """
     parser = argparse.ArgumentParser(
         description="Visualise framework model playback in UE5.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
