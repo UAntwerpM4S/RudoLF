@@ -275,12 +275,17 @@ class MultiPySimEnvironment(BaseEnvironment):
         # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        single_pysim_env = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
+        single_pysim_env1 = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
                              dynamics_model=config["dynamics_model"], ship_model=config["ship_model"],
                              wind=config["wind"], current=config["current"],
                              numerical_damping=config["numerical_damping"])
 
-        self._env = MultiPySimEnv(environments=[single_pysim_env]) # , single_pysim_env])
+        single_pysim_env2 = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
+                             dynamics_model=config["dynamics_model"], ship_model=config["ship_model"],
+                             wind=config["wind"], current=config["current"],
+                             numerical_damping=config["numerical_damping"])
+
+        self._env = MultiPySimEnv(sub_environments=[single_pysim_env1, single_pysim_env2])
 
 
 class FhSimEnvironment(BaseEnvironment):

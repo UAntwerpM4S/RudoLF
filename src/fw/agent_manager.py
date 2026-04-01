@@ -4,18 +4,19 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from pathlib import Path
-from gymnasium import Env
 from enum import auto, Enum
 from matplotlib.colors import to_rgb
 from contextlib import contextmanager
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
 from airsim.communication.airsim_bridge import AirSimBridge
-from fw.stop_condition import StopCondition
+from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
-from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.environments.base_env import BaseEnv
+from fw.stop_condition import StopCondition
 
 
 class PolicyStrategy(Enum):
@@ -152,13 +153,13 @@ class AgentManager:
         return self._agent
 
 
-    def set_environment(self, env: Env, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
+    def set_environment(self, env: BaseEnv, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
                         other_env_name: str = None) -> None:
         """
         Assign an environment to the agent and configure the policy strategy.
 
         Args:
-            env (Env): The environment to set.
+            env (BaseEnv): The environment to set.
             policy_strategy (PolicyStrategy, optional): Strategy for handling policy (reset, reuse current, or reuse other). Default is PolicyStrategy.RESET_POLICY.
             other_env_name (str, optional): Name of the environment whose policy should be reused (if applicable).
 
@@ -177,6 +178,11 @@ class AgentManager:
             self._agent = SinglePPOAgent(environment=env, **self._hyperparameters)
         elif PPO2_POLICY_NAME == self._agent_type:
             self._agent = PPO2Agent(environment=env, **self._hyperparameters)
+        elif MULTI_PPO_POLICY_NAME == self._agent_type:
+            single_agent1 = SinglePPOAgent(environment=env.sub_environments[0], **self._hyperparameters)
+            single_agent2 = SinglePPOAgent(environment=env.sub_environments[1], **self._hyperparameters)
+            self._agent = MultiPPOAgent(environment=env, agents=[single_agent1, single_agent2],
+                                        **self._hyperparameters)
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 
