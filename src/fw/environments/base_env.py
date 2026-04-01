@@ -25,18 +25,21 @@ class BaseEnv(gym.Env):
         super().__init__()
         self._render_mode = render_mode
         self._smoothing_enabled = True
+        self._sub_environments = []
 
 
     @property
     def render_mode(self):
-        """Render mode.
+        """
+        Render mode.
         """
         return self._render_mode
 
 
     @render_mode.setter
     def render_mode(self, value):
-        """Render mode.
+        """
+        Render mode.
 
         Args:
             value: Description.
@@ -46,19 +49,29 @@ class BaseEnv(gym.Env):
 
     @property
     def enable_smoothing(self):
-        """Enable smoothing.
+        """
+        Enable smoothing.
         """
         return self._smoothing_enabled
 
 
     @enable_smoothing.setter
     def enable_smoothing(self, value):
-        """Enable smoothing.
+        """
+        Enable smoothing.
 
         Args:
             value: Description.
         """
         self._smoothing_enabled = value
+
+
+    @property
+    def sub_environments(self):
+        """
+        Returns the sub-environments. This property should only be used by multi-environment.
+        """
+        return self._sub_environments
 
 
     @property
@@ -94,4 +107,3 @@ class BaseEnv(gym.Env):
         that is specific to a subclass (e.g., setting custom internal state).
         """
         pass
-
