@@ -21,15 +21,50 @@ class _FakeCoordTransform:
     """Small coordinate-transform stub for adapter motion-state tests."""
 
     def fossen_to_airsim(self, x: float, y: float, z: float):
+        """Convert framework coordinates into fake AirSim coordinates.
+
+        Args:
+            x: Framework x position.
+            y: Framework y position.
+            z: Framework z position.
+
+        Returns:
+            tuple[float, float, float]: Shifted AirSim-style coordinates.
+        """
         return x + 100.0, y - 50.0, z
 
     def fossen_heading_to_airsim_yaw(self, heading: float) -> float:
+        """Convert framework heading into fake AirSim yaw.
+
+        Args:
+            heading: Framework heading in radians.
+
+        Returns:
+            float: Shifted yaw value for testing.
+        """
         return heading + 0.25
 
     def fossen_velocity_to_airsim(self, vx: float, vy: float):
+        """Convert framework velocity into fake AirSim velocity.
+
+        Args:
+            vx: Framework x velocity.
+            vy: Framework y velocity.
+
+        Returns:
+            tuple[float, float]: Shifted velocity pair for testing.
+        """
         return vx + 1.0, vy - 2.0
 
     def fossen_yaw_rate_to_airsim(self, yaw_rate: float) -> float:
+        """Convert framework yaw rate into fake AirSim yaw rate.
+
+        Args:
+            yaw_rate: Framework yaw rate.
+
+        Returns:
+            float: Shifted yaw-rate value for testing.
+        """
         return yaw_rate - 0.1
 
 
@@ -128,6 +163,14 @@ def test_pysim_adapter_build_environment_uses_shared_defaults(monkeypatch):
     captured = {}
 
     def _fake_pysim_env(**kwargs):
+        """Capture construction arguments for the fake PySim environment.
+
+        Args:
+            **kwargs: Keyword arguments passed to the environment factory.
+
+        Returns:
+            SimpleNamespace: Lightweight fake environment object.
+        """
         captured.update(kwargs)
         return SimpleNamespace(name="fake-pysim-env")
 

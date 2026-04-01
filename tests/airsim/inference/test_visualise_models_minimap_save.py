@@ -78,6 +78,12 @@ class _SmokeBridge(_FakeBridge):
     """Richer fake bridge that supports the real adapter animation path."""
 
     def __init__(self, *args, **kwargs) -> None:
+        """Initialize the richer fake bridge used by the smoke test.
+
+        Args:
+            *args: Positional arguments forwarded to the base fake bridge.
+            **kwargs: Keyword arguments forwarded to the base fake bridge.
+        """
         super().__init__(*args, **kwargs)
         self.coord_transform = SimpleNamespace(
             fossen_to_airsim=lambda x, y, z: (x + 10.0, y - 5.0, z),
@@ -141,6 +147,7 @@ class _SmokeEnv:
     """Lightweight framework env that exercises the real adapter path."""
 
     def __init__(self) -> None:
+        """Initialize the lightweight environment used by the smoke test."""
         self.ship_pos = np.array([100.0, 200.0], dtype=np.float32)
         self.phys_sims = [SimpleNamespace(state=SimpleNamespace(heading=0.2, u=1.5, v=0.1, r=0.05))]
         self.performed_action = np.array([0.2, 0.6], dtype=np.float32)
@@ -150,6 +157,11 @@ class _SmokeEnv:
         self._done_once = False
 
     def reset(self):
+        """Reset the fake smoke environment to its initial state.
+
+        Returns:
+            tuple[np.ndarray, dict]: Initial observation and empty info dict.
+        """
         self._done_once = False
         self.ship_pos = np.array([100.0, 200.0], dtype=np.float32)
         self.phys_sims[0].state = SimpleNamespace(heading=0.2, u=1.5, v=0.1, r=0.05)
@@ -157,6 +169,14 @@ class _SmokeEnv:
         return np.array([0.0], dtype=np.float32), {}
 
     def step(self, action):
+        """Advance the fake smoke environment by one deterministic step.
+
+        Args:
+            action: Action vector chosen by the loaded policy.
+
+        Returns:
+            tuple[np.ndarray, float, bool, bool, dict]: Gym-style step tuple.
+        """
         self._done_once = True
         self.ship_pos = np.array([101.0, 202.0], dtype=np.float32)
         self.phys_sims[0].state = SimpleNamespace(heading=0.25, u=1.8, v=0.05, r=0.04)

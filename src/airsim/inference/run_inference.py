@@ -41,7 +41,11 @@ _AIRSIM_MODEL_HINTS: Tuple[str, ...] = ("airsimenv", "airsim_env", "ue5")
 
 
 def _warn_if_model_name_looks_non_airsim(model_path: Path) -> None:
-    """Warn when a model name does not look like an AirSim-trained policy."""
+    """Warn when a model name does not look like an AirSim-trained policy.
+
+    Args:
+        model_path: Resolved model checkpoint path.
+    """
     stem = model_path.stem.lower()
     if any(hint in stem for hint in _AIRSIM_MODEL_HINTS):
         return
@@ -54,7 +58,15 @@ def _warn_if_model_name_looks_non_airsim(model_path: Path) -> None:
 
 
 def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
-    """Load a :class:`PPOPolicy` from a saved ``.zip`` file."""
+    """Load a :class:`PPOPolicy` from a saved ``.zip`` file.
+
+    Args:
+        model_path: User-provided checkpoint path.
+        device: Torch device selector used during model load.
+
+    Returns:
+        PPOPolicy: Loaded policy with its network in evaluation mode.
+    """
     path = resolve_model_path(model_path, _SRC_DIR)
     stem = str(path.with_suffix("")) if path.suffix == ".zip" else str(path)
     policy = PPOPolicy.load(stem, device=device)
@@ -71,7 +83,19 @@ def _build_inference_row(
     action,
     outcome: str,
 ) -> Dict[str, float | int | str]:
-    """Build one inference telemetry row for CSV export."""
+    """Build one inference telemetry row for CSV export.
+
+    Args:
+        env: Active AirSim environment.
+        episode_index: One-based episode index.
+        step_index: One-based step index within the episode.
+        reward: Reward produced by the current step.
+        action: Policy action applied on this step.
+        outcome: Outcome label for the current step.
+
+    Returns:
+        Dict[str, float | int | str]: Flat telemetry row ready for CSV export.
+    """
     snapshot = build_airsim_env_snapshot(env)
     return {
         "step": int(step_index),
@@ -115,6 +139,17 @@ def _run_episode_airsim_env(
     3. ``env.step()`` sends the action to UE5, waits for physics, reads back
        the new state, and computes reward/termination/truncation
     4. inference stops when the episode terminates or truncates
+
+    Args:
+        env: Active AirSim environment.
+        policy: Loaded PPO policy used for action selection.
+        max_steps: Maximum steps allowed for the episode.
+        episode_index: One-based episode index used for export metadata.
+        exporter: Optional session exporter receiving per-step rows.
+
+    Returns:
+        Tuple[List[float], List[float], float, str]: Trajectory x values,
+        trajectory y values, total reward, and final outcome label.
     """
     obs, _ = env.reset()
     traj_x: List[float] = [float(env.ship_pos[0])]
@@ -184,7 +219,18 @@ def run_inference(
     num_episodes: int = 3,
     device: str = "cpu",
 ) -> None:
-    """Run live inference in UE5 using the native ``AirSimEnv`` loop."""
+    """Run live inference in UE5 using the native ``AirSimEnv`` loop.
+
+    Args:
+        model_path: Path to the AirSimEnv-trained checkpoint.
+        ship_pos: Optional start position override in Fossen coordinates.
+        target_pos: Optional target position override in Fossen coordinates.
+        ip: AirSim RPC host.
+        port: AirSim RPC port.
+        max_steps: Maximum steps per episode.
+        num_episodes: Number of episodes to run.
+        device: Torch device selector used for inference.
+    """
     banner = "=" * 62
     resolved_model_path = resolve_model_path(model_path, _SRC_DIR)
     _warn_if_model_name_looks_non_airsim(resolved_model_path)
@@ -330,7 +376,11 @@ def run_inference(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser for AirSimEnv inference runs."""
+    """Build the command-line parser for AirSimEnv inference runs.
+
+    Returns:
+        argparse.ArgumentParser: Configured parser for AirSimEnv inference.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Run inference for PPO models trained directly in AirSimEnv. "
