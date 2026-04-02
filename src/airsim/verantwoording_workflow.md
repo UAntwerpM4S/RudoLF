@@ -64,7 +64,7 @@ De framework-config in `fw.config` bepaalt:
 
 De AirSim-runtime-instellingen in `airsim/config/runtime_settings.json` bepalen onder meer:
 
-- `fossen_visualise`;
+- `model_visualise`;
 - `inference_visualise`;
 - `training.speed_profile` (`normal`, `safe`, `fast`, `turbo`, `custom`);
 - `training.simulation_speed` en `training.frames_per_step` (bij `custom`);
@@ -140,7 +140,7 @@ Binnen de AirSim-flow geldt:
 - `train` met `AirSimEnv` start training in AirSim;
 - trainingssnelheid en stepping-gedrag worden gestuurd via `training.speed_profile` of via expliciete `training.*` waarden;
 - AirSim-visualisatie kiest op basis van runtime-instellingen tussen:
-  - Fossen-visualisatie in UE5;
+  - modulaire framework-modelvisualisatie in UE5;
   - inference-visualisatie in UE5.
 
 Met andere woorden: bij AirSim wordt `visualize` niet meer gekozen via een `main`-blok in runtime settings, maar via de AirSim-specifieke visualisatievlaggen.
