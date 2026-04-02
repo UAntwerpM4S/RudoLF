@@ -5,10 +5,12 @@ import tempfile
 import numpy as np
 
 from typing import Optional, Tuple, Union
+
 from fw.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_agent import BaseAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.common.tools.logging_utils import dump_multi_agent_metrics
 from fw.environments.multi_sim_env import MultiSimEnv
 
 
@@ -413,25 +415,9 @@ class MultiPPOAgent(BaseAgent):
         self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
 
         # Dump training metrics to CSV
-        self._dump_multi_agent_metrics(training_metrics)
+        _dump_multi_agent_metrics(training_metrics)
 
         print("Training completed!")
-
-
-    def _dump_multi_agent_metrics(self, metrics_dict: dict):
-        """
-        Helper method to flatten multi-agent metrics for CSV export.
-        """
-        flat_metrics = []
-        for agent_name, agent_metrics in metrics_dict.items():
-            agent_id = int(agent_name.replace('agent', ''))
-            for metric in agent_metrics:
-                flat_metrics.append({
-                    'agent_id': agent_id,
-                    **metric
-                })
-
-        self.dump_metrics_to_csv(self.model_dir, "training_metrics.csv", flat_metrics)
 
 
     def load_policy(self, policy_file_name: str) -> None:

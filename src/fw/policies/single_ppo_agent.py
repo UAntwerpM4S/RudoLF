@@ -7,11 +7,13 @@ import gymnasium as gym
 import numpy as np
 
 from typing import Optional, Tuple, Union
+
 from fw.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo_policy import PPOPolicy
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+from fw.common.tools.logging_utils import dump_metrics_to_csv
 
 
 class SinglePPOAgent(BaseAgent):
@@ -452,7 +454,7 @@ class SinglePPOAgent(BaseAgent):
         self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
 
         # Dump training metrics to CSV
-        self.dump_metrics_to_csv(self.model_dir, "training_metrics.csv", training_metrics)
+        dump_metrics_to_csv(self.model_dir, "training_metrics.csv", training_metrics)
 
         if getattr(self, "_vec_env", None) is not None:
             self._vec_env.close()
