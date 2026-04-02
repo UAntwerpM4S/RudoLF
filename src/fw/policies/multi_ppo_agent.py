@@ -9,7 +9,7 @@ from fw.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_agent import BaseAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
-from fw.environments.multi_py_sim_env import MultiPySimEnv
+from fw.environments.multi_sim_env import MultiSimEnv
 
 
 class MultiPPOAgent(BaseAgent):
@@ -18,7 +18,7 @@ class MultiPPOAgent(BaseAgent):
     tuple-structured multi-environment.
 
     This class coordinates multiple independent `SinglePPOAgent` instances,
-    each controlling one sub-environment within a `MultiPySimEnv`. Experience
+    each controlling one sub-environment within a `MultiSimEnv`. Experience
     is collected in parallel across all environments, after which each agent is
     trained independently on its own trajectory.
 
@@ -66,8 +66,8 @@ class MultiPPOAgent(BaseAgent):
         self.agents = agents
         self.num_envs = len(self.env.sub_environments)
 
-        if not isinstance(self.env, MultiPySimEnv):
-            raise TypeError("MultiPPOAgent requires MultiPySimEnv")
+        if not isinstance(self.env, MultiSimEnv):
+            raise TypeError("MultiPPOAgent requires MultiSimEnv")
 
         if len(agents) != self.num_envs:
             raise ValueError(
@@ -316,9 +316,9 @@ class MultiPPOAgent(BaseAgent):
                 if iteration % self.eval_frequency == 0:
                     print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
 
-                    # Save checkpoint every 'self.eval_frequency' iterations
-                    if iteration > 0:
-                        agent.save_policy(f"agent{agent_id}_ppo_checkpoint_{iteration}")
+            # Save checkpoint every 'self.eval_frequency' iterations
+            if iteration > 0 and iteration % self.eval_frequency == 0:
+                self.save_policy(f"ppo_checkpoint_{iteration}")
 
             # Aggregate metrics for stopping condition
             mean_reward_all_agents = np.mean(mean_rewards) if mean_rewards else 0.0

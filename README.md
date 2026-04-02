@@ -29,6 +29,17 @@ python -m fw.main
 
 - Non-AirSim environments run through the generic framework trainer/visualizer flow.
 - AirSim-specific runtime behavior (UE5 visualisation mode, training speed profile, save slot, connection settings) is configured in `src/airsim/config/runtime_settings.json`.
+- AirSim visualisation and inference exports are written to the workspace-level `exports/` folder.
+
+### AirSim Exports
+
+Each AirSim inference or visualisation session creates its own timestamped export folder under `exports/`.
+
+Typical contents:
+
+- `inference_session.csv` or `visualisation_session.csv`: session-level telemetry.
+- `airsim_telemetry.csv`: bridge-side AirSim state snapshots.
+- `metadata.json`: model, environment, and runtime configuration metadata.
 
 ## Quick Start
 
@@ -58,6 +69,7 @@ python -m fw.common.airsim.tools.analyze_telemetry
 
 For full AirSim technical documentation, use:
 
+- [AirSim Step-By-Step Setup Guide](docs/airsim_setup_step_by_step.md)
 - [AirSim Package Reference](src/airsim/README.md)
 - [AirSim Inference and Visualisation Runbook](src/airsim/inference/README.md)
 - [AirSim Workflow Rationale](src/airsim/verantwoording_workflow.md)
@@ -75,6 +87,12 @@ Run AirSim-focused tests:
 
 ```bash
 python -m pytest tests/airsim -v
+```
+
+Run docstring enforcement:
+
+```bash
+python -m pytest tests/fw/test_docstring_enforcement.py -v
 ```
 
 Run framework routing tests:
