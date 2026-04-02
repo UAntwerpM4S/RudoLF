@@ -10,6 +10,7 @@ AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE = "{session_type}_session.csv"
 AIRSIM_BRIDGE_LOG_FILENAME = "airsim_telemetry.csv"
 AIRSIM_METADATA_FILENAME = "metadata.json"
 AIRSIM_INFERENCE_TRAJECTORY_PLOT_FILENAME = "inference_trajectory.png"
+AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME = "trajectory_2d_vs_3d.png"
 
 
 """
