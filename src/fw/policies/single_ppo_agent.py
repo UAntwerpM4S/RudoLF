@@ -187,6 +187,13 @@ class SinglePPOAgent(BaseAgent):
         """
 
         def _init():
+            """Create one monitored deep-copied environment instance.
+
+            Returns:
+                A monitored Gym environment copied from the agent base
+                environment.
+            """
+
             return Monitor(copy.deepcopy(self.env))
 
         return _init

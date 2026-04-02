@@ -199,6 +199,7 @@ class AirSimEnv(BaseEnv):
         self.time_step = time_step
         self.frames_per_step = frames_per_step
         self.use_pause_stepping = use_pause_stepping
+        self.training_mode = bool(training_mode)
         self.verbose = verbose
         self._physics_update_timeout = float(physics_update_timeout)
         self._state_poll_interval = float(state_poll_interval)
@@ -566,6 +567,8 @@ class AirSimEnv(BaseEnv):
         self.bridge.flush_persistent_markers()
         time.sleep(0.2)
 
+        overlay_z = -60.0
+
         # -- Polygon outline (green) --
         csv_path = _ENVIRONMENTS_DIR / "env_Sche_no_scale.csv"
         polygon = np.loadtxt(csv_path, delimiter=",", skiprows=1)
@@ -573,7 +576,7 @@ class AirSimEnv(BaseEnv):
         poly_points = []
         for p in polygon[::2]:
             ux, uy = self.coord.fossen_to_airsim_2d(p[0], p[1])
-            poly_points.append(airsim.Vector3r(ux, uy, -2.0))
+            poly_points.append(airsim.Vector3r(ux, uy, overlay_z))
 
         chunk_size = 500
         for i in range(0, len(poly_points), chunk_size - 1):
@@ -581,8 +584,8 @@ class AirSimEnv(BaseEnv):
             if len(chunk) > 1:
                 self.bridge.plot_line_strip(
                     chunk,
-                    color_rgba=[0, 1, 0, 0.8],
-                    thickness=5.0,
+                    color_rgba=[0.65, 1.0, 0.65, 1.0],
+                    thickness=28.0,
                     is_persistent=True,
                 )
 
@@ -597,15 +600,15 @@ class AirSimEnv(BaseEnv):
         traj_points = []
         for p in traj_data:
             ux, uy = self.coord.fossen_to_airsim_2d(p[0], p[1])
-            traj_points.append(airsim.Vector3r(ux, uy, -3.0))
+            traj_points.append(airsim.Vector3r(ux, uy, overlay_z - 2.0))
 
         for i in range(0, len(traj_points), chunk_size - 1):
             chunk = traj_points[i:i + chunk_size]
             if len(chunk) > 1:
                 self.bridge.plot_line_strip(
                     chunk,
-                    color_rgba=[1, 1, 0, 1.0],
-                    thickness=8.0,
+                    color_rgba=[1.0, 1.0, 0.6, 1.0],
+                    thickness=36.0,
                     is_persistent=True,
                 )
 

@@ -907,6 +907,16 @@ class PySimEnv(BaseEnv):
 
     @staticmethod
     def segment_point_distance(p1, p2, c):
+        """Compute the shortest distance from a point to a line segment.
+
+        Args:
+            p1: Start point of the segment as a 2D vector.
+            p2: End point of the segment as a 2D vector.
+            c: Query point as a 2D vector.
+
+        Returns:
+            The Euclidean distance from ``c`` to the segment ``p1``-``p2``.
+        """
         # project c onto segment p1-p2
         if np.allclose(p1, p2):
             return np.linalg.norm(c - p1)

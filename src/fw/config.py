@@ -6,6 +6,11 @@ PPO_POLICY_NAME = "PPO"
 PPO2_POLICY_NAME = "PPO2"
 MULTI_PPO_POLICY_NAME = "MPPO"
 
+AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE = "{session_type}_session.csv"
+AIRSIM_BRIDGE_LOG_FILENAME = "airsim_telemetry.csv"
+AIRSIM_METADATA_FILENAME = "metadata.json"
+AIRSIM_INFERENCE_TRAJECTORY_PLOT_FILENAME = "inference_trajectory.png"
+
 
 """
 Following (hyper)parameters are for fine-tuning the agent. The key of the dictionary

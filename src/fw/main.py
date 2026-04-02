@@ -24,7 +24,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         airsim_env_name,
         lunar_env_name,
         py_sim_polar_env_name,
-        multi_py_sim_env_name,
+        multi_sim_env_name,
         resolve_environment_names,
         initialize_all_environments
     )
@@ -81,7 +81,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             patience=4,
             max_time_steps=1300,
         ),
-        multi_py_sim_env_name: StopCondition(
+        multi_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=1.75,
             patience=4,
@@ -118,6 +118,28 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     initialize_all_environments()
 
+    def _run_standard_batch(envs: list) -> bool:
+        """Run one contiguous batch of framework environments.
+
+        Args:
+            envs: Framework environment instances collected from the ordered
+                ``env_type`` sequence up to the next AirSim step boundary.
+
+        Returns:
+            True when a framework train/visualize step was executed, otherwise
+            False when ``envs`` is empty.
+        """
+        if not envs:
+            return False
+
+        trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+        if action == "visualize":
+            trainer.visualize(envs, airsim_bridge=None)
+        else:
+            metrics = trainer.train(configuration)
+            print(f"Training metrics (grouped): {metrics}")
+        return True
+
     # Both visualize and train now follow env_type order exactly (for airsim),
     # but standard environments are batched to preserve Trainer functionality.
     executed_any_step = False
@@ -125,6 +147,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     for env_name in configured_env_names:
         if env_name == airsim_env_name:
+            if _run_standard_batch(standard_envs):
+                executed_any_step = True
+            standard_envs = []
             if action == "train":
                 logging.getLogger("airsim").setLevel(logging.INFO)
             if _run_airsim_extension(action):
@@ -134,16 +159,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
         env = build_default_environment(env_name)
         standard_envs.append(env)
 
-    if standard_envs:
-        trainer = Trainer(PPO_POLICY_NAME, standard_envs, "SimpleScheduler")
-        
-        if action == "visualize":
-            trainer.visualize(standard_envs, airsim_bridge=None)
-            executed_any_step = True
-        else:
-            metrics = trainer.train(configuration)
-            print(f"Training metrics (grouped): {metrics}")
-            executed_any_step = True
+    if _run_standard_batch(standard_envs):
+        executed_any_step = True
 
     if not executed_any_step:
         print("[main] No environments remaining after AirSim fallback. Exiting.")
