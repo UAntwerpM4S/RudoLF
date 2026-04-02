@@ -19,7 +19,14 @@ from fw.config import (
 
 
 def get_export_directory(export_dir: Optional[str | Path] = None) -> Path:
-    """Return the export directory, creating it when needed."""
+    """Return the export directory, creating it when needed.
+
+    Args:
+        export_dir: Optional root export directory supplied by the caller.
+
+    Returns:
+        Path: Existing or newly created export directory.
+    """
     if export_dir is not None:
         path = Path(export_dir)
     else:
@@ -29,7 +36,14 @@ def get_export_directory(export_dir: Optional[str | Path] = None) -> Path:
 
 
 def _slugify(value: str) -> str:
-    """Build a filesystem-friendly slug."""
+    """Build a filesystem-friendly slug.
+
+    Args:
+        value: User-facing session label.
+
+    Returns:
+        str: Filesystem-safe slug suitable for directory names.
+    """
     slug = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
     return slug.strip("._-") or "session"
 
@@ -91,8 +105,45 @@ def _get_ship_scalar(value: Any, ship_index: int = 0, default: Any = 0.0) -> Any
     return value
 
 
+def _get_ship_item(value: Any, ship_index: int = 0, default: Any = None) -> Any:
+    """Return one per-ship item while tolerating flat and nested layouts.
+
+    Args:
+        value: Scalar, array, or per-ship container.
+        ship_index: Preferred ship index when ``value`` stores per-ship items.
+        default: Fallback returned when extraction is not possible.
+
+    Returns:
+        Any: Extracted ship-specific item, original flat value, or
+        ``default``.
+    """
+    if value is None:
+        return default
+    if isinstance(value, np.ndarray):
+        if value.ndim == 0:
+            return value.item()
+        if value.ndim == 1:
+            return value
+        if len(value) > ship_index:
+            return value[ship_index]
+        return default
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return default
+        candidate = value[ship_index] if ship_index < len(value) else value[0]
+        if isinstance(candidate, (list, tuple, np.ndarray)) or not np.isscalar(candidate):
+            return candidate
+        return value
+    return value
+
+
 class AirSimSessionExporter:
-    """Session-scoped export bundle for AirSim inference and visualisation runs."""
+    """Session-scoped export bundle for AirSim inference and visualisation runs.
+
+    The exporter owns one timestamped session directory and keeps telemetry,
+    bridge logs, and metadata paths aligned for inference and visualisation
+    workflows.
+    """
 
     def __init__(
         self,
@@ -201,7 +252,11 @@ class AirSimSessionExporter:
         self._exporter.close()
 
     def __enter__(self) -> "AirSimSessionExporter":
-        """Enter runtime context for automatic resource management."""
+        """Enter runtime context for automatic resource management.
+
+        Returns:
+            AirSimSessionExporter: The active exporter instance.
+        """
         return self
 
     def __exit__(
@@ -210,7 +265,13 @@ class AirSimSessionExporter:
         exc_value,
         traceback,
     ) -> None:
-        """Ensure exporter is closed when exiting context manager."""
+        """Ensure exporter is closed when exiting context manager.
+
+        Args:
+            exc_type: Exception type raised inside the context, if any.
+            exc_value: Exception instance raised inside the context, if any.
+            traceback: Traceback object for the active exception, if any.
+        """
         try:
             self.save()
         finally:
@@ -227,6 +288,7 @@ def build_framework_visualisation_row(
     outcome: str,
     control_mode: str = "framework_visualisation",
     ship_index: int = 0,
+    model_origin: str = "framework",
 ) -> Dict[str, Any]:
     """Build one lightweight visualisation telemetry row from framework state.
 
@@ -245,26 +307,21 @@ def build_framework_visualisation_row(
             during visualisation.
         ship_index: Zero-based ship index used when the environment stores
             per-ship state in lists or arrays.
+        model_origin: High-level source label for the mirrored model, such as
+            ``"pysim"`` or ``"fhsim"``.
 
     Returns:
         A flat CSV-friendly dictionary describing the current visualisation
         step.
     """
-    ship_pos = None
-    if hasattr(env, "ship_pos") and env.ship_pos:
-        try:
-            ship_pos = env.ship_pos[ship_index]
-        except Exception:
-            ship_pos = env.ship_pos[0] if env.ship_pos else None
+    ship_pos = _get_ship_item(getattr(env, "ship_pos", None), ship_index=ship_index)
     if ship_pos is None or (isinstance(ship_pos, (list, tuple, np.ndarray)) and len(ship_pos) == 0):
         ship_pos = (0.0, 0.0)
 
     state = None
-    if hasattr(env, "phys_sims") and env.phys_sims:
-        try:
-            state = env.phys_sims[ship_index].state
-        except Exception:
-            state = env.phys_sims[0].state if env.phys_sims else None
+    phys_sim = _get_ship_item(getattr(env, "phys_sims", None), ship_index=ship_index)
+    if phys_sim is not None and hasattr(phys_sim, "state"):
+        state = phys_sim.state
     if state is None:
         class _DefaultState:
             """Default motion state used when AirSim state is unavailable."""
@@ -275,7 +332,7 @@ def build_framework_visualisation_row(
         state = _DefaultState()
 
     action_arr = np.asarray(action).reshape(-1)
-    controls = getattr(bridge, "_controls", None)
+    controls = getattr(bridge, "current_controls", getattr(bridge, "_controls", None))
     checkpoint_index = _get_ship_scalar(getattr(env, "checkpoint_index", 0), ship_index=ship_index, default=0)
     cross_error = _get_ship_scalar(getattr(env, "cross_error", 0.0), ship_index=ship_index, default=0.0)
     return {
@@ -299,6 +356,6 @@ def build_framework_visualisation_row(
         "step_latency_s": "",
         "ue5_timestamp": "",
         "outcome": str(outcome),
-        "model_origin": "fossen",
+        "model_origin": str(model_origin),
         "control_mode": str(control_mode),
     }

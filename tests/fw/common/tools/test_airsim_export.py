@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
+
 _SRC_DIR = Path(__file__).resolve().parents[4] / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
@@ -176,3 +178,30 @@ def test_build_framework_visualisation_row_handles_missing_state_bits() -> None:
     assert row["y"] == 20.0
     assert row["heading_deg"] == 0.0
     assert row["speed"] == 0.0
+
+
+def test_build_framework_visualisation_row_handles_flat_numpy_state() -> None:
+    """Flat NumPy ship state should not require ``[0]`` indexing."""
+    env = SimpleNamespace(
+        ship_pos=np.array([10.0, 20.0], dtype=np.float32),
+        phys_sims=[SimpleNamespace(state=SimpleNamespace(u=3.5, heading=0.25))],
+        time_step=0.1,
+        checkpoint_index=4,
+        cross_error=0.75,
+    )
+    bridge = SimpleNamespace(current_controls=SimpleNamespace(brake=0.0))
+
+    row = build_framework_visualisation_row(
+        env=env,
+        bridge=bridge,
+        episode_index=1,
+        step_index=2,
+        reward=0.4,
+        action=[0.2, 0.3],
+        outcome="running",
+    )
+
+    assert row["x"] == 10.0
+    assert row["y"] == 20.0
+    assert row["checkpoint_index"] == 4
+    assert row["cross_track_error"] == 0.75

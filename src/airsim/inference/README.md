@@ -1,187 +1,207 @@
-# AirSim Inference and Visualisation Runbook
+# AirSim Inference And Visualisation Runbook
 
-This folder now has two primary runtime entrypoints with different purposes:
+This folder contains the two runtime entrypoints that stay intentionally separate:
 
-- `run_inference.py`: UE5-driven policy inference using `AirSimEnv`.
-- `run_visualise_models.py`: framework-driven replay mirrored into UE5.
+- `run_inference.py`
+- `run_visualise_models.py`
 
-The old file `visualisation_models/run_visualise_fossen.py` is kept as a legacy compatibility implementation/wrapper path. New runtime dispatch goes directly through `run_visualise_models.py`.
+Related docs:
 
-## Which Runner Should I Use?
+- [AirSim Step-By-Step Setup Guide](../../../docs/airsim_setup_step_by_step.md)
+- [AirSim Architecture](../../../docs/airsim_architecture.md)
 
-Use `run_inference.py` when:
+## Choose The Right Runner
 
-- UE5 (`AirSimEnv`) is your authoritative simulator.
-- You want to execute a policy directly against live UE5 state and control.
-- You are validating UE5-trained checkpoints or running Fossen-trained checkpoints through compatibility mapping in `AirSimEnv`.
+### Use `run_inference.py` when
 
-Use `run_visualise_models.py` when:
+- the model was trained directly in `AirSimEnv`
+- UE5 is the authoritative simulator
+- you want the native training-style loop during inference
+- you want episode resets, reward, checkpoint progress, and truncation to behave like `AirSimEnv`
 
-- Framework physics (`PySimEnv` or `FhSimEnv`) must stay authoritative.
-- UE5 should act as a visual renderer for framework-generated motion.
-- You want minimap options (matplotlib or UE5 top-down camera).
+### Use `run_visualise_models.py` when
 
-## Runtime Flow
+- the model was trained in `PySimEnv` or `FhSimEnv`
+- framework physics should remain authoritative
+- UE5 is only used as renderer / mirror
+- you want the replay minimap tooling
 
-### 1) Main dispatcher
+## Runtime Decision Path
 
-`fw.main_with_airsim` reads `airsim/config/runtime_settings.json` and checks:
+`fw.main_with_airsim` reads `src/airsim/config/runtime_settings.json`.
 
-- `visualization.fossen_visualise`
-- `visualization.inference_visualise`
+Decision rules:
 
-If `fossen_visualise=true`:
+- `visualization.model_visualise=true` -> run `run_visualise_models.py`
+- `visualization.inference_visualise=true` -> run `run_inference.py`
+- if both replay and inference flags are true, replay wins
 
-- `fw.main_with_airsim` calls `airsim.inference.run_visualise_models.run_visualise_models(...)`.
+## `run_inference.py`
 
-If `inference_visualise=true`:
+### Scope
 
-- `fw.main_with_airsim` calls `airsim.inference.run_inference.run_inference(...)`.
+`run_inference.py` is now AirSim-only.
 
-If both are true:
+It is meant for PPO policies trained inside the UE5-backed `AirSimEnv`. It no longer contains a framework-replay compatibility path or a separate direct-control mode.
 
-- Fossen/model visualisation is prioritized and inference visualisation is skipped.
+### Effective control loop
 
-### 2) Model visualisation path (`run_visualise_models.py`)
+1. load the PPO model
+2. construct `AirSimEnv` in inference mode
+3. call `env.reset()` at the start of each episode
+4. predict an action from the current observation
+5. call `env.step(action)`
+6. let `AirSimEnv.step()` handle:
+   - action validation
+   - action smoothing
+   - control mapping
+   - control send to UE5
+   - physics wait
+   - state readback
+   - observation update
+   - reward calculation
+   - checkpoint progress
+   - termination / truncation detection
+7. stop the episode when `terminated` or `truncated` becomes true
+8. call `env.close()` on shutdown
 
-- Loads PPO model.
-- Selects framework environment family (`PySimEnv` or `FhSimEnv`, or explicit `model_family`).
-- Steps framework environment.
-- Mirrors state into UE5 through `AirSimBridge` pose/kinematics/object APIs.
-- Writes a session export bundle under `exports/`.
-- Optionally displays:
-  - matplotlib minimap (`VisualiseModelsMinimap`) or
-  - UE5 camera minimap (`UE5TopDownMinimap`) using camera pose/FOV/image APIs.
+### What this means for tasks
 
-### 3) Inference path (`run_inference.py`)
+- `T-026` is handled through the native `AirSimEnv.step()` action -> physics -> feedback loop
+- `T-027` is handled through `AirSimEnv.reset()`, `AirSimEnv.step()`, and `AirSimEnv.close()`
 
-- Loads PPO model.
-- Connects `AirSimEnv` to UE5.
-- Auto-detects model origin from filename (or via `--ue5` flag):
-  - Fossen-compatible mode: uses compatibility observation/control path.
-  - UE5-direct mode: maps policy action directly to UE5 control.
-- Runs episode loop directly on UE5-backed environment state.
-- Writes a session export bundle under `exports/`.
+## `run_visualise_models.py`
 
-## Export Artifacts
+### Effective replay loop
 
-Each run creates a timestamped session folder in `exports/`.
+1. resolve adapter from model family and environment
+2. build framework env
+3. load PPO policy
+4. step framework env locally
+5. convert motion to AirSim coordinates
+6. mirror pose/kinematics/object state into UE5
+7. update minimap if enabled
+8. export telemetry bundle
 
-Inference sessions contain:
+### Supported adapters
 
-- `inference_session.csv`
-- `airsim_telemetry.csv`
+Current adapter families:
+
+- `pysim`
+- `fhsim`
+
+The adapter registry lives in `visualisation_models/model_adapters.py`.
+
+## Minimap Options
+
+### Matplotlib minimap
+
+`VisualiseModelsMinimap` is a child-process matplotlib minimap. Internally it currently reuses the `MinimapFossenAirsim` implementation, but the public runtime concept is modular model visualisation.
+
+It currently shows:
+
+- real-time ship marker
+- heading line
+- path trail
+- ideal path
+- waterway polygon
+- Western Scheldt outline
+
+### UE5 camera minimap
+
+`UE5TopDownMinimap` uses a top-down AirSim camera and can optionally show an OpenCV preview window.
+
+## Exports
+
+Both runners create a timestamped session folder in `exports/`.
+
+Typical files:
+
 - `metadata.json`
-
-Visualisation sessions contain:
-
-- `visualisation_session.csv`
 - `airsim_telemetry.csv`
-- `metadata.json`
+- `inference_session.csv` or `visualisation_session.csv`
 
-`metadata.json` includes the used model, selected environment, and the relevant runtime configuration.
+## Text Overlay Status
 
-## Key Runtime Settings
+UE5 text overlays are currently disabled.
 
-The control file is `airsim/config/runtime_settings.json`.
+That means:
 
-### AirSim connection
+- no HUD status banner
+- no in-world status text near the ship
+
+The runners now rely on console logging and exported telemetry instead.
+
+## Commands
+
+From `src/`:
+
+### Live AirSimEnv inference
+
+```bash
+python -m airsim.inference.run_inference --model models/AirSimEnv_PPO_policy.zip
+```
+
+### Framework replay in UE5
+
+```bash
+python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_policy.zip
+```
+
+## Important Runtime Settings
+
+### Connection
 
 - `airsim.ip`
 - `airsim.port`
 - `airsim.save_slot`
 - `airsim.simulation_speed`
 
-### Common visualisation control
+### Replay selection
 
-- `visualization.max_steps`
-- `visualization.episodes`
-- `visualization.device`
-- `visualization.log_every`
-- `visualization.min_log_interval_s`
+- `visualization.model_visualise`
+- `visualization.model_family`
+- `visualization.environment_name`
 
-### Model visualisation selector
+### Inference selection
 
-- `visualization.fossen_visualise` (true enables `run_visualise_models` path)
-- `visualization.fossen_model_path`
-- `visualization.model_family` (`auto`, `fossen`, `fhsim` depending on your naming conventions)
-- `visualization.fossen_environment` (`auto`, `PySimEnv`, `FhSimEnv`)
-
-### Inference selector
-
-- `visualization.inference_visualise` (true enables `run_inference` path)
+- `visualization.inference_visualise`
 - `visualization.inference_model_path`
 
-### UE5 mirror/minimap behavior (model visualisation path)
+### Replay rendering and minimap
 
-- `visualization.draw_calibration_reference`
-- `visualization.mirror_controls_in_ue5`
-- `visualization.animate_steering_in_ue5`
-- `visualization.animate_throttle_in_ue5`
-- `visualization.render_interpolation_steps`
-- `visualization.steering_visual_gain`
-- `visualization.throttle_visual_gain`
-- `visualization.use_kinematics_in_ue5`
-- `visualization.min_render_hz`
-- `visualization.max_translation_step`
-- `visualization.max_yaw_step_deg`
-- `visualization.lock_path_in_ue5`
-- `visualization.vehicle_object_name`
 - `visualization.show_minimap`
 - `visualization.use_ue5_camera_minimap`
-- `visualization.ue5_camera_name`
-- `visualization.ue5_camera_fov_deg`
-- `visualization.ue5_camera_height_m`
-- `visualization.ue5_camera_follow_heading`
-- `visualization.ue5_preview_window`
 - `visualization.save_matplotlib_minimap`
 - `visualization.minimap_update_hz`
 - `visualization.bridge_telemetry_hz`
-- `visualization.startup_settle_s`
-
-## How to Run
-
-From `src` folder:
-
-### A) Framework replay mirrored into UE5
-
-```bash
-python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_policy.zip
-```
-
-### B) UE5-driven policy inference
-
-```bash
-python -m airsim.inference.run_inference --model models/AirSimEnv_PPO_policy.zip
-```
-
-### C) Through unified runtime dispatcher
-
-```bash
-python -m fw.main_with_airsim
-```
-
-This route uses `runtime_settings.json` flags to choose between the two modes.
-
-## Legacy Compatibility
-
-`visualisation_models/run_visualise_fossen.py` remains present so existing scripts/imports can still work. New code should target:
-
-- `airsim.inference.run_visualise_models`
+- `visualization.render_interpolation_steps`
+- `visualization.use_kinematics_in_ue5`
+- `visualization.vehicle_object_name`
 
 ## Troubleshooting
 
-- UE5 unreachable:
-  - Ensure UE5 is running in Play mode.
-  - Verify `airsim.ip` and `airsim.port`.
-- Wrong runner starts:
-  - Check `visualization.fossen_visualise` and `visualization.inference_visualise`.
-  - Remember: when both are true, `fossen_visualise` wins.
-- Minimap not visible:
-  - Set `visualization.show_minimap=true`.
-  - For camera minimap, also set `visualization.use_ue5_camera_minimap=true` and verify camera name/FOV.
-- Visualisation feels slower than the requested simulation speed:
-  - The configured `simulation_speed` is the target playback ratio, but actual throughput still depends on UE5 render cost, minimap use, and control animation settings.
-  - To reduce visual overhead, try disabling the minimap, lowering `render_interpolation_steps`, or disabling throttle animation.
-- Model family mismatch in replay:
-  - Set `visualization.model_family` and `visualization.fossen_environment` explicitly instead of `auto`.
+### UE5 unreachable
+
+- ensure UE5 is running in Play mode
+- verify `airsim.ip` and `airsim.port`
+
+### Wrong runner starts
+
+- check `visualization.model_visualise`
+- check `visualization.inference_visualise`
+- remember replay wins if both are enabled
+
+### No minimap window appears
+
+- set `visualization.show_minimap=true`
+- for camera mode also set `visualization.use_ue5_camera_minimap=true`
+
+### Framework-trained model passed to `run_inference.py`
+
+- switch to `run_visualise_models.py`
+- `run_inference.py` is reserved for models trained in `AirSimEnv`
+
+### `plot_airsim_path.py`
+
+This tool still exists as a standalone telemetry plotter. It is not wired into the main runtime paths automatically.

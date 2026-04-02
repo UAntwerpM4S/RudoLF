@@ -52,7 +52,7 @@ def _find_ue5_window_context():
         import ctypes.wintypes
 
         class _MONITORINFO(ctypes.Structure):
-            """ MONITORINFO."""
+            """ctypes structure matching Win32 ``MONITORINFO``."""
             _fields_ = [
                 ("cbSize", ctypes.wintypes.DWORD),
                 ("rcMonitor", ctypes.wintypes.RECT),
@@ -390,10 +390,10 @@ def _minimap_process_main(
     pending_reframe = [False]
 
     def on_draw(_event):
-        """On draw.
+        """Refresh the cached background after a full matplotlib redraw.
 
         Args:
-            _event: Description.
+            _event: Matplotlib draw event object.
         """
         bg[0] = fig.canvas.copy_from_bbox(ax.bbox)
         pending_reframe[0] = False
@@ -496,14 +496,14 @@ class MinimapFossenAirsim:
         window_title: str = "RudoLF - Live Minimap",
         max_fps: float = 15.0,
     ) -> None:
-        """Initialize the instance.
+        """Initialize the live minimap process wrapper.
 
         Args:
-            env: Description.
-            save_dir: Description.
-            window_title: Description.
-            max_fps: Description.
-            ,: Description.
+            env: Fully reset framework environment used to build the initial
+                static snapshot.
+            save_dir: Directory where episode PNG exports should be written.
+            window_title: Window title shown by the minimap process.
+            max_fps: Maximum redraw rate requested for live updates.
         """
         self._save_dir = Path(save_dir)
         self._window_title = window_title
@@ -534,13 +534,22 @@ class MinimapFossenAirsim:
             logger.warning("Minimap process did not become ready within 15 s.")
 
     def update(self, env) -> None:
-        """Queue the current ship position for the next minimap redraw."""
+        """Queue the current ship position for the next minimap redraw.
+
+        Args:
+            env: Active framework environment providing position and heading.
+        """
         pos = np.array(env.ship_pos[0], dtype=np.float64)
         hdg = float(env.phys_sims[0].state.heading)
         _try_put_latest(self._update_q, ("update", pos, hdg))
 
     def finish(self, total_reward: float, episode: int = 1) -> None:
-        """Finalise an episode and wait briefly for the PNG save acknowledgement."""
+        """Finalize an episode and wait briefly for the PNG save acknowledgement.
+
+        Args:
+            total_reward: Episode reward recorded for the finished run.
+            episode: One-based episode index used for the PNG filename.
+        """
         self._cmd_q.put(("finish", float(total_reward), int(episode)))
         deadline = time.monotonic() + 10.0
         while time.monotonic() < deadline:

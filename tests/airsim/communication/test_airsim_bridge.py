@@ -13,8 +13,8 @@ if str(_SRC_DIR) not in sys.path:
 from airsim.communication.airsim_bridge import AirSimBridge
 
 
-def test_prepare_fossen_visualisation_updates_internal_simulation_speed(monkeypatch):
-    """Preparing visualisation should update the cached bridge speed value."""
+def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypatch):
+    """Preparing model visualisation should update the cached bridge speed value."""
     bridge = AirSimBridge.__new__(AirSimBridge)
     bridge._connected = True
     bridge._last_health_check = 0.0
@@ -56,7 +56,7 @@ def test_prepare_fossen_visualisation_updates_internal_simulation_speed(monkeypa
         load_saved_calibration_reference=_fake_load_saved_calibration_reference
     )
     try:
-        bridge.prepare_fossen_visualisation(simulation_speed=20.0)
+        bridge.prepare_model_visualisation(simulation_speed=20.0)
     finally:
         if previous_module is None:
             del _sys.modules[module_name]
