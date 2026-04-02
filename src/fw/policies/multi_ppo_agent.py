@@ -156,76 +156,149 @@ class MultiPPOAgent(BaseAgent):
             - Reward normalization (if enabled) is applied per trajectory.
         """
 
+        # Reset all environments
         states, _ = self.env.reset()
-        dones = np.zeros(num_envs, dtype=bool)
+        envs_done = np.zeros(num_envs, dtype=bool)
 
-        buffers = [
-            {k: [] for k in ["states", "actions", "rewards", "dones", "values", "log_probs"]}
+        # Storage for episode data
+        collected_data = [
+            {
+                "states": [],
+                "actions": [],
+                "rewards": [],
+                "terminations": [],
+                "truncations": [],
+                "values": [],
+                "log_probs": [],
+                "next_states": [],
+            }
             for _ in range(num_envs)
         ]
 
         safeguard = 0
-
-        while not np.all(dones) and safeguard < self.max_nbr_iterations:
+        while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
+            # Select actions and get value predictions
             actions, log_probs, values = self.predict(states, deterministic=False)
 
-            # unified step
-            next_states, rewards, terminations, truncations, _ = self.env.step(actions)
-            step_dones = np.logical_or(terminations, truncations)
+            # Step all environments
+            next_states, next_rewards, next_terminations, truncations, infos = self.env.step(actions)
 
-            for i in range(num_envs):
-                if dones[i]:
-                    continue
+            if infos and all(
+                    all(k in env_info for k in ("rewards", "terminations", "truncations"))
+                    for env_info in infos
+            ):
+                rewards = np.array([env_info["rewards"] for env_info in infos], dtype=np.float32)
+                terminations = np.array([env_info["terminations"] for env_info in infos], dtype=bool)
+                truncations = np.array([env_info["truncations"] for env_info in infos], dtype=bool)
+            else:
+                rewards = next_rewards
+                terminations = next_terminations
 
-                buffers[i]["states"].append(states[i])
-                buffers[i]["actions"].append(actions[i])
-                buffers[i]["rewards"].append(rewards[i])
-                buffers[i]["dones"].append(step_dones[i])
-                buffers[i]["values"].append(values[i])
-                buffers[i]["log_probs"].append(log_probs[i])
+            # Store per-agent transitions
+            for env_id in range(num_envs):
+                if envs_done[env_id]:
+                    continue  # Skip already completed environments
 
-                dones[i] = step_dones[i]
+                collected_data[env_id]["states"].append(states[env_id])
+                collected_data[env_id]["actions"].append(actions[env_id])
+                collected_data[env_id]["rewards"].append(rewards[env_id])
+                collected_data[env_id]["terminations"].append(terminations[env_id])
+                collected_data[env_id]["truncations"].append(truncations[env_id])
+                collected_data[env_id]["values"].append(values[env_id])
+                collected_data[env_id]["log_probs"].append(log_probs[env_id])
+                collected_data[env_id]["next_states"].append(next_states[env_id])
 
+            # Update done flags at environment level
+            env_done = np.logical_or(terminations, truncations)
+            envs_done = np.logical_or(envs_done, env_done)
+
+            # Update states for the next step
             states = next_states
             safeguard += 1
 
+        if safeguard >= 135000:
+            print(f"Safeguard surpassed the 135000 boundary: {safeguard}.")
+
+        if safeguard >= self.max_nbr_iterations:
+            print(f"Safeguard triggered due to reaching max_iterations ({self.max_nbr_iterations}).")
+
+        # self._vec_env.close()
+
+        # Process episode data with proper trimming
         episode_data = []
+        for env_id in range(num_envs):
+            trajectory = collected_data[env_id]
 
-        for i in range(num_envs):
-            data = buffers[i]
+            if len(trajectory["states"]) == 0:
+                continue
+
+            # ----------------------------------------------------------
+            # Determine episode end (termination OR truncation)
+            # ----------------------------------------------------------
+
+            # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
+            # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
+
+            # Find the first True in dones for this environment
+            done_mask = np.logical_or(trajectory["terminations"], trajectory["truncations"])
+            first_done = self.find_first_true(done_mask)
+
+            # Handle cases where no True is found (episode did not terminate)
+            if first_done == -1:
+                first_done = len(done_mask) - 1  # Use the entire episode
+
+            # ----------------------------------------------------------
+            # Determine bootstrap condition
+            # ----------------------------------------------------------
+            last_step_terminated = trajectory["terminations"][first_done]
+
             next_value = 0.0
-
-            # convert to arrays safely
-            for key in data:
-                data[key] = np.array(data[key])
-
-            if self.normalize:
-                data["rewards"] = self.normalize_rewards(data["rewards"])
-
-            # bootstrap value
-            last_state = states[i]
-
-            if dones[i]:
-                next_value = 0.0
-            else:
+            if not last_step_terminated:
+                # We bootstrap for:
+                # - truncation
+                # - safeguard stop
                 with torch.no_grad():
-                    _, _, next_value = self.agents[i].policy.network(
-                        torch.FloatTensor(last_state).to(self.device)
-                    )
-                    next_value = next_value.cpu().numpy()
+                    last_state = torch.FloatTensor(trajectory["next_states"][first_done]).unsqueeze(0).to(self.device)
+                    _, _, next_values = self.agents[env_id].policy.network(last_state)
+                    next_value = next_values.squeeze(0).item()
 
-            data["advantages"] = self.compute_gae(
-                data["rewards"],
-                data["values"],
-                data["dones"],
+            # ----------------------------------------------------------
+            # Trim trajectory to valid region
+            # ----------------------------------------------------------
+            episode = {}
+
+            for key in trajectory:
+                relevant_steps = trajectory[key][:first_done + 1]
+
+                if key in ["states", "actions", "next_states"]:
+                    episode[key] = np.stack(relevant_steps)
+                elif key in ["terminations", "truncations"]:
+                    episode[key] = np.asarray(relevant_steps, dtype=bool)
+                else:
+                    episode[key] = np.asarray(relevant_steps, dtype=np.float32)
+
+            # ----------------------------------------------------------
+            # Optional reward normalization
+            # ----------------------------------------------------------
+            if self.normalize:
+                episode["rewards"] = self.normalize_rewards(episode["rewards"])
+
+            # ----------------------------------------------------------
+            # Compute GAE (ONLY true terminations zero bootstrap)
+            # ----------------------------------------------------------
+
+            # Compute advantages and returns
+            episode["advantages"] = self.compute_gae(
+                episode["rewards"],
+                episode["values"],
+                episode["terminations"],  # only real terminals
                 next_value,
                 self.gamma,
                 self.gae_lambda,
             )
 
-            data["returns"] = data["advantages"] + data["values"]
-
-            episode_data.append(data)
+            episode["returns"] = episode["advantages"] + episode["values"]
+            episode_data.append(episode)
 
         return episode_data
 
