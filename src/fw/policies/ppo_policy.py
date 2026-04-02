@@ -4,7 +4,7 @@ import zipfile
 import tempfile
 import numpy as np
 
-from typing import Tuple
+from typing import Tuple, Dict, Any
 from fw.policies.actor_critic_network import ActorCriticNetwork
 
 POLICY_FILE_NAME = 'policy.pth'
@@ -53,13 +53,15 @@ class PPOPolicy:
     """
 
     def __init__(self, input_dim: int, output_dim: int, device: str = "cpu"):
-        """Initialize the PPOPolicy with the given dimensions and device.
+        """
+        Initialize the PPOPolicy with the given dimensions and device.
 
         Args:
             input_dim (int): The dimensionality of the state space.
             output_dim (int): The dimensionality of the action space.
             device (str, optional): The device to run computations on. Default is 'cpu'.
         """
+
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.device = get_device(device)  # Set the device
@@ -67,16 +69,107 @@ class PPOPolicy:
 
 
     def _get_constructor_parameters(self) -> dict:
-        """Retrieve the constructor parameters of the policy.
+        """
+        Retrieve the constructor parameters of the policy.
 
         Returns:
             dict: A dictionary containing the parameters used to construct the PPOPolicy.
         """
+
         return {
             "input_dim": self.input_dim,
             "output_dim": self.output_dim,
             "device": self.device.type,
         }
+
+
+    def serialize_policy(self) -> Dict[str, Any]:
+        """
+        Serialize the policy into a dictionary format.
+
+        Captures both the model parameters and the minimal constructor
+        arguments required to reconstruct the policy.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing:
+                - "model_state_dict": The state dictionary of the policy network.
+                - "data": Constructor parameters needed to rebuild the policy.
+        """
+
+        return {
+            "model_state_dict": self.network.state_dict(),
+            "data": self._get_constructor_parameters(),
+        }
+
+
+    @staticmethod
+    def infer_constructor_data(saved_variables: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
+        """
+        Infer constructor parameters for policy reconstruction.
+
+        Attempts to retrieve constructor data from the saved variables. If
+        unavailable, infers required parameters (e.g., input/output dimensions)
+        directly from the model state dictionary.
+
+        Args:
+            saved_variables (Dict[str, Any]): Serialized policy data containing
+                model weights and optional constructor metadata.
+            device (torch.device): Target device for the reconstructed model.
+
+        Returns:
+            Dict[str, Any]: Dictionary of constructor parameters including:
+                - "input_dim": Input feature dimension.
+                - "output_dim": Output action dimension.
+                - "device": Device type as a string.
+
+        Raises:
+            KeyError: If required keys are missing in `saved_variables` when
+                inference is attempted.
+        """
+
+        data = saved_variables.get("data", {})
+
+        if not data:
+            # Infer missing data from model state_dict
+            model_state_dict = saved_variables["model_state_dict"]
+            data = {
+                "input_dim": model_state_dict["shared_network.0.weight"].shape[1],
+                "output_dim": model_state_dict["actor_mean.weight"].shape[0],
+                "device": device.type,
+            }
+        return data
+
+
+    @classmethod
+    def build_policy_from_state(cls, saved_variables: Dict[str, Any], device: torch.device):
+        """
+        Reconstruct a policy instance from serialized state data.
+
+        Initializes a new policy using inferred or stored constructor parameters,
+        loads the model weights, and moves the network to the specified device.
+
+        Args:
+            saved_variables (Dict[str, Any]): Serialized policy containing
+                model weights and constructor metadata.
+            device (torch.device): Target device for the reconstructed model.
+
+        Returns:
+            PPOPolicy: Reconstructed policy instance with loaded weights.
+
+        Raises:
+            RuntimeError: If there is a mismatch between the expected device
+                and the device specified in the saved data.
+        """
+
+        data = cls.infer_constructor_data(saved_variables, device)
+
+        if device.type != torch.device(data["device"]).type:
+            raise RuntimeError(f'Expected a "{device}" device, but got a "{data["device"]}" device instead!')
+
+        model = cls(**data)  # Initialize model with constructor data
+        model.network.load_state_dict(saved_variables["model_state_dict"])  # Load the model weights
+        model.network.to(device)  # Move model to the specified device
+        return model
 
 
     def save(self, filename: str) -> None:
@@ -90,10 +183,7 @@ class PPOPolicy:
             params_path = os.path.join(tmp_dir, POLICY_FILE_NAME)
 
             torch.save(
-                {
-                    "model_state_dict": self.network.state_dict(),
-                    "data": self._get_constructor_parameters(),
-                },
+                self.serialize_policy(),
                 params_path,
 			)
 
@@ -124,23 +214,7 @@ class PPOPolicy:
         except (FileNotFoundError, KeyError) as e:
             raise RuntimeError(f"Failed to load model: {e}")
 
-        data = saved_variables.get("data", {})
-        if not data:
-            # Infer missing data from model state_dict
-            model_state_dict = saved_variables["model_state_dict"]
-            data = {
-                "input_dim": model_state_dict["shared_network.0.weight"].shape[1],
-                "output_dim": model_state_dict["actor_mean.weight"].shape[0],
-                "device": device.type,
-            }
-
-        if device.type != torch.device(data["device"]).type:
-            raise RuntimeError(f'Expected a "{device}" device, but got a "{data["device"]}" device instead!')
-
-        model = cls(**data)  # Initialize model with constructor data
-        model.network.load_state_dict(saved_variables["model_state_dict"])  # Load the model weights
-        model.network.to(device)  # Move model to the specified device
-        return model
+        return cls.build_policy_from_state(saved_variables, device)
 
 
     @staticmethod

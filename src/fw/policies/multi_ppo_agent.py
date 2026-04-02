@@ -5,7 +5,6 @@ import tempfile
 import numpy as np
 
 from typing import Optional, Tuple, Union
-
 from fw.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_agent import BaseAgent
@@ -415,7 +414,7 @@ class MultiPPOAgent(BaseAgent):
         self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
 
         # Dump training metrics to CSV
-        _dump_multi_agent_metrics(training_metrics)
+        dump_multi_agent_metrics(self.model_dir, training_metrics)
 
         print("Training completed!")
 
@@ -469,20 +468,7 @@ class MultiPPOAgent(BaseAgent):
                     if agent.policy is None:
                         raise RuntimeError(f"Agent {i} has no initialized policy.")
 
-                    data = saved_variables.get("data", {})
-                    if not data:
-                        # Infer missing data from model state_dict
-                        model_state_dict = saved_variables["model_state_dict"]
-                        data = {
-                            "input_dim": model_state_dict["shared_network.0.weight"].shape[1],
-                            "output_dim": model_state_dict["actor_mean.weight"].shape[0],
-                            "device": self.device.type,
-                        }
-
-                    model = PPOPolicy(**data)
-                    model.network.load_state_dict(saved_variables["model_state_dict"])  # Load the model weights
-                    model.network.to(self.device)  # Move model to the specified device
-                    agent.policy = model
+                    agent.policy = PPOPolicy.build_policy_from_state(saved_variables, self.device)
 
                 # Verify all agents loaded
                 if any(agent.policy is None for agent in self.agents):
@@ -520,14 +506,7 @@ class MultiPPOAgent(BaseAgent):
                         raise RuntimeError(f"Agent {i} has no policy to save.")
 
                     torch.save(
-                        {
-                            "model_state_dict": agent.policy.network.state_dict(),
-                            "data": {
-                                "input_dim": agent.policy.input_dim,
-                                "output_dim": agent.policy.output_dim,
-                                "device": self.device.type,
-                            },
-                        },
+                        agent.policy.serialize_policy(),
                         agent_path,
                     )
 
