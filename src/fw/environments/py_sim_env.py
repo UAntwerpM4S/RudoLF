@@ -810,7 +810,13 @@ class PySimEnv(BaseEnv):
             terminated = False
             truncated = False
 
-        return self._get_obs(), reward, terminated | truncated, False, {}
+        info = {
+            "rewards": reward,
+            "terminations": terminated,
+            "truncations": truncated,
+        }
+
+        return self._get_obs(), reward, terminated | truncated, False, info
 
     # -------------------
     # Reward calculation
