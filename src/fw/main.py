@@ -14,6 +14,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     multiprocessing.set_start_method("spawn", force=True)
 
+    import os
+    import runpy
+
     from fw.trainer import Trainer
     from fw.stop_condition import StopCondition, Criterion
     from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, get_config_parameters
@@ -39,7 +42,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
         action = "train"
 
     def _run_airsim_extension(selected_action: str) -> bool:
-        """Run the AirSim entrypoint as an ordered step.
+        """
+        Run the AirSim entrypoint as an ordered step.
 
         Args:
             selected_action: Framework action to forward to the AirSim
@@ -50,8 +54,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
             AirSim step failed and the caller should continue with remaining
             framework steps.
         """
-        import os
-        import runpy
 
         try:
             os.environ["FW_MAIN_ACTION_OVERRIDE"] = selected_action
@@ -119,16 +121,18 @@ if __name__ == "__main__" or __name__ == "fw.main":
     initialize_all_environments()
 
     def _run_standard_batch(envs: list) -> bool:
-        """Run one contiguous batch of framework environments.
+        """
+        Run one contiguous batch of framework environments.
 
         Args:
             envs: Framework environment instances collected from the ordered
-                ``env_type`` sequence up to the next AirSim step boundary.
+                `env_type` sequence up to the next AirSim step boundary.
 
         Returns:
             True when a framework train/visualize step was executed, otherwise
-            False when ``envs`` is empty.
+            False when `envs` is empty.
         """
+
         if not envs:
             return False
 

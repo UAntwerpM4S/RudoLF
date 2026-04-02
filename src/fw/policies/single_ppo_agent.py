@@ -7,11 +7,13 @@ import gymnasium as gym
 import numpy as np
 
 from typing import Optional, Tuple, Union
+
 from fw.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo_policy import PPOPolicy
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+from fw.common.tools.logging_utils import dump_metrics_to_csv
 
 
 class SinglePPOAgent(BaseAgent):
@@ -232,24 +234,57 @@ class SinglePPOAgent(BaseAgent):
         envs_done = np.zeros(num_envs, dtype=bool)
 
         # Storage for episode data
-        collected_data = {k: [] for k in ["states", "actions", "rewards", "dones", "values", "log_probs"]}
-        safeguard = 0
+        collected_data = [
+            {
+                "states": [],
+                "actions": [],
+                "rewards": [],
+                "terminations": [],
+                "truncations": [],
+                "values": [],
+                "log_probs": [],
+                "next_states": [],
+            }
+            for _ in range(num_envs)
+        ]
 
+        safeguard = 0
         while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
             # Select actions and get value predictions
-            actions, log_probs, values = self.policy.predict(states)
+            actions, log_probs, values = self.policy.predict(states, deterministic=False)
 
             # Step all environments
-            next_states, rewards, terminations, _ = self._vec_env.step(actions)
-            envs_done = np.logical_or(envs_done, terminations)
+            next_states, next_rewards, next_terminations, infos = self._vec_env.step(actions)
 
-            # Store episode data
-            collected_data["states"].append(states)
-            collected_data["actions"].append(actions)
-            collected_data["rewards"].append(rewards)
-            collected_data["dones"].append(terminations)
-            collected_data["values"].append(values)
-            collected_data["log_probs"].append(log_probs)
+            if infos and all(
+                    all(k in env_info for k in ("rewards", "terminations", "truncations"))
+                    for env_info in infos
+            ):
+                rewards = np.array([env_info["rewards"] for env_info in infos], dtype=np.float32)
+                terminations = np.array([env_info["terminations"] for env_info in infos], dtype=bool)
+                truncations = np.array([env_info["truncations"] for env_info in infos], dtype=bool)
+            else:
+                rewards = next_rewards
+                terminations = next_terminations
+                truncations = np.zeros(num_envs, dtype=bool)
+
+            # Store per-agent transitions
+            for env_id in range(num_envs):
+                if envs_done[env_id]:
+                    continue  # Skip already completed environments
+
+                collected_data[env_id]["states"].append(states[env_id])
+                collected_data[env_id]["actions"].append(actions[env_id])
+                collected_data[env_id]["rewards"].append(rewards[env_id])
+                collected_data[env_id]["terminations"].append(terminations[env_id])
+                collected_data[env_id]["truncations"].append(truncations[env_id])
+                collected_data[env_id]["values"].append(values[env_id])
+                collected_data[env_id]["log_probs"].append(log_probs[env_id])
+                collected_data[env_id]["next_states"].append(next_states[env_id])
+
+            # Update done flags at environment level
+            env_done = np.logical_or(terminations, truncations)
+            envs_done = np.logical_or(envs_done, env_done)
 
             # Update states for the next step
             states = next_states
@@ -263,44 +298,75 @@ class SinglePPOAgent(BaseAgent):
 
         # self._vec_env.close()
 
-        # Compute next values for the last state in each environment
-        with torch.no_grad():
-            _, _, next_values = self.policy.network(torch.FloatTensor(states).to(self.device))
-            next_values = next_values.cpu().numpy()
-
-        # Process episode data
+        # Process episode data with proper trimming
         episode_data = []
-        for i in range(num_envs):
+        for env_id in range(num_envs):
+            trajectory = collected_data[env_id]
+
+            if len(trajectory["states"]) == 0:
+                continue
+
+            # ----------------------------------------------------------
+            # Determine episode end (termination OR truncation)
+            # ----------------------------------------------------------
+
             # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
             # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
 
             # Find the first True in dones for this environment
-            episode_dones = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in collected_data["dones"]])
-            first_true = self.find_first_true(episode_dones)
+            done_mask = np.logical_or(trajectory["terminations"], trajectory["truncations"])
+            first_done = self.find_first_true(done_mask)
 
             # Handle cases where no True is found (episode did not terminate)
-            if first_true == -1:
-                first_true = len(episode_dones) - 1  # Use the entire episode
+            if first_done == -1:
+                first_done = len(done_mask) - 1  # Use the entire episode
 
+            # ----------------------------------------------------------
+            # Determine bootstrap condition
+            # ----------------------------------------------------------
+            last_step_terminated = trajectory["terminations"][first_done]
+
+            next_value = 0.0
+            if not last_step_terminated:
+                # We bootstrap for:
+                # - truncation
+                # - safeguard stop
+                with torch.no_grad():
+                    last_state = torch.FloatTensor(trajectory["next_states"][first_done]).unsqueeze(0).to(self.device)
+                    _, _, next_values = self.policy.network(last_state)
+                    next_value = next_values.squeeze(0).item()
+
+            # ----------------------------------------------------------
+            # Trim trajectory to valid region
+            # ----------------------------------------------------------
             episode = {}
-            for key in collected_data:
-                # Extract only the relevant portion of the data for this environment
-                relevant_steps = collected_data[key][:first_true + 1]
 
-                if key in ["states", "actions"]:
-                    episode[key] = np.stack([step[i] for step in relevant_steps])
+            for key in trajectory:
+                relevant_steps = trajectory[key][:first_done + 1]
+
+                if key in ["states", "actions", "next_states"]:
+                    episode[key] = np.stack(relevant_steps)
+                elif key in ["terminations", "truncations"]:
+                    episode[key] = np.asarray(relevant_steps, dtype=bool)
                 else:
-                    episode[key] = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in relevant_steps])
+                    episode[key] = np.asarray(relevant_steps, dtype=np.float32)
 
+            # ----------------------------------------------------------
+            # Optional reward normalization
+            # ----------------------------------------------------------
             if self.normalize:
                 episode["rewards"] = self.normalize_rewards(episode["rewards"])
+
+            # ----------------------------------------------------------
+            # Compute GAE (ONLY true terminations zero bootstrap)
+            # ----------------------------------------------------------
 
             # Compute advantages and returns
             episode["advantages"] = self.compute_gae(
                 episode["rewards"],
                 episode["values"],
-                episode["dones"],
-                next_values[i],
+                episode["terminations"],  # only real terminals
+                next_value,
                 self.gamma,
                 self.gae_lambda,
             )
@@ -388,7 +454,7 @@ class SinglePPOAgent(BaseAgent):
         self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
 
         # Dump training metrics to CSV
-        self.dump_metrics_to_csv(self.model_dir, "training_metrics.csv", training_metrics)
+        dump_metrics_to_csv(self.model_dir, "training_metrics.csv", training_metrics)
 
         if getattr(self, "_vec_env", None) is not None:
             self._vec_env.close()
@@ -406,25 +472,13 @@ class SinglePPOAgent(BaseAgent):
 
         Raises:
             RuntimeError: If no agent is created or the policy fails to load.
-            ValueError: If the loaded policy dimensions do not match the environment.
         """
 
         try:
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-            loaded_policy = self.policy.load(policy_file_name, self.device)
-            
-            if loaded_policy.input_dim != self.input_dim:
-                raise ValueError(f"Observation space dimension mismatch: loaded policy expects {loaded_policy.input_dim}D, but environment provides {self.input_dim}D.")
-            
-            if loaded_policy.output_dim != self.output_dim:
-                raise ValueError(f"Action space dimension mismatch: loaded policy expects {loaded_policy.output_dim}D, but environment requires {self.output_dim}D.")
-            
-            self.policy = loaded_policy
-        except ValueError as e:
-            # Re-raise ValueError directly to let the caller handle the dimension mismatch fallback
-            raise e
+            self.policy = self.policy.load(policy_file_name, self.device)
         except Exception as e:
             raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
 
