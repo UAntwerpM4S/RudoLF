@@ -120,6 +120,28 @@ Typical files:
 - `metadata.json`
 - `airsim_telemetry.csv`
 - `inference_session.csv` or `visualisation_session.csv`
+- `trajectory_2d_vs_3d.png`
+
+`metadata.json` now also stores a `performance_summary` block with:
+
+- total reward
+- total duration
+- cumulative 2D distance
+- cumulative 3D distance
+- mean and max cross-track error
+- per-episode outcome and metrics
+
+## BI Metrics And Comparison
+
+AirSim runners now reuse exported telemetry for post-run analysis:
+
+- session telemetry (`*_session.csv`) provides reward, cross-track error, and 2D path
+- bridge telemetry (`airsim_telemetry.csv`) provides UE5 3D path
+
+After each run:
+
+- a console summary is printed with key performance indicators
+- a side-by-side `2D vs 3D` trajectory figure is exported
 
 ## Text Overlay Status
 
@@ -146,6 +168,23 @@ python -m airsim.inference.run_inference --model models/AirSimEnv_PPO_policy.zip
 
 ```bash
 python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_policy.zip
+```
+
+### Verbose diagnostics (optional)
+
+Both runners default to concise console output.
+
+Use CLI verbose mode when needed:
+
+```bash
+python -m airsim.inference.run_inference --model models/AirSimEnv_PPO_policy.zip --verbose
+python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_policy.zip --verbose
+```
+
+Or set environment-level verbose mode for `fw.main_with_airsim` / `airsim.train.train_airsim`:
+
+```bash
+set FW_AIRSIM_VERBOSE=1
 ```
 
 ## Important Runtime Settings

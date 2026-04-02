@@ -40,6 +40,10 @@ Typical contents:
 - `inference_session.csv` or `visualisation_session.csv`: session-level telemetry.
 - `airsim_telemetry.csv`: bridge-side AirSim state snapshots.
 - `metadata.json`: model, environment, and runtime configuration metadata.
+- `trajectory_2d_vs_3d.png`: side-by-side 2D (session) vs 3D (UE5 bridge) trajectory comparison.
+
+`metadata.json` includes a `performance_summary` section with total reward,
+duration, distance (2D and 3D), and cross-track error indicators.
 
 ## Quick Start
 
