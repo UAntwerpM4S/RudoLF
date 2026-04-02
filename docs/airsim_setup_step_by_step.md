@@ -42,15 +42,17 @@ So:
 At the time this document was updated, the checked-in source defaults are:
 
 - in `src/fw/config.py`
-  - `env_type = ["AirSimEnv"]`
-  - `action = "visualize"`
+  - `env_type = ["PySimEnv", "AirSimEnv"]`
+  - `action = "train"`
 - in `src/airsim/config/runtime_settings.json`
   - `visualization.model_visualise = true`
   - `visualization.inference_visualise = false`
   - `training.speed_profile = "turbo"`
 
-That means the repository, as currently checked in, is biased toward an AirSim
-visualisation run unless you change the configuration.
+That means the repository, as currently checked in, is biased toward framework
+training with an ordered `PySimEnv -> AirSimEnv` flow. If you switch the
+framework action to `visualize`, the AirSim runtime defaults are biased toward
+model visualisation (`model_visualise = true`).
 
 ## How Train vs Visualize Is Actually Resolved
 
