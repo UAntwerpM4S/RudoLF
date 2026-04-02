@@ -30,7 +30,12 @@ from fw.common.airsim.tools.airsim_export import (  # noqa: E402
     AirSimSessionExporter,
     build_airsim_env_snapshot,
 )
-from fw.config import AIRSIM_INFERENCE_TRAJECTORY_PLOT_FILENAME  # noqa: E402
+from fw.common.airsim.tools.trajectory_analysis import (  # noqa: E402
+    build_run_summary_from_csv,
+    format_performance_summary,
+    render_side_by_side_trajectory_plot,
+)
+from fw.config import AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME  # noqa: E402
 from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 from fw.policies.ppo_policy import PPOPolicy  # noqa: E402
 
@@ -129,6 +134,7 @@ def _run_episode_airsim_env(
     max_steps: int,
     episode_index: int = 1,
     exporter: Optional[AirSimSessionExporter] = None,
+    verbose: bool = False,
 ) -> Tuple[List[float], List[float], float, str]:
     """Run one inference episode through ``AirSimEnv.step()``.
 
@@ -146,6 +152,7 @@ def _run_episode_airsim_env(
         max_steps: Maximum steps allowed for the episode.
         episode_index: One-based episode index used for export metadata.
         exporter: Optional session exporter receiving per-step rows.
+        verbose: Whether to emit periodic per-step debug logs.
 
     Returns:
         Tuple[List[float], List[float], float, str]: Trajectory x values,
@@ -190,7 +197,7 @@ def _run_episode_airsim_env(
                 )
             )
 
-        if step % 200 == 0:
+        if verbose and step % 200 == 0:
             logger.info(
                 "step=%d pos=(%.0f, %.0f) reward=%+.2f cumulative=%+.1f "
                 "checkpoint=%d cte=%.2f",
@@ -218,6 +225,7 @@ def run_inference(
     max_steps: int = 14000,
     num_episodes: int = 3,
     device: str = "cpu",
+    verbose: bool = False,
 ) -> None:
     """Run live inference in UE5 using the native ``AirSimEnv`` loop.
 
@@ -230,7 +238,10 @@ def run_inference(
         max_steps: Maximum steps per episode.
         num_episodes: Number of episodes to run.
         device: Torch device selector used for inference.
+        verbose: Whether to emit detailed runtime logs.
     """
+    logger.setLevel(logging.INFO if verbose else logging.WARNING)
+
     banner = "=" * 62
     resolved_model_path = resolve_model_path(model_path, _SRC_DIR)
     _warn_if_model_name_looks_non_airsim(resolved_model_path)
@@ -268,6 +279,7 @@ def run_inference(
     ) as session_exporter:
         logger.info("Connecting to UE5 and loading world save 'simulator_1'...")
         env: Optional[AirSimEnv] = None
+        comparison_plot_path = session_exporter.export_dir / AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME
         env = AirSimEnv(
             ship_pos=ship_pos,
             target_pos=target_pos,
@@ -296,28 +308,6 @@ def run_inference(
         )
 
         try:
-            import matplotlib.pyplot as plt
-
-            has_mpl = True
-        except ImportError:
-            has_mpl = False
-            logger.warning("matplotlib not installed; trajectory plotting disabled.")
-
-        if has_mpl:
-            fig, ax = plt.subplots(figsize=(10, 10))
-            ax.set_title(
-                f"RudoLF Inference [AirSimEnv] - {resolved_model_path.name}",
-                fontsize=11,
-            )
-            ax.set_xlabel("Fossen X / East (m)")
-            ax.set_ylabel("Fossen Y / North (m)")
-            ax.set_aspect("equal", adjustable="datalim")
-            colors = plt.cm.tab10.colors  # type: ignore[attr-defined]
-
-        last_traj_x: List[float] = []
-        last_traj_y: List[float] = []
-
-        try:
             for ep in range(num_episodes):
                 print(f"\nEpisode {ep + 1}/{num_episodes} [AirSimEnv]")
                 traj_x, traj_y, total_reward, outcome = _run_episode_airsim_env(
@@ -326,6 +316,7 @@ def run_inference(
                     max_steps,
                     episode_index=ep + 1,
                     exporter=session_exporter,
+                    verbose=verbose,
                 )
 
                 steps_run = len(traj_x) - 1
@@ -333,21 +324,6 @@ def run_inference(
                     f"   Finished: {steps_run} steps | outcome={outcome} | "
                     f"reward={total_reward:+.1f}"
                 )
-                last_traj_x, last_traj_y = traj_x, traj_y
-
-                if has_mpl and traj_x:
-                    color = colors[ep % len(colors)]
-                    label = f"Ep {ep + 1}  r={total_reward:.0f}  {outcome}"
-                    ax.plot(traj_x, traj_y, color=color, linewidth=1.3, label=label)
-                    ax.plot(traj_x[0], traj_y[0], "o", color=color, markersize=7)
-                    ax.plot(
-                        traj_x[-1],
-                        traj_y[-1],
-                        "x",
-                        color=color,
-                        markersize=9,
-                        markeredgewidth=2,
-                    )
 
                 session_exporter.update_metadata(
                     {
@@ -366,13 +342,53 @@ def run_inference(
                 env.close()
             print("\nInference complete; AirSim connection closed.")
 
-        if has_mpl and last_traj_x:
-            ax.legend(loc="best")
-            plt.tight_layout()
-            out_path = session_exporter.export_dir / AIRSIM_INFERENCE_TRAJECTORY_PLOT_FILENAME
-            plt.savefig(out_path, dpi=150)
-            print(f"Trajectory plot saved to '{out_path}'.")
-            plt.show()
+        # Persist step rows first so summary/plot code can reuse telemetry CSVs.
+        session_exporter.save()
+        session_csv_path = Path(
+            getattr(
+                session_exporter,
+                "telemetry_path",
+                session_exporter.export_dir / "inference_session.csv",
+            )
+        )
+        bridge_csv_path = Path(
+            getattr(
+                session_exporter,
+                "bridge_log_path",
+                session_exporter.export_dir / "airsim_telemetry.csv",
+            )
+        )
+
+        summary = build_run_summary_from_csv(
+            session_csv_path=session_csv_path,
+            bridge_csv_path=bridge_csv_path,
+        )
+        session_exporter.update_metadata(
+            {
+                "performance_summary": summary.to_metadata_dict(),
+            }
+        )
+        session_exporter.save()
+
+        print()
+        print(format_performance_summary("AIRSIM INFERENCE SUMMARY", summary))
+
+        comparison_plot = render_side_by_side_trajectory_plot(
+            session_csv_path=session_csv_path,
+            bridge_csv_path=bridge_csv_path,
+            output_path=comparison_plot_path,
+            title=f"2D vs 3D Trajectory - {resolved_model_path.name}",
+        )
+        if comparison_plot is not None:
+            print(f"2D vs 3D trajectory plot saved to '{comparison_plot}'.")
+            session_exporter.update_metadata(
+                {
+                    "comparison_plot": comparison_plot.name,
+                }
+            )
+            session_exporter.save()
+        else:
+            print("2D vs 3D trajectory plot skipped (missing telemetry or matplotlib).")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -441,12 +457,18 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["cpu", "cuda"],
         help="PyTorch device for policy inference.",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Enable detailed AirSim inference logs.",
+    )
     return parser
 
 
 if __name__ == "__main__":
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
@@ -462,4 +484,5 @@ if __name__ == "__main__":
         max_steps=args.max_steps,
         num_episodes=args.episodes,
         device=args.device,
+        verbose=args.verbose,
     )

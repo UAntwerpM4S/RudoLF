@@ -184,6 +184,20 @@ class _SmokeEnv:
         return np.array([0.1], dtype=np.float32), 1.25, True, False, {}
 
 
+class _BatchedObsSmokeEnv(_SmokeEnv):
+    """Smoke env variant returning a ship-batched observation layout."""
+
+    def reset(self):
+        """Return a batched reset observation shaped like ``(1, obs_dim)``."""
+        obs, info = super().reset()
+        return obs.reshape(1, -1), info
+
+    def step(self, action):
+        """Return a batched step observation shaped like ``(1, obs_dim)``."""
+        obs, reward, done, truncated, info = super().step(action)
+        return obs.reshape(1, -1), reward, done, truncated, info
+
+
 class _FakePolicy:
     """Policy stub returning a deterministic action."""
 
@@ -447,3 +461,31 @@ def test_visualise_models_smoke_path_uses_real_saved_policy(monkeypatch, tmp_pat
     assert bridge.current_controls is not None
     assert exporter.rows
     assert exporter.rows[0]["model_origin"] == "pysim"
+
+
+def test_visualise_models_smoke_path_supports_batched_single_ship_obs(monkeypatch, tmp_path: Path):
+    """Visualisation should accept batched single-ship observations from envs."""
+    model_stem = tmp_path / "PySimEnv_PPO_policy"
+    PPOPolicy(input_dim=1, output_dim=2, device="cpu").save(str(model_stem))
+
+    monkeypatch.setattr(module, "AirSimBridge", _SmokeBridge)
+    monkeypatch.setattr(module, "AirSimSessionExporter", _FakeExporter)
+    monkeypatch.setattr(module, "resolve_model_path", lambda model_path, src_dir: model_stem.with_suffix(".zip"))
+    monkeypatch.setattr(module.VisualiseModelsRunner, "_build_environment", lambda self, selected_env, max_steps: _BatchedObsSmokeEnv())
+
+    _SmokeBridge.created = []
+    _FakeExporter.created = []
+    module.run_visualise_models(
+        model_path=str(model_stem.with_suffix(".zip")),
+        show_minimap=False,
+        num_episodes=1,
+        max_steps=1,
+        save_matplotlib_minimap=False,
+    )
+
+    bridge = _SmokeBridge.created[-1]
+    exporter = _FakeExporter.created[-1]
+
+    assert bridge.pose_calls
+    assert bridge.current_controls is not None
+    assert exporter.rows
