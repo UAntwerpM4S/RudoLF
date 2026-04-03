@@ -336,8 +336,6 @@ class BasePPOAgent(BaseAgent):
         if safeguard >= self.max_nbr_iterations:
             print(f"Safeguard triggered due to reaching max_iterations ({self.max_nbr_iterations}).")
 
-        # self._vec_env.close()
-
         # Process episode data with proper trimming
         episode_data = []
         for env_id in range(num_envs):
@@ -371,7 +369,7 @@ class BasePPOAgent(BaseAgent):
                 # We bootstrap for:
                 # - truncation
                 # - safeguard stop
-                next_value = self._get_bootstrap_value(trajectory["next_states"][first_done])
+                next_value = self._get_bootstrap_value(trajectory["next_states"][first_done], env_id)
 
             # ----------------------------------------------------------
             # Trim trajectory to valid region

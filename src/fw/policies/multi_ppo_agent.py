@@ -130,6 +130,9 @@ class MultiPPOAgent(BasePPOAgent):
             np.ndarray: Tuple or array of initial observations.
         """
 
+        for sub_env in self.env.sub_environments:
+            sub_env.randomize()
+
         states, _ = self.env.reset()
         return states
 
@@ -315,6 +318,9 @@ class MultiPPOAgent(BasePPOAgent):
 
         # Dump training metrics to CSV
         dump_multi_agent_metrics(self.model_dir, training_metrics)
+
+        for sub_env in self.env.sub_environments:
+            sub_env.close()
 
         print("Training completed!")
 
