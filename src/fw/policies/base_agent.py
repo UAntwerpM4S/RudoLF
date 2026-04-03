@@ -1,5 +1,4 @@
 import os
-import csv
 import torch
 import numpy as np
 
@@ -19,66 +18,6 @@ class BaseAgent(ABC):
     for reinforcement learning algorithms. Subclasses must implement
     the core training and inference logic.
     """
-
-    @staticmethod
-    def compute_gae(
-        rewards: np.ndarray,
-        values: np.ndarray,
-        dones: np.ndarray,
-        next_value: float,
-        gamma: float,
-        lambda_: float,
-    ) -> np.ndarray:
-        """
-        Compute Generalized Advantage Estimation (GAE).
-
-        GAE helps in reducing the variance of the policy gradient estimates by using both bootstrapping and Monte Carlo estimates.
-
-        Args:
-            rewards (np.ndarray): Array of rewards for the batch.
-            values (np.ndarray): Array of value estimates for each state.
-            dones (np.ndarray): Array of done flags indicating if the episode ended.
-            next_value (float): Value estimate for the state after the batch.
-            gamma (float): Discount factor for future rewards.
-            lambda_ (float): GAE parameter that controls bias-variance tradeoff (default: 0.95).
-
-        Returns:
-            np.ndarray: Computed advantages as a NumPy array.
-        """
-
-        advantages = np.zeros_like(rewards, dtype=np.float32)
-        last_gae = 0.0
-
-        # Reverse iteration for GAE calculation
-        for t in reversed(range(len(rewards))):
-            next_non_terminal = 1.0 - dones[t]
-            next_values = next_value if t == len(rewards) - 1 else values[t + 1]
-            delta = rewards[t] + gamma * next_values * next_non_terminal - values[t]
-            last_gae = delta + gamma * lambda_ * next_non_terminal * last_gae
-            advantages[t] = last_gae
-
-        return advantages
-
-
-    @staticmethod
-    def find_first_true(bool_array):
-        """
-        Find the index of the first True value in a boolean array.
-        If no True value exists, return -1.
-
-        Args:
-            bool_array (np.ndarray): A NumPy array of boolean values.
-
-        Returns:
-            int: The index of the first True value, or -1 if not found.
-        """
-
-        # Find the index of the first True value
-        true_indices = np.where(bool_array)[0]
-
-        # Return the first index if it exists, otherwise return -1
-        return true_indices[0] if true_indices.size > 0 else -1
-
 
     def __init__(
         self,
@@ -116,6 +55,7 @@ class BaseAgent(ABC):
             device (str, optional): Device for training, either 'cpu' or 'cuda'. Default is 'cpu'.
             model_dir (str, optional): Folder in which the generated agents are saved.
         """
+
         if device not in ("cpu", "cuda"):
             raise ValueError("device must be 'cpu' or 'cuda'")
 
@@ -124,9 +64,8 @@ class BaseAgent(ABC):
 
         self.env = environment
         self.num_envs = num_envs
-        self.observation_space = environment.observation_space
-        self.action_space = environment.action_space
 
+        # PPO hyperparameters
         self.eval_frequency = eval_frequency
         self.learning_rate = learning_rate
         self.clip_range = clip_range
@@ -137,6 +76,7 @@ class BaseAgent(ABC):
         self.entropy_coef = entropy_coef
         self.num_epochs = num_epochs
         self.batch_size = batch_size
+
         self.device = torch.device(device)
         self.model_dir = model_dir
 
@@ -151,37 +91,6 @@ class BaseAgent(ABC):
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4  # avoid division by zero
-
-
-    def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
-        """Normalize rewards using running statistics (Welford's algorithm).
-
-        Args:
-            rewards: Raw rewards array of shape (batch_size,).
-
-        Returns:
-            Normalized rewards with zero mean and unit variance.
-        """
-
-        # Welford's algorithm for running stats
-        batch_mean = np.mean(rewards)
-        batch_var = np.var(rewards)
-        batch_count = len(rewards)
-
-        delta = batch_mean - self.reward_mean
-        tot_count = self.reward_count + batch_count
-
-        new_mean = self.reward_mean + delta * batch_count / tot_count
-        m_a = self.reward_var * self.reward_count
-        m_b = batch_var * batch_count
-        m2 = m_a + m_b + delta ** 2 * self.reward_count * batch_count / tot_count
-        new_var = m2 / tot_count
-
-        self.reward_mean = new_mean
-        self.reward_var = new_var
-        self.reward_count = tot_count
-
-        return (rewards - self.reward_mean) / (np.sqrt(self.reward_var) + 1e-8)
 
 
     @abstractmethod
