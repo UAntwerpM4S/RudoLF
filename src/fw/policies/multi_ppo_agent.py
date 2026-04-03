@@ -130,6 +130,9 @@ class MultiPPOAgent(BasePPOAgent):
             np.ndarray: Tuple or array of initial observations.
         """
 
+        for sub_env in self.env.sub_environments:
+            sub_env.randomize()
+
         states, _ = self.env.reset()
         return states
 
@@ -242,8 +245,9 @@ class MultiPPOAgent(BasePPOAgent):
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
         best_policy_files = [
-            f"Best_{self.env.type_name}_PPO_agent{i}_policy"
-            for i in range(len(self.agents))
+            f"Best_{env.type_name}_{i+1}_PPO_policy" if self.num_envs > 1
+            else f"Best_{env.type_name}_PPO_policy"
+            for i, env in enumerate(self.env.sub_environments)
         ]
 
         for iteration in range(stopping_condition.max_time_steps):
@@ -316,6 +320,9 @@ class MultiPPOAgent(BasePPOAgent):
         # Dump training metrics to CSV
         dump_multi_agent_metrics(self.model_dir, training_metrics)
 
+        for sub_env in self.env.sub_environments:
+            sub_env.close()
+
         print("Training completed!")
 
 
@@ -385,7 +392,7 @@ class MultiPPOAgent(BasePPOAgent):
         Save all agent policies into a single ZIP archive.
 
         Args:
-            policy_file_name (str): Output file name (".zip" will be appended if missing).
+            policy_file_name (str): Output file name ('.zip' will be appended if missing).
 
         Raises:
             RuntimeError: If saving fails.

@@ -120,8 +120,6 @@ class BasePPOAgent(BaseAgent):
             normalize (bool): Whether to normalize rewards.
 
         Attributes:
-            observation_space: Environment observation space.
-            action_space: Environment action space.
             max_nbr_iterations: Safeguard value to avoid infinite stepping through environments.
             normalize: Flag that indicates whether reward values should be normalized.
         """
@@ -143,8 +141,6 @@ class BasePPOAgent(BaseAgent):
             model_dir=model_dir,
         )
 
-        self.observation_space = environment.observation_space
-        self.action_space = environment.action_space
         self.max_nbr_iterations = max_nbr_iterations
         self.normalize = normalize
 
@@ -336,8 +332,6 @@ class BasePPOAgent(BaseAgent):
         if safeguard >= self.max_nbr_iterations:
             print(f"Safeguard triggered due to reaching max_iterations ({self.max_nbr_iterations}).")
 
-        # self._vec_env.close()
-
         # Process episode data with proper trimming
         episode_data = []
         for env_id in range(num_envs):
@@ -371,7 +365,7 @@ class BasePPOAgent(BaseAgent):
                 # We bootstrap for:
                 # - truncation
                 # - safeguard stop
-                next_value = self._get_bootstrap_value(trajectory["next_states"][first_done])
+                next_value = self._get_bootstrap_value(trajectory["next_states"][first_done], env_id)
 
             # ----------------------------------------------------------
             # Trim trajectory to valid region
