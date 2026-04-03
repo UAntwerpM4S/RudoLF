@@ -4,16 +4,17 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from pathlib import Path
-from gymnasium import Env
 from enum import auto, Enum
 from contextlib import contextmanager
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+from fw.environments.base_env import BaseEnv
+from fw.environments.multi_sim_env import MultiSimEnv
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
 from airsim.communication.airsim_bridge import AirSimBridge
-from fw.stop_condition import StopCondition
+from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
-from fw.policies.single_ppo_agent import SinglePPOAgent
-
+from fw.stop_condition import StopCondition
 
 MIN_GRID_POS = -11700
 MAX_GRID_POS = 14500
@@ -27,20 +28,23 @@ class PolicyStrategy(Enum):
         REUSE_CURRENT_POLICY: Continue training with the current policy.
         REUSE_OTHER_POLICY: Load and use a policy trained on another environment.
     """
+
     RESET_POLICY = auto()
     REUSE_CURRENT_POLICY = auto()
     REUSE_OTHER_POLICY = auto()
 
 
 class AgentManager:
-    """AgentManager class for managing agents and environments during training.
+    """
+    AgentManager class for managing agents and environments during training.
 
     This class includes methods for training, saving/loading policies, and
     visualizing paths taken by the agent during evaluation.
     """
 
     def render(self, env, start_pos: np.ndarray, all_paths: list, total_rewards: list) -> None:
-        """Render and save a visualization of paths taken by the agent.
+        """
+        Render and save a visualization of paths taken by the agent.
 
         Args:
             env: Environment object containing boundaries, obstacles, and checkpoints.
@@ -48,6 +52,7 @@ class AgentManager:
             all_paths (list): List of paths taken over multiple episodes.
             total_rewards (list): List of total rewards corresponding to each episode.
         """
+
         try:
             if self._overlay_active and self._fig is not None:
                 ax = self._axes
@@ -140,12 +145,14 @@ class AgentManager:
 
 
     def __init__(self, agent_type: str, hyperparameters: dict):
-        """Initialize the Agent.
+        """
+        Initialize the Agent.
 
         Args:
             agent_type (str): Type of agent to use (e.g., 'PPO').
             hyperparameters (dict): Hyperparameters for configuring the agent.
         """
+
         self._agent = None
         self._agent_type = agent_type
         self.prev_smoothing_setting = None
@@ -157,14 +164,20 @@ class AgentManager:
 
 
     def begin_overlay_plot(self):
-        """Create a persistent matplotlib figure for overlaying multiple environments."""
+        """
+        Create a persistent matplotlib figure for overlaying multiple environments.
+        """
+
         if self._fig is None:
             self._fig, self._axes = plt.subplots(figsize=(12, 8))
             self._overlay_active = True
 
 
     def end_overlay_plot(self):
-        """Finalize and close the persistent matplotlib figure."""
+        """
+        Finalize and close the persistent matplotlib figure.
+        """
+
         if self._fig is not None:
             plt.tight_layout()
             plt.show()
@@ -183,6 +196,7 @@ class AgentManager:
         Returns:
             str: The agent type.
         """
+
         return self._agent_type
 
 
@@ -194,22 +208,87 @@ class AgentManager:
         Returns:
             BaseAgent: The agent.
         """
+
         return self._agent
 
 
-    def set_environment(self, env: Env, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
+    def _build_single_agent(self, env):
+        """
+        Create a `SinglePPOAgent` from the given environment.
+
+        If the environment exposes a `sub_environments` attribute, this method
+        ensures that exactly one sub-environment is used. Otherwise, the environment
+        itself is used directly.
+
+        Args:
+            env: Environment instance, optionally containing `sub_environments`.
+
+        Returns:
+            SinglePPOAgent: Initialized PPO agent for a single environment.
+
+        Raises:
+            RuntimeError: If more than one sub-environment is provided.
+        """
+
+        sub_envs = getattr(env, "sub_environments", None)
+
+        if sub_envs is None or len(sub_envs) < 1:
+            target_env = env
+        elif len(sub_envs) == 1:
+            target_env = sub_envs[0]
+        else:
+            raise RuntimeError("SinglePPOAgent requires exactly one sub-environment.")
+
+        return SinglePPOAgent(environment=target_env, **self._hyperparameters)
+
+
+    def _build_multi_agent(self, env):
+        """
+        Create a `MultiPPOAgent` composed of multiple `SinglePPOAgent` instances.
+
+        Each sub-environment in the provided `MultiSimEnv` is assigned its own
+        `SinglePPOAgent`. These agents are then combined into a `MultiPPOAgent`
+        for coordinated training.
+
+        Args:
+            env (MultiSimEnv): Multi-environment containing sub-environments.
+
+        Returns:
+            MultiPPOAgent: Initialized multi-agent PPO trainer.
+
+        Raises:
+            TypeError: If `env` is not an instance of `MultiSimEnv`.
+            ValueError: If no sub-environments are defined.
+        """
+
+        if not isinstance(env, MultiSimEnv):
+            raise TypeError("MultiPPOAgent requires a MultiSimEnv instance.")
+
+        if not env.sub_environments:
+            raise ValueError("MultiSimEnv must contain at least one sub-environment.")
+
+        agents = [
+            SinglePPOAgent(environment=sub_env, **self._hyperparameters)
+            for sub_env in env.sub_environments
+        ]
+
+        return MultiPPOAgent(environment=env, agents=agents, **self._hyperparameters)
+
+
+    def set_environment(self, env: BaseEnv, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
                         other_env_name: str = None) -> None:
         """
         Assign an environment to the agent and configure the policy strategy.
 
         Args:
-            env (Env): The environment to set.
+            env (BaseEnv): The environment to set.
             policy_strategy (PolicyStrategy, optional): Strategy for handling policy (reset, reuse current, or reuse other). Default is PolicyStrategy.RESET_POLICY.
             other_env_name (str, optional): Name of the environment whose policy should be reused (if applicable).
 
         Raises:
             RuntimeError: If an unknown policy type is specified.
         """
+
         policy_file_name = None
 
         if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._agent:
@@ -219,9 +298,11 @@ class AgentManager:
             policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
 
         if PPO_POLICY_NAME == self._agent_type:
-            self._agent = SinglePPOAgent(environment=env, **self._hyperparameters)
+            self._agent = self._build_single_agent(env)
         elif PPO2_POLICY_NAME == self._agent_type:
             self._agent = PPO2Agent(environment=env, **self._hyperparameters)
+        elif MULTI_PPO_POLICY_NAME == self._agent_type:
+            self._agent = self._build_multi_agent(env)
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 
@@ -232,9 +313,14 @@ class AgentManager:
 
             if Path(full_policy_file_name).exists():
                 print(f"Reusing {policy_file_name}.")
-                self._agent.load_policy(policy_file_name)
+                try:
+                    self._agent.load_policy(policy_file_name)
+                except ValueError as e:
+                    print(f"[Fallback] Incompatible model: {e}")
+                    print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
             else:
-                raise RuntimeError(f"The policy file {policy_file_name} does not exist.")
+                print(f"[Fallback] The policy file {policy_file_name} does not exist.")
+                print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
 
 
     def train(self, stop_condition: StopCondition) -> None:
@@ -247,6 +333,7 @@ class AgentManager:
         Raises:
             RuntimeError: If no agent is created.
         """
+
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
@@ -262,11 +349,13 @@ class AgentManager:
 
     @contextmanager
     def smoothing(self, env):
-        """Smoothing.
+        """
+        Smoothing.
 
         Args:
             env: Description.
         """
+
         if hasattr(env, "enable_smoothing"):
             try:
                 self.prev_smoothing_setting = env.enable_smoothing
@@ -295,6 +384,7 @@ class AgentManager:
         Raises:
             RuntimeError: If no agent is created.
         """
+
         # Load checkpoint
         # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
 
@@ -415,5 +505,5 @@ class AgentManager:
         Returns:
             The environment object.
         """
-        return self._agent.get_env()
 
+        return self._agent.get_env()

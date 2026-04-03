@@ -120,8 +120,6 @@ class BasePPOAgent(BaseAgent):
             normalize (bool): Whether to normalize rewards.
 
         Attributes:
-            observation_space: Environment observation space.
-            action_space: Environment action space.
             max_nbr_iterations: Safeguard value to avoid infinite stepping through environments.
             normalize: Flag that indicates whether reward values should be normalized.
         """
@@ -143,8 +141,6 @@ class BasePPOAgent(BaseAgent):
             model_dir=model_dir,
         )
 
-        self.observation_space = environment.observation_space
-        self.action_space = environment.action_space
         self.max_nbr_iterations = max_nbr_iterations
         self.normalize = normalize
 

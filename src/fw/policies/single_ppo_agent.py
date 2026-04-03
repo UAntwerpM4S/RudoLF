@@ -51,6 +51,9 @@ class SinglePPOAgent(BasePPOAgent):
 
         super().__init__(*args, **kwargs)
 
+        self.observation_space = self.env.observation_space
+        self.action_space = self.env.action_space
+
         # Handle discrete and continuous action spaces
         if isinstance(self.action_space, gym.spaces.Discrete):
             self.output_dim = self.action_space.n
