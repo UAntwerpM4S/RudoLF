@@ -416,10 +416,10 @@ class AgentManager:
                         done = False
                         steps = 0
 
-                        start_pos = np.copy(env.ship_pos[0])
+                        start_pos = np.copy(env.ship_pos)
 
                         # Store positions for this episode
-                        path_positions = [np.copy(env.ship_pos[0])]
+                        path_positions = [np.copy(env.ship_pos)]
 
                         while not done:
                             # Select action
@@ -431,7 +431,7 @@ class AgentManager:
 
                             if not done:
                                 # Store current position
-                                path_positions.append(np.copy(env.ship_pos[0]))
+                                path_positions.append(np.copy(env.ship_pos))
 
                                 # Calculate the average episode reward
                                 episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
