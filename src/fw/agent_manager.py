@@ -11,11 +11,13 @@ from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
 from airsim.communication.airsim_bridge import AirSimBridge
+from fw.environments.multi_sim_env import MultiSimEnv
+from fw.environments.base_env import BaseEnv
+
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
-from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
-from fw.environments.base_env import BaseEnv
+from fw.policies.base_agent import BaseAgent
 from fw.stop_condition import StopCondition
 
 
@@ -27,13 +29,17 @@ class PolicyStrategy(Enum):
         REUSE_CURRENT_POLICY: Continue training with the current policy.
         REUSE_OTHER_POLICY: Load and use a policy trained on another environment.
     """
+
     RESET_POLICY = auto()
     REUSE_CURRENT_POLICY = auto()
     REUSE_OTHER_POLICY = auto()
 
 
 def normalized_time_axis(length: int) -> np.ndarray:
-    """Return a normalized time axis in [0, 1] for a trajectory of given length."""
+    """
+    Return a normalized time axis in [0, 1] for a trajectory of given length.
+    """
+
     if length <= 1:
         return np.array([0.0])
     return np.linspace(0.0, 100.0, length)
@@ -43,6 +49,7 @@ def shade_color(base_color, n, lo=0.45, hi=1.0):
     """
     Generate n shaded variants of a base color by scaling lightness.
     """
+
     rgb = np.array(to_rgb(base_color))
     factors = np.linspace(hi, lo, n)
 
@@ -53,6 +60,7 @@ def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.n
     """
     Resample a 1D signal defined over normalized time [0,1] onto a common grid.
     """
+
     signal = np.asarray(signal)
 
     if signal.shape[0] == 1:
@@ -80,7 +88,8 @@ def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.n
 
 
 class AgentManager:
-    """AgentManager class for managing agents and environments during training.
+    """
+    AgentManager class for managing agents and environments during training.
 
     This class includes methods for training, saving/loading policies, and
     visualizing paths taken by the agent during evaluation.
@@ -97,12 +106,14 @@ class AgentManager:
     ]
 
     def __init__(self, agent_type: str, hyperparameters: dict):
-        """Initialize the Agent.
+        """
+        Initialize the Agent.
 
         Args:
             agent_type (str): Type of agent to use (e.g., 'PPO').
             hyperparameters (dict): Hyperparameters for configuring the agent.
         """
+
         self._agent = None
         self._agent_type = agent_type
         self.prev_smoothing_setting = None
@@ -114,13 +125,19 @@ class AgentManager:
 
 
     def begin_overlay_plot(self):
-        """Create a persistent matplotlib figure for overlaying multiple environments."""
+        """
+        Create a persistent matplotlib figure for overlaying multiple environments.
+        """
+
         if self._fig is None:
             self._fig, self._axes = plt.subplots(4, 1, figsize=(12, 16))
             self._overlay_active = True
 
     def end_overlay_plot(self):
-        """Finalize and close the persistent matplotlib figure."""
+        """
+        Finalize and close the persistent matplotlib figure.
+        """
+
         if self._fig is not None:
             plt.tight_layout()
             plt.show()
@@ -139,6 +156,7 @@ class AgentManager:
         Returns:
             str: The agent type.
         """
+
         return self._agent_type
 
 
@@ -150,7 +168,71 @@ class AgentManager:
         Returns:
             BaseAgent: The agent.
         """
+
         return self._agent
+
+
+    def _build_single_agent(self, env):
+        """
+        Create a `SinglePPOAgent` from the given environment.
+
+        If the environment exposes a `sub_environments` attribute, this method
+        ensures that exactly one sub-environment is used. Otherwise, the environment
+        itself is used directly.
+
+        Args:
+            env: Environment instance, optionally containing `sub_environments`.
+
+        Returns:
+            SinglePPOAgent: Initialized PPO agent for a single environment.
+
+        Raises:
+            RuntimeError: If more than one sub-environment is provided.
+        """
+
+        sub_envs = getattr(env, "sub_environments", None)
+
+        if sub_envs is None or len(sub_envs) < 1:
+            target_env = env
+        elif len(sub_envs) == 1:
+            target_env = sub_envs[0]
+        else:
+            raise RuntimeError("SinglePPOAgent requires exactly one sub-environment.")
+
+        return SinglePPOAgent(environment=target_env, **self._hyperparameters)
+
+
+    def _build_multi_agent(self, env):
+        """
+        Create a `MultiPPOAgent` composed of multiple `SinglePPOAgent` instances.
+
+        Each sub-environment in the provided `MultiSimEnv` is assigned its own
+        `SinglePPOAgent`. These agents are then combined into a `MultiPPOAgent`
+        for coordinated training.
+
+        Args:
+            env (MultiSimEnv): Multi-environment containing sub-environments.
+
+        Returns:
+            MultiPPOAgent: Initialized multi-agent PPO trainer.
+
+        Raises:
+            TypeError: If `env` is not an instance of `MultiSimEnv`.
+            ValueError: If no sub-environments are defined.
+        """
+
+        if not isinstance(env, MultiSimEnv):
+            raise TypeError("MultiPPOAgent requires a MultiSimEnv instance.")
+
+        if not env.sub_environments:
+            raise ValueError("MultiSimEnv must contain at least one sub-environment.")
+
+        agents = [
+            SinglePPOAgent(environment=sub_env, **self._hyperparameters)
+            for sub_env in env.sub_environments
+        ]
+
+        return MultiPPOAgent(environment=env, agents=agents, **self._hyperparameters)
 
 
     def set_environment(self, env: BaseEnv, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
@@ -166,6 +248,7 @@ class AgentManager:
         Raises:
             RuntimeError: If an unknown policy type is specified.
         """
+
         policy_file_name = None
 
         if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._agent:
@@ -175,14 +258,11 @@ class AgentManager:
             policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
 
         if PPO_POLICY_NAME == self._agent_type:
-            self._agent = SinglePPOAgent(environment=env, **self._hyperparameters)
+            self._agent = self._build_single_agent(env)
         elif PPO2_POLICY_NAME == self._agent_type:
             self._agent = PPO2Agent(environment=env, **self._hyperparameters)
         elif MULTI_PPO_POLICY_NAME == self._agent_type:
-            single_agent1 = SinglePPOAgent(environment=env.sub_environments[0], **self._hyperparameters)
-            single_agent2 = SinglePPOAgent(environment=env.sub_environments[1], **self._hyperparameters)
-            self._agent = MultiPPOAgent(environment=env, agents=[single_agent1, single_agent2],
-                                        **self._hyperparameters)
+            self._agent = self._build_multi_agent(env)
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 
@@ -213,6 +293,7 @@ class AgentManager:
         Raises:
             RuntimeError: If no agent is created.
         """
+
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
@@ -231,6 +312,7 @@ class AgentManager:
         """
         Compute heading error relative to desired path direction
         """
+
         # Get current checkpoint index and position
         curr_checkpoint = env.checkpoints[env.checkpoint_index]
         next_checkpoint = env.checkpoints[min(env.checkpoint_index + 1, len(env.checkpoints) - 1)]
@@ -256,6 +338,7 @@ class AgentManager:
         MTE = max{|e(N0)|, |e(N0+1)|, ..., |e(N1)|}
         mHEI = (1/(N1-N0+1)) * sum(|e_psi(k)|)
         """
+
         all_mTEIs = []
         all_MTEs = []
         all_mRAs = []
@@ -312,6 +395,7 @@ class AgentManager:
             obstacles: Description.
             overall: Description.
         """
+
         obstacle_poly = Polygon(obstacles)
         overall_poly = Polygon(overall)
         difference = overall_poly.difference(obstacle_poly)
@@ -333,6 +417,7 @@ class AgentManager:
         Args:
             env: Description.
         """
+
         if hasattr(env, "enable_smoothing"):
             try:
                 self.prev_smoothing_setting = env.enable_smoothing
@@ -349,7 +434,6 @@ class AgentManager:
             env_color_index: int = 0,
             airsim_bridge: AirSimBridge = None,
     ) -> None:
-
         """
         Run and visualize a trained agent in the environment over multiple episodes.
 
@@ -362,6 +446,7 @@ class AgentManager:
         Raises:
             RuntimeError: If no agent is created.
         """
+
         # Load checkpoint
         # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
 
@@ -717,4 +802,5 @@ class AgentManager:
         Returns:
             The environment object.
         """
+
         return self._agent.get_env()
