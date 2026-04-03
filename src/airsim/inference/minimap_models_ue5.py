@@ -191,13 +191,15 @@ class UE5TopDownMinimap:
         ship_pos_arr = ship_pos_arr.reshape(-1)
 
         state_entry = None
-        phys_sims = getattr(env, "phys_sims", None)
-        if isinstance(phys_sims, (list, tuple)) and phys_sims:
-            state_entry = phys_sims[0]
-        elif phys_sims is not None:
-            state_entry = phys_sims
         if state_entry is None:
             state_entry = getattr(env, "phys_sim", None)
+        if state_entry is None:
+            # Backward compatibility for earlier multi-sim env variants.
+            phys_sims = getattr(env, "phys_sims", None)
+            if isinstance(phys_sims, (list, tuple)) and phys_sims:
+                state_entry = phys_sims[0]
+            elif phys_sims is not None:
+                state_entry = phys_sims
         state = getattr(state_entry, "state", state_entry)
         heading = None if state is None else getattr(state, "heading", None)
 

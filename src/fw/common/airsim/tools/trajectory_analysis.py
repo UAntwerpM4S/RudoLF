@@ -193,7 +193,10 @@ def _group_rows_by_episode(rows: List[Dict[str, str]]) -> Dict[int, List[Dict[st
     """
     grouped: Dict[int, List[Dict[str, str]]] = {}
     for row in rows:
-        episode = _safe_int(row.get("episode", 1), default=1)
+        raw_episode = row.get("episode", 1)
+        episode = _safe_int(raw_episode, default=1)
+        if episode < 1:
+            episode = 1
         grouped.setdefault(episode, []).append(row)
     return grouped
 
@@ -209,15 +212,28 @@ def _episode_duration_s(rows: List[Dict[str, str]]) -> float:
     """
     if not rows:
         return 0.0
-    sim_times = [_safe_float(row.get("sim_time", 0.0)) for row in rows]
-    duration_s = max(sim_times)
-    if duration_s > 0.0:
-        return float(duration_s)
+
+    sim_times: List[float] = []
+    for row in rows:
+        raw_sim_time = row.get("sim_time", None)
+        if raw_sim_time is None:
+            continue
+        if isinstance(raw_sim_time, str) and not raw_sim_time.strip():
+            continue
+        try:
+            sim_times.append(float(raw_sim_time))
+        except (TypeError, ValueError):
+            continue
+
+    if sim_times:
+        return float(max(sim_times) - min(sim_times))
 
     # Fallback when sim_time is unavailable: approximate by the largest
     # recorded episode step assuming dt=1.0s.
-    steps = [_safe_int(row.get("episode_step", 0), default=0) for row in rows]
-    return float(max(steps))
+    steps = [_safe_int(row.get("episode_step", None), default=0) for row in rows]
+    if not steps:
+        return 0.0
+    return float(max(steps) - min(steps))
 
 
 def build_run_summary_from_csv(
