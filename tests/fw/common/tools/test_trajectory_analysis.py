@@ -6,6 +6,8 @@ import csv
 import sys
 from pathlib import Path
 
+import pytest
+
 _SRC_DIR = Path(__file__).resolve().parents[4] / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
@@ -71,12 +73,102 @@ def test_build_run_summary_from_csv_computes_metrics(tmp_path: Path) -> None:
 
     assert len(summary.episodes) == 2
     assert summary.total_reward == 5.0
-    assert summary.total_duration_s == 0.4
+    assert summary.total_duration_s == 0.2
     assert summary.total_distance_2d_m == 8.0
     assert summary.total_distance_3d_m == 9.0
     assert summary.mean_cross_track_error_m == 1.75
     assert summary.max_cross_track_error_m == 3.0
     assert summary.bridge_samples == 3
+
+
+def test_build_run_summary_duration_uses_episode_time_span(tmp_path: Path) -> None:
+    """Duration should be max-min within an episode, not absolute sim_time."""
+    session_csv = tmp_path / "offset_time_session.csv"
+    _write_csv(
+        session_csv,
+        fieldnames=["step", "sim_time", "episode", "episode_step", "x", "y", "reward", "cross_track_error", "outcome"],
+        rows=[
+            {
+                "step": 1,
+                "sim_time": 10.1,
+                "episode": 1,
+                "episode_step": 1,
+                "x": 0.0,
+                "y": 0.0,
+                "reward": 0.0,
+                "cross_track_error": 0.0,
+                "outcome": "running",
+            },
+            {
+                "step": 2,
+                "sim_time": 10.2,
+                "episode": 1,
+                "episode_step": 2,
+                "x": 1.0,
+                "y": 0.0,
+                "reward": 0.0,
+                "cross_track_error": 0.0,
+                "outcome": "terminated",
+            },
+        ],
+    )
+
+    summary = build_run_summary_from_csv(session_csv)
+
+    assert len(summary.episodes) == 1
+    assert summary.episodes[0].duration_s == pytest.approx(0.1)
+    assert summary.total_duration_s == pytest.approx(0.1)
+
+
+def test_build_run_summary_normalises_episode_values(tmp_path: Path) -> None:
+    """Missing, string, and invalid episode values should group safely."""
+    session_csv = tmp_path / "episode_values_session.csv"
+    _write_csv(
+        session_csv,
+        fieldnames=["step", "sim_time", "episode", "episode_step", "x", "y", "reward", "cross_track_error", "outcome"],
+        rows=[
+            {
+                "step": 1,
+                "sim_time": 0.0,
+                "episode_step": 1,
+                "x": 0.0,
+                "y": 0.0,
+                "reward": 1.0,
+                "cross_track_error": 1.0,
+                "outcome": "running",
+            },
+            {
+                "step": 2,
+                "sim_time": 0.1,
+                "episode": "1",
+                "episode_step": 2,
+                "x": 1.0,
+                "y": 0.0,
+                "reward": 2.0,
+                "cross_track_error": 2.0,
+                "outcome": "running",
+            },
+            {
+                "step": 3,
+                "sim_time": 0.2,
+                "episode": "abc",
+                "episode_step": 3,
+                "x": 2.0,
+                "y": 0.0,
+                "reward": 3.0,
+                "cross_track_error": 3.0,
+                "outcome": "terminated",
+            },
+        ],
+    )
+
+    summary = build_run_summary_from_csv(session_csv)
+
+    assert len(summary.episodes) == 1
+    assert summary.episodes[0].episode == 1
+    assert summary.episodes[0].steps == 3
+    assert summary.total_reward == 6.0
+    assert summary.max_cross_track_error_m == 3.0
 
 
 

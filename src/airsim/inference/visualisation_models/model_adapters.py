@@ -124,7 +124,7 @@ def _extract_physics_entry(env: Any, ship_index: int = 0) -> Any:
         Any: Physics simulator entry for one ship, or ``None`` when no known
         simulator attribute is available.
     """
-    for attr_name in ("phys_sims", "phys_sim"):
+    for attr_name in ("phys_sim", "phys_sims"):
         candidate = _extract_indexed_value(getattr(env, attr_name, None), ship_index=ship_index)
         if candidate is not None:
             return candidate
@@ -278,12 +278,14 @@ def _build_visual_controls(
             steering_gain=steering_visual_gain,
             throttle_gain=throttle_visual_gain,
         )
-    return map_fossen_steering_visual_state(
-        airsim_module,
-        specs,
-        rudder_angle=float(actuator_state[0]),
-        steering_gain=steering_visual_gain,
-    )
+    if animate_steering_in_ue5:
+        return map_fossen_steering_visual_state(
+            airsim_module,
+            specs,
+            rudder_angle=float(actuator_state[0]),
+            steering_gain=steering_visual_gain,
+        )
+    return None
 
 
 def _animate_framework_state(
