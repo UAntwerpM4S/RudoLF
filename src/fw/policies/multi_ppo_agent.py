@@ -15,24 +15,23 @@ from fw.environments.multi_sim_env import MultiSimEnv
 
 class MultiPPOAgent(BasePPOAgent):
     """
-    Multi-agent Proximal Policy Optimization (PPO) trainer operating over a
-    tuple-structured multi-environment.
+    Multi-agent PPO trainer for tuple-based environments.
 
     This class coordinates multiple independent `SinglePPOAgent` instances,
-    each controlling one sub-environment within a `MultiSimEnv`. Experience
-    is collected in parallel across all environments, after which each agent is
-    trained independently on its own trajectory.
+    each controlling a sub-environment within a `MultiSimEnv`. Experience is
+    collected synchronously across all environments, while policy updates are
+    performed independently per agent.
 
-    The interaction model is *synchronous but factorized*:
-    - Environments are stepped together using tuple-based actions.
-    - Each agent receives only its corresponding observation.
-    - No parameter sharing or centralized critic is used.
+    The training setup is decentralized:
+        - Each agent observes only its own state.
+        - Policies are not shared between agents.
+        - No centralized critic is used.
 
     Attributes:
-        agents (list[SinglePPOAgent]): List of independent PPO agents, one per environment.
-        num_envs (int): Number of parallel environments/agents.
-        max_nbr_iterations (int): Maximum steps per rollout to prevent infinite loops.
-        normalize (bool): Whether to normalize rewards per episode.
+        agents (list[SinglePPOAgent]): List of PPO agents (one per environment).
+        num_envs (int): Number of sub-environments.
+        max_nbr_iterations (int): Maximum rollout length.
+        normalize (bool): Whether to normalize rewards per trajectory.
     """
 
     MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20
@@ -47,17 +46,17 @@ class MultiPPOAgent(BasePPOAgent):
         Initialize the multi-agent PPO trainer.
 
         Args:
-            *args: Positional arguments forwarded to `BaseAgent`.
-            agents (list[SinglePPOAgent]): List of initialized PPO agents. The
-                length must match the number of sub-environments in `self.env`.
-            max_nbr_iterations (int, optional): Maximum number of environment
-                steps per rollout before forced termination. Defaults to 200000.
-            normalize (bool, optional): If True, apply reward normalization per
-                episode before advantage computation. Defaults to False.
-            **kwargs: Keyword arguments forwarded to `BaseAgent`.
+            *args: Positional arguments forwarded to `BasePPOAgent`.
+            agents (list[SinglePPOAgent]): List of initialized agents, one per sub-environment.
+            **kwargs: Keyword arguments forwarded to `BasePPOAgent`.
 
         Raises:
-            ValueError: If the number of agents does not match the number of environments.
+            TypeError: If the environment is not a `MultiSimEnv`.
+            ValueError: If the number of agents does not match the number of sub-environments.
+
+        Notes:
+            - Each agent operates independently with its own policy and optimizer.
+            - The number of agents must match `env.sub_environments`.
         """
 
         super().__init__(*args, **kwargs)
@@ -81,26 +80,22 @@ class MultiPPOAgent(BasePPOAgent):
             deterministic: bool = False
     ) -> Tuple[Union[np.ndarray, Tuple[np.ndarray, ...]], np.ndarray, np.ndarray]:
         """
-        Compute actions, log-probabilities, and value estimates for all agents.
-
-        Each agent receives its corresponding observation and produces an action
-        independently. The outputs are aggregated into tuple/array structures.
+        Compute actions and value estimates for all agents.
 
         Args:
-            state (tuple[np.ndarray, ...]): Tuple of observations, one per environment.
-            deterministic (bool, optional): If True, use deterministic policy actions.
-                Otherwise, sample from the action distribution.
+            state (Union[np.ndarray, Tuple[np.ndarray, ...]]): Tuple of observations,
+                one per agent/environment.
+            deterministic (bool): Whether to use deterministic policy outputs.
 
         Returns:
-            tuple:
-                - actions (tuple): Tuple of actions, one per agent/environment.
-                - log_probs (np.ndarray): Array of shape (num_envs,) containing
-                  log-probabilities of the sampled actions.
-                - values (np.ndarray): Array of shape (num_envs,) containing
-                  state-value estimates.
+            Tuple:
+                - actions (tuple): Actions per agent.
+                - log_probs (np.ndarray): Log-probabilities of actions (num_envs,).
+                - values (np.ndarray): Value estimates (num_envs,).
 
         Notes:
-            The structure of `state` must match `env.observation_space`.
+            - Each agent processes only its corresponding observation.
+            - Output ordering matches agent/environment indexing.
         """
 
         actions = []
@@ -125,11 +120,39 @@ class MultiPPOAgent(BasePPOAgent):
 
 
     def _reset_envs(self, num_envs):
+        """
+        Reset the multi-environment.
+
+        Args:
+            num_envs (int): Number of environments (unused, inferred from env).
+
+        Returns:
+            np.ndarray: Tuple or array of initial observations.
+        """
+
         states, _ = self.env.reset()
         return states
 
 
     def _step_envs(self, actions):
+        """
+        Step all sub-environments with joint actions.
+
+        Args:
+            actions (tuple): Tuple of actions, one per agent.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                - next_states: Next observations.
+                - rewards: Rewards per agent.
+                - terminations: Termination flags.
+                - truncations: Truncation flags.
+
+        Notes:
+            - Supports custom info dictionaries for richer transition data.
+            - Falls back to standard Gymnasium outputs if unavailable.
+        """
+
         # Step all environments
         next_states, next_rewards, next_terminations, truncations, infos = self.env.step(actions)
 
@@ -148,10 +171,35 @@ class MultiPPOAgent(BasePPOAgent):
 
 
     def _predict(self, states, deterministic=False):
+        """
+        Internal wrapper for batched prediction.
+
+        Args:
+            states (np.ndarray or tuple): Observations per agent.
+            deterministic (bool): Whether to use deterministic actions.
+
+        Returns:
+            Same as `predict`.
+        """
+
         return self.predict(states, deterministic=False)
 
 
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):
+        """
+        Estimate value for bootstrapping for a specific agent.
+
+        Args:
+            next_state (np.ndarray): State to evaluate.
+            env_id (Optional[int]): Index of the agent/environment.
+
+        Returns:
+            float: Estimated value.
+
+        Raises:
+            ValueError: If `env_id` is not provided.
+        """
+
         with torch.no_grad():
             last_state = torch.FloatTensor(next_state).unsqueeze(0).to(self.device)
             _, _, next_values = self.agents[env_id].policy.network(last_state)
@@ -163,29 +211,27 @@ class MultiPPOAgent(BasePPOAgent):
         stop_condition: Optional[StopCondition] = None,
     ):
         """
-        Train all agents using parallel environment rollouts.
-
-        The training loop alternates between:
-        1. Collecting trajectories from all environments.
-        2. Updating each agent independently using its own trajectory.
-
-        Training continues until the provided stopping condition is met or the
-        maximum number of iterations is reached.
+        Train all agents using parallel rollouts.
 
         Args:
-            stop_condition (Optional[StopCondition]): Stopping criterion based on
-                iteration count, reward, or loss. If None, a default condition is used.
+            stop_condition (Optional[StopCondition]): Stopping criterion. If None,
+                a default condition is used.
+
+        Workflow:
+            1. Collect trajectories across all environments.
+            2. Train each agent independently on its trajectory.
+            3. Track metrics and save best-performing policies.
+            4. Apply early stopping if conditions are met.
 
         Side Effects:
-            - Updates agent policies in-place.
-            - Saves best-performing and periodic checkpoint policies to disk.
-            - Logs training metrics to CSV.
+            - Updates all agent policies in-place.
+            - Saves checkpoints and best-performing models.
+            - Logs per-agent training metrics to disk.
 
         Notes:
-            - Policy evaluation mode is enabled during rollout collection.
-            - Best model saving is delayed until a minimum number of iterations
-              (`MINIMUM_ITERATIONS_FOR_BEST_SAVE`) is reached.
-            - Early stopping is evaluated per agent using its own metrics.
+            - Training is synchronous across environments.
+            - Early stopping uses aggregated metrics across agents.
+            - Best policies are tracked per agent.
         """
 
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
@@ -277,14 +323,16 @@ class MultiPPOAgent(BasePPOAgent):
         """
         Load a multi-agent policy from a ZIP archive.
 
-        The archive must contain one policy file per agent.
-
         Args:
-            policy_file_name (str): Path to the policy archive.
+            policy_file_name (str): Path to the ZIP archive containing agent policies.
 
         Raises:
             FileNotFoundError: If the archive does not exist.
-            RuntimeError: If loading fails.
+            RuntimeError: If loading fails or required files are missing.
+
+        Notes:
+            - Archive must contain files named `agent_0.pth`, `agent_1.pth`, etc.
+            - Each file represents a serialized policy for one agent.
         """
 
         # Ensure the parent file has the .zip extension
@@ -337,11 +385,15 @@ class MultiPPOAgent(BasePPOAgent):
         Save all agent policies into a single ZIP archive.
 
         Args:
-            policy_file_name (str): Output file name.
+            policy_file_name (str): Output file name (".zip" will be appended if missing).
 
         Raises:
             RuntimeError: If saving fails.
-            FileNotFoundError: If an expected agent policy file is missing.
+            FileNotFoundError: If any expected policy file is missing.
+
+        Notes:
+            - Each agent is saved as a separate `.pth` file inside the archive.
+            - Policies are serialized using `policy.serialize_policy()`.
         """
 
         # Ensure the parent file has the .zip extension
@@ -383,8 +435,8 @@ class MultiPPOAgent(BasePPOAgent):
         """
         Set all agent policies to evaluation mode.
 
-        This disables training-specific behavior such as dropout and ensures
-        deterministic forward passes where applicable.
+        Disables training-specific behavior such as dropout and ensures
+        consistent inference across all agents.
         """
 
         for agent in self.agents:
