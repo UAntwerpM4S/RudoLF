@@ -17,27 +17,36 @@ from fw.common.tools.logging_utils import dump_metrics_to_csv
 
 class SinglePPOAgent(BasePPOAgent):
     """
-    Proximal Policy Optimization (PPO) Agent for reinforcement learning.
+    PPO agent operating on a single (vectorized) environment instance.
 
-    This class handles the training, evaluation, and policy management for PPO-based reinforcement learning agents.
+    This class implements policy optimization, environment interaction,
+    and training logic for Proximal Policy Optimization (PPO). It supports
+    both discrete and continuous action spaces and leverages vectorized
+    environments for parallel rollout collection.
+
+    Responsibilities include:
+        - Policy inference and optimization
+        - Parallel trajectory collection
+        - PPO loss computation and updates
+        - Model checkpointing and evaluation
+
+    Inherits rollout and GAE logic from `BasePPOAgent`.
     """
 
     MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20
 
     def __init__(self, *args, **kwargs):
         """
-        Initialize PPOAgent with environment and training hyperparameters.
-
-        This constructor passes core arguments to the BaseAgent and adds two specific options
-        for training behavior: maximum number of iterations and reward normalization.
+        Initialize the PPO agent.
 
         Args:
-            *args: Positional arguments passed to the BaseAgent initializer.
-            max_nbr_iterations (int, optional): The maximum number of environment steps before terminating training.
-                Used as a safeguard to prevent infinite loops. Defaults to 200000.
-            normalize (bool, optional): Whether to normalize rewards using running statistics.
-                Helps stabilize learning when reward scales vary significantly. Defaults to False.
-            **kwargs: Keyword arguments passed to the BaseAgent initializer.
+            *args: Positional arguments forwarded to `BasePPOAgent`.
+            **kwargs: Keyword arguments forwarded to `BasePPOAgent`.
+
+        Notes:
+            - Automatically infers input and output dimensions from the environment.
+            - Initializes the PPO policy network and optimizer.
+            - Sets up running statistics for optional reward normalization.
         """
 
         super().__init__(*args, **kwargs)
@@ -63,35 +72,42 @@ class SinglePPOAgent(BasePPOAgent):
             deterministic: bool = False
     ) -> Tuple[Union[np.ndarray, Tuple[np.ndarray, ...]], np.ndarray, np.ndarray]:
         """
-        Predict an action for a given state using the policy.
+        Predict an action for a single state.
 
         Args:
-            state (np.ndarray): Current state as a NumPy array.
-            deterministic (boolean): Whether the action should be deterministic or not.
+            state (Union[np.ndarray, Tuple[np.ndarray, ...]]): Input observation.
+            deterministic (bool): Whether to use deterministic policy output.
 
         Returns:
-            Tuple: A tuple containing the predicted action and log probability.
+            Tuple:
+                - action: Selected action.
+                - log_prob: Log-probability of the action.
+                - value: Estimated state value.
         """
+
         actions, log_probs, values = self.policy.predict(state, deterministic)
         return actions[0], log_probs.item(), values.item()
 
 
     def train(self, all_episodes_data) -> float:
         """
-        Train the PPO policy on a batch of data.
-
-        This method trains the policy network on the provided batch of episode data by optimizing the PPO objective.
+        Perform PPO policy optimization on collected trajectories.
 
         Args:
-            all_episodes_data (list): List of dictionaries, each containing episode data:
-                - states: numpy array of states
-                - actions: numpy array of actions
-                - advantages: numpy array of advantages
-                - old_log_probs: numpy array of old log probabilities
-                - returns: numpy array of returns
+            all_episodes_data (list[dict]): List of trajectory dictionaries, each containing:
+                - states (np.ndarray)
+                - actions (np.ndarray)
+                - advantages (np.ndarray)
+                - log_probs (np.ndarray)
+                - returns (np.ndarray)
 
         Returns:
-            float: Average loss value after training.
+            float: Mean training loss across all updates. Returns NaN if no valid data.
+
+        Notes:
+            - Advantages are normalized before optimization.
+            - Uses mini-batch SGD over multiple epochs.
+            - Applies PPO clipping, value loss, and entropy regularization.
         """
 
         if not all_episodes_data:
@@ -176,11 +192,19 @@ class SinglePPOAgent(BasePPOAgent):
 
     def make_env(self):
         """
-        Utility function for multiprocessing env creation.
+        Create a callable environment factory for vectorized execution.
+
+        Returns:
+            Callable[[], gym.Env]: Function that creates a monitored copy of the base environment.
+
+        Notes:
+            - Each environment is deep-copied to ensure independence.
+            - Wrapped with `Monitor` for logging episode statistics.
         """
 
         def _init():
-            """Create one monitored deep-copied environment instance.
+            """
+            Create one monitored deep-copied environment instance.
 
             Returns:
                 A monitored Gym environment copied from the agent base
@@ -193,6 +217,21 @@ class SinglePPOAgent(BasePPOAgent):
 
 
     def _reset_envs(self, num_envs):
+        """
+        Initialize or reset vectorized environments.
+
+        Args:
+            num_envs (int): Number of parallel environments.
+
+        Returns:
+            np.ndarray: Initial observations of shape (num_envs, obs_dim).
+
+        Notes:
+            - Reuses existing vectorized environment if possible.
+            - Uses `SubprocVecEnv` for multiple environments, `DummyVecEnv` otherwise.
+            - Optionally randomizes environments if supported.
+        """
+
         # Create vectorized environments once and reuse
         # follows the approach of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/common/on_policy_algorithm.html
         # where the vector is passed for each rollout instead of recreating it for all environments
@@ -212,6 +251,24 @@ class SinglePPOAgent(BasePPOAgent):
 
 
     def _step_envs(self, actions):
+        """
+        Step all environments with the given actions.
+
+        Args:
+            actions (np.ndarray): Actions of shape (num_envs, action_dim).
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                - next_states: Next observations.
+                - rewards: Rewards per environment.
+                - terminations: Episode termination flags.
+                - truncations: Episode truncation flags.
+
+        Notes:
+            - Supports both standard Gymnasium outputs and custom info dictionaries.
+            - Falls back to default values if truncation data is unavailable.
+        """
+
         # Step all environments
         next_states, next_rewards, next_terminations, infos = self._vec_env.step(actions)
 
@@ -231,10 +288,35 @@ class SinglePPOAgent(BasePPOAgent):
 
 
     def _predict(self, states, deterministic=False):
+        """
+        Compute batched actions, log-probabilities, and value estimates.
+
+        Args:
+            states (np.ndarray): Observations of shape (num_envs, obs_dim).
+            deterministic (bool): Whether to use deterministic policy output.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                - actions
+                - log_probs
+                - values
+        """
+
         return self.policy.predict(states, deterministic=deterministic)
 
 
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):
+        """
+        Estimate value for a given state for bootstrapping.
+
+        Args:
+            next_state (np.ndarray): State to evaluate.
+            env_id (Optional[int]): Environment index (unused in this implementation).
+
+        Returns:
+            float: Estimated state value.
+        """
+
         with torch.no_grad():
             last_state = torch.FloatTensor(next_state).unsqueeze(0).to(self.device)
             _, _, next_values = self.policy.network(last_state)
@@ -246,14 +328,23 @@ class SinglePPOAgent(BasePPOAgent):
         stop_condition: Optional[StopCondition] = None,
     ):
         """
-        Train the policy using multiple parallel environments.
-
-        This method runs the training loop for the specified number of timesteps using parallel environments.
-        It collects experience from the environments, updates the policy, logs training metrics, and saves
-        agent checkpoints at regular intervals.
+        Execute the full PPO training loop.
 
         Args:
-            stop_condition (StopCondition): Condition that defines when training should stop.
+            stop_condition (Optional[StopCondition]): Stopping criteria for training.
+                If not provided, a default condition is used.
+
+        Workflow:
+            1. Collect trajectories using parallel environments.
+            2. Compute advantages and returns.
+            3. Update policy using PPO optimization.
+            4. Log metrics and save checkpoints.
+            5. Apply early stopping if conditions are met.
+
+        Notes:
+            - Tracks best-performing policy based on mean reward.
+            - Periodically saves checkpoints.
+            - Cleans up vectorized environments after training.
         """
 
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
@@ -329,13 +420,13 @@ class SinglePPOAgent(BasePPOAgent):
 
     def load_policy(self, policy_file_name: str) -> None:
         """
-        Load a trained agent's policy.
+        Load a saved policy from disk.
 
         Args:
-            policy_file_name (str): Name of the policy file to load.
+            policy_file_name (str): Name or path of the policy file.
 
         Raises:
-            RuntimeError: If no agent is created or the policy fails to load.
+            RuntimeError: If loading fails.
         """
 
         try:
@@ -349,13 +440,13 @@ class SinglePPOAgent(BasePPOAgent):
 
     def save_policy(self, policy_file_name: str) -> None:
         """
-        Save the trained agent's policy.
+        Save the current policy to disk.
 
         Args:
-            policy_file_name (str): Name of the policy file to save.
+            policy_file_name (str): Name or path for the saved policy.
 
         Raises:
-            RuntimeError: If no agent is created or the policy fails to save.
+            RuntimeError: If saving fails.
         """
 
         try:
@@ -369,7 +460,10 @@ class SinglePPOAgent(BasePPOAgent):
 
     def set_policy_eval(self):
         """
-        Set policy in evaluation mode.
+        Set the policy network to evaluation mode.
+
+        Disables training-specific behavior such as dropout and
+        batch normalization updates.
         """
 
         self.policy.network.eval()

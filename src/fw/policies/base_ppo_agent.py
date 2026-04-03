@@ -1,7 +1,6 @@
-from typing import Optional
-
 import numpy as np
 
+from typing import Optional
 from abc import abstractmethod
 from fw.policies.base_agent import BaseAgent
 from fw.environments.base_env import BaseEnv
@@ -9,11 +8,16 @@ from fw.environments.base_env import BaseEnv
 
 class BasePPOAgent(BaseAgent):
     """
-    Abstract base class for reinforcement learning agents.
+    Abstract base class for Proximal Policy Optimization (PPO) agents.
 
-    This class provides a unified interface and shared hyperparameters
-    for reinforcement learning algorithms. Subclasses must implement
-    the core training and inference logic.
+    This class extends `BaseAgent` with PPO-specific functionality, including
+    trajectory collection, reward normalization, and Generalized Advantage
+    Estimation (GAE). It defines a standardized interface for interacting
+    with environments and computing policy/value updates.
+
+    Subclasses are responsible for implementing environment interaction
+    (`_reset_envs`, `_step_envs`) and model inference (`_predict`,
+    `_get_bootstrap_value`).
     """
 
     @staticmethod
@@ -59,8 +63,7 @@ class BasePPOAgent(BaseAgent):
     @staticmethod
     def find_first_true(bool_array):
         """
-        Find the index of the first True value in a boolean array.
-        If no True value exists, return -1.
+        Return the index of the first True value in a boolean array.
 
         Args:
             bool_array (np.ndarray): A NumPy array of boolean values.
@@ -96,23 +99,31 @@ class BasePPOAgent(BaseAgent):
         normalize: bool = False,
     ):
         """
-        Initialize the base agent with environment and hyperparameters.
+        Initialize the PPO agent with environment and training hyperparameters.
 
         Args:
-            environment (BaseEnv): The training environment.
-            num_envs (int): The number of training environments (for parallel training).
-            eval_frequency (int): Number of training iterations between evaluations.
-            learning_rate (float, optional): Learning rate for the optimizer. Default is 3e-4.
-            clip_range (float, optional): PPO clipping range. Default is 0.2.
-            value_loss_coef (float, optional): Coefficient for value loss. Default is 0.5.
-            max_grad_norm (float, optional): Maximum gradient norm for gradient clipping. Default is 0.5.
-            gamma (float, optional): Discount factor for future rewards. Default is 0.99.
-            gae_lambda (float, optional): Lambda for Generalized Advantage Estimation. Default is 0.95.
-            entropy_coef (float, optional): Coefficient for entropy bonus. Default is 0.01.
-            num_epochs (int, optional): Number of training epochs per update. Default is 10.
-            batch_size (int, optional): Mini-batch size. Default is 64.
-            device (str, optional): Device for training, either 'cpu' or 'cuda'. Default is 'cpu'.
-            model_dir (str, optional): Folder in which the generated agents are saved.
+            environment (BaseEnv): Training environment instance.
+            num_envs (int): Number of parallel environments.
+            eval_frequency (int): Training iterations between evaluations.
+            learning_rate (float): Optimizer learning rate.
+            clip_range (float): PPO clipping range.
+            value_loss_coef (float): Weight for value function loss.
+            max_grad_norm (float): Maximum gradient norm for clipping.
+            gamma (float): Discount factor.
+            gae_lambda (float): GAE smoothing parameter.
+            entropy_coef (float): Entropy regularization coefficient.
+            num_epochs (int): Number of optimization epochs per update.
+            batch_size (int): Mini-batch size.
+            device (str): Device for computation ("cpu" or "cuda").
+            model_dir (str): Directory for saving models.
+            max_nbr_iterations (int): Maximum steps per rollout.
+            normalize (bool): Whether to normalize rewards.
+
+        Attributes:
+            observation_space: Environment observation space.
+            action_space: Environment action space.
+            max_nbr_iterations: Safeguard value to avoid infinite stepping through environments.
+            normalize: Flag that indicates whether reward values should be normalized.
         """
 
         super().__init__(
@@ -144,8 +155,13 @@ class BasePPOAgent(BaseAgent):
     @abstractmethod
     def _reset_envs(self, num_envs):
         """
+        Reset all environments.
+
+        Args:
+            num_envs (int): Number of environments to reset.
+
         Returns:
-            np.ndarray of shape (num_envs, obs_dim)
+            np.ndarray: Initial observations of shape (num_envs, obs_dim).
         """
 
         pass
@@ -153,11 +169,17 @@ class BasePPOAgent(BaseAgent):
     @abstractmethod
     def _step_envs(self, actions):
         """
+        Perform a step in all environments.
+
         Args:
-            actions: np.ndarray shape (num_envs, action_dim)
+            actions (np.ndarray): Actions of shape (num_envs, action_dim).
 
         Returns:
-            next_states, rewards, terminations, truncations
+            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                - next_states: Next observations.
+                - rewards: Rewards per environment.
+                - terminations: Episode termination flags.
+                - truncations: Episode truncation flags.
         """
 
         pass
@@ -165,8 +187,17 @@ class BasePPOAgent(BaseAgent):
     @abstractmethod
     def _predict(self, states, deterministic=False):
         """
+        Compute actions, log-probabilities, and value estimates.
+
+        Args:
+            states (np.ndarray): Observations of shape (num_envs, obs_dim).
+            deterministic (bool): Whether to use deterministic policy.
+
         Returns:
-            actions, log_probs, values
+            Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                - actions: Sampled actions.
+                - log_probs: Log-probabilities of actions.
+                - values: Value estimates.
         """
 
         pass
@@ -174,7 +205,16 @@ class BasePPOAgent(BaseAgent):
     @abstractmethod
     def _get_bootstrap_value(self, states, env_id: Optional[int] = None):
         """
-        Returns value estimate for final state
+        Estimate value for bootstrapping.
+
+        Used when an episode ends due to truncation or iteration limits.
+
+        Args:
+            states (np.ndarray): State(s) to evaluate.
+            env_id (Optional[int]): Environment index (for multi-env setups).
+
+        Returns:
+            float: Estimated value of the given state.
         """
 
         pass
@@ -211,36 +251,32 @@ class BasePPOAgent(BaseAgent):
         return (rewards - self.reward_mean) / (np.sqrt(self.reward_var) + 1e-8)
 
 
-    # -------------------------
-    # Core PPO rollout
-    # -------------------------
     def run_parallel_episodes(self, num_envs) -> list:
         """
-        Collect one episode per environment in parallel.
+        Collect one trajectory per environment in parallel.
 
-        All environments are reset and stepped synchronously until each has
-        reached a terminal or truncated state, or until the maximum number of
-        iterations is reached. Trajectories are stored separately per environment.
+        Environments are stepped synchronously until each one reaches a terminal
+        or truncated state, or until `max_nbr_iterations` is reached.
 
         Args:
-            num_envs (int): Number of environments to simulate (must match `self.num_envs`).
+            num_envs (int): Number of environments to simulate.
 
         Returns:
-            list[dict]: List of per-environment trajectory dictionaries. Each dict contains:
-                - states (np.ndarray): Sequence of observations.
-                - actions (np.ndarray): Sequence of actions.
-                - rewards (np.ndarray): Sequence of rewards.
-                - dones (np.ndarray): Episode termination flags.
-                - values (np.ndarray): Value function estimates.
-                - log_probs (np.ndarray): Log-probabilities of actions.
-                - advantages (np.ndarray): Generalized Advantage Estimates (GAE).
-                - returns (np.ndarray): Discounted returns (advantages + values).
+            list[dict]: List of trajectory dictionaries (one per environment), each containing:
+                - states (np.ndarray): Observations.
+                - actions (np.ndarray): Actions taken.
+                - rewards (np.ndarray): Rewards received.
+                - terminations (np.ndarray): True termination flags.
+                - truncations (np.ndarray): Truncation flags.
+                - values (np.ndarray): Value estimates.
+                - log_probs (np.ndarray): Action log-probabilities.
+                - advantages (np.ndarray): GAE advantages.
+                - returns (np.ndarray): Discounted returns.
 
         Notes:
-            - Episodes may have different lengths across environments.
-            - Bootstrapping is applied if an episode does not terminate within
-              `max_nbr_iterations`.
-            - Reward normalization (if enabled) is applied per trajectory.
+            - Trajectories are trimmed to the first terminal/truncated step.
+            - Bootstrapping is applied if termination is not reached.
+            - Reward normalization is applied per trajectory if enabled.
         """
 
         if num_envs <= 0:
