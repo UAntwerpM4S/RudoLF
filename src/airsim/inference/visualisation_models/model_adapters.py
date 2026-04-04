@@ -112,6 +112,25 @@ def _extract_indexed_value(value: Any, ship_index: int = 0) -> Any:
     return value
 
 
+def _extract_physics_entry(env: Any, ship_index: int = 0) -> Any:
+    """Return one physics-simulator entry from common env layouts.
+
+    Args:
+        env: Framework environment exposing either ``phys_sims`` or
+            ``phys_sim``.
+        ship_index: Preferred ship index for multi-ship environments.
+
+    Returns:
+        Any: Physics simulator entry for one ship, or ``None`` when no known
+        simulator attribute is available.
+    """
+    for attr_name in ("phys_sim", "phys_sims"):
+        candidate = _extract_indexed_value(getattr(env, attr_name, None), ship_index=ship_index)
+        if candidate is not None:
+            return candidate
+    return None
+
+
 def _build_framework_motion_state(
     adapter: "ModelVisualisationAdapter",
     env,
@@ -259,12 +278,14 @@ def _build_visual_controls(
             steering_gain=steering_visual_gain,
             throttle_gain=throttle_visual_gain,
         )
-    return map_fossen_steering_visual_state(
-        airsim_module,
-        specs,
-        rudder_angle=float(actuator_state[0]),
-        steering_gain=steering_visual_gain,
-    )
+    if animate_steering_in_ue5:
+        return map_fossen_steering_visual_state(
+            airsim_module,
+            specs,
+            rudder_angle=float(actuator_state[0]),
+            steering_gain=steering_visual_gain,
+        )
+    return None
 
 
 def _animate_framework_state(
@@ -541,13 +562,21 @@ class ModelVisualisationAdapter(ABC):
                 extract a pose.
         """
         ship_pos = _extract_indexed_value(getattr(env, "ship_pos", None), ship_index=ship_index)
-        state = _extract_indexed_value(getattr(env, "phys_sims", None), ship_index=ship_index)
-        if ship_pos is None or state is None or not hasattr(state, "state"):
+        state_entry = _extract_physics_entry(env, ship_index=ship_index)
+        state = getattr(state_entry, "state", state_entry)
+
+        if ship_pos is None or state is None:
             raise ValueError(f"Adapter '{self.family}' could not extract pose from the environment.")
+
+        ship_pos_arr = np.asarray(ship_pos, dtype=np.float64).reshape(-1)
+        heading = getattr(state, "heading", None)
+        if ship_pos_arr.size < 2 or heading is None:
+            raise ValueError(f"Adapter '{self.family}' could not extract pose from the environment.")
+
         return (
-            float(ship_pos[0]),
-            float(ship_pos[1]),
-            float(state.state.heading),
+            float(ship_pos_arr[0]),
+            float(ship_pos_arr[1]),
+            float(heading),
         )
 
     def extract_velocity(self, env, ship_index: int = 0) -> tuple[float, float, float]:
@@ -565,13 +594,14 @@ class ModelVisualisationAdapter(ABC):
             ValueError: If the environment does not expose enough state to
                 extract velocity.
         """
-        phys_sim = _extract_indexed_value(getattr(env, "phys_sims", None), ship_index=ship_index)
-        if phys_sim is None or not hasattr(phys_sim, "state"):
+        phys_sim = _extract_physics_entry(env, ship_index=ship_index)
+        state = getattr(phys_sim, "state", phys_sim)
+        if state is None or getattr(state, "u", None) is None:
             raise ValueError(f"Adapter '{self.family}' could not extract velocity from the environment.")
         return (
-            float(phys_sim.state.u),
-            float(getattr(phys_sim.state, "v", 0.0)),
-            float(getattr(phys_sim.state, "r", 0.0)),
+            float(state.u),
+            float(getattr(state, "v", 0.0)),
+            float(getattr(state, "r", 0.0)),
         )
 
     def extract_actuator_state(self, env, ship_index: int = 0) -> Optional[np.ndarray]:
@@ -611,6 +641,8 @@ class ModelVisualisationAdapter(ABC):
                 specifications.
         """
         ship = _extract_indexed_value(getattr(env, "ships", None), ship_index=ship_index)
+        if ship is None:
+            ship = _extract_indexed_value(getattr(env, "ship", None), ship_index=ship_index)
         if ship is None or not hasattr(ship, "specifications"):
             raise ValueError(
                 f"Adapter '{self.family}' could not extract ship specifications from the environment."

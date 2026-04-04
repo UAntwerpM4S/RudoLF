@@ -232,14 +232,15 @@ class TestObsSpaceParity:
     """T-010: Validate the current observation-space compatibility contract.
 
     AirSimEnv uses a flat 10-channel observation. PySimEnv currently exposes
-    12 channels per ship (the AirSim-compatible core plus 2 extra features).
+    a flat 12-channel observation (the AirSim-compatible core plus 2 extra
+    features).
     """
 
     @pytest.fixture(scope="class")
     def pysim_env(self):
         """Create a real PySimEnv (pure Python, no mocking required)."""
         from fw.environments.py_sim_env import PySimEnv
-        env = PySimEnv(render_mode=None, num_ships=1)
+        env = PySimEnv(render_mode=None)
         yield env
         # no close needed – PySimEnv has no network connections
 
@@ -274,8 +275,8 @@ class TestObsSpaceParity:
     def test_obs_bounds_per_channel_match(self, mock_airsim, pysim_env):
         """Validate matching bounds for shared channels and known differences."""
         airsim_env, _ = mock_airsim
-        py_low = pysim_env.observation_space.low.squeeze(axis=0)
-        py_high = pysim_env.observation_space.high.squeeze(axis=0)
+        py_low = np.asarray(pysim_env.observation_space.low, dtype=np.float32).reshape(-1)
+        py_high = np.asarray(pysim_env.observation_space.high, dtype=np.float32).reshape(-1)
 
         air_low = airsim_env.observation_space.low
         air_high = airsim_env.observation_space.high
@@ -300,14 +301,14 @@ class TestObsSpaceParity:
         np.testing.assert_array_equal(air_high[3:6], np.array([1.0, 1.0, 2.0], dtype=np.float32))
 
     def test_obs_shape_difference_is_documented(self, mock_airsim, pysim_env):
-        """PySimEnv wraps observations per ship; AirSimEnv is flat.
+        """PySimEnv and AirSimEnv both expose flat observations.
 
         Callers that transfer policies between environments must handle this
-        shape/channel difference explicitly.
+        channel-count difference explicitly.
         """
         airsim_env, _ = mock_airsim
         assert airsim_env.observation_space.shape == (10,)
-        assert pysim_env.observation_space.shape == (1, 12)
+        assert pysim_env.observation_space.shape == (12,)
 
 
 

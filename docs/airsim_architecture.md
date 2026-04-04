@@ -49,6 +49,8 @@ flowchart TD
     D --> L["AirSimSessionExporter"]
     E --> L
     F --> L
+    E --> M["trajectory_analysis.py"]
+    F --> M
 ```
 
 ## Runtime Routing Overview
@@ -313,11 +315,16 @@ src/airsim/
 - dedicated to models trained in `AirSimEnv`
 - uses `AirSimEnv.reset()`, `AirSimEnv.step()`, and `AirSimEnv.close()`
 - mirrors the training-style action -> physics -> feedback loop
+- computes post-run KPIs by reusing `inference_session.csv` and `airsim_telemetry.csv`
+- prints a concise console summary (reward, duration, distance, cross-track error)
+- exports `trajectory_2d_vs_3d.png` with side-by-side trajectory comparison
 
 ### `run_visualise_models.py`
 
 - dedicated to framework-model replay in UE5
 - resolves a model adapter
+- reuses `visualisation_session.csv` and bridge telemetry for KPI summaries
+- exports side-by-side `trajectory_2d_vs_3d.png` for 2D vs 3D comparison
 - keeps framework physics authoritative
 - mirrors motion into UE5
 - supports matplotlib and UE5-camera minimaps
