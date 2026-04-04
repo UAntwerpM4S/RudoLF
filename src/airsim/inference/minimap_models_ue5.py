@@ -184,11 +184,31 @@ class UE5TopDownMinimap:
         if self.bridge.coord_transform is None:
             raise RuntimeError("UE5 minimap needs an active coordinate transform.")
 
-        ship_pos = env.ship_pos[0]
-        heading = float(env.phys_sims[0].state.heading)
+        ship_pos_value = getattr(env, "ship_pos", None)
+        ship_pos_arr = np.asarray(ship_pos_value, dtype=np.float64)
+        if ship_pos_arr.ndim > 1:
+            ship_pos_arr = ship_pos_arr[0]
+        ship_pos_arr = ship_pos_arr.reshape(-1)
+
+        state_entry = None
+        if state_entry is None:
+            state_entry = getattr(env, "phys_sim", None)
+        if state_entry is None:
+            # Backward compatibility for earlier multi-sim env variants.
+            phys_sims = getattr(env, "phys_sims", None)
+            if isinstance(phys_sims, (list, tuple)) and phys_sims:
+                state_entry = phys_sims[0]
+            elif phys_sims is not None:
+                state_entry = phys_sims
+        state = getattr(state_entry, "state", state_entry)
+        heading = None if state is None else getattr(state, "heading", None)
+
+        if ship_pos_arr.size < 2 or heading is None:
+            raise ValueError("Environment does not expose ship pose for minimap rendering.")
+
         x, y, _ = self.bridge.coord_transform.fossen_to_airsim(
-            float(ship_pos[0]),
-            float(ship_pos[1]),
+            float(ship_pos_arr[0]),
+            float(ship_pos_arr[1]),
             self.bridge.render_z,
         )
         yaw = self.bridge.coord_transform.fossen_heading_to_airsim_yaw(heading)

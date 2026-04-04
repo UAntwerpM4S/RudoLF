@@ -13,10 +13,19 @@ import logging
 import multiprocessing
 
 if __name__ == "__main__":
+    import os
+
+    verbose = str(os.environ.get("FW_AIRSIM_VERBOSE", "0")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.INFO if verbose else logging.WARNING,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+    logging.getLogger("sim").setLevel(logging.INFO if verbose else logging.ERROR)
     multiprocessing.set_start_method("spawn", force=True)
 
     from fw.trainer import Trainer

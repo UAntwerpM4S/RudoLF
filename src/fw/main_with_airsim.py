@@ -17,14 +17,22 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     from pathlib import Path
     import os
 
+    _verbose_airsim = str(os.environ.get("FW_AIRSIM_VERBOSE", "0")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    _airsim_log_level = logging.INFO if _verbose_airsim else logging.WARNING
+    _sim_log_level = logging.INFO if _verbose_airsim else logging.ERROR
+
     logging.basicConfig(
-        level=logging.INFO,
+        level=_airsim_log_level,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
-    # Suppress all airsim loggers by default; they are re-enabled once a live
-    # connection is confirmed (see visualize / train blocks below).
-    logging.getLogger("airsim").setLevel(logging.CRITICAL)
-    logging.getLogger("sim").setLevel(logging.CRITICAL)
+    # Keep AirSim and simulator logs concise by default.
+    logging.getLogger("airsim").setLevel(_airsim_log_level)
+    logging.getLogger("sim").setLevel(_sim_log_level)
 
 
     multiprocessing.set_start_method("spawn", force=True)
@@ -149,7 +157,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         if model_visualise:
             import airsim.inference.run_visualise_models as run_visualise_models_module
 
-            logging.getLogger("airsim").setLevel(logging.INFO)
+            logging.getLogger("airsim").setLevel(_airsim_log_level)
             run_visualise_models_module.run_visualise_models(
                 model_path=str(
                     resolve_path_relative_to_src(
@@ -192,13 +200,14 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 minimap_update_hz=float(visualization_cfg.get("minimap_update_hz", 20.0)),
                 bridge_telemetry_hz=float(visualization_cfg.get("bridge_telemetry_hz", 12.0)),
                 startup_settle_s=float(visualization_cfg.get("startup_settle_s", 0.4)),
+                verbose=bool(visualization_cfg.get("verbose", _verbose_airsim)),
             )
             return True
 
         if inference_visualise:
             import airsim.inference.run_inference as run_inference_module
 
-            logging.getLogger("airsim").setLevel(logging.INFO)
+            logging.getLogger("airsim").setLevel(_airsim_log_level)
             run_inference_module.run_inference(
                 model_path=str(resolve_path_relative_to_src(str(visualization_cfg.get("inference_model_path", "models/AirSimEnv_PPO_policy.zip")), _SRC_DIR)),
                 ip=ip,
@@ -206,6 +215,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 max_steps=max_steps,
                 num_episodes=episodes,
                 device=device,
+                verbose=bool(visualization_cfg.get("verbose", _verbose_airsim)),
             )
             return True
 
@@ -294,7 +304,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     if "train" == action:
         # Re-enable airsim logging only when the airsim environment is selected
         if _is_airsim_selected(envs):
-            logging.getLogger("airsim").setLevel(logging.INFO)
+            logging.getLogger("airsim").setLevel(_airsim_log_level)
 
         configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
                          airsim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
@@ -318,9 +328,9 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             temp_bridge = AirSimBridge(bridge_cfg)
             if temp_bridge.is_connected:
                 airsim_bridge = temp_bridge
-                logging.getLogger("airsim").setLevel(logging.INFO)  # connected - enable airsim logs
+                logging.getLogger("airsim").setLevel(_airsim_log_level)
             else:
                 print("[main] AirSim bridge not connected - running without.")
         elif _is_airsim_selected(envs):
-            logging.getLogger("airsim").setLevel(logging.INFO)
+            logging.getLogger("airsim").setLevel(_airsim_log_level)
         trainer.visualize(envs, airsim_bridge=airsim_bridge)

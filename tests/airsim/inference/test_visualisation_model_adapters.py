@@ -210,6 +210,38 @@ def test_motion_state_from_env_supports_flat_ship_position():
     )
 
 
+def test_motion_state_from_env_supports_single_ship_attribute_layout():
+    """Adapter extraction should support envs exposing ``phys_sim`` and ``ship``."""
+    adapter = PySimVisualisationAdapter()
+    env = SimpleNamespace(
+        ship_pos=np.array([12.0, 34.0], dtype=np.float32),
+        phys_sim=SimpleNamespace(state=SimpleNamespace(heading=0.3, u=4.0, v=1.5, r=0.2)),
+        performed_action=np.array([0.2, 0.6], dtype=np.float32),
+        ship=SimpleNamespace(specifications=SimpleNamespace(max_rudder_angle=1.0, min_thrust=-1.0, max_thrust=1.0)),
+    )
+
+    motion_state = adapter.motion_state_from_env(env, _bridge())
+    expected_vx = 4.0 * np.cos(0.3) - 1.5 * np.sin(0.3)
+    expected_vy = 4.0 * np.sin(0.3) + 1.5 * np.cos(0.3)
+    np.testing.assert_allclose(
+        motion_state,
+        np.array(
+            [
+                112.0,
+                -16.0,
+                0.55,
+                expected_vx + 1.0,
+                expected_vy - 2.0,
+                0.1,
+            ],
+            dtype=np.float64,
+        ),
+    )
+
+    specs = adapter.extract_ship_specifications(env)
+    assert specs.max_rudder_angle == 1.0
+
+
 def test_extract_actuator_state_supports_flat_action_vector():
     """Actuator extraction should not require ``performed_action[0]``."""
     adapter = PySimVisualisationAdapter()

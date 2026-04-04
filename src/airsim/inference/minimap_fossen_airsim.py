@@ -236,9 +236,10 @@ def _snapshot_env(env) -> dict:
     Returns:
         Dictionary of serialisable static map data.
     """
+    ship_pos, heading = _extract_primary_ship_pose(env)
     return {
-        "ship_pos_0": np.array(env.ship_pos[0], dtype=np.float64),
-        "initial_heading": float(env.phys_sims[0].state.heading),
+        "ship_pos_0": np.array(ship_pos, dtype=np.float64),
+        "initial_heading": float(heading),
         "target_pos": (
             np.array(env.target_pos, dtype=np.float64)
             if getattr(env, "target_pos", None) is not None
@@ -262,6 +263,43 @@ def _snapshot_env(env) -> dict:
             else None
         ),
     }
+
+
+def _extract_primary_ship_pose(env) -> tuple[np.ndarray, float]:
+    """Extract one ship position and heading from common env layouts.
+
+    Args:
+        env: Framework environment exposing one of the supported position and
+            physics-state attributes.
+
+    Returns:
+        tuple[np.ndarray, float]: Flattened ``(x, y)`` position and heading in
+        framework coordinates.
+
+    Raises:
+        ValueError: If position or heading cannot be extracted.
+    """
+    ship_pos_value = getattr(env, "ship_pos", None)
+    ship_pos = np.asarray(ship_pos_value, dtype=np.float64)
+    if ship_pos.ndim > 1:
+        ship_pos = ship_pos[0]
+    ship_pos = ship_pos.reshape(-1)
+
+    state_entry = None
+    phys_sims = getattr(env, "phys_sims", None)
+    if isinstance(phys_sims, (list, tuple)) and phys_sims:
+        state_entry = phys_sims[0]
+    elif phys_sims is not None:
+        state_entry = phys_sims
+    if state_entry is None:
+        state_entry = getattr(env, "phys_sim", None)
+
+    state = getattr(state_entry, "state", state_entry)
+    heading = None if state is None else getattr(state, "heading", None)
+    if ship_pos.size < 2 or heading is None:
+        raise ValueError("Environment does not expose ship pose for minimap rendering.")
+
+    return ship_pos, float(heading)
 
 
 def _worker_save_png(
@@ -539,8 +577,7 @@ class MinimapFossenAirsim:
         Args:
             env: Active framework environment providing position and heading.
         """
-        pos = np.array(env.ship_pos[0], dtype=np.float64)
-        hdg = float(env.phys_sims[0].state.heading)
+        pos, hdg = _extract_primary_ship_pose(env)
         _try_put_latest(self._update_q, ("update", pos, hdg))
 
     def finish(self, total_reward: float, episode: int = 1) -> None:

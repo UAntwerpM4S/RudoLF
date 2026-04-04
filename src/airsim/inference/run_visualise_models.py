@@ -36,6 +36,12 @@ from fw.common.airsim.tools.airsim_export import (  # noqa: E402
     AirSimSessionExporter,
     build_framework_visualisation_row,
 )
+from fw.common.airsim.tools.trajectory_analysis import (  # noqa: E402
+    build_run_summary_from_csv,
+    format_performance_summary,
+    render_side_by_side_trajectory_plot,
+)
+from fw.config import AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME  # noqa: E402
 from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -45,6 +51,54 @@ _DEFAULT_MINIMAP_UPDATE_HZ = 20.0
 _DEFAULT_BRIDGE_TELEMETRY_HZ = 12.0
 _DEFAULT_STARTUP_SETTLE_S = 0.4
 _DEFAULT_TRAIL_MIN_SEGMENT_M = 1.5
+
+
+def _normalise_policy_observation(obs, expected_dim: int | None = None) -> np.ndarray:
+    """Convert framework observations to a flat policy input vector.
+
+    This keeps AirSim replay compatible with both flat single-ship observations
+    and batched per-ship layouts, without requiring framework env changes.
+
+    Args:
+        obs: Observation payload returned by the framework environment.
+        expected_dim: Optional policy input dimension used to disambiguate
+            flattening vs selecting the first ship row.
+
+    Returns:
+        np.ndarray: Flat observation vector for ``PPOPolicy.predict``.
+    """
+    arr = np.asarray(obs, dtype=np.float32)
+
+    if arr.ndim <= 1:
+        return arr.reshape(-1)
+
+    if arr.shape[0] == 1:
+        return arr[0].reshape(-1)
+
+    if expected_dim is not None and arr.shape[-1] == int(expected_dim):
+        return arr[0].reshape(-1)
+
+    flat = arr.reshape(-1)
+    if expected_dim is not None and flat.size == int(expected_dim):
+        return flat
+
+    return arr[0].reshape(-1)
+
+
+def _normalise_policy_action(action, expected_dim: int | None = None) -> np.ndarray:
+    """Convert policy action output to a flat environment action vector.
+
+    Args:
+        action: Action payload returned by ``PPOPolicy.predict``.
+        expected_dim: Optional action dimension inferred from env action space.
+
+    Returns:
+        np.ndarray: Flat action vector.
+    """
+    arr = np.asarray(action, dtype=np.float32).reshape(-1)
+    if expected_dim is None or arr.size <= int(expected_dim):
+        return arr
+    return arr[: int(expected_dim)]
 
 
 class VisualiseModelsRunner:
@@ -187,6 +241,7 @@ class VisualiseModelsRunner:
         minimap_update_hz: float = _DEFAULT_MINIMAP_UPDATE_HZ,
         bridge_telemetry_hz: float = _DEFAULT_BRIDGE_TELEMETRY_HZ,
         startup_settle_s: float = _DEFAULT_STARTUP_SETTLE_S,
+        verbose: bool = False,
     ) -> None:
         """Run framework-model playback mirrored into UE5.
 
@@ -228,7 +283,10 @@ class VisualiseModelsRunner:
             minimap_update_hz: Maximum minimap refresh rate.
             bridge_telemetry_hz: Maximum bridge telemetry polling rate.
             startup_settle_s: Startup settle window before stepping begins.
+            verbose: Whether to emit detailed per-step logging.
         """
+        logger.setLevel(logging.INFO if verbose else logging.WARNING)
+
         selected_env = self._resolve_environment_name(model_path)
         resolved_model_path = resolve_model_path(model_path, _SRC_DIR)
 
@@ -300,6 +358,7 @@ class VisualiseModelsRunner:
                     "bridge_telemetry_path": str(session_exporter.bridge_log_path),
                 }
             )
+            comparison_plot_path = session_exporter.export_dir / AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME
             bridge = None
             env = None
             minimap = None
@@ -444,11 +503,16 @@ class VisualiseModelsRunner:
                     steps_since_ue5_update = 0
                     last_log_t = 0.0
                     episode_wall_start = time.perf_counter()
+                    expected_obs_dim = getattr(policy, "input_dim", None)
+                    expected_action_dim = None
+                    action_space = getattr(env, "action_space", None)
+                    if action_space is not None and getattr(action_space, "shape", None) is not None:
+                        expected_action_dim = int(np.prod(action_space.shape, dtype=np.int64))
 
                     while step < max_steps:
-                        policy_obs = obs[0] if isinstance(obs, np.ndarray) and obs.ndim > 1 else obs
+                        policy_obs = _normalise_policy_observation(obs, expected_dim=expected_obs_dim)
                         action, _, _ = policy.predict(policy_obs, deterministic=True)
-                        action = np.asarray(action).reshape(-1)
+                        action = _normalise_policy_action(action, expected_dim=expected_action_dim)
 
                         obs, reward, done, truncated, _ = env.step(action)
                         total_reward += float(reward)
@@ -527,6 +591,8 @@ class VisualiseModelsRunner:
                         )
 
                         if (
+                            verbose
+                            and
                             log_every > 0
                             and step % log_every == 0
                             and ((now - last_log_t) >= max(float(min_log_interval_s), 0.0) or done or truncated)
@@ -588,6 +654,53 @@ class VisualiseModelsRunner:
                     bridge.disconnect()
                 print(f"Exports saved to '{session_exporter.export_dir}'.")
                 print("\nVisualisation complete - AirSim connection closed.")
+
+            # Reuse persisted telemetry for BI metrics and comparison plots.
+            session_exporter.save()
+            session_csv_path = Path(
+                getattr(
+                    session_exporter,
+                    "telemetry_path",
+                    session_exporter.export_dir / "visualisation_session.csv",
+                )
+            )
+            bridge_csv_path = Path(
+                getattr(
+                    session_exporter,
+                    "bridge_log_path",
+                    session_exporter.export_dir / "airsim_telemetry.csv",
+                )
+            )
+            summary = build_run_summary_from_csv(
+                session_csv_path=session_csv_path,
+                bridge_csv_path=bridge_csv_path,
+            )
+            session_exporter.update_metadata(
+                {
+                    "performance_summary": summary.to_metadata_dict(),
+                }
+            )
+            session_exporter.save()
+
+            print()
+            print(format_performance_summary("AIRSIM VISUALISATION SUMMARY", summary))
+
+            comparison_plot = render_side_by_side_trajectory_plot(
+                session_csv_path=session_csv_path,
+                bridge_csv_path=bridge_csv_path,
+                output_path=comparison_plot_path,
+                title=f"2D vs 3D Trajectory - {resolved_model_path.name}",
+            )
+            if comparison_plot is not None:
+                print(f"2D vs 3D trajectory plot saved to '{comparison_plot}'.")
+                session_exporter.update_metadata(
+                    {
+                        "comparison_plot": comparison_plot.name,
+                    }
+                )
+                session_exporter.save()
+            else:
+                print("2D vs 3D trajectory plot skipped (missing telemetry or matplotlib).")
 
 
 def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) -> None:
@@ -659,12 +772,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--minimap-update-hz", type=float, default=_DEFAULT_MINIMAP_UPDATE_HZ)
     parser.add_argument("--bridge-telemetry-hz", type=float, default=_DEFAULT_BRIDGE_TELEMETRY_HZ)
     parser.add_argument("--startup-settle-s", type=float, default=_DEFAULT_STARTUP_SETTLE_S)
+    parser.add_argument("--verbose", action="store_true", default=False)
     return parser
 
 
 if __name__ == "__main__":
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
@@ -709,4 +823,5 @@ if __name__ == "__main__":
         minimap_update_hz=args.minimap_update_hz,
         bridge_telemetry_hz=args.bridge_telemetry_hz,
         startup_settle_s=args.startup_settle_s,
+        verbose=args.verbose,
     )
