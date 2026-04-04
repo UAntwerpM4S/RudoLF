@@ -338,7 +338,7 @@ class MultiPPOAgent(BasePPOAgent):
             RuntimeError: If loading fails or required files are missing.
 
         Notes:
-            - Archive must contain files named `agent_0.pth`, `agent_1.pth`, etc.
+            - Archive must contain files named `policy_0.pth`, `policy_1.pth`, etc.
             - Each file represents a serialized policy for one agent.
         """
 
@@ -358,7 +358,7 @@ class MultiPPOAgent(BasePPOAgent):
                 with zipfile.ZipFile(policy_file_name, 'r') as main_zip:
                     # Validate archive contents
                     file_list = main_zip.namelist()
-                    expected_files = {f"agent_{i}.pth" for i in range(len(self.agents))}
+                    expected_files = {f"policy_{i}.pth" for i in range(len(self.agents))}
                     if not expected_files.issubset(set(file_list)):
                         missing = expected_files - set(file_list)
                         raise RuntimeError(f"Archive missing required files: {missing}")
@@ -367,10 +367,10 @@ class MultiPPOAgent(BasePPOAgent):
 
                 # 2. Load each agent
                 for i, agent in enumerate(self.agents):
-                    agent_path = os.path.join(tmp_dir, f"agent_{i}.pth")
+                    agent_path = os.path.join(tmp_dir, f"policy_{i}.pth")
 
                     if not os.path.exists(agent_path):
-                        raise FileNotFoundError(f"Missing policy file: agent_{i}.pth")
+                        raise FileNotFoundError(f"Missing policy file: policy_{i}.pth")
 
                     saved_variables = torch.load(agent_path, map_location=self.device, weights_only=False)
 
@@ -413,7 +413,7 @@ class MultiPPOAgent(BasePPOAgent):
             try:
                 # 1. Save each agent as a .pth file (state_dict only)
                 for i, agent in enumerate(self.agents):
-                    agent_path = os.path.join(tmp_dir, f"agent_{i}.pth")
+                    agent_path = os.path.join(tmp_dir, f"policy_{i}.pth")
 
                     if agent.policy is None:
                         raise RuntimeError(f"Agent {i} has no policy to save.")
@@ -426,7 +426,7 @@ class MultiPPOAgent(BasePPOAgent):
                 # 2. Zip all .pth files into one archive
                 with zipfile.ZipFile(full_path, 'w', compression=zipfile.ZIP_DEFLATED) as main_zip:
                     for i in range(len(self.agents)):
-                        file_name = f"agent_{i}.pth"
+                        file_name = f"policy_{i}.pth"
                         file_path = os.path.join(tmp_dir, file_name)
 
                         if not os.path.exists(file_path):
