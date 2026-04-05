@@ -130,7 +130,7 @@ class MultiPPOAgent(BasePPOAgent):
             np.ndarray: Tuple or array of initial observations.
         """
 
-        for sub_env in self.env.sub_environments:
+        for sub_env in self.env.sub_environments.values():
             sub_env.randomize()
 
         states, _ = self.env.reset()
@@ -247,7 +247,7 @@ class MultiPPOAgent(BasePPOAgent):
         best_policy_files = [
             f"Best_{env.type_name}_{i+1}_PPO_policy" if self.num_envs > 1
             else f"Best_{env.type_name}_PPO_policy"
-            for i, env in enumerate(self.env.sub_environments)
+            for i, env in enumerate(self.env.sub_environments.values())
         ]
 
         for iteration in range(stopping_condition.max_time_steps):
@@ -320,7 +320,7 @@ class MultiPPOAgent(BasePPOAgent):
         # Dump training metrics to CSV
         dump_multi_agent_metrics(self.model_dir, training_metrics)
 
-        for sub_env in self.env.sub_environments:
+        for sub_env in self.env.sub_environments.values():
             sub_env.close()
 
         print("Training completed!")
