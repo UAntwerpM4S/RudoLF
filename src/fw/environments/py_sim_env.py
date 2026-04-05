@@ -880,7 +880,7 @@ class PySimEnv(BaseEnv):
         # Reached checkpoint circle
         if self.segment_point_distance(self.previous_ship_pos, self.ship_pos, current_checkpoint["pos"]) <= current_checkpoint['radius']:
             if self.checkpoint_index == len(self.checkpoints) - 1:
-                print(f"Target REACHED at distance {checkpoint_distance:.2f}")
+                print(f"{self.env_name} - target REACHED at distance {checkpoint_distance:.2f}")
             self.checkpoint_index += 1
             self.step_count = 0
 

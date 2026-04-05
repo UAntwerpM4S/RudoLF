@@ -43,7 +43,11 @@ class MultiSimEnv(BaseEnv):
 
         super().__init__(render_mode=render_mode)
 
-        self._sub_environments = sub_environments
+        self._sub_environments = {}
+        for i, env in enumerate(sub_environments):
+            name = f"env_{i}"
+            env.env_name = name
+            self._sub_environments[name] = env
         self.num_envs = len(sub_environments)
 
         if self.num_envs == 0:
@@ -88,7 +92,7 @@ class MultiSimEnv(BaseEnv):
         observations = []
         infos = []
 
-        for i, env in enumerate(self.sub_environments):
+        for i, env in enumerate(self.sub_environments.values()):
             env_seed = None if seed is None else seed + i
             obs, info = env.reset(seed=env_seed, options=options)
 
@@ -140,7 +144,7 @@ class MultiSimEnv(BaseEnv):
         truncations = []
         infos = []
 
-        for i, env in enumerate(self.sub_environments):
+        for i, env in enumerate(self.sub_environments.values()):
             obs, reward, terminated, truncated, info = env.step(action[i])
 
             observations.append(obs)

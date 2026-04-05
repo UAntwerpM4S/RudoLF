@@ -21,7 +21,8 @@ MAX_GRID_POS = 14500
 
 
 class PolicyStrategy(Enum):
-    """Defines strategies for handling policies during environment switching.
+    """
+    Defines strategies for handling policies during environment switching.
 
     Attributes:
         RESET_POLICY: Start with a fresh policy.
@@ -235,7 +236,7 @@ class AgentManager:
         if sub_envs is None or len(sub_envs) < 1:
             target_env = env
         elif len(sub_envs) == 1:
-            target_env = sub_envs[0]
+            target_env = next(iter(sub_envs.values()))
         else:
             raise RuntimeError("SinglePPOAgent requires exactly one sub-environment.")
 
@@ -269,7 +270,7 @@ class AgentManager:
 
         agents = [
             SinglePPOAgent(environment=sub_env, **self._hyperparameters)
-            for sub_env in env.sub_environments
+            for sub_env in env.sub_environments.values()
         ]
 
         return MultiPPOAgent(environment=env, agents=agents, **self._hyperparameters)
