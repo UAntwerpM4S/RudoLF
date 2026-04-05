@@ -26,7 +26,7 @@ class BaseEnv(gym.Env):
         self._render_mode = render_mode
         self._smoothing_enabled = True
         self._sub_environments = []
-        self._env_name = ""
+        self._env_name = type(self).__name__
 
 
     @property
