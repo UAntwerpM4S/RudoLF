@@ -45,7 +45,7 @@ class MultiSimEnv(BaseEnv):
 
         self._sub_environments = {}
         for i, env in enumerate(sub_environments):
-            name = f"env_{i}"
+            name = f"{env.type_name}_{i}"
             env.env_name = name
             self._sub_environments[name] = env
         self.num_envs = len(sub_environments)
