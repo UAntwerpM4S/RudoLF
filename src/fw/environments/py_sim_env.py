@@ -157,6 +157,9 @@ class PySimEnv(BaseEnv):
         self.dynamics = None
         self.ship_pos = None
 
+        self._agent_state = None
+        self.other_agent_states = {}
+
         # RNG: environment-local RNG for reproducibility when seeded via reset()
         self._rng: np.random.Generator = np.random.default_rng()
 
@@ -187,6 +190,38 @@ class PySimEnv(BaseEnv):
 
         # Rendering flag
         self.initialize_plots = True
+
+    def get_agent_state(self):
+        """
+        Retrieves the current state of this agent from the physics simulator.
+
+        Returns:
+            Any: The current state of the agent as provided by the underlying
+            physics simulator (`self.phys_sim.state`). The exact structure
+            depends on the simulator implementation.
+        """
+
+        return self.phys_sim.state
+
+    def set_other_agents_states(self, agent_states):
+        """
+        Updates the stored states of all other agents in the environment.
+
+        Filters out this agent's own state (identified by `self.env_name`)
+        and updates `self.other_agent_states` with the remaining entries.
+
+        Args:
+            agent_states (dict): A mapping of agent identifiers (e.g., names or IDs)
+                to their corresponding states.
+        """
+
+        filtered = {
+            agent_name: state
+            for agent_name, state in agent_states.items()
+            if agent_name != self.env_name
+        }
+
+        self.other_agent_states.update(filtered)
 
     # -----------------------
     # Initialization helpers
@@ -220,6 +255,7 @@ class PySimEnv(BaseEnv):
             y=self.initial_ship_pos[1],
             heading=self.ship_heading,
             u=0.0, v=0.0, r=0.0))
+        self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
 
     def create_simulator(self):
@@ -789,6 +825,7 @@ class PySimEnv(BaseEnv):
 
             # Update state vector
             self.phys_sim.step(action, self.enable_smoothing)
+            self._agent_state = self.phys_sim.state
             self.ship_pos = np.array([self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32)
             self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
             self.step_count += 1
