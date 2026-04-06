@@ -53,6 +53,8 @@ class MultiSimEnv(BaseEnv):
         if self.num_envs == 0:
             raise ValueError("MultiSimEnv requires at least one environment")
 
+        self.agent_states = {}
+
         # --- Structured observation space ---
         self.observation_space = spaces.Tuple(
             tuple(env.observation_space for env in sub_environments)
@@ -62,6 +64,28 @@ class MultiSimEnv(BaseEnv):
         self.action_space = spaces.Tuple(
             tuple(env.action_space for env in sub_environments)
         )
+
+
+    def update_agent_states(self):
+        """
+        Updates the stored states of all agents from their sub-environments.
+
+        Iterates over all sub-environments, retrieves each agent's current
+        state using `get_agent_state()`, and updates `self.agent_states`
+        with a mapping from environment names to agent states.
+
+        This method overwrites existing entries in `self.agent_states`
+        for agents present in `self.sub_environments`.
+
+        Returns:
+            None
+        """
+
+        self.agent_states.update({
+            env.env_name: env.get_agent_state()
+            for env in self.sub_environments.values()
+        })
+
 
 
     def reset(self, seed: int = None, options=None):
@@ -98,6 +122,8 @@ class MultiSimEnv(BaseEnv):
 
             observations.append(obs)
             infos.append(info)
+
+        self.update_agent_states()
 
         return tuple(observations), infos
 
@@ -145,6 +171,7 @@ class MultiSimEnv(BaseEnv):
         infos = []
 
         for i, env in enumerate(self.sub_environments.values()):
+            env.set_other_agents_states(self.agent_states)
             obs, reward, terminated, truncated, info = env.step(action[i])
 
             observations.append(obs)
@@ -152,6 +179,8 @@ class MultiSimEnv(BaseEnv):
             terminations.append(terminated)
             truncations.append(truncated)
             infos.append(info)
+
+        self.update_agent_states()
 
         return (
             tuple(observations),
