@@ -94,6 +94,42 @@ class BaseEnv(gym.Env):
         return self._sub_environments
 
 
+    def get_agent_state(self):
+        """
+        Retrieves the current state of this agent.
+
+        This method should be implemented by subclasses to return a
+        representation of the agent's internal state at the current time step.
+
+        Returns:
+            Any: The current state of the agent. The exact format and structure
+            depend on the specific implementation.
+
+        Raises:
+            NotImplementedError: If the method is not implemented in a subclass.
+        """
+
+        raise NotImplementedError
+
+
+    def set_other_agents_states(self, agent_states):
+        """
+        Updates the stored states of other agents in the environment.
+
+        This method should be implemented by subclasses to store or process
+        the states of all agents except the current one.
+
+        Args:
+            agent_states (dict): A mapping of agent identifiers (e.g., names or IDs)
+                to their corresponding states.
+
+        Raises:
+            NotImplementedError: If the method is not implemented in a subclass.
+        """
+
+        raise NotImplementedError
+
+
     @property
     def type_name(self):
         """
