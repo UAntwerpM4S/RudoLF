@@ -131,7 +131,8 @@ class MultiPPOAgent(BasePPOAgent):
         """
 
         for sub_env in self.env.sub_environments.values():
-            sub_env.randomize()
+            if hasattr(sub_env, "randomize"):
+                sub_env.randomize()
 
         states, _ = self.env.reset()
         return states
@@ -185,7 +186,7 @@ class MultiPPOAgent(BasePPOAgent):
             Same as `predict`.
         """
 
-        return self.predict(states, deterministic=False)
+        return self.predict(states, deterministic=deterministic)
 
 
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):
