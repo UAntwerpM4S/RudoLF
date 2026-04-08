@@ -240,11 +240,13 @@ class BasePPOAgent(BaseAgent):
         m2 = m_a + m_b + delta ** 2 * self.reward_count * batch_count / tot_count
         new_var = m2 / tot_count
 
+        old_mean = self.reward_mean
+        old_var = self.reward_var
         self.reward_mean = new_mean
         self.reward_var = new_var
         self.reward_count = tot_count
 
-        return (rewards - self.reward_mean) / (np.sqrt(self.reward_var) + 1e-8)
+        return (rewards - old_mean) / (np.sqrt(old_var) + 1e-8)
 
 
     def run_parallel_episodes(self, num_envs) -> list:

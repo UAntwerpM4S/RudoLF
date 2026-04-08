@@ -61,7 +61,7 @@ class SinglePPOAgent(BasePPOAgent):
             self.output_dim = self.action_space.shape[0]
 
         self.input_dim = self.observation_space.shape[0]
-        self.policy = PPOPolicy(self.input_dim, self.output_dim, self.device)
+        self.policy = PPOPolicy(self.input_dim, self.output_dim, str(self.device))
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         self._vec_env = None
 
