@@ -249,12 +249,15 @@ class BasePPOAgent(BaseAgent):
         return (rewards - old_mean) / (np.sqrt(old_var) + 1e-8)
 
 
-    def run_parallel_episodes(self, num_envs) -> list:
+    def run_parallel_episodes(self, num_envs: int) -> list:
         """
         Collect one trajectory per environment in parallel.
 
         Environments are stepped synchronously until each one reaches a terminal
         or truncated state, or until `max_nbr_iterations` is reached.
+
+        Actions for agents that have already finished are replaced with zeros
+        so the joint simulator is not perturbed after an agent's episode ends.
 
         Args:
             num_envs (int): Number of environments to simulate.
@@ -301,10 +304,29 @@ class BasePPOAgent(BaseAgent):
 
         safeguard = 0
         while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
-            # Select actions and get value predictions
+
+            # Policy predicts actions for all agents from live states
             actions, log_probs, values = self._predict(states, deterministic=False)
 
-            next_states, rewards, terminations, truncations = self._step_envs(actions)
+            # Build effective_actions: zero out done agents before stepping the sim.
+            # This must happen BEFORE _step_envs so the simulator receives a
+            # stable neutral input for ships that have already finished.
+            effective_actions = list(actions)
+
+            for env_id in range(num_envs):
+                if envs_done[env_id]:
+                    # Replace with zero action (neutral helm) — sim receives a
+                    # stopped ship rather than a randomly-acting one
+                    effective_actions[env_id] = np.zeros_like(actions[env_id])
+
+            # Convert back to the same container type _step_envs expects.
+            # SinglePPOAgent uses np.ndarray; MultiPPOAgent uses tuple.
+            if isinstance(actions, np.ndarray):
+                effective_actions = np.stack(effective_actions)
+            else:
+                effective_actions = tuple(effective_actions)
+
+            next_states, rewards, terminations, truncations = self._step_envs(effective_actions)
 
             # Store per-agent transitions
             for env_id in range(num_envs):
@@ -328,11 +350,8 @@ class BasePPOAgent(BaseAgent):
             states = next_states
             safeguard += 1
 
-        if safeguard >= 135000:
-            print(f"Safeguard surpassed the 135000 boundary: {safeguard}.")
-
         if safeguard >= self.max_nbr_iterations:
-            print(f"Safeguard triggered due to reaching max_iterations ({self.max_nbr_iterations}).")
+            print(f"[Warning] Safeguard triggered at {safeguard} steps (max_nbr_iterations={self.max_nbr_iterations}).")
 
         # Process episode data with proper trimming
         episode_data = []
@@ -405,6 +424,7 @@ class BasePPOAgent(BaseAgent):
             )
 
             episode["returns"] = episode["advantages"] + episode["values"]
+            episode["env_id"] = env_id
             episode_data.append(episode)
 
         return episode_data
