@@ -317,7 +317,7 @@ class BasePPOAgent(BaseAgent):
                 if envs_done[env_id]:
                     # Replace with zero action (neutral helm) — sim receives a
                     # stopped ship rather than a randomly-acting one
-                    effective_actions[env_id] = np.zeros_like(actions[env_id])
+                    effective_actions[env_id] = self.env.get_neutral_action(env_id, actions[env_id])
 
             # Convert back to the same container type _step_envs expects.
             # SinglePPOAgent uses np.ndarray; MultiPPOAgent uses tuple.
