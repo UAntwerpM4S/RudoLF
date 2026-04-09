@@ -211,9 +211,9 @@ class MultiPPOAgent(BasePPOAgent):
 
 
     def learn(
-        self,
-        stop_condition: Optional[StopCondition] = None,
-    ):
+            self,
+            stop_condition: Optional[StopCondition] = None,
+    ) -> None:
         """
         Train all agents using parallel rollouts.
 
@@ -234,6 +234,9 @@ class MultiPPOAgent(BasePPOAgent):
 
         Notes:
             - Training is synchronous across environments.
+            - Episodes are matched to agents by env_id tag, not list position.
+            - A missing trajectory for an agent causes a warning + skip, not a crash.
+            - Metrics are recorded as NaN for skipped agents so the CSV stays aligned.
             - Early stopping uses aggregated metrics across agents.
             - Best policies are tracked per agent.
         """
@@ -241,7 +244,7 @@ class MultiPPOAgent(BasePPOAgent):
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
 
         last_save_index = 0
-        best_rewards = [float('-inf') for _ in range(len(self.agents))]
+        best_rewards = [float('-inf')] * len(self.agents)
         training_metrics = {f"agent{i}": [] for i in range(len(self.agents))}
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
@@ -257,18 +260,38 @@ class MultiPPOAgent(BasePPOAgent):
             # Collect batch data from multiple parallel environments
             batch_data = self.run_parallel_episodes(self.num_envs)
 
-            # Validate batch_data length matches number of agents
-            if len(batch_data) != len(self.agents):
-                raise RuntimeError(
-                    f"Batch data size ({len(batch_data)}) does not match "
-                    f"number of agents ({len(self.agents)})"
-                )
+            # Build a dict keyed by env_id for safe lookup.
+            # Each episode dict now carries episode["env_id"].
+            episode_by_env: dict[int, dict] = {
+                ep["env_id"]: ep
+                for ep in batch_data
+                if "env_id" in ep
+            }
+
+            # Fallback: if env_id tags are absent (e.g. running old base code),
+            # reconstruct by position — same behaviour as before.
+            if not episode_by_env:
+                episode_by_env = {i: ep for i, ep in enumerate(batch_data)}
 
             mean_rewards = []
             mean_losses = []
 
             # Train each agent
-            for agent_id, (agent, episode) in enumerate(zip(self.agents, batch_data)):
+            for agent_id, agent in enumerate(self.agents):
+                episode = episode_by_env.get(agent_id)
+
+                if episode is None:
+                    print(f"[Warning] Iteration {iteration}: no trajectory for agent {agent_id} — skipping update.")
+                    mean_rewards.append(float('nan'))
+                    mean_losses.append(float('nan'))
+                    training_metrics[f"agent{agent_id}"].append({
+                        'iteration': iteration,
+                        'loss': float('nan'),
+                        'advantage': float('nan'),
+                        'reward': float('nan'),
+                    })
+                    continue
+
                 mean_reward = np.mean(episode['rewards'])
                 mean_advantage = np.mean(episode['advantages'])
 
@@ -283,7 +306,7 @@ class MultiPPOAgent(BasePPOAgent):
                     'iteration': iteration,
                     'loss': loss,
                     'advantage': mean_advantage,
-                    'reward': mean_reward
+                    'reward': mean_reward,
                 })
 
                 # Save the best policy per agent
@@ -293,21 +316,24 @@ class MultiPPOAgent(BasePPOAgent):
 
                 # Log evaluation results periodically
                 if iteration % self.eval_frequency == 0:
-                    print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
+                    print(f"Iteration {iteration} | agent {agent_id} | average reward: {mean_reward:.3f}, loss: {loss:.3f}")
 
-            # Save checkpoint every 'self.eval_frequency' iterations
+            # Periodic checkpoint (all agents in one zip)
             if iteration > 0 and iteration % self.eval_frequency == 0:
                 self.save_policy(f"ppo_checkpoint_{iteration}")
 
-            # Aggregate metrics for stopping condition
-            mean_reward_all_agents = np.mean(mean_rewards) if mean_rewards else 0.0
-            mean_loss_all_agents = np.mean(mean_losses) if mean_losses else 0.0
+            # Aggregate metrics for stopping condition — ignore NaN entries
+            valid_rewards = [r for r in mean_rewards if not np.isnan(r)]
+            valid_losses = [l for l in mean_losses if not np.isnan(l)]
+
+            mean_reward_all_agents = np.mean(valid_rewards) if valid_rewards else 0.0
+            mean_loss_all_agents = np.mean(valid_losses) if valid_losses else float('nan')
 
             # Check if the condition is met for early stopping
             should_stop, reason = stopping_condition.should_stop(
                 current_step=iteration,
                 mean_reward=mean_reward_all_agents,
-                mean_loss=mean_loss_all_agents
+                mean_loss=mean_loss_all_agents,
             )
 
             if should_stop:
