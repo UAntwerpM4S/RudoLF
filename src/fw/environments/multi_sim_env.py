@@ -19,7 +19,7 @@ class MultiSimEnv(BaseEnv):
     tuples (observations) or NumPy arrays (rewards, termination flags).
 
     Attributes:
-        _sub_environments (list[BaseEnv]): List of wrapped sub-environments.
+        _sub_environments (dict[BaseEnv]): Dict of wrapped sub-environments.
         num_envs (int): Number of sub-environments.
         observation_space (spaces.Tuple): Tuple of sub-environment observation spaces.
         action_space (spaces.Tuple): Tuple of sub-environment action spaces.

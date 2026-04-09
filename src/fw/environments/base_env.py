@@ -24,6 +24,7 @@ class BaseEnv(gym.Env):
             render_mode (str, optional): The rendering mode. Defaults to None.
         """
         super().__init__()
+
         self._render_mode = render_mode
         self._smoothing_enabled = True
         self._sub_environments = {}
