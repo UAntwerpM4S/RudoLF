@@ -19,7 +19,7 @@ class MultiSimEnv(BaseEnv):
     tuples (observations) or NumPy arrays (rewards, termination flags).
 
     Attributes:
-        _sub_environments (list[BaseEnv]): List of wrapped sub-environments.
+        _sub_environments (dict[BaseEnv]): Dict of wrapped sub-environments.
         num_envs (int): Number of sub-environments.
         observation_space (spaces.Tuple): Tuple of sub-environment observation spaces.
         action_space (spaces.Tuple): Tuple of sub-environment action spaces.
@@ -43,7 +43,6 @@ class MultiSimEnv(BaseEnv):
 
         super().__init__(render_mode=render_mode)
 
-        self._sub_environments = {}
         for i, env in enumerate(sub_environments):
             name = f"{env.type_name}_{i}"
             env.env_name = name
@@ -64,6 +63,36 @@ class MultiSimEnv(BaseEnv):
         self.action_space = spaces.Tuple(
             tuple(env.action_space for env in sub_environments)
         )
+
+
+    def _get_ordered_envs(self):
+        """
+        Returns a stable ordered list of sub-environments.
+        Cached to ensure consistent indexing.
+        """
+
+        return list(self.sub_environments.values())
+
+
+    def get_sub_env(self, env_id: int):
+        """
+        Resolve sub-environment by index.
+        """
+
+        return self._get_ordered_envs()[env_id]
+
+
+    def get_neutral_action(self, env_id: int, action_template):
+        """
+        Return neutral action for a specific sub-environment.
+        """
+
+        sub_env = self.get_sub_env(env_id)
+
+        if hasattr(sub_env, "neutral_action"):
+            return sub_env.neutral_action()
+
+        return np.zeros_like(action_template)
 
 
     def update_agent_states(self):

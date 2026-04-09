@@ -1,3 +1,4 @@
+import numpy as np
 import gymnasium as gym
 
 from typing import Optional
@@ -23,9 +24,10 @@ class BaseEnv(gym.Env):
             render_mode (str, optional): The rendering mode. Defaults to None.
         """
         super().__init__()
+
         self._render_mode = render_mode
         self._smoothing_enabled = True
-        self._sub_environments = []
+        self._sub_environments = {}
         self._env_name = type(self).__name__
 
 
@@ -92,6 +94,40 @@ class BaseEnv(gym.Env):
         Returns the sub-environments. This property should only be used by multi-environment.
         """
         return self._sub_environments
+
+
+    def neutral_action(self):
+        """
+        Return a neutral (no-op) action for the environment.
+
+        A neutral action represents a control input that does not actively
+        influence the system (e.g., zero thrust, centered steering). This is
+        required for algorithms that continue stepping the simulator after an
+        episode has terminated in one or more environments.
+
+        Subclasses must implement this method and return an action that is
+        compatible with the environment's action space.
+
+        Returns:
+            np.ndarray: Neutral action with the correct shape and dtype for
+            the environment.
+
+        Raises:
+            NotImplementedError: If the method is not implemented by a subclass.
+        """
+
+        raise NotImplementedError
+
+
+    def get_neutral_action(self, env_id: int, action_template):
+        """
+        Return a neutral action for a given env_id.
+
+        Default fallback: zeros_like(action_template).
+        Single environments ignore env_id.
+        """
+
+        return np.zeros_like(action_template)
 
 
     def get_agent_state(self):
