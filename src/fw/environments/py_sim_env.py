@@ -191,6 +191,21 @@ class PySimEnv(BaseEnv):
         # Rendering flag
         self.initialize_plots = True
 
+    def neutral_action(self):
+        """
+        Return the neutral control action for the simulation.
+
+        In this environment, the neutral action corresponds to zero control
+        inputs (e.g., no thrust and no steering), resulting in passive system
+        behavior such as drift.
+
+        Returns:
+            np.ndarray: A zero-valued action vector of shape (2,) with dtype
+            np.float32.
+        """
+
+        return np.zeros(2, dtype=np.float32)
+
     def get_agent_state(self):
         """
         Retrieves the current state of this agent from the physics simulator.
