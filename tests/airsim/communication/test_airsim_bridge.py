@@ -10,7 +10,7 @@ _SRC_DIR = Path(__file__).resolve().parents[3] / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from airsim.communication.airsim_bridge import AirSimBridge
+from airsim.communication.airsim_bridge import AirSimBridge, _silence_library_output
 
 
 def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypatch):
@@ -20,14 +20,17 @@ def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypat
     bridge._last_health_check = 0.0
     bridge.config = SimpleNamespace(health_check_interval=10)
     bridge._simulation_speed = 1.0
+    bridge._rendering_enabled = None
     bridge._controls = None
     bridge.coord_transform = None
     bridge.render_z = 0.0
     client_speed_values = []
+    console_commands = []
     bridge._client = SimpleNamespace(
         simGetVehiclePose=lambda: SimpleNamespace(position=SimpleNamespace(z_val=12.5)),
         setCarControls=lambda controls: None,
         simSetSimulationSpeed=lambda value: client_speed_values.append(float(value)),
+        simRunConsoleCommand=lambda command: console_commands.append(command) or True,
     )
     bridge._client_speed = None
 
@@ -65,3 +68,40 @@ def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypat
 
     assert bridge._simulation_speed == 20.0
     assert client_speed_values == [20.0]
+    assert console_commands == ["ShowFlag.Rendering 1"]
+
+
+def test_set_rendering_enabled_uses_console_command(monkeypatch):
+    """Bridge should toggle UE5 rendering through simRunConsoleCommand."""
+    bridge = AirSimBridge.__new__(AirSimBridge)
+    bridge._connected = True
+    bridge._last_health_check = 0.0
+    bridge.config = SimpleNamespace(health_check_interval=10)
+    bridge._rendering_enabled = None
+    issued_commands = []
+    bridge._client = SimpleNamespace(
+        simRunConsoleCommand=lambda command: issued_commands.append(command) or True,
+    )
+
+    monkeypatch.setattr(AirSimBridge, "_ensure_connected", lambda self: True)
+
+    assert bridge.set_rendering_enabled(False) is True
+    assert bridge._rendering_enabled is False
+    assert issued_commands == ["ShowFlag.Rendering 0"]
+
+
+def test_silence_library_output_suppresses_stdout_and_stderr(capsys):
+    """Bridge helper should suppress noisy library output written directly to the terminal."""
+
+    def _noisy_callback():
+        """Emit simulated native-library chatter to both stdout and stderr."""
+        print("Client Ver:4")
+        print("Server Ver:3", file=sys.stderr)
+        return "ok"
+
+    result = _silence_library_output(_noisy_callback)
+    captured = capsys.readouterr()
+
+    assert result == "ok"
+    assert captured.out == ""
+    assert captured.err == ""

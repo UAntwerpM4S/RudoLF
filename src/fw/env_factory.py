@@ -12,6 +12,7 @@ from fw.common.default_positions import (
 )
 from fw.common.tools.config_utils import normalize_configuration
 from fw.config import get_config_parameters
+from fw.environments.action_repeat_wrapper import ActionRepeatWrapper
 from fw.environments.py_sim_env import PySimEnv
 from fw.environments.fh_sim_env import FhSimEnv
 from airsim.environments.airsim_env import AirSimEnv
@@ -356,6 +357,7 @@ class AirSimEnvironment(BaseEnvironment):
         # training_mode=False → restores UE5 rendering + uses real-time stepping.
         cfg = configuration if isinstance(configuration, dict) else {}
         training_mode = cfg.get("training_mode", True)
+        no_rendering_mode = bool(cfg.get("no_rendering_mode", False))
         use_pause = cfg.get("use_pause_stepping", training_mode)
         max_steps = int(cfg.get("max_steps", 14000))
         ip = cfg.get("ip", "")
@@ -367,11 +369,27 @@ class AirSimEnvironment(BaseEnvironment):
         csv_log_path = str(cfg.get("csv_log_path", ""))
         save_slot = str(cfg.get("save_slot", DEFAULT_AIRSIM_SAVE_SLOT))
         simulation_speed = float(cfg.get("simulation_speed", DEFAULT_AIRSIM_SIMULATION_SPEED))
+        draw_calibration_reference = bool(cfg.get("draw_calibration_reference", True))
+        episode_log_path = str(cfg.get("episode_log_path", ""))
+        progress_log_interval_steps = int(cfg.get("progress_log_interval_steps", 0))
+        log_pause_watchdog_warnings = bool(cfg.get("log_pause_watchdog_warnings", False))
+        use_sim_time_stepping = bool(cfg.get("use_sim_time_stepping", False))
+        sim_time_per_action = float(cfg.get("sim_time_per_action", cfg.get("time_step", 0.1)))
         frames_per_step = int(cfg.get("frames_per_step", 10))
         time_step = float(cfg.get("time_step", 0.1))
         physics_update_timeout = float(cfg.get("physics_update_timeout", 1.0))
         state_poll_interval = float(cfg.get("state_poll_interval", 0.005))
         latency_warning_threshold = cfg.get("latency_warning_threshold", None)
+        curriculum_enabled = bool(cfg.get("curriculum_enabled", False))
+        curriculum_window_size = int(cfg.get("curriculum_window_size", 8))
+        curriculum_target_checkpoint = cfg.get("curriculum_target_checkpoint", None)
+        curriculum_frontier_increment = int(cfg.get("curriculum_frontier_increment", 4))
+        curriculum_window_increment = int(cfg.get("curriculum_window_increment", 6))
+        curriculum_success_patience = int(cfg.get("curriculum_success_patience", 2))
+        curriculum_randomization_scale = float(cfg.get("curriculum_randomization_scale", 0.0))
+        guidance_assist_enabled = bool(cfg.get("guidance_assist_enabled", True))
+        guidance_residual_steering_scale = float(cfg.get("guidance_residual_steering_scale", 0.45))
+        guidance_residual_throttle_scale = float(cfg.get("guidance_residual_throttle_scale", 0.55))
 
         try:
             self._env = AirSimEnv(
@@ -387,18 +405,45 @@ class AirSimEnvironment(BaseEnvironment):
                 csv_log_path=csv_log_path,
                 save_slot=save_slot,
                 simulation_speed=simulation_speed,
+                draw_calibration_reference=draw_calibration_reference,
+                episode_log_path=episode_log_path,
+                progress_log_interval_steps=progress_log_interval_steps,
+                log_pause_watchdog_warnings=log_pause_watchdog_warnings,
+                use_sim_time_stepping=use_sim_time_stepping,
+                sim_time_per_action=sim_time_per_action,
+                no_rendering_mode=no_rendering_mode,
                 training_mode=training_mode,
                 use_pause_stepping=use_pause,
                 frames_per_step=frames_per_step,
                 time_step=time_step,
                 physics_update_timeout=physics_update_timeout,
                 state_poll_interval=state_poll_interval,
+                curriculum_enabled=curriculum_enabled,
+                curriculum_window_size=curriculum_window_size,
+                curriculum_target_checkpoint=(
+                    int(curriculum_target_checkpoint)
+                    if curriculum_target_checkpoint is not None
+                    else None
+                ),
+                curriculum_frontier_increment=curriculum_frontier_increment,
+                curriculum_window_increment=curriculum_window_increment,
+                curriculum_success_patience=curriculum_success_patience,
+                curriculum_randomization_scale=curriculum_randomization_scale,
+                guidance_assist_enabled=guidance_assist_enabled,
+                guidance_residual_steering_scale=guidance_residual_steering_scale,
+                guidance_residual_throttle_scale=guidance_residual_throttle_scale,
                 latency_warning_threshold=(
                     float(latency_warning_threshold)
                     if latency_warning_threshold is not None
                     else None
                 ),
             )
+            
+            # Action repeat wrapper can be set dynamically or statically (e.g., repeat=4)
+            repeat_steps = int(cfg.get("action_repeat", 1))
+            if repeat_steps > 1:
+                self._env = ActionRepeatWrapper(self._env, repeat=repeat_steps)
+                
         except (ImportError, ConnectionError) as exc:
             # Graceful fallback: if AirSim is unavailable (missing package or no UE5 connection),
             print(
