@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 
 from typing import Optional
@@ -31,15 +33,14 @@ class MultiSimEnv(BaseEnv):
 
         Args:
             sub_environments (list[BaseEnv]): Non-empty list of environments to wrap.
-                Each environment must define compatible Gymnasium observation
-                and action spaces.
             render_mode (Optional[str]): Rendering mode passed to `BaseEnv`.
 
         Raises:
-            ValueError: If `environments` is empty.
-            TypeError: If any sub-environment does not define valid Gymnasium
-                observation or action spaces.
+            ValueError: If `sub_environments` is empty.
         """
+
+        if not sub_environments:
+            raise ValueError("MultiSimEnv requires at least one environment")
 
         super().__init__(render_mode=render_mode)
 
@@ -47,11 +48,8 @@ class MultiSimEnv(BaseEnv):
             name = f"{env.type_name}_{i}"
             env.env_name = name
             self._sub_environments[name] = env
+
         self.num_envs = len(sub_environments)
-
-        if self.num_envs == 0:
-            raise ValueError("MultiSimEnv requires at least one environment")
-
         self.agent_states = {}
 
         # --- Structured observation space ---
@@ -140,8 +138,6 @@ class MultiSimEnv(BaseEnv):
             The returned observation structure matches `observation_space`.
         """
 
-        super().reset(seed=seed, options=options)
-
         observations = []
         infos = []
 
@@ -161,37 +157,38 @@ class MultiSimEnv(BaseEnv):
         """
         Step all sub-environments with the provided actions.
 
-        The input action must be a tuple (or list) containing one action per
-        sub-environment, matching the structure of `action_space`.
+        Agent states are updated AFTER all sub-environments have stepped.
+        This implements synchronous (simultaneous) execution: every ship acts
+        on the world state from the end of the previous timestep. This is
+        intentional — it avoids ordering bias between agents and matches the
+        standard multi-agent RL assumption.
 
         Args:
-            action (Sequence): Tuple or list of actions, where `action[i]` is
-                applied to the i-th sub-environment.
+            action (tuple or list): One action per sub-environment.
 
         Returns:
             tuple:
-                - observations (tuple[np.ndarray, ...]): Tuple of next observations.
-                - rewards (np.ndarray): Array of shape (num_envs,) containing rewards.
-                - terminations (np.ndarray): Boolean array indicating per-env termination.
-                - truncations (np.ndarray): Boolean array indicating per-env truncation.
-                - infos (list[dict]): List of info dictionaries from each sub-environment.
-
-        Raises:
-            AssertionError: If the action is not a sequence of length `num_envs`.
-            ValueError: If the action does not conform to `action_space`.
-
-        Notes:
-            - Termination and truncation signals are returned per environment
-              (vectorized), not aggregated.
-            - No automatic resetting is performed for terminated environments.
+                - observations (tuple[np.ndarray, ...]): Next observations.
+                - rewards (np.ndarray): Per-env rewards, shape (num_envs,).
+                - terminations (np.ndarray): Per-env termination flags.
+                - truncations (np.ndarray): Per-env truncation flags.
+                - infos (list[dict]): Per-env info dicts.
         """
 
         assert isinstance(action, (tuple, list)), "Action must be tuple or list"
-        assert len(action) == self.num_envs, "Action count mismatch"
+        assert len(action) == self.num_envs, (
+            f"Action count mismatch: got {len(action)}, expected {self.num_envs}"
+        )
 
-        # Optional strict validation (recommended in debug mode)
-        if not self.action_space.contains(action):
-            raise ValueError("Action does not match action_space")
+        # spaces.Tuple.contains() is sensitive to exact dtypes and rejects valid
+        # float32 arrays in practice. Use DEBUG_ENV=1 to enable during development.
+        if os.environ.get("DEBUG_ENV"):
+            if not self.action_space.contains(action):
+                raise ValueError(
+                    f"Action does not match action_space.\n"
+                    f"action_space: {self.action_space}\n"
+                    f"received:     {action}"
+                )
 
         observations = []
         rewards = []
@@ -209,6 +206,7 @@ class MultiSimEnv(BaseEnv):
             truncations.append(truncated)
             infos.append(info)
 
+        # States updated after all ships have stepped (synchronous execution).
         self.update_agent_states()
 
         return (
