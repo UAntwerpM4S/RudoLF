@@ -123,11 +123,24 @@ class BaseEnv(gym.Env):
         """
         Return a neutral action for a given env_id.
 
-        Default fallback: zeros_like(action_template).
-        Single environments ignore env_id.
+        Delegates to self.neutral_action() so subclass-defined neutral
+        actions are respected. Falls back to zeros_like(action_template)
+        only if neutral_action() is not implemented.
+
+        Args:
+            env_id (int): Sub-environment index (ignored for single envs).
+            action_template: An action array used for shape/dtype reference
+                if the fallback path is taken.
+
+        Returns:
+            np.ndarray: Neutral action compatible with this environment's
+                action space.
         """
 
-        return np.zeros_like(action_template)
+        try:
+            return self.neutral_action()
+        except NotImplementedError:
+            return np.zeros_like(action_template)
 
 
     def get_agent_state(self):
