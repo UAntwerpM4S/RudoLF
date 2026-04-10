@@ -533,10 +533,6 @@ class PySimEnv(BaseEnv):
             float: Perpendicular distance from point to line segment.
         """
 
-        point = np.array(point, dtype=np.float32)
-        line_start = np.array(line_start, dtype=np.float32)
-        line_end = np.array(line_end, dtype=np.float32)
-
         line_vec = line_end - line_start
         point_vec = point - line_start
         line_mag_squared = np.dot(line_vec, line_vec)
