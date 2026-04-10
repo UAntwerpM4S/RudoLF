@@ -233,6 +233,8 @@ def _draw_visualization(
     ue5_B,
     ridge_overlay_offset: tuple[float, float] = (0.0, 0.0),
     ridge_overlay_rot_z_deg: float = 0.0,
+    ship_pos: tuple[float, float] | None = None,
+    target_pos: tuple[float, float] | None = None,
 ) -> None:
     """Draw polygon, trajectory, and reference dots in UE5.
 
@@ -308,11 +310,14 @@ def _draw_visualization(
     chunk_size = 500
 
     # Draw trajectory (yellow)
-    ship_pos = np.array([2245.0, -47.0])
+    route_start = np.array(
+        ship_pos if ship_pos is not None else [2245.0, -47.0],
+        dtype=np.float64,
+    )
     traj_path = _ENVIRONMENTS_DIR / "trajectory_points_no_scale.csv"
     traj_data = np.loadtxt(traj_path, delimiter=",", skiprows=1)
 
-    distances = [np.linalg.norm(p - ship_pos) for p in traj_data]
+    distances = [np.linalg.norm(p - route_start) for p in traj_data]
     closest_idx = int(np.argmin(distances))
     traj_data = traj_data[closest_idx:]
 
@@ -332,8 +337,13 @@ def _draw_visualization(
             )
 
     # Draw start (blue) and target (red) dots
-    start_ux, start_uy = coord.fossen_to_airsim_2d(ship_pos[0], ship_pos[1])
-    target_ux, target_uy = coord.fossen_to_airsim_2d(*fossen_B)
+    marker_start = route_start
+    marker_target = np.array(
+        target_pos if target_pos is not None else fossen_B,
+        dtype=np.float64,
+    )
+    start_ux, start_uy = coord.fossen_to_airsim_2d(marker_start[0], marker_start[1])
+    target_ux, target_uy = coord.fossen_to_airsim_2d(marker_target[0], marker_target[1])
 
     client.simPlotPoints(
         [airsim.Vector3r(start_ux, start_uy, -3.0)],
@@ -364,6 +374,8 @@ def load_saved_calibration_reference(
     client,
     calibration_path: Path | None = None,
     draw_reference: bool = True,
+    ship_pos: tuple[float, float] | None = None,
+    target_pos: tuple[float, float] | None = None,
 ) -> tuple[CoordTransform, dict]:
     """Load saved calibration, apply drift correction, and optionally redraw it.
 
@@ -371,6 +383,9 @@ def load_saved_calibration_reference(
         client: Active ``cosysairsim.CarClient`` instance.
         calibration_path: Optional override for ``calibration.json``.
         draw_reference: Whether to redraw the saved reference overlay in UE5.
+        ship_pos: Optional Fossen start position used for the blue marker and
+            trajectory slicing.
+        target_pos: Optional Fossen target position used for the red marker.
 
     Returns:
         A tuple ``(coord, config)`` containing the corrected transform and
@@ -410,6 +425,8 @@ def load_saved_calibration_reference(
             ue5_B,
             ridge_overlay_offset=ridge_overlay_offset,
             ridge_overlay_rot_z_deg=ridge_overlay_rot_z_deg,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
         )
 
     return coord, config

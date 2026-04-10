@@ -35,7 +35,7 @@ DEFAULT_HYPERPARAMETERS = {
         'normalize': False,
         'max_nbr_iterations': 200000,
         'batch_size': 64,
-        'device': "cpu",
+        'device': "cpu", # Consider using "cuda" for airsim training if you have a compatible GPU and the necessary setup.
         'model_dir': "models"
     },
     PPO2_POLICY_NAME: {

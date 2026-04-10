@@ -82,6 +82,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         "safe": {
             "simulation_speed": 20.0,
             "use_pause_stepping": True,
+            "use_sim_time_stepping": True,
+            "sim_time_per_action": 0.1,
             "frames_per_step": 8,
             "time_step": 0.1,
             "physics_update_timeout": 1.0,
@@ -90,6 +92,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         "fast": {
             "simulation_speed": 40.0,
             "use_pause_stepping": True,
+            "use_sim_time_stepping": True,
+            "sim_time_per_action": 0.1,
             "frames_per_step": 10,
             "time_step": 0.1,
             "physics_update_timeout": 1.0,
@@ -98,6 +102,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         "turbo": {
             "simulation_speed": 80.0,
             "use_pause_stepping": True,
+            "use_sim_time_stepping": True,
+            "sim_time_per_action": 0.1,
             "frames_per_step": 12,
             "time_step": 0.1,
             "physics_update_timeout": 1.2,
@@ -114,6 +120,17 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             f"[main_with_airsim] Unknown training.speed_profile '{profile_name}'. "
             "Using explicit training settings."
         )
+    if bool(effective_training_cfg.get("use_pause_stepping", False)):
+        if bool(effective_training_cfg.get("use_sim_time_stepping", False)):
+            print(
+                "[main_with_airsim] Step mode: simContinueForTime("
+                f"{float(effective_training_cfg.get('sim_time_per_action', effective_training_cfg.get('time_step', 0.1))):.3f}s)"
+            )
+        else:
+            print(
+                "[main_with_airsim] Step mode: simContinueForFrames("
+                f"{int(effective_training_cfg.get('frames_per_step', 1))})"
+            )
     # Runtime visualization flags may promote the AirSim entrypoint into
     # visualize mode only when fw.main did not pass an explicit action override.
     # This keeps ordered framework execution honest: a delegated AirSim train
@@ -215,6 +232,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 max_steps=max_steps,
                 num_episodes=episodes,
                 device=device,
+                draw_calibration_reference=draw_ref,
                 verbose=bool(visualization_cfg.get("verbose", _verbose_airsim)),
             )
             return True
@@ -275,6 +293,18 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     )
     airsim_env_cfg.update({
         "training_mode": is_training,
+        "draw_calibration_reference": bool(
+            effective_training_cfg.get(
+                "draw_calibration_reference",
+                visualization_cfg.get("draw_calibration_reference", True),
+            )
+        ),
+        "no_rendering_mode": bool(effective_training_cfg.get("no_rendering_mode", False)),
+        "episode_log_path": str(effective_training_cfg.get("episode_log_path", "")),
+        "progress_log_interval_steps": int(effective_training_cfg.get("progress_log_interval_steps", 0)),
+        "log_pause_watchdog_warnings": bool(effective_training_cfg.get("log_pause_watchdog_warnings", False)),
+        "use_sim_time_stepping": bool(effective_training_cfg.get("use_sim_time_stepping", False)),
+        "sim_time_per_action": float(effective_training_cfg.get("sim_time_per_action", effective_training_cfg.get("time_step", 0.1))),
         "use_pause_stepping": bool(effective_training_cfg.get("use_pause_stepping", is_training)),
         "simulation_speed": effective_simulation_speed,
         "max_steps": effective_max_steps,
@@ -307,7 +337,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             logging.getLogger("airsim").setLevel(_airsim_log_level)
 
         configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
-                         airsim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
+                         airsim_env_name: StopCondition(stop_criterion=Criterion.NBR_POLICY_UPDATES, max_time_steps=350),
                          fh_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=3.80, patience=4, max_time_steps=1300),
                          lunar_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD_AND_LOSS, target_reward=0.20, target_loss=0.8, patience=1, max_time_steps=300),
                          py_sim_polar_env_name: StopCondition(stop_criterion=Criterion.NBR_POLICY_UPDATES, max_time_steps=600)}

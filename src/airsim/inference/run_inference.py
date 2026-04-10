@@ -225,6 +225,7 @@ def run_inference(
     max_steps: int = 14000,
     num_episodes: int = 3,
     device: str = "cpu",
+    draw_calibration_reference: bool = True,
     verbose: bool = False,
 ) -> None:
     """Run live inference in UE5 using the native ``AirSimEnv`` loop.
@@ -238,6 +239,8 @@ def run_inference(
         max_steps: Maximum steps per episode.
         num_episodes: Number of episodes to run.
         device: Torch device selector used for inference.
+        draw_calibration_reference: Whether to draw the shared calibration
+            ridge and route overlay in UE5.
         verbose: Whether to emit detailed runtime logs.
     """
     logger.setLevel(logging.INFO if verbose else logging.WARNING)
@@ -273,6 +276,7 @@ def run_inference(
                 "num_episodes": num_episodes,
                 "device": device,
                 "simulation_speed": 1.0,
+                "draw_calibration_reference": bool(draw_calibration_reference),
                 "episode_loop": "AirSimEnv.reset -> policy -> AirSimEnv.step",
             },
         },
@@ -287,6 +291,7 @@ def run_inference(
             port=port,
             max_steps=max_steps,
             training_mode=False,
+            draw_calibration_reference=draw_calibration_reference,
             use_pause_stepping=False,
             simulation_speed=1.0,
             csv_log_path=str(session_exporter.bridge_log_path),
@@ -458,6 +463,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="PyTorch device for policy inference.",
     )
     parser.add_argument(
+        "--no-calibration-reference",
+        action="store_true",
+        default=False,
+        help="Disable the shared ridge/trajectory calibration overlay in UE5.",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         default=False,
@@ -484,5 +495,6 @@ if __name__ == "__main__":
         max_steps=args.max_steps,
         num_episodes=args.episodes,
         device=args.device,
+        draw_calibration_reference=not args.no_calibration_reference,
         verbose=args.verbose,
     )
