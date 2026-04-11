@@ -200,14 +200,11 @@ class FhSimBridge:
             ship_config = exercise.getShipConfig()
 
             # Set initial vessel state
-            if self._initial_vessel_state is not None:
-                ship_config.setInitialPosition(float(self._initial_vessel_state.x), float(self._initial_vessel_state.y))
-                ship_config.setInitialHeading(float(np.degrees(self._initial_vessel_state.heading)))
-                ship_config.setInitialSurgeVelocity(float(self._initial_vessel_state.u))
-                ship_config.setInitialSwayVelocity(float(-self._initial_vessel_state.v))
-                ship_config.setInitialYawVelocity(float(np.degrees(self._initial_vessel_state.r)))
-            else:
-                raise RuntimeError("Initial vessel state not set.")
+            ship_config.setInitialPosition(float(self._initial_vessel_state.x), float(self._initial_vessel_state.y))
+            ship_config.setInitialHeading(float(np.degrees(self._initial_vessel_state.heading)))
+            ship_config.setInitialSurgeVelocity(float(self._initial_vessel_state.u))
+            ship_config.setInitialSwayVelocity(float(-self._initial_vessel_state.v))
+            ship_config.setInitialYawVelocity(float(np.degrees(self._initial_vessel_state.r)))
 
             # Initialize the math model and enable the bridge
             self._math_model = MathModel()
