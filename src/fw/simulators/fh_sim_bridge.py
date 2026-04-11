@@ -299,12 +299,6 @@ class FhSimBridge:
 
             sim_time = self._math_model.getSimInterface().getSimulationTime()
 
-            if time_point > sim_time:
-                raise RuntimeError(
-                    f"time_point {time_point:.3f} s exceeds current simulation "
-                    f"time {sim_time:.3f} s — cannot rewind to a future time."
-                )
-
             if sim_time > self.SNAPSHOT_WINDOW:
                 self._logger.warning(
                     "Simulation time %.1f s exceeds snapshot window %d s. "
