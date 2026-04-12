@@ -150,45 +150,14 @@ class FhSimWrapper(BaseSimulator):
         heading_rad = np.radians(heading_deg)
         yaw_rate    = np.radians(yaw_rate_deg_per_s)
 
-        # Step 5: transform earth-fixed velocity -> body-fixed surge / sway
-        #
-        # getShipVelocityOverGround() returns (vx, vy) in the
-        # earth-fixed frame. VesselState.u and .v must be body-fixed (surge
-        # and sway). Without this rotation the policy's velocity observations
-        # are in the wrong frame, which is especially harmful with wind or
-        # current active because the earth-fixed and body-fixed frames diverge
-        # significantly when the ship is crabbing or being pushed sideways.
-        #
-        # Rotation from earth-fixed to body-fixed:
-        #   u =  vx * cos(ψ) + vy * sin(ψ)   (surge: along ship's bow)
-        #   v = -vx * sin(ψ) + vy * cos(ψ)   (sway: to starboard)
-        #
-        # Note: the FH engine returns vy with positive = port, which is the
-        # opposite of the body-fixed convention (positive = starboard). The
-        # rotation already incorporates this because we use +vy in the u
-        # equation and +vy in the v equation - the sign flip is absorbed by
-        # the geometry of the rotation for a ship traveling forward.
-        # Previously the code used: u = vx, v = -vy (no rotation), which was
-        # only correct when heading ≈ 0 (ship pointing east).
-        vx = float(velocity_over_ground.x)
-        vy = float(velocity_over_ground.y)   # positive = port in FH convention
-
-        cos_psi = np.cos(heading_rad)
-        sin_psi = np.sin(heading_rad)
-
-        surge =  vx * cos_psi + vy * sin_psi   # body-fixed forward velocity
-        sway  = -vx * sin_psi + vy * cos_psi   # body-fixed starboard velocity
-        # sway sign: FH vy positive = port; after rotation, positive sway = starboard.
-        # The rotation handles this correctly without an additional negation.
-
-        # Step 6: store VesselState
+        # Step 5: store VesselState
         self._state = VesselState(
             terminated=False,
             truncated=False,
             x=np.float32(new_ship_pos.x),
             y=np.float32(new_ship_pos.y),
             heading=np.float32((heading_rad + np.pi) % (2.0 * np.pi) - np.pi),
-            u=np.float32(vx),
-            v=np.float32(-vy),
+            u=np.float32(velocity_over_ground.x),
+            v=np.float32(-velocity_over_ground.y),
             r=np.float32(yaw_rate),
         )
