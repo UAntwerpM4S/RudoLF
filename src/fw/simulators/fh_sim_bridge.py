@@ -225,6 +225,8 @@ class FhSimBridge:
                     "Check the exercise file, config, and SimAPI installation."
                 )
 
+            self.math_model.simulateSeconds(0.125)  # initialize velocities
+
         except SimException as e:
             self.math_model_initialized = False
             self._math_model = None
