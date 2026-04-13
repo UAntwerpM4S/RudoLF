@@ -1,30 +1,16 @@
-"""Model-agnostic visualisation helpers for UE5 replay workflows.
-
-This module exposes two minimap options:
-- ``VisualiseModelsMinimap``: existing matplotlib-based minimap process.
-- ``UE5TopDownMinimap``: camera-driven top-down view rendered from UE5.
-"""
+"""Model-agnostic UE5 top-down minimap helpers for replay workflows."""
 
 from __future__ import annotations
 
-import base64
 import logging
 import time
-from typing import Optional
 
 import numpy as np
 
-from airsim.inference.minimap_fossen_airsim import MinimapFossenAirsim
-
 logger = logging.getLogger(__name__)
 
-
-class VisualiseModelsMinimap(MinimapFossenAirsim):
-    """Process-based matplotlib minimap used by model visualisation."""
-
-
 class UE5TopDownMinimap:
-    """Top-down UE5 camera view with optional external preview window.
+    """Top-down UE5 camera minimap rendered inside UE5.
 
     The camera is positioned above the current ship pose and pointed down,
     producing a 2D-like map view while still rendering full UE5 3D content.
@@ -38,14 +24,9 @@ class UE5TopDownMinimap:
         fov_degrees: float = 38.0,
         height_offset_m: float = 120.0,
         follow_heading: bool = False,
-        enable_preview_window: bool = True,
-        preview_window_name: str = "UE5 Top-Down Minimap",
-        preview_width: int = 520,
-        preview_height: int = 520,
         draw_trail: bool = True,
         trail_thickness: float = 8.0,
         max_update_hz: float = 15.0,
-        preview_max_hz: float = 10.0,
     ) -> None:
         """Initialize the UE5 top-down minimap helper.
 
@@ -57,14 +38,9 @@ class UE5TopDownMinimap:
             height_offset_m: Height above the ship in meters for the top-down
                 view.
             follow_heading: Whether the camera yaw follows ship heading.
-            enable_preview_window: Whether to open an OpenCV preview window.
-            preview_window_name: Window title used by the OpenCV preview.
-            preview_width: Preview window width in pixels.
-            preview_height: Preview window height in pixels.
             draw_trail: Whether to draw the ship trail in UE5.
             trail_thickness: Thickness used for the UE5 trail strip.
             max_update_hz: Maximum camera-update frequency.
-            preview_max_hz: Maximum preview-image refresh frequency.
         """
         self.bridge = bridge
         self.camera_name = camera_name
@@ -72,19 +48,12 @@ class UE5TopDownMinimap:
         self.fov_degrees = float(fov_degrees)
         self.height_offset_m = float(height_offset_m)
         self.follow_heading = bool(follow_heading)
-        self.enable_preview_window = bool(enable_preview_window)
-        self.preview_window_name = preview_window_name
-        self.preview_width = int(preview_width)
-        self.preview_height = int(preview_height)
         self.draw_trail = bool(draw_trail)
         self.trail_thickness = float(trail_thickness)
         self.max_update_interval_s = 1.0 / max(float(max_update_hz), 1.0)
-        self.preview_update_interval_s = 1.0 / max(float(preview_max_hz), 1.0)
 
         self._prev_trail_point = None
-        self._cv2 = None
         self._last_update_at = 0.0
-        self._last_preview_at = 0.0
 
         if self.bridge.is_connected:
             try:
@@ -95,18 +64,6 @@ class UE5TopDownMinimap:
                 )
             except Exception as exc:
                 logger.warning("Could not set camera FOV for '%s': %s", self.camera_name, exc)
-
-        if self.enable_preview_window:
-            try:
-                import cv2  # type: ignore
-
-                self._cv2 = cv2
-                self._cv2.namedWindow(self.preview_window_name, self._cv2.WINDOW_NORMAL)
-                self._cv2.resizeWindow(self.preview_window_name, self.preview_width, self.preview_height)
-            except Exception as exc:
-                logger.warning("OpenCV preview disabled: %s", exc)
-                self._cv2 = None
-                self.enable_preview_window = False
 
     def _quaternion_from_euler(self, roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
         """Build a quaternion from ZYX Euler angles.
@@ -132,41 +89,6 @@ class UE5TopDownMinimap:
         y = cr * sp * cy + sr * cp * sy
         z = cr * cp * sy - sr * sp * cy
         return float(x), float(y), float(z), float(w)
-
-    def _decode_png(self, image_payload) -> Optional[np.ndarray]:
-        """Decode a PNG payload returned by AirSim into an OpenCV image.
-
-        Args:
-            image_payload: Raw bytes or base64-like payload returned by AirSim.
-
-        Returns:
-            Optional[np.ndarray]: Decoded OpenCV image, or ``None`` when the
-            payload cannot be decoded.
-        """
-        if image_payload is None:
-            return None
-
-        raw_bytes = None
-        if isinstance(image_payload, (bytes, bytearray)):
-            raw_bytes = bytes(image_payload)
-        elif isinstance(image_payload, str):
-            if not image_payload:
-                return None
-            try:
-                raw_bytes = base64.b64decode(image_payload)
-            except Exception:
-                # Some AirSim variants return a raw byte-string via latin1 repr.
-                raw_bytes = image_payload.encode("latin1", errors="ignore")
-
-        if not raw_bytes or self._cv2 is None:
-            return None
-
-        np_data = np.frombuffer(raw_bytes, dtype=np.uint8)
-        if np_data.size == 0:
-            return None
-
-        frame = self._cv2.imdecode(np_data, self._cv2.IMREAD_COLOR)
-        return frame
 
     def _ship_pose_from_env(self, env) -> tuple[float, float, float]:
         """Extract the current ship pose from the framework environment.
@@ -215,7 +137,7 @@ class UE5TopDownMinimap:
         return x, y, yaw
 
     def update(self, env) -> None:
-        """Update UE5 top-down camera position and optional preview image.
+        """Update the UE5 top-down camera position.
 
         Args:
             env: Active framework environment exposing ship position and
@@ -256,22 +178,6 @@ class UE5TopDownMinimap:
                         is_persistent=True,
                     )
                 self._prev_trail_point = current
-
-            if (
-                self.enable_preview_window
-                and self._cv2 is not None
-                and (now - self._last_preview_at >= self.preview_update_interval_s)
-            ):
-                self._last_preview_at = now
-                payload = self.bridge.get_camera_image(
-                    self.camera_name,
-                    self.bridge.airsim.ImageType.Scene,
-                    vehicle_name=self.vehicle_name,
-                )
-                frame = self._decode_png(payload)
-                if frame is not None:
-                    self._cv2.imshow(self.preview_window_name, frame)
-                    self._cv2.waitKey(1)
         except Exception as exc:
             logger.warning("UE5 top-down minimap update failed: %s", exc)
 
@@ -279,10 +185,4 @@ class UE5TopDownMinimap:
         """Dispose minimap resources."""
         self._prev_trail_point = None
         self._last_update_at = 0.0
-        self._last_preview_at = 0.0
-        if self.enable_preview_window and self._cv2 is not None:
-            try:
-                self._cv2.destroyWindow(self.preview_window_name)
-            except Exception:
-                pass
 

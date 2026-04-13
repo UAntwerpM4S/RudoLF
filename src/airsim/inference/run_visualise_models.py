@@ -24,7 +24,6 @@ from airsim.config.airsim_config import (  # noqa: E402
 )
 from airsim.inference.minimap_models_ue5 import (  # noqa: E402
     UE5TopDownMinimap,
-    VisualiseModelsMinimap,
 )
 from airsim.inference.visualisation_models import (  # noqa: E402
     ModelVisualisationAdapter,
@@ -47,7 +46,7 @@ from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MIN_LOG_INTERVAL_S = 0.25
-_DEFAULT_MINIMAP_UPDATE_HZ = 20.0
+_DEFAULT_MINIMAP_UPDATE_HZ = 6.0
 _DEFAULT_BRIDGE_TELEMETRY_HZ = 12.0
 _DEFAULT_STARTUP_SETTLE_S = 0.4
 _DEFAULT_TRAIL_MIN_SEGMENT_M = 1.5
@@ -227,13 +226,10 @@ class VisualiseModelsRunner:
         lock_path_in_ue5: bool = False,
         vehicle_object_name: str = "",
         show_minimap: bool = True,
-        use_ue5_camera_minimap: bool = False,
         ue5_camera_name: str = "TopDownCam",
         ue5_camera_fov_deg: float = 38.0,
         ue5_camera_height_m: float = 120.0,
         ue5_camera_follow_heading: bool = False,
-        ue5_preview_window: bool = True,
-        save_matplotlib_minimap: bool = False,
         draw_ship_trail_in_ue5: bool = True,
         ship_trail_thickness: float = 14.0,
         ship_trail_min_segment_m: float = _DEFAULT_TRAIL_MIN_SEGMENT_M,
@@ -268,14 +264,11 @@ class VisualiseModelsRunner:
             max_yaw_step_deg: Maximum yaw delta per interpolation step in degrees.
             lock_path_in_ue5: Whether to lock motion onto the framework path.
             vehicle_object_name: Optional UE5 vehicle object override.
-            show_minimap: Whether to create a minimap during playback.
-            use_ue5_camera_minimap: Whether to use the UE5 top-down camera minimap.
+            show_minimap: Whether to create the UE5 top-down minimap during playback.
             ue5_camera_name: UE5 camera name for the top-down minimap.
             ue5_camera_fov_deg: UE5 top-down camera field of view.
             ue5_camera_height_m: UE5 top-down camera follow height.
             ue5_camera_follow_heading: Whether the UE5 minimap camera follows heading.
-            ue5_preview_window: Whether to show the UE5 camera preview window.
-            save_matplotlib_minimap: Whether to save the matplotlib minimap snapshot when supported.
             draw_ship_trail_in_ue5: Whether to draw a persistent blue trail behind the ship in UE5.
             ship_trail_thickness: Thickness of the persistent blue ship trail in UE5.
             ship_trail_min_segment_m: Minimum movement before adding a new UE5 trail segment.
@@ -297,7 +290,8 @@ class VisualiseModelsRunner:
         print(f"  Family     : {self.adapter.family}")
         print(f"  Environment: {selected_env}")
         print(f"  Save slot  : {save_slot}")
-        print(f"  Camera map : {'UE5 top-down' if use_ue5_camera_minimap else 'matplotlib minimap'}")
+        camera_map_label = "UE5 top-down" if show_minimap else "disabled"
+        print(f"  Camera map : {camera_map_label}")
         print(banner)
 
         policy = self._load_policy(model_path, device=device)
@@ -334,13 +328,10 @@ class VisualiseModelsRunner:
                     "lock_path_in_ue5": lock_path_in_ue5,
                     "vehicle_object_name": vehicle_object_name,
                     "show_minimap": show_minimap,
-                    "use_ue5_camera_minimap": use_ue5_camera_minimap,
                     "ue5_camera_name": ue5_camera_name,
                     "ue5_camera_fov_deg": ue5_camera_fov_deg,
                     "ue5_camera_height_m": ue5_camera_height_m,
                     "ue5_camera_follow_heading": ue5_camera_follow_heading,
-                    "ue5_preview_window": ue5_preview_window,
-                    "save_matplotlib_minimap": save_matplotlib_minimap,
                     "draw_ship_trail_in_ue5": draw_ship_trail_in_ue5,
                     "ship_trail_thickness": float(ship_trail_thickness),
                     "ship_trail_min_segment_m": float(ship_trail_min_segment_m),
@@ -440,21 +431,14 @@ class VisualiseModelsRunner:
                         if minimap is not None:
                             minimap.close()
                         try:
-                            if use_ue5_camera_minimap:
-                                minimap = UE5TopDownMinimap(
-                                    bridge,
-                                    camera_name=ue5_camera_name,
-                                    fov_degrees=ue5_camera_fov_deg,
-                                    height_offset_m=ue5_camera_height_m,
-                                    follow_heading=ue5_camera_follow_heading,
-                                    enable_preview_window=ue5_preview_window,
-                                )
-                            else:
-                                minimap = VisualiseModelsMinimap(
-                                    env,
-                                    save_dir=str(session_exporter.export_dir),
-                                    max_fps=float(minimap_update_hz),
-                                )
+                            minimap = UE5TopDownMinimap(
+                                bridge,
+                                camera_name=ue5_camera_name,
+                                fov_degrees=ue5_camera_fov_deg,
+                                height_offset_m=ue5_camera_height_m,
+                                follow_heading=ue5_camera_follow_heading,
+                                max_update_hz=float(minimap_update_hz),
+                            )
                         except Exception as exc:
                             logger.warning("Minimap unavailable: %s", exc)
                             minimap = None
@@ -519,7 +503,11 @@ class VisualiseModelsRunner:
                         step += 1
 
                         now = time.perf_counter()
-                        if minimap is not None and (now - last_minimap_update_at) >= minimap_update_interval_s:
+                        target_elapsed_s = step * target_step_interval_s
+                        actual_elapsed_s = now - episode_wall_start
+                        minimap_is_due = (now - last_minimap_update_at) >= minimap_update_interval_s
+                        replay_is_behind = actual_elapsed_s > (target_elapsed_s + (target_step_interval_s * 0.35))
+                        if minimap is not None and minimap_is_due and not replay_is_behind:
                             last_minimap_update_at = now
                             minimap.update(env)
 
@@ -638,8 +626,6 @@ class VisualiseModelsRunner:
                         }
                     )
 
-                    if save_matplotlib_minimap and minimap is not None and hasattr(minimap, "finish"):
-                        minimap.finish(total_reward, episode=episode + 1)
             finally:
                 if minimap is not None:
                     minimap.close()
@@ -758,13 +744,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-calibration-reference", action="store_true", default=False)
     parser.add_argument("--vehicle-object-name", default="", dest="vehicle_object_name")
     parser.add_argument("--no-minimap", action="store_true", default=False, dest="no_minimap")
-    parser.add_argument("--use-ue5-camera-minimap", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--ue5-camera-name", default="TopDownCam")
     parser.add_argument("--ue5-camera-fov-deg", type=float, default=38.0)
     parser.add_argument("--ue5-camera-height-m", type=float, default=120.0)
     parser.add_argument("--ue5-camera-follow-heading", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--ue5-preview-window", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--save-matplotlib-minimap", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--draw-ship-trail-in-ue5", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--ship-trail-thickness", type=float, default=14.0)
     parser.add_argument("--ship-trail-min-segment-m", type=float, default=_DEFAULT_TRAIL_MIN_SEGMENT_M)
@@ -809,13 +792,10 @@ if __name__ == "__main__":
         lock_path_in_ue5=args.lock_path_in_ue5,
         vehicle_object_name=args.vehicle_object_name,
         show_minimap=not args.no_minimap,
-        use_ue5_camera_minimap=args.use_ue5_camera_minimap,
         ue5_camera_name=args.ue5_camera_name,
         ue5_camera_fov_deg=args.ue5_camera_fov_deg,
         ue5_camera_height_m=args.ue5_camera_height_m,
         ue5_camera_follow_heading=args.ue5_camera_follow_heading,
-        ue5_preview_window=args.ue5_preview_window,
-        save_matplotlib_minimap=args.save_matplotlib_minimap,
         draw_ship_trail_in_ue5=args.draw_ship_trail_in_ue5,
         ship_trail_thickness=args.ship_trail_thickness,
         ship_trail_min_segment_m=args.ship_trail_min_segment_m,
