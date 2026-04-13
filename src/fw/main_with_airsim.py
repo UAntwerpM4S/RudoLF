@@ -38,6 +38,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     multiprocessing.set_start_method("spawn", force=True)
 
     from airsim.config.airsim_config import (
+        DEFAULT_THROTTLE_VISUAL_GAIN,
         get_default_runtime_settings,
         get_runtime_settings,
         merge_runtime_settings,
@@ -198,7 +199,9 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 animate_throttle_in_ue5=bool(visualization_cfg.get("animate_throttle_in_ue5", True)),
                 render_interpolation_steps=int(visualization_cfg.get("render_interpolation_steps", 8)),
                 steering_visual_gain=float(visualization_cfg.get("steering_visual_gain", 0.35)),
-                throttle_visual_gain=float(visualization_cfg.get("throttle_visual_gain", 1.0)),
+                throttle_visual_gain=float(
+                    visualization_cfg.get("throttle_visual_gain", DEFAULT_THROTTLE_VISUAL_GAIN)
+                ),
                 use_kinematics_in_ue5=bool(visualization_cfg.get("use_kinematics_in_ue5", False)),
                 min_render_hz=float(visualization_cfg.get("min_render_hz", 90.0)),
                 max_translation_step=float(visualization_cfg.get("max_translation_step", 0.15)),

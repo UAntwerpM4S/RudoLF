@@ -17,9 +17,9 @@ import numpy as np
 
 from airsim.communication.airsim_bridge import AirSimBridge
 from airsim.communication.control_mapping import (
-    map_fossen_actuator_state,
-    map_fossen_steering_visual_state,
-    map_fossen_visual_actuator_state,
+    map_framework_actuator_state,
+    map_framework_steering_visual_state,
+    map_framework_visual_actuator_state,
 )
 from fw.common.airsim.tools.angles import interpolate_angle, wrapped_angle_delta
 from fw.common.airsim.tools.path_utils import resolve_model_path
@@ -159,17 +159,17 @@ def _build_framework_motion_state(
     framework_x, framework_y, framework_heading = adapter.extract_pose(env, ship_index=ship_index)
     surge, sway, yaw_rate = adapter.extract_velocity(env, ship_index=ship_index)
 
-    airsim_x, airsim_y, _ = coord.fossen_to_airsim(
+    airsim_x, airsim_y, _ = coord.framework_to_airsim(
         framework_x,
         framework_y,
         bridge.render_z,
     )
-    airsim_yaw = coord.fossen_heading_to_airsim_yaw(framework_heading)
+    airsim_yaw = coord.framework_heading_to_airsim_yaw(framework_heading)
 
-    fossen_vx = surge * np.cos(framework_heading) - sway * np.sin(framework_heading)
-    fossen_vy = surge * np.sin(framework_heading) + sway * np.cos(framework_heading)
-    airsim_vx, airsim_vy = coord.fossen_velocity_to_airsim(fossen_vx, fossen_vy)
-    airsim_yaw_rate = coord.fossen_yaw_rate_to_airsim(yaw_rate)
+    framework_vx = surge * np.cos(framework_heading) - sway * np.sin(framework_heading)
+    framework_vy = surge * np.sin(framework_heading) + sway * np.cos(framework_heading)
+    airsim_vx, airsim_vy = coord.framework_velocity_to_airsim(framework_vx, framework_vy)
+    airsim_yaw_rate = coord.framework_yaw_rate_to_airsim(yaw_rate)
 
     return np.array([airsim_x, airsim_y, airsim_yaw, airsim_vx, airsim_vy, airsim_yaw_rate], dtype=np.float64)
 
@@ -261,28 +261,33 @@ def _build_visual_controls(
 
     airsim_module = bridge.airsim
     specs = adapter.extract_ship_specifications(env, ship_index=ship_index)
+    replay_brake = 1.0
     if mirror_controls_in_ue5:
-        return map_fossen_actuator_state(
+        return map_framework_actuator_state(
             airsim_module,
             specs,
             rudder_angle=float(actuator_state[0]),
             thrust=float(actuator_state[1]),
+            brake=replay_brake,
             steering_gain=steering_visual_gain,
+            throttle_gain=throttle_visual_gain,
         )
     if animate_throttle_in_ue5:
-        return map_fossen_visual_actuator_state(
+        return map_framework_visual_actuator_state(
             airsim_module,
             specs,
             rudder_angle=float(actuator_state[0]),
             thrust=float(actuator_state[1]),
+            brake=replay_brake,
             steering_gain=steering_visual_gain,
             throttle_gain=throttle_visual_gain,
         )
     if animate_steering_in_ue5:
-        return map_fossen_steering_visual_state(
+        return map_framework_steering_visual_state(
             airsim_module,
             specs,
             rudder_angle=float(actuator_state[0]),
+            brake=replay_brake,
             steering_gain=steering_visual_gain,
         )
     return None
@@ -301,7 +306,7 @@ def _animate_framework_state(
     animate_throttle_in_ue5: bool = False,
     previous_actuator_state: Optional[np.ndarray] = None,
     steering_visual_gain: float = 0.35,
-    throttle_visual_gain: float = 1.0,
+    throttle_visual_gain: float = 5.0 / 5.6,
     use_kinematics_in_ue5: bool = False,
     min_render_hz: float = 90.0,
     max_translation_step: float = 0.15,
@@ -692,7 +697,7 @@ class PySimVisualisationAdapter(ModelVisualisationAdapter):
     family = "pysim"
     model_origin = "pysim"
     supported_environment_names = ("PySimEnv",)
-    filename_keywords = ("pysimenv", "py_sim", "fossen")
+    filename_keywords = ("pysimenv", "py_sim", "framework")
 
     def environment_builders(self) -> dict[str, Callable[[int], object]]:
         """Return the supported PySim environment factories.

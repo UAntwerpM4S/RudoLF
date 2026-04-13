@@ -232,8 +232,8 @@ def run_inference(
 
     Args:
         model_path: Path to the AirSimEnv-trained checkpoint.
-        ship_pos: Optional start position override in Fossen coordinates.
-        target_pos: Optional target position override in Fossen coordinates.
+            ship_pos: Optional start position override in framework coordinates.
+            target_pos: Optional target position override in framework coordinates.
         ip: AirSim RPC host.
         port: AirSim RPC port.
         max_steps: Maximum steps per episode.
@@ -445,7 +445,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar=("X", "Y"),
         dest="ship_pos",
-        help="Start position in Fossen coords (east north).",
+        help="Start position in framework coords (east north).",
     )
     parser.add_argument(
         "--target-pos",
@@ -454,7 +454,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar=("X", "Y"),
         dest="target_pos",
-        help="Target position in Fossen coords (east north).",
+        help="Target position in framework coords (east north).",
     )
     parser.add_argument(
         "--device",

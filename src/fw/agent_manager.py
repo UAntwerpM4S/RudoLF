@@ -461,7 +461,7 @@ class AgentManager:
         self.agent.set_policy_eval()
         env = self.get_env()
         
-        # T-011 / Visualisation logic: prepare Fossen->AirSim coord transform if bridge active
+            # T-011 / Visualisation logic: prepare framework->AirSim coord transform if bridge active
         coord_transform = None
         if airsim_bridge and airsim_bridge.is_connected:
             from airsim.communication.coord_transform import CoordTransform
@@ -534,11 +534,11 @@ class AgentManager:
                             
                             # Bridge position to UE5 if connected
                             if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
-                                ax, ay, _ = coord_transform.fossen_to_airsim(
+                                ax, ay, _ = coord_transform.framework_to_airsim(
                                     float(env.ship_pos[0]), 
                                     float(env.ship_pos[1])
                                 )
-                                ayaw = coord_transform.fossen_heading_to_airsim_yaw(
+                                ayaw = coord_transform.framework_heading_to_airsim_yaw(
                                     float(env.phys_sim.state.heading)
                                 )
                                 airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
@@ -781,11 +781,11 @@ class AgentManager:
                     
                     # Bridge position to UE5 if connected
                     if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
-                        ax, ay, _ = coord_transform.fossen_to_airsim(
+                        ax, ay, _ = coord_transform.framework_to_airsim(
                             float(env.ship_pos[0]), 
                             float(env.ship_pos[1])
                         )
-                        ayaw = coord_transform.fossen_heading_to_airsim_yaw(
+                        ayaw = coord_transform.framework_heading_to_airsim_yaw(
                             float(env.phys_sim.state.heading)
                         )
                         airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
