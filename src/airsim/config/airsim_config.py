@@ -1,9 +1,9 @@
 """AirSim connection configuration with validation.
 
 Provides a validated ``AirSimConfig`` dataclass that centralises all
-CosysAirSim connection parameters.  PID / control-loop gains are
-intentionally **not** stored here - they belong in the future
-Fossen-input-mapping layer.
+CosysAirSim connection parameters. PID / control-loop gains are
+intentionally **not** stored here because they belong in the
+input-mapping layer instead.
 
 Example::
 
@@ -29,6 +29,7 @@ _THIS_DIR = Path(__file__).resolve().parent
 _RUNTIME_SETTINGS_PATH = _THIS_DIR / "runtime_settings.json"
 DEFAULT_AIRSIM_SAVE_SLOT = "simulator_1"
 DEFAULT_AIRSIM_SIMULATION_SPEED = 8.0
+DEFAULT_THROTTLE_VISUAL_GAIN = 5.0 / 5.6
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -171,7 +172,7 @@ def get_default_runtime_settings() -> Dict[str, Any]:
             "animate_throttle_in_ue5": True,
             "render_interpolation_steps": 12,
             "steering_visual_gain": 1.0,
-            "throttle_visual_gain": 1.0,
+            "throttle_visual_gain": DEFAULT_THROTTLE_VISUAL_GAIN,
             "use_kinematics_in_ue5": False,
             "min_render_hz": 90.0,
             "max_translation_step": 0.15,

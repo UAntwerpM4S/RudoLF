@@ -200,6 +200,7 @@ set FW_AIRSIM_VERBOSE=1
 - `visualization.minimap_update_hz`
 - `visualization.bridge_telemetry_hz`
 - `visualization.render_interpolation_steps`
+- `visualization.throttle_visual_gain`
 - `visualization.use_kinematics_in_ue5`
 - `visualization.vehicle_object_name`
 

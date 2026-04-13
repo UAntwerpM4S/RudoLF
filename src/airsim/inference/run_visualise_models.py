@@ -50,6 +50,7 @@ _DEFAULT_MINIMAP_UPDATE_HZ = 6.0
 _DEFAULT_BRIDGE_TELEMETRY_HZ = 12.0
 _DEFAULT_STARTUP_SETTLE_S = 0.4
 _DEFAULT_TRAIL_MIN_SEGMENT_M = 1.5
+_DEFAULT_THROTTLE_VISUAL_GAIN = 5.0 / 5.6
 
 
 def _normalise_policy_observation(obs, expected_dim: int | None = None) -> np.ndarray:
@@ -218,7 +219,7 @@ class VisualiseModelsRunner:
         animate_throttle_in_ue5: bool = True,
         render_interpolation_steps: int = 4,
         steering_visual_gain: float = 0.35,
-        throttle_visual_gain: float = 1.0,
+        throttle_visual_gain: float = _DEFAULT_THROTTLE_VISUAL_GAIN,
         use_kinematics_in_ue5: bool = False,
         min_render_hz: float = 90.0,
         max_translation_step: float = 0.15,

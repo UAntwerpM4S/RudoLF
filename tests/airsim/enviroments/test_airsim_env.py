@@ -178,6 +178,88 @@ def _find_straight_checkpoint(env, max_turn_deg=5.0):
     return None
 
 
+def _set_sharp_turn_route(env):
+    """Replace checkpoints with a deterministic route that contains a clear turn."""
+    env_module = importlib.import_module("airsim.environments.airsim_env")
+    points = np.array(
+        [
+            [0.0, 0.0],
+            [120.0, 0.0],
+            [240.0, 0.0],
+            [320.0, 140.0],
+            [360.0, 300.0],
+        ],
+        dtype=np.float32,
+    )
+
+    checkpoints = []
+    for i, point in enumerate(points):
+        framework_pos = np.array(point, dtype=np.float32)
+        ax, ay, az = env.coord.framework_to_airsim(
+            float(framework_pos[0]),
+            float(framework_pos[1]),
+        )
+        checkpoints.append(
+            {
+                "pos": framework_pos,
+                "pos_airsim_3d": np.array([ax, ay, az], dtype=np.float32),
+                "radius": float(env_module.CHECKPOINT_AREA_SIZE),
+                "reward": (i / max(1, len(points))) * 10.0,
+            }
+        )
+
+    checkpoints[-1]["radius"] = float(env_module.TARGET_AREA_SIZE)
+    checkpoints[-1]["reward"] = float(env_module.SUCCESS_REWARD)
+    lines = env_module._calculate_perpendicular_lines(checkpoints)
+    for checkpoint, line in zip(checkpoints, lines):
+        checkpoint["perpendicular_line"] = line
+
+    env.checkpoints = checkpoints
+    env.target_pos = checkpoints[-1]["pos"].copy()
+    return checkpoints
+
+
+def _set_straight_route(env):
+    """Replace checkpoints with a deterministic route that remains essentially straight."""
+    env_module = importlib.import_module("airsim.environments.airsim_env")
+    points = np.array(
+        [
+            [0.0, 0.0],
+            [100.0, 0.0],
+            [200.0, 1.0],
+            [300.0, 1.5],
+            [400.0, 2.0],
+        ],
+        dtype=np.float32,
+    )
+
+    checkpoints = []
+    for i, point in enumerate(points):
+        framework_pos = np.array(point, dtype=np.float32)
+        ax, ay, az = env.coord.framework_to_airsim(
+            float(framework_pos[0]),
+            float(framework_pos[1]),
+        )
+        checkpoints.append(
+            {
+                "pos": framework_pos,
+                "pos_airsim_3d": np.array([ax, ay, az], dtype=np.float32),
+                "radius": float(env_module.CHECKPOINT_AREA_SIZE),
+                "reward": (i / max(1, len(points))) * 10.0,
+            }
+        )
+
+    checkpoints[-1]["radius"] = float(env_module.TARGET_AREA_SIZE)
+    checkpoints[-1]["reward"] = float(env_module.SUCCESS_REWARD)
+    lines = env_module._calculate_perpendicular_lines(checkpoints)
+    for checkpoint, line in zip(checkpoints, lines):
+        checkpoint["perpendicular_line"] = line
+
+    env.checkpoints = checkpoints
+    env.target_pos = checkpoints[-1]["pos"].copy()
+    return checkpoints
+
+
 # ── Fixtures ───────────────────────────────────────────────
 
 
@@ -556,12 +638,12 @@ class TestWaypoints3D:
             assert cp["pos_airsim_3d"].dtype == np.float32
 
     def test_2d_and_3d_coords_consistent(self, mock_airsim):
-        """The 2D Fossen pos and 3D AirSim pos must be related by
+        """The 2D framework position and 3D AirSim position must be related by
         the coordinate transform (round-trip check)."""
         env, _ = mock_airsim
         cp = env.checkpoints[0]
-        fossen_x, fossen_y = cp["pos"]
-        ax, ay, _ = env.coord.fossen_to_airsim(float(fossen_x), float(fossen_y))
+        framework_x, framework_y = cp["pos"]
+        ax, ay, _ = env.coord.framework_to_airsim(float(framework_x), float(framework_y))
         np.testing.assert_allclose(
             cp["pos_airsim_3d"][:2],
             [ax, ay],
@@ -680,9 +762,9 @@ class TestCrossTrackCSV:
     def test_turn_action_governor_boosts_steering_and_reduces_throttle_on_sharp_turn(self, mock_airsim):
         """Sharp turns should trigger the AirSim action governor."""
         env, _ = mock_airsim
+        _set_sharp_turn_route(env)
         checkpoint_index = _find_turn_checkpoint(env)
-        if checkpoint_index is None:
-            pytest.skip("No turn checkpoint available in route")
+        assert checkpoint_index is not None
 
         prev_pos = env.checkpoints[checkpoint_index - 1]["pos"]
         cur_pos = env.checkpoints[checkpoint_index]["pos"]
@@ -708,9 +790,9 @@ class TestCrossTrackCSV:
     def test_turn_action_governor_injects_steering_for_timid_policy(self, mock_airsim):
         """The governor should add turn commitment even when the policy outputs zero steering."""
         env, _ = mock_airsim
+        _set_sharp_turn_route(env)
         checkpoint_index = _find_turn_checkpoint(env)
-        if checkpoint_index is None:
-            pytest.skip("No turn checkpoint available in route")
+        assert checkpoint_index is not None
 
         prev_pos = env.checkpoints[checkpoint_index - 1]["pos"]
         cur_pos = env.checkpoints[checkpoint_index]["pos"]
@@ -737,9 +819,9 @@ class TestCrossTrackCSV:
     def test_turn_action_governor_leaves_straight_action_unchanged(self, mock_airsim):
         """Straight segments should not be distorted by the turn governor."""
         env, _ = mock_airsim
+        _set_straight_route(env)
         checkpoint_index = _find_straight_checkpoint(env)
-        if checkpoint_index is None:
-            pytest.skip("No sufficiently straight checkpoint available in route")
+        assert checkpoint_index is not None
         _set_reward_state(
             env,
             progress_m=12.0,
@@ -984,9 +1066,9 @@ class TestCrossTrackCSV:
     def test_high_speed_in_turn_is_penalized_more_than_slowing_down(self, mock_airsim):
         """Sharp-turn approach should prefer slowing down over staying at top speed."""
         env, _ = mock_airsim
+        _set_sharp_turn_route(env)
         checkpoint_index = _find_turn_checkpoint(env)
-        if checkpoint_index is None:
-            pytest.skip("No turn checkpoint available in route")
+        assert checkpoint_index is not None
 
         prev_pos = env.checkpoints[checkpoint_index - 1]["pos"]
         cur_pos = env.checkpoints[checkpoint_index]["pos"]
@@ -1026,9 +1108,9 @@ class TestCrossTrackCSV:
     def test_sharp_turn_prefers_committed_steering_over_timid_steering(self, mock_airsim):
         """A tight turn should score better with committed steering than with timid input."""
         env, _ = mock_airsim
+        _set_sharp_turn_route(env)
         checkpoint_index = _find_turn_checkpoint(env)
-        if checkpoint_index is None:
-            pytest.skip("No turn checkpoint available in route")
+        assert checkpoint_index is not None
 
         prev_pos = env.checkpoints[checkpoint_index - 1]["pos"]
         cur_pos = env.checkpoints[checkpoint_index]["pos"]
@@ -1186,9 +1268,9 @@ class TestCrossTrackCSV:
     def test_near_checkpoint_reward_softens_penalty_for_upcoming_turn_heading(self, mock_airsim):
         """Near a turning checkpoint, the next-segment heading should become less bad."""
         env, _ = mock_airsim
+        _set_sharp_turn_route(env)
         checkpoint_index = _find_turn_checkpoint(env)
-        if checkpoint_index is None:
-            pytest.skip("Trajectory does not contain a sufficiently sharp turn for lookahead testing.")
+        assert checkpoint_index is not None
 
         prev_pos = env.checkpoints[checkpoint_index - 1]["pos"]
         cur_pos = env.checkpoints[checkpoint_index]["pos"]
