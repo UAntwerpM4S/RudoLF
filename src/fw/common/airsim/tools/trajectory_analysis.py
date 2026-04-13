@@ -344,7 +344,7 @@ def render_side_by_side_trajectory_plot(
     """Render and save a side-by-side 2D-vs-3D trajectory plot.
 
     The left panel shows 2D trajectory data from session telemetry
-    (Fossen/local frame), while the right panel shows UE5 AirSim 3D bridge
+    (framework/local frame), while the right panel shows UE5 AirSim 3D bridge
     telemetry.
 
     Args:

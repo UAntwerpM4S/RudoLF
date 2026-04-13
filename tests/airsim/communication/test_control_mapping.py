@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from airsim.communication.control_mapping import (
-    map_fossen_policy_action,
+    map_framework_actuator_state,
+    map_framework_policy_action,
     validate_policy_action,
 )
 from fw.ships.ship_factory import create_ship
@@ -52,13 +53,13 @@ def test_validate_policy_action_rejects_non_finite_values():
         validate_policy_action(np.array([0.0, np.nan], dtype=np.float32))
 
 
-def test_map_fossen_policy_action_normalizes_to_ue5_throttle_range():
-    """Test behavior for map fossen policy action normalizes to ue5 throttle range.
+def test_map_framework_policy_action_normalizes_to_ue5_throttle_range():
+    """Test behavior for framework policy action normalization to UE5 throttle.
     """
     airsim_module = _make_airsim_module()
     specs = create_ship().specifications
 
-    controls = map_fossen_policy_action(
+    controls = map_framework_policy_action(
         airsim_module,
         specs,
         steering=0.0,
@@ -66,4 +67,20 @@ def test_map_fossen_policy_action_normalizes_to_ue5_throttle_range():
     )
 
     assert 0.0 <= controls.throttle <= 1.0
+    assert controls.throttle == pytest.approx(0.5, abs=1e-6)
+
+
+def test_map_framework_actuator_state_applies_throttle_gain():
+    """Mirrored framework throttle should support calibrated visual scaling."""
+    airsim_module = _make_airsim_module()
+    specs = create_ship().specifications
+
+    controls = map_framework_actuator_state(
+        airsim_module,
+        specs,
+        rudder_angle=0.0,
+        thrust=specs.max_thrust,
+        throttle_gain=0.5,
+    )
+
     assert controls.throttle == pytest.approx(0.5, abs=1e-6)

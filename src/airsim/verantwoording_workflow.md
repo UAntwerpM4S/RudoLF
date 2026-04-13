@@ -1,4 +1,4 @@
-# Verantwoording Workflow
+﻿# Verantwoording Workflow
 
 ## Doel van deze workflow
 
@@ -35,7 +35,7 @@ De klassieke frameworkflow gebruikt de waarden uit `fw.config.CONFIG_PARAMETERS`
 Deze entrypoint leest de AirSim-runtime-instellingen en beslist welke AirSim-flow uitgevoerd moet worden:
 
 - AirSim training;
-- Fossen-gebaseerde visualisatie in UE5;
+- Framework-gebaseerde visualisatie in UE5;
 - inference-gebaseerde visualisatie in UE5.
 
 Deze file bevat dus de gespecialiseerde AirSim-logica, terwijl `fw.main` de algemene framework-entrypoint blijft.

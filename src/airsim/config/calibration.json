@@ -3,7 +3,7 @@
   "rotation": 0.023874173971934365,
   "mirror_x": false,
   "mirror_y": true,
-  "fossen_origin": [
+  "framework_origin": [
     2114.85899697759,
     -67.1000576978549
   ],
@@ -11,7 +11,7 @@
     -1130.04052734375,
     6048.738525390625
   ],
-  "fossen_endpoint": [
+  "framework_endpoint": [
     -1559.35222664292,
     11990.2317192098
   ],

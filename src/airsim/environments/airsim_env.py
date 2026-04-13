@@ -2,13 +2,13 @@
 
 This module provides a :class:`AirSimEnv`, a drop-in replacement for
 ``PySimEnv`` that uses Unreal Engine 5's physics via the CosysAirSim API
-instead of the Fossen mathematical model.
+instead of the local framework dynamics model.
 
 Coordinate frames
 -----------------
-- **Fossen**: x = east, y = north, heading from east (CCW positive).
+- **Framework**: x = east, y = north, heading from east (CCW positive).
 - **AirSim**: x = north, y = east (NED), yaw from north (CW positive).
-- **Transform**: ``AirSim_yaw = pi/2 - fossen_heading``.
+- **Transform**: ``AirSim_yaw = pi/2 - framework_heading``.
 
 Usage
 -----
@@ -43,7 +43,7 @@ from fw.common.airsim.tools.angles import (
     yaw_from_quaternion as _yaw_from_quaternion,
 )
 from airsim.communication.control_mapping import (
-    map_fossen_actuator_state,
+    map_framework_actuator_state,
     validate_policy_action,
 )
 from fw.ships.action_mapper import ActionMapper
@@ -187,7 +187,7 @@ def _calculate_perpendicular_lines(
 class AirSimEnv(BaseEnv):
     """Gymnasium environment that trains an RL agent inside UE5 via CosysAirSim.
 
-    This environment mirrors ``PySimEnv`` but replaces the Fossen physics
+    This environment mirrors ``PySimEnv`` but replaces the local framework physics
     model with UE5's physics engine. The agent sends ``[steering, throttle]``
     commands, and the environment reads back position, heading, speed, and
     collision info from UE5.
@@ -196,7 +196,7 @@ class AirSimEnv(BaseEnv):
         bridge: The :class:`~airsim.communication.airsim_bridge.AirSimBridge`
             that manages the connection to UE5.  The underlying
             ``cosysairsim.CarClient`` is accessible via ``bridge.client``.
-        coord: The coordinate transform between Fossen and AirSim frames.
+        coord: The coordinate transform between framework and AirSim frames.
     """
 
     def __init__(
@@ -245,8 +245,8 @@ class AirSimEnv(BaseEnv):
         """Initialise the AirSim training environment.
 
         Args:
-            ship_pos: Initial ship position in Fossen coords [x_east, y_north].
-            target_pos: Target position in Fossen coords.
+            ship_pos: Initial ship position in framework coords [x_east, y_north].
+            target_pos: Target position in framework coords.
             calibration: Optional calibration dict with scale/rotation/origins.
             calibration_path: Path to calibration JSON. If None, tries default.
             use_airsim: Whether the AirSim bridge should be enabled.
@@ -346,19 +346,19 @@ class AirSimEnv(BaseEnv):
         self.ship_specs = self.ship.specifications
         self._actuators = ActuatorModel(self.ship_specs)
 
-        # Match Fossen model surge limit for identical observation normalisation.
+        # Match the local framework surge limit for identical observation normalisation.
         # MYZAKO_DEFAULT: surge_limits = (0.0, 5.0).  UE5 top speed is 5.6 m/s
         # but we cap at the same value the policy was trained against.
         self.MAX_SPEED = self.ship_specs.surge_limits[1]  # 5.0 m/s
 
-        # Positions in Fossen frame
+        # Positions in framework coordinates
         self.initial_ship_pos = np.array(
             ship_pos if ship_pos is not None else [2245, -47],
             dtype=np.float32,
         )
         self._base_initial_ship_pos = self.initial_ship_pos.copy()
         self.randomization_scale = 1.0
-        self.target_fossen = np.array(
+        self.target_framework = np.array(
             target_pos if target_pos is not None else [11530.0, 13000.0],
             dtype=np.float32,
         )
@@ -426,7 +426,7 @@ class AirSimEnv(BaseEnv):
                 calibration_path=cal_path,
                 draw_reference=self.draw_calibration_reference,
                 ship_pos=(float(self.initial_ship_pos[0]), float(self.initial_ship_pos[1])),
-                target_pos=(float(self.target_fossen[0]), float(self.target_fossen[1])),
+                target_pos=(float(self.target_framework[0]), float(self.target_framework[1])),
             )
         elif cal_path.exists():
             with open(cal_path, "r") as f:
@@ -812,14 +812,14 @@ class AirSimEnv(BaseEnv):
 
         checkpoints = []
         for i, point in enumerate(path):
-            fossen_pos = np.array(point, dtype=np.float32)
-            ax, ay, az = self.coord.fossen_to_airsim(
-                float(fossen_pos[0]),
-                float(fossen_pos[1]),
+            framework_pos = np.array(point, dtype=np.float32)
+            ax, ay, az = self.coord.framework_to_airsim(
+                float(framework_pos[0]),
+                float(framework_pos[1]),
             )
             checkpoints.append(
                 {
-                    "pos": fossen_pos,
+                    "pos": framework_pos,
                     "pos_airsim_3d": np.array([ax, ay, az], dtype=np.float32),
                     "radius": float(CHECKPOINT_AREA_SIZE),
                     "reward": (i / max(1, len(path))) * 10.0,
@@ -844,7 +844,7 @@ class AirSimEnv(BaseEnv):
         )
 
         self.checkpoints = checkpoints
-        self.target_pos = checkpoints[-1]["pos"] if checkpoints else self.target_fossen
+        self.target_pos = checkpoints[-1]["pos"] if checkpoints else self.target_framework
 
         from shapely.geometry import Polygon
 
@@ -922,7 +922,7 @@ class AirSimEnv(BaseEnv):
 
         poly_points = []
         for p in polygon[::2]:
-            ux, uy = self.coord.fossen_to_airsim_2d(p[0], p[1])
+            ux, uy = self.coord.framework_to_airsim_2d(p[0], p[1])
             poly_points.append(airsim.Vector3r(ux, uy, overlay_z))
 
         chunk_size = 500
@@ -946,7 +946,7 @@ class AirSimEnv(BaseEnv):
 
         traj_points = []
         for p in traj_data:
-            ux, uy = self.coord.fossen_to_airsim_2d(p[0], p[1])
+            ux, uy = self.coord.framework_to_airsim_2d(p[0], p[1])
             traj_points.append(airsim.Vector3r(ux, uy, overlay_z - 2.0))
 
         for i in range(0, len(traj_points), chunk_size - 1):
@@ -960,10 +960,10 @@ class AirSimEnv(BaseEnv):
                 )
 
         # -- Start (blue) and end (red) dots --
-        start_ux, start_uy = self.coord.fossen_to_airsim_2d(
+        start_ux, start_uy = self.coord.framework_to_airsim_2d(
             float(self.initial_ship_pos[0]), float(self.initial_ship_pos[1])
         )
-        end_ux, end_uy = self.coord.fossen_to_airsim_2d(
+        end_ux, end_uy = self.coord.framework_to_airsim_2d(
             float(traj_data[-1][0]), float(traj_data[-1][1])
         )
 
@@ -987,7 +987,7 @@ class AirSimEnv(BaseEnv):
         if self.no_rendering_mode:
             return
 
-        ax, ay = self.coord.fossen_to_airsim_2d(
+        ax, ay = self.coord.framework_to_airsim_2d(
             float(self.ship_pos[0]),
             float(self.ship_pos[1]),
         )
@@ -999,7 +999,7 @@ class AirSimEnv(BaseEnv):
         )
 
         current_checkpoint = self._get_active_checkpoint()
-        cp_ax, cp_ay = self.coord.fossen_to_airsim_2d(
+        cp_ax, cp_ay = self.coord.framework_to_airsim_2d(
             float(current_checkpoint["pos"][0]),
             float(current_checkpoint["pos"][1]),
         )
@@ -1011,11 +1011,11 @@ class AirSimEnv(BaseEnv):
         )
 
         line_start, line_end = current_checkpoint["perpendicular_line"]
-        start_ax, start_ay = self.coord.fossen_to_airsim_2d(
+        start_ax, start_ay = self.coord.framework_to_airsim_2d(
             float(line_start[0]),
             float(line_start[1]),
         )
-        end_ax, end_ay = self.coord.fossen_to_airsim_2d(
+        end_ax, end_ay = self.coord.framework_to_airsim_2d(
             float(line_end[0]),
             float(line_end[1]),
         )
@@ -1160,10 +1160,10 @@ class AirSimEnv(BaseEnv):
         return latest_car_state, wait_time
 
     def _read_airsim_state(self, car_state=None) -> None:
-        """Read vehicle state from UE5 and convert to Fossen frame.
+        """Read vehicle state from UE5 and convert to the framework frame.
 
         Queries ``simGetVehiclePose`` and ``getCarState`` from the
-        AirSim client, then maps AirSim NED coordinates -> Fossen
+        AirSim client, then maps AirSim NED coordinates -> framework
         east/north via ``CoordTransform``.  Also derives the yaw rate
         from consecutive headings.
         """
@@ -1171,13 +1171,13 @@ class AirSimEnv(BaseEnv):
         if car_state is None:
             car_state = self.bridge.get_car_state()
 
-        fx, fy = self.coord.airsim_to_fossen(
+        fx, fy = self.coord.airsim_to_framework(
             pose.position.x_val, pose.position.y_val
         )
         self.ship_pos = np.array([fx, fy], dtype=np.float32)
 
         airsim_yaw = _yaw_from_quaternion(pose.orientation)
-        self.ship_heading = self.coord.airsim_yaw_to_fossen_heading(airsim_yaw)
+        self.ship_heading = self.coord.airsim_yaw_to_framework_heading(airsim_yaw)
 
         self.ship_speed = min(car_state.speed, self.MAX_SPEED)
         self.ship_u = self.ship_speed
@@ -1337,7 +1337,7 @@ class AirSimEnv(BaseEnv):
             dt=self._last_sim_step_dt,
             enable_smoothing=self.enable_smoothing,
         )
-        controls = map_fossen_actuator_state(
+        controls = map_framework_actuator_state(
             self._airsim,
             self.ship_specs,
             rudder_angle=float(actuator.rudder_angle),
@@ -1494,7 +1494,7 @@ class AirSimEnv(BaseEnv):
 
         Resets the AirSim vehicle, re-pauses the simulation (if
         ``use_pause_stepping``), and teleports the ship back to the
-        initial Fossen position.
+        initial framework position.
 
         Args:
             seed: Optional RNG seed for reproducibility.
@@ -1557,11 +1557,11 @@ class AirSimEnv(BaseEnv):
         current_pose = self.bridge.get_vehicle_pose()
         current_z = current_pose.position.z_val
 
-        start_ax, start_ay, _ = self.coord.fossen_to_airsim(
+        start_ax, start_ay, _ = self.coord.framework_to_airsim(
             float(self.initial_ship_pos[0]),
             float(self.initial_ship_pos[1]),
         )
-        initial_yaw = self.coord.fossen_heading_to_airsim_yaw(initial_heading)
+        initial_yaw = self.coord.framework_heading_to_airsim_yaw(initial_heading)
         pose = self._airsim.Pose(
             self._airsim.Vector3r(start_ax, start_ay, current_z),
             self._airsim.Quaternionr(0, 0, math.sin(initial_yaw / 2), math.cos(initial_yaw / 2)),

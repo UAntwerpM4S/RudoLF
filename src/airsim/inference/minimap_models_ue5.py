@@ -128,12 +128,12 @@ class UE5TopDownMinimap:
         if ship_pos_arr.size < 2 or heading is None:
             raise ValueError("Environment does not expose ship pose for minimap rendering.")
 
-        x, y, _ = self.bridge.coord_transform.fossen_to_airsim(
+        x, y, _ = self.bridge.coord_transform.framework_to_airsim(
             float(ship_pos_arr[0]),
             float(ship_pos_arr[1]),
             self.bridge.render_z,
         )
-        yaw = self.bridge.coord_transform.fossen_heading_to_airsim_yaw(heading)
+        yaw = self.bridge.coord_transform.framework_heading_to_airsim_yaw(heading)
         return x, y, yaw
 
     def update(self, env) -> None:

@@ -86,10 +86,10 @@ class _SmokeBridge(_FakeBridge):
         """
         super().__init__(*args, **kwargs)
         self.coord_transform = SimpleNamespace(
-            fossen_to_airsim=lambda x, y, z: (x + 10.0, y - 5.0, z),
-            fossen_heading_to_airsim_yaw=lambda heading: heading + 0.1,
-            fossen_velocity_to_airsim=lambda vx, vy: (vx, vy),
-            fossen_yaw_rate_to_airsim=lambda yaw_rate: yaw_rate,
+            framework_to_airsim=lambda x, y, z: (x + 10.0, y - 5.0, z),
+            framework_heading_to_airsim_yaw=lambda heading: heading + 0.1,
+            framework_velocity_to_airsim=lambda vx, vy: (vx, vy),
+            framework_yaw_rate_to_airsim=lambda yaw_rate: yaw_rate,
         )
         self.render_z = -3.0
         self.pose_calls = []

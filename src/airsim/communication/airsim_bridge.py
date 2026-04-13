@@ -9,13 +9,13 @@ inside Unreal Engine 5.  It provides:
 * **Pass-through control** - ``set_controls()`` forwards pre-mapped
   ``CarControls`` to AirSim without any PID processing.
 
-Input mapping (Fossen model -> UE5 controls) is handled by
+Input mapping (framework/local model -> UE5 controls) is handled by
 :class:`~airsim.environments.airsim_env.AirSimEnv` and the
 :mod:`airsim.inference.run_inference` module.  **PID control is not
 used anywhere in this bridge.**
 
 Coordinate frames:
-    * **Ship (Fossen):** x = east, y = north, heading from east (CCW+).
+    * **Framework:** x = east, y = north, heading from east (CCW+).
     * **AirSim (NED):** x = north, y = east, yaw from north (CW+).
     * **Transform:** ``AirSim_yaw = pi/2 - ship_heading``.
 
@@ -706,7 +706,7 @@ class AirSimBridge:
     ) -> None:
         """Forcibly set the vehicle's position and orientation in UE5.
         
-        Useful for visualization where another physics engine (e.g. Fossen)
+        Useful for visualization where another physics engine
         computes the trajectory and we only use UE5 for rendering.
         
         Args:
@@ -762,7 +762,8 @@ class AirSimBridge:
         Static/Skeletal Mesh Actor) that has no Chaos physics body. The water
         plugin never sees a physics body move, so there are no buoyancy reactions
         or water ripple artefacts. This is the recommended transport for the
-        fully-external-physics visualisation mode: Fossen runs in Python, UE5
+        fully-external-physics visualisation mode: the local framework runs in
+        Python, UE5
         is used purely as a renderer.
 
         Args:

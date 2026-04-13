@@ -397,7 +397,7 @@ class AgentManager:
         self.agent.set_policy_eval()
         env = self.get_env()
 
-        # Prepare Fossen->AirSim coordinate transform if bridge is active
+        # Prepare framework->AirSim coordinate transform if bridge is active
         coord_transform = None
         if airsim_bridge and airsim_bridge.is_connected:
             from airsim.communication.coord_transform import CoordTransform
@@ -444,11 +444,11 @@ class AgentManager:
 
                                 # Bridge ship position and heading to UE5 via coordinate transform
                                 if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
-                                    ax, ay, _ = coord_transform.fossen_to_airsim(
+                                    ax, ay, _ = coord_transform.framework_to_airsim(
                                         float(env.ship_pos[0][0]),
                                         float(env.ship_pos[0][1])
                                     )
-                                    ayaw = coord_transform.fossen_heading_to_airsim_yaw(
+                                    ayaw = coord_transform.framework_heading_to_airsim_yaw(
                                         float(env.phys_sims[0].state.heading)
                                     )
                                     airsim_bridge.set_pose(ax, ay, 0.0, ayaw)

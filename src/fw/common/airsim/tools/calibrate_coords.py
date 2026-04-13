@@ -1,11 +1,11 @@
-"""Coordinate calibration tool for Fossen <-> AirSim mapping.
+"""Coordinate calibration tool for Framework <-> AirSim mapping.
 
 Run this script while UE5 + CosysAirSim is running. It will:
 1. Ask you to drive the vehicle to 2 known reference points
 2. Compute the transform (scale, rotation, mirror, offset)
 3. Save calibration as ``calibration.json``
 
-4. Visually verify by drawing the Fossen polygon in UE5
+4. Visually verify by drawing the Framework polygon in UE5
 
 Usage:
     python -m fw.common.airsim.tools.calibrate_coords
@@ -78,7 +78,7 @@ def _detect_origin_drift(client, saved_config: dict) -> np.ndarray:
 
 
 def _collect_reference_points(client, traj_start, traj_end, has_existing, choice):
-    """Gather two Fossen ↔ AirSim reference-point pairs interactively.
+    """Gather two Framework <-> AirSim reference-point pairs interactively.
 
     Depending on the user's ``choice`` the method either re-uses a
     saved calibration, drives to points in UE5, or accepts manual
@@ -86,13 +86,13 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
 
     Args:
         client: An active ``cosysairsim.CarClient`` instance.
-        traj_start: Start of the reference trajectory (Fossen frame).
-        traj_end: End of the reference trajectory (Fossen frame).
+        traj_start: Start of the reference trajectory (Framework frame).
+        traj_end: End of the reference trajectory (Framework frame).
         has_existing: Whether a ``calibration.json`` already exists.
-        choice: User-selected calibration mode (``"1"``–``"4"``).
+        choice: User-selected calibration mode (``"1"``-``"4"``).
 
     Returns:
-        An 8-tuple ``(fossen_A, fossen_B, ue5_A, ue5_B,
+        An 8-tuple ``(framework_A, framework_B, ue5_A, ue5_B,
         mirror_x, mirror_y, offset_x, offset_y)``.
     """
     if choice in ["1", "4", "5"] and has_existing:
@@ -102,46 +102,46 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
 
         drift = _detect_origin_drift(client, saved)
 
-        fossen_A = np.array(saved["fossen_origin"])
+        framework_A = np.array(saved["framework_origin"])
         ue5_A = np.array(saved["airsim_origin"]) + drift
         mirror_x = saved.get("mirror_x", False)
         mirror_y = saved.get("mirror_y", False)
 
-        if "fossen_endpoint" in saved and "airsim_endpoint" in saved:
-            fossen_B = np.array(saved["fossen_endpoint"])
+        if "framework_endpoint" in saved and "airsim_endpoint" in saved:
+            framework_B = np.array(saved["framework_endpoint"])
             ue5_B = np.array(saved["airsim_endpoint"]) + drift
         else:
-            fossen_B = traj_end
+            framework_B = traj_end
             corrected = dict(saved)
             corrected["airsim_origin"] = ue5_A.tolist()
             coord = CoordTransform(corrected)
-            ux, uy = coord.fossen_to_airsim_2d(fossen_B[0], fossen_B[1])
+            ux, uy = coord.framework_to_airsim_2d(framework_B[0], framework_B[1])
             ue5_B = np.array([ux, uy])
 
         print(f"\n  Re-using saved calibration from: {cal_path}")
-        return fossen_A, fossen_B, ue5_A, ue5_B, mirror_x, mirror_y, 0.0, 0.0
+        return framework_A, framework_B, ue5_A, ue5_B, mirror_x, mirror_y, 0.0, 0.0
 
-    # Ask for Fossen reference points
+    # Ask for Framework reference points
     print()
-    custom_fossen = input("Use trajectory start/end as Fossen points? [Y/n]: ").strip().lower()
-    if custom_fossen == "n":
-        ax = float(input("Fossen point A — x: "))
-        ay = float(input("Fossen point A — y: "))
-        bx = float(input("Fossen point B — x: "))
-        by = float(input("Fossen point B — y: "))
-        fossen_A = np.array([ax, ay])
-        fossen_B = np.array([bx, by])
+    custom_framework = input("Use trajectory start/end as Framework points? [Y/n]: ").strip().lower()
+    if custom_framework == "n":
+        ax = float(input("Framework point A - x: "))
+        ay = float(input("Framework point A - y: "))
+        bx = float(input("Framework point B - x: "))
+        by = float(input("Framework point B - y: "))
+        framework_A = np.array([ax, ay])
+        framework_B = np.array([bx, by])
     else:
-        fossen_A = traj_start
-        fossen_B = traj_end
+        framework_A = traj_start
+        framework_B = traj_end
 
     # Get AirSim points
     if choice == "3":
         print()
-        uax = float(input("AirSim point A — x: "))
-        uay = float(input("AirSim point A — y: "))
-        ubx = float(input("AirSim point B — x: "))
-        uby = float(input("AirSim point B — y: "))
+        uax = float(input("AirSim point A - x: "))
+        uay = float(input("AirSim point A - y: "))
+        ubx = float(input("AirSim point B - x: "))
+        uby = float(input("AirSim point B - y: "))
         ue5_A = np.array([uax, uay])
         ue5_B = np.array([ubx, uby])
     else:
@@ -162,27 +162,27 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
 
     # Mirror and offset
     print()
-    flip_x = input("Is the UE5 X-axis flipped relative to Fossen? [y/N]: ").strip().lower()
-    flip_y = input("Is the UE5 Y-axis flipped relative to Fossen? (Usually Yes for UE5) [Y/n]: ").strip().lower()
+    flip_x = input("Is the UE5 X-axis flipped relative to Framework? [y/N]: ").strip().lower()
+    flip_y = input("Is the UE5 Y-axis flipped relative to Framework? (Usually Yes for UE5) [Y/n]: ").strip().lower()
     mirror_x = (flip_x == "y")
     mirror_y = (flip_y != "n")
 
     print()
-    print("Fine-tuning: you can add a manual offset in meters to shift the Fossen data in UE5.")
+    print("Fine-tuning: you can add a manual offset in meters to shift the Framework data in UE5.")
     offset_x = float(input("Manual X offset (e.g. 0.0): ") or 0.0)
     offset_y = float(input("Manual Y offset (e.g. 0.0): ") or 0.0)
 
-    return fossen_A, fossen_B, ue5_A, ue5_B, mirror_x, mirror_y, offset_x, offset_y
+    return framework_A, framework_B, ue5_A, ue5_B, mirror_x, mirror_y, offset_x, offset_y
 
 
-def _compute_calibration(fossen_A, fossen_B, ue5_A, ue5_B,
+def _compute_calibration(framework_A, framework_B, ue5_A, ue5_B,
                           mirror_x, mirror_y, offset_x, offset_y,
                           spawn_position) -> dict:
     """Compute the calibration dictionary from two reference-point pairs.
 
     Args:
-        fossen_A: First reference point in Fossen coordinates.
-        fossen_B: Second reference point in Fossen coordinates.
+        framework_A: First reference point in Framework coordinates.
+        framework_B: Second reference point in Framework coordinates.
         ue5_A: First reference point in AirSim / UE5 coordinates.
         ue5_B: Second reference point in AirSim / UE5 coordinates.
         mirror_x: Whether the X-axis is flipped.
@@ -194,20 +194,20 @@ def _compute_calibration(fossen_A, fossen_B, ue5_A, ue5_B,
     Returns:
         A dictionary suitable for writing to ``calibration.json``.
     """
-    fossen_dist = np.linalg.norm(fossen_B - fossen_A)
+    framework_dist = np.linalg.norm(framework_B - framework_A)
     ue5_dist = np.linalg.norm(ue5_B - ue5_A)
-    scale = ue5_dist / fossen_dist
+    scale = ue5_dist / framework_dist
 
-    dx_f = fossen_B[0] - fossen_A[0]
-    dy_f = fossen_B[1] - fossen_A[1]
+    dx_f = framework_B[0] - framework_A[0]
+    dy_f = framework_B[1] - framework_A[1]
     if mirror_x:
         dx_f = -dx_f
     if mirror_y:
         dy_f = -dy_f
 
-    fossen_angle = np.arctan2(dy_f, dx_f)
+    framework_angle = np.arctan2(dy_f, dx_f)
     ue5_angle = np.arctan2(ue5_B[1] - ue5_A[1], ue5_B[0] - ue5_A[0])
-    rotation = ue5_angle - fossen_angle
+    rotation = ue5_angle - framework_angle
 
     ue5_A_shifted = ue5_A + np.array([offset_x, offset_y])
 
@@ -216,9 +216,9 @@ def _compute_calibration(fossen_A, fossen_B, ue5_A, ue5_B,
         "rotation": float(rotation),
         "mirror_x": mirror_x,
         "mirror_y": mirror_y,
-        "fossen_origin": fossen_A.tolist(),
+        "framework_origin": framework_A.tolist(),
         "airsim_origin": ue5_A_shifted.tolist(),
-        "fossen_endpoint": fossen_B.tolist(),
+        "framework_endpoint": framework_B.tolist(),
         "airsim_endpoint": ue5_B.tolist(),
         "spawn_position": spawn_position.tolist(),
     }
@@ -227,8 +227,8 @@ def _compute_calibration(fossen_A, fossen_B, ue5_A, ue5_B,
 def _draw_visualization(
     client,
     coord,
-    fossen_A,
-    fossen_B,
+    framework_A,
+    framework_B,
     ue5_A,
     ue5_B,
     ridge_overlay_offset: tuple[float, float] = (0.0, 0.0),
@@ -246,8 +246,8 @@ def _draw_visualization(
         client: An active ``cosysairsim.CarClient`` instance.
         coord: A ``CoordTransform`` configured with the current
             calibration.
-        fossen_A: First Fossen reference point.
-        fossen_B: Second Fossen reference point.
+        framework_A: First Framework reference point.
+        framework_B: Second Framework reference point.
         ue5_A: First AirSim reference point.
         ue5_B: Second AirSim reference point.
     """
@@ -265,17 +265,17 @@ def _draw_visualization(
     client.simFlushPersistentMarkers()
     time.sleep(0.3)
 
-    check_A = coord.fossen_to_airsim_2d(*fossen_A)
-    check_B = coord.fossen_to_airsim_2d(*fossen_B)
+    check_A = coord.framework_to_airsim_2d(*framework_A)
+    check_B = coord.framework_to_airsim_2d(*framework_B)
     err_A = np.linalg.norm(np.array(check_A) - ue5_A)
     err_B = np.linalg.norm(np.array(check_B) - ue5_B)
-    print(f"\n  Verification A: ({check_A[0]:.2f}, {check_A[1]:.2f}) vs ({ue5_A[0]:.2f}, {ue5_A[1]:.2f}) — error: {err_A:.4f}")
-    print(f"  Verification B: ({check_B[0]:.2f}, {check_B[1]:.2f}) vs ({ue5_B[0]:.2f}, {ue5_B[1]:.2f}) — error: {err_B:.4f}")
+    print(f"\n  Verification A: ({check_A[0]:.2f}, {check_A[1]:.2f}) vs ({ue5_A[0]:.2f}, {ue5_A[1]:.2f}) - error: {err_A:.4f}")
+    print(f"  Verification B: ({check_B[0]:.2f}, {check_B[1]:.2f}) vs ({ue5_B[0]:.2f}, {ue5_B[1]:.2f}) - error: {err_B:.4f}")
 
     # Draw reference ridges from both polygons:
     # - river banks (overall map) in green
     # - navigation channel / waterway ridges in bright red
-    print("\nDrawing Fossen polygons in UE5 for visual verification...")
+    print("\nDrawing Framework polygons in UE5 for visual verification...")
 
     def _plot_polygon_ridges(csv_name: str, color_rgba: list[float], thickness: float, z: float = overlay_z) -> None:
         """Render a polygon CSV as persistent line-strip chunks in UE5."""
@@ -284,7 +284,7 @@ def _draw_visualization(
 
         points_3d = []
         for p in polygon[::2]:
-            ux, uy = coord.fossen_to_airsim_2d(p[0], p[1])
+            ux, uy = coord.framework_to_airsim_2d(p[0], p[1])
             ux += ridge_dx
             uy += ridge_dy
             # Optional overlay-only Z-axis rotation for ridge fine tuning (top-down orientation).
@@ -323,7 +323,7 @@ def _draw_visualization(
 
     traj_points = []
     for p in traj_data:
-        ux, uy = coord.fossen_to_airsim_2d(p[0], p[1])
+        ux, uy = coord.framework_to_airsim_2d(p[0], p[1])
         traj_points.append(airsim.Vector3r(ux, uy, overlay_z))
 
     for i in range(0, len(traj_points), chunk_size - 1):
@@ -339,11 +339,11 @@ def _draw_visualization(
     # Draw start (blue) and target (red) dots
     marker_start = route_start
     marker_target = np.array(
-        target_pos if target_pos is not None else fossen_B,
+        target_pos if target_pos is not None else framework_B,
         dtype=np.float64,
     )
-    start_ux, start_uy = coord.fossen_to_airsim_2d(marker_start[0], marker_start[1])
-    target_ux, target_uy = coord.fossen_to_airsim_2d(marker_target[0], marker_target[1])
+    start_ux, start_uy = coord.framework_to_airsim_2d(marker_start[0], marker_start[1])
+    target_ux, target_uy = coord.framework_to_airsim_2d(marker_target[0], marker_target[1])
 
     client.simPlotPoints(
         [airsim.Vector3r(start_ux, start_uy, -3.0)],
@@ -383,9 +383,9 @@ def load_saved_calibration_reference(
         client: Active ``cosysairsim.CarClient`` instance.
         calibration_path: Optional override for ``calibration.json``.
         draw_reference: Whether to redraw the saved reference overlay in UE5.
-        ship_pos: Optional Fossen start position used for the blue marker and
+        ship_pos: Optional Framework start position used for the blue marker and
             trajectory slicing.
-        target_pos: Optional Fossen target position used for the red marker.
+        target_pos: Optional Framework target position used for the red marker.
 
     Returns:
         A tuple ``(coord, config)`` containing the corrected transform and
@@ -399,16 +399,16 @@ def load_saved_calibration_reference(
     config = dict(saved)
 
     ue5_A = np.array(saved["airsim_origin"], dtype=np.float64) + drift
-    fossen_A = np.array(saved["fossen_origin"], dtype=np.float64)
+    framework_A = np.array(saved["framework_origin"], dtype=np.float64)
     config["airsim_origin"] = ue5_A.tolist()
 
     _, traj_end = _load_trajectory_endpoints()
-    fossen_B = np.array(saved.get("fossen_endpoint", traj_end), dtype=np.float64)
+    framework_B = np.array(saved.get("framework_endpoint", traj_end), dtype=np.float64)
     if "airsim_endpoint" in saved:
         ue5_B = np.array(saved["airsim_endpoint"], dtype=np.float64) + drift
     else:
         preview = CoordTransform(config)
-        ux, uy = preview.fossen_to_airsim_2d(fossen_B[0], fossen_B[1])
+        ux, uy = preview.framework_to_airsim_2d(framework_B[0], framework_B[1])
         ue5_B = np.array([ux, uy], dtype=np.float64)
     config["airsim_endpoint"] = ue5_B.tolist()
 
@@ -419,8 +419,8 @@ def load_saved_calibration_reference(
         _draw_visualization(
             client,
             coord,
-            fossen_A,
-            fossen_B,
+            framework_A,
+            framework_B,
             ue5_A,
             ue5_B,
             ridge_overlay_offset=ridge_overlay_offset,
@@ -433,7 +433,7 @@ def load_saved_calibration_reference(
 
 
 def run_calibration() -> None:
-    """Run the interactive Fossen ↔ AirSim calibration wizard.
+    """Run the interactive Framework <-> AirSim calibration wizard.
 
     Connects to AirSim, collects two reference-point pairs (either
     from an existing calibration, interactive driving, or manual
@@ -451,11 +451,11 @@ def run_calibration() -> None:
     traj_start, traj_end = _load_trajectory_endpoints()
 
     print("=" * 60)
-    print("  FOSSEN <-> AIRSIM COORDINATE CALIBRATION")
+    print("  FRAMEWORK <-> AIRSIM COORDINATE CALIBRATION")
     print("=" * 60)
     print()
-    print(f"Trajectory START (Fossen): ({traj_start[0]:.1f}, {traj_start[1]:.1f})")
-    print(f"Trajectory END   (Fossen): ({traj_end[0]:.1f}, {traj_end[1]:.1f})")
+    print(f"Trajectory START (Framework): ({traj_start[0]:.1f}, {traj_start[1]:.1f})")
+    print(f"Trajectory END   (Framework): ({traj_end[0]:.1f}, {traj_end[1]:.1f})")
     print()
 
     existing_cal = _CONFIG_DIR / "calibration.json"
@@ -473,7 +473,7 @@ def run_calibration() -> None:
 
     choice = input(f"Choose [{'1/4/5/' if has_existing else ''}2/3]: ").strip()
 
-    fossen_A, fossen_B, ue5_A, ue5_B, mirror_x, mirror_y, offset_x, offset_y = (
+    framework_A, framework_B, ue5_A, ue5_B, mirror_x, mirror_y, offset_x, offset_y = (
         _collect_reference_points(client, traj_start, traj_end, has_existing, choice)
     )
 
@@ -488,7 +488,7 @@ def run_calibration() -> None:
             config["spawn_position"] = spawn_position.tolist()
     else:
         config = _compute_calibration(
-            fossen_A, fossen_B, ue5_A, ue5_B,
+            framework_A, framework_B, ue5_A, ue5_B,
             mirror_x, mirror_y, offset_x, offset_y,
             spawn_position,
         )
@@ -501,8 +501,8 @@ def run_calibration() -> None:
     print()
     print("=" * 40)
     print(f"  Scale:    {config['scale']:.6f}")
-    print(f"  Rotation: {math.degrees(config['rotation']):.2f}°")
-    print(f"  Fossen origin: {config['fossen_origin']}")
+    print(f"  Rotation: {math.degrees(config['rotation']):.2f} deg")
+    print(f"  Framework origin: {config['framework_origin']}")
     print(f"  AirSim origin: {config['airsim_origin']}")
     print("=" * 40)
 
@@ -516,8 +516,8 @@ def run_calibration() -> None:
         _draw_visualization(
             client,
             coord,
-            fossen_A,
-            fossen_B,
+            framework_A,
+            framework_B,
             ue5_A,
             ue5_B,
             ridge_overlay_offset=tuple(config.get("ridge_overlay_offset", [0.0, 0.0])),
@@ -532,7 +532,7 @@ def run_calibration() -> None:
         print("=" * 40)
         if choice == "4":
             print("  LIVE TUNING MODE (FULL CALIBRATION)")
-            print("  Shift the full Fossen overlay in UE5 by entering an X and Y offset in meters.")
+            print("  Shift the full Framework overlay in UE5 by entering an X and Y offset in meters.")
             print("  This updates airsim_origin and affects all transformed data.")
         else:
             print("  LIVE TUNING MODE (RIDGE OVERLAY ONLY)")
