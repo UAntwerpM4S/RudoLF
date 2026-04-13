@@ -4,6 +4,13 @@ from airsim.config.airsim_config import get_airsim_config  # re-export
 
 PPO_POLICY_NAME = "PPO"
 PPO2_POLICY_NAME = "PPO2"
+MULTI_PPO_POLICY_NAME = "MPPO"
+
+AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE = "{session_type}_session.csv"
+AIRSIM_BRIDGE_LOG_FILENAME = "airsim_telemetry.csv"
+AIRSIM_METADATA_FILENAME = "metadata.json"
+AIRSIM_INFERENCE_TRAJECTORY_PLOT_FILENAME = "inference_trajectory.png"
+AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME = "trajectory_2d_vs_3d.png"
 
 
 """
@@ -47,14 +54,31 @@ DEFAULT_HYPERPARAMETERS = {
         'log_interval': 10,
         'n_steps': 2048,
         'batch_size': 64,
-        'num_epochs': 7,
+        'num_epochs': 10,
         'reward_threshold': 100000.8,
         'device': "cpu",
         'model_dir': "models",
         'log_dir': "logs",
         'tensorboard_log': "logs/tensorboard",
         'verbose': True
-    }
+    },
+    MULTI_PPO_POLICY_NAME: {
+        'learning_rate': 1e-4,
+        'gamma': 0.95,
+        'gae_lambda': 0.95,
+        'entropy_coef': 0.01,
+        'value_loss_coef': 0.5,
+        'max_grad_norm': 0.5,
+        'clip_range': 0.05,
+        'eval_frequency': 100,
+        'num_envs': 1,
+        'num_epochs': 10,
+        'normalize': False,
+        'max_nbr_iterations': 200000,
+        'batch_size': 64,
+        'device': "cpu",
+        'model_dir': "models"
+    },
 }
 
 CONFIG_PARAMETERS = {

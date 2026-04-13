@@ -3,6 +3,7 @@ from typing import Optional, Tuple
 
 
 class Criterion(Enum):
+    """Criterion."""
     NBR_POLICY_UPDATES = auto()
     TARGET_REWARD = auto()
     TARGET_REWARD_AND_LOSS = auto()

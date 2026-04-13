@@ -1,28 +1,28 @@
-"""Tests for AirSim Fossen-visualisation dispatch through fw.main_with_airsim."""
+"""Tests for modular model-visualisation dispatch through fw.main_with_airsim."""
 
 import runpy
 
 import pytest
 
 
-def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
-    """Run fw.main_with_airsim and verify it routes to run_visualise_fossen.
+def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
+    """Run fw.main_with_airsim and verify it routes to run_visualise_models.
 
     Args:
         monkeypatch: Pytest monkeypatch fixture.
 
     Verifies:
-        - runtime settings enable fossen_visualise.
-        - run_visualise_fossen receives expected arguments.
+        - runtime settings enable model_visualise.
+        - run_visualise_models receives expected arguments.
         - main_with_airsim exits early with code 0 after dispatch.
         - run_inference is not called in this mode.
     """
     runtime = {
         "visualization": {
-            "fossen_visualise": True,
+            "model_visualise": True,
             "inference_visualise": False,
-            "fossen_model_path": "src/models/PySimEnv_PPO_policy.zip",
-            "fossen_environment": "auto",
+            "model_path": "src/models/PySimEnv_PPO_policy.zip",
+            "environment_name": "auto",
             "episodes": 2,
             "max_steps": 123,
             "device": "cpu",
@@ -55,17 +55,27 @@ def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
 
     called = {}
 
-    import airsim.inference.run_visualise_fossen as run_visualise_fossen_module
+    import airsim.inference.run_visualise_models as run_visualise_models_module
 
-    def _fake_run_visualise_fossen(**kwargs):
+    def _fake_run_visualise_models(**kwargs):
+        """ fake run visualise models.
+
+        Args:
+            kwargs: Description.
+        """
         called.update(kwargs)
 
-    monkeypatch.setattr(run_visualise_fossen_module, "run_visualise_fossen", _fake_run_visualise_fossen)
+    monkeypatch.setattr(run_visualise_models_module, "run_visualise_models", _fake_run_visualise_models)
 
     import airsim.inference.run_inference as run_inference_module
 
     def _fail_run_inference(**kwargs):
-        raise AssertionError("run_inference should not be called when fossen_visualise=True")
+        """ fail run inference.
+
+        Args:
+            kwargs: Description.
+        """
+        raise AssertionError("run_inference should not be called when model_visualise=True")
 
     monkeypatch.setattr(run_inference_module, "run_inference", _fail_run_inference)
 
@@ -75,8 +85,11 @@ def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("fw.main_with_airsim", run_name="__main__")
 
+    from pathlib import Path
+
     assert exc.value.code == 0
-    assert called["model_path"] == "src/models/PySimEnv_PPO_policy.zip"
+    assert Path(called["model_path"]).name == "PySimEnv_PPO_policy.zip"
+    assert "models" in Path(called["model_path"]).parts
     assert called["env_name"] == "auto"
     assert called["port"] == 41451
     assert called["num_episodes"] == 2
@@ -84,7 +97,7 @@ def test_main_with_airsim_dispatches_fossen_visualisation(monkeypatch):
     assert called["simulation_speed"] == 10.0
 
 
-def test_main_with_airsim_exits_cleanly_when_ue5_is_unreachable(monkeypatch, capsys):
+def test_main_with_airsim_model_visualisation_exits_cleanly_when_ue5_is_unreachable(monkeypatch, capsys):
     """Run fw.main_with_airsim and verify UE5 connection failures exit cleanly.
 
     Args:
@@ -92,14 +105,14 @@ def test_main_with_airsim_exits_cleanly_when_ue5_is_unreachable(monkeypatch, cap
         capsys: Pytest stdout/stderr capture fixture.
 
     Verifies:
-        - runtime settings enable fossen_visualise.
+        - runtime settings enable model_visualise.
         - a ConnectionError from the AirSim visualiser is converted into a
           clean ``SystemExit(1)`` rather than an uncaught traceback.
         - the user-facing message explains the missing UE5 dependency.
     """
     runtime = {
         "visualization": {
-            "fossen_visualise": True,
+            "model_visualise": True,
             "inference_visualise": False,
         },
         "airsim": {
@@ -111,14 +124,19 @@ def test_main_with_airsim_exits_cleanly_when_ue5_is_unreachable(monkeypatch, cap
     import airsim.config.airsim_config as airsim_config
     monkeypatch.setattr(airsim_config, "get_runtime_settings", lambda: runtime)
 
-    import airsim.inference.run_visualise_fossen as run_visualise_fossen_module
+    import airsim.inference.run_visualise_models as run_visualise_models_module
 
     def _raise_connection_error(**kwargs):
+        """ raise connection error.
+
+        Args:
+            kwargs: Description.
+        """
         raise ConnectionError("AirSimBridge could not connect to UE5 at 127.0.0.1:41451.")
 
     monkeypatch.setattr(
-        run_visualise_fossen_module,
-        "run_visualise_fossen",
+        run_visualise_models_module,
+        "run_visualise_models",
         _raise_connection_error,
     )
 

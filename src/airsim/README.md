@@ -1,347 +1,383 @@
-# AirSim Integration Package
+﻿# AirSim Integration Package
 
-> **CosysAirSim bridge, Gymnasium RL environment, coordinate calibration, and analysis tools for training autonomous navigation agents in Unreal Engine 5.**
+`src/airsim` contains the Unreal Engine 5 / CosysAirSim integration layer for the RudoLF framework.
 
----
+It supports three practical runtime paths:
 
-## Overview
+- `AirSimEnv` training inside UE5.
+- `run_inference.py` for policy inference against live UE5 state.
+- `run_visualise_models.py` for framework-driven replay where `PySimEnv` or `FhSimEnv` remains authoritative and UE5 is used as renderer.
 
-The `airsim` package connects the RudoLF reinforcement-learning framework to [CosysAirSim](https://github.com/Cosys-Lab/Cosys-AirSim) — a photorealistic vehicle simulator built on Unreal Engine 5. It enables:
+No UE5 text overlay or in-world status text is currently active. That feature was removed temporarily.
 
-- **RL training inside UE5** — the `AirSimEnv` Gymnasium environment reads vehicle state (position, heading, speed) directly from UE5 and sends steering / throttle commands back, replacing the Fossen mathematical model with UE5's physics engine.
-- **Framework-to-UE5 visualisation** — the Fossen framework simulation can be mirrored into UE5 in real time while keeping the framework as the physics source of truth.
-- **Coordinate calibration** — an interactive wizard aligns the Fossen (east, north) frame with AirSim's (NED) frame using two reference points, automatically handling scale, rotation, axis mirroring, and origin drift.
+## Scope
 
-### Architecture
+The AirSim package is responsible for:
+
+- connecting to CosysAirSim in UE5
+- translating between framework and AirSim coordinates
+- mapping policy actions to `CarControls`
+- exposing a Gymnasium environment backed by UE5
+- replaying framework trajectories into UE5
+- exporting telemetry and session metadata
+- providing matplotlib and UE5-camera minimap options for replay
+
+It is not responsible for:
+
+- policy architecture itself
+- scheduler orchestration
+- framework environment registration logic
+- long-term analytics outside exported CSV/metadata bundles
+
+## Getting Started
+
+If you need the full environment/bootstrap flow, start with:
+
+- [AirSim Step-By-Step Setup Guide](../../docs/airsim_setup_step_by_step.md)
+- [AirSim Architecture](../../docs/airsim_architecture.md)
+
+## Top-Level Architecture
 
 ```mermaid
 flowchart LR
-    subgraph EntryPoints[Runtime entrypoints]
-        main[fw.main]
-        airsimMain[fw.main_with_airsim]
-        inference[run_inference.py]
-        replay[run_visualise_fossen.py]
-    end
+    A["fw.main"] --> B["fw.main_with_airsim"]
+    B --> C{"runtime_settings.json"}
 
-    subgraph Runtime[Python runtime]
-        trainer[Trainer / PPO]
-        airsimEnv[AirSimEnv]
-        mapping[control_mapping.py]
-        bridge[AirSimBridge]
-        coord[CoordTransform]
-        minimap[minimap process]
-    end
+    C -->|train| D["AirSimEnv via fw.env_factory"]
+    D --> E["Trainer / AgentManager"]
+    E --> F["AirSimBridge"]
+    F --> G["UE5 + CosysAirSim"]
 
-    subgraph UE5[UE5 and CosysAirSim]
-        rpc[CosysAirSim RPC]
-        world[UE5 world / vehicle / save slot]
-    end
+    C -->|inference_visualise| H["airsim.inference.run_inference"]
+    H --> I["AirSimEnv"]
+    I --> F
 
-    main -->|AirSimEnv selected| airsimMain
-    main -->|framework envs| trainer
-    airsimMain --> trainer
-    trainer --> airsimEnv
-    inference --> airsimEnv
-    replay --> coord --> bridge
-    replay --> minimap
-    airsimEnv --> mapping --> bridge
-    bridge --> rpc --> world
+    C -->|model_visualise| J["airsim.inference.run_visualise_models"]
+    J --> K["Model adapter registry"]
+    K --> L["PySimEnv or FhSimEnv"]
+    L --> F
+
+    H --> M["exports/<session>"]
+    J --> M
+    D --> M
 ```
 
-The current bridge is a transport and lifecycle layer. It owns the CosysAirSim connection, save-slot reloads, pose mirroring, kinematic mirroring, object-pose mirroring, and telemetry reads. Control laws and action mapping live in upper layers such as `AirSimEnv`, `run_inference.py`, `run_visualise_fossen.py`, and `control_mapping.py`.
+## Component Diagram
 
-For the rationale behind the current `fw.main` and `fw.main_with_airsim` split, see [verantwoording_workflow.md](verantwoording_workflow.md).
+```mermaid
+flowchart TD
+    A["AirSimBridge"] --> B["RPC: set_controls / set_pose / get_state"]
+    B --> C["CosysAirSim / UE5"]
 
-For the full tree structure and runtime diagrams, see [../../docs/airsim_architecture.md](../../docs/airsim_architecture.md).
+    D["control_mapping.py"] --> A
+    E["coord_transform.py"] --> A
+    E --> F["AirSimEnv"]
 
----
+    F --> G["reward + checkpoint logic"]
+    F --> H["episode reset / close"]
+    F --> I["telemetry snapshot fields"]
 
-## Package Structure
+    J["run_inference.py"] --> F
+    K["run_visualise_models.py"] --> L["visualisation_models/model_adapters.py"]
+    L --> M["PySimEnv / FhSimEnv"]
+    M --> A
 
+    K --> N["VisualiseModelsMinimap"]
+    K --> O["UE5TopDownMinimap"]
+    J --> P["AirSimSessionExporter"]
+    K --> P
 ```
+
+## How It Fits Into The Framework
+
+### Ordered framework execution
+
+`fw.main` is still the top-level framework entrypoint.
+
+When `env_type` contains `AirSimEnv`, `fw.main` delegates that stage to `fw.main_with_airsim` while keeping the configured environment order intact. This is what allows mixed sequences such as:
+
+```python
+["PySimEnv", "AirSimEnv", "PySimEnv"]
+```
+
+### Real source of truth
+
+The execution decision is made in this order:
+
+1. `src/fw/config.py`
+   - `env_type`
+   - `action`
+2. `src/fw/main.py`
+   - resolves ordered environments
+   - delegates `AirSimEnv` steps to `fw.main_with_airsim`
+3. `src/fw/main_with_airsim.py`
+   - refines the selected AirSim step using `runtime_settings.json`
+
+### AirSim-specialized entrypoint
+
+`fw.main_with_airsim` reads `src/airsim/config/runtime_settings.json` and decides whether it should:
+
+- train through `AirSimEnv`
+- run UE5 inference through `run_inference.py`
+- run framework replay through `run_visualise_models.py`
+
+`model_visualise` is the primary runtime switch for modular framework-model replay in UE5.
+
+Current checked-in defaults in the source are not neutral:
+
+- `src/fw/config.py`
+  - `env_type = ["AirSimEnv"]`
+  - `action = "visualize"`
+- `src/airsim/config/runtime_settings.json`
+  - `visualization.model_visualise = true`
+  - `visualization.inference_visualise = false`
+
+So the repository currently defaults to an AirSim model-visualisation workflow
+unless those values are changed.
+
+## Package Layout
+
+```text
 airsim/
-├── __init__.py                   # Re-exports CoordTransform, get_airsim_config
-│
-├── config/                       # Configuration & calibration data
-│   ├── airsim_config.py          # Validated connection and runtime settings
-│   ├── runtime_settings.json     # Python runtime settings and AirSim overrides
-│   ├── calibration.json          # Fossen ↔ AirSim coordinate calibration
-│   └── settings_training.json    # Manual UE5 / CosysAirSim settings template
-│
-├── communication/                # UE5 ↔ Fossen communication layer
-│   ├── airsim_bridge.py          # RPC lifecycle, control forwarding, pose mirroring
-│   ├── control_mapping.py        # Policy and actuator mapping to CarControls
-│   └── coord_transform.py        # Bidirectional coordinate mapping
-│
-├── environments/                 # Gymnasium RL environments
-│   └── airsim_env.py             # AirSimEnv — drop-in replacement for PySimEnv
-│
-├── train/                        # Training scripts
-│   └── train_airsim.py           # Entry point for RL training inside UE5
-│
-├── inference/                    # Visualization & analysis scripts
-│   ├── minimap_fossen_airsim.py  # Live minimap for Fossen replay
-│   ├── plot_airsim_path.py       # Live dead-reckoning path plotter
-│   ├── run_inference.py          # AirSim-backed inference entry point
-│   ├── run_visualise_fossen.py   # Fossen replay mirrored into UE5
-│   └── verify_headless_plot.py   # CI-friendly headless plot export
-│
-├── tools/                        # Calibration & telemetry utilities
-│   ├── calibrate_coords.py       # Interactive Fossen↔AirSim calibration wizard
-│   └── analyze_telemetry.py      # Offline telemetry statistics
-│
-├── poc/                          # Frozen proof-of-concept snapshots
-│   ├── README.md                 # Documents the POC scope
-│   ├── airsim_bridge_PID.py      # Historical bridge prototype
-│   └── train_airsim.py           # Historical training snapshot
-│
-
-Repository-level tests for this package live in:
-
+|-- communication/
+|   |-- airsim_bridge.py
+|   |-- control_mapping.py
+|   `-- coord_transform.py
+|-- config/
+|   |-- airsim_config.py
+|   |-- calibration.json
+|   `-- runtime_settings.json
+|-- environments/
+|   `-- airsim_env.py
+|-- inference/
+|   |-- README.md
+|   |-- minimap_fossen_airsim.py
+|   |-- minimap_models_ue5.py
+|   |-- plot_airsim_path.py
+|   |-- run_inference.py
+|   |-- run_visualise_models.py
+|   `-- visualisation_models/
+|       |-- __init__.py
+|       `-- model_adapters.py
+|-- train/
+|   `-- train_airsim.py
+`-- verantwoording_workflow.md
 ```
 
-tests/
-└── airsim/
-├── communication/
-│ └── test_bridge.py
-├── enviroments/
-│ └── test_airsim_env.py
-└── inference/
-└── test_fossen_visualisation_dispatch.py
+Shared AirSim utilities live under:
 
+```text
+src/fw/common/airsim/
+|-- tools/analyze_telemetry.py
+|-- tools/angles.py
+|-- tools/calibrate_coords.py
+`-- tools/path_utils.py
 ```
 
-```
+## Runtime Paths
 
----
+### 1. AirSim training
 
-## Quick Start
+Training uses `AirSimEnv` as the authoritative environment.
 
-### Prerequisites
+This path is selected by:
 
-| Requirement        | Version | Notes                                     |
-|--------------------|---------|-------------------------------------------|
-| Python             | ≥ 3.12  |                                           |
-| CosysAirSim        | latest  | `pip install cosysairsim`                 |
-| Unreal Engine 5    | ≥ 5.3   | With the CosysAirSim plugin + water level |
-| Stable Baselines 3 | ≥ 2.0   | `pip install stable-baselines3`           |
-| pytest             | ≥ 8.0   | `pip install pytest` (for tests only)     |
+- `src/fw/config.py`
+  - `env_type` includes `AirSimEnv`
+  - `action = "train"`
+- `src/airsim/config/runtime_settings.json`
+  - `training.*` refines the AirSim training behavior
 
-### 1 — Calibrate coordinates (one-time)
+Control flow:
+
+1. policy action enters `AirSimEnv.step()`
+2. action is validated and smoothed
+3. the AirSimEnv control mapping is applied
+4. `AirSimBridge.set_controls()` sends controls to UE5
+5. UE5 advances physics
+6. AirSim state is read back
+7. observation, reward, checkpoint progress, and termination are computed
+
+Key code:
+
+- `src/airsim/environments/airsim_env.py`
+- `src/airsim/communication/control_mapping.py`
+- `src/airsim/communication/airsim_bridge.py`
+
+### 2. Live inference against UE5
+
+`run_inference.py` is now dedicated to models trained directly in `AirSimEnv`.
+
+This path is selected by:
+
+- `src/fw/config.py`
+  - `env_type` includes `AirSimEnv`
+  - `action = "visualize"`
+- `src/airsim/config/runtime_settings.json`
+  - `visualization.inference_visualise = true`
+  - `visualization.model_visualise = false`
+
+Its runtime loop intentionally mirrors training:
+
+1. `AirSimEnv.reset()` starts each episode and restores the ship pose
+2. the PPO policy predicts an action from the current observation
+3. `AirSimEnv.step()` sends controls to UE5, waits for physics, reads back state, and computes reward
+4. termination and truncation come directly from `AirSimEnv.step()`
+5. `AirSimEnv.close()` shuts the session down cleanly
+
+This means:
+
+- `T-026` is implemented through the native `AirSimEnv` send-action and feedback loop
+- `T-027` is implemented through native episode reset, stop detection, and ship repositioning
+
+For framework-trained models such as `PySimEnv` and `FhSimEnv`, `run_visualise_models.py` remains the preferred and supported replay path.
+
+### 3. Framework replay mirrored into UE5
+
+`run_visualise_models.py` keeps framework physics authoritative and mirrors the resulting motion into UE5.
+
+This path is selected by:
+
+- `src/fw/config.py`
+  - `env_type` includes `AirSimEnv`
+  - `action = "visualize"`
+- `src/airsim/config/runtime_settings.json`
+  - `visualization.model_visualise = true`
+
+Control flow:
+
+1. adapter is resolved from model family and environment name
+2. framework env (`PySimEnv` or `FhSimEnv`) is stepped locally
+3. motion state is converted to AirSim coordinates
+4. bridge mirrors pose or kinematics into UE5
+5. optional minimap is updated
+6. visualisation and bridge telemetry are exported
+
+This path is the current reference path for visual model replay.
+
+## Configuration
+
+### Framework-level
+
+In `src/fw/config.py`:
+
+- `env_type`
+- `action`
+
+### AirSim runtime configuration
+
+In `src/airsim/config/runtime_settings.json`:
+
+- `airsim`
+  - connection, save slot, simulation speed
+- `training`
+  - pause stepping, frames per step, time step, watchdogs
+- `visualization`
+  - replay mode selection, minimap options, interpolation, camera settings
+
+Important keys:
+
+- `visualization.model_visualise`
+- `visualization.inference_visualise`
+- `visualization.model_family`
+- `visualization.environment_name`
+- `visualization.show_minimap`
+- `visualization.use_ue5_camera_minimap`
+- `visualization.save_matplotlib_minimap`
+
+## Exports
+
+All AirSim runtime paths write session folders under `exports/`.
+
+Typical files:
+
+- `metadata.json`
+- `airsim_telemetry.csv`
+- `inference_session.csv` or `visualisation_session.csv`
+
+These are created through `AirSimSessionExporter`.
+
+## Minimap And Plotting
+
+There are currently two replay minimap options:
+
+- `VisualiseModelsMinimap`
+  - process-based matplotlib minimap
+  - live ship marker + heading line
+  - ideal path and waterway geometry
+- `UE5TopDownMinimap`
+  - top-down camera view rendered from UE5
+
+`plot_airsim_path.py` still exists as a standalone telemetry plotter. It is not currently integrated into the main replay runner.
+
+## Current Visual Cues In UE5
+
+Active:
+
+- persistent path/reference markers drawn with `plot_line_strip`
+- start/end points and other debug markers
+- minimap rendering when enabled
+
+Inactive for now:
+
+- UE5 HUD status text
+- in-world text labels near the ship
+
+## Common Commands
+
+From `src/`:
+
+### Framework entrypoint
 
 ```bash
-cd src
-python -m airsim.tools.calibrate_coords
+python -m fw.main
 ```
 
-Follow the prompts to drive the vehicle to two reference points. The wizard writes `calibration.json` and draws the Fossen polygon overlay in UE5 for visual verification.
-
-### 2 — Train inside UE5
+### AirSim-specialized entrypoint
 
 ```bash
-cd src
 python -m fw.main_with_airsim
 ```
 
-This reads `airsim/config/runtime_settings.json` and launches the AirSim-specific training flow for `AirSimEnv`. The generic alternative is `python -m fw.main`, which delegates into `fw.main_with_airsim` when `fw.config.CONFIG_PARAMETERS['env_type']` is set to `"AirSimEnv"`.
-
-`settings_training.json` is not loaded by the Python runtime. It exists as a manual template for the UE5 / CosysAirSim application settings that you may copy into the simulator-side settings location.
-
-`runtime_settings.json` is valid JSON and therefore cannot contain native comments. Inline explanations are stored under `_remarks` objects.
-
-When you launch through `fw.main`, the framework-level selector lives in `fw.config.CONFIG_PARAMETERS`:
-
-- `env_type = "AirSimEnv"` routes into `fw.main_with_airsim`.
-- `action = "train"` or `"visualize"` controls the generic non-AirSim framework path.
-- AirSim visualisation itself is selected through `fossen_visualise` or `inference_visualise` in `airsim/config/runtime_settings.json` after the AirSim branch has been selected.
-- AirSim training throughput is tuned through `training.speed_profile` (`safe`, `fast`, `turbo`, `custom`) in `airsim/config/runtime_settings.json`.
-
-### 3 — Run inference inside UE5
+### Live AirSimEnv inference in UE5
 
 ```bash
-cd src
-python -m airsim.inference.run_inference --model src/models/AirSimEnv_PPO_policy.zip
+python -m airsim.inference.run_inference --model models/AirSimEnv_PPO_policy.zip
 ```
 
-This runs a saved PPO policy against `AirSimEnv`. For UE5-trained models, actions are mapped directly to `CarControls`. For older Fossen-trained models, the compatibility path inside `AirSimEnv.step()` is used.
-
-### 4 — Visualise Fossen replay in UE5
-
-To keep the framework physics authoritative and use UE5 as a renderer:
+### Framework replay in UE5
 
 ```bash
-cd src
-python -m airsim.inference.run_visualise_fossen --model src/models/PySimEnv_PPO_policy.zip
+python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_policy.zip
 ```
 
-This path steps `PySimEnv` or `FhSimEnv`, converts the resulting framework state with `CoordTransform`, and mirrors it into UE5 through `AirSimBridge`.
+## Related Docs
 
-### 5 — Analyse telemetry
-
-```bash
-cd src
-python -m airsim.tools.analyze_telemetry
-```
-
-### 6 — Run tests
-
-```bash
-cd ..
-python -m pytest tests/airsim -v
-```
-
----
-
-## Key Components
-
-### `AirSimBridge` — Connection and Transport Layer
-
-**Module:** `airsim.communication.airsim_bridge`
-
-The bridge is responsible for:
-
-- Connecting to `cosysairsim.CarClient` with retry and health-check logic.
-- Reloading UE5 save slots and reconnecting after world reloads.
-- Forwarding already-mapped `CarControls` objects to UE5.
-- Mirroring framework state into UE5 through `set_pose()`, `set_kinematics()`, or `set_object_pose()`.
-- Reading vehicle telemetry and optionally buffering it to CSV.
-
-Action mapping happens in `communication/control_mapping.py`, `environments/airsim_env.py`, and the inference entry points.
-
-### `CoordTransform` — Bidirectional Coordinate Mapping
-
-**Module:** `airsim.communication.coord_transform`
-
-Handles the complex mapping between the Fossen (x = east, y = north) and AirSim (x = north, y = east, NED) coordinate frames. Supports:
-
-- **Scale** — different distance units between frames.
-- **Rotation** — arbitrary rotation angle.
-- **Axis mirroring** — independent X / Y flips.
-- **Translation** — different origin positions.
-- **Heading ↔ Yaw** conversion with correct mirroring.
-- **Origin-drift auto-correction** — compensates for UE5 PlayerStart shifts.
-
-Configured from `calibration.json` (generated by `calibrate_coords.py`).
-
-### `AirSimEnv` — Gymnasium RL Environment
-
-**Module:** `airsim.environments.airsim_env`
-
-A drop-in replacement for `PySimEnv` that uses UE5's physics engine instead of the Fossen mathematical model:
-
-- **Same observation space** (10-dim: velocities, distances, heading errors).
-- **Same action space** (`[steering, throttle]` in [-1, 1]).
-- **Same reward function** (forward progress + heading alignment + cross-track penalty + rudder penalty).
-- **Same termination conditions** (collision, out-of-water, excessive heading change, cross-track limit).
-
-Additional UE5-specific features:
-
-- **Deterministic frame stepping** — pauses UE5 and advances frame-by-frame for reproducible training.
-- **Physics-update watchdog** — waits for a newer UE5 timestamp after each paused-frame step and warns when latency exceeds the configured threshold.
-- **Training mode** — disables UE5 rendering, fog, particles, shadows to maximise training speed.
-- **Drift auto-correction** — detects and compensates for UE5 coordinate-origin shifts.
-- **Per-step latency telemetry** — exposes `physics_wait_s`, `step_latency_s`, and `ue5_timestamp` through `step()` info and the episode CSV logger.
-
-### `run_visualise_fossen.py` — Framework Replay Renderer
-
-This entry point keeps `PySimEnv` or `FhSimEnv` as the source of truth and mirrors the resulting motion into UE5. It supports pose mirroring, kinematic mirroring, object-pose mirroring, optional visual steering/throttle animation, and a process-isolated live minimap.
-
-For high replay speeds, the visualisation no longer insists on time-based interpolation when the wall-clock budget per framework step is already shorter than the effective render interval. In that case, the mirror path snaps directly to the target pose to reduce pacing jitter in both UE5 and the minimap.
-
----
-
-## Configuration Reference
-
-The validated bridge settings live in `airsim/config/airsim_config.py`:
-
-| Parameter               | Default | Description                                 |
-|-------------------------|---------|---------------------------------------------|
-| `use_airsim`            | `True`  | Enable / disable the AirSim bridge          |
-| `ip`                    | `""`    | AirSim server IP, empty meaning localhost   |
-| `port`                  | `41451` | AirSim RPC port                             |
-| `timeout`               | `10.0`  | Connection timeout in seconds               |
-| `max_retries`           | `3`     | Number of reconnect attempts                |
-| `health_check_interval` | `30.0`  | Health-check interval in seconds            |
-| `csv_log_path`          | `""`    | Optional path for buffered telemetry export |
-
-Higher-level AirSim runtime options for training, inference, and visualisation live in `airsim/config/runtime_settings.json`. Framework routing lives in `fw.config.CONFIG_PARAMETERS`, where `env_type` chooses the environment and `action` chooses generic framework train versus visualize behavior.
-
-Training runtime controls include:
-
-| Runtime key                       | Purpose                                                               |
-|-----------------------------------|-----------------------------------------------------------------------|
-| `training.speed_profile`          | One-switch preset: `safe`, `fast`, `turbo`, or `custom`.              |
-| `training.simulation_speed`       | UE5 speed multiplier used in training mode (`custom` profile).        |
-| `training.frames_per_step`        | Number of UE5 physics frames advanced per RL step (`custom` profile). |
-| `training.use_pause_stepping`     | Deterministic paused stepping toggle (`custom` profile).              |
-| `training.physics_update_timeout` | Watchdog timeout while waiting for paused step completion.            |
-
-Important visualisation-related settings include:
-
-| Runtime key                  | Purpose                                                                          |
-|------------------------------|----------------------------------------------------------------------------------|
-| `simulation_speed`           | Multiplies UE5 replay speed during training or visualisation.                    |
-| `min_render_hz`              | Sets the minimum wall-clock cadence for UE5 pose pushes during framework replay. |
-| `render_interpolation_steps` | Requests smoothing steps for mirrored framework motion.                          |
-| `show_minimap`               | Enables the live minimap process during Fossen replay.                           |
-
-These settings interact: at high `simulation_speed`, the replay may reach a point where the time budget per framework step becomes smaller than the effective render interval. The current implementation then snaps the visual update directly instead of blocking on interpolation that cannot become visible anyway.
-
----
-
-## Coordinate Frames
-
-| Frame  | X-axis | Y-axis | Heading reference | Positive direction |
-|--------|--------|--------|-------------------|--------------------|
-| Fossen | East   | North  | From East         | Counter-clockwise  |
-| AirSim | North  | East   | From North (NED)  | Clockwise          |
-
-**Conversion:** `AirSim_yaw = π/2 − fossen_heading`
-
-The `CoordTransform` class handles all conversions, including scale, rotation, and axis mirroring as specified in `calibration.json`.
-
----
-
-## Telemetry
-
-When `csv_log_path` is configured, the bridge can export buffered vehicle telemetry with fields returned by `AirSimBridge.get_state()`, including:
-
-| Column                                | Unit  | Description                   |
-|---------------------------------------|-------|-------------------------------|
-| `timestamp`                           | —     | AirSim timestamp              |
-| `speed`                               | m/s   | AirSim-reported vehicle speed |
-| `gear`                                | —     | Current gear                  |
-| `pos_x`, `pos_y`, `pos_z`             | m     | AirSim-frame position         |
-| `vel_x`, `vel_y`, `vel_z`             | m/s   | Linear velocity components    |
-| `ang_vel_x`, `ang_vel_y`, `ang_vel_z` | rad/s | Angular velocity components   |
-| `yaw`                                 | rad   | Normalized AirSim yaw         |
-
-Use `python -m airsim.tools.analyze_telemetry` for offline inspection, and see [../../docs/airsim_architecture.md](../../docs/airsim_architecture.md) for how telemetry fits into the overall design.
-
-`AirSimEnv` can additionally write episode-scoped CSV telemetry with the following extra fields:
-
-| Column           | Unit | Description                                          |
-|------------------|------|------------------------------------------------------|
-| `physics_wait_s` | s    | Time spent waiting for a newer UE5 physics timestamp |
-| `step_latency_s` | s    | Total wall-clock duration of the environment step    |
-| `ue5_timestamp`  | —    | Last timestamp reported by `getCarState()`           |
-
----
+- [AirSim Step-By-Step Setup Guide](../../docs/airsim_setup_step_by_step.md)
+- [AirSim Inference and Visualisation Runbook](inference/README.md)
+- [Workflow rationale](verantwoording_workflow.md)
+- [Repository-level AirSim architecture](../../docs/airsim_architecture.md)
 
 ## Tests
 
+Examples:
+
 ```bash
-cd ..
 python -m pytest tests/airsim -v
+python -m pytest tests/fw/test_main_fallback.py -v
+python -m pytest tests/fw/test_env_factory_config.py -v
 ```
 
-The test suite covers:
+Important modules:
 
-- **`test_bridge.py`** — connection handling, state conversion helpers, and bridge integration behavior.
-- **`test_airsim_env.py`** — observation parity, reset/step behavior, checkpoint loading, and CSV telemetry.
-- **`test_control_mapping.py`** — action validation and Fossen-to-UE5 throttle mapping bounds.
-- **`test_fossen_visualisation_dispatch.py`** — verifies `fw.main_with_airsim` routes runtime Fossen-visualise mode to `run_visualise_fossen` with expected arguments.
-- **`test_minimap_layout.py`** — verifies minimap sizing, docking, and local follow-view helper behaviour.
-- **`test_fossen_visualisation_timing.py`** — verifies the snap-versus-interpolate decision used to reduce pacing jitter at high replay speeds.
+- `tests/airsim/inference/test_model_visualisation_dispatch.py`
+- `tests/airsim/inference/test_visualisation_model_adapters.py`
+- `tests/airsim/inference/test_visualise_models_minimap_save.py`
+- `tests/fw/test_main_fallback.py`
+- `tests/fw/test_env_factory_config.py`
 
-Tests run without UE5 or CosysAirSim by patching the bridge and environment dependencies directly inside the test modules.
+## Notes
+
+- `poc/` is historical and not the current reference implementation.
+- `run_visualise_models.py` is the preferred replay path for framework-trained policies.
+- `run_inference.py` is the preferred path for live UE5-native inference and validation.

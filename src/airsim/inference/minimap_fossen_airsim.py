@@ -52,6 +52,7 @@ def _find_ue5_window_context():
         import ctypes.wintypes
 
         class _MONITORINFO(ctypes.Structure):
+            """ctypes structure matching Win32 ``MONITORINFO``."""
             _fields_ = [
                 ("cbSize", ctypes.wintypes.DWORD),
                 ("rcMonitor", ctypes.wintypes.RECT),
@@ -235,9 +236,10 @@ def _snapshot_env(env) -> dict:
     Returns:
         Dictionary of serialisable static map data.
     """
+    ship_pos, heading = _extract_primary_ship_pose(env)
     return {
-        "ship_pos_0": np.array(env.ship_pos[0], dtype=np.float64),
-        "initial_heading": float(env.phys_sims[0].state.heading),
+        "ship_pos_0": np.array(ship_pos, dtype=np.float64),
+        "initial_heading": float(heading),
         "target_pos": (
             np.array(env.target_pos, dtype=np.float64)
             if getattr(env, "target_pos", None) is not None
@@ -261,6 +263,43 @@ def _snapshot_env(env) -> dict:
             else None
         ),
     }
+
+
+def _extract_primary_ship_pose(env) -> tuple[np.ndarray, float]:
+    """Extract one ship position and heading from common env layouts.
+
+    Args:
+        env: Framework environment exposing one of the supported position and
+            physics-state attributes.
+
+    Returns:
+        tuple[np.ndarray, float]: Flattened ``(x, y)`` position and heading in
+        framework coordinates.
+
+    Raises:
+        ValueError: If position or heading cannot be extracted.
+    """
+    ship_pos_value = getattr(env, "ship_pos", None)
+    ship_pos = np.asarray(ship_pos_value, dtype=np.float64)
+    if ship_pos.ndim > 1:
+        ship_pos = ship_pos[0]
+    ship_pos = ship_pos.reshape(-1)
+
+    state_entry = None
+    phys_sims = getattr(env, "phys_sims", None)
+    if isinstance(phys_sims, (list, tuple)) and phys_sims:
+        state_entry = phys_sims[0]
+    elif phys_sims is not None:
+        state_entry = phys_sims
+    if state_entry is None:
+        state_entry = getattr(env, "phys_sim", None)
+
+    state = getattr(state_entry, "state", state_entry)
+    heading = None if state is None else getattr(state, "heading", None)
+    if ship_pos.size < 2 or heading is None:
+        raise ValueError("Environment does not expose ship pose for minimap rendering.")
+
+    return ship_pos, float(heading)
 
 
 def _worker_save_png(
@@ -389,6 +428,11 @@ def _minimap_process_main(
     pending_reframe = [False]
 
     def on_draw(_event):
+        """Refresh the cached background after a full matplotlib redraw.
+
+        Args:
+            _event: Matplotlib draw event object.
+        """
         bg[0] = fig.canvas.copy_from_bbox(ax.bbox)
         pending_reframe[0] = False
 
@@ -490,6 +534,15 @@ class MinimapFossenAirsim:
         window_title: str = "RudoLF - Live Minimap",
         max_fps: float = 15.0,
     ) -> None:
+        """Initialize the live minimap process wrapper.
+
+        Args:
+            env: Fully reset framework environment used to build the initial
+                static snapshot.
+            save_dir: Directory where episode PNG exports should be written.
+            window_title: Window title shown by the minimap process.
+            max_fps: Maximum redraw rate requested for live updates.
+        """
         self._save_dir = Path(save_dir)
         self._window_title = window_title
         self._update_interval = 1.0 / max(max_fps, 1.0)
@@ -519,13 +572,21 @@ class MinimapFossenAirsim:
             logger.warning("Minimap process did not become ready within 15 s.")
 
     def update(self, env) -> None:
-        """Queue the current ship position for the next minimap redraw."""
-        pos = np.array(env.ship_pos[0], dtype=np.float64)
-        hdg = float(env.phys_sims[0].state.heading)
+        """Queue the current ship position for the next minimap redraw.
+
+        Args:
+            env: Active framework environment providing position and heading.
+        """
+        pos, hdg = _extract_primary_ship_pose(env)
         _try_put_latest(self._update_q, ("update", pos, hdg))
 
     def finish(self, total_reward: float, episode: int = 1) -> None:
-        """Finalise an episode and wait briefly for the PNG save acknowledgement."""
+        """Finalize an episode and wait briefly for the PNG save acknowledgement.
+
+        Args:
+            total_reward: Episode reward recorded for the finished run.
+            episode: One-based episode index used for the PNG filename.
+        """
         self._cmd_q.put(("finish", float(total_reward), int(episode)))
         deadline = time.monotonic() + 10.0
         while time.monotonic() < deadline:
@@ -549,3 +610,4 @@ class MinimapFossenAirsim:
             self._proc.join(timeout=2.0)
 
         self._proc = None
+

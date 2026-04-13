@@ -1,11 +1,13 @@
 import os
 import torch
 import numpy as np
-import gymnasium as gym
 
-from typing import Optional, Tuple
+from pathlib import Path
 from abc import ABC, abstractmethod
+from typing import Optional, Tuple, Union
 from fw.stop_condition import StopCondition
+from fw.environments.base_env import BaseEnv
+from fw.common.tools.path_utils import resolve_path_relative_to_src
 
 
 class BaseAgent(ABC):
@@ -19,7 +21,7 @@ class BaseAgent(ABC):
 
     def __init__(
         self,
-        environment: gym.Env,
+        environment: BaseEnv,
         num_envs: int = 1,
         eval_frequency: int = 1000,
         learning_rate: float = 3e-4,
@@ -33,14 +35,12 @@ class BaseAgent(ABC):
         batch_size: int = 64,
         device: str = "cpu",
         model_dir: str = "models",
-        fixed_horizon: bool = False,
-        steps_per_update: int = 8192
     ):
         """
         Initialize the base agent with environment and hyperparameters.
 
         Args:
-            environment (gym.Env): The training environment.
+            environment (BaseEnv): The training environment.
             num_envs (int): The number of training environments (for parallel training).
             eval_frequency (int): Number of training iterations between evaluations.
             learning_rate (float, optional): Learning rate for the optimizer. Default is 3e-4.
@@ -55,6 +55,7 @@ class BaseAgent(ABC):
             device (str, optional): Device for training, either 'cpu' or 'cuda'. Default is 'cpu'.
             model_dir (str, optional): Folder in which the generated agents are saved.
         """
+
         if device not in ("cpu", "cuda"):
             raise ValueError("device must be 'cpu' or 'cuda'")
 
@@ -63,11 +64,8 @@ class BaseAgent(ABC):
 
         self.env = environment
         self.num_envs = num_envs
-        self.fixed_horizon = fixed_horizon
-        self.steps_per_update = steps_per_update
-        self.observation_space = environment.observation_space
-        self.action_space = environment.action_space
 
+        # PPO hyperparameters
         self.eval_frequency = eval_frequency
         self.learning_rate = learning_rate
         self.clip_range = clip_range
@@ -78,15 +76,29 @@ class BaseAgent(ABC):
         self.entropy_coef = entropy_coef
         self.num_epochs = num_epochs
         self.batch_size = batch_size
+
         self.device = torch.device(device)
         self.model_dir = model_dir
 
+        # Normalize relative model paths so they always land under src/models.
+        # This prevents cases where training from inside src/ creates src/src/models.
         if self.model_dir:
+            project_src_dir = Path(__file__).resolve().parents[2]
+            model_dir_path = resolve_path_relative_to_src(self.model_dir, project_src_dir)
+            self.model_dir = str(model_dir_path)
             os.makedirs(self.model_dir, exist_ok=True)
+
+        self.reward_mean = 0.0
+        self.reward_var = 1.0
+        self.reward_count = 1e-4  # avoid division by zero
 
 
     @abstractmethod
-    def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple[np.ndarray, float]:
+    def predict(
+            self,
+            state: Union[np.ndarray, Tuple[np.ndarray, ...]],
+            deterministic: bool = False
+    ) -> Tuple[Union[np.ndarray, Tuple[np.ndarray, ...]], np.ndarray, np.ndarray]:
         """
         Predict an action for a given state.
 
@@ -144,11 +156,11 @@ class BaseAgent(ABC):
         pass
 
 
-    def get_env(self) -> gym.Env:
+    def get_env(self) -> BaseEnv:
         """
         Get the training environment.
 
         Returns:
-            gym.Env: The training environment instance.
+            BaseEnv: The training environment instance.
         """
         return self.env

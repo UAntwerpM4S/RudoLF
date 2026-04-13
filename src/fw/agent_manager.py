@@ -6,35 +6,43 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from pathlib import Path
-from gymnasium import Env
 from enum import auto, Enum
 from matplotlib.colors import to_rgb
 from contextlib import contextmanager
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
 from airsim.communication.airsim_bridge import AirSimBridge
-from fw.stop_condition import StopCondition
-from fw.policies.base_agent import BaseAgent
+from fw.environments.multi_sim_env import MultiSimEnv
+from fw.environments.base_env import BaseEnv
+
+from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.ppo2_agent import PPO2Agent
-from fw.policies.ppo_agent import PPOAgent
+from fw.policies.base_agent import BaseAgent
+from fw.stop_condition import StopCondition
 
 
 class PolicyStrategy(Enum):
-    """Defines strategies for handling policies during environment switching.
+    """
+    Defines strategies for handling policies during environment switching.
 
     Attributes:
         RESET_POLICY: Start with a fresh policy.
         REUSE_CURRENT_POLICY: Continue training with the current policy.
         REUSE_OTHER_POLICY: Load and use a policy trained on another environment.
     """
+
     RESET_POLICY = auto()
     REUSE_CURRENT_POLICY = auto()
     REUSE_OTHER_POLICY = auto()
 
 
 def normalized_time_axis(length: int) -> np.ndarray:
-    """Return a normalized time axis in [0, 1] for a trajectory of given length."""
+    """
+    Return a normalized time axis in [0, 1] for a trajectory of given length.
+    """
+
     if length <= 1:
         return np.array([0.0])
     return np.linspace(0.0, 100.0, length)
@@ -44,6 +52,7 @@ def shade_color(base_color, n, lo=0.45, hi=1.0):
     """
     Generate n shaded variants of a base color by scaling lightness.
     """
+
     rgb = np.array(to_rgb(base_color))
     factors = np.linspace(hi, lo, n)
 
@@ -54,15 +63,36 @@ def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.n
     """
     Resample a 1D signal defined over normalized time [0,1] onto a common grid.
     """
-    if len(signal) == 1:
-        return np.full_like(common_time, signal[0])
 
-    original_time = np.linspace(0.0, 1.0, len(signal))
-    return np.interp(common_time, original_time, signal)
+    signal = np.asarray(signal)
+
+    if signal.shape[0] == 1:
+        return np.repeat(signal, len(common_time), axis=0)
+
+    original_time = np.linspace(0.0, 1.0, signal.shape[0])
+
+    # --- 1D case (fast path) ---
+    if signal.ndim == 1:
+        return np.interp(common_time, original_time, signal)
+
+    # --- ND case ---
+    # reshape to (T, -1), interpolate each column, then reshape back
+    T = signal.shape[0]
+    rest_shape = signal.shape[1:]
+
+    flat_signal = signal.reshape(T, -1)  # (T, D)
+
+    resampled = np.stack([
+        np.interp(common_time, original_time, flat_signal[:, i])
+        for i in range(flat_signal.shape[1])
+    ], axis=1)
+
+    return resampled.reshape(len(common_time), *rest_shape)
 
 
 class AgentManager:
-    """AgentManager class for managing agents and environments during training.
+    """
+    AgentManager class for managing agents and environments during training.
 
     This class includes methods for training, saving/loading policies, and
     visualizing paths taken by the agent during evaluation.
@@ -79,12 +109,14 @@ class AgentManager:
     ]
 
     def __init__(self, agent_type: str, hyperparameters: dict):
-        """Initialize the Agent.
+        """
+        Initialize the Agent.
 
         Args:
             agent_type (str): Type of agent to use (e.g., 'PPO').
             hyperparameters (dict): Hyperparameters for configuring the agent.
         """
+
         self._agent = None
         self._agent_type = agent_type
         self.prev_smoothing_setting = None
@@ -96,13 +128,19 @@ class AgentManager:
 
 
     def begin_overlay_plot(self):
-        """Create a persistent matplotlib figure for overlaying multiple environments."""
+        """
+        Create a persistent matplotlib figure for overlaying multiple environments.
+        """
+
         if self._fig is None:
             self._fig, self._axes = plt.subplots(4, 1, figsize=(12, 16))
             self._overlay_active = True
 
     def end_overlay_plot(self):
-        """Finalize and close the persistent matplotlib figure."""
+        """
+        Finalize and close the persistent matplotlib figure.
+        """
+
         if self._fig is not None:
             plt.tight_layout()
             plt.show()
@@ -121,6 +159,7 @@ class AgentManager:
         Returns:
             str: The agent type.
         """
+
         return self._agent_type
 
 
@@ -132,22 +171,87 @@ class AgentManager:
         Returns:
             BaseAgent: The agent.
         """
+
         return self._agent
 
 
-    def set_environment(self, env: Env, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
+    def _build_single_agent(self, env):
+        """
+        Create a `SinglePPOAgent` from the given environment.
+
+        If the environment exposes a `sub_environments` attribute, this method
+        ensures that exactly one sub-environment is used. Otherwise, the environment
+        itself is used directly.
+
+        Args:
+            env: Environment instance, optionally containing `sub_environments`.
+
+        Returns:
+            SinglePPOAgent: Initialized PPO agent for a single environment.
+
+        Raises:
+            RuntimeError: If more than one sub-environment is provided.
+        """
+
+        sub_envs = getattr(env, "sub_environments", None)
+
+        if sub_envs is None or len(sub_envs) < 1:
+            target_env = env
+        elif len(sub_envs) == 1:
+            target_env = next(iter(sub_envs.values()))
+        else:
+            raise RuntimeError("SinglePPOAgent requires exactly one sub-environment.")
+
+        return SinglePPOAgent(environment=target_env, **self._hyperparameters)
+
+
+    def _build_multi_agent(self, env):
+        """
+        Create a `MultiPPOAgent` composed of multiple `SinglePPOAgent` instances.
+
+        Each sub-environment in the provided `MultiSimEnv` is assigned its own
+        `SinglePPOAgent`. These agents are then combined into a `MultiPPOAgent`
+        for coordinated training.
+
+        Args:
+            env (MultiSimEnv): Multi-environment containing sub-environments.
+
+        Returns:
+            MultiPPOAgent: Initialized multi-agent PPO trainer.
+
+        Raises:
+            TypeError: If `env` is not an instance of `MultiSimEnv`.
+            ValueError: If no sub-environments are defined.
+        """
+
+        if not isinstance(env, MultiSimEnv):
+            raise TypeError("MultiPPOAgent requires a MultiSimEnv instance.")
+
+        if not env.sub_environments:
+            raise ValueError("MultiSimEnv must contain at least one sub-environment.")
+
+        agents = [
+            SinglePPOAgent(environment=sub_env, **self._hyperparameters)
+            for sub_env in env.sub_environments.values()
+        ]
+
+        return MultiPPOAgent(environment=env, agents=agents, **self._hyperparameters)
+
+
+    def set_environment(self, env: BaseEnv, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
                         other_env_name: str = None) -> None:
         """
         Assign an environment to the agent and configure the policy strategy.
 
         Args:
-            env (Env): The environment to set.
+            env (BaseEnv): The environment to set.
             policy_strategy (PolicyStrategy, optional): Strategy for handling policy (reset, reuse current, or reuse other). Default is PolicyStrategy.RESET_POLICY.
             other_env_name (str, optional): Name of the environment whose policy should be reused (if applicable).
 
         Raises:
             RuntimeError: If an unknown policy type is specified.
         """
+
         policy_file_name = None
 
         if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._agent:
@@ -157,9 +261,11 @@ class AgentManager:
             policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
 
         if PPO_POLICY_NAME == self._agent_type:
-            self._agent = PPOAgent(environment=env, **self._hyperparameters)
+            self._agent = self._build_single_agent(env)
         elif PPO2_POLICY_NAME == self._agent_type:
             self._agent = PPO2Agent(environment=env, **self._hyperparameters)
+        elif MULTI_PPO_POLICY_NAME == self._agent_type:
+            self._agent = self._build_multi_agent(env)
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 
@@ -170,9 +276,14 @@ class AgentManager:
 
             if Path(full_policy_file_name).exists():
                 print(f"Reusing {policy_file_name}.")
-                self._agent.load_policy(policy_file_name)
+                try:
+                    self._agent.load_policy(policy_file_name)
+                except ValueError as e:
+                    print(f"[Fallback] Incompatible model: {e}")
+                    print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
             else:
-                raise RuntimeError(f"The policy file {policy_file_name} does not exist.")
+                print(f"[Fallback] The policy file {policy_file_name} does not exist.")
+                print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
 
 
     def train(self, stop_condition: StopCondition) -> None:
@@ -185,6 +296,7 @@ class AgentManager:
         Raises:
             RuntimeError: If no agent is created.
         """
+
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
@@ -203,9 +315,10 @@ class AgentManager:
         """
         Compute heading error relative to desired path direction
         """
+
         # Get current checkpoint index and position
-        curr_checkpoint = env.checkpoints[env.checkpoint_index[0]]
-        next_checkpoint = env.checkpoints[min(env.checkpoint_index[0] + 1, len(env.checkpoints) - 1)]
+        curr_checkpoint = env.checkpoints[env.checkpoint_index]
+        next_checkpoint = env.checkpoints[min(env.checkpoint_index + 1, len(env.checkpoints) - 1)]
 
         # Calculate desired heading (angle of path segment)
         desired_heading = np.arctan2(
@@ -214,7 +327,7 @@ class AgentManager:
         )
 
         # Calculate heading error (difference between current and desired heading)
-        heading_error = (env.phys_sims[0].state.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
+        heading_error = (env.phys_sim.state.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
         return heading_error
 
 
@@ -228,6 +341,7 @@ class AgentManager:
         MTE = max{|e(N0)|, |e(N0+1)|, ..., |e(N1)|}
         mHEI = (1/(N1-N0+1)) * sum(|e_psi(k)|)
         """
+
         all_mTEIs = []
         all_MTEs = []
         all_mRAs = []
@@ -278,6 +392,14 @@ class AgentManager:
     # Create hashed pattern for the area between obstacles and Western Scheldt
     @staticmethod
     def create_hashed_area(obstacles, overall):
+        """
+        Create hashed area.
+
+        Args:
+            obstacles: Description.
+            overall: Description.
+        """
+
         obstacle_poly = Polygon(obstacles)
         overall_poly = Polygon(overall)
         difference = overall_poly.difference(obstacle_poly)
@@ -294,6 +416,13 @@ class AgentManager:
 
     @contextmanager
     def smoothing(self, env):
+        """
+		Smoothing.
+
+        Args:
+            env: Description.
+        """
+
         if hasattr(env, "enable_smoothing"):
             try:
                 self.prev_smoothing_setting = env.enable_smoothing
@@ -310,7 +439,6 @@ class AgentManager:
             env_color_index: int = 0,
             airsim_bridge: AirSimBridge = None,
     ) -> None:
-
         """
         Run and visualize a trained agent in the environment over multiple episodes.
 
@@ -323,6 +451,7 @@ class AgentManager:
         Raises:
             RuntimeError: If no agent is created.
         """
+
         # Load checkpoint
         # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
 
@@ -358,20 +487,13 @@ class AgentManager:
                 collision_side_count = defaultdict(int)
                 colreg_violation_count = 0
 
-                # AirSimEnv is single-ship (flat scalar/array attributes).
-                # PySimEnv/FhSimEnv is multi-ship (list-of-arrays).
-                # Normalise access once so the episode loop works for both.
-                _ms = hasattr(env, 'phys_sims')            # True = multi-ship env
-                _s = (lambda a: a[0]) if _ms else (lambda a: a)              # index first ship
-                _steer = (lambda pa: pa[0][0]) if _ms else (lambda pa: float(pa[0]))  # rudder
-
                 for episode in range(num_episodes):
                     state, _ = env.reset()
                     episode_reward = 0
                     done = False
                     steps = 0
 
-                    start_pos = np.copy(_s(env.ship_pos))
+                    start_pos = np.copy(env.ship_pos)
 
                     # Store heading errors for this episode
                     cross_errors = []
@@ -381,9 +503,9 @@ class AgentManager:
                     previous_rudder_action = 0.0
                     rudder_changes = []
                     ukc_measurements = []
-                    path_positions = [np.copy(_s(env.ship_pos))]  # Store initial position
-                    cross_errors.append(_s(env.cross_error))  # Store initial cross-track error
-                    velocities.append(_s(env.velocities))  # Store initial cross-track error
+                    path_positions = [np.copy(env.ship_pos)]  # Store initial position
+                    cross_errors.append(env.cross_error)  # Store initial cross-track error
+                    velocities.append(env.velocities)  # Store initial cross-track error
 
                     # Calculate initial heading error relative to desired path
                     initial_heading_error = self.compute_heading_error(env)
@@ -399,15 +521,15 @@ class AgentManager:
 
                         if not done:
                             # Store current position and errors
-                            path_positions.append(np.copy(_s(env.ship_pos)))
-                            if _s(env.checkpoint_index) >= 2:
-                                cross_errors.append(_s(env.cross_error))
-                            heading_errors.append(_s(env.heading_error))
-                            velocities.append(_s(env.velocities))
-                            rudder_actions.append(_steer(env.performed_action))
-                            rudder_changes.append(abs(_steer(env.performed_action) - previous_rudder_action))
-                            previous_rudder_action = _steer(env.performed_action)
-                            ukc_measurements.append(env.ukc[0] if _ms else 0.0)
+                            path_positions.append(np.copy(env.ship_pos))
+                            if env.checkpoint_index >= 2:
+                                cross_errors.append(env.cross_error)
+                            heading_errors.append(env.heading_error)
+                            velocities.append(env.velocities)
+                            rudder_actions.append(env.performed_action)
+                            rudder_changes.append(abs(env.performed_action - previous_rudder_action))
+                            previous_rudder_action = env.performed_action
+                            ukc_measurements.append(env.ukc)
 
                             episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
                             steps += 1
@@ -417,13 +539,13 @@ class AgentManager:
                                 env.render()
                             
                             # Bridge position to UE5 if connected
-                            if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
+                            if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
                                 ax, ay, _ = coord_transform.fossen_to_airsim(
-                                    float(env.ship_pos[0][0]), 
-                                    float(env.ship_pos[0][1])
+                                    float(env.ship_pos[0]), 
+                                    float(env.ship_pos[1])
                                 )
                                 ayaw = coord_transform.fossen_heading_to_airsim_yaw(
-                                    float(env.phys_sims[0].state.heading)
+                                    float(env.phys_sim.state.heading)
                                 )
                                 airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
                                 
@@ -479,9 +601,6 @@ class AgentManager:
 
                 try:
                     # AirSimEnv has no obstacles/overall for matplotlib — skip trajectory plot.
-                    if not _ms:
-                        return
-
                     # Create a figure with two subplots
                     if self._overlay_active and self._fig is not None:
                         ax1, ax2, ax3, ax4 = self._axes
@@ -677,7 +796,7 @@ class AgentManager:
                 while not done:
                     # The agent chooses an action based on the current observation
                     prediction = self._agent.predict(state=obs, deterministic=True)
-                    action = prediction[0].squeeze()
+                    action = prediction[0]
                     obs, _, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
 
@@ -685,13 +804,13 @@ class AgentManager:
                     env.render()
                     
                     # Bridge position to UE5 if connected
-                    if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
+                    if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
                         ax, ay, _ = coord_transform.fossen_to_airsim(
-                            float(env.ship_pos[0][0]), 
-                            float(env.ship_pos[0][1])
+                            float(env.ship_pos[0]), 
+                            float(env.ship_pos[1])
                         )
                         ayaw = coord_transform.fossen_heading_to_airsim_yaw(
-                            float(env.phys_sims[0].state.heading)
+                            float(env.phys_sim.state.heading)
                         )
                         airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
 
@@ -710,4 +829,5 @@ class AgentManager:
         Returns:
             The environment object.
         """
+
         return self._agent.get_env()

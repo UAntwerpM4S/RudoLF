@@ -1,3 +1,4 @@
+import numpy as np
 import gymnasium as gym
 
 from typing import Optional
@@ -23,28 +24,159 @@ class BaseEnv(gym.Env):
             render_mode (str, optional): The rendering mode. Defaults to None.
         """
         super().__init__()
+
         self._render_mode = render_mode
         self._smoothing_enabled = True
+        self._sub_environments = {}
+        self._env_name = type(self).__name__
+
+
+    @property
+    def env_name(self):
+        """
+        Environment name.
+        """
+        return self._env_name
+
+
+    @env_name.setter
+    def env_name(self, value):
+        """
+        Environment name.
+
+        Args:
+            value: The environment's name.
+        """
+        self._env_name = value
 
 
     @property
     def render_mode(self):
+        """
+        Render mode.
+        """
         return self._render_mode
 
 
     @render_mode.setter
     def render_mode(self, value):
+        """
+        Render mode.
+
+        Args:
+            value: Description.
+        """
         self._render_mode = value
 
 
     @property
     def enable_smoothing(self):
+        """
+        Enable smoothing.
+        """
         return self._smoothing_enabled
 
 
     @enable_smoothing.setter
     def enable_smoothing(self, value):
+        """
+        Enable smoothing.
+
+        Args:
+            value: Description.
+        """
         self._smoothing_enabled = value
+
+
+    @property
+    def sub_environments(self):
+        """
+        Returns the sub-environments. This property should only be used by multi-environment.
+        """
+        return self._sub_environments
+
+
+    def neutral_action(self):
+        """
+        Return a neutral (no-op) action for the environment.
+
+        A neutral action represents a control input that does not actively
+        influence the system (e.g., zero thrust, centered steering). This is
+        required for algorithms that continue stepping the simulator after an
+        episode has terminated in one or more environments.
+
+        Subclasses must implement this method and return an action that is
+        compatible with the environment's action space.
+
+        Returns:
+            np.ndarray: Neutral action with the correct shape and dtype for
+            the environment.
+
+        Raises:
+            NotImplementedError: If the method is not implemented by a subclass.
+        """
+
+        raise NotImplementedError
+
+
+    def get_neutral_action(self, env_id: int, action_template):
+        """
+        Return a neutral action for a given env_id.
+
+        Delegates to self.neutral_action() so subclass-defined neutral
+        actions are respected. Falls back to zeros_like(action_template)
+        only if neutral_action() is not implemented.
+
+        Args:
+            env_id (int): Sub-environment index (ignored for single envs).
+            action_template: An action array used for shape/dtype reference
+                if the fallback path is taken.
+
+        Returns:
+            np.ndarray: Neutral action compatible with this environment's
+                action space.
+        """
+
+        try:
+            return self.neutral_action()
+        except NotImplementedError:
+            return np.zeros_like(action_template)
+
+
+    def get_agent_state(self):
+        """
+        Retrieves the current state of this agent.
+
+        This method should be implemented by subclasses to return a
+        representation of the agent's internal state at the current time step.
+
+        Returns:
+            Any: The current state of the agent. The exact format and structure
+            depend on the specific implementation.
+
+        Raises:
+            NotImplementedError: If the method is not implemented in a subclass.
+        """
+
+        raise NotImplementedError
+
+
+    def set_other_agents_states(self, agent_states):
+        """
+        Updates the stored states of other agents in the environment.
+
+        This method should be implemented by subclasses to store or process
+        the states of all agents except the current one.
+
+        Args:
+            agent_states (dict): A mapping of agent identifiers (e.g., names or IDs)
+                to their corresponding states.
+
+        Raises:
+            NotImplementedError: If the method is not implemented in a subclass.
+        """
+
+        raise NotImplementedError
 
 
     @property

@@ -4,8 +4,11 @@ from abc import ABC, abstractmethod
 
 
 class Model(Enum):
+    """Enumeration of supported vessel-dynamics model families."""
+
     NOMOTO = auto()
     FOSSEN = auto()
+    UGENT_SURROGATE = auto()
 
 
 class DynamicsBase(ABC):

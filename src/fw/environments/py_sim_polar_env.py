@@ -179,9 +179,16 @@ class PySimPolarEnv(BaseEnv):
         self._load_environment_data()
 
     def _load_environment_data(self) -> None:
+        """ load environment data.
+        """
         base_path = os.path.dirname(os.path.abspath(__file__))
 
         def load_csv(name: str) -> np.ndarray:
+            """Load csv.
+
+            Args:
+                name: Description.
+            """
             try:
                 data = np.loadtxt(os.path.join(base_path, name), delimiter=',', skiprows=1)
             except FileNotFoundError:
@@ -353,6 +360,8 @@ class PySimPolarEnv(BaseEnv):
 
     @staticmethod
     def _has_enough_keel_clearance():
+        """ has enough keel clearance.
+        """
         return True  # Assume always enough clearance for simplicity
 
     @staticmethod
@@ -445,6 +454,14 @@ class PySimPolarEnv(BaseEnv):
     @staticmethod
     def create_rotated_grid_from_polygon(polygon: Polygon, origin: Tuple[float, float],
                                          angle_degrees: float, grid_size: float = 1.0) -> torch.Tensor:
+        """Create rotated grid from polygon.
+
+        Args:
+            polygon: Description.
+            origin: Description.
+            angle_degrees: Description.
+            grid_size: Description.
+        """
         # Convert angle to radians
         angle_rad = math.radians(angle_degrees)
 
@@ -745,6 +762,8 @@ class PySimPolarEnv(BaseEnv):
         return obs, reward, terminated, False, {}
 
     def _get_obs(self) -> np.ndarray:
+        """ get obs.
+        """
         self.observed_surroundings = self.get_ship_surroundings_polar_coords(
             self.polygon_shape,
             (self.state[0], self.state[1]),
@@ -881,6 +900,8 @@ class PySimPolarEnv(BaseEnv):
 
 
     def _draw_fixed_landmarks(self):
+        """ draw fixed landmarks.
+        """
         # Draw the path as straight lines
         # if self.checkpoints:  # Check if there are checkpoints to draw
         #     # Start with the ship position and end with the target position
@@ -980,3 +1001,4 @@ class PySimPolarEnv(BaseEnv):
             plt.close(self._polar_fig)
         if hasattr(self, 'fig'):
             plt.close(self.fig)
+

@@ -1,12 +1,218 @@
 # AirSim Architecture
 
-This document describes the current AirSim subsystem as implemented in `src/airsim`. It reflects the active code paths and runtime responsibilities.
+This document describes the current AirSim subsystem used by RudoLF for:
 
-## Package Tree
+- UE5-backed training through `AirSimEnv`
+- live inference for models trained in `AirSimEnv`
+- modular framework-model replay in UE5 through `run_visualise_models.py`
+
+It also documents the main public interfaces of `AirSimBridge` and `AirSimEnv`.
+
+## Related Docs
+
+- [AirSim Step-By-Step Setup Guide](airsim_setup_step_by_step.md)
+- [AirSim Package Reference](../src/airsim/README.md)
+- [AirSim Inference and Visualisation Runbook](../src/airsim/inference/README.md)
+
+## C4 System Context
+
+```mermaid
+flowchart LR
+    User["Developer / Researcher"] --> Framework["RudoLF Framework"]
+    Framework --> AirSimPkg["AirSim Integration Package"]
+    AirSimPkg --> RPC["CosysAirSim RPC layer"]
+    RPC --> UE5["UE5 + RudoLF world"]
+    AirSimPkg --> Exports["exports/ session bundles"]
+```
+
+## C4 Container View
+
+```mermaid
+flowchart TD
+    A["fw.main"] --> B["fw.main_with_airsim"]
+    B --> C["runtime_settings.json"]
+
+    B --> D["AirSimEnv"]
+    B --> E["run_inference.py"]
+    B --> F["run_visualise_models.py"]
+
+    D --> G["AirSimBridge"]
+    E --> D
+    F --> H["visualisation_models/model_adapters.py"]
+    H --> I["PySimEnv / FhSimEnv"]
+    F --> G
+    D --> G
+
+    G --> J["CosysAirSim RPC"]
+    J --> K["UE5 runtime session"]
+
+    D --> L["AirSimSessionExporter"]
+    E --> L
+    F --> L
+    E --> M["trajectory_analysis.py"]
+    F --> M
+```
+
+## Runtime Routing Overview
+
+The execution routing is controlled in layers.
+
+### Layer 1: framework selection
+
+`src/fw/config.py` decides:
+
+- which simulator(s) are selected through `env_type`
+- whether the framework requests `train` or `visualize` through `action`
+
+### Layer 2: ordered framework execution
+
+`src/fw/main.py`:
+
+- resolves the configured environments
+- preserves their order
+- delegates only `AirSimEnv` steps to `fw.main_with_airsim`
+
+### Layer 3: AirSim-specific refinement
+
+`src/fw/main_with_airsim.py` reads `src/airsim/config/runtime_settings.json`.
+
+Within an AirSim step:
+
+- `action = "train"` means AirSimEnv training
+- `action = "visualize"` can still split into:
+  - modular framework-model replay through `visualization.model_visualise`
+  - AirSimEnv inference through `visualization.inference_visualise`
+
+If both AirSim visualisation flags are true, model visualisation wins.
+
+## C4 Component View
+
+```mermaid
+flowchart LR
+    A["AirSimBridge"] --> B["Connection / reconnect / save-slot reload"]
+    A --> C["Vehicle control forwarding"]
+    A --> D["Pose / kinematics mirroring"]
+    A --> E["Telemetry snapshot collection"]
+
+    F["AirSimEnv"] --> G["Observation builder"]
+    F --> H["Reward / checkpoint logic"]
+    F --> I["Episode lifecycle"]
+    F --> A
+
+    J["run_inference.py"] --> F
+    K["run_visualise_models.py"] --> L["Adapter registry"]
+    L --> M["PySim adapter"]
+    L --> N["FHSim adapter"]
+    K --> A
+
+    O["control_mapping.py"] --> A
+    P["coord_transform.py"] --> A
+    P --> F
+```
+
+## UML Class Diagram
+
+```mermaid
+classDiagram
+    class AirSimBridge {
+        +is_connected
+        +client
+        +health_check()
+        +set_controls(controls)
+        +get_state()
+        +get_vehicle_pose()
+        +set_pose(x, y, z, yaw)
+        +set_object_pose(object_name, x, y, z, yaw)
+        +set_kinematics(x, y, z, yaw, ...)
+        +load_world_save(save_slot)
+        +prepare_model_visualisation(save_slot, simulation_speed, draw_reference)
+        +reset()
+        +disconnect()
+    }
+
+    class AirSimEnv {
+        +bridge
+        +coord
+        +action_space
+        +observation_space
+        +step(action)
+        +reset(seed, **kwargs)
+        +close()
+        +env_specific_reset()
+        +randomize(randomization_scale)
+    }
+
+    class ModelVisualisationAdapter {
+        <<abstract>>
+        +family
+        +model_origin
+        +resolve_environment_name(model_path, requested_env_name)
+        +load_policy(model_path, device)
+        +build_environment(environment_name, max_steps)
+        +motion_state_from_env(env, bridge)
+        +animate_state(env, bridge, **kwargs)
+        +cleanup_environment(env)
+    }
+
+    AirSimEnv --> AirSimBridge
+    ModelVisualisationAdapter --> AirSimBridge
+```
+
+## UML Sequence: AirSimEnv Inference
+
+```mermaid
+sequenceDiagram
+    participant Policy
+    participant Runner as run_inference.py
+    participant Env as AirSimEnv
+    participant Bridge as AirSimBridge
+    participant UE5 as UE5/CosysAirSim
+
+    Runner->>Env: reset()
+    loop episode steps
+        Runner->>Policy: predict(obs)
+        Policy-->>Runner: action
+        Runner->>Env: step(action)
+        Env->>Bridge: set_controls(...)
+        Bridge->>UE5: RPC controls
+        Env->>Bridge: get_car_state()/get_vehicle_pose()
+        Bridge->>UE5: RPC state readback
+        UE5-->>Bridge: state
+        Bridge-->>Env: state
+        Env-->>Runner: obs, reward, terminated, truncated, info
+    end
+    Runner->>Env: close()
+```
+
+## UML Sequence: Framework Replay In UE5
+
+```mermaid
+sequenceDiagram
+    participant Policy
+    participant Runner as run_visualise_models.py
+    participant Framework as PySimEnv/FhSimEnv
+    participant Adapter as ModelVisualisationAdapter
+    participant Bridge as AirSimBridge
+    participant UE5 as UE5/CosysAirSim
+
+    Runner->>Bridge: prepare_model_visualisation(...)
+    Runner->>Framework: reset()
+    loop replay steps
+        Runner->>Policy: predict(obs)
+        Policy-->>Runner: action
+        Runner->>Framework: step(action)
+        Runner->>Adapter: motion_state_from_env(env, bridge)
+        Adapter-->>Runner: motion state
+        Runner->>Adapter: animate_state(env, bridge, ...)
+        Adapter->>Bridge: set_pose()/set_kinematics()/set_object_pose()
+        Bridge->>UE5: RPC mirror update
+    end
+```
+
+## Current Module Layout
 
 ```text
 src/airsim/
-|-- __init__.py
 |-- communication/
 |   |-- airsim_bridge.py
 |   |-- control_mapping.py
@@ -14,260 +220,146 @@ src/airsim/
 |-- config/
 |   |-- airsim_config.py
 |   |-- calibration.json
-|   |-- runtime_settings.json
-|   `-- settings_training.json
+|   `-- runtime_settings.json
 |-- environments/
 |   `-- airsim_env.py
 |-- inference/
+|   |-- README.md
 |   |-- minimap_fossen_airsim.py
+|   |-- minimap_models_ue5.py
 |   |-- plot_airsim_path.py
 |   |-- run_inference.py
-|   |-- run_visualise_fossen.py
-|   `-- verify_headless_plot.py
-|-- poc/
-|   |-- airsim_bridge_PID.py
+|   |-- run_visualise_models.py
+|   `-- visualisation_models/
+|       |-- __init__.py
+|       `-- model_adapters.py
+|-- train/
 |   `-- train_airsim.py
-|-- tools/
-|   |-- analyze_telemetry.py
-|   `-- calibrate_coords.py
-`-- train/
-    `-- train_airsim.py
+`-- verantwoording_workflow.md
 ```
 
-## Responsibility Tree
+## Public Interface: `AirSimBridge`
 
-```mermaid
-flowchart TB
-    airsim[airsim package]
+`AirSimBridge` is the public RPC-facing façade for UE5/CosysAirSim.
 
-    airsim --> config[config]
-    airsim --> comms[communication]
-    airsim --> envs[environments]
-    airsim --> infer[inference]
-    airsim --> tools[tools]
-    airsim --> train[train]
-    airsim --> poc[poc]
+### Connection and session control
 
-    config --> cfg[airsim_config.py\nvalidated runtime config]
-    config --> cal[calibration.json\nframe alignment data]
-    config --> runtime[runtime_settings.json\nentry-point settings]
+- `is_connected`
+- `client`
+- `health_check()`
+- `load_world_save(save_slot, ...)`
+- `prepare_model_visualisation(save_slot, simulation_speed, draw_reference)`
+- `reset()`
+- `disconnect()`
 
-    comms --> bridge[airsim_bridge.py\nRPC lifecycle, pose/control transport]
-    comms --> mapping[control_mapping.py\naction and actuator mapping]
-    comms --> transform[coord_transform.py\nFossen <-> AirSim transforms]
+### Vehicle control and state
 
-    envs --> airsimenv[airsim_env.py\nGymnasium environment using UE5 physics]
+- `set_controls(controls)`
+- `get_car_state()`
+- `get_vehicle_pose()`
+- `get_collision_info()`
+- `set_pause(is_paused)`
+- `continue_for_frames(frames)`
+- `is_paused()`
+- `set_simulation_speed(simulation_speed)`
+- `get_state()`
 
-    infer --> runinf[run_inference.py\npolicy replay in AirSimEnv]
-    infer --> runviz[run_visualise_fossen.py\nFossen replay mirrored into UE5]
-    infer --> minimap[minimap_fossen_airsim.py\nlive minimap process]
-    infer --> plotpath[plot_airsim_path.py\npath plotting]
+### Visualisation and mirroring
 
-    tools --> calib[calibrate_coords.py\ninteractive calibration wizard]
-    tools --> telemetry[analyze_telemetry.py\noffline CSV analysis]
+- `flush_persistent_markers()`
+- `plot_line_strip(points, color_rgba, thickness, is_persistent=True)`
+- `plot_points(points, color_rgba, size, is_persistent=True)`
+- `set_pose(x, y, z, yaw, ...)`
+- `set_object_pose(object_name, x, y, z, yaw)`
+- `set_kinematics(x, y, z, yaw, ...)`
 
-    train --> trainue5[train_airsim.py\ntrainer entry point for UE5]
+### Camera support
 
-    poc --> oldbridge[legacy bridge snapshot]
-```
+- `get_camera_info(camera_name, vehicle_name="")`
+- `set_camera_pose(camera_name, pose, vehicle_name="")`
+- `set_camera_fov(camera_name, fov_degrees, vehicle_name="")`
+- `get_camera_image(camera_name, image_type, vehicle_name="", annotation_name="")`
+- `get_camera_images(requests, vehicle_name="")`
 
-## Core Design
+## Public Interface: `AirSimEnv`
 
-### 1. Shared services
+`AirSimEnv` is the Gymnasium-compatible environment backed by UE5 physics.
 
-- `AirSimConfig` centralizes connection and runtime settings.
-- `CoordTransform` converts positions, vectors, headings, and yaw rates between the framework's Fossen frame and AirSim's UE5 frame.
-- `AirSimBridge` owns the `cosysairsim.CarClient` lifecycle, reconnect logic, world-save reload handling, pose updates, kinematic updates, object-pose updates, control forwarding, and telemetry reads.
-- `control_mapping.py` is the only place where policy outputs or actuator states are translated into `CarControls`.
+### Core Gymnasium lifecycle
 
-### 2. Two runtime modes
+- `step(action)`
+- `reset(seed=None, **kwargs)`
+- `close()`
 
-- UE5-native mode: `AirSimEnv` uses UE5 as the physics source of truth. PPO actions are mapped to `CarControls`, sent through `AirSimBridge`, and observations are reconstructed from UE5 state.
-- Fossen-visualisation mode: the framework simulator remains the physics source of truth. `run_visualise_fossen.py` steps `PySimEnv` or `FhSimEnv`, converts the resulting motion with `CoordTransform`, and mirrors the motion into UE5 through `AirSimBridge`.
-- The live minimap is intentionally isolated in a separate child process, not a thread, so GUI redraws and viewport recentering cannot stall the main replay loop.
+### Framework integration hooks
 
-### 3. Calibration as a first-class dependency
+- `env_specific_reset()`
+- `randomize(randomization_scale=None)`
 
-- Training and inference rely on consistent frame conversion.
-- `calibrate_coords.py` produces `calibration.json`.
-- `prepare_fossen_visualisation()` loads the calibration and also captures the render `z` level from the currently loaded UE5 save.
-- `AirSimEnv` can auto-fall back to an identity axis-swap transform if calibration is unavailable, but calibrated operation is the intended path.
+### Publicly important attributes
 
-## Runtime Architecture
+- `bridge`
+- `coord`
+- `action_space`
+- `observation_space`
+- `ship_pos`
+- `ship_heading`
+- `ship_speed`
+- `checkpoint_index`
+- `cross_error`
 
-Framework routing is split across two configuration layers:
+## Runtime Responsibilities
 
-- `fw.config.CONFIG_PARAMETERS['env_type']` selects the generic environment and determines whether `fw.main` stays in the framework flow or delegates to `fw.main_with_airsim`.
-- `fw.config.CONFIG_PARAMETERS['action']` controls `train` versus `visualize` for the generic non-AirSim framework flow.
-- `airsim/config/runtime_settings.json` controls AirSim-specific visualize dispatch (`fossen_visualise`, `inference_visualise`) and training-speed controls through `training.speed_profile` (`safe`, `fast`, `turbo`, `custom`) after the AirSim branch has been selected.
-- `runtime_settings.json` is strict JSON; documentation comments are stored in `_remarks` objects.
+### `run_inference.py`
 
-```mermaid
-flowchart LR
-    subgraph EntryPoints[Runtime entrypoints]
-        main[fw.main]
-        airsimMain[fw.main_with_airsim]
-        inference[run_inference.py]
-        replay[run_visualise_fossen.py]
-    end
+- dedicated to models trained in `AirSimEnv`
+- uses `AirSimEnv.reset()`, `AirSimEnv.step()`, and `AirSimEnv.close()`
+- mirrors the training-style action -> physics -> feedback loop
+- computes post-run KPIs by reusing `inference_session.csv` and `airsim_telemetry.csv`
+- prints a concise console summary (reward, duration, distance, cross-track error)
+- exports `trajectory_2d_vs_3d.png` with side-by-side trajectory comparison
 
-    subgraph FrameworkSide[Python runtime side]
-        policy[PPOPolicy / Trainer]
-        airsimEnv[AirSimEnv]
-        fossenEnv[PySimEnv or FhSimEnv]
-        mapping[action mapping]
-        transformSvc[CoordTransform]
-        bridgeSvc[AirSimBridge]
-        minimap[minimap process]
-    end
+### `run_visualise_models.py`
 
-    subgraph UE5Side[UE5 and CosysAirSim]
-        rpc[CosysAirSim RPC server]
-        ue5[UE5 world and vehicle actor]
-    end
+- dedicated to framework-model replay in UE5
+- resolves a model adapter
+- reuses `visualisation_session.csv` and bridge telemetry for KPI summaries
+- exports side-by-side `trajectory_2d_vs_3d.png` for 2D vs 3D comparison
+- keeps framework physics authoritative
+- mirrors motion into UE5
+- supports matplotlib and UE5-camera minimaps
 
-    main -->|env_type = AirSimEnv| airsimMain
-    main -->|other env_type + action| policy
-    airsimMain -->|AirSim train| policy
-    airsimMain -->|Fossen replay or UE5 inference| replay
+## Configuration Layers
 
-    policy --> airsimEnv
-    replay --> fossenEnv
-    replay --> minimap
-    airsimEnv --> mapping
-    mapping --> bridgeSvc
-    bridgeSvc --> rpc
-    rpc --> ue5
-    ue5 --> rpc
-    rpc --> bridgeSvc
-    bridgeSvc --> airsimEnv
+- framework selection: `src/fw/config.py`
+- AirSim runtime behavior: `src/airsim/config/runtime_settings.json`
+- validated connection config: `src/airsim/config/airsim_config.py`
 
-    fossenEnv --> transformSvc
-    transformSvc --> bridgeSvc
-```
+## Export Artifacts
 
-## Detailed Execution Flows
+Each AirSim run creates a timestamped session folder under `exports/`.
 
-### A. Training inside UE5
+Common files:
 
-```mermaid
-sequenceDiagram
-    participant Trainer
-    participant AirSimEnv
-    participant AirSimBridge
-    participant UE5 as UE5/CosysAirSim
+- `metadata.json`
+- `airsim_telemetry.csv`
+- `inference_session.csv` or `visualisation_session.csv`
 
-    Trainer->>AirSimEnv: create environment
-    AirSimEnv->>AirSimBridge: connect with AirSimConfig
-    AirSimBridge->>UE5: confirmConnection + enableApiControl
-    AirSimEnv->>AirSimBridge: load world save and reconnect
-    AirSimEnv->>UE5: simSetSimulationSpeed
-    loop each RL step
-        Trainer->>AirSimEnv: step(action)
-        AirSimEnv->>AirSimEnv: smooth actuator state
-        AirSimEnv->>AirSimEnv: map policy action to CarControls
-        AirSimEnv->>AirSimBridge: set_controls(controls)
-        AirSimBridge->>UE5: setCarControls
-        AirSimEnv->>UE5: advance or wait for simulation frames
-        AirSimEnv->>AirSimBridge: get_state or direct client state reads
-        AirSimBridge->>UE5: getCarState / pose calls
-        UE5-->>AirSimEnv: kinematics and collision state
-        AirSimEnv->>AirSimEnv: build observation, reward, done flags
-        AirSimEnv-->>Trainer: obs, reward, done, truncated, info
-    end
-```
+## Test Coverage Map
 
-Key points:
+AirSim-specific tests:
 
-- UE5 is the physics engine in this path.
-- `AirSimEnv` preserves the framework-style observation and reward interface so the rest of the RL stack can stay unchanged.
-- `AirSimBridge` is intentionally thin here: it forwards commands and exposes state transport, but does not decide control laws.
-- Training performance can be tuned from `runtime_settings.json` without code edits via `training.speed_profile` or explicit `training.*` values when profile is `custom`.
+- `tests/airsim/communication/test_bridge.py`
+- `tests/airsim/communication/test_control_mapping.py`
+- `tests/airsim/communication/test_airsim_bridge.py`
+- `tests/airsim/enviroments/test_airsim_env.py`
+- `tests/airsim/inference/test_model_visualisation_dispatch.py`
+- `tests/airsim/inference/test_fossen_visualisation_timing.py` (timing coverage for model-visualisation interpolation)
+- `tests/airsim/inference/test_minimap_layout.py`
+- `tests/airsim/inference/test_visualise_models_minimap_save.py`
+- `tests/airsim/inference/test_run_inference_airsim_env.py`
 
-### B. Direct policy replay through `run_inference.py`
+Framework-routing tests:
 
-```mermaid
-flowchart TD
-    start[run_inference.py] --> detect[detect model origin]
-    detect -->|fossen| envmode[AirSimEnv.step path]
-    detect -->|ue5| directmode[_ue5_direct_step path]
-
-    envmode --> policy1[policy predicts action]
-    policy1 --> envstep[AirSimEnv.step]
-    envstep --> map1[map_fossen_policy_action]
-    map1 --> bridge1[AirSimBridge.set_controls]
-    bridge1 --> state1[read UE5 state back]
-
-    directmode --> policy2[policy predicts action]
-    policy2 --> map2[map_direct_policy_action]
-    map2 --> bridge2[AirSimBridge.set_controls]
-    bridge2 --> state2[read UE5 state back]
-```
-
-Key points:
-
-- This script supports both older Fossen-trained models and UE5-trained models.
-- The branch is chosen from the filename unless the CLI forces a mode.
-- In both branches the bridge remains a transport layer.
-
-### C. Fossen visualisation replay through `run_visualise_fossen.py`
-
-```mermaid
-sequenceDiagram
-    participant Runner as run_visualise_fossen.py
-    participant FossenEnv as PySimEnv or FhSimEnv
-    participant Transform as CoordTransform
-    participant Bridge as AirSimBridge
-    participant Minimap as minimap process
-    participant UE5 as UE5/CosysAirSim
-
-    Runner->>Bridge: connect
-    Runner->>Bridge: prepare_fossen_visualisation(save_slot)
-    Bridge->>UE5: load save slot, reconnect, set sim speed
-    Bridge->>UE5: read spawn pose
-    Bridge->>Runner: loaded coordinate transform + render_z
-    Runner->>FossenEnv: reset
-    Runner->>Minimap: start live minimap
-    loop each framework step
-        Runner->>FossenEnv: step(policy action)
-        FossenEnv-->>Runner: framework pose and actuator state
-        Runner->>Transform: convert pose, velocity, yaw rate
-        Runner->>Bridge: set_pose or set_kinematics or set_object_pose
-        Runner->>Minimap: latest vessel state
-        opt visual controls enabled
-            Runner->>Bridge: set_controls(mapped visual actuator state)
-        end
-        Bridge->>UE5: mirror framework state for rendering
-    end
-    Runner->>Minimap: finish and close
-```
-
-Key points:
-
-- Framework physics stays authoritative.
-- UE5 is used as a renderer and visual mirror.
-- At high `simulation_speed`, visual updates now snap directly when the allocated wall-clock duration becomes shorter than the effective render interval. This avoids adding artificial slowdown through pointless interpolation sleeps.
-- The mirror transport can use one of three strategies:
-  - `set_pose()` for standard vehicle-pose mirroring.
-  - `set_kinematics()` when the installed CosysAirSim build exposes `simSetKinematics`.
-  - `set_object_pose()` for moving a non-physics actor without triggering vehicle-water interactions.
-
-## File-to-Role Mapping
-
-- `communication/airsim_bridge.py`: connection setup, reconnection, save-slot reload, `CarControls` forwarding, pose mirroring, kinematic mirroring, telemetry extraction.
-- `communication/control_mapping.py`: converts policy outputs and framework actuator states into valid UE5 `CarControls` values.
-- `communication/coord_transform.py`: reusable frame-conversion service shared by training, inference, calibration, and visualisation.
-- `environments/airsim_env.py`: UE5-backed Gymnasium environment that keeps the framework-compatible observation and reward contract.
-- `inference/run_inference.py`: policy replay entry point that can drive UE5-backed inference using `AirSimEnv`.
-- `inference/run_visualise_fossen.py`: framework replay entry point that mirrors external physics into UE5.
-- `inference/minimap_fossen_airsim.py`: process-isolated visual aid for framework replay episodes, with UE5-aware docking and a local follow-view.
-- `tools/calibrate_coords.py`: interactive production of `calibration.json` and overlay verification in UE5.
-- `tools/analyze_telemetry.py`: post-run inspection of logged bridge telemetry.
-- `train/train_airsim.py`: minimal bridge from the framework trainer into `AirSimEnv`.
-
-## Important Current Constraints
-
-- The active bridge assumes upper layers already decided what controls or poses to send.
-- The `poc/` directory is a historical snapshot and should not be used as the reference architecture for current behavior.
-- `run_visualise_fossen.py` is the correct reference for current Fossen-to-UE5 visualisation behavior.
-- The minimap is not part of the timing-critical replay loop anymore; it runs in a separate process and receives latest-wins position updates.
+- `tests/fw/test_main_fallback.py`
+- `tests/fw/test_env_factory_config.py`

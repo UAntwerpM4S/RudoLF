@@ -32,7 +32,15 @@ DEFAULT_AIRSIM_SIMULATION_SPEED = 8.0
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge two nested dictionaries without mutating either input."""
+    """Merge two nested dictionaries without mutating either input.
+
+    Args:
+        base: Baseline dictionary to merge into.
+        override: Override dictionary whose values win on conflicts.
+
+    Returns:
+        Dict[str, Any]: New recursively merged dictionary.
+    """
     merged: Dict[str, Any] = dict(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -71,7 +79,11 @@ class AirSimConfig:
     csv_log_path: str = ""
 
     def __post_init__(self) -> None:
-        """Validate all fields after initialisation."""
+        """Validate all fields after initialisation.
+
+        Raises:
+            ValueError: If any configuration field is invalid.
+        """
         # ── IP ──
         if self.ip:
             try:
@@ -114,7 +126,11 @@ class AirSimConfig:
 
     @property
     def resolved_ip(self) -> str:
-        """Return the effective IP address (``127.0.0.1`` when empty)."""
+        """Return the effective IP address (``127.0.0.1`` when empty).
+
+        Returns:
+            str: Resolved IP address used for network calls.
+        """
         return self.ip if self.ip else "127.0.0.1"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -127,19 +143,29 @@ class AirSimConfig:
 
 
 def get_runtime_settings_path() -> Path:
-    """Return the path to the runtime settings JSON file."""
+    """Return the path to the runtime settings JSON file.
+
+    Returns:
+        Path: Runtime settings JSON path.
+    """
     return _RUNTIME_SETTINGS_PATH
 
 
 def get_default_runtime_settings() -> Dict[str, Any]:
-    """Return the built-in runtime defaults used when JSON is absent or invalid."""
+    """Return the built-in runtime defaults used when JSON is absent or invalid.
+
+    Returns:
+        Dict[str, Any]: Nested runtime-settings dictionary with built-in
+        defaults.
+    """
     return {
         "visualization": {
-            "fossen_visualise": False,
+            "model_visualise": False,
             "inference_visualise": False,
-            "fossen_model_path": "src/models/PySimEnv_PPO_policy.zip",
-            "inference_model_path": "src/models/AirSimEnv_PPO_policy.zip",
-            "fossen_environment": "auto",
+            "model_path": "models/PySimEnv_PPO_policy.zip",
+            "inference_model_path": "models/AirSimEnv_PPO_policy.zip",
+            "environment_name": "auto",
+            "model_family": "auto",
             "mirror_controls_in_ue5": False,
             "animate_steering_in_ue5": True,
             "animate_throttle_in_ue5": True,
@@ -152,11 +178,16 @@ def get_default_runtime_settings() -> Dict[str, Any]:
             "max_yaw_step_deg": 1.5,
             "vehicle_object_name": "",
             "show_minimap": True,
+            "save_matplotlib_minimap": False,
             "lock_path_in_ue5": False,
             "episodes": 1,
             "max_steps": 14000,
             "device": "cpu",
             "log_every": 50,
+            "min_log_interval_s": 0.25,
+            "minimap_update_hz": 20.0,
+            "bridge_telemetry_hz": 12.0,
+            "startup_settle_s": 0.4,
             "draw_calibration_reference": True,
         },
         "training": {
@@ -178,14 +209,25 @@ def get_default_runtime_settings() -> Dict[str, Any]:
 
 
 def merge_runtime_settings(override: Dict[str, Any] | None) -> Dict[str, Any]:
-    """Merge a partial runtime-settings override onto the built-in defaults."""
+    """Merge a partial runtime-settings override onto the built-in defaults.
+
+    Args:
+        override: Partial runtime-settings override dictionary.
+
+    Returns:
+        Dict[str, Any]: Fully merged runtime-settings dictionary.
+    """
     if not isinstance(override, dict):
         return get_default_runtime_settings()
     return _deep_merge(get_default_runtime_settings(), override)
 
 
 def get_runtime_settings() -> Dict[str, Any]:
-    """Load runtime settings from JSON and merge them with defaults."""
+    """Load runtime settings from JSON and merge them with defaults.
+
+    Returns:
+        Dict[str, Any]: Runtime-settings dictionary ready for consumers.
+    """
     defaults = get_default_runtime_settings()
 
     if not _RUNTIME_SETTINGS_PATH.exists():

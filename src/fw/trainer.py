@@ -120,6 +120,11 @@ class Trainer:
 
     @contextmanager
     def render(self, env):
+        """Render.
+
+        Args:
+            env: Description.
+        """
         if hasattr(env, "render_mode"):
             try:
                 self.prev_render_mode = env.render_mode
@@ -157,6 +162,12 @@ class Trainer:
         return metrics
 
     def visualize(self, envs, airsim_bridge=None):
+        """Visualize.
+
+        Args:
+            envs: Description.
+            airsim_bridge: Description.
+        """
         if envs is not None:
             # Start shared figure
             self._agent_mgr.begin_overlay_plot()
@@ -165,11 +176,18 @@ class Trainer:
                 gym_env = env.gym_env
                 try:
                     with self.render(gym_env):
-                        if hasattr(gym_env, "phys_sims"):
-                            if hasattr(gym_env.phys_sims[0], "_dynamics"):
-                                print(f"Visualization of {gym_env.ship_model.name} in a {gym_env.dynamics_model.name}-based simulator.")
-                            elif hasattr(gym_env.phys_sims[0], "_engine"):
-                                print(f"Visualization of {gym_env.ship_model.name} in an {gym_env.phys_sims[0]._engine} simulator.")
+                        sim = getattr(gym_env, "phys_sim", None)
+                        if sim is not None:
+                            sim_name = (
+                                f"{gym_env.dynamics_model.name}-based simulator"
+                                if hasattr(sim, "_dynamics")
+                                else f"{getattr(sim, '_engine')} simulator"
+                                if hasattr(sim, "_engine")
+                                else None
+                            )
+
+                            if sim_name:
+                                print(f"Visualization of {gym_env.ship_model.name} in a {sim_name}.")
 
                         policy_name = f"Best_{gym_env.type_name}" if self._config[
                             "visualize_best_trained"] else gym_env.type_name
@@ -188,4 +206,5 @@ class Trainer:
             self._agent_mgr.end_overlay_plot()
         else:
             print("No data found to visualize.")
+
 
