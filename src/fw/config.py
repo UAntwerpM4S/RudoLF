@@ -23,7 +23,7 @@ DEFAULT_HYPERPARAMETERS = {
         'max_grad_norm': 0.5,
         'clip_range': 0.2,
         'eval_frequency': 100,
-        'num_envs': 8,
+        'num_envs': 16,
         'num_epochs': 4,
         'normalize': False,
         'max_nbr_iterations': 200000,
@@ -31,7 +31,7 @@ DEFAULT_HYPERPARAMETERS = {
         'device': "cpu",
         'model_dir': "models",
         'fixed_horizon': True,
-        'steps_per_update': 8192
+        'steps_per_update': 4096
     },
     PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,

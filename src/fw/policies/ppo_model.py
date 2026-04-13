@@ -589,25 +589,4 @@ class PPOModel(BaseModel):
         """
         self.policy.network.eval()
 
-    # TODO: does not really follow the workflow; previous workflow used exporting to a CSV. Cleaner solution
-    #       may be to read the CSV in the visualization code of the environment and plot it there.
-    def plot_reward_metrics(self, training_metrics):
-        """
-        Plot the evolution of the average reward over training iterations.
-
-        Args:
-            training_metrics (list): List of dicts. Each dict must contain a 'reward' key.
-                                     e.g. {'loss': ..., 'advantage': ..., 'reward': ...}
-        """
-        iterations = np.arange(len(training_metrics))
-        rewards = [m["reward"] for m in training_metrics]
-        plt.figure()
-        plt.plot(iterations, rewards)
-        plt.xlabel("Iteration")
-        plt.ylabel("Average Reward")
-        plt.title("PPO: Average Reward over iterations")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
-
 

@@ -10,8 +10,8 @@ EPSILON = 1e-9
 class ScenarioBuilder:
     def __init__(self, env) -> None:
         self.env = env
-        self.scenario_types = ["static", "overtaking", "head-on"]
-        self.scenario_probs = [1, 0.0, 0.0]
+        self.scenario_types = ["path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"]
+        self.scenario_probs = [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
 
     def cache_checkpoint_segments(self) -> None:
         """
@@ -102,6 +102,8 @@ class ScenarioBuilder:
     def compute_collision_entity_positions(self, episode_type: Optional[str] = None, n: int = 1):
         entities = []
         match episode_type:
+            case "path-following":
+                pass
             case "static":
                 entities.extend(self.compute_static_collision_entities())
             case "overtaking":
@@ -110,8 +112,12 @@ class ScenarioBuilder:
             case "head-on":
                 for i in range(n):
                     entities.extend(self.compute_headon_collision_entities())
-            case "crossing":
-                raise NotImplementedError("Crossing scenario is not implemented yet.")
+            case "crossing-right":
+                for i in range(n):
+                    entities.extend(self.compute_crossing_right_collision_entities())
+            case "crossing-left":
+                for i in range(n):
+                    entities.extend(self.compute_crossing_left_collision_entities())
             case _:
                 raise ValueError(f"Unknown episode_type '{episode_type}'")
 
@@ -347,6 +353,141 @@ class ScenarioBuilder:
                (env.collision_entities or [])):
             return []
         return [entity]
+
+    def _compute_crossing_collision_entities(self, side: str):
+        """
+        Shared logic for crossing-right and crossing-left scenarios.
+
+        Places a dormant TS on one side of the OS path, heading perpendicular
+        across it. The TS is activated (starts moving) once the OS enters
+        activation range during stepping.
+
+        Placement offset d_ts is computed from the intercept equation so
+        the TS fits realistically inside the canal:
+
+            d_ts = activation_range * v_ts / sqrt(v_os² + v_ts²)
+
+        However, the actual speed at activation time is recomputed dynamically
+        in _step_collision_entities based on the real OS-to-crossing-point
+        distance, which accounts for path curvature.
+
+        side: "starboard" for crossing-right (TS on OS starboard, OS give-way)
+              "port"      for crossing-left  (TS on OS port, OS stand-on)
+        """
+        env = self.env
+        seg_indices = getattr(env, "_eligible_dynamic_seg_indices", np.array([], dtype=np.int32))
+        if len(seg_indices) == 0:
+            return []
+
+        segment_margin_frac = float(getattr(env, "static_ship_segment_margin_frac", 0.0))
+        t_min = max(0.0, segment_margin_frac)
+        t_max = min(1.0, 1.0 - segment_margin_frac)
+        if t_min > t_max:
+            t_min, t_max = 0.0, 1.0
+
+        ship_radius = float(env._rng.uniform(env.static_ship_radius_min, env.static_ship_radius_max))
+        activation_range = float(env.polar_max_range) + float(getattr(env, "crossing_activation_margin", 50.0))
+
+        # Target bearing range at classification (radians).
+        # d_ts = activation_range * sin(bearing) gives the lateral offset
+        # that produces the desired relative bearing when OS-to-TS ≈ activation_range.
+        bearing_min = math.radians(float(getattr(env, "crossing_bearing_min", 25.0)))
+        bearing_max = math.radians(float(getattr(env, "crossing_bearing_max", 50.0)))
+        d_ts_min_abs = float(getattr(env, "crossing_d_ts_min", 50.0))
+
+        target_bearing = float(env._rng.uniform(bearing_min, bearing_max))
+        d_ts_ideal = activation_range * math.sin(target_bearing)
+
+        entity_type = "crossing-right" if side == "starboard" else "crossing-left"
+
+        # Uniform shuffle of eligible segments (avoids bias toward longer/wider
+        # segments that would make narrow-canal placements rare).
+        seg_order = env._rng.choice(len(seg_indices), size=len(seg_indices), replace=False)
+
+        for seg_local_idx in seg_order:
+            seg_idx = int(seg_indices[int(seg_local_idx)])
+            tangent = env._seg_tangents[seg_idx]
+            normal = env._seg_normals[seg_idx]  # points to port side of the path
+            pa = env._seg_starts[seg_idx]
+            seg_len = float(env._seg_lengths[seg_idx])
+
+            # Determine spawn offset direction and TS heading
+            # normal points to port; -normal points to starboard
+            if side == "starboard":
+                offset_dir = -normal       # spawn on starboard side
+                ts_heading_vec = normal    # head towards port
+            else:
+                offset_dir = normal        # spawn on port side
+                ts_heading_vec = -normal   # head towards starboard
+
+            ts_heading = float(math.atan2(ts_heading_vec[1], ts_heading_vec[0]))
+
+            # Try a few random crossing points along this segment.
+            # For each crossing point, try the ideal d_ts first, then shrink
+            # until the TS fits inside the canal polygon.
+            for _ in range(10):
+                t_spawn = float(env._rng.uniform(t_min, t_max))
+                crossing_point = pa + tangent * (t_spawn * seg_len)
+
+                placed = False
+                d_ts = d_ts_ideal
+                while d_ts >= d_ts_min_abs:
+                    candidate_pos = crossing_point + offset_dir * d_ts
+
+                    candidate = CollisionEntity(
+                        radius=ship_radius,
+                        x=float(candidate_pos[0]),
+                        y=float(candidate_pos[1]),
+                        entity_type=entity_type,
+                        heading=ts_heading,
+                        speed=0.0,
+                        is_dynamic=True,
+                    )
+                    if (candidate.is_fully_inside_polygon(env.polygon_shape, own_radius=env.own_ship_radius)
+                            and not any(candidate.overlaps_with(existing, own_radius=env.own_ship_radius)
+                                        for existing in (env.collision_entities or []))):
+                        placed = True
+                        break
+                    d_ts *= 0.8  # shrink by 20% and retry
+
+                if not placed:
+                    continue
+
+                entity = CollisionEntity(
+                    radius=ship_radius,
+                    x=float(candidate_pos[0]),
+                    y=float(candidate_pos[1]),
+                    entity_type=entity_type,
+                    heading=ts_heading,
+                    speed=0.0,  # dormant until activated
+                    is_dynamic=True,
+                )
+                entity.crossing_point = crossing_point.copy()
+                entity.crossing_d_ts = float(d_ts)
+                entity.crossing_path_tangent = tangent.copy()
+                entity.route_mode = "straight_line"
+                entity.route_finished = False
+                entity.crossing_activated = False
+                entity.crossing_activation_range = activation_range
+
+                return [entity]
+
+        # No valid placement found across all segments
+        return []
+
+    def compute_crossing_right_collision_entities(self):
+        """
+        Crossing-right: TS on OS starboard side, heading across the path
+        towards port. OS is the give-way vessel (must pass behind TS stern).
+        """
+        return self._compute_crossing_collision_entities(side="starboard")
+
+    def compute_crossing_left_collision_entities(self):
+        """
+        Crossing-left: TS on OS port side, heading across the path
+        towards starboard. OS is the stand-on vessel (maintain course/speed).
+        """
+        return self._compute_crossing_collision_entities(side="port")
 
     def check_collision_entity_collision(self, ship_index: int = 0) -> bool:
         """Checks collision between OS and TS"""

@@ -635,8 +635,6 @@ class PPOAgent(BaseAgent):
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
             self.policy = self.policy.load(policy_file_name, self.device)
-            # TODO: starts from previous policy, do not forget to remove
-            #self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         except Exception as e:
             raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
 
