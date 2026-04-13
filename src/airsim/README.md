@@ -82,7 +82,7 @@ flowchart TD
     L --> M["PySimEnv / FhSimEnv"]
     M --> A
 
-    K --> N["VisualiseModelsMinimap"]
+K --> N["UE5TopDownMinimap"]
     K --> O["UE5TopDownMinimap"]
     J --> P["AirSimSessionExporter"]
     K --> P
@@ -151,7 +151,6 @@ airsim/
 |   `-- airsim_env.py
 |-- inference/
 |   |-- README.md
-|   |-- minimap_fossen_airsim.py
 |   |-- minimap_models_ue5.py
 |   |-- plot_airsim_path.py
 |   |-- run_inference.py
@@ -250,7 +249,7 @@ Control flow:
 2. framework env (`PySimEnv` or `FhSimEnv`) is stepped locally
 3. motion state is converted to AirSim coordinates
 4. bridge mirrors pose or kinematics into UE5
-5. optional minimap is updated
+5. optional UE5 top-down minimap is updated
 6. visualisation and bridge telemetry are exported
 
 This path is the current reference path for visual model replay.
@@ -282,9 +281,6 @@ Important keys:
 - `visualization.model_family`
 - `visualization.environment_name`
 - `visualization.show_minimap`
-- `visualization.use_ue5_camera_minimap`
-- `visualization.save_matplotlib_minimap`
-
 ## Exports
 
 All AirSim runtime paths write session folders under `exports/`.
@@ -299,12 +295,8 @@ These are created through `AirSimSessionExporter`.
 
 ## Minimap And Plotting
 
-There are currently two replay minimap options:
+Replay minimap support uses:
 
-- `VisualiseModelsMinimap`
-  - process-based matplotlib minimap
-  - live ship marker + heading line
-  - ideal path and waterway geometry
 - `UE5TopDownMinimap`
   - top-down camera view rendered from UE5
 
@@ -316,7 +308,7 @@ Active:
 
 - persistent path/reference markers drawn with `plot_line_strip`
 - start/end points and other debug markers
-- minimap rendering when enabled
+- UE5 top-down minimap rendering when enabled
 
 Inactive for now:
 

@@ -1,4 +1,4 @@
-"""Tests for minimap save behavior in run_visualise_models."""
+"""Tests for UE5 minimap behavior in run_visualise_models."""
 
 from __future__ import annotations
 
@@ -215,20 +215,20 @@ class _FakePolicy:
 
 
 class _FakeMinimap:
-    """Minimap stub exposing finish/close for verification."""
+    """UE5 minimap stub exposing update/close for verification."""
 
     created = []
 
-    def __init__(self, env, save_dir=".", **kwargs) -> None:
+    def __init__(self, bridge, **kwargs) -> None:
         """Initialise the fake minimap.
 
         Args:
-            env: Fake environment instance.
-            save_dir: Ignored save directory.
+            bridge: Fake AirSim bridge instance.
             **kwargs: Ignored minimap options.
         """
-        self.env = env
-        self.finished = False
+        self.bridge = bridge
+        self.kwargs = dict(kwargs)
+        self.updated = False
         type(self).created.append(self)
 
     def update(self, env) -> None:
@@ -237,16 +237,7 @@ class _FakeMinimap:
         Args:
             env: Fake environment instance.
         """
-        return None
-
-    def finish(self, total_reward: float, episode: int = 1) -> None:
-        """Record that a save/finish action was requested.
-
-        Args:
-            total_reward: Episode reward.
-            episode: One-based episode index.
-        """
-        self.finished = True
+        self.updated = True
 
     def close(self) -> None:
         """Close the fake minimap."""
@@ -344,8 +335,8 @@ class _FakeExporter:
         self.close()
 
 
-def test_visualise_models_does_not_save_matplotlib_minimap_by_default(monkeypatch):
-    """Default visualisation should not save a matplotlib minimap snapshot."""
+def test_visualise_models_uses_ue5_top_down_minimap_when_enabled(monkeypatch):
+    """UE5 replay should open the UE5 top-down minimap when enabled."""
     monkeypatch.setattr(module.VisualiseModelsRunner, "_load_policy", lambda self, model_path, device: _FakePolicy())
     monkeypatch.setattr(module, "AirSimBridge", _FakeBridge)
     monkeypatch.setattr(module, "AirSimSessionExporter", _FakeExporter)
@@ -354,7 +345,7 @@ def test_visualise_models_does_not_save_matplotlib_minimap_by_default(monkeypatc
     monkeypatch.setattr(module.VisualiseModelsRunner, "_resolve_environment_name", lambda self, model_path: "PySimEnv")
     monkeypatch.setattr(module.VisualiseModelsRunner, "_motion_state_from_env", lambda self, env, bridge: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     monkeypatch.setattr(module.VisualiseModelsRunner, "_animate_state", lambda self, env, bridge, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
-    monkeypatch.setattr(module, "VisualiseModelsMinimap", _FakeMinimap)
+    monkeypatch.setattr(module, "UE5TopDownMinimap", _FakeMinimap)
 
     _FakeBridge.created = []
     _FakeMinimap.created = []
@@ -362,14 +353,14 @@ def test_visualise_models_does_not_save_matplotlib_minimap_by_default(monkeypatc
     module.run_visualise_models(
         model_path="models/PySimEnv_PPO_policy.zip",
         show_minimap=True,
-        use_ue5_camera_minimap=False,
         num_episodes=1,
         max_steps=1,
+        minimap_update_hz=9.0,
     )
 
     assert len(_FakeMinimap.created) == 1
-    assert _FakeMinimap.created[0].finished is False
-    assert _FakeBridge.created[-1]._controls is not None
+    assert _FakeMinimap.created[0].updated is True
+    assert _FakeMinimap.created[0].kwargs["max_update_hz"] == 9.0
 
 
 def test_visualise_models_exports_rows_and_bridge_log_path(monkeypatch):
@@ -406,8 +397,8 @@ def test_visualise_models_exports_rows_and_bridge_log_path(monkeypatch):
     assert _FakeBridge.created[-1]._controls is not None
 
 
-def test_visualise_models_saves_matplotlib_minimap_when_enabled(monkeypatch):
-    """Visualisation should finish the minimap when save is enabled."""
+def test_visualise_models_keeps_minimap_disabled_when_show_minimap_is_false(monkeypatch):
+    """UE5 replay should not create a minimap when the toggle is off."""
     monkeypatch.setattr(module.VisualiseModelsRunner, "_load_policy", lambda self, model_path, device: _FakePolicy())
     monkeypatch.setattr(module, "AirSimBridge", _FakeBridge)
     monkeypatch.setattr(module, "AirSimSessionExporter", _FakeExporter)
@@ -416,22 +407,18 @@ def test_visualise_models_saves_matplotlib_minimap_when_enabled(monkeypatch):
     monkeypatch.setattr(module.VisualiseModelsRunner, "_resolve_environment_name", lambda self, model_path: "PySimEnv")
     monkeypatch.setattr(module.VisualiseModelsRunner, "_motion_state_from_env", lambda self, env, bridge: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     monkeypatch.setattr(module.VisualiseModelsRunner, "_animate_state", lambda self, env, bridge, **kwargs: ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], None))
-    monkeypatch.setattr(module, "VisualiseModelsMinimap", _FakeMinimap)
 
     _FakeBridge.created = []
     _FakeMinimap.created = []
     _FakeExporter.created = []
     module.run_visualise_models(
         model_path="models/PySimEnv_PPO_policy.zip",
-        show_minimap=True,
-        use_ue5_camera_minimap=False,
-        save_matplotlib_minimap=True,
+        show_minimap=False,
         num_episodes=1,
         max_steps=1,
     )
 
-    assert len(_FakeMinimap.created) == 1
-    assert _FakeMinimap.created[0].finished is True
+    assert len(_FakeMinimap.created) == 0
 
 
 def test_visualise_models_smoke_path_uses_real_saved_policy(monkeypatch, tmp_path: Path):
@@ -451,7 +438,6 @@ def test_visualise_models_smoke_path_uses_real_saved_policy(monkeypatch, tmp_pat
         show_minimap=False,
         num_episodes=1,
         max_steps=1,
-        save_matplotlib_minimap=False,
     )
 
     bridge = _SmokeBridge.created[-1]
@@ -480,7 +466,6 @@ def test_visualise_models_smoke_path_supports_batched_single_ship_obs(monkeypatc
         show_minimap=False,
         num_episodes=1,
         max_steps=1,
-        save_matplotlib_minimap=False,
     )
 
     bridge = _SmokeBridge.created[-1]

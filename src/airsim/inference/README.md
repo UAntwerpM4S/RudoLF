@@ -92,24 +92,11 @@ Current adapter families:
 
 The adapter registry lives in `visualisation_models/model_adapters.py`.
 
-## Minimap Options
-
-### Matplotlib minimap
-
-`VisualiseModelsMinimap` is a child-process matplotlib minimap. Internally it currently reuses the `MinimapFossenAirsim` implementation, but the public runtime concept is modular model visualisation.
-
-It currently shows:
-
-- real-time ship marker
-- heading line
-- path trail
-- ideal path
-- waterway polygon
-- Western Scheldt outline
+## Minimap
 
 ### UE5 camera minimap
 
-`UE5TopDownMinimap` uses a top-down AirSim camera and can optionally show an OpenCV preview window.
+`UE5TopDownMinimap` uses a top-down AirSim camera rendered inside UE5.
 
 ## Exports
 
@@ -210,8 +197,6 @@ set FW_AIRSIM_VERBOSE=1
 ### Replay rendering and minimap
 
 - `visualization.show_minimap`
-- `visualization.use_ue5_camera_minimap`
-- `visualization.save_matplotlib_minimap`
 - `visualization.minimap_update_hz`
 - `visualization.bridge_telemetry_hz`
 - `visualization.render_interpolation_steps`
@@ -234,7 +219,6 @@ set FW_AIRSIM_VERBOSE=1
 ### No minimap window appears
 
 - set `visualization.show_minimap=true`
-- for camera mode also set `visualization.use_ue5_camera_minimap=true`
 
 ### Framework-trained model passed to `run_inference.py`
 
