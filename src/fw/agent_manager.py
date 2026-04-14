@@ -520,9 +520,9 @@ class AgentManager:
                                 cross_errors.append(env.cross_error)
                             heading_errors.append(env.heading_error)
                             velocities.append(env.velocities)
-                            rudder_actions.append(env.performed_action)
-                            rudder_changes.append(abs(env.performed_action - previous_rudder_action))
-                            previous_rudder_action = env.performed_action
+                            rudder_actions.append(env.performed_action[0])
+                            rudder_changes.append(abs(env.performed_action[0] - previous_rudder_action))
+                            previous_rudder_action = env.performed_action[0]
                             ukc_measurements.append(env.ukc)
 
                             episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
