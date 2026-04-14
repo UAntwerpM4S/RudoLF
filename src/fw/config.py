@@ -22,7 +22,7 @@ In the long term this should be moved to a config-file which will then be read.
 
 DEFAULT_HYPERPARAMETERS = {
     PPO_POLICY_NAME: {
-        'learning_rate': 1e-4,
+        'learning_rate': 3e-4,
         'gamma': 0.99,
         'gae_lambda': 0.95,
         'entropy_coef': 0.01,
@@ -30,15 +30,15 @@ DEFAULT_HYPERPARAMETERS = {
         'max_grad_norm': 0.5,
         'clip_range': 0.2,
         'eval_frequency': 100,
-        'num_envs': 16,
-        'num_epochs': 4,
+        'num_envs': 4,
+        'num_epochs': 8,
         'normalize': False,
-        'max_nbr_iterations': 200000,
-        'batch_size': 4096,
-        'device': "cpu",
+        'max_nbr_iterations': 5000,
+        'batch_size': 512,
+        'device': "cuda",
         'model_dir': "models",
-        'fixed_horizon': True,
-        'steps_per_update': 4096
+        'fixed_horizon': False,
+        'steps_per_update': 2048,
     },
     PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,
@@ -64,29 +64,30 @@ DEFAULT_HYPERPARAMETERS = {
     },
     MULTI_PPO_POLICY_NAME: {
         'learning_rate': 1e-4,
-        'gamma': 0.95,
+        'gamma': 0.99,
         'gae_lambda': 0.95,
         'entropy_coef': 0.01,
         'value_loss_coef': 0.5,
         'max_grad_norm': 0.5,
-        'clip_range': 0.05,
+        'clip_range': 0.2,
         'eval_frequency': 100,
-        'num_envs': 1,
-        'num_epochs': 10,
+        'num_envs': 3,
+        'num_epochs': 4,
         'normalize': False,
         'max_nbr_iterations': 200000,
-        'batch_size': 64,
+        'batch_size': 4096,
         'device': "cpu",
         'model_dir': "models"
     },
 }
 
 CONFIG_PARAMETERS = {
-    # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander"
+    # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander",
+    #   "PySimColav" (single colav env), "MultiColav" (3 colav envs for MPPO)
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
-    'env_type': ["PySimColav"],
-    'action': "visualize",  # Valid action values: "train", "visualize"
+    'env_type': ["PySimColavEnv"],
+    'action': "train",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
     'numerical_damping': False,
@@ -94,7 +95,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': True,
+    'live_animation': False,
     # AirSim settings are now in airsim.config.airsim_config
     # Use get_airsim_config() to access them.
 }

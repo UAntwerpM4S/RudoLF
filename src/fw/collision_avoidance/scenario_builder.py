@@ -489,11 +489,11 @@ class ScenarioBuilder:
         """
         return self._compute_crossing_collision_entities(side="port")
 
-    def check_collision_entity_collision(self, ship_index: int = 0) -> bool:
+    def check_collision_entity_collision(self) -> bool:
         """Checks collision between OS and TS"""
         env = self.env
         entities = getattr(env, "collision_entities", []) or []
         return any(
-            entity.collides_with_point(env.ship_pos[ship_index], own_radius=env.own_ship_radius)
+            entity.collides_with_point(env.ship_pos, own_radius=env.own_ship_radius)
             for entity in entities
         )

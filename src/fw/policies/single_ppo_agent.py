@@ -367,7 +367,7 @@ class SinglePPOAgent(BasePPOAgent):
             total_advantage = 0
 
             # Collect batch data from multiple parallel environments
-            batch_data = self.run_parallel_episodes(self.num_envs)
+            batch_data = self.run_parallel_episodes(self.num_envs, fixed_horizon=self.fixed_horizon)
 
             for episode_result in batch_data:
                 episode_data.append(episode_result)
@@ -382,6 +382,7 @@ class SinglePPOAgent(BasePPOAgent):
             mean_advantage = total_advantage / len(batch_data) if batch_data else 0
 
             training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
+            print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
 
             # Save the best policy so far
             if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:

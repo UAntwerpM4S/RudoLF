@@ -18,6 +18,7 @@ from airsim.environments.airsim_env import AirSimEnv
 from fw.environments.lunar_lander import LunarLander
 from fw.environments.py_sim_polar_env import PySimPolarEnv
 from fw.environments.multi_sim_env import MultiSimEnv
+from fw.environments.py_sim_colav_env import PySimColavEnv
 
 
 class EnvironmentRegistryError(Exception):
@@ -293,6 +294,103 @@ class MultiPySimEnvironment(BaseEnvironment):
         self._env = MultiSimEnv(sub_environments=[single_pysim_env1, single_pysim_env2])
 
 
+class PySimColavEnvironment(BaseEnvironment):
+    """
+    Class for a single PySimColav environment (one COLREGs scenario type).
+    """
+
+    def __init__(self, name, configuration):
+        """Create the default PySimColav environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Optional runtime configuration forwarded by the
+                environment factory.
+        """
+        super().__init__(name, configuration)
+
+        # During registration probe (name==""), return a dummy to avoid
+        # instantiating the full environment. The class name determines the
+        # registered key in the factory.
+        if name == "":
+            self._env = type("PySimColavEnv", (), {})()
+            return
+
+        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
+        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+        config = get_config_parameters()
+
+        self._env = PySimColavEnv(
+            time_step=1.0,
+            max_steps=1500,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            dynamics_model=config["dynamics_model"],
+            ship_model=config["ship_model"],
+            wind=config["wind"],
+            current=config["current"],
+            numerical_damping=config["numerical_damping"],
+            enable_obstacles=True,
+            use_polar_scan=True,
+            eval=True,
+            eval_scenario="crossing-right",
+            eval_obstacle_count=1,
+        )
+
+
+class MultiColavEnvironment(BaseEnvironment):
+    """
+    Multi-environment wrapper that creates three PySimColavEnv instances,
+    one for each COLREGs scenario type (head-on, overtaking, crossing-right),
+    composed into a single MultiSimEnv for use with MultiPPOAgent.
+    """
+
+    def __init__(self, name, configuration):
+        """Create three PySimColavEnv instances wrapped in a MultiSimEnv.
+
+        Args:
+            name: Registered environment name.
+            configuration: Optional runtime configuration forwarded by the
+                environment factory.
+        """
+        super().__init__(name, configuration)
+
+        # During registration probe (name==""), return a dummy to avoid
+        # instantiating heavy environments. The dummy class name determines
+        # the registered key in the factory.
+        if name == "":
+            self._env = type("MultiSimEnv_colav", (), {})()
+            return
+
+        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
+        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+        config = get_config_parameters()
+
+        common_kwargs = dict(
+            time_step=1.0,
+            max_steps=1500,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            dynamics_model=config["dynamics_model"],
+            ship_model=config["ship_model"],
+            wind=config["wind"],
+            current=config["current"],
+            numerical_damping=config["numerical_damping"],
+            enable_obstacles=True,
+            use_polar_scan=True,
+            eval=True,
+            eval_obstacle_count=1,
+        )
+
+        head_on_env = PySimColavEnv(eval_scenario="head-on", **common_kwargs)
+        overtaking_env = PySimColavEnv(eval_scenario="overtaking", **common_kwargs)
+        crossing_right_env = PySimColavEnv(eval_scenario="crossing-right", **common_kwargs)
+
+        self._env = MultiSimEnv(
+            sub_environments=[head_on_env, overtaking_env, crossing_right_env]
+        )
+
+
 class FhSimEnvironment(BaseEnvironment):
     """
     Class for the FH Sim environment
@@ -497,6 +595,8 @@ airsim_env_name = "AirSimEnv"
 lunar_env_name = "LunarLander"
 py_sim_polar_env_name = "PySimPolarEnv"
 multi_sim_env_name = "MultiSimEnv"
+py_sim_colav_env_name = "PySimColavEnv"
+multi_colav_env_name = "MultiSimEnv_colav"
 
 _ENVIRONMENT_NAME_ALIASES = {
     py_sim_env_name.lower(): py_sim_env_name,
@@ -512,6 +612,12 @@ _ENVIRONMENT_NAME_ALIASES = {
     "polar": py_sim_polar_env_name,
     multi_sim_env_name.lower(): multi_sim_env_name,
     "multipysim": multi_sim_env_name,
+    py_sim_colav_env_name.lower(): py_sim_colav_env_name,
+    "pysimcolav": py_sim_colav_env_name,
+    "colav": py_sim_colav_env_name,
+    multi_colav_env_name.lower(): multi_colav_env_name,
+    "multicolav": multi_colav_env_name,
+    "multisimcolav": multi_colav_env_name,
 }
 
 

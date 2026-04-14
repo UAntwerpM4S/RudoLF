@@ -34,7 +34,7 @@ from fw.dynamics.nomoto import Nomoto
 # Physical limits / config
 
 # Grid limits
-MAX_CHECKPOINTS_DISTANCE = 2000
+MAX_CHECKPOINTS_DISTANCE = 3000
 CHECKPOINTS_DISTANCE = 350
 MIN_GRID_POS = -11700
 MAX_GRID_POS = 14500
@@ -868,7 +868,7 @@ class PySimEnv(BaseEnv):
             # Set truncated True when episode exceeded max_steps but not terminated by failure or success.
             truncated = False
             if self.step_count >= self.max_steps and not terminated:
-                # reward = -250
+                reward = -250 # TODO: comment out
                 truncated = True
 
             # Update ship state
@@ -927,7 +927,7 @@ class PySimEnv(BaseEnv):
         # Reward components
         r_forward = - 0.25 * abs(target_velocity - velocity) / target_velocity
         r_heading_alignment = - 0.5 * abs(heading_error)
-        r_cte = - 0.05 * cross_track_error
+        r_cte = - 0.00 * cross_track_error # TODO: 0.05 weight instead of 0.00
         r_rudder_angle_change = - 0.4 * (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -1
         r_rudder_angle = - 0.05 * (abs(self.performed_action[0]) / 0.2) ** (2 if abs(self.performed_action[0]) < 0.2 else 4)
         r_thrust_change = 0  # - 0.5 * thrust_change

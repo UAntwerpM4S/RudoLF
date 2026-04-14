@@ -28,6 +28,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
         lunar_env_name,
         py_sim_polar_env_name,
         multi_sim_env_name,
+        multi_colav_env_name,
+        py_sim_colav_env_name,
         resolve_environment_names,
         initialize_all_environments
     )
@@ -112,6 +114,18 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.NBR_POLICY_UPDATES,
             max_time_steps=600,
         ),
+        multi_colav_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=1.75,
+            patience=4,
+            max_time_steps=1300,
+        ),
+        py_sim_colav_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=1.75,
+            patience=4,
+            max_time_steps=1300,
+        ),
     }
 
     if not configured_env_names:
@@ -119,6 +133,26 @@ if __name__ == "__main__" or __name__ == "fw.main":
         raise SystemExit(1)
 
     initialize_all_environments()
+
+    def _select_agent_type(envs: list) -> str:
+        """
+        Choose the correct agent type based on the environments.
+
+        If any environment is a MultiSimEnv (i.e. wraps multiple
+        sub-environments for multi-policy training), use MPPO.
+        Otherwise, default to single-policy PPO.
+
+        Args:
+            envs: List of framework environment wrappers.
+
+        Returns:
+            The agent type string (e.g. "PPO" or "MPPO").
+        """
+        from fw.environments.multi_sim_env import MultiSimEnv
+        for env in envs:
+            if isinstance(env.gym_env, MultiSimEnv):
+                return MULTI_PPO_POLICY_NAME
+        return PPO_POLICY_NAME
 
     def _run_standard_batch(envs: list) -> bool:
         """
@@ -136,7 +170,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
         if not envs:
             return False
 
-        trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+        agent_type = _select_agent_type(envs)
+        trainer = Trainer(agent_type, envs, "SimpleScheduler")
         if action == "visualize":
             trainer.visualize(envs, airsim_bridge=None)
         else:

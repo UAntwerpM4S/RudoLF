@@ -74,19 +74,9 @@ class PySimColavEnv(PySimEnv):
             eval: bool = True,
             eval_scenario: Optional[str] = "crossing-right", # "static", "overtaking", "head-on", "crossing-right", "crossing-left"
             eval_obstacle_count: int = 1,
-            num_ships: int = 1
     ) -> None:
         self._first_class = False
         self.first_class = False
-
-        # ── Crossing-right encounter logging ──
-        self._cr_log_active = False
-        self._cr_log = {"steps": 0, "cum_base": 0.0, "cum_polar": 0.0, "cum_crossing": 0.0}
-
-        # ── Run-level crossing-right aggregation ──
-        self._cr_run_encounters: list[dict] = []
-
-        self.num_ships = int(num_ships)
 
         # Scenario measurements
         self.enable_variable_ship_size = bool(enable_variable_ship_size)
@@ -136,12 +126,12 @@ class PySimColavEnv(PySimEnv):
         self._current_episode_min_dist: float = float("inf")
         self._current_episode_collided: bool = False
 
-        self._last_collision_info = [{} for _ in range(self.num_ships)]
-        self._colreg_violations = [0] * self.num_ships
-        self._colreg_correct = [0] * self.num_ships
-        self._colreg_initial_heading = [None] * self.num_ships
-        self._crossing_left_initial_speed = [None] * self.num_ships
-        self._crossing_right_grav_point = [None] * self.num_ships
+        self._last_collision_info = {}
+        self._colreg_violations = 0
+        self._colreg_correct = 0
+        self._colreg_initial_heading = None
+        self._crossing_left_initial_speed = None
+        self._crossing_right_grav_point = None
 
         # Passing snapshot: list of dicts with OS/TS positions at the moment of passing
         self._passing_snapshots: list[dict] = []
@@ -166,22 +156,19 @@ class PySimColavEnv(PySimEnv):
             wind=wind,
             current=current,
             numerical_damping=numerical_damping,
-            num_ships=num_ships,
         )
 
-        # single-ship aliases expected by the existing colav code
-        self.os_i = 0
-        self.polar_scan_cached = [None] * self.num_ships
+        self.polar_scan_cached = None
 
         self.scenario_builder = ScenarioBuilder(self)
         self.scenario_builder.cache_checkpoint_segments()
 
-        # Per-ship scenario classifiers
-        self.scenario_classifiers = [ScenarioClassifier(
+        # Scenario classifier for the single OS
+        self.scenario_classifier = ScenarioClassifier(
             classify_range=self.polar_max_range,
-            forget_range=self.polar_max_range + 20) for _ in range(self.num_ships)]
+            forget_range=self.polar_max_range + 20)
         # Track which TS index the one-time COLREG reward was already given for (None = not given)
-        self.ts_passed = [None] * self.num_ships
+        self.ts_passed = None
 
         self._base_initial_ship_pos = self.initial_ship_pos.copy()
         self._base_target_pos = self.target_pos.copy()
@@ -212,7 +199,7 @@ class PySimColavEnv(PySimEnv):
             "colreg_bearing": 0.4,
             "headon_bearing": 0.4,
             "crossing_left_speed": 0.3,
-            "crossing_right": 20.0,
+            "crossing_right": 0.5,
             "crossing_right_grav": 1.0,
         }
 
@@ -279,7 +266,7 @@ class PySimColavEnv(PySimEnv):
 
         return self.cri_omega1 * cri_dcpa + self.cri_omega2 * cri_tcpa
 
-    def _nearest_segment_signed_cte(self, obs_pos: np.ndarray, ship_index: int) -> float:
+    def _nearest_segment_signed_cte(self, obs_pos: np.ndarray) -> float:
         """
         Walk forward from the OS's current segment, accumulating path length.
         Stop when accumulated length exceeds polar_max_range. Among the
@@ -305,7 +292,7 @@ class PySimColavEnv(PySimEnv):
         best_unbounded_abs = float('inf')
         best_unbounded_signed = 0.0
 
-        start_idx = max(1, self.checkpoint_index[ship_index])
+        start_idx = max(1, self.checkpoint_index)
 
         for seg_idx in range(start_idx, len(self.checkpoints)):
             seg_start = np.asarray(self.checkpoints[seg_idx - 1]['pos'], dtype=np.float32)
@@ -407,10 +394,10 @@ class PySimColavEnv(PySimEnv):
             self._collision_entity_centers = None
             self._collision_entity_radii_sq = None
 
-    def _get_polar_scan(self, ship_index: int) -> np.ndarray:
-        ship_pos = self.ship_pos[ship_index]
+    def _get_polar_scan(self) -> np.ndarray:
+        ship_pos = self.ship_pos
         x0, y0 = ship_pos
-        heading = self.phys_sims[ship_index].state.heading
+        heading = self.phys_sim.state.heading
 
         # Calculate ray endpoints
         ch, sh = np.cos(heading), np.sin(heading)
@@ -484,14 +471,13 @@ class PySimColavEnv(PySimEnv):
         if not getattr(self, "use_polar_scan", False):
             return base_space
 
-        # Append polar scan dimensions to each ship's observation
-        # base_space.low/high shape: (num_ships, base_obs_dim)
-        polar_low = np.zeros((self.num_ships, self.polar_n_sectors), dtype=np.float32)
-        polar_high = np.full((self.num_ships, self.polar_n_sectors), self.polar_obs_max, dtype=np.float32)
+        # Append polar scan dimensions to the observation
+        polar_low = np.zeros(self.polar_n_sectors, dtype=np.float32)
+        polar_high = np.full(self.polar_n_sectors, self.polar_obs_max, dtype=np.float32)
 
         # Append CRI scalar (0 = no encounter / static obstacle, up to ~1.0 for dynamic TS)
-        cri_low = np.zeros((self.num_ships, 1), dtype=np.float32)
-        cri_high = np.ones((self.num_ships, 1), dtype=np.float32)
+        cri_low = np.zeros(1, dtype=np.float32)
+        cri_high = np.ones(1, dtype=np.float32)
 
         extended_low = np.hstack([base_space.low, polar_low, cri_low])
         extended_high = np.hstack([base_space.high, polar_high, cri_high])
@@ -500,176 +486,147 @@ class PySimColavEnv(PySimEnv):
 
     def _get_obs(self) -> np.ndarray:
         """
-        Extend the parent's multi-agent observation with per-ship polar scan
-        data and a CRI scalar.
+        Extend the parent's observation with polar scan data and a CRI scalar.
 
         Returns:
-            np.ndarray: shape (num_ships, base_obs_dim + polar_n_sectors + 1)
+            np.ndarray: shape (base_obs_dim + polar_n_sectors + 1,)
         """
-        # Parent builds the full path-following observation for every ship
-        # Shape: (num_ships, base_obs_dim)
         base_obs = super()._get_obs()
 
         if not getattr(self, "use_polar_scan", False):
             return base_obs
 
-        # Append each ship's polar scan to its observation row
-        scans = []
-        for i in range(self.num_ships):
-            scan = self.polar_scan_cached[i]
-            if scan is None:
-                scan = self._get_polar_scan(i)
-                self.polar_scan_cached[i] = scan
-            scans.append(scan)
+        # Get or compute polar scan
+        scan = self.polar_scan_cached
+        if scan is None:
+            scan = self._get_polar_scan()
+            self.polar_scan_cached = scan
 
-        polar_block = np.array(scans, dtype=np.float32)  # (num_ships, polar_n_sectors)
+        # Classify scenario (used by reward/violation logic, not in obs)
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            self.scenario_classifier.classify(
+                self.ship_pos,
+                self.phys_sim.state.heading,
+                self.collision_entities,
+            )
 
-        # Classify scenario for each ship (used by reward/violation logic, not in obs)
-        for i in range(self.num_ships):
-            if not self.phys_sims[i].state.terminated and not self.phys_sims[i].state.truncated:
-                self.scenario_classifiers[i].classify(
-                    self.ship_pos[i],
-                    self.phys_sims[i].state.heading,
-                    self.collision_entities,
-                )
+        # Compute CRI (0 when no tracked TS, else CRI of tracked TS)
+        cri_value = 0.0
+        clf = self.scenario_classifier
+        if clf.tracked_ts is not None:
+            ts = self.collision_entities[clf.tracked_ts]
+            os_pos = self.ship_pos
+            os_heading = self.phys_sim.state.heading
+            os_u = float(self.phys_sim.state.u)
+            os_v = float(self.phys_sim.state.v)
+            cri_value = float(np.clip(self._compute_cri(os_pos, os_heading, os_u, os_v, ts), 0.0, 1.0))
 
-        # Compute per-ship CRI (0 when no tracked TS, else CRI of tracked TS)
-        cri_block = np.zeros((self.num_ships, 1), dtype=np.float32)
-        for i in range(self.num_ships):
-            clf = self.scenario_classifiers[i]
-            if clf.tracked_ts is not None:
-                ts = self.collision_entities[clf.tracked_ts]
-                os_pos = self.ship_pos[i]
-                os_heading = self.phys_sims[i].state.heading
-                os_u = float(self.phys_sims[i].state.u)
-                os_v = float(self.phys_sims[i].state.v)
-                cri = self._compute_cri(os_pos, os_heading, os_u, os_v, ts)
-                cri_block[i, 0] = np.clip(cri, 0.0, 1.0)
-
-        obs = np.hstack([base_obs, polar_block, cri_block]).astype(np.float32)
-
+        obs = np.hstack([base_obs, scan, np.array([cri_value], dtype=np.float32)]).astype(np.float32)
         return obs
 
     # -----------------------
     # Dynamics update & step
     # -----------------------
-    def step(self, actions: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """
-        Execute one environment timestep for all ships, with collision entity
+        Execute one environment timestep with collision entity
         updates inserted between physics and reward computation.
         """
-        actions = np.asarray(actions, dtype=np.float32)
-        if actions.shape == (2,):
-            actions = actions[None, :]  # single-ship fallback
+        action = np.asarray(action, dtype=np.float32)
 
-        rewards = np.zeros(self.num_ships, dtype=np.float32)
-        terminations = np.zeros(self.num_ships, dtype=bool)
-        truncations = np.zeros(self.num_ships, dtype=bool)
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            self.previous_action = self.performed_action.copy()
+            self.previous_ship_pos = self.ship_pos.copy()
+            self.previous_heading = self.phys_sim.state.heading
 
-        # Step physics for all active ships
-        for i in range(self.num_ships):
-            if not self.phys_sims[i].state.terminated and not self.phys_sims[i].state.truncated:
-                self.previous_action[i] = self.performed_action[i].copy()
-                self.previous_ship_pos[i] = self.ship_pos[i].copy()
-                self.previous_heading[i] = self.phys_sims[i].state.heading
+            self.phys_sim.step(action, self.enable_smoothing)
+            self.ship_pos = np.array(
+                [self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32
+            )
+            self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
+            self.step_count += 1
 
-                self.phys_sims[i].step(actions[i], self.enable_smoothing)
-                self.ship_pos[i] = np.array(
-                    [self.phys_sims[i].state.x, self.phys_sims[i].state.y], dtype=np.float32
-                )
-                self.performed_action[i] = self.phys_sims[i].actuators.current_actuator_state.copy()
-                self.step_count[i] += 1
-
-        # Step collision entities (once, after all ships have moved)
+        # Step collision entities (once, after the ship has moved)
         self._step_collision_entities()
 
-        # Track minimum center-to-center distance to collision entities (for OS, ship index 0)
+        # Track minimum center-to-center distance to collision entities
         if getattr(self, "collision_entities", None) and getattr(self, "eval", False):
             for entity in self.collision_entities:
-                dist = entity.distance_to_point(self.ship_pos[self.os_i])
+                dist = entity.distance_to_point(self.ship_pos)
                 if dist < self._current_episode_min_dist:
                     self._current_episode_min_dist = dist
 
-        # Update polar scans for all active ships
+        # Update polar scan
         if self.use_polar_scan:
-            for i in range(self.num_ships):
-                if not self.phys_sims[i].state.terminated and not self.phys_sims[i].state.truncated:
-                    self.polar_scan_cached[i] = self._get_polar_scan(i)
+            if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+                self.polar_scan_cached = self._get_polar_scan()
 
-        # Compute live signed CTE for each static entity, per ship.
-        # Stored as dict: _live_signed_cte[ship_index] = {entity_id: float}
+        # Compute live signed CTE for each static entity.
+        # Stored as dict: _live_signed_cte = {entity_id: float}
         # Used by both reward and observation to avoid recomputation.
-        self._live_signed_cte = [{} for _ in range(self.num_ships)]
-        for i in range(self.num_ships):
-            if self.phys_sims[i].state.terminated or self.phys_sims[i].state.truncated:
-                continue
+        self._live_signed_cte = {}
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
             for entity in (self.collision_entities or []):
                 if entity.is_dynamic:
                     continue
                 obs_pos = np.array([entity.x, entity.y], dtype=np.float32)
-                self._live_signed_cte[i][id(entity)] = self._nearest_segment_signed_cte(obs_pos, i)
+                self._live_signed_cte[id(entity)] = self._nearest_segment_signed_cte(obs_pos)
 
-        # Calculate rewards and termination for all active ships
-        for i in range(self.num_ships):
-            if not self.phys_sims[i].state.terminated and not self.phys_sims[i].state.truncated:
-                reward, terminated = self._calculate_reward_single(i)
+        # Calculate reward and termination
+        reward = 0.0
+        terminated = False
+        truncated = False
 
-                truncated = False
-                if self.step_count[i] >= self.max_steps and not terminated:
-                    reward = -250
-                    truncated = True
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            reward, terminated = self._calculate_reward_single()
 
-                self.phys_sims[i].state.terminated = terminated
-                self.phys_sims[i].state.truncated = truncated
+            if self.step_count >= self.max_steps and not terminated:
+                reward = -250
+                truncated = True
 
-                rewards[i] = reward
-                terminations[i] = terminated
-                truncations[i] = truncated
-            else:
-                rewards[i] = 0.0
-                terminations[i] = self.phys_sims[i].state.terminated
-                truncations[i] = self.phys_sims[i].state.truncated
+            self.phys_sim.state.terminated = terminated
+            self.phys_sim.state.truncated = truncated
 
         # Mark collision so the min distance for this episode is excluded from the PDF
-        if any(self._last_collision_info[i].get("collision") for i in range(self.num_ships)):
+        if self._last_collision_info.get("collision"):
             self._current_episode_collided = True
 
         info = {
-            "rewards": rewards,
-            "terminations": terminations,
-            "truncations": truncations,
-            "collision_info": [self._last_collision_info[i] for i in range(self.num_ships)],
-            "colreg_violations": [self._colreg_violations[i] for i in range(self.num_ships)],
-            "colreg_correct": [self._colreg_correct[i] for i in range(self.num_ships)],
+            "rewards": reward,
+            "terminations": terminated,
+            "truncations": truncated,
+            "collision_info": self._last_collision_info,
+            "colreg_violations": self._colreg_violations,
+            "colreg_correct": self._colreg_correct,
             "min_distance": self._current_episode_min_dist,
         }
 
-        return self._get_obs(), rewards[0], np.all(terminations | truncations), False, info
+        return self._get_obs(), reward, terminated or truncated, False, info
 
     # -------------------
     # Reward calculation
     # -------------------
-    def _calculate_reward_single(self, i: int) -> Tuple[float, bool]:
+    def _calculate_reward_single(self) -> Tuple[float, bool]:
         """
         Extend parent's path-following reward with colav-specific penalties.
         """
 
         # Capture the active path segment before parent may advance checkpoint_index
-        prev_idx = max(0, self.checkpoint_index[i] - 1)
+        prev_idx = max(0, self.checkpoint_index - 1)
         collision_segment_start = np.asarray(self.checkpoints[prev_idx]['pos'], dtype=np.float32)
-        curr_idx = min(self.checkpoint_index[i], len(self.checkpoints) - 1)
+        curr_idx = min(self.checkpoint_index, len(self.checkpoints) - 1)
         collision_segment_end = np.asarray(self.checkpoints[curr_idx]['pos'], dtype=np.float32)
 
         # Base path-following reward and termination
-        base_reward, done = super()._calculate_reward_single(i)
+        base_reward, done = super()._calculate_reward()
         reward = base_reward
 
         # ------------------------------------------------------------------ #
         #  Polar distance penalty                                              #
         # ------------------------------------------------------------------ #
         _step_polar = 0.0
-        if getattr(self, "use_polar_scan", False) and self.polar_scan_cached[i] is not None:
-            max_close = float(np.max(self.polar_scan_cached[i]))
+        if getattr(self, "use_polar_scan", False) and self.polar_scan_cached is not None:
+            max_close = float(np.max(self.polar_scan_cached))
             min_dist_n = 1.0 - (max_close / max(float(self.polar_obs_max), 1e-6))
 
             d_ramp_start = 100
@@ -685,21 +642,21 @@ class PySimColavEnv(PySimEnv):
                 _step_polar = self.reward_weights['polar_distance'] * ramp_penalty
                 reward -= _step_polar
 
-        clf = self.scenario_classifiers[i]
+        clf = self.scenario_classifier
         ts_idx = clf.tracked_ts
 
         # Reset crossing-left speed capture when scenario changes
         if clf.label != "crossing-left":
-            self._crossing_left_initial_speed[i] = None
+            self._crossing_left_initial_speed = None
 
         # Reset gravitation point when no longer crossing-right
         if clf.label != "crossing-right":
-            self._crossing_right_grav_point[i] = None
+            self._crossing_right_grav_point = None
 
         if ts_idx is not None:
             ts = self.collision_entities[ts_idx]
-            os_pos = self.ship_pos[i]
-            os_heading = self.phys_sims[i].state.heading
+            os_pos = self.ship_pos
+            os_heading = self.phys_sim.state.heading
             scenario = clf.label
 
             if scenario == "head-on":
@@ -716,12 +673,12 @@ class PySimColavEnv(PySimEnv):
 
                 # Logging only — no reward effect
                 side = ts.ts_side_from_os_perspective(os_pos, os_heading)
-                if ts.passed_by_os(os_pos, os_heading) and self.ts_passed[i] != ts_idx:
-                    self.ts_passed[i] = ts_idx
+                if ts.passed_by_os(os_pos, os_heading) and self.ts_passed != ts_idx:
+                    self.ts_passed = ts_idx
                     if side == "port":
-                        self._colreg_correct[i] += 1
+                        self._colreg_correct += 1
                     elif side == "starboard":
-                        self._colreg_violations[i] += 1
+                        self._colreg_violations += 1
 
                     # Record passing snapshot for rendering
                     self._passing_snapshots.append({
@@ -733,12 +690,12 @@ class PySimColavEnv(PySimEnv):
 
             elif scenario == "overtaking":
                 side = ts.ts_side_from_os_perspective(os_pos, os_heading)
-                if ts.passed_by_os(os_pos, os_heading) and self.ts_passed[i] != ts_idx:
-                    self.ts_passed[i] = ts_idx
+                if ts.passed_by_os(os_pos, os_heading) and self.ts_passed != ts_idx:
+                    self.ts_passed = ts_idx
                     if side == "port":
-                        self._colreg_correct[i] += 1
+                        self._colreg_correct += 1
                     elif side == "starboard":
-                        self._colreg_violations[i] += 1
+                        self._colreg_violations += 1
 
                     # Record passing snapshot for rendering
                     dist = ts.distance_to_point(os_pos)
@@ -757,8 +714,8 @@ class PySimColavEnv(PySimEnv):
                                       math.atan2(dy, dx) - os_heading + math.pi
                               ) % (2.0 * math.pi) - math.pi
 
-                os_u = float(self.phys_sims[i].state.u)
-                os_v = float(self.phys_sims[i].state.v)
+                os_u = float(self.phys_sim.state.u)
+                os_v = float(self.phys_sim.state.v)
                 cri = self._compute_cri(os_pos, os_heading, os_u, os_v, ts)
 
                 # Attenuate polar penalty: the TS appears in the polar scan
@@ -780,9 +737,9 @@ class PySimColavEnv(PySimEnv):
 
                 # Gravitation point: reward heading toward TS position at classification
                 _step_grav = 0.0
-                if self._crossing_right_grav_point[i] is None:
-                    self._crossing_right_grav_point[i] = ts.get_position().copy()
-                grav = self._crossing_right_grav_point[i]
+                if self._crossing_right_grav_point is None:
+                    self._crossing_right_grav_point = ts.get_position().copy()
+                grav = self._crossing_right_grav_point
                 grav_dx = float(grav[0] - os_pos[0])
                 grav_dy = float(grav[1] - os_pos[1])
                 # only active while OS is still approaching the gravitation point
@@ -795,12 +752,12 @@ class PySimColavEnv(PySimEnv):
                 # Violation: OS crossed ahead of TS (TS on starboard at passing)
                 ts_pos = ts.get_position()
                 side = ts.ts_side_from_os_perspective(os_pos, os_heading)
-                if ts.passed_by_os(os_pos, os_heading) and self.ts_passed[i] != ts_idx:
-                    self.ts_passed[i] = ts_idx
+                if ts.passed_by_os(os_pos, os_heading) and self.ts_passed != ts_idx:
+                    self.ts_passed = ts_idx
                     if side == "port":
-                        self._colreg_correct[i] += 1
+                        self._colreg_correct += 1
                     elif side == "starboard":
-                        self._colreg_violations[i] += 1
+                        self._colreg_violations += 1
 
                     dist = ts.distance_to_point(os_pos)
                     self._passing_snapshots.append({
@@ -815,26 +772,25 @@ class PySimColavEnv(PySimEnv):
         # ------------------------------------------------------------------ #
         collision_entity_collision = False
         if getattr(self, "collision_entities", None):
-            collision_entity_collision = self.scenario_builder.check_collision_entity_collision(
-                ship_index=i)
+            collision_entity_collision = self.scenario_builder.check_collision_entity_collision()
             if collision_entity_collision:
                 done = True
 
-        bank_collision = not self._ship_in_open_water(self.ship_pos[i])
-        self._last_collision_info[i] = {}
+        bank_collision = not self._ship_in_open_water(self.ship_pos)
+        self._last_collision_info = {}
 
         if bank_collision:
-            self._last_collision_info[i] = {"collision": True, "collision_type": "bank"}
+            self._last_collision_info = {"collision": True, "collision_type": "bank"}
 
         if collision_entity_collision:
             segment_vec = collision_segment_end - collision_segment_start
-            ship_vec = self.ship_pos[i] - collision_segment_start
+            ship_vec = self.ship_pos - collision_segment_start
             cross_z = float(segment_vec[0] * ship_vec[1] - segment_vec[1] * ship_vec[0])
             collision_side = "port" if cross_z > 0.0 else "starboard"
             cross_track_error = self._distance_from_point_to_line(
-                self.ship_pos[i], collision_segment_start, collision_segment_end
+                self.ship_pos, collision_segment_start, collision_segment_end
             )
-            self._last_collision_info[i] = {
+            self._last_collision_info = {
                 "collision": True,
                 "collision_type": "ship",
                 "collision_cte": abs(cross_track_error),
@@ -842,7 +798,7 @@ class PySimColavEnv(PySimEnv):
             }
 
         # Distinguish failure from success — only failures get -250
-        success = self.checkpoint_index[i] >= len(self.checkpoints)
+        success = self.checkpoint_index >= len(self.checkpoints)
         if done and not success:
             reward = -250.0
 
@@ -854,48 +810,32 @@ class PySimColavEnv(PySimEnv):
     def _initialize_rendering(self) -> None:
         super()._initialize_rendering()
 
-        # Per-ship plot handles (parent only creates one)
-        colors = ['bo', 'co', 'mo', 'yo', 'ko']
-        self.ship_plots = []
-        self.heading_lines = []
-        for i in range(self.num_ships):
-            color = colors[i % len(colors)]
-            plot, = self.ax.plot([], [], color, markersize=10, label=f'Ship {i}')
-            heading, = self.ax.plot([], [], color='black', linewidth=2)
-            self.ship_plots.append(plot)
-            self.heading_lines.append(heading)
+        # Ship plot handle
+        self.ship_plot_colav, = self.ax.plot([], [], 'bo', markersize=10, label='OS')
+        self.heading_line_colav, = self.ax.plot([], [], color='black', linewidth=2)
 
-        # Per-ship polar beams
-        self.polar_beams_per_ship = []
+        # Polar beams
+        self.polar_beams = []
         if self.use_polar_scan:
-            beam_colors = ['orange', 'cyan', 'magenta', 'yellow']
-            for i in range(self.num_ships):
-                beams = []
-                beam_color = beam_colors[i % len(beam_colors)]
-                for _ in range(self.polar_n_sectors):
-                    beam_line, = self.ax.plot(
-                        [], [],
-                        color=beam_color,
-                        alpha=0.3,
-                        linewidth=1,
-                    )
-                    beams.append(beam_line)
-                self.polar_beams_per_ship.append(beams)
+            for _ in range(self.polar_n_sectors):
+                beam_line, = self.ax.plot(
+                    [], [],
+                    color='orange',
+                    alpha=0.3,
+                    linewidth=1,
+                )
+                self.polar_beams.append(beam_line)
 
-        # OS trail lines (one per ship)
-        trail_colors = ['blue', 'cyan', 'magenta', 'yellow', 'black']
-        self.os_trails = []
-        self.os_trail_history = [[] for _ in range(self.num_ships)]
-        for i in range(self.num_ships):
-            trail_line, = self.ax.plot(
-                [], [],
-                color=trail_colors[i % len(trail_colors)],
-                alpha=0.5,
-                linewidth=1.5,
-                linestyle='-',
-                label=f'OS {i} trail' if i == 0 else '',
-            )
-            self.os_trails.append(trail_line)
+        # OS trail line
+        self.os_trail_history = []
+        self.os_trail_line, = self.ax.plot(
+            [], [],
+            color='blue',
+            alpha=0.5,
+            linewidth=1.5,
+            linestyle='-',
+            label='OS trail',
+        )
 
         # TS (collision entity) trail lines — created dynamically
         self.ts_trails = []
@@ -954,16 +894,16 @@ class PySimColavEnv(PySimEnv):
             self._collision_entity_patches.append(safety)
 
     def _draw_fixed_landmarks(self) -> None:
-        self.start_pos = np.asarray(self.initial_ship_pos[0], dtype=np.float32).copy()
+        self.start_pos = np.asarray(self.initial_ship_pos, dtype=np.float32).copy()
         super()._draw_fixed_landmarks()
 
     def render(self) -> None:
-        """Render the environment and visualize all ships' movement."""
+        """Render the environment and visualize ship movement."""
         if self.render_mode != 'human':
             return
 
         # Initialize plotting objects once
-        if self.initialize_plots and not hasattr(self, 'ship_plots'):
+        if self.initialize_plots and not hasattr(self, 'ship_plot_colav'):
             self._initialize_rendering()
             self._draw_fixed_landmarks()
             self._draw_collision_entities()
@@ -994,10 +934,9 @@ class PySimColavEnv(PySimEnv):
 
         heading_line_length = 30.0
 
-        # Record OS positions into trail history
-        for i in range(self.num_ships):
-            if not self.phys_sims[i].state.terminated and not self.phys_sims[i].state.truncated:
-                self.os_trail_history[i].append(self.ship_pos[i].copy())
+        # Record OS position into trail history
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            self.os_trail_history.append(self.ship_pos.copy())
 
         # Record TS positions and ensure we have enough trail line objects
         entities = getattr(self, "collision_entities", []) or []
@@ -1017,11 +956,10 @@ class PySimColavEnv(PySimEnv):
         for idx, entity in enumerate(entities):
             self.ts_trail_history[idx].append(entity.get_position().copy())
 
-        # Update OS trail lines
-        for i in range(self.num_ships):
-            if self.os_trail_history[i]:
-                pts = np.array(self.os_trail_history[i])
-                self.os_trails[i].set_data(pts[:, 0], pts[:, 1])
+        # Update OS trail line
+        if self.os_trail_history:
+            pts = np.array(self.os_trail_history)
+            self.os_trail_line.set_data(pts[:, 0], pts[:, 1])
 
         # Update TS trail lines
         for idx in range(len(entities)):
@@ -1029,37 +967,36 @@ class PySimColavEnv(PySimEnv):
                 pts = np.array(self.ts_trail_history[idx])
                 self.ts_trails[idx].set_data(pts[:, 0], pts[:, 1])
 
-        for i in range(self.num_ships):
-            # Update ship marker
-            self.ship_plots[i].set_data(self.ship_pos[i][0:1], self.ship_pos[i][1:2])
+        # Update ship marker
+        self.ship_plot_colav.set_data(self.ship_pos[0:1], self.ship_pos[1:2])
 
-            # Update heading line
-            heading = self.phys_sims[i].state.heading
-            hx = self.ship_pos[i][0] + np.cos(heading) * heading_line_length
-            hy = self.ship_pos[i][1] + np.sin(heading) * heading_line_length
-            self.heading_lines[i].set_data(
-                [self.ship_pos[i][0], hx],
-                [self.ship_pos[i][1], hy]
-            )
+        # Update heading line
+        heading = self.phys_sim.state.heading
+        hx = self.ship_pos[0] + np.cos(heading) * heading_line_length
+        hy = self.ship_pos[1] + np.sin(heading) * heading_line_length
+        self.heading_line_colav.set_data(
+            [self.ship_pos[0], hx],
+            [self.ship_pos[1], hy]
+        )
 
-            # Update polar beams for this ship
-            if self.use_polar_scan and i < len(self.polar_beams_per_ship):
-                scan = self.polar_scan_cached[i]
-                if scan is None:
-                    scan = self._get_polar_scan(i)
+        # Update polar beams
+        if self.use_polar_scan and self.polar_beams:
+            scan = self.polar_scan_cached
+            if scan is None:
+                scan = self._get_polar_scan()
 
-                sx = float(self.ship_pos[i][0])
-                sy = float(self.ship_pos[i][1])
+            sx = float(self.ship_pos[0])
+            sy = float(self.ship_pos[1])
 
-                for j, beam in enumerate(self.polar_beams_per_ship[i]):
-                    rel_angle = float(self._polar_rel_angles[j])
-                    angle = heading + rel_angle
-                    closeness01 = float(scan[j]) / max(float(self.polar_obs_max), 1e-6)
-                    length = (1.0 - closeness01) * float(self.polar_max_range)
-                    beam.set_data(
-                        [sx, sx + length * np.cos(angle)],
-                        [sy, sy + length * np.sin(angle)]
-                    )
+            for j, beam in enumerate(self.polar_beams):
+                rel_angle = float(self._polar_rel_angles[j])
+                angle = heading + rel_angle
+                closeness01 = float(scan[j]) / max(float(self.polar_obs_max), 1e-6)
+                length = (1.0 - closeness01) * float(self.polar_max_range)
+                beam.set_data(
+                    [sx, sx + length * np.cos(angle)],
+                    [sy, sy + length * np.sin(angle)]
+                )
 
         # Create artists for any new passing snapshots
         while len(self._passing_snapshot_artists) < len(self._passing_snapshots):
@@ -1110,9 +1047,8 @@ class PySimColavEnv(PySimEnv):
         # Blit all artists
         try:
             if hasattr(self.fig.canvas, 'blit'):
-                # Draw trails first (underneath markers)
-                for i in range(self.num_ships):
-                    self.ax.draw_artist(self.os_trails[i])
+                # Draw trail first (underneath markers)
+                self.ax.draw_artist(self.os_trail_line)
                 for tl in self.ts_trails:
                     self.ax.draw_artist(tl)
 
@@ -1121,13 +1057,12 @@ class PySimColavEnv(PySimEnv):
                     for artist in artists:
                         self.ax.draw_artist(artist)
 
-                # Draw ships, headings, and beams on top
-                for i in range(self.num_ships):
-                    self.ax.draw_artist(self.ship_plots[i])
-                    self.ax.draw_artist(self.heading_lines[i])
-                    if self.use_polar_scan and i < len(self.polar_beams_per_ship):
-                        for beam in self.polar_beams_per_ship[i]:
-                            self.ax.draw_artist(beam)
+                # Draw ship, heading, and beams on top
+                self.ax.draw_artist(self.ship_plot_colav)
+                self.ax.draw_artist(self.heading_line_colav)
+                if self.use_polar_scan:
+                    for beam in self.polar_beams:
+                        self.ax.draw_artist(beam)
                 self.fig.canvas.blit(self.ax.bbox)
             else:
                 self.fig.canvas.draw()
@@ -1161,12 +1096,10 @@ class PySimColavEnv(PySimEnv):
 
         moved = False
 
-        # Precompute active ship positions for distance checks
-        active_ship_positions = [
-            self.ship_pos[i]
-            for i in range(self.num_ships)
-            if not self.phys_sims[i].state.terminated and not self.phys_sims[i].state.truncated
-        ]
+        # Active ship position for distance checks
+        active_ship_positions = []
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            active_ship_positions = [self.ship_pos]
 
         for entity in self.collision_entities:
             if not getattr(entity, "is_dynamic", False):
@@ -1220,7 +1153,7 @@ class PySimColavEnv(PySimEnv):
                     d_ts = float(getattr(entity, "crossing_d_ts", 0))
                     if d_ts > 0 and self.crossing_ts_v_min > 0:
                         sf = float(getattr(self, "crossing_speed_factor", 1.0))
-                        v_os_est = float(max(abs(self.phys_sims[0].state.u), self.os_nominal_speed * 0.5))
+                        v_os_est = float(max(abs(self.phys_sim.state.u), self.os_nominal_speed * 0.5))
                         timing_cap = sf * d_ts * v_os_est / self.crossing_ts_v_min
                         activation_range = min(activation_range, timing_cap)
 
@@ -1233,7 +1166,7 @@ class PySimColavEnv(PySimEnv):
                         if path_tangent is not None:
                             forward = np.asarray(path_tangent, dtype=np.float32)
                         else:
-                            os_heading = float(self.ship_heading[0])
+                            os_heading = float(self.phys_sim.state.heading)
                             forward = np.array([math.cos(os_heading), math.sin(os_heading)], dtype=np.float32)
                         ahead_dot = float(np.dot(to_cp, forward))
 
@@ -1244,7 +1177,7 @@ class PySimColavEnv(PySimEnv):
                             # slowing down won't make the threat disappear.
                             # v_ts = speed_factor * d_ts * v_os_actual / d_os
                             d_os = float(np.linalg.norm(to_cp))
-                            v_os_actual = float(max(abs(self.phys_sims[0].state.u), self.os_nominal_speed * 0.5))
+                            v_os_actual = float(max(abs(self.phys_sim.state.u), self.os_nominal_speed * 0.5))
                             speed_factor = float(getattr(self, "crossing_speed_factor", 1.0))
                             if d_os > EPSILON:
                                 v_ts = speed_factor * d_ts * v_os_actual / d_os
@@ -1272,7 +1205,7 @@ class PySimColavEnv(PySimEnv):
 
             if getattr(self, "use_polar_scan", False):
                 self._rebuild_polar_scan_geometries()
-                self.polar_scan_cached = [None] * self.num_ships
+                self.polar_scan_cached = None
 
     def _advance_entity_along_checkpoints(self, entity, dt: float) -> None:
         remaining_dist = float(entity.path_speed) * float(dt)
@@ -1369,25 +1302,24 @@ class PySimColavEnv(PySimEnv):
         self._current_episode_collided = False
 
         if getattr(self, "use_polar_scan", False):
-            self.polar_scan_cached = [None] * self.num_ships  # was: None
+            self.polar_scan_cached = None
 
         self.collision_entities = []
         self.obstacle_count = 0
         self.obstacle_pos = None
         self.static_ship_radii = []
 
-        # Reset per-ship collision info (from point 5)
-        self._last_collision_info = [{} for _ in range(self.num_ships)]
+        # Reset collision info
+        self._last_collision_info = {}
 
-        # Reset scenario classifiers and COLREG reward tracking
-        for clf in self.scenario_classifiers:
-            clf.reset()
-        self.ts_passed = [None] * self.num_ships
-        self._colreg_violations = [0] * self.num_ships
-        self._colreg_correct = [0] * self.num_ships
-        self._colreg_initial_heading = [None] * self.num_ships
-        self._crossing_left_initial_speed = [None] * self.num_ships
-        self._crossing_right_grav_point = [None] * self.num_ships
+        # Reset scenario classifier and COLREG reward tracking
+        self.scenario_classifier.reset()
+        self.ts_passed = None
+        self._colreg_violations = 0
+        self._colreg_correct = 0
+        self._colreg_initial_heading = None
+        self._crossing_left_initial_speed = None
+        self._crossing_right_grav_point = None
 
         # Remove passing snapshot artists from the plot and reset
         for artists in getattr(self, "_passing_snapshot_artists", []):
@@ -1413,7 +1345,7 @@ class PySimColavEnv(PySimEnv):
         self._os_speed_samples = []
 
         # Clear trail histories for the new episode
-        self.os_trail_history = [[] for _ in range(self.num_ships)]
+        self.os_trail_history = []
         for trail_line in getattr(self, "ts_trails", []):
             trail_line.remove()
         self.ts_trail_history = []
