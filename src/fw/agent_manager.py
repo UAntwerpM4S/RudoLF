@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
+from fw.viz_refactor import EpisodeCollector, CollisionAnnotator, MetricsComputer, MatplotlibRenderer
 from airsim.communication.airsim_bridge import AirSimBridge
 from fw.environments.multi_sim_env import MultiSimEnv
 from fw.environments.base_env import BaseEnv
@@ -119,34 +120,6 @@ class AgentManager:
         self._agent_type = agent_type
         self.prev_smoothing_setting = None
         self._hyperparameters = hyperparameters
-
-        self._fig = None
-        self._axes = None
-        self._overlay_active = False
-
-
-    def begin_overlay_plot(self):
-        """
-        Create a persistent matplotlib figure for overlaying multiple environments.
-        """
-
-        if self._fig is None:
-            self._fig, self._axes = plt.subplots(4, 1, figsize=(12, 16))
-            self._overlay_active = True
-
-    def end_overlay_plot(self):
-        """
-        Finalize and close the persistent matplotlib figure.
-        """
-
-        if self._fig is not None:
-            plt.tight_layout()
-            plt.show()
-            plt.close(self._fig)
-
-            self._fig = None
-            self._axes = None
-            self._overlay_active = False
 
 
     @property
@@ -429,8 +402,53 @@ class AgentManager:
             finally:
                 env.enable_smoothing = self.prev_smoothing_setting
                 self.prev_smoothing_setting = None
+        else:
+            yield
 
     def visualize_trained_agent(
+            self,
+            num_episodes: int = 5,
+            live_animation: bool = False,
+            env_color_index: int = 0,
+            airsim_bridge: AirSimBridge = None,
+            _use_legacy: bool = False,  # escape hatch during transition
+    ) -> None:
+        if not self._agent:
+            raise RuntimeError("No agent has been created yet!")
+
+        if _use_legacy:
+            self._visualize_trained_agent_legacy(
+                num_episodes, live_animation, env_color_index, airsim_bridge
+            )
+        else:
+            self.agent.set_policy_eval()
+            env = self.get_env()
+
+            with self.smoothing(env):
+                raw_env = self.get_env()
+                if hasattr(raw_env, 'envs'):  # VecEnv wrapping
+                    raw_env = raw_env.envs[0]
+                elif hasattr(raw_env, 'env'):  # gym Wrapper
+                    raw_env = raw_env.env
+
+                collector = EpisodeCollector(self._agent, raw_env)
+                ship_data = collector.collect(num_episodes=num_episodes)
+
+                CollisionAnnotator().annotate(ship_data)
+                metrics = MetricsComputer.compute(ship_data)
+
+                # Print summary (same output as before)
+                for sid, m in metrics.items():
+                    print(f"\nAverage reward: {m.avg_reward:.2f}")
+                    print(f"mTEI={m.mTEI:.2f}  MTE={m.MTE:.2f}  mRA={m.mRA:.3f}  mHE={m.mHE:.3f} rad")
+
+                save_dir = self.agent.model_dir or "."
+                MatplotlibRenderer.render(
+                    ship_data, metrics, raw_env,
+                    save_path=f"{save_dir}/trajectory.png"
+                )
+
+    def _visualize_trained_agent_legacy(
             self,
             num_episodes: int = 5,
             live_animation: bool = False,
@@ -578,10 +596,7 @@ class AgentManager:
                 try:
                     # AirSimEnv has no obstacles/overall for matplotlib — skip trajectory plot.
                     # Create a figure with two subplots
-                    if self._overlay_active and self._fig is not None:
-                        ax1, ax2, ax3, ax4 = self._axes
-                    else:
-                        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 16))
+                    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 16))
 
                     # Add hatched pattern to first subplot
                     difference_coords = self.create_hashed_area(env.obstacles, env.overall)
@@ -754,9 +769,12 @@ class AgentManager:
                     )
 
                     plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
+                    plt.show()
 
                     print(f"\nPath and error visualization saved as 'trajectory.png'")
                 finally:
+                    plt.close('all')
+
                     # Cleanup the environment
                     if hasattr(env, "fh_sim"):
                         env.fh_sim.dispose()
@@ -789,13 +807,6 @@ class AgentManager:
                             float(env.phys_sim.state.heading)
                         )
                         airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
-
-                if self._fig is not None and self._overlay_active:
-                    plt.close(self._fig)
-
-                    self._fig = None
-                    self._axes = None
-                    self._overlay_active = False
 
 
     def get_env(self):
