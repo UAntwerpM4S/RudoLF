@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
+from fw.viz_refactor import EpisodeCollector, CollisionAnnotator, MetricsComputer, MatplotlibRenderer
 from airsim.communication.airsim_bridge import AirSimBridge
 from fw.environments.multi_sim_env import MultiSimEnv
 from fw.environments.base_env import BaseEnv
@@ -431,6 +432,49 @@ class AgentManager:
                 self.prev_smoothing_setting = None
 
     def visualize_trained_agent(
+            self,
+            num_episodes: int = 5,
+            live_animation: bool = False,
+            env_color_index: int = 0,
+            airsim_bridge: AirSimBridge = None,
+            _use_legacy: bool = False,  # escape hatch during transition
+    ) -> None:
+        if not self._agent:
+            raise RuntimeError("No agent has been created yet!")
+
+        if _use_legacy:
+            self._visualize_trained_agent_legacy(
+                num_episodes, live_animation, env_color_index, airsim_bridge
+            )
+
+        self.agent.set_policy_eval()
+        env = self.get_env()
+
+        with self.smoothing(env):
+            raw_env = self.get_env()
+            if hasattr(raw_env, 'envs'):  # VecEnv wrapping
+                raw_env = raw_env.envs[0]
+            elif hasattr(raw_env, 'env'):  # gym Wrapper
+                raw_env = raw_env.env
+
+            collector = EpisodeCollector(self._agent, raw_env)
+            ship_data = collector.collect(num_episodes=num_episodes)
+
+            CollisionAnnotator().annotate(ship_data)
+            metrics = MetricsComputer.compute(ship_data)
+
+            # Print summary (same output as before)
+            for sid, m in metrics.items():
+                print(f"\nAverage reward: {m.avg_reward:.2f}")
+                print(f"mTEI={m.mTEI:.2f}  MTE={m.MTE:.2f}  mRA={m.mRA:.3f}  mHE={m.mHE:.3f} rad")
+
+            save_dir = self.agent.model_dir or "."
+            MatplotlibRenderer.render(
+                ship_data, metrics, env,
+                save_path=f"{save_dir}/trajectory.png"
+            )
+
+    def _visualize_trained_agent_legacy(
             self,
             num_episodes: int = 5,
             live_animation: bool = False,
