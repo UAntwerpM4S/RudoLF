@@ -12,7 +12,7 @@ class Reward:
     DEFAULT_WEIGHTS: Dict[str, float] = {
         "forward": -0.25,
         "heading_alignment": -0.5,
-        "cross_track": -0.05,
+        "cross_track": -0.00,
         "rudder_change": -0.4,
         "rudder_angle": -0.05,
         "thrust_change": 0.0,
@@ -67,10 +67,10 @@ class Reward:
         # Penalize lateral deviation from the intended path.
         return cross_track_error
 
-    @staticmethod
-    def r_rudder_angle_change(rudder_change: float, max_rudder_change: float, **_: float) -> float:
+    def r_rudder_angle_change(self, rudder_change: float, max_rudder_change: float, **_: float) -> float:
         # Penalize sudden rudder changes, saturating at -1 when over the max.
-        return (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -1
+        weight = self.reward_weights.get("rudder_change", 1.0)
+        return (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else (-1/weight)
     
     @staticmethod
     def r_rudder_angle(rudder_angle: float, **_: float) -> float:
