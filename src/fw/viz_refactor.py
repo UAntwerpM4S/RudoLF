@@ -199,7 +199,7 @@ class EpisodeCollector:
         }
 
         state, _ = env.reset()
-        done = False
+        done = np.zeros(len(self._ship_ids), dtype=bool)
         steps = 0
 
         # Capture initial state for each ship
@@ -216,12 +216,13 @@ class EpisodeCollector:
                     self._compute_heading_error(ship_env)
                 )
 
-        while not done:
+        while not np.all(done):
             action, _, _ = self._agent.predict(state=state, deterministic=True)
             state, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
+            env_done = np.logical_or(terminated, truncated)
+            done = np.logical_or(done, env_done)
 
-            if not done:
+            if not np.all(done):
                 steps += 1
                 self._record_step(accumulators, reward, steps)
 
@@ -604,7 +605,7 @@ class MatplotlibRenderer:
             ax.plot(
                 ep.path[:, 0], ep.path[:, 1],
                 color=colors[i], alpha=0.5,
-                label=f"Ep {i + 1} (R={ep.reward:.1f})",
+                label=f"Ep {i + 1} (R={float(np.mean(ep.reward)):.1f})",
             )
 
             # Start / end markers
