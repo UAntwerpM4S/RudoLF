@@ -446,33 +446,33 @@ class AgentManager:
             self._visualize_trained_agent_legacy(
                 num_episodes, live_animation, env_color_index, airsim_bridge
             )
+        else:
+            self.agent.set_policy_eval()
+            env = self.get_env()
 
-        self.agent.set_policy_eval()
-        env = self.get_env()
+            with self.smoothing(env):
+                raw_env = self.get_env()
+                if hasattr(raw_env, 'envs'):  # VecEnv wrapping
+                    raw_env = raw_env.envs[0]
+                elif hasattr(raw_env, 'env'):  # gym Wrapper
+                    raw_env = raw_env.env
 
-        with self.smoothing(env):
-            raw_env = self.get_env()
-            if hasattr(raw_env, 'envs'):  # VecEnv wrapping
-                raw_env = raw_env.envs[0]
-            elif hasattr(raw_env, 'env'):  # gym Wrapper
-                raw_env = raw_env.env
+                collector = EpisodeCollector(self._agent, raw_env)
+                ship_data = collector.collect(num_episodes=num_episodes)
 
-            collector = EpisodeCollector(self._agent, raw_env)
-            ship_data = collector.collect(num_episodes=num_episodes)
+                CollisionAnnotator().annotate(ship_data)
+                metrics = MetricsComputer.compute(ship_data)
 
-            CollisionAnnotator().annotate(ship_data)
-            metrics = MetricsComputer.compute(ship_data)
+                # Print summary (same output as before)
+                for sid, m in metrics.items():
+                    print(f"\nAverage reward: {m.avg_reward:.2f}")
+                    print(f"mTEI={m.mTEI:.2f}  MTE={m.MTE:.2f}  mRA={m.mRA:.3f}  mHE={m.mHE:.3f} rad")
 
-            # Print summary (same output as before)
-            for sid, m in metrics.items():
-                print(f"\nAverage reward: {m.avg_reward:.2f}")
-                print(f"mTEI={m.mTEI:.2f}  MTE={m.MTE:.2f}  mRA={m.mRA:.3f}  mHE={m.mHE:.3f} rad")
-
-            save_dir = self.agent.model_dir or "."
-            MatplotlibRenderer.render(
-                ship_data, metrics, env,
-                save_path=f"{save_dir}/trajectory.png"
-            )
+                save_dir = self.agent.model_dir or "."
+                MatplotlibRenderer.render(
+                    ship_data, metrics, env,
+                    save_path=f"{save_dir}/trajectory.png"
+                )
 
     def _visualize_trained_agent_legacy(
             self,
