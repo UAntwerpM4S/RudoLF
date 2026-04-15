@@ -519,51 +519,54 @@ class MatplotlibRenderer:
             print("[MatplotlibRenderer] No episode data to render — skipping.")
             return
 
-        fig, axes = plt.subplots(
-            n_rows, n_ships,
-            figsize=(fig_width_per_ship * n_ships, 16),
-            squeeze=False,   # always (n_rows, n_ships) shape
-        )
-
-        for col, ship_id in enumerate(ship_ids):
-            episodes = ship_data[ship_id]
-            ship_color = SHIP_COLORS[col % len(SHIP_COLORS)]
-            colors = shade_color(ship_color, len(episodes))
-            m = metrics[ship_id]
-
-            ax_traj  = axes[0][col]
-            ax_error = axes[1][col]
-            ax_rudder= axes[2][col]
-            ax_ukc   = axes[3][col]
-
-            # -- Trajectory map --
-            cls._plot_trajectory(ax_traj, episodes, colors, env, ship_id, m)
-
-            # -- Cross-track error --
-            cls._plot_signal(
-                ax_error, episodes, colors,
-                signal_attr="cross_errors",
-                title=f"Cross-track error – {ship_id}",
-                ylabel="Cross-track error",
-                ylim=(0, 45),
+        try:
+            fig, axes = plt.subplots(
+                n_rows, n_ships,
+                figsize=(fig_width_per_ship * n_ships, 16),
+                squeeze=False,   # always (n_rows, n_ships) shape
             )
 
-            # -- Rudder actions --
-            cls._plot_rudder(ax_rudder, episodes, colors, ship_id)
+            for col, ship_id in enumerate(ship_ids):
+                episodes = ship_data[ship_id]
+                ship_color = SHIP_COLORS[col % len(SHIP_COLORS)]
+                colors = shade_color(ship_color, len(episodes))
+                m = metrics[ship_id]
 
-            # -- UKC --
-            cls._plot_signal(
-                ax_ukc, episodes, colors,
-                signal_attr="ukc_measurements",
-                title=f"UKC – {ship_id}",
-                ylabel="UKC",
-                ylim=(0, 45),
-            )
+                ax_traj  = axes[0][col]
+                ax_error = axes[1][col]
+                ax_rudder= axes[2][col]
+                ax_ukc   = axes[3][col]
 
-        plt.tight_layout()
-        plt.savefig(save_path, bbox_inches="tight", dpi=300)
-        plt.close(fig)
-        print(f"Trajectory figure saved to '{save_path}'")
+                # -- Trajectory map --
+                cls._plot_trajectory(ax_traj, episodes, colors, env, ship_id, m)
+
+                # -- Cross-track error --
+                cls._plot_signal(
+                    ax_error, episodes, colors,
+                    signal_attr="cross_errors",
+                    title=f"Cross-track error – {ship_id}",
+                    ylabel="Cross-track error",
+                    ylim=(0, 45),
+                )
+
+                # -- Rudder actions --
+                cls._plot_rudder(ax_rudder, episodes, colors, ship_id)
+
+                # -- UKC --
+                cls._plot_signal(
+                    ax_ukc, episodes, colors,
+                    signal_attr="ukc_measurements",
+                    title=f"UKC – {ship_id}",
+                    ylabel="UKC",
+                    ylim=(0, 45),
+                )
+
+            plt.tight_layout()
+            plt.savefig(save_path, bbox_inches="tight", dpi=300)
+            plt.show()
+            print(f"Trajectory figure saved to '{save_path}'")
+        finally:
+            plt.close('all')
 
     # ------------------------------------------------------------------
     # Sub-plot helpers
