@@ -3,7 +3,7 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import gymnasium as gym
 from fw.collision_avoidance.scenario_builder import ScenarioBuilder
-from fw.collision_avoidance.scenario_classifier import ScenarioClassifier
+from fw.collision_avoidance.scenario_classifier import ScenarioClassifier, NUM_SCENARIOS
 from scipy.stats import gaussian_kde
 
 import math
@@ -74,6 +74,7 @@ class PySimColavEnv(PySimEnv):
             eval: bool = True,
             eval_scenario: Optional[str] = "crossing-right", # "static", "overtaking", "head-on", "crossing-right", "crossing-left"
             eval_obstacle_count: int = 1,
+            include_scenario_one_hot: bool = False,
     ) -> None:
         self._first_class = False
         self.first_class = False
@@ -119,6 +120,7 @@ class PySimColavEnv(PySimEnv):
         self.eval_obstacle_count = int(eval_obstacle_count)
         self.eval_scenario = str(eval_scenario)
         self.eval = bool(eval)
+        self.include_scenario_one_hot = bool(include_scenario_one_hot)
         self.min_distance = float("inf")
 
         # Per-episode minimum distance tracking for evaluation
@@ -482,6 +484,13 @@ class PySimColavEnv(PySimEnv):
         extended_low = np.hstack([base_space.low, polar_low, cri_low])
         extended_high = np.hstack([base_space.high, polar_high, cri_high])
 
+        # Optional one-hot scenario encoding for multi-policy agents
+        if getattr(self, "include_scenario_one_hot", False):
+            one_hot_low = np.zeros(NUM_SCENARIOS, dtype=np.float32)
+            one_hot_high = np.ones(NUM_SCENARIOS, dtype=np.float32)
+            extended_low = np.hstack([extended_low, one_hot_low])
+            extended_high = np.hstack([extended_high, one_hot_high])
+
         return gym.spaces.Box(low=extended_low, high=extended_high, dtype=np.float32)
 
     def _get_obs(self) -> np.ndarray:
@@ -522,6 +531,11 @@ class PySimColavEnv(PySimEnv):
             cri_value = float(np.clip(self._compute_cri(os_pos, os_heading, os_u, os_v, ts), 0.0, 1.0))
 
         obs = np.hstack([base_obs, scan, np.array([cri_value], dtype=np.float32)]).astype(np.float32)
+
+        # Append one-hot scenario encoding if enabled
+        if getattr(self, "include_scenario_one_hot", False):
+            obs = np.hstack([obs, self.scenario_classifier.get_one_hot()]).astype(np.float32)
+
         return obs
 
     # -----------------------

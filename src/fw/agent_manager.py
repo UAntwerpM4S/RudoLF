@@ -11,7 +11,7 @@ from matplotlib.colors import to_rgb
 from contextlib import contextmanager
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, MULTI_POLICY_SINGLE_NAME
 from airsim.communication.airsim_bridge import AirSimBridge
 from fw.environments.multi_sim_env import MultiSimEnv
 from fw.environments.py_sim_colav_env import PySimColavEnv
@@ -19,9 +19,11 @@ from fw.environments.base_env import BaseEnv
 
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
+from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
 from fw.policies.ppo2_agent import PPO2Agent
 from fw.policies.base_agent import BaseAgent
 from fw.stop_condition import StopCondition
+from fw.collision_avoidance.scenario_classifier import SCENARIO_LABELS, NUM_SCENARIOS
 
 
 class PolicyStrategy(Enum):
@@ -239,6 +241,42 @@ class AgentManager:
         return MultiPPOAgent(environment=env, agents=agents, **self._hyperparameters)
 
 
+    def _build_multi_policy_single_agent(self, env):
+        """
+        Create a ``MultiPolicySingleAgent`` for the given environment.
+
+        The environment must have ``include_scenario_one_hot=True`` so that
+        its observations carry a one-hot suffix the agent uses for policy
+        routing.
+
+        Args:
+            env: Environment instance (a single PySimColavEnv with one-hot
+                encoding enabled, NOT a MultiSimEnv).
+
+        Returns:
+            MultiPolicySingleAgent: Initialized multi-policy agent.
+        """
+
+        sub_envs = getattr(env, "sub_environments", None)
+
+        if sub_envs is None or len(sub_envs) < 1:
+            target_env = env
+        elif len(sub_envs) == 1:
+            target_env = next(iter(sub_envs.values()))
+        else:
+            raise RuntimeError(
+                "MultiPolicySingleAgent operates on a single environment.  "
+                "Got a MultiSimEnv with multiple sub-environments."
+            )
+
+        return MultiPolicySingleAgent(
+            environment=target_env,
+            num_policies=NUM_SCENARIOS,
+            policy_labels=list(SCENARIO_LABELS),
+            **self._hyperparameters,
+        )
+
+
     def set_environment(self, env: BaseEnv, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
                         other_env_name: str = None) -> None:
         """
@@ -267,6 +305,8 @@ class AgentManager:
             self._agent = PPO2Agent(environment=env, **self._hyperparameters)
         elif MULTI_PPO_POLICY_NAME == self._agent_type:
             self._agent = self._build_multi_agent(env)
+        elif MULTI_POLICY_SINGLE_NAME == self._agent_type:
+            self._agent = self._build_multi_policy_single_agent(env)
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 

@@ -19,7 +19,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     from fw.trainer import Trainer
     from fw.stop_condition import StopCondition, Criterion
-    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, get_config_parameters
+    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, MULTI_POLICY_SINGLE_NAME, get_config_parameters
     from fw.env_factory import (
         build_default_environment,
         py_sim_env_name,
@@ -29,6 +29,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         py_sim_polar_env_name,
         multi_sim_env_name,
         multi_colav_env_name,
+        multi_policy_colav_env_name,
         py_sim_colav_env_name,
         resolve_environment_names,
         initialize_all_environments
@@ -126,6 +127,12 @@ if __name__ == "__main__" or __name__ == "fw.main":
             patience=4,
             max_time_steps=1300,
         ),
+        multi_policy_colav_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=1.75,
+            patience=4,
+            max_time_steps=5,
+        ),
     }
 
     if not configured_env_names:
@@ -138,18 +145,20 @@ if __name__ == "__main__" or __name__ == "fw.main":
         """
         Choose the correct agent type based on the environments.
 
-        If any environment is a MultiSimEnv (i.e. wraps multiple
-        sub-environments for multi-policy training), use MPPO.
-        Otherwise, default to single-policy PPO.
+        If any environment has ``include_scenario_one_hot`` enabled, use
+        MPSA (Multi-Policy Single Agent).  If any environment is a
+        MultiSimEnv, use MPPO.  Otherwise, default to single-policy PPO.
 
         Args:
             envs: List of framework environment wrappers.
 
         Returns:
-            The agent type string (e.g. "PPO" or "MPPO").
+            The agent type string (e.g. "PPO", "MPPO", or "MPSA").
         """
         from fw.environments.multi_sim_env import MultiSimEnv
         for env in envs:
+            if getattr(env.gym_env, "include_scenario_one_hot", False):
+                return MULTI_POLICY_SINGLE_NAME
             if isinstance(env.gym_env, MultiSimEnv):
                 return MULTI_PPO_POLICY_NAME
         return PPO_POLICY_NAME

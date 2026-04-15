@@ -34,8 +34,8 @@ from fw.dynamics.nomoto import Nomoto
 # Physical limits / config
 
 # Grid limits
-MAX_CHECKPOINTS_DISTANCE = 3000
 CHECKPOINTS_DISTANCE = 350
+MAX_CHECKPOINTS_DISTANCE = 10000
 MIN_GRID_POS = -11700
 MAX_GRID_POS = 14500
 
