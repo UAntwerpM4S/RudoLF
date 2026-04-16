@@ -368,9 +368,14 @@ class AirSimEnvironment(BaseEnvironment):
         health_check_interval = float(cfg.get("health_check_interval", 30.0))
         csv_log_path = str(cfg.get("csv_log_path", ""))
         save_slot = str(cfg.get("save_slot", DEFAULT_AIRSIM_SAVE_SLOT))
+        load_world_on_start = cfg.get("load_world_on_start", None)
+        capture_live_start_pose = cfg.get("capture_live_start_pose", None)
         simulation_speed = float(cfg.get("simulation_speed", DEFAULT_AIRSIM_SIMULATION_SPEED))
         draw_calibration_reference = bool(cfg.get("draw_calibration_reference", True))
         episode_log_path = str(cfg.get("episode_log_path", ""))
+        normalize_reward = bool(cfg.get("normalize_reward", True))
+        reward_normalization_scale = float(cfg.get("reward_normalization_scale", 160.0))
+        reset_mode = str(cfg.get("reset_mode", "rewind_pose"))
         progress_log_interval_steps = int(cfg.get("progress_log_interval_steps", 0))
         log_pause_watchdog_warnings = bool(cfg.get("log_pause_watchdog_warnings", False))
         use_sim_time_stepping = bool(cfg.get("use_sim_time_stepping", False))
@@ -387,9 +392,11 @@ class AirSimEnvironment(BaseEnvironment):
         curriculum_window_increment = int(cfg.get("curriculum_window_increment", 6))
         curriculum_success_patience = int(cfg.get("curriculum_success_patience", 2))
         curriculum_randomization_scale = float(cfg.get("curriculum_randomization_scale", 0.0))
-        guidance_assist_enabled = bool(cfg.get("guidance_assist_enabled", True))
+        guidance_assist_enabled = bool(cfg.get("guidance_assist_enabled", False))
         guidance_residual_steering_scale = float(cfg.get("guidance_residual_steering_scale", 0.45))
         guidance_residual_throttle_scale = float(cfg.get("guidance_residual_throttle_scale", 0.55))
+        control_interface = str(cfg.get("control_interface", "car_physics"))
+        observation_profile = str(cfg.get("observation_profile", "ppo_route_relative_car"))
 
         try:
             self._env = AirSimEnv(
@@ -404,9 +411,14 @@ class AirSimEnvironment(BaseEnvironment):
                 health_check_interval=health_check_interval,
                 csv_log_path=csv_log_path,
                 save_slot=save_slot,
+                load_world_on_start=load_world_on_start,
+                capture_live_start_pose=capture_live_start_pose,
                 simulation_speed=simulation_speed,
                 draw_calibration_reference=draw_calibration_reference,
                 episode_log_path=episode_log_path,
+                normalize_reward=normalize_reward,
+                reward_normalization_scale=reward_normalization_scale,
+                reset_mode=reset_mode,
                 progress_log_interval_steps=progress_log_interval_steps,
                 log_pause_watchdog_warnings=log_pause_watchdog_warnings,
                 use_sim_time_stepping=use_sim_time_stepping,
@@ -432,6 +444,8 @@ class AirSimEnvironment(BaseEnvironment):
                 guidance_assist_enabled=guidance_assist_enabled,
                 guidance_residual_steering_scale=guidance_residual_steering_scale,
                 guidance_residual_throttle_scale=guidance_residual_throttle_scale,
+                control_interface=control_interface,
+                observation_profile=observation_profile,
                 latency_warning_threshold=(
                     float(latency_warning_threshold)
                     if latency_warning_threshold is not None

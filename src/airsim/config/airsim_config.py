@@ -196,6 +196,8 @@ def get_default_runtime_settings() -> Dict[str, Any]:
             "simulation_speed": DEFAULT_AIRSIM_SIMULATION_SPEED,
             "draw_calibration_reference": True,
             "no_rendering_mode": False,
+            "load_world_on_start": True,
+            "capture_live_start_pose": True,
             "use_pause_stepping": True,
             "frames_per_step": 10,
             "time_step": 0.1,
@@ -235,8 +237,16 @@ def get_runtime_settings() -> Dict[str, Any]:
     if not _RUNTIME_SETTINGS_PATH.exists():
         return defaults
 
-    with open(_RUNTIME_SETTINGS_PATH, "r", encoding="utf-8") as fh:
-        loaded = json.load(fh)
+    try:
+        with open(_RUNTIME_SETTINGS_PATH, "r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "Could not load runtime settings from '%s'; using built-in defaults. %s",
+            _RUNTIME_SETTINGS_PATH,
+            exc,
+        )
+        return defaults
     return merge_runtime_settings(loaded)
 
 

@@ -1,210 +1,183 @@
-"""Gymnasium environment for RL training inside UE5 via CosysAirSim.
+"""Gymnasium AirSim environment for UE5 vessel training and inference.
 
-This module provides a :class:`AirSimEnv`, a drop-in replacement for
-``PySimEnv`` that uses Unreal Engine 5's physics via the CosysAirSim API
-instead of the local framework dynamics model.
-
-Coordinate frames
------------------
-- **Framework**: x = east, y = north, heading from east (CCW positive).
-- **AirSim**: x = north, y = east (NED), yaw from north (CW positive).
-- **Transform**: ``AirSim_yaw = pi/2 - framework_heading``.
-
-Usage
------
->>> from airsim.environments.airsim_env import AirSimEnv
->>> env = AirSimEnv(ship_pos=[2245, -47], target_pos=[11530, 13000])
->>> obs, info = env.reset()
->>> obs, reward, done, truncated, info = env.step([0.0, 0.5])
->>> env.close()
+This environment is the missing bridge between the existing AirSim connection
+layer and the framework PPO stack. It exposes a standard Gymnasium interface,
+defines an explicit continuous observation space for PPO, and keeps the route,
+reward, and telemetry model close to the rest of the project so training,
+inference, and reporting all use the same state contract.
 """
 
-import csv
-import os
-import math
-import time
-import json
+from __future__ import annotations
+
+import copy
 import logging
-import numpy as np
-import gymnasium as gym
-
+import math
+import os
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from types import SimpleNamespace
+from typing import Any, Optional
 
-from fw.environments.base_env import BaseEnv
-from fw.environments.tools import create_checkpoints_from_simple_path
-from airsim.config.airsim_config import (
-    DEFAULT_AIRSIM_SAVE_SLOT,
-    DEFAULT_AIRSIM_SIMULATION_SPEED,
-)
-from airsim.communication.coord_transform import CoordTransform
-from fw.common.airsim.tools.angles import (
-    normalize_angle as _normalize_angle,
-    yaw_from_quaternion as _yaw_from_quaternion,
-)
+import gymnasium as gym
+import numpy as np
+
+from airsim.communication.airsim_bridge import AirSimBridge
 from airsim.communication.control_mapping import (
-    map_framework_actuator_state,
+    build_car_controls,
+    map_direct_policy_action,
     validate_policy_action,
 )
-from fw.ships.action_mapper import ActionMapper
-from fw.ships.ship_factory import create_ship, ShipModel
-from fw.ships.actuator_model import ActuatorModel
+from airsim.communication.coord_transform import CoordTransform
+from airsim.config.airsim_config import AirSimConfig, DEFAULT_AIRSIM_SAVE_SLOT
+from fw.common.airsim.tools.calibrate_coords import load_saved_calibration_reference
+from fw.common.airsim.tools.angles import yaw_from_quaternion
+from fw.common.default_positions import (
+    DEFAULT_FRAMEWORK_SHIP_POS,
+    DEFAULT_FRAMEWORK_TARGET_POS,
+)
+from fw.environments.base_env import BaseEnv
+from fw.environments.tools import create_checkpoints_from_simple_path
 
 logger = logging.getLogger(__name__)
 
-# ----------------
-# Constants (mirror PySimEnv for consistency)
-# ----------------
-CHECKPOINTS_DISTANCE = 350
-MIN_GRID_POS = -11700
-MAX_GRID_POS = 14500
-SUCCESS_REWARD = 50.0
-CHECKPOINT_AREA_SIZE = 9.0
-TARGET_AREA_SIZE = 14.0
-PERPENDICULAR_LINE_LENGTH = 50.0
-PERPENDICULAR_LINE_PROXIMITY = 8.0
-HEADING_CHANGE_THRESHOLD = np.pi / 2.0
-CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
-EPSILON = 1e-9
-EARLY_CROSS_TRACK_TERMINATION_DISTANCE = 400.0
-HIGH_CROSS_TRACK_PENALTY_START = 175.0
-HIGH_CROSS_TRACK_TIME_PENALTY_PATIENCE = 80
-LOW_SPEED_THRESHOLD_MPS = 0.05
-LOW_SPEED_PATIENCE_STEPS = 250
-MIN_PROGRESS_STEP_M = 0.015
-NO_PROGRESS_PATIENCE_STEPS = 350
-LATE_CHECKPOINT_STRONGER_CROSS_TRACK_START = 3
-CENTERLINE_BONUS_WIDTH_M = 45.0
-CHECKPOINT_ENTRY_BASE_REWARD = 30.0
-CHECKPOINT_ENTRY_REWARD_SCALE = 2.0
-FINAL_CHECKPOINT_ENTRY_REWARD = 120.0
-LOOKAHEAD_BLEND_START_PROGRESS = 0.55
-LOOKAHEAD_BLEND_FULL_PROGRESS = 0.90
-OFFTRACK_THROTTLE_ERROR_START_M = 60.0
-COLLISION_TERMINATION_REWARD = -400.0
-CHECKPOINT_PROGRESS_IMPROVEMENT_EPSILON_M = 2.5
-COLLISION_LIKE_STOP_SPEED_MPS = 0.05
-COLLISION_LIKE_PREVIOUS_SPEED_MPS = 1.5
-COLLISION_LIKE_STOP_PATIENCE_STEPS = 8
-COLLISION_LIKE_STOP_MIN_THROTTLE = 0.35
-OBSTACLE_CONTACT_PATIENCE_STEPS = 12
-OBSTACLE_CONTACT_MIN_THROTTLE = 0.35
-OBSTACLE_CONTACT_MAX_PROGRESS_M = 0.05
-OBSTACLE_CONTACT_LOW_SPEED_MPS = 0.50
-OBSTACLE_CONTACT_MIN_CROSS_TRACK_M = 30.0
-OBSTACLE_CONTACT_SPEED_DROP_MPS = 1.25
-CHECKPOINT_DISTANCE_PROGRESS_SCALE_M = 5.0
-CROSS_TRACK_CONVERGENCE_SCALE_M = 4.0
-OFFTRACK_RECOVERY_BLEND_START_M = 20.0
-OFFTRACK_RECOVERY_BLEND_FULL_M = 160.0
-RECOVERY_LOOKAHEAD_DISTANCE_M = 70.0
-OFFTRACK_SPEED_PENALTY_START_FRACTION = 0.70
-PY_SIM_TARGET_SPEED_MPS = 3.4
-HEADLESS_WATCHDOG_FALLBACK_PATIENCE = 2
-MIN_TURN_TARGET_SPEED_MPS = 1.5
-HEADING_CONVERGENCE_SCALE_RAD = math.radians(8.0)
-UNDERSTEER_STEERING_THRESHOLD = 0.18
-MAX_TURN_TARGET_SPEED_REDUCTION = 0.78
-TURN_SPEED_EXCESS_PENALTY_SCALE = 0.60
-TURN_STEERING_RELIEF_SCALE = 0.90
-BASE_REQUIRED_TURN_STEERING = 0.08
-MAX_REQUIRED_TURN_STEERING = 0.42
-TURN_ACTION_GOVERNOR_START = 0.55
-TURN_ACTION_MAX_STEERING_GAIN = 1.35
-TURN_ACTION_OFFTRACK_THROTTLE_SCALE = 0.55
-TURN_ACTION_HEADING_INJECTION_DEAD_ZONE_RAD = math.radians(2.0)
-CURRICULUM_DEFAULT_WINDOW_SIZE = 8
-CURRICULUM_DEFAULT_FRONTIER_INCREMENT = 4
-CURRICULUM_DEFAULT_WINDOW_INCREMENT = 6
-CURRICULUM_DEFAULT_SUCCESS_PATIENCE = 2
-CHECKPOINT_STAGNATION_PATIENCE_STEPS = 420
-CHECKPOINT_STAGNATION_MIN_DISTANCE_M = 120.0
-GUIDANCE_ASSIST_DEFAULT_ENABLED = True
-GUIDANCE_RESIDUAL_STEERING_SCALE = 0.45
-GUIDANCE_RESIDUAL_THROTTLE_SCALE = 0.55
-GUIDANCE_STEERING_KP = 1.10
-GUIDANCE_STEERING_KD = 0.35
-GUIDANCE_THROTTLE_KP = 2.00
-GUIDANCE_OFFTRACK_SLOWDOWN_START_M = 25.0
-GUIDANCE_OFFTRACK_SLOWDOWN_FULL_M = 180.0
-GUIDANCE_MIN_FORWARD_THROTTLE = 0.12
-GUIDANCE_MAX_REVERSE_THROTTLE = -0.30
-# Default calibration file location
-_THIS_DIR = Path(__file__).resolve().parent
-_DEFAULT_CALIBRATION_PATH = _THIS_DIR.parent / "config" / "calibration.json"
-_ENVIRONMENTS_DIR = Path(__file__).resolve().parent.parent.parent / "fw" / "environments"
+_SRC_DIR = Path(__file__).resolve().parents[2]
+_FW_ENV_DIR = _SRC_DIR / "fw" / "environments"
+_DEFAULT_TRAJECTORY_CSV = _FW_ENV_DIR / "trajectory_points_no_scale.csv"
+_DEFAULT_OVERALL_CSV = _FW_ENV_DIR / "env_Sche_no_scale.csv"
+_DEFAULT_OBSTACLES_CSV = _FW_ENV_DIR / "env_Sche_250cm_no_scale.csv"
+
+_ROUTE_POINT_SPACING_M = 160.0
+_CHECKPOINT_RADIUS_M = 45.0
+_TARGET_RADIUS_M = 65.0
+_CROSS_TRACK_LIMIT_M = 250.0
+_SPEED_SCALE_MPS = 15.0
+_MIN_DISTANCE_SCALE_M = 400.0
+_SUCCESS_REWARD = 120.0
+_CHECKPOINT_REWARD = 8.0
+_COLLISION_PENALTY = -60.0
+_OFFTRACK_PENALTY = -45.0
+_DISCONNECT_PENALTY = -80.0
+_TIMEOUT_PENALTY = -20.0
+_DEFAULT_REWARD_NORMALIZATION_SCALE = 160.0
+_RESET_SETTLE_TIMEOUT_S = 1.5
+_RESET_SETTLE_POLL_S = 0.05
+_RESET_POSITION_TOLERANCE_M = 25.0
+_WORLD_LOAD_SETTLE_TIMEOUT_S = 6.0
+_WORLD_LOAD_SETTLE_POLL_S = 0.2
+_WORLD_LOAD_SETTLE_POSITION_EPS_M = 0.25
+_WORLD_LOAD_SETTLE_YAW_EPS_RAD = math.radians(2.0)
+_EARLY_FAILURE_GRACE_STEPS = 3
+_STATE_PROGRESS_POSITION_EPS_M = 0.05
+_STATE_PROGRESS_YAW_EPS_RAD = math.radians(0.5)
+_OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR = "ppo_route_relative_car"
+_CONTROL_INTERFACE_CAR_PHYSICS = "car_physics"
+_RESET_MODE_REWIND_POSE = "rewind_pose"
+_RESET_MODE_BRIDGE_RESET = "bridge_reset"
+_OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR = (
+    "current_checkpoint_forward",
+    "current_checkpoint_lateral",
+    "next_checkpoint_forward",
+    "next_checkpoint_lateral",
+    "target_forward",
+    "target_lateral",
+    "heading_error_cos",
+    "heading_error_sin",
+    "cross_track_error",
+    "forward_speed",
+    "executed_action_steering",
+    "executed_action_throttle",
+    "route_progress_ratio",
+    "checkpoint_progress_ratio",
+)
+_OBSERVATION_FIELDS_BY_PROFILE = {
+    _OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR: _OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR,
+}
+_OBSERVATION_BUILDERS = {
+    (_CONTROL_INTERFACE_CAR_PHYSICS, _OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR): "_build_route_relative_car_observation",
+}
+_CONTROL_MAPPERS = {
+    _CONTROL_INTERFACE_CAR_PHYSICS: map_direct_policy_action,
+}
+_AIRSIM_READ_EXCEPTIONS = (AttributeError, OSError, RuntimeError)
+_AIRSIM_DECODE_EXCEPTIONS = (AttributeError, TypeError, ValueError)
 
 
-# ----------------
-# Helpers
-# ----------------
-def _safe_heading_from_vector(vec: np.ndarray) -> float:
-    """Return heading angle for a 2D vector, or 0 if near-zero."""
-    n = np.linalg.norm(vec)
-    return float(np.arctan2(vec[1], vec[0])) if n > 0.0 else 0.0
+def _normalize_angle(angle_rad: float) -> float:
+    """Wrap an angle to ``[-pi, pi]``."""
+    return math.atan2(math.sin(angle_rad), math.cos(angle_rad))
+
+
+def _safe_load_csv(path: Path, fallback: np.ndarray) -> np.ndarray:
+    """Load a two-column CSV file or return the provided fallback array."""
+    try:
+        data = np.loadtxt(path, delimiter=",", skiprows=1)
+    except Exception:
+        return np.asarray(fallback, dtype=np.float32)
+
+    data = np.asarray(data, dtype=np.float32)
+    if data.ndim != 2 or data.shape[1] != 2 or len(data) == 0:
+        return np.asarray(fallback, dtype=np.float32)
+    return data
 
 
 def _calculate_perpendicular_lines(
-    checkpoints: List[dict],
-    line_length: float = PERPENDICULAR_LINE_LENGTH,
-) -> List[Tuple[np.ndarray, np.ndarray]]:
-    """Compute perpendicular guidance lines for checkpoint list."""
-    def smooth_tangent(cps, idx):
-        """Estimate a smoothed tangent vector at a checkpoint index.
+    checkpoints: list[dict[str, Any]],
+    line_length: float = 120.0,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Build short perpendicular guidance lines for each checkpoint."""
+    if not checkpoints:
+        return []
 
-        Args:
-            cps: Ordered checkpoint dictionaries containing ``pos`` vectors.
-            idx: Checkpoint index to evaluate.
-
-        Returns:
-            A normalized tangent vector in ``float32`` when possible.
-        """
-        if len(cps) == 1:
+    def _tangent_at(index: int) -> np.ndarray:
+        """Return a normalized local path tangent vector at a checkpoint index."""
+        if len(checkpoints) == 1:
             return np.array([1.0, 0.0], dtype=np.float32)
-        if idx == 0:
-            t = cps[1]["pos"] - cps[0]["pos"]
-        elif idx == len(cps) - 1:
-            t = cps[-1]["pos"] - cps[-2]["pos"]
+        if index == 0:
+            tangent = checkpoints[1]["pos"] - checkpoints[0]["pos"]
+        elif index == len(checkpoints) - 1:
+            tangent = checkpoints[-1]["pos"] - checkpoints[-2]["pos"]
         else:
-            t = 0.5 * ((cps[idx + 1]["pos"] - cps[idx]["pos"]) +
-                        (cps[idx]["pos"] - cps[idx - 1]["pos"]))
-        n = np.linalg.norm(t)
-        return (t / n if n != 0.0 else t).astype(np.float32)
+            tangent = 0.5 * (
+                checkpoints[index + 1]["pos"] - checkpoints[index - 1]["pos"]
+            )
+        norm = float(np.linalg.norm(tangent))
+        if norm <= 1e-9:
+            return np.array([1.0, 0.0], dtype=np.float32)
+        return (tangent / norm).astype(np.float32)
 
-    lines = []
-    for i, cp in enumerate(checkpoints):
-        pos = np.asarray(cp["pos"], dtype=np.float32)
-        tang = smooth_tangent(checkpoints, i)
-        perp = np.array([-tang[1], tang[0]], dtype=np.float32)
-        offset = perp * (line_length / 2.0)
-        lines.append((pos + offset, pos - offset))
+    lines: list[tuple[np.ndarray, np.ndarray]] = []
+    for index, checkpoint in enumerate(checkpoints):
+        tangent = _tangent_at(index)
+        normal = np.array([-tangent[1], tangent[0]], dtype=np.float32)
+        offset = normal * (line_length / 2.0)
+        lines.append((checkpoint["pos"] + offset, checkpoint["pos"] - offset))
     return lines
 
 
-# ----------------
-# Main Environment
-# ----------------
 class AirSimEnv(BaseEnv):
-    """Gymnasium environment that trains an RL agent inside UE5 via CosysAirSim.
-
-    This environment mirrors ``PySimEnv`` but replaces the local framework physics
-    model with UE5's physics engine. The agent sends ``[steering, throttle]``
-    commands, and the environment reads back position, heading, speed, and
-    collision info from UE5.
-
-    Attributes:
-        bridge: The :class:`~airsim.communication.airsim_bridge.AirSimBridge`
-            that manages the connection to UE5.  The underlying
-            ``cosysairsim.CarClient`` is accessible via ``bridge.client``.
-        coord: The coordinate transform between framework and AirSim frames.
-    """
+    """Live AirSim route-following environment for PPO training and inference."""
 
     def __init__(
         self,
-        ship_pos: Optional[list] = None,
-        target_pos: Optional[list] = None,
-        calibration: Optional[dict] = None,
-        calibration_path: Optional[str] = None,
+        render_mode: Optional[str] = None,
+        ship_pos: Optional[list[float] | tuple[float, float]] = None,
+        target_pos: Optional[list[float] | tuple[float, float]] = None,
+        max_steps: int = 14000,
+        time_step: float = 0.1,
+        training_mode: bool = True,
+        no_rendering_mode: bool = False,
+        use_pause_stepping: bool = True,
+        use_sim_time_stepping: bool = False,
+        sim_time_per_action: float = 0.1,
+        frames_per_step: int = 8,
+        physics_update_timeout: float = 1.0,
+        state_poll_interval: float = 0.005,
+        draw_calibration_reference: bool = True,
+        simulation_speed: float = 1.0,
+        save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
+        load_world_on_start: bool | None = None,
+        capture_live_start_pose: bool | None = None,
         use_airsim: bool = True,
         ip: str = "",
         port: int = 41451,
@@ -212,184 +185,201 @@ class AirSimEnv(BaseEnv):
         max_retries: int = 3,
         health_check_interval: float = 30.0,
         csv_log_path: str = "",
-        save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
-        render_mode: Optional[str] = None,
-        max_steps: int = 14000,
-        time_step: float = 0.1,
-        frames_per_step: int = 10,
-        use_pause_stepping: bool = True,
-        training_mode: bool = False,
-        draw_calibration_reference: bool = True,
-        no_rendering_mode: bool = False,
-        verbose: bool = False,
         episode_log_path: str = "",
+        normalize_reward: bool = True,
+        reward_normalization_scale: float = _DEFAULT_REWARD_NORMALIZATION_SCALE,
+        reset_mode: str = _RESET_MODE_REWIND_POSE,
         progress_log_interval_steps: int = 0,
         log_pause_watchdog_warnings: bool = False,
-        use_sim_time_stepping: bool = False,
-        sim_time_per_action: Optional[float] = None,
-        simulation_speed: float = DEFAULT_AIRSIM_SIMULATION_SPEED,
-        physics_update_timeout: float = 1.0,
-        state_poll_interval: float = 0.005,
+        latency_warning_threshold: float | None = None,
         curriculum_enabled: bool = False,
-        curriculum_window_size: int = CURRICULUM_DEFAULT_WINDOW_SIZE,
-        curriculum_target_checkpoint: Optional[int] = None,
-        curriculum_frontier_increment: int = CURRICULUM_DEFAULT_FRONTIER_INCREMENT,
-        curriculum_window_increment: int = CURRICULUM_DEFAULT_WINDOW_INCREMENT,
-        curriculum_success_patience: int = CURRICULUM_DEFAULT_SUCCESS_PATIENCE,
+        curriculum_window_size: int = 8,
+        curriculum_target_checkpoint: int | None = None,
+        curriculum_frontier_increment: int = 4,
+        curriculum_window_increment: int = 6,
+        curriculum_success_patience: int = 2,
         curriculum_randomization_scale: float = 0.0,
-        guidance_assist_enabled: bool = GUIDANCE_ASSIST_DEFAULT_ENABLED,
-        guidance_residual_steering_scale: float = GUIDANCE_RESIDUAL_STEERING_SCALE,
-        guidance_residual_throttle_scale: float = GUIDANCE_RESIDUAL_THROTTLE_SCALE,
-        latency_warning_threshold: Optional[float] = None,
+        guidance_assist_enabled: bool = False,
+        guidance_residual_steering_scale: float = 0.45,
+        guidance_residual_throttle_scale: float = 0.55,
+        control_interface: str = _CONTROL_INTERFACE_CAR_PHYSICS,
+        observation_profile: str = _OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR,
     ) -> None:
-        """Initialise the AirSim training environment.
+        """Create a live UE5-backed RL environment."""
+        super().__init__(render_mode=render_mode)
 
-        Args:
-            ship_pos: Initial ship position in framework coords [x_east, y_north].
-            target_pos: Target position in framework coords.
-            calibration: Optional calibration dict with scale/rotation/origins.
-            calibration_path: Path to calibration JSON. If None, tries default.
-            use_airsim: Whether the AirSim bridge should be enabled.
-            ip: AirSim server IP. Empty string = localhost.
-            port: AirSim RPC port.
-            timeout: RPC connection timeout in seconds.
-            max_retries: Maximum number of connection retries.
-            health_check_interval: Seconds between bridge health checks.
-            csv_log_path: Optional bridge telemetry CSV path.
-            save_slot: UE5 save slot loaded before training or visualization.
-            render_mode: 'human' or None.
-            max_steps: Maximum steps per episode before truncation.
-            time_step: Nominal simulation time step (seconds).
-            frames_per_step: Physics frames to advance per RL step.
-            use_pause_stepping: If True, pause sim and step frame-by-frame
-                (fastest training mode).
-            draw_calibration_reference: Whether to draw the shared
-                calibration overlay (ridges, route line, start/end markers)
-                used by the visualization mode.
-            no_rendering_mode: Whether to disable full UE5 scene rendering
-                through Unreal's ``ShowFlag.Rendering`` console flag.
-            verbose: Print debug info.
-            episode_log_path: Optional path to a CSV file where per-step
-                episode telemetry (position, speed, cross-track error,
-                reward, action) is appended.  One file collects all
-                episodes across resets.  Set to ``""`` to disable.
-            simulation_speed: Simulation speed multiplier set via
-                ``simSetSimulationSpeed``.  ``1.0`` = real-time (inference);
-                higher values (e.g. ``20.0``) speed up training.
-        """
-        super().__init__(render_mode)
+        self._constructor_kwargs = {
+            "render_mode": render_mode,
+            "ship_pos": list(ship_pos) if ship_pos is not None else None,
+            "target_pos": list(target_pos) if target_pos is not None else None,
+            "max_steps": int(max_steps),
+            "time_step": float(time_step),
+            "training_mode": bool(training_mode),
+            "no_rendering_mode": bool(no_rendering_mode),
+            "use_pause_stepping": bool(use_pause_stepping),
+            "use_sim_time_stepping": bool(use_sim_time_stepping),
+            "sim_time_per_action": float(sim_time_per_action),
+            "frames_per_step": int(frames_per_step),
+            "physics_update_timeout": float(physics_update_timeout),
+            "state_poll_interval": float(state_poll_interval),
+            "draw_calibration_reference": bool(draw_calibration_reference),
+            "simulation_speed": float(simulation_speed),
+            "save_slot": str(save_slot),
+            "load_world_on_start": load_world_on_start,
+            "capture_live_start_pose": capture_live_start_pose,
+            "use_airsim": bool(use_airsim),
+            "ip": str(ip),
+            "port": int(port),
+            "timeout": float(timeout),
+            "max_retries": int(max_retries),
+            "health_check_interval": float(health_check_interval),
+            "csv_log_path": str(csv_log_path),
+            "episode_log_path": str(episode_log_path),
+            "normalize_reward": bool(normalize_reward),
+            "reward_normalization_scale": float(reward_normalization_scale),
+            "reset_mode": str(reset_mode),
+            "progress_log_interval_steps": int(progress_log_interval_steps),
+            "log_pause_watchdog_warnings": bool(log_pause_watchdog_warnings),
+            "latency_warning_threshold": latency_warning_threshold,
+            "curriculum_enabled": bool(curriculum_enabled),
+            "curriculum_window_size": int(curriculum_window_size),
+            "curriculum_target_checkpoint": curriculum_target_checkpoint,
+            "curriculum_frontier_increment": int(curriculum_frontier_increment),
+            "curriculum_window_increment": int(curriculum_window_increment),
+            "curriculum_success_patience": int(curriculum_success_patience),
+            "curriculum_randomization_scale": float(curriculum_randomization_scale),
+            "guidance_assist_enabled": bool(guidance_assist_enabled),
+            "guidance_residual_steering_scale": float(guidance_residual_steering_scale),
+            "guidance_residual_throttle_scale": float(guidance_residual_throttle_scale),
+            "control_interface": str(control_interface),
+            "observation_profile": str(observation_profile),
+        }
 
-        self.max_steps = max_steps
-        self.time_step = time_step
-        self.frames_per_step = frames_per_step
-        self.use_pause_stepping = use_pause_stepping
+        self.max_steps = int(max_steps)
+        self.time_step = float(time_step)
         self.training_mode = bool(training_mode)
-        self.draw_calibration_reference = bool(draw_calibration_reference)
         self.no_rendering_mode = bool(no_rendering_mode)
-        self.verbose = verbose
-        self._progress_log_interval_steps = max(0, int(progress_log_interval_steps))
-        self._log_pause_watchdog_warnings = bool(log_pause_watchdog_warnings)
-        self._use_sim_time_stepping = bool(use_sim_time_stepping)
-        self._sim_time_per_action = float(
-            sim_time_per_action if sim_time_per_action is not None else time_step
+        self.use_pause_stepping = bool(use_pause_stepping)
+        self.use_sim_time_stepping = bool(use_sim_time_stepping)
+        self.sim_time_per_action = float(sim_time_per_action)
+        self.frames_per_step = int(frames_per_step)
+        self.physics_update_timeout = float(physics_update_timeout)
+        self.state_poll_interval = float(state_poll_interval)
+        self.draw_calibration_reference = bool(draw_calibration_reference)
+        self.simulation_speed = float(simulation_speed)
+        self.save_slot = str(save_slot)
+        self.load_world_on_start = (
+            bool(load_world_on_start)
+            if load_world_on_start is not None
+            else not self.training_mode
         )
-        self._last_sim_step_dt = max(self._sim_time_per_action, EPSILON)
-        self._physics_update_timeout = float(physics_update_timeout)
-        self._state_poll_interval = float(state_poll_interval)
-        self._latency_warning_threshold = float(
-            latency_warning_threshold
+        self.capture_live_start_pose = (
+            bool(capture_live_start_pose)
+            if capture_live_start_pose is not None
+            else (self.training_mode and not self.load_world_on_start)
+        )
+        self.episode_log_path = str(episode_log_path)
+        self.normalize_reward = bool(normalize_reward)
+        self.reward_normalization_scale = max(
+            float(reward_normalization_scale),
+            1e-6,
+        )
+        self.reset_mode = str(reset_mode).strip().lower() or _RESET_MODE_REWIND_POSE
+        self.progress_log_interval_steps = int(progress_log_interval_steps)
+        self.log_pause_watchdog_warnings = bool(log_pause_watchdog_warnings)
+        self.latency_warning_threshold = (
+            float(latency_warning_threshold)
             if latency_warning_threshold is not None
-            else max(0.25, self.time_step)
-        )
-        self._last_ue5_timestamp: Optional[int] = None
-        self.last_physics_wait_s: float = 0.0
-        self.last_step_latency_s: float = 0.0
-        self.episode_step_count: int = 0
-
-        # -- Episode-level telemetry CSV (T-012) --
-        self._episode_log_path: str = episode_log_path
-        self._episode_log_file = None
-        self._episode_csv_writer = None
-        self._episode_number: int = 0
-        self._episode_started: bool = False
-        self._curriculum_enabled = bool(curriculum_enabled)
-        self._curriculum_window_size = max(1, int(curriculum_window_size))
-        self._curriculum_target_checkpoint = (
-            int(curriculum_target_checkpoint)
-            if curriculum_target_checkpoint is not None
             else None
         )
-        self._curriculum_frontier_increment = max(1, int(curriculum_frontier_increment))
-        self._curriculum_window_increment = max(
-            self._curriculum_frontier_increment,
-            int(curriculum_window_increment),
-        )
-        self._curriculum_success_patience = max(1, int(curriculum_success_patience))
-        self._curriculum_randomization_scale = max(0.0, float(curriculum_randomization_scale))
+
+        self.curriculum_enabled = bool(curriculum_enabled)
+        self.curriculum_window_size = max(1, int(curriculum_window_size))
+        self.curriculum_frontier_increment = max(1, int(curriculum_frontier_increment))
+        self.curriculum_window_increment = max(1, int(curriculum_window_increment))
+        self.curriculum_success_patience = max(1, int(curriculum_success_patience))
+        self.curriculum_randomization_scale = float(curriculum_randomization_scale)
         self._curriculum_success_streak = 0
-        self._curriculum_reference_checkpoints: List[dict] = []
-        self._curriculum_active_start_index = 0
-        self._curriculum_active_end_index = 0
-        self._guidance_assist_enabled = bool(guidance_assist_enabled)
-        self._guidance_residual_steering_scale = float(
-            np.clip(guidance_residual_steering_scale, 0.0, 1.0)
+
+        self.guidance_assist_enabled = bool(guidance_assist_enabled)
+        self.guidance_residual_steering_scale = float(guidance_residual_steering_scale)
+        self.guidance_residual_throttle_scale = float(guidance_residual_throttle_scale)
+        self.control_interface = str(control_interface).strip().lower() or _CONTROL_INTERFACE_CAR_PHYSICS
+        self.observation_profile = (
+            str(observation_profile).strip().lower()
+            or _OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR
         )
-        self._guidance_residual_throttle_scale = float(
-            np.clip(guidance_residual_throttle_scale, 0.0, 1.0)
-        )
-        self.last_policy_action = np.zeros(2, dtype=np.float32)
-        self.last_guidance_action = np.zeros(2, dtype=np.float32)
-        self.last_command_action = np.zeros(2, dtype=np.float32)
+        self.mdp_step_seconds = self._resolve_mdp_step_seconds()
+        if self.use_pause_stepping and self.use_sim_time_stepping:
+            self.time_step = self.mdp_step_seconds
 
-        # -- Ship specifications & actuator model --
-        self.ship = create_ship(ShipModel.MYZAKO_DEFAULT)
-        self.ship_specs = self.ship.specifications
-        self._actuators = ActuatorModel(self.ship_specs)
-
-        # Match the local framework surge limit for identical observation normalisation.
-        # MYZAKO_DEFAULT: surge_limits = (0.0, 5.0).  UE5 top speed is 5.6 m/s
-        # but we cap at the same value the policy was trained against.
-        self.MAX_SPEED = self.ship_specs.surge_limits[1]  # 5.0 m/s
-
-        # Positions in framework coordinates
-        self.initial_ship_pos = np.array(
-            ship_pos if ship_pos is not None else [2245, -47],
+        self.initial_ship_pos = np.asarray(
+            ship_pos if ship_pos is not None else DEFAULT_FRAMEWORK_SHIP_POS,
             dtype=np.float32,
         )
-        self._base_initial_ship_pos = self.initial_ship_pos.copy()
-        self.randomization_scale = 1.0
-        self.target_framework = np.array(
-            target_pos if target_pos is not None else [11530.0, 13000.0],
-            dtype=np.float32,
+        self._requested_target_pos = (
+            np.asarray(target_pos, dtype=np.float32)
+            if target_pos is not None
+            else None
         )
 
-        # Coordinate transform
-        if calibration is not None:
-            self.coord = CoordTransform(calibration)
-        elif calibration_path is not None and Path(calibration_path).exists():
-            self.coord = CoordTransform.load(Path(calibration_path))
-        elif _DEFAULT_CALIBRATION_PATH.exists():
-            self.coord = CoordTransform.load()
-            logger.info("Loaded calibration from %s", _DEFAULT_CALIBRATION_PATH)
-        else:
-            self.coord = CoordTransform.identity(tuple(self.initial_ship_pos))
-            logger.info("No calibration found - using identity axis-swap transform.")
+        self._rng = np.random.default_rng()
+        self._other_agent_states: dict[str, Any] = {}
+        self._world_prepared = False
+        self._captured_startup_pose_airsim: dict[str, float] | None = None
+        self._captured_startup_framework_heading: float | None = None
+        self._pending_run_events: list[dict[str, Any]] = []
+        self._log_next_reset_event = True
+        self._episode_index = 0
+        self._episode_start_checkpoint_index = 0
+        self._episode_success = False
+        self._last_pause_timeout = False
+        self._last_collision = False
+        self._route_projection_segment = 0
+        self._route_progress_m = 0.0
+        self._route_progress_ratio = 0.0
+        self._distance_scale_m = _MIN_DISTANCE_SCALE_M
+        self._last_ue5_timestamp: int = 0
+        self._last_state_signature: tuple[float, float, float, int] | None = None
+        self._repeated_state_count = 0
+        self._state_update_reliable = True
+        self.last_physics_wait_s = 0.0
+        self.last_step_latency_s = 0.0
+        self.last_controls: dict[str, float] = {"steering": 0.0, "throttle": 0.0, "brake": 1.0}
+        self.last_policy_action = np.array([0.0, -1.0], dtype=np.float32)
+        self.previous_action = self.neutral_action()
+        self.performed_action = self.neutral_action()
+        self.ship_pos = self.initial_ship_pos.copy()
+        self.target_pos = (
+            self._requested_target_pos.copy()
+            if self._requested_target_pos is not None
+            else np.asarray(DEFAULT_FRAMEWORK_TARGET_POS, dtype=np.float32)
+        )
+        self.ship_heading = 0.0
+        self.ship_speed = 0.0
+        self.heading_error = 0.0
+        self.cross_error = 0.0
+        self.velocities = 0.0
+        self.ukc = 0.0
+        self.step_count = 0
+        self.checkpoint_index = 1
 
-        # -- Connect to AirSim via Bridge --
-        try:
-            import cosysairsim as airsim
-        except ImportError as e:
-            raise ImportError(
-                "The 'cosysairsim' package is required to use AirSimEnv but is "
-                "not installed. Install it with:  pip install cosysairsim"
-            ) from e
-        self._airsim = airsim
+        self.overall = self._load_outline_points(_DEFAULT_OVERALL_CSV)
+        self.obstacles = self._load_outline_points(_DEFAULT_OBSTACLES_CSV)
+        self._rebuild_route_geometry()
+        self._curriculum_frontier_index = self._initial_curriculum_frontier(
+            curriculum_target_checkpoint
+        )
+        self._validate_configuration()
 
-        from airsim.config.airsim_config import AirSimConfig
-        from airsim.communication.airsim_bridge import AirSimBridge
+        self.action_space = gym.spaces.Box(
+            low=np.array([-1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0], dtype=np.float32),
+            dtype=np.float32,
+        )
+        self.observation_space = self._build_observation_space()
 
-        self._save_slot = save_slot
-        cfg = AirSimConfig(
+        bridge_config = AirSimConfig(
             use_airsim=use_airsim,
             ip=ip,
             port=port,
@@ -398,1968 +388,1394 @@ class AirSimEnv(BaseEnv):
             health_check_interval=health_check_interval,
             csv_log_path=csv_log_path,
         )
-        self.bridge = AirSimBridge(cfg)
-
+        self.bridge = AirSimBridge(bridge_config)
         if not self.bridge.is_connected:
             raise ConnectionError(
-                f"AirSimBridge could not connect to UE5 at {ip or '127.0.0.1'}:{port}. "
-                "Make sure Unreal Engine 5 is open and in Play mode."
+                f"AirSimEnv could not connect to UE5 at {bridge_config.resolved_ip}:{bridge_config.port}."
             )
-        
-        # -- Load world save + set simulation speed --
-        self._simulation_speed = simulation_speed
-        self.bridge.load_world_save(save_slot=self._save_slot)
-        self.bridge.set_rendering_enabled(not self.no_rendering_mode)
-        self.bridge.set_simulation_speed(simulation_speed)
-        logger.info("Simulation speed set to %.1fx.", simulation_speed)
 
-        # -- Auto drift correction --
-        # Capture spawn pose AFTER world load so it reflects the loaded position.
-        self._spawn_pose = self.bridge.get_vehicle_pose()
-        self._live_debug_z = float(self._spawn_pose.position.z_val - 2.0)
-        cal_path = Path(calibration_path) if calibration_path else _DEFAULT_CALIBRATION_PATH
-        if calibration is None and cal_path.exists():
-            from fw.common.airsim.tools.calibrate_coords import load_saved_calibration_reference
-
-            self.coord, _ = load_saved_calibration_reference(
-                self.bridge.client,
-                calibration_path=cal_path,
-                draw_reference=self.draw_calibration_reference,
-                ship_pos=(float(self.initial_ship_pos[0]), float(self.initial_ship_pos[1])),
-                target_pos=(float(self.target_framework[0]), float(self.target_framework[1])),
+        self.coord_transform = CoordTransform.identity(
+            framework_origin=(float(self.initial_ship_pos[0]), float(self.initial_ship_pos[1]))
+        )
+        self.phys_sim = SimpleNamespace(
+            state=SimpleNamespace(
+                x=float(self.ship_pos[0]),
+                y=float(self.ship_pos[1]),
+                heading=0.0,
+                u=0.0,
+                v=0.0,
+                r=0.0,
             )
-        elif cal_path.exists():
-            with open(cal_path, "r") as f:
-                raw_cal = json.load(f)
-            if "spawn_position" in raw_cal:
-                saved_spawn = np.array(raw_cal["spawn_position"])
-                current_spawn = np.array([
-                    self._spawn_pose.position.x_val,
-                    self._spawn_pose.position.y_val,
-                ])
-                drift = current_spawn - saved_spawn
-                mag = np.linalg.norm(drift)
-                if mag > 0.5:
-                    logger.info(
-                        "Origin drift detected: dx=%.2f, dy=%.2f (%.1f m) -> auto-correcting.",
-                        drift[0], drift[1], mag,
-                    )
-                    self.coord._airsim_origin = self.coord._airsim_origin + drift
-                else:
-                    logger.debug("No origin drift (%.2f m).", mag)
-
-        self._headless_watchdog_hits = 0
-        self._force_continuous_stepping = False
-        if self.use_pause_stepping and not self._force_continuous_stepping:
-            self.bridge.set_pause(True)
-            logger.info("Simulation paused - using deterministic frame stepping.")
-        else:
-            self.bridge.set_pause(False)
-            logger.info("Simulation running continuously for accelerated training.")
-
-        # -- Draw fallback visualization when no saved calibration overlay is available --
-        if not (calibration is None and cal_path.exists()) and self.draw_calibration_reference:
-            self._draw_visualization()
-
-        # -- Load checkpoints (same data as PySimEnv) --
-        self._load_checkpoints()
-        self._curriculum_reference_checkpoints = self._build_checkpoints_for_initial_position(
-            self._base_initial_ship_pos,
-        )
-        total_reference_targets = max(len(self._curriculum_reference_checkpoints) - 1, 1)
-        seeded_target_checkpoint = (
-            self._curriculum_target_checkpoint
-            if self._curriculum_target_checkpoint is not None
-            else self._curriculum_window_size
-        )
-        self._curriculum_target_checkpoint = int(
-            np.clip(seeded_target_checkpoint, 1, total_reference_targets)
-        )
-        self._curriculum_window_size = int(
-            np.clip(self._curriculum_window_size, 1, total_reference_targets)
         )
 
-        # -- State tracking --
-        self.ship_pos = self.initial_ship_pos.copy()
-        self.previous_ship_pos = self.initial_ship_pos.copy()
-        self.ship_heading = 0.0
-        self.previous_heading = 0.0
-        self.ship_speed = 0.0
-        self.previous_speed = 0.0
-        self.ship_u = 0.0  # surge
-        self.ship_v = 0.0  # sway
-        self.ship_r = 0.0  # yaw rate
-        self.performed_action = np.zeros(2, dtype=np.float32)
-        self.previous_action = np.zeros(2, dtype=np.float32)
-        self.last_controls = {"steering": 0.0, "throttle": 0.0, "brake": 0.0}
-        self.checkpoint_index = 1
-        self.cross_error = 0.0
-        self.step_count = 0
-        self._low_speed_steps = 0
-        self._stalled_progress_steps = 0
-        self._high_cross_track_steps = 0
-        self._hard_stop_steps = 0
-        self._obstacle_contact_steps = 0
-        self._collision_latched = False
-        self._headless_watchdog_hits = 0
-        self._force_continuous_stepping = False
-        self._best_checkpoint_distance = float("inf")
-        self._checkpoint_stagnation_steps = 0
-        self._last_raw_progress = 0.0
-        self.max_dist = np.sqrt(2) * float(MAX_GRID_POS)
-        self._curriculum_best_master_checkpoint = int(self._curriculum_target_checkpoint)
+    def __deepcopy__(self, memo: dict[int, Any]) -> "AirSimEnv":
+        """Create a fresh UE5-backed copy for vectorized PPO wrappers."""
+        return type(self)(**copy.deepcopy(self._constructor_kwargs, memo))
 
-        # -- Gym spaces (identical to PySimEnv) --
-        self.action_space = gym.spaces.Box(
-            low=np.array([-1.0, -1.0], dtype=np.float32),
-            high=np.array([1.0, 1.0], dtype=np.float32),
-            dtype=np.float32,
-        )
-        self.observation_space = self._initialize_observation_space()
+    def neutral_action(self) -> np.ndarray:
+        """Return a neutral AirSim action with zero propulsion."""
+        return np.array([0.0, -1.0], dtype=np.float32)
 
-        # -- Open episode log if configured --
-        if self._episode_log_path:
-            self._open_episode_log()
+    def get_agent_state(self) -> Any:
+        """Return the latest lightweight simulator state proxy."""
+        return self.phys_sim.state
 
-    # AirSimEnv holds a live network connection and a module reference
-    # that cannot be pickled.
-    def __deepcopy__(self, memo):
-        """Return *self* - AirSimEnv cannot be deep-copied (live socket)."""
-        return self
-
-    def __copy__(self):
-        """Return *self* - AirSimEnv cannot be shallow-copied."""
-        return self
-
-    # -------------
-    # Episode telemetry CSV  (T-012)
-    # -------------
-
-    _EPISODE_LOG_FIELDS = [
-        "episode", "episode_step",
-        "checkpoint_step",
-        "ship_x", "ship_y", "heading_deg", "speed",
-        "cross_track_error", "checkpoint_index",
-        "current_checkpoint_x", "current_checkpoint_y",
-        "current_checkpoint_airsim_x", "current_checkpoint_airsim_y",
-        "current_checkpoint_distance",
-        "reward", "steering", "throttle",
-        "physics_wait_s", "step_latency_s", "ue5_timestamp",
-    ]
-
-    def _get_active_checkpoint(self) -> dict:
-        """Return the currently active checkpoint with index clamping."""
-        return self.checkpoints[min(self.checkpoint_index, len(self.checkpoints) - 1)]
-
-    def _open_episode_log(self) -> None:
-        """Open (or re-open) the episode telemetry CSV for appending.
-
-        Creates the file with a header row when it does not yet exist.
-        Safe to call repeatedly - closes any previously open handle first.
-        """
-        self._close_episode_log()
-        path = self._episode_log_path
-        try:
-            file_exists = os.path.isfile(path)
-            directory = os.path.dirname(path)
-            if directory:
-                os.makedirs(directory, exist_ok=True)
-            self._episode_log_file = open(path, "a", newline="")
-            self._episode_csv_writer = csv.DictWriter(
-                self._episode_log_file,
-                fieldnames=self._EPISODE_LOG_FIELDS,
-            )
-            if not file_exists:
-                self._episode_csv_writer.writeheader()
-            logger.info("Episode log opened: %s", path)
-        except Exception as exc:
-            logger.warning("Could not open episode log '%s': %s", path, exc)
-            self._episode_log_file = None
-            self._episode_csv_writer = None
-
-    def _write_episode_log_row(self, reward: float) -> None:
-        """Append one row of telemetry to the episode CSV.
-
-        Args:
-            reward: The scalar reward computed for this step.
-        """
-        if self._episode_csv_writer is None:
-            return
-        try:
-            current_checkpoint = self._get_active_checkpoint()
-            self._episode_csv_writer.writerow({
-                "episode": self._episode_number,
-                "episode_step": self.episode_step_count,
-                "checkpoint_step": self.step_count,
-                "ship_x": float(self.ship_pos[0]),
-                "ship_y": float(self.ship_pos[1]),
-                "heading_deg": float(math.degrees(self.ship_heading)),
-                "speed": float(self.ship_speed),
-                "cross_track_error": float(self.cross_error),
-                "checkpoint_index": int(self.checkpoint_index),
-                "current_checkpoint_x": float(current_checkpoint["pos"][0]),
-                "current_checkpoint_y": float(current_checkpoint["pos"][1]),
-                "current_checkpoint_airsim_x": float(current_checkpoint["pos_airsim_3d"][0]),
-                "current_checkpoint_airsim_y": float(current_checkpoint["pos_airsim_3d"][1]),
-                "current_checkpoint_distance": float(
-                    np.linalg.norm(self.ship_pos - current_checkpoint["pos"])
-                ),
-                "reward": float(reward),
-                "steering": float(self.performed_action[0]),
-                "throttle": float(self.performed_action[1]),
-                "physics_wait_s": float(self.last_physics_wait_s),
-                "step_latency_s": float(self.last_step_latency_s),
-                "ue5_timestamp": int(self._last_ue5_timestamp or 0),
-            })
-            self._episode_log_file.flush()
-        except Exception as exc:
-            logger.warning("Episode log write failed: %s", exc)
-
-    def _ensure_episode_started(self) -> None:
-        """Advance the user-facing episode counter on the first real step only.
-
-        ``DummyVecEnv`` auto-resets environments immediately after termination.
-        If we incremented the counter inside ``reset()``, those hidden resets
-        would make the console/log episode numbers jump (1, 3, 5, ...). By
-        advancing the counter lazily on the first post-reset step, the episode
-        number reflects only episodes that actually produced rollout data.
-        """
-        if not self._episode_started:
-            self._episode_number += 1
-            self._episode_started = True
-
-    def _emit_progress_heartbeat(
-        self,
-        reward: float,
-        terminated: bool,
-        truncated: bool,
-        termination_reason: str = "",
-    ) -> None:
-        """Print a concise headless-training heartbeat to stdout.
-
-        This is intentionally independent from logging levels so a user can
-        still verify progress when UE5 rendering is disabled and the viewport
-        looks frozen.
-        """
-        interval = self._progress_log_interval_steps
-        should_print = (
-            interval > 0
-            and self.episode_step_count > 0
-            and self.episode_step_count % interval == 0
-        ) or terminated or truncated
-        if not should_print:
-            return
-
-        print(
-            (
-                "[AirSimEnv][progress] "
-                f"episode={self._episode_number} "
-                f"step={self.episode_step_count} "
-                f"checkpoint_step={self.step_count} "
-                f"checkpoint={self.checkpoint_index}/{max(len(self.checkpoints) - 1, 0)} "
-                f"reward={float(reward):.3f} "
-                f"pos=({float(self.ship_pos[0]):.1f}, {float(self.ship_pos[1]):.1f}) "
-                f"speed={float(self.ship_speed):.2f}m/s "
-                f"xte={float(self.cross_error):.2f} "
-                f"cp_dist={float(np.linalg.norm(self.ship_pos - self._get_active_checkpoint()['pos'])):.2f} "
-                f"progress={float(self._last_raw_progress):.3f} "
-                f"low_speed_steps={self._low_speed_steps} "
-                f"stalled_steps={self._stalled_progress_steps} "
-                f"hard_stop_steps={self._hard_stop_steps} "
-                f"obstacle_contact_steps={self._obstacle_contact_steps} "
-                f"cp_stagnation_steps={self._checkpoint_stagnation_steps} "
-                f"wait={float(self.last_physics_wait_s):.3f}s "
-                f"latency={float(self.last_step_latency_s):.3f}s "
-                f"status={'done' if terminated else 'truncated' if truncated else 'running'}"
-                f"{f' reason={termination_reason}' if termination_reason else ''}"
-            ),
-            flush=True,
-        )
-
-    def _close_episode_log(self) -> None:
-        """Flush and close the episode log file handle, if open."""
-        if self._episode_log_file is not None:
-            try:
-                self._episode_log_file.flush()
-                self._episode_log_file.close()
-            except Exception:
-                pass
-        self._episode_log_file = None
-        self._episode_csv_writer = None
-
-    def _checkpoint_entry_reward(self, checkpoint_index: int) -> float:
-        """Return the bonus reward for entering a trajectory checkpoint."""
-        cp = self.checkpoints[checkpoint_index]
-        if checkpoint_index >= len(self.checkpoints) - 1:
-            return FINAL_CHECKPOINT_ENTRY_REWARD
-        return max(
-            CHECKPOINT_ENTRY_BASE_REWARD,
-            float(cp.get("reward", 0.0)) * CHECKPOINT_ENTRY_REWARD_SCALE,
-        )
-
-    def _halt_vehicle(self) -> None:
-        """Immediately command neutral controls to stop post-termination drift."""
-        try:
-            controls = self._airsim.CarControls()
-            controls.steering = 0.0
-            controls.throttle = 0.0
-            controls.brake = 1.0
-            self.bridge.set_controls(controls)
-            if self.use_pause_stepping:
-                self.bridge.set_pause(True)
-        except Exception as exc:
-            logger.debug("Could not halt vehicle after termination: %s", exc)
-
-    # -------------
-    # BaseEnv adapter  (T-010)
-    # -------------
-    def env_specific_reset(self) -> None:
-        """Perform AirSim-specific reset actions.
-
-        Called by ``BaseEnv`` / the training pipeline *after* the
-        generic state reset.  Delegates to the bridge reset and
-        re-pauses the simulation when deterministic stepping is used.
-        """
-        self.bridge.reset()
-        if self.use_pause_stepping and not self._force_continuous_stepping:
-            self.bridge.set_pause(True)
-        else:
-            self.bridge.set_pause(False)
+    def set_other_agents_states(self, agent_states: dict[str, Any]) -> None:
+        """Store other-agent state snapshots for framework compatibility."""
+        self._other_agent_states = {
+            agent_name: state
+            for agent_name, state in dict(agent_states or {}).items()
+            if agent_name != self.env_name
+        }
 
     def randomize(self, randomization_scale: Optional[float] = None) -> None:
-        """Apply domain randomisation to the initial ship position.
-
-        Adds a uniform random perturbation to ``initial_ship_pos`` and
-        ensures the new position stays inside the navigable polygon.
-
-        Args:
-            randomization_scale: Maximum absolute perturbation (meters).
-                Defaults to ``1.0`` if *None*.
-        """
+        """Adjust the curriculum start randomization scale."""
         if randomization_scale is not None:
-            if randomization_scale <= 0:
-                raise ValueError("randomization_scale must be positive")
-            self.randomization_scale = float(randomization_scale)
+            self.curriculum_randomization_scale = float(randomization_scale)
 
-        if self._curriculum_enabled and self._curriculum_reference_checkpoints:
-            base_spawn, start_index, end_index = self._select_curriculum_route_window()
-            scale = self._curriculum_randomization_scale
-            if scale > 0.0:
-                perturbation = np.random.default_rng().uniform(
-                    low=-scale,
-                    high=scale,
-                    size=base_spawn.shape,
-                ).astype(np.float32)
-                candidate = np.clip(base_spawn + perturbation, MIN_GRID_POS, MAX_GRID_POS)
-                if self._ship_in_open_water(candidate):
-                    base_spawn = candidate.astype(np.float32)
+    def render(self) -> None:
+        """UE5 handles rendering directly, so this method is a no-op."""
+        return None
 
-            self.initial_ship_pos = np.asarray(base_spawn, dtype=np.float32)
-            self._curriculum_active_start_index = int(start_index)
-            self._curriculum_active_end_index = int(end_index)
-            self._load_checkpoints(max_targets=end_index - start_index)
+    def reset(
+        self,
+        *,
+        seed: int | None = None,
+        options: Optional[dict[str, Any]] = None,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Reset the UE5 episode and return the first observation."""
+        super().reset(seed=seed)
+        if seed is not None:
+            self._rng = np.random.default_rng(seed)
+
+        self._prepare_world_if_needed()
+        self._episode_index += 1
+        self._episode_success = False
+        self._last_pause_timeout = False
+        self._last_collision = False
+        self._reset_sync_metrics()
+
+        start_index, start_pos = self._select_episode_start()
+        start_heading = self._select_episode_start_heading(start_index)
+
+        if self._world_prepared and self.reset_mode == _RESET_MODE_BRIDGE_RESET:
+            try:
+                self.bridge.reset()
+            except Exception:
+                logger.debug("AirSim reset failed during episode reset.", exc_info=True)
+
+        self.bridge.set_simulation_speed(self.simulation_speed)
+        self.bridge.set_rendering_enabled(not self.no_rendering_mode, force=True)
+        self._set_pause_mode(self.use_pause_stepping)
+
+        startup_pose = self._startup_reset_pose_for(start_index, start_pos, start_heading)
+        if startup_pose is not None:
+            airsim_x = float(startup_pose["x"])
+            airsim_y = float(startup_pose["y"])
+            airsim_z = float(startup_pose["z"])
+            airsim_yaw = float(startup_pose["yaw"])
+        else:
+            airsim_x, airsim_y, airsim_z = self.coord_transform.framework_to_airsim(
+                float(start_pos[0]),
+                float(start_pos[1]),
+                float(getattr(self.bridge, "render_z", 0.0)),
+            )
+            airsim_yaw = self.coord_transform.framework_heading_to_airsim_yaw(start_heading)
+        reset_settled = False
+        for reset_attempt in range(2):
+            self.bridge.set_pose(
+                airsim_x,
+                airsim_y,
+                airsim_z,
+                airsim_yaw,
+                preserve_current_z=False,
+                preserve_roll_pitch=False,
+            )
+            self._apply_parked_controls()
+            reset_settled = self._settle_after_reset(start_pos=start_pos, start_heading=start_heading)
+            if reset_settled:
+                break
+            logger.warning(
+                "AirSimEnv reset pose did not settle on attempt %d/2; retrying teleport.",
+                reset_attempt + 1,
+            )
+        if not reset_settled:
+            raise RuntimeError("AirSimEnv reset failed because the post-teleport state never stabilized.")
+
+        self.step_count = 0
+        self.previous_action = self.neutral_action()
+        self.performed_action = self.neutral_action()
+        self.last_policy_action = self.neutral_action()
+        self._episode_start_checkpoint_index = start_index
+        self.checkpoint_index = min(start_index + 1, len(self.checkpoints) - 1)
+        self._route_progress_m = float(self.route_cumulative_distances[start_index])
+        self._route_progress_ratio = self._route_progress_m / max(self.route_length_m, 1e-6)
+
+        self._reset_sync_metrics()
+        if not self._refresh_state_from_bridge(track_sync=False):
+            raise RuntimeError("AirSimEnv reset failed because the initial simulator state could not be read reliably.")
+        observation = self._build_observation()
+        info = self._build_info(
+            reward=0.0,
+            raw_reward=0.0,
+            terminated=False,
+            truncated=False,
+            outcome="reset",
+        )
+        if self._log_next_reset_event:
+            self._record_run_event(
+                "respawn",
+                start_checkpoint_index=int(start_index),
+                used_startup_anchor=bool(startup_pose is not None),
+                start_x=float(start_pos[0]),
+                start_y=float(start_pos[1]),
+                start_heading_deg=float(math.degrees(start_heading)),
+                airsim_x=float(airsim_x),
+                airsim_y=float(airsim_y),
+                airsim_z=float(airsim_z),
+                airsim_yaw_deg=float(math.degrees(airsim_yaw)),
+                outcome="reset",
+            )
+        self._log_next_reset_event = False
+        return observation, info
+
+    def step(
+        self,
+        action: np.ndarray,
+    ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
+        """Apply one policy action to UE5 and return the next transition."""
+        if not self.bridge.is_connected:
+            observation = self._build_observation()
+            reward = self._normalize_reward(_DISCONNECT_PENALTY)
+            info = self._build_info(
+                reward=reward,
+                raw_reward=_DISCONNECT_PENALTY,
+                terminated=True,
+                truncated=False,
+                outcome="disconnected",
+            )
+            return observation, float(reward), True, False, info
+
+        step_start = time.perf_counter()
+        action = validate_policy_action(action)
+        self.last_policy_action = action.copy()
+        effective_action = self._compose_effective_action(action)
+        controls = self._map_policy_action_to_controls(effective_action)
+        self.last_controls = {
+            "steering": float(getattr(controls, "steering", 0.0)),
+            "throttle": float(getattr(controls, "throttle", 0.0)),
+            "brake": float(getattr(controls, "brake", 0.0)),
+        }
+
+        previous_progress = float(self._route_progress_m)
+        previous_target_distance = self._distance_to_target()
+        previous_checkpoint_distance = self._distance_to_checkpoint(self.checkpoint_index)
+        previous_heading_error = float(self.heading_error)
+
+        self.bridge.set_controls(controls)
+        self.last_physics_wait_s = self._advance_simulation()
+        state_updated = self._refresh_state_from_bridge(track_sync=True)
+        self.step_count += 1
+        self.performed_action = effective_action.copy()
+
+        if not state_updated:
+            logger.warning(
+                "AirSimEnv could not read a valid simulator state after stepping; truncating the episode."
+            )
+            raw_reward = _TIMEOUT_PENALTY
+            reward = self._normalize_reward(raw_reward)
+            self.last_step_latency_s = time.perf_counter() - step_start
+            observation = self._build_observation()
+            info = self._build_info(
+                reward=reward,
+                raw_reward=raw_reward,
+                terminated=False,
+                truncated=True,
+                outcome="state_unavailable",
+            )
+            self._record_run_event(
+                "episode_finished",
+                outcome="state_unavailable",
+                reward=float(reward),
+                raw_reward=float(raw_reward),
+                terminated=False,
+                truncated=True,
+            )
+            return observation, float(reward), False, True, info
+
+        checkpoint_reward = self._update_checkpoint_progress()
+        allow_early_failure = (
+            not self.training_mode
+            or self.step_count > _EARLY_FAILURE_GRACE_STEPS
+        )
+        collision_status = self._detect_collision() if allow_early_failure else False
+        collision_read_failed = collision_status is None
+        collision = bool(collision_status) if collision_status is not None else False
+        success = self._has_reached_target()
+        offtrack = bool(abs(self.cross_error) > _CROSS_TRACK_LIMIT_M) if allow_early_failure else False
+        terminated = bool(success or collision or offtrack or not self.bridge.is_connected)
+        truncated = bool(
+            self.step_count >= self.max_steps
+            or self._last_pause_timeout
+            or collision_read_failed
+        )
+
+        raw_reward = self._compute_reward(
+            previous_progress=previous_progress,
+            previous_target_distance=previous_target_distance,
+            previous_checkpoint_distance=previous_checkpoint_distance,
+            previous_heading_error=previous_heading_error,
+            checkpoint_reward=checkpoint_reward,
+            success=success,
+            collision=collision,
+            offtrack=offtrack,
+            disconnected=not self.bridge.is_connected,
+            truncated=truncated,
+        )
+        if collision_read_failed:
+            raw_reward = min(raw_reward, _TIMEOUT_PENALTY)
+        reward = self._normalize_reward(raw_reward)
+
+        self.last_step_latency_s = time.perf_counter() - step_start
+        if (
+            self.latency_warning_threshold is not None
+            and self.last_step_latency_s > self.latency_warning_threshold
+        ):
+            logger.warning(
+                "AirSimEnv step latency %.3fs exceeded threshold %.3fs.",
+                self.last_step_latency_s,
+                self.latency_warning_threshold,
+            )
+
+        if self.progress_log_interval_steps > 0 and self.step_count % self.progress_log_interval_steps == 0:
+            logger.info(
+                "AirSimEnv step=%d progress=%.1f%% checkpoint=%d/%d reward=%+.3f",
+                self.step_count,
+                self._route_progress_ratio * 100.0,
+                self.checkpoint_index,
+                len(self.checkpoints) - 1,
+                reward,
+            )
+
+        if terminated or truncated:
+            self._episode_success = success
+            self._update_curriculum_after_episode(success=success)
+
+        outcome = "running"
+        if success:
+            outcome = "success"
+        elif collision:
+            outcome = "collision"
+        elif offtrack:
+            outcome = "offtrack"
+        elif not self.bridge.is_connected:
+            outcome = "disconnected"
+        elif collision_read_failed:
+            outcome = "collision_unavailable"
+        elif self._last_pause_timeout:
+            outcome = "timeout"
+        elif truncated:
+            outcome = "truncated"
+
+        observation = self._build_observation()
+        info = self._build_info(
+            reward=reward,
+            raw_reward=raw_reward,
+            terminated=terminated,
+            truncated=truncated,
+            outcome=outcome,
+        )
+        if terminated or truncated:
+            self._record_run_event(
+                "episode_finished",
+                outcome=outcome,
+                reward=float(reward),
+                raw_reward=float(raw_reward),
+                terminated=bool(terminated),
+                truncated=bool(truncated),
+            )
+        return observation, float(reward), terminated, truncated, info
+
+    def close(self) -> None:
+        """Disconnect from AirSim and release bridge resources."""
+        try:
+            if getattr(self, "bridge", None) is not None:
+                self.bridge.disconnect()
+        except Exception:
+            logger.debug("AirSimEnv close() swallowed a bridge disconnect error.", exc_info=True)
+
+    def _prepare_world_if_needed(self) -> None:
+        """Load the requested save slot and coordinate transform once per env."""
+        if self._world_prepared:
             return
 
-        perturbation = np.random.default_rng().uniform(
-            low=-self.randomization_scale,
-            high=self.randomization_scale,
-            size=self._base_initial_ship_pos.shape,
-        ).astype(np.float32)
+        if self.load_world_on_start and self.save_slot:
+            try:
+                load_started_at = time.perf_counter()
+                self.bridge.load_world_save(save_slot=self.save_slot)
+                settled_pose = self._settle_after_world_load()
+                self._record_run_event(
+                    "world_loaded",
+                    save_slot=self.save_slot,
+                    load_duration_s=float(time.perf_counter() - load_started_at),
+                    airsim_x=float(settled_pose["x"]) if settled_pose is not None else None,
+                    airsim_y=float(settled_pose["y"]) if settled_pose is not None else None,
+                    airsim_z=float(settled_pose["z"]) if settled_pose is not None else None,
+                    airsim_yaw_deg=(
+                        float(math.degrees(float(settled_pose["yaw"])))
+                        if settled_pose is not None
+                        else None
+                    ),
+                )
+            except Exception as exc:
+                logger.warning("Could not load AirSim save slot '%s': %s", self.save_slot, exc)
+                self._record_run_event(
+                    "world_load_failed",
+                    save_slot=self.save_slot,
+                    details={"error": str(exc)},
+                )
 
-        candidate = np.clip(
-            self._base_initial_ship_pos + perturbation,
-            MIN_GRID_POS, MAX_GRID_POS,
-        )
+        self.bridge.set_simulation_speed(self.simulation_speed)
+        self.bridge.set_rendering_enabled(not self.no_rendering_mode, force=True)
 
-        # Only accept if the candidate is inside the river polygon.
-        if self._ship_in_open_water(candidate):
-            self.initial_ship_pos = candidate
-            self._load_checkpoints()
-        else:
-            logger.debug(
-                "Randomised position (%.0f, %.0f) outside polygon - keeping original.",
-                candidate[0], candidate[1],
+        try:
+            self.coord_transform, _ = load_saved_calibration_reference(
+                self.bridge.client,
+                draw_reference=self.draw_calibration_reference,
+                ship_pos=(float(self.initial_ship_pos[0]), float(self.initial_ship_pos[1])),
+                target_pos=(float(self.target_pos[0]), float(self.target_pos[1])),
+            )
+        except FileNotFoundError:
+            logger.warning("No AirSim calibration.json found; falling back to identity transform.")
+            self.coord_transform = CoordTransform.identity(
+                framework_origin=(float(self.initial_ship_pos[0]), float(self.initial_ship_pos[1]))
+            )
+        except Exception as exc:
+            logger.warning("Could not load saved AirSim calibration; using identity transform. %s", exc)
+            self.coord_transform = CoordTransform.identity(
+                framework_origin=(float(self.initial_ship_pos[0]), float(self.initial_ship_pos[1]))
             )
 
-    # -------------
-    # Data loading  (T-011)
-    # -------------
-    def _build_checkpoints_for_initial_position(
+        self.bridge.coord_transform = self.coord_transform
+        try:
+            pose = self.bridge.get_vehicle_pose()
+            self.bridge.render_z = float(pose.position.z_val)
+        except _AIRSIM_READ_EXCEPTIONS:
+            self.bridge.render_z = 0.0
+
+        self._capture_startup_anchor_if_needed()
+        self._record_run_event(
+            "world_prepared",
+            used_startup_anchor=bool(self._captured_startup_pose_airsim is not None),
+            save_slot=self.save_slot,
+            load_world_on_start=bool(self.load_world_on_start),
+            capture_live_start_pose=bool(self.capture_live_start_pose),
+            no_rendering_mode=bool(self.no_rendering_mode),
+            simulation_speed=float(self.simulation_speed),
+            reset_mode=str(self.reset_mode),
+        )
+
+        self._world_prepared = True
+
+    def _settle_after_world_load(self) -> dict[str, float] | None:
+        """Wait briefly for the freshly loaded save-slot spawn pose to stabilize."""
+        self._apply_parked_controls()
+        deadline = time.monotonic() + _WORLD_LOAD_SETTLE_TIMEOUT_S
+        previous_sample: tuple[float, float, float, float] | None = None
+        stable_samples = 0
+
+        while time.monotonic() < deadline:
+            try:
+                pose = self.bridge.get_vehicle_pose()
+                sample = (
+                    float(pose.position.x_val),
+                    float(pose.position.y_val),
+                    float(pose.position.z_val),
+                    float(yaw_from_quaternion(pose.orientation)),
+                )
+            except _AIRSIM_READ_EXCEPTIONS:
+                logger.debug("Could not read vehicle pose while settling world load.", exc_info=True)
+                time.sleep(_WORLD_LOAD_SETTLE_POLL_S)
+                continue
+
+            if previous_sample is not None:
+                position_delta = math.hypot(
+                    sample[0] - previous_sample[0],
+                    sample[1] - previous_sample[1],
+                )
+                yaw_delta = abs(_normalize_angle(sample[3] - previous_sample[3]))
+                if (
+                    position_delta <= _WORLD_LOAD_SETTLE_POSITION_EPS_M
+                    and yaw_delta <= _WORLD_LOAD_SETTLE_YAW_EPS_RAD
+                ):
+                    stable_samples += 1
+                    if stable_samples >= 2:
+                        return {
+                            "x": sample[0],
+                            "y": sample[1],
+                            "z": sample[2],
+                            "yaw": sample[3],
+                        }
+                else:
+                    stable_samples = 0
+
+            previous_sample = sample
+            time.sleep(_WORLD_LOAD_SETTLE_POLL_S)
+
+        if previous_sample is None:
+            return None
+
+        logger.info(
+            "Continuing after save-slot load settle timeout; using latest observed startup pose."
+        )
+        return {
+            "x": previous_sample[0],
+            "y": previous_sample[1],
+            "z": previous_sample[2],
+            "yaw": previous_sample[3],
+        }
+
+    def _capture_startup_anchor_if_needed(self) -> None:
+        """Adopt the live simulator spawn pose as the reset anchor once."""
+        if not self.capture_live_start_pose or self._captured_startup_pose_airsim is not None:
+            return
+
+        try:
+            pose = self.bridge.get_vehicle_pose()
+        except _AIRSIM_READ_EXCEPTIONS:
+            logger.debug("Could not read the live AirSim startup pose.", exc_info=True)
+            return
+
+        try:
+            airsim_x = float(pose.position.x_val)
+            airsim_y = float(pose.position.y_val)
+            airsim_z = float(pose.position.z_val)
+            airsim_yaw = float(yaw_from_quaternion(pose.orientation))
+        except _AIRSIM_DECODE_EXCEPTIONS:
+            logger.debug("Could not decode the live AirSim startup pose.", exc_info=True)
+            return
+
+        framework_x, framework_y = self.coord_transform.airsim_to_framework(
+            airsim_x,
+            airsim_y,
+        )
+        framework_heading = self.coord_transform.airsim_yaw_to_framework_heading(
+            airsim_yaw
+        )
+        captured_framework_pos = np.asarray(
+            [framework_x, framework_y],
+            dtype=np.float32,
+        )
+
+        drift_m = float(
+            np.linalg.norm(captured_framework_pos - np.asarray(self.initial_ship_pos, dtype=np.float32))
+        )
+        logger.info(
+            "Adopting live AirSim startup pose as the training reset anchor "
+            "(drift %.1fm, heading %.1fdeg).",
+            drift_m,
+            math.degrees(framework_heading),
+        )
+
+        self._captured_startup_pose_airsim = {
+            "x": airsim_x,
+            "y": airsim_y,
+            "z": airsim_z,
+            "yaw": airsim_yaw,
+        }
+        self._captured_startup_framework_heading = float(framework_heading)
+        self.bridge.render_z = airsim_z
+        self.initial_ship_pos = captured_framework_pos
+        self.ship_pos = captured_framework_pos.copy()
+        self._rebuild_route_geometry()
+        self._record_run_event(
+            "startup_anchor_captured",
+            used_startup_anchor=True,
+            ship_x=float(framework_x),
+            ship_y=float(framework_y),
+            heading_deg=float(math.degrees(framework_heading)),
+            airsim_x=float(airsim_x),
+            airsim_y=float(airsim_y),
+            airsim_z=float(airsim_z),
+            airsim_yaw_deg=float(math.degrees(airsim_yaw)),
+        )
+
+    def _rebuild_route_geometry(self) -> None:
+        """Recompute route geometry after the chosen route anchor changes."""
+        self.route_points = self._build_route_points()
+        self.route_cumulative_distances = self._compute_cumulative_distances(
+            self.route_points
+        )
+        self.route_length_m = (
+            float(self.route_cumulative_distances[-1])
+            if len(self.route_cumulative_distances)
+            else 1.0
+        )
+        self._distance_scale_m = max(_MIN_DISTANCE_SCALE_M, self.route_length_m)
+        self.checkpoints = self._build_checkpoints(
+            self.route_points,
+            self.route_cumulative_distances,
+        )
+        self.target_pos = self.checkpoints[-1]["pos"].copy()
+
+    def _startup_reset_pose_for(
         self,
-        initial_ship_pos: np.ndarray,
-        max_targets: Optional[int] = None,
-    ) -> List[dict]:
-        """Build a checkpoint list for a given spawn position."""
-        csv_path = _ENVIRONMENTS_DIR / "trajectory_points_no_scale.csv"
-        path = np.loadtxt(csv_path, delimiter=",", skiprows=1)
-        if path.ndim != 2 or path.shape[1] != 2:
-            raise ValueError(f"Trajectory CSV has unexpected shape: {path.shape}")
+        start_index: int,
+        start_pos: np.ndarray,
+        start_heading: float,
+    ) -> dict[str, float] | None:
+        """Return the exact captured AirSim reset pose for the canonical start."""
+        if self._captured_startup_pose_airsim is None:
+            return None
+        if int(start_index) != 0:
+            return None
+        if self.curriculum_randomization_scale > 0.0:
+            return None
+        if float(np.linalg.norm(np.asarray(start_pos, dtype=np.float32) - self.initial_ship_pos)) > 1e-3:
+            return None
+        if self._captured_startup_framework_heading is None:
+            return None
+        heading_error = abs(
+            _normalize_angle(
+                float(start_heading) - float(self._captured_startup_framework_heading)
+            )
+        )
+        if heading_error > math.radians(45.0):
+            return None
+        return dict(self._captured_startup_pose_airsim)
 
-        distances = [np.linalg.norm(p - initial_ship_pos) for p in path]
-        closest_idx = int(np.argmin(distances))
-        path = path[closest_idx + 1:]
+    def _apply_parked_controls(self) -> None:
+        """Stop the AirSim vehicle after a reset teleport."""
+        controls = build_car_controls(
+            self.bridge.airsim,
+            steering=0.0,
+            throttle=0.0,
+            brake=1.0,
+        )
+        self.bridge.set_controls(controls)
+        self.last_controls = {"steering": 0.0, "throttle": 0.0, "brake": 1.0}
 
-        path = create_checkpoints_from_simple_path(path, CHECKPOINTS_DISTANCE)
+    def _set_pause_mode(self, is_paused: bool) -> None:
+        """Toggle paused stepping mode."""
+        try:
+            self.bridge.set_pause(bool(is_paused))
+        except Exception:
+            logger.debug("Could not change AirSim pause mode.", exc_info=True)
 
-        if len(path) == 0:
-            path = [np.asarray(initial_ship_pos, dtype=np.float32).copy()]
+    def _advance_simulation(self) -> float:
+        """Advance the UE5 simulation according to the configured step mode."""
+        step_start = time.perf_counter()
+        self._last_pause_timeout = False
+
+        if not self.use_pause_stepping:
+            sleep_s = max(
+                self.mdp_step_seconds / max(self.simulation_speed, 1e-6),
+                self.state_poll_interval,
+            )
+            time.sleep(sleep_s)
+            return time.perf_counter() - step_start
+
+        self.bridge.set_pause(True)
+        before_signature = self._snapshot_progress_signature()
+        if self.use_sim_time_stepping:
+            self.bridge.continue_for_time(self.mdp_step_seconds)
         else:
-            path = np.insert(path, 0, np.asarray(initial_ship_pos, dtype=np.float32).copy(), axis=0)
+            self.bridge.continue_for_frames(self.frames_per_step)
 
-        if max_targets is not None:
-            capped_length = max(2, int(max_targets) + 1)
-            path = path[:capped_length]
+        deadline = step_start + self.physics_update_timeout
+        while time.perf_counter() < deadline:
+            if self._has_progressed_since(before_signature):
+                return time.perf_counter() - step_start
+            time.sleep(self.state_poll_interval)
 
-        checkpoints = []
-        for i, point in enumerate(path):
-            framework_pos = np.array(point, dtype=np.float32)
-            ax, ay, az = self.coord.framework_to_airsim(
-                float(framework_pos[0]),
-                float(framework_pos[1]),
+        self._last_pause_timeout = True
+        if self.log_pause_watchdog_warnings:
+            logger.warning(
+                "AirSim pause-step watchdog timed out after %.3fs.",
+                self.physics_update_timeout,
             )
-            checkpoints.append(
-                {
-                    "pos": framework_pos,
-                    "pos_airsim_3d": np.array([ax, ay, az], dtype=np.float32),
-                    "radius": float(CHECKPOINT_AREA_SIZE),
-                    "reward": (i / max(1, len(path))) * 10.0,
-                }
-            )
+        return time.perf_counter() - step_start
 
-        if checkpoints:
-            checkpoints[-1]["radius"] = float(TARGET_AREA_SIZE)
-            checkpoints[-1]["reward"] = float(SUCCESS_REWARD)
+    def _snapshot_progress_signature(self) -> dict[str, float | int] | None:
+        """Capture a lightweight telemetry signature for step-progress checks."""
+        signature: dict[str, float | int] = {}
+        try:
+            state = self.bridge.get_state()
+        except Exception:
+            state = None
 
-        lines = _calculate_perpendicular_lines(checkpoints)
-        for cp, line in zip(checkpoints, lines):
-            cp["perpendicular_line"] = line
+        if isinstance(state, dict) and not bool(state.get("state_read_failed")):
+            try:
+                signature["timestamp"] = int(state.get("timestamp", 0) or 0)
+                signature["pos_x"] = float(state["pos_x"])
+                signature["pos_y"] = float(state["pos_y"])
+                signature["yaw"] = float(state["yaw"])
+            except (KeyError, TypeError, ValueError):
+                signature.clear()
 
-        return checkpoints
+        try:
+            pose = self.bridge.get_vehicle_pose()
+        except Exception:
+            pose = None
 
-    def _load_checkpoints(self, max_targets: Optional[int] = None) -> None:
-        """Load active checkpoints and the water polygon for the current spawn."""
-        checkpoints = self._build_checkpoints_for_initial_position(
-            self.initial_ship_pos,
-            max_targets=max_targets,
+        if pose is not None:
+            try:
+                signature["pose_x"] = float(pose.position.x_val)
+                signature["pose_y"] = float(pose.position.y_val)
+            except Exception:
+                pass
+            try:
+                signature["pose_yaw"] = float(yaw_from_quaternion(pose.orientation))
+            except Exception:
+                pass
+
+        return signature or None
+
+    def _has_progressed_since(self, before_signature: dict[str, float | int] | None) -> bool:
+        """Return whether UE5 telemetry changed after a step command."""
+        if before_signature is None:
+            return False
+
+        after_signature = self._snapshot_progress_signature()
+        if not after_signature:
+            return False
+
+        if int(after_signature.get("timestamp", 0)) != int(before_signature.get("timestamp", 0)):
+            return True
+
+        for x_key, y_key, yaw_key in (
+            ("pose_x", "pose_y", "pose_yaw"),
+            ("pos_x", "pos_y", "yaw"),
+        ):
+            if x_key not in before_signature or x_key not in after_signature:
+                continue
+            dx = float(after_signature[x_key]) - float(before_signature[x_key])
+            dy = float(after_signature[y_key]) - float(before_signature[y_key])
+            if math.hypot(dx, dy) > _STATE_PROGRESS_POSITION_EPS_M:
+                return True
+            if yaw_key in before_signature and yaw_key in after_signature:
+                yaw_delta = abs(
+                    _normalize_angle(
+                        float(after_signature[yaw_key]) - float(before_signature[yaw_key])
+                    )
+                )
+                if yaw_delta > _STATE_PROGRESS_YAW_EPS_RAD:
+                    return True
+
+        return False
+
+    def _refresh_state_from_bridge(self, track_sync: bool = True) -> bool:
+        """Pull the latest pose and velocity state from AirSim.
+
+        Returns:
+            bool: ``True`` when at least one valid telemetry snapshot was
+            available for the update, ``False`` otherwise.
+        """
+        state = self.bridge.get_state()
+        state_failed = not isinstance(state, dict) or bool(state.get("state_read_failed"))
+        airsim_x: float | None = None
+        airsim_y: float | None = None
+        airsim_yaw: float | None = None
+        pose = None
+        try:
+            pose = self.bridge.get_vehicle_pose()
+        except _AIRSIM_READ_EXCEPTIONS:
+            pose = None
+
+        if pose is not None:
+            try:
+                airsim_x = float(pose.position.x_val)
+                airsim_y = float(pose.position.y_val)
+            except _AIRSIM_DECODE_EXCEPTIONS:
+                airsim_x = None
+                airsim_y = None
+            try:
+                airsim_yaw = float(yaw_from_quaternion(pose.orientation))
+            except _AIRSIM_DECODE_EXCEPTIONS:
+                airsim_yaw = None
+
+        if (
+            airsim_x is None
+            or airsim_y is None
+            or airsim_yaw is None
+        ) and not state_failed:
+            try:
+                airsim_x = float(state["pos_x"])
+                airsim_y = float(state["pos_y"])
+                airsim_yaw = float(state["yaw"])
+            except (KeyError, TypeError, ValueError):
+                airsim_x = None
+                airsim_y = None
+                airsim_yaw = None
+
+        if airsim_x is None or airsim_y is None or airsim_yaw is None:
+            self._repeated_state_count += 1
+            self._state_update_reliable = False
+            logger.debug("AirSimEnv state refresh skipped because no valid telemetry snapshot was available.")
+            return False
+
+        framework_x, framework_y = self.coord_transform.airsim_to_framework(airsim_x, airsim_y)
+        framework_heading = self.coord_transform.airsim_yaw_to_framework_heading(
+            airsim_yaw
         )
 
-        self.checkpoints = checkpoints
-        self.target_pos = checkpoints[-1]["pos"] if checkpoints else self.target_framework
+        self.ship_pos = np.array([framework_x, framework_y], dtype=np.float32)
+        self.ship_heading = float(framework_heading)
+        self.ship_speed = 0.0
+        self.velocities = 0.0
+        self._last_ue5_timestamp = 0
+        yaw_rate = 0.0
+        if not state_failed:
+            try:
+                self.ship_speed = float(max(float(state.get("speed", 0.0)), 0.0))
+            except (TypeError, ValueError):
+                self.ship_speed = 0.0
+            self.velocities = float(self.ship_speed)
+            try:
+                self._last_ue5_timestamp = int(state.get("timestamp", 0) or 0)
+            except (TypeError, ValueError):
+                self._last_ue5_timestamp = 0
+            try:
+                yaw_rate = self._airsim_yaw_rate_to_framework(float(state.get("ang_vel_z", 0.0)))
+            except (TypeError, ValueError):
+                yaw_rate = 0.0
+        if track_sync:
+            self._update_sync_metrics()
+        projection = self._project_onto_route(self.ship_pos)
+        self._route_projection_segment = int(projection["segment_index"])
+        self._route_progress_m = float(projection["progress_m"])
+        self._route_progress_ratio = float(
+            np.clip(self._route_progress_m / max(self.route_length_m, 1e-6), 0.0, 1.0)
+        )
+        self.cross_error = float(projection["cross_track_error"])
+        self.heading_error = self._current_heading_error()
+        self.phys_sim.state = SimpleNamespace(
+            x=float(self.ship_pos[0]),
+            y=float(self.ship_pos[1]),
+            heading=float(self.ship_heading),
+            u=float(self.ship_speed),
+            v=0.0,
+            r=float(yaw_rate),
+        )
+        if state_failed:
+            self._state_update_reliable = False
+            return False
+        return True
 
-        from shapely.geometry import Polygon
+    def _validate_configuration(self) -> None:
+        """Validate the control and timing model used for the active env."""
+        if self.control_interface not in _CONTROL_MAPPERS:
+            raise ValueError(
+                "AirSimEnv currently supports only these control interfaces: "
+                f"{sorted(_CONTROL_MAPPERS)}."
+            )
+        if (self.control_interface, self.observation_profile) not in _OBSERVATION_BUILDERS:
+            raise ValueError(
+                "AirSimEnv currently does not support observation_profile="
+                f"'{self.observation_profile}' for control_interface='{self.control_interface}'."
+            )
+        if self.reset_mode not in {_RESET_MODE_REWIND_POSE, _RESET_MODE_BRIDGE_RESET}:
+            raise ValueError(
+                "AirSimEnv reset_mode must be either "
+                f"'{_RESET_MODE_REWIND_POSE}' or '{_RESET_MODE_BRIDGE_RESET}'."
+            )
+        if self.training_mode and self.use_pause_stepping and not self.use_sim_time_stepping:
+            raise ValueError(
+                "AirSimEnv training with paused stepping requires "
+                "use_sim_time_stepping=True so one RL step has an explicit simulated duration."
+            )
+        if self.training_mode and not self.use_pause_stepping:
+            logger.warning(
+                "AirSimEnv training is running without pause stepping; transition timing may be less deterministic."
+            )
 
-        obstacles_csv = _ENVIRONMENTS_DIR / "env_Sche_250cm_no_scale.csv"
-        obstacles = np.loadtxt(obstacles_csv, delimiter=",", skiprows=1)
-        self.polygon_shape = Polygon(obstacles)
+    def _resolve_mdp_step_seconds(self) -> float:
+        """Resolve the simulated duration represented by one RL step."""
+        if self.use_pause_stepping and self.use_sim_time_stepping:
+            step_seconds = float(self.sim_time_per_action)
+        else:
+            step_seconds = float(self.time_step)
+        if step_seconds <= 0.0:
+            raise ValueError("AirSimEnv requires a positive RL step duration.")
+        return step_seconds
 
-    def _select_curriculum_route_window(self) -> Tuple[np.ndarray, int, int]:
-        """Select the active curriculum slice from the reference checkpoint route."""
-        total_targets = max(len(self._curriculum_reference_checkpoints) - 1, 1)
-        end_index = int(np.clip(self._curriculum_target_checkpoint, 1, total_targets))
-        window_targets = int(np.clip(self._curriculum_window_size, 1, total_targets))
-        start_index = max(0, end_index - window_targets)
+    def _reset_sync_metrics(self) -> None:
+        """Reset state-synchronization metrics at episode boundaries."""
+        self._last_state_signature = None
+        self._repeated_state_count = 0
+        self._state_update_reliable = True
+
+    def _update_sync_metrics(self) -> None:
+        """Track whether AirSim returned a fresh state for this RL step."""
+        signature = (
+            round(float(self.ship_pos[0]), 3),
+            round(float(self.ship_pos[1]), 3),
+            round(float(self.ship_heading), 4),
+            int(self._last_ue5_timestamp),
+        )
+        if self._last_state_signature == signature:
+            self._repeated_state_count += 1
+            self._state_update_reliable = False
+        else:
+            self._repeated_state_count = 0
+            self._state_update_reliable = True
+        self._last_state_signature = signature
+
+    def _settle_after_reset(self, start_pos: np.ndarray, start_heading: float) -> bool:
+        """Wait briefly until the teleported reset pose is reflected in telemetry."""
+        deadline = time.perf_counter() + _RESET_SETTLE_TIMEOUT_S
+        while time.perf_counter() < deadline:
+            if not self._refresh_state_from_bridge():
+                time.sleep(_RESET_SETTLE_POLL_S)
+                continue
+            pos_error = float(np.linalg.norm(self.ship_pos - np.asarray(start_pos, dtype=np.float32)))
+            heading_error = abs(_normalize_angle(self.ship_heading - float(start_heading)))
+            if pos_error <= _RESET_POSITION_TOLERANCE_M and heading_error <= math.radians(20.0):
+                return True
+            time.sleep(_RESET_SETTLE_POLL_S)
+
+        logger.warning(
+            "AirSimEnv reset pose did not fully settle within %.1fs; "
+            "marking reset as failed with pos_error=%.1fm.",
+            _RESET_SETTLE_TIMEOUT_S,
+            float(np.linalg.norm(self.ship_pos - np.asarray(start_pos, dtype=np.float32))),
+        )
+        return False
+
+    def _compose_effective_action(self, action: np.ndarray) -> np.ndarray:
+        """Blend residual policy output with an optional guidance prior."""
+        action = validate_policy_action(action)
+        if not self.guidance_assist_enabled:
+            return action
+
+        guidance = self._guidance_action()
+        effective = np.array(
+            [
+                guidance[0] + action[0] * self.guidance_residual_steering_scale,
+                guidance[1] + action[1] * self.guidance_residual_throttle_scale,
+            ],
+            dtype=np.float32,
+        )
+        return np.clip(effective, -1.0, 1.0).astype(np.float32)
+
+    def _guidance_action(self) -> np.ndarray:
+        """Build a conservative route-following prior in policy-action space."""
+        heading_error = self._current_heading_error()
+        cross_track_term = float(np.clip(self.cross_error / _CROSS_TRACK_LIMIT_M, -1.0, 1.0))
+        steering = np.clip((heading_error / math.pi) * 0.95 + cross_track_term * 0.35, -1.0, 1.0)
+
+        throttle_01 = 0.55 + 0.30 * max(0.0, math.cos(heading_error))
+        throttle_01 *= max(0.25, 1.0 - 0.55 * min(abs(cross_track_term), 1.0))
+        throttle_signed = np.clip(2.0 * throttle_01 - 1.0, -1.0, 1.0)
+        return np.array([steering, throttle_signed], dtype=np.float32)
+
+    def _distance_to_target(self) -> float:
+        """Return current Euclidean distance to the route target."""
+        return float(np.linalg.norm(self.target_pos - self.ship_pos))
+
+    def _distance_to_checkpoint(self, checkpoint_index: int) -> float:
+        """Return Euclidean distance to a checkpoint by index."""
+        checkpoint = self.checkpoints[min(max(checkpoint_index, 0), len(self.checkpoints) - 1)]
+        return float(np.linalg.norm(checkpoint["pos"] - self.ship_pos))
+
+    def _update_checkpoint_progress(self) -> float:
+        """Advance the current checkpoint index from route progress."""
+        reward = 0.0
+        while self.checkpoint_index < len(self.checkpoints) - 1:
+            checkpoint = self.checkpoints[self.checkpoint_index]
+            threshold = checkpoint["distance_m"] - checkpoint["radius"]
+            if self._route_progress_m < threshold:
+                break
+            passed_checkpoint_index = int(self.checkpoint_index)
+            self.checkpoint_index += 1
+            checkpoint_reward = float(checkpoint.get("reward", _CHECKPOINT_REWARD))
+            reward += checkpoint_reward
+            self._record_run_event(
+                "checkpoint_passed",
+                checkpoint_index=passed_checkpoint_index,
+                reward=checkpoint_reward,
+                ship_x=float(self.ship_pos[0]),
+                ship_y=float(self.ship_pos[1]),
+                heading_deg=float(math.degrees(self.ship_heading)),
+            )
+        return reward
+
+    def _has_reached_target(self) -> bool:
+        """Return whether the ship has reached the route target."""
         return (
-            self._curriculum_reference_checkpoints[start_index]["pos"].copy(),
-            start_index,
-            end_index,
+            self._distance_to_target() <= self.checkpoints[-1]["radius"]
+            or self._route_progress_m >= self.route_length_m - self.checkpoints[-1]["radius"]
         )
 
-    def _record_curriculum_result(
+    def _detect_collision(self) -> bool | None:
+        """Return whether AirSim reported a collision this step."""
+        try:
+            collision = self.bridge.get_collision_info()
+        except _AIRSIM_READ_EXCEPTIONS:
+            logger.warning("AirSimEnv could not read collision info for the current step.", exc_info=True)
+            self._last_collision = False
+            return None
+        self._last_collision = bool(getattr(collision, "has_collided", False))
+        return self._last_collision
+
+    def _compute_reward(
         self,
+        *,
+        previous_progress: float,
+        previous_target_distance: float,
+        previous_checkpoint_distance: float,
+        previous_heading_error: float,
+        checkpoint_reward: float,
+        success: bool,
+        collision: bool,
+        offtrack: bool,
+        disconnected: bool,
+        truncated: bool,
+    ) -> float:
+        """Compute a shaped route-following reward for PPO."""
+        progress_delta = self._route_progress_m - previous_progress
+        target_delta = previous_target_distance - self._distance_to_target()
+        checkpoint_delta = previous_checkpoint_distance - self._distance_to_checkpoint(self.checkpoint_index)
+        heading_improvement = abs(previous_heading_error) - abs(self.heading_error)
+        steering_delta = abs(float(self.performed_action[0]) - float(self.previous_action[0]))
+
+        reward = 0.0
+        reward += 4.0 * (progress_delta / max(_ROUTE_POINT_SPACING_M, 1.0))
+        reward += 0.7 * (target_delta / max(self._distance_scale_m, 1.0))
+        reward += 0.5 * (checkpoint_delta / max(_CHECKPOINT_RADIUS_M, 1.0))
+        reward += 0.25 * heading_improvement
+        reward -= 0.25 * min(abs(self.cross_error) / _CROSS_TRACK_LIMIT_M, 1.0)
+        reward -= 0.08 * min(abs(self.heading_error) / math.pi, 1.0)
+        reward -= 0.05 * steering_delta
+        reward += checkpoint_reward
+
+        if success:
+            reward += _SUCCESS_REWARD
+        if collision:
+            reward += _COLLISION_PENALTY
+        if offtrack:
+            reward += _OFFTRACK_PENALTY
+        if disconnected:
+            reward += _DISCONNECT_PENALTY
+        if truncated and self._last_pause_timeout:
+            reward += _TIMEOUT_PENALTY
+
+        self.previous_action = self.performed_action.copy()
+        return float(reward)
+
+    def _normalize_reward(self, reward: float) -> float:
+        """Scale route rewards into the PPO-friendly ``[-1, 1]`` interval."""
+        if not self.normalize_reward:
+            return float(reward)
+        normalized = float(reward) / self.reward_normalization_scale
+        return float(np.clip(normalized, -1.0, 1.0))
+
+    def _map_policy_action_to_controls(self, action: np.ndarray) -> Any:
+        """Map the policy action to the active UE5 control interface."""
+        try:
+            mapper = _CONTROL_MAPPERS[self.control_interface]
+        except KeyError as exc:
+            raise ValueError(
+                "Unsupported AirSim control interface "
+                f"'{self.control_interface}'."
+            ) from exc
+        return mapper(self.bridge.airsim, action)
+
+    def _build_observation(self) -> np.ndarray:
+        """Build the PPO observation vector from the current route state.
+
+        The current car-physics training profile intentionally keeps the
+        observation route-relative and minimal: no surge/sway state, no
+        absolute yaw, and no yaw-rate term are exposed to PPO yet.
+        """
+        builder_name = _OBSERVATION_BUILDERS.get(
+            (self.control_interface, self.observation_profile)
+        )
+        if builder_name is None:
+            raise ValueError(
+                "Unsupported AirSim observation profile "
+                f"'{self.observation_profile}' for control interface "
+                f"'{self.control_interface}'."
+            )
+        builder = getattr(self, builder_name)
+        observation = builder()
+        return np.clip(observation, self.observation_space.low, self.observation_space.high)
+
+    def _build_route_relative_car_observation(self) -> np.ndarray:
+        """Build the current route-relative car-physics observation vector."""
+        current_checkpoint = self.checkpoints[min(self.checkpoint_index, len(self.checkpoints) - 1)]["pos"]
+        next_index = min(self.checkpoint_index + 1, len(self.checkpoints) - 1)
+        next_checkpoint = self.checkpoints[next_index]["pos"]
+
+        current_local = self._world_to_ship_frame(current_checkpoint)
+        next_local = self._world_to_ship_frame(next_checkpoint)
+        target_local = self._world_to_ship_frame(self.target_pos)
+
+        observation = np.array(
+            [
+                current_local[0] / self._distance_scale_m,
+                current_local[1] / self._distance_scale_m,
+                next_local[0] / self._distance_scale_m,
+                next_local[1] / self._distance_scale_m,
+                target_local[0] / self._distance_scale_m,
+                target_local[1] / self._distance_scale_m,
+                math.cos(self.heading_error),
+                math.sin(self.heading_error),
+                float(np.clip(self.cross_error / _CROSS_TRACK_LIMIT_M, -1.0, 1.0)),
+                float(np.clip(self.ship_speed / _SPEED_SCALE_MPS, 0.0, 1.0)),
+                float(self.performed_action[0]),
+                float(self.performed_action[1]),
+                float(np.clip(self._route_progress_ratio, 0.0, 1.0)),
+                float(np.clip(self.checkpoint_index / max(len(self.checkpoints) - 1, 1), 0.0, 1.0)),
+            ],
+            dtype=np.float32,
+        )
+        return observation
+
+    def _build_observation_space(self) -> gym.spaces.Box:
+        """Define the explicit continuous PPO observation space."""
+        try:
+            fields = _OBSERVATION_FIELDS_BY_PROFILE[self.observation_profile]
+        except KeyError as exc:
+            raise ValueError(
+                "Unsupported AirSim observation profile "
+                f"'{self.observation_profile}'."
+            ) from exc
+        high = np.ones(len(fields), dtype=np.float32)
+        return gym.spaces.Box(low=-high, high=high, dtype=np.float32)
+
+    def _world_to_ship_frame(self, point: np.ndarray) -> np.ndarray:
+        """Express a world-frame point in the ship-local frame."""
+        delta = np.asarray(point, dtype=np.float32) - self.ship_pos
+        cos_h = math.cos(self.ship_heading)
+        sin_h = math.sin(self.ship_heading)
+        forward = cos_h * float(delta[0]) + sin_h * float(delta[1])
+        lateral = -sin_h * float(delta[0]) + cos_h * float(delta[1])
+        return np.array([forward, lateral], dtype=np.float32)
+
+    def _current_heading_error(self) -> float:
+        """Compute heading error against the current route segment direction."""
+        route_heading = self._route_heading_at_index(self._route_projection_segment)
+        return _normalize_angle(route_heading - self.ship_heading)
+
+    def _route_heading_at_index(self, index: int) -> float:
+        """Return the route tangent heading at a route-point index."""
+        idx = min(max(int(index), 0), len(self.route_points) - 2)
+        segment = self.route_points[idx + 1] - self.route_points[idx]
+        if float(np.linalg.norm(segment)) <= 1e-9:
+            return 0.0
+        return float(math.atan2(float(segment[1]), float(segment[0])))
+
+    def _project_onto_route(self, ship_pos: np.ndarray) -> dict[str, float | int]:
+        """Project a ship position onto the route polyline."""
+        if len(self.route_points) < 2:
+            return {"progress_m": 0.0, "cross_track_error": 0.0, "segment_index": 0}
+
+        best_distance = float("inf")
+        best_progress = 0.0
+        best_cross_track = 0.0
+        best_segment_index = 0
+
+        for index in range(len(self.route_points) - 1):
+            start = self.route_points[index]
+            end = self.route_points[index + 1]
+            segment = end - start
+            length_sq = float(np.dot(segment, segment))
+            if length_sq <= 1e-9:
+                continue
+
+            relative = np.asarray(ship_pos, dtype=np.float32) - start
+            t = float(np.clip(np.dot(relative, segment) / length_sq, 0.0, 1.0))
+            projection = start + t * segment
+            delta = np.asarray(ship_pos, dtype=np.float32) - projection
+            distance = float(np.linalg.norm(delta))
+            signed_area = float(segment[0] * relative[1] - segment[1] * relative[0])
+            segment_length = math.sqrt(length_sq)
+            lateral_distance = signed_area / max(segment_length, 1e-9)
+            if abs(lateral_distance) <= distance + 1e-6:
+                signed_distance = lateral_distance
+            elif abs(lateral_distance) > 1e-9:
+                signed_distance = math.copysign(distance, lateral_distance)
+            else:
+                signed_distance = 0.0
+            progress = float(self.route_cumulative_distances[index] + t * math.sqrt(length_sq))
+
+            if distance < best_distance:
+                best_distance = distance
+                best_progress = progress
+                best_cross_track = signed_distance
+                best_segment_index = index
+
+        return {
+            "progress_m": best_progress,
+            "cross_track_error": best_cross_track,
+            "segment_index": best_segment_index,
+        }
+
+    def _build_info(
+        self,
+        *,
+        reward: float,
+        raw_reward: float,
         terminated: bool,
         truncated: bool,
-        termination_reason: str,
-        reached_checkpoint_count: int,
-    ) -> None:
-        """Advance the curriculum only after repeated success at the frontier."""
-        if not self._curriculum_enabled:
+        outcome: str,
+    ) -> dict[str, Any]:
+        """Build the step info dictionary shared by training and inference."""
+        return {
+            "checkpoint_index": int(self.checkpoint_index),
+            "cross_track_error": float(self.cross_error),
+            "heading_error": float(self.heading_error),
+            "route_progress_m": float(self._route_progress_m),
+            "route_progress_ratio": float(self._route_progress_ratio),
+            "target_distance": float(self._distance_to_target()),
+            "speed": float(self.ship_speed),
+            "mdp_step_seconds": float(self.mdp_step_seconds),
+            "physics_wait_s": float(self.last_physics_wait_s),
+            "step_latency_s": float(self.last_step_latency_s),
+            "ue5_timestamp": int(self._last_ue5_timestamp),
+            "collision": bool(self._last_collision),
+            "pause_timeout": bool(self._last_pause_timeout),
+            "state_update_reliable": bool(self._state_update_reliable),
+            "repeated_state_count": int(self._repeated_state_count),
+            "guidance_assist_enabled": bool(self.guidance_assist_enabled),
+            "control_interface": str(self.control_interface),
+            "observation_profile": str(self.observation_profile),
+            "outcome": str(outcome),
+            "reward": float(reward),
+            "raw_reward": float(raw_reward),
+            "terminated": bool(terminated),
+            "truncated": bool(truncated),
+        }
+
+    def mark_explicit_reset_context(self, enabled: bool = True) -> None:
+        """Allow the next explicit reset to emit a respawn event."""
+        self._log_next_reset_event = bool(enabled)
+
+    def drain_run_events(self) -> list[dict[str, Any]]:
+        """Return and clear pending training run events."""
+        events = list(self._pending_run_events)
+        self._pending_run_events.clear()
+        return events
+
+    def get_training_export_snapshot(self) -> dict[str, Any]:
+        """Return a serializable route snapshot for training exports."""
+        return {
+            "route_points": self.route_points.astype(float).tolist(),
+            "checkpoints": [
+                {
+                    "index": int(index),
+                    "x": float(checkpoint["pos"][0]),
+                    "y": float(checkpoint["pos"][1]),
+                    "radius": float(checkpoint["radius"]),
+                    "reward": float(checkpoint["reward"]),
+                    "distance_m": float(checkpoint["distance_m"]),
+                    "progress_ratio": float(checkpoint["progress_ratio"]),
+                }
+                for index, checkpoint in enumerate(self.checkpoints)
+            ],
+            "overall": self.overall.astype(float).tolist(),
+            "obstacles": self.obstacles.astype(float).tolist(),
+            "initial_ship_pos": self.initial_ship_pos.astype(float).tolist(),
+            "target_pos": self.target_pos.astype(float).tolist(),
+            "captured_startup_pose_airsim": self._serialize_run_event_value(
+                self._captured_startup_pose_airsim
+            ),
+            "captured_startup_framework_heading_deg": (
+                None
+                if self._captured_startup_framework_heading is None
+                else float(math.degrees(self._captured_startup_framework_heading))
+            ),
+            "save_slot": self.save_slot,
+            "load_world_on_start": bool(self.load_world_on_start),
+            "capture_live_start_pose": bool(self.capture_live_start_pose),
+            "no_rendering_mode": bool(self.no_rendering_mode),
+            "simulation_speed": float(self.simulation_speed),
+            "reset_mode": str(self.reset_mode),
+        }
+
+    def _record_run_event(self, event_type: str, **fields: Any) -> None:
+        """Queue one structured training event for PPO-side export."""
+        event = {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "event_type": str(event_type),
+            "env_pid": int(os.getpid()),
+            "episode": int(self._episode_index),
+            "episode_step": int(self.step_count),
+            "checkpoint_index": int(self.checkpoint_index),
+            "route_progress_m": float(self._route_progress_m),
+            "route_progress_ratio": float(self._route_progress_ratio),
+            "cross_track_error": float(self.cross_error),
+            "ship_x": float(self.ship_pos[0]),
+            "ship_y": float(self.ship_pos[1]),
+            "heading_deg": float(math.degrees(self.ship_heading)),
+            "speed": float(self.ship_speed),
+        }
+        event.update(fields)
+        self._pending_run_events.append(self._serialize_run_event_value(event))
+
+    def _serialize_run_event_value(self, value: Any) -> Any:
+        """Convert nested event values into JSON-safe structures."""
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, dict):
+            return {
+                str(key): self._serialize_run_event_value(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [self._serialize_run_event_value(item) for item in value]
+        return str(value)
+
+    def _initial_curriculum_frontier(self, target_checkpoint: int | None) -> int:
+        """Resolve the initial curriculum frontier checkpoint."""
+        if not self.curriculum_enabled:
+            return len(self.checkpoints) - 2
+        if target_checkpoint is not None:
+            return min(max(int(target_checkpoint), 1), len(self.checkpoints) - 2)
+        return min(self.curriculum_window_size, len(self.checkpoints) - 2)
+
+    def _select_episode_start(self) -> tuple[int, np.ndarray]:
+        """Choose the episode start checkpoint and framework position."""
+        start_index = 0
+        if self.curriculum_enabled and self.training_mode and len(self.checkpoints) > 2:
+            window_end = min(self._curriculum_frontier_index, len(self.checkpoints) - 2)
+            window_start = max(0, window_end - self.curriculum_window_size + 1)
+            start_index = int(self._rng.integers(window_start, window_end + 1))
+
+        start_pos = self.checkpoints[start_index]["pos"].copy()
+        if self.curriculum_randomization_scale > 0.0:
+            start_pos = start_pos + self._rng.normal(
+                loc=0.0,
+                scale=self.curriculum_randomization_scale,
+                size=2,
+            ).astype(np.float32)
+        return start_index, start_pos.astype(np.float32)
+
+    def _select_episode_start_heading(self, start_index: int) -> float:
+        """Choose the reset heading for the selected episode start."""
+        if (
+            int(start_index) == 0
+            and self._captured_startup_framework_heading is not None
+            and self.curriculum_randomization_scale <= 0.0
+        ):
+            return float(self._captured_startup_framework_heading)
+        return self._route_heading_at_index(start_index)
+
+    def _update_curriculum_after_episode(self, success: bool) -> None:
+        """Expand the curriculum frontier after repeated success."""
+        if not self.curriculum_enabled:
             return
-
-        reached_master_checkpoint = int(
-            min(
-                self._curriculum_active_start_index + reached_checkpoint_count,
-                len(self._curriculum_reference_checkpoints) - 1,
-            )
-        )
-        self._curriculum_best_master_checkpoint = max(
-            self._curriculum_best_master_checkpoint,
-            reached_master_checkpoint,
-        )
-
-        success = bool(terminated and not truncated and termination_reason == "completed")
         if success:
             self._curriculum_success_streak += 1
         else:
             self._curriculum_success_streak = 0
 
-        total_targets = max(len(self._curriculum_reference_checkpoints) - 1, 1)
-        if (
-            self._curriculum_success_streak >= self._curriculum_success_patience
-            and self._curriculum_target_checkpoint < total_targets
-        ):
-            self._curriculum_target_checkpoint = min(
-                total_targets,
-                self._curriculum_target_checkpoint + self._curriculum_frontier_increment,
-            )
-            self._curriculum_window_size = min(
-                total_targets,
-                self._curriculum_window_size + self._curriculum_window_increment,
-            )
-            self._curriculum_success_streak = 0
-
-    def _draw_visualization(self) -> None:
-        """Draw a fallback trajectory overlay when no saved calibration exists."""
-        airsim = self._airsim
-
-        self.bridge.flush_persistent_markers()
-        time.sleep(0.2)
-
-        overlay_z = -60.0
-
-        # -- Polygon outline (green) --
-        csv_path = _ENVIRONMENTS_DIR / "env_Sche_no_scale.csv"
-        polygon = np.loadtxt(csv_path, delimiter=",", skiprows=1)
-
-        poly_points = []
-        for p in polygon[::2]:
-            ux, uy = self.coord.framework_to_airsim_2d(p[0], p[1])
-            poly_points.append(airsim.Vector3r(ux, uy, overlay_z))
-
-        chunk_size = 500
-        for i in range(0, len(poly_points), chunk_size - 1):
-            chunk = poly_points[i:i + chunk_size]
-            if len(chunk) > 1:
-                self.bridge.plot_line_strip(
-                    chunk,
-                    color_rgba=[0.65, 1.0, 0.65, 1.0],
-                    thickness=28.0,
-                    is_persistent=True,
-                )
-
-        # -- Trajectory (yellow) --
-        traj_csv = _ENVIRONMENTS_DIR / "trajectory_points_no_scale.csv"
-        traj_data = np.loadtxt(traj_csv, delimiter=",", skiprows=1)
-
-        distances = [np.linalg.norm(p - self.initial_ship_pos) for p in traj_data]
-        closest_idx = int(np.argmin(distances))
-        traj_data = traj_data[closest_idx:]
-
-        traj_points = []
-        for p in traj_data:
-            ux, uy = self.coord.framework_to_airsim_2d(p[0], p[1])
-            traj_points.append(airsim.Vector3r(ux, uy, overlay_z - 2.0))
-
-        for i in range(0, len(traj_points), chunk_size - 1):
-            chunk = traj_points[i:i + chunk_size]
-            if len(chunk) > 1:
-                self.bridge.plot_line_strip(
-                    chunk,
-                    color_rgba=[1.0, 1.0, 0.6, 1.0],
-                    thickness=36.0,
-                    is_persistent=True,
-                )
-
-        # -- Start (blue) and end (red) dots --
-        start_ux, start_uy = self.coord.framework_to_airsim_2d(
-            float(self.initial_ship_pos[0]), float(self.initial_ship_pos[1])
-        )
-        end_ux, end_uy = self.coord.framework_to_airsim_2d(
-            float(traj_data[-1][0]), float(traj_data[-1][1])
-        )
-
-        self.bridge.plot_points(
-            [airsim.Vector3r(start_ux, start_uy, -3.0)],
-            color_rgba=[0, 0, 1, 1],
-            size=30.0,
-            is_persistent=True,
-        )
-        self.bridge.plot_points(
-            [airsim.Vector3r(end_ux, end_uy, -3.0)],
-            color_rgba=[1, 0, 0, 1],
-            size=30.0,
-            is_persistent=True,
-        )
-
-        logger.info("Trajectory and polygon drawn in UE5.")
-
-    def _draw_live_debug_markers(self) -> None:
-        """Draw non-persistent ship and active-checkpoint markers in UE5."""
-        if self.no_rendering_mode:
+        if self._curriculum_success_streak < self.curriculum_success_patience:
             return
 
-        ax, ay = self.coord.framework_to_airsim_2d(
-            float(self.ship_pos[0]),
-            float(self.ship_pos[1]),
+        self._curriculum_success_streak = 0
+        self._curriculum_frontier_index = min(
+            len(self.checkpoints) - 2,
+            self._curriculum_frontier_index + self.curriculum_frontier_increment,
         )
-        self.bridge.plot_points(
-            [self._airsim.Vector3r(ax, ay, self._live_debug_z)],
-            color_rgba=[0.05, 0.85, 1.0, 1.0],
-            size=18.0,
-            is_persistent=False,
-        )
-
-        current_checkpoint = self._get_active_checkpoint()
-        cp_ax, cp_ay = self.coord.framework_to_airsim_2d(
-            float(current_checkpoint["pos"][0]),
-            float(current_checkpoint["pos"][1]),
-        )
-        self.bridge.plot_points(
-            [self._airsim.Vector3r(cp_ax, cp_ay, self._live_debug_z)],
-            color_rgba=[1.0, 0.65, 0.1, 1.0],
-            size=14.0,
-            is_persistent=False,
+        self.curriculum_window_size = min(
+            len(self.checkpoints) - 1,
+            self.curriculum_window_size + self.curriculum_window_increment,
         )
 
-        line_start, line_end = current_checkpoint["perpendicular_line"]
-        start_ax, start_ay = self.coord.framework_to_airsim_2d(
-            float(line_start[0]),
-            float(line_start[1]),
+    def _airsim_yaw_rate_to_framework(self, yaw_rate: float) -> float:
+        """Invert the yaw-rate sign convention used by the coordinate transform."""
+        sign = float(self.coord_transform.framework_yaw_rate_to_airsim(1.0))
+        return float(yaw_rate * sign)
+
+    def _build_route_points(self) -> np.ndarray:
+        """Load, trim, and densify the framework route used by AirSimEnv."""
+        raw_path = self._load_route_points(target_pos=self._requested_target_pos)
+        if len(raw_path) == 0:
+            raw_path = np.array(
+                [self.initial_ship_pos, self.target_pos],
+                dtype=np.float32,
+            )
+
+        start_index = int(
+            np.argmin(np.linalg.norm(raw_path - self.initial_ship_pos.reshape(1, 2), axis=1))
         )
-        end_ax, end_ay = self.coord.framework_to_airsim_2d(
-            float(line_end[0]),
-            float(line_end[1]),
+        trimmed = raw_path[start_index:].astype(np.float32)
+        if len(trimmed) == 0:
+            trimmed = raw_path.astype(np.float32)
+
+        if float(np.linalg.norm(trimmed[0] - self.initial_ship_pos)) > 1e-3:
+            trimmed = np.vstack([self.initial_ship_pos, trimmed]).astype(np.float32)
+
+        if self._requested_target_pos is not None and float(np.linalg.norm(trimmed[-1] - self._requested_target_pos)) > 1e-3:
+            trimmed = np.vstack([trimmed, self._requested_target_pos]).astype(np.float32)
+
+        dense = np.asarray(
+            create_checkpoints_from_simple_path(trimmed, _ROUTE_POINT_SPACING_M),
+            dtype=np.float32,
         )
-        self.bridge.plot_line_strip(
+        if len(dense) < 2:
+            dense = np.vstack([self.initial_ship_pos, self.target_pos]).astype(np.float32)
+        return dense
+
+    def _load_route_points(self, target_pos: Optional[np.ndarray] = None) -> np.ndarray:
+        """Load the route CSV used for AirSim training and inference."""
+        fallback_target = (
+            np.asarray(target_pos, dtype=np.float32)
+            if target_pos is not None
+            else np.asarray(DEFAULT_FRAMEWORK_TARGET_POS, dtype=np.float32)
+        )
+        fallback = np.vstack([self.initial_ship_pos, fallback_target]).astype(np.float32)
+        return _safe_load_csv(_DEFAULT_TRAJECTORY_CSV, fallback=fallback)
+
+    def _load_outline_points(self, path: Path) -> np.ndarray:
+        """Load an outline CSV used by framework plotting helpers."""
+        fallback = np.array(
             [
-                self._airsim.Vector3r(start_ax, start_ay, self._live_debug_z),
-                self._airsim.Vector3r(end_ax, end_ay, self._live_debug_z),
-            ],
-            color_rgba=[1.0, 0.45, 0.1, 1.0],
-            thickness=8.0,
-            is_persistent=False,
-        )
-
-    # -------------
-    # Observation space  (T-009)
-    # -------------
-    def _initialize_observation_space(self) -> gym.spaces.Box:
-        """Create the 12-dimensional observation space.
-
-        The layout is **identical** to ``PySimEnv`` so that policies
-        trained in either environment can be transferred directly.
-
-        Observation channels (all min-max normalised):
-            0. **surge velocity**  ``u / surge_max``          -> [-1, 1]
-            1. **sway  velocity**  ``v / sway_max``           -> [-1, 1]
-            2. **yaw rate**        ``r / yaw_rate_max``       -> [-1, 1]
-            3. **dist to current checkpoint** ``/ max_dist``  -> [ 0, 1]
-            4. **dist to next checkpoint**    ``/ max_dist``  -> [ 0, 1]
-            5. **signed cross-track error** ``/ (CP_DIST/2)`` -> [-2, 2]
-            6. **heading error  -> current CP** ``/ pi``        -> [-1, 1]
-            7. **heading error  -> next CP**    ``/ pi``        -> [-1, 1]
-            8. **heading error || current seg** ``/ pi``        -> [-1, 1]
-            9. **heading error || next seg**    ``/ pi``        -> [-1, 1]
-            10. **previous rudder angle** (critical for policy)-> [-1, 1]
-            11. **optimal LOS guidance heading** ``/ pi``        -> [-1, 1]
-
-        Returns:
-            A ``gym.spaces.Box`` with shape ``(12,)`` and dtype
-            ``float32``.
-        """
-        low = np.array([
-            -1.0,  # 0  surge velocity
-            -1.0,  # 1  sway velocity
-            -1.0,  # 2  yaw rate
-             0.0,  # 3  distance to current checkpoint
-             0.0,  # 4  distance to next checkpoint
-            -2.0,  # 5  cross-track error
-            -1.0,  # 6  heading error (to current)
-            -1.0,  # 7  heading error (to next)
-            -1.0,  # 8  heading error parallel (current)
-            -1.0,  # 9  heading error parallel (next)
-            -1.0,  # 10 previous rudder angle
-            -1.0,  # 11 optimal LOS guidance heading
-        ], dtype=np.float32)
-
-        high = np.array([
-            1.0, 1.0, 1.0,
-            1.0, 1.0,
-            2.0,
-            1.0, 1.0, 1.0, 1.0,
-            1.0,  # 10 previous rudder angle
-            1.0,  # 11 optimal LOS guidance heading
-        ], dtype=np.float32)
-
-        return gym.spaces.Box(low=low, high=high, dtype=np.float32)
-
-    # -------------
-    # AirSim state reading
-    # -------------
-    @staticmethod
-    def _extract_ue5_timestamp(car_state) -> Optional[int]:
-        """Return the UE5 state timestamp when available.
-
-        Args:
-            car_state: AirSim ``CarState`` object returned by ``getCarState``.
-
-        Returns:
-            The integer timestamp reported by UE5, or ``None`` when the field
-            is missing or not parseable.
-        """
-        timestamp = getattr(car_state, "timestamp", None)
-        if timestamp is None:
-            return None
-        try:
-            return int(timestamp)
-        except (TypeError, ValueError):
-            return None
-
-    def _wait_for_non_pause_state_update(
-        self,
-        previous_timestamp: Optional[int],
-        previous_pose_xy: Tuple[float, float],
-        previous_speed: float,
-        minimum_wait_s: float,
-    ):
-        """Wait for a fresh state while UE5 runs continuously.
-
-        Without this, very small wall-clock sleeps can sample the exact same
-        stale pose/state before UE5 has processed the latest controls.
-        """
-        started = time.monotonic()
-        latest_car_state = None
-
-        initial_wait = max(0.0, float(minimum_wait_s))
-        if initial_wait > 0.0:
-            time.sleep(initial_wait)
-
-        while True:
-            latest_car_state = self.bridge.get_car_state()
-            latest_pose = self.bridge.get_vehicle_pose()
-            current_timestamp = self._extract_ue5_timestamp(latest_car_state)
-            pose_dx = float(latest_pose.position.x_val) - float(previous_pose_xy[0])
-            pose_dy = float(latest_pose.position.y_val) - float(previous_pose_xy[1])
-            pose_delta = math.hypot(pose_dx, pose_dy)
-            speed_delta = abs(float(latest_car_state.speed) - float(previous_speed))
-
-            if previous_timestamp is not None and current_timestamp is not None:
-                if current_timestamp != previous_timestamp:
-                    break
-                if current_timestamp == 0:
-                    break
-
-            if pose_delta > 1e-3 or speed_delta > 1e-3:
-                break
-
-            if time.monotonic() - started >= self._physics_update_timeout:
-                logger.debug(
-                    "Continuous-mode state watchdog expired after %.3f s; reading latest state.",
-                    time.monotonic() - started,
-                )
-                break
-
-            time.sleep(self._state_poll_interval)
-
-        wait_time = time.monotonic() - started
-        if wait_time > self._latency_warning_threshold:
-            logger.warning(
-                "UE5 physics update latency %.3f s exceeded threshold %.3f s.",
-                wait_time,
-                self._latency_warning_threshold,
-            )
-        return latest_car_state, wait_time
-
-    def _read_airsim_state(self, car_state=None) -> None:
-        """Read vehicle state from UE5 and convert to the framework frame.
-
-        Queries ``simGetVehiclePose`` and ``getCarState`` from the
-        AirSim client, then maps AirSim NED coordinates -> framework
-        east/north via ``CoordTransform``.  Also derives the yaw rate
-        from consecutive headings.
-        """
-        pose = self.bridge.get_vehicle_pose()
-        if car_state is None:
-            car_state = self.bridge.get_car_state()
-
-        fx, fy = self.coord.airsim_to_framework(
-            pose.position.x_val, pose.position.y_val
-        )
-        self.ship_pos = np.array([fx, fy], dtype=np.float32)
-
-        airsim_yaw = _yaw_from_quaternion(pose.orientation)
-        self.ship_heading = self.coord.airsim_yaw_to_framework_heading(airsim_yaw)
-
-        self.ship_speed = min(car_state.speed, self.MAX_SPEED)
-        self.ship_u = self.ship_speed
-        self.ship_v = 0.0
-        heading_diff = _normalize_angle(self.ship_heading - self.previous_heading)
-        self.ship_r = heading_diff / max(self._last_sim_step_dt, EPSILON)
-        self._last_ue5_timestamp = self._extract_ue5_timestamp(car_state)
-
-    def _check_collision(self) -> bool:
-        """Check for collision via AirSim API.
-
-        Returns:
-            ``True`` if the vehicle has collided with any object.
-        """
-        info = self.bridge.get_collision_info()
-        return info.has_collided
-
-    # -------------
-    # Observation  (T-009)
-    # -------------
-    def _get_obs(self) -> np.ndarray:
-        """Build the 12-dim normalised observation vector.
-
-        All values are min-max normalised to match the ranges defined
-        in ``_initialize_observation_space`` so that a policy trained on
-        ``PySimEnv`` can be deployed here without any rescaling.
-
-        Normalisation strategy:
-            * **Velocities** - divided by the ship-spec hard limits and
-              clipped to [-1, 1].
-            * **Distances** - divided by the diagonal of the grid
-              (``max_dist``).
-            * **Cross-track error** - divided by half the checkpoint
-              spacing; sign encodes port/starboard.
-            * **Heading errors** - divided by pi.
-            * **Previous rudder angle** - directly from performed_action[0].
-            * **LOS guidance** - optimal heading error divided by pi.
-
-        Returns:
-            A ``np.float32`` array of shape ``(12,)`` clipped to
-            ``observation_space``.
-        """
-        norm_velocities = np.array([
-            np.clip(self.ship_u / self.ship_specs.surge_limits[1], -1, 1),
-            np.clip(self.ship_v / self.ship_specs.sway_limits[1], -1, 1),
-            np.clip(self.ship_r / self.ship_specs.yaw_rate_limits[1], -1, 1),
-        ], dtype=np.float32)
-
-        cur_idx = min(self.checkpoint_index, len(self.checkpoints) - 1)
-        prev_idx = max(0, cur_idx - 1)
-        next_idx = min(cur_idx + 1, len(self.checkpoints) - 1)
-
-        cur_pos = self.checkpoints[cur_idx]["pos"]
-        prev_pos = self.checkpoints[prev_idx]["pos"]
-        next_pos = self.checkpoints[next_idx]["pos"]
-
-        norm_distance = np.linalg.norm(self.ship_pos - cur_pos) / self.max_dist
-        norm_next_distance = np.linalg.norm(self.ship_pos - next_pos) / self.max_dist
-
-        cross_error = self._distance_from_point_to_line(
-            self.ship_pos, prev_pos, cur_pos
-        )
-        norm_cross_error = cross_error / (CHECKPOINTS_DISTANCE / 2.0)
-        track_vec = cur_pos - prev_pos
-        ship_vec = self.ship_pos - prev_pos
-        
-        # 2D cross product: x1*y2 - y1*x2
-        cross_2d = track_vec[0] * ship_vec[1] - track_vec[1] * ship_vec[0]
-        norm_cross_error *= 1.0 if cross_2d >= 0.0 else -1.0
-        self.cross_error = cross_error
-
-        heading_error = self._calc_heading_error(
-            _safe_heading_from_vector(cur_pos - self.ship_pos),
-            self.ship_heading, 0.0
-        )
-        heading_error2 = self._calc_heading_error(
-            _safe_heading_from_vector(next_pos - self.ship_pos),
-            self.ship_heading, 0.0
-        )
-        heading_error_parallel = self._calc_heading_error(
-            _safe_heading_from_vector(cur_pos - prev_pos),
-            self.ship_heading, 0.0
-        )
-        heading_error_parallel2 = self._calc_heading_error(
-            _safe_heading_from_vector(next_pos - prev_pos),
-            self.ship_heading, 0.0
-        )
-
-        # Compute optimal LOS guidance heading
-        los_heading = self._los_guidance_heading()
-        los_heading_error = self._calc_heading_error(
-            los_heading, self.ship_heading, 0.0
-        )
-
-        obs = np.array([
-            norm_velocities[0],
-            norm_velocities[1],
-            norm_velocities[2],
-            norm_distance,
-            norm_next_distance,
-            norm_cross_error,
-            heading_error / np.pi,
-            heading_error2 / np.pi,
-            heading_error_parallel / np.pi,
-            heading_error_parallel2 / np.pi,
-            self.performed_action[0],  # Previous rudder angle (CRITICAL)
-            los_heading_error / np.pi,  # Optimal LOS guidance heading
-        ], dtype=np.float32)
-
-        # Safety clamp: guarantee the vector lies inside observation_space.
-        return np.clip(obs, self.observation_space.low, self.observation_space.high)
-
-    # -------------
-    # Step & Reset
-    # -------------
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
-        """Execute one RL step in UE5.
-
-        Applies the action through the actuator model, advances the
-        UE5 simulation, reads back the vehicle state, and computes
-        the reward.
-
-        Args:
-            action: Array of shape ``(2,)`` containing
-                ``[steering, throttle]`` each in ``[-1, 1]``.
-
-        Returns:
-            A tuple ``(observation, reward, terminated, truncated, info)``
-            where *info* contains ``cross_track_error`` and
-            ``checkpoint_index``.
-
-        Raises:
-            ValueError: If *action* does not have shape ``(2,)``.
-        """
-        self._ensure_episode_started()
-        step_started = time.monotonic()
-        policy_action = validate_policy_action(action, action_name="AirSimEnv.step action")
-        guided_action = self._apply_guidance_residual_policy(policy_action)
-        action = self._apply_turn_action_governor(guided_action)
-        self.last_command_action = np.asarray(action, dtype=np.float32).copy()
-        effective_pause_stepping = self.use_pause_stepping and not self._force_continuous_stepping
-        sim_step_dt = (
-            self._sim_time_per_action
-            if effective_pause_stepping and self._use_sim_time_stepping
-            else self.time_step
-        )
-        self._last_sim_step_dt = max(float(sim_step_dt), EPSILON)
-
-        self.previous_ship_pos = self.ship_pos.copy()
-        self.previous_heading = self.ship_heading
-        self.previous_speed = float(self.ship_speed)
-        self.previous_action = self.performed_action.copy()
-
-        command = ActionMapper.map(action, self.ship_specs)
-        actuator = self._actuators.step(
-            command,
-            dt=self._last_sim_step_dt,
-            enable_smoothing=self.enable_smoothing,
-        )
-        controls = map_framework_actuator_state(
-            self._airsim,
-            self.ship_specs,
-            rudder_angle=float(actuator.rudder_angle),
-            thrust=float(actuator.thrust),
-        )
-        self.last_controls = {
-            "steering": float(controls.steering),
-            "throttle": float(controls.throttle),
-            "brake": float(controls.brake),
-        }
-
-        if effective_pause_stepping:
-            # When the sim is paused, setCarControls blocks indefinitely waiting
-            # for a physics-thread acknowledgement that never arrives.
-            # Fix: unpause first so the RPC returns immediately, then
-            # simContinueForFrames schedules N frames and auto-pauses the sim.
-            # simContinueForFrames is NON-blocking: poll simIsPause() to know
-            # when UE5 has finished those N frames and re-paused.
-            _pause_wait_started = time.monotonic()
-            pause_watchdog_expired = False
-            self.bridge.set_pause(False)
-            self.bridge.set_controls(controls)
-            if self._use_sim_time_stepping and hasattr(self.bridge, "continue_for_time"):
-                self.bridge.continue_for_time(self._last_sim_step_dt)
-            else:
-                self.bridge.continue_for_frames(self.frames_per_step)
-            while not self.bridge.is_paused():
-                if time.monotonic() - _pause_wait_started >= self._physics_update_timeout:
-                    message = "Pause watchdog expired after %.3f s; reading latest state."
-                    if self._log_pause_watchdog_warnings:
-                        logger.warning(
-                            message,
-                            time.monotonic() - _pause_wait_started,
-                        )
-                    else:
-                        logger.debug(
-                            message,
-                            time.monotonic() - _pause_wait_started,
-                        )
-                    pause_watchdog_expired = True
-                    break
-                time.sleep(self._state_poll_interval)
-            car_state = self.bridge.get_car_state()
-            physics_wait_s = time.monotonic() - _pause_wait_started
-            if pause_watchdog_expired and self.no_rendering_mode:
-                self._headless_watchdog_hits += 1
-                if self._headless_watchdog_hits >= HEADLESS_WATCHDOG_FALLBACK_PATIENCE:
-                    self._force_continuous_stepping = True
-                    self.bridge.set_pause(False)
-                    logger.warning(
-                        "Headless pause stepping stalled repeatedly; falling back to continuous stepping."
-                    )
-            else:
-                self._headless_watchdog_hits = 0
-        else:
-            previous_timestamp = self._last_ue5_timestamp
-            previous_pose = self.bridge.get_vehicle_pose()
-            previous_pose_xy = (
-                float(previous_pose.position.x_val),
-                float(previous_pose.position.y_val),
-            )
-            previous_speed = float(self.ship_speed)
-            self.bridge.set_pause(False)
-            self.bridge.set_controls(controls)
-            real_time_step = self.time_step / max(float(self._simulation_speed), EPSILON)
-            car_state, physics_wait_s = self._wait_for_non_pause_state_update(
-                previous_timestamp=previous_timestamp,
-                previous_pose_xy=previous_pose_xy,
-                previous_speed=previous_speed,
-                minimum_wait_s=real_time_step,
-            )
-            self._headless_watchdog_hits = 0
-
-        self._read_airsim_state(car_state=car_state)
-        self._draw_live_debug_markers()
-        self.performed_action = self._actuators.current_actuator_state.copy()
-        self.step_count += 1
-        self.episode_step_count += 1
-        self.last_physics_wait_s = float(physics_wait_s)
-        self.last_step_latency_s = float(time.monotonic() - step_started)
-
-        reward, terminated, termination_reason = self._calculate_reward()
-        current_checkpoint = self._get_active_checkpoint()
-
-        # T-012: log per-step telemetry to episode CSV
-        self._write_episode_log_row(reward)
-
-        truncated = False
-        if self.episode_step_count >= self.max_steps and not terminated:
-            reward = -250.0
-            truncated = True
-
-        total_checkpoints = max(len(self.checkpoints) - 1, 1)
-        reached_checkpoint_count = min(max(self.checkpoint_index - 1, 0), total_checkpoints)
-        if terminated or truncated:
-            self._record_curriculum_result(
-                terminated=bool(terminated),
-                truncated=bool(truncated),
-                termination_reason=str(termination_reason),
-                reached_checkpoint_count=int(reached_checkpoint_count),
-            )
-
-        # T-012: expose cross-track error and checkpoint progress
-        info = {
-            "episode_step": int(self.episode_step_count),
-            "checkpoint_step": int(self.step_count),
-            "cross_track_error": float(self.cross_error),
-            "checkpoint_index": int(self.checkpoint_index),
-            "reached_checkpoint_count": int(reached_checkpoint_count),
-            "total_checkpoints": int(total_checkpoints),
-            "checkpoint_fraction": float(reached_checkpoint_count / max(total_checkpoints, 1)),
-            "physics_wait_s": float(self.last_physics_wait_s),
-            "step_latency_s": float(self.last_step_latency_s),
-            "ue5_timestamp": int(self._last_ue5_timestamp or 0),
-            "current_checkpoint_pos": current_checkpoint["pos"].astype(np.float32).copy(),
-            "current_checkpoint_airsim_3d": current_checkpoint["pos_airsim_3d"].astype(np.float32).copy(),
-            "current_checkpoint_distance": float(
-                np.linalg.norm(self.ship_pos - current_checkpoint["pos"])
-            ),
-            "raw_progress": float(self._last_raw_progress),
-            "low_speed_steps": int(self._low_speed_steps),
-            "stalled_progress_steps": int(self._stalled_progress_steps),
-            "high_cross_track_steps": int(self._high_cross_track_steps),
-            "hard_stop_steps": int(self._hard_stop_steps),
-            "obstacle_contact_steps": int(self._obstacle_contact_steps),
-            "checkpoint_stagnation_steps": int(self._checkpoint_stagnation_steps),
-            "collision": bool(self._collision_latched),
-            "completed": bool(termination_reason == "completed"),
-            "termination_reason": str(termination_reason),
-            "curriculum_enabled": bool(self._curriculum_enabled),
-            "curriculum_active_start_checkpoint": int(self._curriculum_active_start_index),
-            "curriculum_active_end_checkpoint": int(self._curriculum_active_end_index),
-            "curriculum_target_checkpoint": int(self._curriculum_target_checkpoint),
-            "curriculum_success_streak": int(self._curriculum_success_streak),
-            "policy_action": self.last_policy_action.astype(np.float32).copy(),
-            "guidance_action": self.last_guidance_action.astype(np.float32).copy(),
-            "command_action": self.last_command_action.astype(np.float32).copy(),
-            "rewards": float(reward),
-            "terminations": bool(terminated),
-            "truncations": bool(truncated),
-        }
-
-        self._emit_progress_heartbeat(
-            reward=float(reward),
-            terminated=bool(terminated),
-            truncated=bool(truncated),
-            termination_reason=str(termination_reason),
-        )
-
-        return self._get_obs(), float(reward), bool(terminated), bool(truncated), info
-
-    def reset(self, seed: Optional[int] = None, **kwargs) -> Tuple[np.ndarray, Dict]:
-        """Reset the UE5 environment for a new episode.
-
-        Resets the AirSim vehicle, re-pauses the simulation (if
-        ``use_pause_stepping``), and teleports the ship back to the
-        initial framework position.
-
-        Args:
-            seed: Optional RNG seed for reproducibility.
-            **kwargs: Forwarded to ``gym.Env.reset``.
-
-        Returns:
-            A tuple ``(observation, info)``.
-        """
-        if seed is not None:
-            super().reset(seed=seed)
-
-        if self._curriculum_enabled and self._curriculum_active_end_index == 0:
-            self.randomize(randomization_scale=self.randomization_scale)
-
-        self.bridge.reset()
-
-        if self.use_pause_stepping:
-            self.bridge.set_pause(True)
-        else:
-            self.bridge.set_pause(False)
-
-        self.ship_pos = self.initial_ship_pos.copy()
-        self.previous_ship_pos = self.initial_ship_pos.copy()
-        self.previous_heading = 0.0
-        self.ship_heading = 0.0
-        self.ship_speed = 0.0
-        self.previous_speed = 0.0
-        self.ship_u = 0.0
-        self.ship_v = 0.0
-        self.ship_r = 0.0
-        self._actuators.reset()
-        self.performed_action = np.zeros(2, dtype=np.float32)
-        self.last_policy_action = np.zeros(2, dtype=np.float32)
-        self.last_guidance_action = np.zeros(2, dtype=np.float32)
-        self.last_command_action = np.zeros(2, dtype=np.float32)
-        self.last_controls = {"steering": 0.0, "throttle": 0.0, "brake": 0.0}
-        self.checkpoint_index = 1
-        self.cross_error = 0.0
-        self.step_count = 0
-        self.episode_step_count = 0
-        self._low_speed_steps = 0
-        self._stalled_progress_steps = 0
-        self._high_cross_track_steps = 0
-        self._hard_stop_steps = 0
-        self._obstacle_contact_steps = 0
-        self._collision_latched = False
-        self._headless_watchdog_hits = 0
-        self._best_checkpoint_distance = float("inf")
-        self._checkpoint_stagnation_steps = 0
-        self._last_raw_progress = 0.0
-        self.previous_action = np.zeros(2, dtype=np.float32)
-        self._episode_started = False
-
-        initial_heading = 0.0
-        if len(self.checkpoints) > self.checkpoint_index:
-            direction = self.checkpoints[self.checkpoint_index]["pos"] - self.ship_pos
-            initial_heading = _normalize_angle(_safe_heading_from_vector(direction))
-        self.ship_heading = initial_heading
-
-        current_pose = self.bridge.get_vehicle_pose()
-        current_z = current_pose.position.z_val
-
-        start_ax, start_ay, _ = self.coord.framework_to_airsim(
-            float(self.initial_ship_pos[0]),
-            float(self.initial_ship_pos[1]),
-        )
-        initial_yaw = self.coord.framework_heading_to_airsim_yaw(initial_heading)
-        pose = self._airsim.Pose(
-            self._airsim.Vector3r(start_ax, start_ay, current_z),
-            self._airsim.Quaternionr(0, 0, math.sin(initial_yaw / 2), math.cos(initial_yaw / 2)),
-        )
-        self.bridge.set_vehicle_pose(pose, ignore_collision=True)
-        time.sleep(0.2)
-
-        self._read_airsim_state()
-        self._draw_live_debug_markers()
-
-        if self.verbose:
-            logger.debug(
-                "Reset - ship at (%.0f, %.0f), heading %.1f deg",
-                self.ship_pos[0], self.ship_pos[1],
-                math.degrees(self.ship_heading),
-            )
-
-        return self._get_obs(), {}
-
-    def close(self) -> None:
-        """Disconnect from AirSim and restore real-time simulation speed.
-
-        Safe to call multiple times.  Resets the simulation speed to 1.0
-        (real-time) before disconnecting so UE5 is left in a usable state.
-        """
-        try:
-            self.bridge.flush_persistent_markers()
-            self.bridge.set_vehicle_pose(self._spawn_pose, ignore_collision=True)
-            self.bridge.set_rendering_enabled(True, force=True)
-            self.bridge.set_simulation_speed(1.0)
-
-            if self.use_pause_stepping:
-                self.bridge.set_pause(False)
-
-            self.bridge.disconnect()
-            logger.info("Vehicle reset to spawn, simulation speed restored to 1.0x.")
-        except Exception as e:
-            logger.warning("Error during AirSimEnv.close(): %s", e)
-        finally:
-            # T-012: always flush and close episode log on env teardown
-            self._close_episode_log()
-
-    # -------------
-    # Reward and termination tuning for UE5 training
-    # -------------
-    def _update_stuck_trackers(
-        self,
-        raw_progress: float,
-        cross_track_error: float,
-        checkpoint_distance: float,
-    ) -> None:
-        """Track persistent low-speed, no-progress, and off-track behavior."""
-        if abs(float(self.ship_speed)) <= LOW_SPEED_THRESHOLD_MPS:
-            self._low_speed_steps += 1
-        else:
-            self._low_speed_steps = 0
-
-        if float(raw_progress) <= MIN_PROGRESS_STEP_M:
-            self._stalled_progress_steps += 1
-        else:
-            self._stalled_progress_steps = 0
-
-        if float(cross_track_error) >= HIGH_CROSS_TRACK_PENALTY_START:
-            self._high_cross_track_steps += 1
-        else:
-            self._high_cross_track_steps = 0
-
-        throttle = abs(float(self.last_controls.get("throttle", 0.0)))
-        collision_like_stop = (
-            float(self.previous_speed) >= COLLISION_LIKE_PREVIOUS_SPEED_MPS
-            and float(self.ship_speed) <= COLLISION_LIKE_STOP_SPEED_MPS
-            and throttle >= COLLISION_LIKE_STOP_MIN_THROTTLE
-        )
-        if collision_like_stop:
-            self._hard_stop_steps += 1
-        else:
-            self._hard_stop_steps = 0
-
-        obstacle_contact = (
-            throttle >= OBSTACLE_CONTACT_MIN_THROTTLE
-            and float(raw_progress) <= OBSTACLE_CONTACT_MAX_PROGRESS_M
-            and (
-                float(self.ship_speed) <= OBSTACLE_CONTACT_LOW_SPEED_MPS
-                or (float(self.previous_speed) - float(self.ship_speed)) >= OBSTACLE_CONTACT_SPEED_DROP_MPS
-            )
-            and float(cross_track_error) >= OBSTACLE_CONTACT_MIN_CROSS_TRACK_M
-        )
-        if obstacle_contact:
-            self._obstacle_contact_steps += 1
-        else:
-            self._obstacle_contact_steps = 0
-
-        if checkpoint_distance + CHECKPOINT_PROGRESS_IMPROVEMENT_EPSILON_M < self._best_checkpoint_distance:
-            self._best_checkpoint_distance = float(checkpoint_distance)
-            self._checkpoint_stagnation_steps = 0
-        else:
-            self._checkpoint_stagnation_steps += 1
-
-    def _compute_turn_guidance(
-        self,
-        ship_pos: np.ndarray,
-        ship_heading: float,
-        cross_track_error: Optional[float] = None,
-    ) -> Dict[str, float]:
-        """Estimate local turn severity and a safer speed/steering target."""
-        cp_idx = min(self.checkpoint_index, len(self.checkpoints) - 1)
-        prev_idx = max(0, cp_idx - 1)
-        prev_pos = self.checkpoints[prev_idx]["pos"]
-        current_cp = self.checkpoints[cp_idx]
-        cur_pos = current_cp["pos"]
-
-        path_vec = cur_pos - prev_pos
-        path_length = max(np.linalg.norm(path_vec), EPSILON)
-        path_unit = path_vec / path_length
-        cp_dist = float(np.linalg.norm(ship_pos - cur_pos))
-        segment_progress = float(
-            np.clip(np.dot(ship_pos - prev_pos, path_unit) / path_length, 0.0, 1.0)
-        )
-        heading_error = self._calc_heading_error(
-            _safe_heading_from_vector(path_vec),
-            ship_heading,
-        )
-        checkpoint_heading_error = self._calc_heading_error(
-            _safe_heading_from_vector(cur_pos - ship_pos),
-            ship_heading,
-        )
-
-        if cross_track_error is None:
-            cross_track_error = float(
-                self._distance_from_point_to_line(ship_pos, prev_pos, cur_pos)
-            )
-
-        lookahead_mix = 0.0
-        turn_intensity = 0.0
-        if cp_idx < len(self.checkpoints) - 1:
-            next_pos = self.checkpoints[cp_idx + 1]["pos"]
-            next_vec = next_pos - cur_pos
-            next_length = np.linalg.norm(next_vec)
-            if next_length > EPSILON:
-                next_unit = next_vec / next_length
-                turn_intensity = float(
-                    np.clip(
-                        abs(
-                            self._calc_heading_error(
-                                _safe_heading_from_vector(next_unit),
-                                _safe_heading_from_vector(path_unit),
-                            )
-                        ) / (math.pi / 2.0),
-                        0.0,
-                        1.0,
-                    )
-                )
-                lookahead_mix = float(
-                    np.clip(
-                        (segment_progress - LOOKAHEAD_BLEND_START_PROGRESS)
-                        / max(
-                            LOOKAHEAD_BLEND_FULL_PROGRESS - LOOKAHEAD_BLEND_START_PROGRESS,
-                            EPSILON,
-                        ),
-                        0.0,
-                        1.0,
-                    )
-                )
-
-        recovery_mix = float(
-            np.clip(
-                (cross_track_error - OFFTRACK_RECOVERY_BLEND_START_M)
-                / max(OFFTRACK_RECOVERY_BLEND_FULL_M - OFFTRACK_RECOVERY_BLEND_START_M, EPSILON),
-                0.0,
-                1.0,
-            )
-        )
-        checkpoint_bearing_mix = float(
-            np.clip(max(recovery_mix, 1.0 - (cp_dist / path_length)), 0.0, 1.0)
-        )
-        turn_demand = float(
-            np.clip(
-                max(
-                    recovery_mix,
-                    checkpoint_bearing_mix * abs(float(checkpoint_heading_error)) / math.radians(30.0),
-                    lookahead_mix * (0.35 + turn_intensity),
-                    turn_intensity,
-                    abs(float(heading_error)) / math.radians(25.0),
-                ),
-                0.0,
-                1.5,
-            )
-        )
-        target_speed_mps = max(
-            MIN_TURN_TARGET_SPEED_MPS,
-            PY_SIM_TARGET_SPEED_MPS * (
-                1.0 - MAX_TURN_TARGET_SPEED_REDUCTION * min(turn_demand, 1.0)
-            ),
-        )
-        required_turn_steering = float(
-            np.clip(
-                BASE_REQUIRED_TURN_STEERING
-                + 0.12 * checkpoint_bearing_mix
-                + 0.14 * recovery_mix
-                + 0.20 * turn_intensity
-                + 0.06 * min(turn_demand, 1.0),
-                BASE_REQUIRED_TURN_STEERING,
-                MAX_REQUIRED_TURN_STEERING,
-            )
-        )
-        required_turn_action = float(
-            np.clip(
-                required_turn_steering / max(float(self.ship_specs.max_rudder_angle), EPSILON),
-                0.0,
-                1.0,
-            )
-        )
-
-        return {
-            "turn_demand": turn_demand,
-            "turn_intensity": turn_intensity,
-            "recovery_mix": recovery_mix,
-            "checkpoint_bearing_mix": checkpoint_bearing_mix,
-            "checkpoint_heading_error": float(checkpoint_heading_error),
-            "target_speed_mps": float(target_speed_mps),
-            "required_turn_action": required_turn_action,
-            "cross_track_error": float(cross_track_error),
-        }
-
-    def _apply_turn_action_governor(self, action: np.ndarray) -> np.ndarray:
-        """Reduce throttle and amplify steering when the live route geometry demands a real turn."""
-        if len(self.checkpoints) < 2:
-            return np.asarray(action, dtype=np.float32)
-
-        cp_idx = min(self.checkpoint_index, len(self.checkpoints) - 1)
-        prev_pos = self.checkpoints[max(0, cp_idx - 1)]["pos"]
-        cur_pos = self.checkpoints[cp_idx]["pos"]
-        cross_track_error = float(
-            self._distance_from_point_to_line(self.ship_pos, prev_pos, cur_pos)
-        )
-        guidance = self._compute_turn_guidance(
-            self.ship_pos,
-            self.ship_heading,
-            cross_track_error=cross_track_error,
-        )
-
-        governed = np.asarray(action, dtype=np.float32).copy()
-        turn_demand = float(guidance["turn_demand"])
-        if turn_demand < TURN_ACTION_GOVERNOR_START:
-            return governed
-
-        turn_fraction = float(
-            np.clip(
-                (turn_demand - TURN_ACTION_GOVERNOR_START)
-                / max(1.0 - TURN_ACTION_GOVERNOR_START, EPSILON),
-                0.0,
-                1.0,
-            )
-        )
-
-        steering_gain = 1.0 + (TURN_ACTION_MAX_STEERING_GAIN - 1.0) * turn_fraction
-        governed[0] = float(np.clip(governed[0] * steering_gain, -1.0, 1.0))
-
-        steering_floor = guidance["required_turn_action"] * turn_fraction
-        preferred_turn_sign = 0.0
-        if abs(float(governed[0])) >= 0.02:
-            preferred_turn_sign = float(np.sign(governed[0]))
-        elif abs(float(guidance["checkpoint_heading_error"])) >= TURN_ACTION_HEADING_INJECTION_DEAD_ZONE_RAD:
-            preferred_turn_sign = float(np.sign(guidance["checkpoint_heading_error"]))
-        elif abs(float(self.previous_action[0])) >= 0.02:
-            preferred_turn_sign = float(np.sign(self.previous_action[0]))
-
-        if preferred_turn_sign != 0.0 and steering_floor > 0.0:
-            governed[0] = float(
-                np.clip(
-                    preferred_turn_sign * max(abs(float(governed[0])), steering_floor),
-                    -1.0,
-                    1.0,
-                )
-            )
-
-        if governed[1] > 0.0:
-            speed_scale = float(
-                np.clip(
-                    guidance["target_speed_mps"] / max(float(self.MAX_SPEED), EPSILON),
-                    0.25,
-                    1.0,
-                )
-            )
-            offtrack_scale = 1.0 - TURN_ACTION_OFFTRACK_THROTTLE_SCALE * float(
-                np.clip(
-                    (cross_track_error - OFFTRACK_RECOVERY_BLEND_START_M)
-                    / max(OFFTRACK_RECOVERY_BLEND_FULL_M - OFFTRACK_RECOVERY_BLEND_START_M, EPSILON),
-                    0.0,
-                    1.0,
-                )
-            )
-            governed[1] = float(
-                np.clip(governed[1] * min(speed_scale, offtrack_scale), -1.0, 1.0)
-            )
-
-        return governed.astype(np.float32, copy=False)
-
-    def _apply_guidance_residual_policy(self, policy_action: np.ndarray) -> np.ndarray:
-        """Blend a deterministic path-following baseline with the policy residual.
-
-        This makes training substantially more stable on the long 86-checkpoint
-        route: the baseline keeps the vessel near the path while PPO learns
-        higher-quality corrections.
-        """
-        policy_action = np.asarray(policy_action, dtype=np.float32)
-        self.last_policy_action = policy_action.copy()
-
-        if not self._guidance_assist_enabled or len(self.checkpoints) < 2:
-            self.last_guidance_action = np.zeros(2, dtype=np.float32)
-            return policy_action
-
-        cp_idx = min(self.checkpoint_index, len(self.checkpoints) - 1)
-        prev_pos = self.checkpoints[max(0, cp_idx - 1)]["pos"]
-        cur_pos = self.checkpoints[cp_idx]["pos"]
-        cross_track_error = float(
-            self._distance_from_point_to_line(self.ship_pos, prev_pos, cur_pos)
-        )
-        guidance = self._compute_turn_guidance(
-            self.ship_pos,
-            self.ship_heading,
-            cross_track_error=cross_track_error,
-        )
-
-        los_heading = self._los_guidance_heading()
-        los_heading_error = self._calc_heading_error(los_heading, self.ship_heading)
-        yaw_rate_limit = max(float(self.ship_specs.yaw_rate_limits[1]), EPSILON)
-        yaw_rate_ratio = float(np.clip(self.ship_r / yaw_rate_limit, -2.0, 2.0))
-        max_rudder_angle = max(float(self.ship_specs.max_rudder_angle), EPSILON)
-
-        base_steering = float(
-            np.clip(
-                (GUIDANCE_STEERING_KP * float(los_heading_error) / max_rudder_angle)
-                - (GUIDANCE_STEERING_KD * yaw_rate_ratio),
-                -1.0,
-                1.0,
-            )
-        )
-
-        target_speed = float(
-            np.clip(
-                guidance["target_speed_mps"],
-                MIN_TURN_TARGET_SPEED_MPS,
-                PY_SIM_TARGET_SPEED_MPS,
-            )
-        )
-        offtrack_mix = float(
-            np.clip(
-                (cross_track_error - GUIDANCE_OFFTRACK_SLOWDOWN_START_M)
-                / max(
-                    GUIDANCE_OFFTRACK_SLOWDOWN_FULL_M - GUIDANCE_OFFTRACK_SLOWDOWN_START_M,
-                    EPSILON,
-                ),
-                0.0,
-                1.0,
-            )
-        )
-        target_speed *= 1.0 - 0.6 * offtrack_mix
-        speed_error = target_speed - float(self.ship_speed)
-        base_throttle = float(
-            np.clip(
-                (GUIDANCE_THROTTLE_KP * speed_error) / max(float(self.MAX_SPEED), EPSILON),
-                GUIDANCE_MAX_REVERSE_THROTTLE,
-                1.0,
-            )
-        )
-        base_throttle *= 1.0 - 0.35 * abs(base_steering)
-        if float(self.ship_speed) < 0.35 and abs(float(los_heading_error)) < math.radians(35.0):
-            base_throttle = max(base_throttle, GUIDANCE_MIN_FORWARD_THROTTLE)
-
-        guidance_action = np.array([base_steering, base_throttle], dtype=np.float32)
-        self.last_guidance_action = guidance_action.copy()
-
-        blended = np.array(
-            [
-                guidance_action[0] + (policy_action[0] * self._guidance_residual_steering_scale),
-                guidance_action[1] + (policy_action[1] * self._guidance_residual_throttle_scale),
+                [self.initial_ship_pos[0] - 1000.0, self.initial_ship_pos[1] - 1000.0],
+                [self.initial_ship_pos[0] + 1000.0, self.initial_ship_pos[1] - 1000.0],
+                [self.initial_ship_pos[0] + 1000.0, self.initial_ship_pos[1] + 1000.0],
+                [self.initial_ship_pos[0] - 1000.0, self.initial_ship_pos[1] + 1000.0],
             ],
             dtype=np.float32,
         )
-        blended = np.clip(blended, -1.0, 1.0)
-
-        if guidance["turn_demand"] >= 0.65:
-            preferred_turn_sign = float(np.sign(guidance["checkpoint_heading_error"]))
-            if preferred_turn_sign != 0.0 and abs(float(blended[0])) < 0.12:
-                blended[0] = float(
-                    np.clip(
-                        preferred_turn_sign * max(0.12, abs(float(guidance_action[0]))),
-                        -1.0,
-                        1.0,
-                    )
-                )
-
-        return blended.astype(np.float32, copy=False)
-
-    def _calculate_reward(self) -> Tuple[float, bool, str]:
-        """Compute dense full-route reward for stable no-curriculum training."""
-        if self.checkpoint_index >= len(self.checkpoints):
-            return 200.0, True, "completed"
-
-        prev_idx = max(0, self.checkpoint_index - 1)
-        prev_pos = self.checkpoints[prev_idx]["pos"]
-        current_cp = self.checkpoints[self.checkpoint_index]
-        cur_pos = current_cp["pos"]
-
-        path_vec = cur_pos - prev_pos
-        path_length = max(np.linalg.norm(path_vec), EPSILON)
-        path_unit = path_vec / path_length
-
-        rel_prev = self.previous_ship_pos - prev_pos
-        rel_now = self.ship_pos - prev_pos
-        proj_prev = float(np.dot(rel_prev, path_unit))
-        proj_now = float(np.dot(rel_now, path_unit))
-        raw_progress = proj_now - proj_prev
-        self._last_raw_progress = float(raw_progress)
-        route_progress = float(self.checkpoint_index / max(len(self.checkpoints) - 1, 1))
-
-        cp_dist = float(np.linalg.norm(self.ship_pos - cur_pos))
-        prev_cp_dist = float(np.linalg.norm(self.previous_ship_pos - cur_pos))
-
-        cross_track_error = float(
-            self._distance_from_point_to_line(self.ship_pos, prev_pos, cur_pos)
-        )
-        prev_cross_track_error = float(
-            self._distance_from_point_to_line(self.previous_ship_pos, prev_pos, cur_pos)
-        )
-        self.cross_error = cross_track_error
-
-        los_heading = self._los_guidance_heading()
-        los_heading_prev = _safe_heading_from_vector(cur_pos - self.previous_ship_pos)
-        los_heading_error = self._calc_heading_error(los_heading, self.ship_heading)
-        prev_los_heading_error = self._calc_heading_error(
-            los_heading_prev,
-            self.previous_heading,
-        )
-
-        guidance = self._compute_turn_guidance(
-            self.ship_pos,
-            self.ship_heading,
-            cross_track_error=cross_track_error,
-        )
-        target_speed_mps = max(float(guidance["target_speed_mps"]), MIN_TURN_TARGET_SPEED_MPS)
-
-        self._update_stuck_trackers(raw_progress, cross_track_error, cp_dist)
-
-        progress_reward = float(np.clip(raw_progress / 2.2, -2.5, 2.5))
-        checkpoint_approach_reward = float(
-            np.clip((prev_cp_dist - cp_dist) / 4.0, -2.0, 2.0)
-        )
-        cross_track_convergence_reward = float(
-            np.clip((prev_cross_track_error - cross_track_error) / 3.5, -2.0, 2.0)
-        )
-        heading_alignment_reward = float(math.cos(float(los_heading_error)))
-        heading_convergence_reward = float(
-            np.clip(
-                (abs(float(prev_los_heading_error)) - abs(float(los_heading_error)))
-                / max(math.radians(8.0), EPSILON),
-                -2.0,
-                2.0,
-            )
-        )
-        centerline_bonus = float(
-            math.exp(-((cross_track_error / max(CENTERLINE_BONUS_WIDTH_M, EPSILON)) ** 2))
-        )
-        cross_track_scale = 1.0 + 0.7 * route_progress
-        cross_track_penalty = float(
-            -cross_track_scale * np.clip(cross_track_error / 180.0, 0.0, 3.0)
-        )
-
-        speed_excess = max(float(self.ship_speed) - target_speed_mps, 0.0) / max(
-            target_speed_mps,
-            EPSILON,
-        )
-        speed_shortfall = max(target_speed_mps - float(self.ship_speed), 0.0) / max(
-            target_speed_mps,
-            EPSILON,
-        )
-        overspeed_penalty = -(
-            (0.35 + 0.65 * float(guidance["turn_demand"])) * speed_excess
-        )
-        heading_slowdown_penalty = -(
-            0.25
-            * speed_shortfall
-            * float(np.clip(abs(float(los_heading_error)) / math.radians(45.0), 0.0, 1.0))
-        )
-
-        rudder_delta = abs(float(self.performed_action[0]) - float(self.previous_action[0]))
-        max_rudder_delta = float(self.ship_specs.max_rudder_rate) * max(
-            self._last_sim_step_dt,
-            EPSILON,
-        )
-        rudder_smooth_penalty = float(
-            -0.10 * np.clip(rudder_delta / max(max_rudder_delta, EPSILON), 0.0, 1.5)
-        )
-        rudder_magnitude_penalty = float(
-            -0.08 * min(abs(float(self.performed_action[0])) ** 2, 1.0)
-        )
-
-        throttle_mag = abs(float(self.last_controls.get("throttle", 0.0)))
-        heading_throttle_penalty = float(
-            -0.25
-            * throttle_mag
-            * np.clip(abs(float(los_heading_error)) / math.radians(35.0), 0.0, 1.5)
-        )
-        offtrack_throttle_penalty = float(
-            -0.55
-            * throttle_mag
-            * np.clip((cross_track_error - 90.0) / 120.0, 0.0, 2.0)
-        )
-        turn_demand = float(guidance["turn_demand"])
-        required_turn_action = max(float(guidance["required_turn_action"]), 0.10)
-        steering_mag = abs(float(self.performed_action[0]))
-        understeer_penalty = float(
-            -1.0
-            * max(0.0, turn_demand - 0.2)
-            * np.clip((required_turn_action - steering_mag) / required_turn_action, 0.0, 1.0)
-        )
-        persistence_penalty = float(
-            -0.35
-            * min(
-                self._high_cross_track_steps / max(HIGH_CROSS_TRACK_TIME_PENALTY_PATIENCE, 1),
-                2.0,
-            )
-        )
-        wrong_way_penalty = -0.75 if raw_progress < -0.05 else 0.0
-
-        reward = (
-            0.35
-            + 0.90 * progress_reward
-            + 0.50 * checkpoint_approach_reward
-            + 0.35 * cross_track_convergence_reward
-            + 0.30 * heading_alignment_reward
-            + 0.25 * heading_convergence_reward
-            + 0.20 * centerline_bonus
-            + cross_track_penalty
-            + overspeed_penalty
-            + heading_slowdown_penalty
-            + rudder_smooth_penalty
-            + rudder_magnitude_penalty
-            + heading_throttle_penalty
-            + offtrack_throttle_penalty
-            + understeer_penalty
-            + persistence_penalty
-            + wrong_way_penalty
-        )
-        if cp_dist <= current_cp["radius"]:
-            reward += self._checkpoint_entry_reward(self.checkpoint_index)
-            if self.checkpoint_index == len(self.checkpoints) - 1:
-                logger.info("Target REACHED at distance %.2f", cp_dist)
-            self.checkpoint_index += 1
-            self.step_count = 0
-            self._low_speed_steps = 0
-            self._stalled_progress_steps = 0
-            self._high_cross_track_steps = 0
-            self._hard_stop_steps = 0
-            self._obstacle_contact_steps = 0
-            self._best_checkpoint_distance = float("inf")
-            self._checkpoint_stagnation_steps = 0
-        elif self._is_near_perpendicular_line(current_cp):
-            reward += self._checkpoint_entry_reward(self.checkpoint_index)
-            self.checkpoint_index += 1
-            self.step_count = 0
-            self._low_speed_steps = 0
-            self._stalled_progress_steps = 0
-            self._high_cross_track_steps = 0
-            self._hard_stop_steps = 0
-            self._obstacle_contact_steps = 0
-            self._best_checkpoint_distance = float("inf")
-            self._checkpoint_stagnation_steps = 0
-
-        done = False
-        termination_reason = ""
-
-        collision = self._check_collision()
-        self._collision_latched = self._collision_latched or bool(collision)
-        out_of_water = not self._ship_in_open_water(self.ship_pos)
-        cross_track_limit = min(380.0, CROSS_TRACK_TERMINATION_MULTIPLIER * CHECKPOINTS_DISTANCE)
-        checkpoint_stagnation = (
-            self._checkpoint_stagnation_steps >= CHECKPOINT_STAGNATION_PATIENCE_STEPS
-            and cp_dist > CHECKPOINT_STAGNATION_MIN_DISTANCE_M
-        )
-        collision_like_stop = (
-            self._hard_stop_steps >= COLLISION_LIKE_STOP_PATIENCE_STEPS
-            and cp_dist > max(float(current_cp["radius"]) * 3.0, 20.0)
-        )
-        obstacle_contact_stall = (
-            self._obstacle_contact_steps >= OBSTACLE_CONTACT_PATIENCE_STEPS
-            and cp_dist > max(float(current_cp["radius"]) * 2.0, 20.0)
-        )
-        low_speed_stall = (
-            self._low_speed_steps >= LOW_SPEED_PATIENCE_STEPS
-            and cp_dist > max(float(current_cp["radius"]) * 2.0, 20.0)
-        )
-        no_progress_stall = (
-            self._stalled_progress_steps >= NO_PROGRESS_PATIENCE_STEPS
-            and cp_dist > max(float(current_cp["radius"]) * 1.5, 20.0)
-        )
-
-        termination_conditions = {
-            "collision": bool(self._collision_latched),
-            "collision-like-stop": collision_like_stop,
-            "obstacle-contact-stall": obstacle_contact_stall,
-            "cross-track": cross_track_error > cross_track_limit,
-            "out-of-water": out_of_water,
-            "low-speed-stall": low_speed_stall,
-            "no-progress-stall": no_progress_stall,
-            "checkpoint-stagnation": checkpoint_stagnation,
-        }
-
-        if termination_conditions["collision"]:
-            reward = COLLISION_TERMINATION_REWARD
-            done = True
-            termination_reason = "collision"
-            self._halt_vehicle()
-        elif termination_conditions["collision-like-stop"]:
-            reward = COLLISION_TERMINATION_REWARD
-            done = True
-            termination_reason = "collision-like-stop"
-            self._halt_vehicle()
-        elif termination_conditions["obstacle-contact-stall"]:
-            reward = COLLISION_TERMINATION_REWARD
-            done = True
-            termination_reason = "obstacle-contact-stall"
-            self._halt_vehicle()
-        elif any(termination_conditions.values()):
-            reward = -250
-            done = True
-            for name, active in termination_conditions.items():
-                if active:
-                    termination_reason = name
-                    break
-            self._halt_vehicle()
-            if self.verbose:
-                triggered = [name for name, active in termination_conditions.items() if active]
-                logger.debug("Terminated: %s", ", ".join(triggered))
-
-        if self.checkpoint_index >= len(self.checkpoints):
-            done = True
-            termination_reason = "completed"
-            reward += 180.0
-
-        return reward, done, termination_reason
-
-    # -------------
-    # Utility methods (match PySimEnv)
-    # -------------
-    def _los_guidance_heading(self) -> float:
-        """Compute desired LOS (Line-of-Sight) heading toward the current path segment.
-
-        This implements the LOS guidance algorithm from Changyuan Chen's PhD thesis
-        "Numerical and Experimental Study on Ship Motion Control Systems in Shallow Water"
-        at Flanders Hydraulics (FH). The algorithm computes an optimal heading that steers
-        the vessel toward a look-ahead point on the trajectory.
-
-        Returns:
-            The optimal heading angle in radians that the ship should aim toward.
-        """
-        import math
-
-        current_checkpoint_idx = self.checkpoint_index
-        current_checkpoint_idx = min(current_checkpoint_idx, len(self.checkpoints) - 1)
-        pos = self.ship_pos
-        p_k = self.checkpoints[current_checkpoint_idx]["pos"].copy()
-        if current_checkpoint_idx + 1 > len(self.checkpoints) - 1:
-            p_k_plus_1 = self.checkpoints[len(self.checkpoints) - 1]["pos"].copy()
-            direction = p_k_plus_1 - self.checkpoints[len(self.checkpoints) - 2]["pos"]
-            p_k_plus_1 += direction
-        else:
-            p_k_plus_1 = self.checkpoints[current_checkpoint_idx + 1]["pos"].copy()
-        x, y = pos[:]
-        x_k, y_k = p_k[:]
-        x_k_plus_1, y_k_plus_1 = p_k_plus_1[:]
-
-        # previous checkpoint
-        if current_checkpoint_idx > 0:
-            p_k_min_1 = self.checkpoints[current_checkpoint_idx - 1]["pos"].copy()
-            x_k_min_1, y_k_min_1 = p_k_min_1[:]
-        else:
-            # if none exists, create a virtual one behind the ship
-            p_k_min_1 = p_k - (p_k_plus_1 - p_k)
-            x_k_min_1, y_k_min_1 = p_k_min_1[:]
-
-        # Find the orthogonal projection A(x_A, y_A) of the ship on the path segment
-        denom_sq = (x_k - x_k_min_1) ** 2 + (y_k - y_k_min_1) ** 2
-        if denom_sq < EPSILON:
-            # Degenerate segment, just head toward current checkpoint
-            return _safe_heading_from_vector(p_k - pos)
-
-        t = ((x - x_k_min_1) * (x_k - x_k_min_1) + (y - y_k_min_1) * (y_k - y_k_min_1)) / denom_sq
-        x_a = x_k_min_1 + t * (x_k - x_k_min_1)
-        y_a = y_k_min_1 + t * (y_k - y_k_min_1)
-
-        # Calculate the look ahead distance L_A
-        c = 0.5  # Coefficient for LOS look ahead horizon
-        delta_y = np.sqrt((x - x_a) ** 2 + (y - y_a) ** 2)  # Cross-track error
-        l_pp = 0.95 * self.ship_specs.length  # Length between perpendiculars
-        l_a = np.sqrt((delta_y + c * l_pp) ** 2 - delta_y ** 2) if (delta_y + c * l_pp) >= 0 else 0.0
-
-        # Calculate the LOS position Ploss(x_loss, y_loss)
-        path_length = np.sqrt(denom_sq)
-        if path_length > EPSILON:
-            x_loss = x_a + ((x_k - x_k_min_1) / path_length) * l_a
-            y_loss = y_a + ((y_k - y_k_min_1) / path_length) * l_a
-        else:
-            x_loss, y_loss = x_a, y_a
-
-        # Calculate radius of acceptance circle Rk
-        w_los = 0.5
-        r_k = w_los * l_pp
-
-        heading_p_k_min_1_p_k = _safe_heading_from_vector(p_k - p_k_min_1)
-        heading_p_k_p_k_plus_1 = _safe_heading_from_vector(p_k_plus_1 - p_k)
-        heading_difference = _normalize_angle(heading_p_k_min_1_p_k - heading_p_k_p_k_plus_1)
-        collinear = abs(heading_difference) < (1 / 57)  # ~1 degree
-
-        if collinear:
-            dist_a_pk = np.sqrt((x_a - x_k) ** 2 + (y_a - y_k) ** 2)
-            if dist_a_pk > r_k:
-                los_angle = math.atan2(y_loss - y, x_loss - x)
-            else:
-                los_angle = math.atan2(y_k_plus_1 - y, x_k_plus_1 - x)
-        else:
-            dist_p_pk = np.sqrt((x - x_k) ** 2 + (y - y_k) ** 2)
-            if dist_p_pk > 2 * r_k:
-                if l_a < dist_p_pk:
-                    los_angle = math.atan2(y_loss - y, x_loss - x)
-                else:
-                    # Change look ahead distance from LA to L'A
-                    l_accent_a = l_a - np.sqrt((x_k - x_a) ** 2 + (y_k - y_a) ** 2)
-                    path_next_length = np.sqrt((x_k_plus_1 - x_k) ** 2 + (y_k_plus_1 - y_k) ** 2)
-                    if path_next_length > EPSILON:
-                        x_accent_loss = x_k + ((x_k_plus_1 - x_k) / path_next_length) * l_accent_a
-                        y_accent_loss = y_k + ((y_k_plus_1 - y_k) / path_next_length) * l_accent_a
-                    else:
-                        x_accent_loss, y_accent_loss = x_k, y_k
-                    los_angle = math.atan2(y_accent_loss - y, x_accent_loss - x)
-            else:
-                # Ship is close to current checkpoint; use next checkpoint
-                los_angle = math.atan2(y_k_plus_1 - y, x_k_plus_1 - x)
-
-        return los_angle
+        return _safe_load_csv(path, fallback=fallback)
 
     @staticmethod
-    def _calc_heading_error(target: float, current: float, dead_zone_deg: float = 0.0) -> float:
-        """Compute the wrapped heading error between two angles.
+    def _compute_cumulative_distances(points: np.ndarray) -> np.ndarray:
+        """Compute cumulative route distances for a polyline."""
+        if len(points) == 0:
+            return np.array([0.0], dtype=np.float32)
+        if len(points) == 1:
+            return np.array([0.0], dtype=np.float32)
+        segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+        return np.concatenate([[0.0], np.cumsum(segment_lengths)]).astype(np.float32)
 
-        Args:
-            target: Desired heading angle in radians.
-            current: Current heading angle in radians.
-            dead_zone_deg: Optional symmetric dead zone in degrees. Errors with
-                smaller magnitude are clamped to ``0.0``.
+    def _build_checkpoints(
+        self,
+        route_points: np.ndarray,
+        cumulative_distances: np.ndarray,
+    ) -> list[dict[str, Any]]:
+        """Build checkpoint metadata for route following and plotting."""
+        checkpoints: list[dict[str, Any]] = []
+        total_points = max(len(route_points) - 1, 1)
+        for index, point in enumerate(route_points):
+            checkpoints.append(
+                {
+                    "pos": np.asarray(point, dtype=np.float32),
+                    "radius": float(_TARGET_RADIUS_M if index == len(route_points) - 1 else _CHECKPOINT_RADIUS_M),
+                    "reward": float(_CHECKPOINT_REWARD if index < len(route_points) - 1 else 0.0),
+                    "distance_m": float(cumulative_distances[index]),
+                    "progress_ratio": float(index / total_points),
+                }
+            )
 
-        Returns:
-            The wrapped heading error in radians.
-        """
-        error = _normalize_angle(target - current)
-        if dead_zone_deg > 0:
-            dead_zone = np.radians(dead_zone_deg)
-            return 0.0 if abs(error) < dead_zone else error
-        return error
+        for checkpoint, line in zip(checkpoints, _calculate_perpendicular_lines(checkpoints)):
+            checkpoint["perpendicular_line"] = line
 
-    def _ship_in_open_water(self, pos: np.ndarray) -> bool:
-        """Check if ship is inside the navigable water polygon."""
-        from shapely.geometry import Point
-        x, y = pos[0], pos[1]
-        minx, miny, maxx, maxy = self.polygon_shape.bounds
-        if not (minx <= x <= maxx and miny <= y <= maxy):
-            return False
-        return self.polygon_shape.contains(Point(pos))
-
-    def _is_near_perpendicular_line(self, checkpoint: dict) -> bool:
-        """Check whether the ship is close enough to cross a checkpoint line.
-
-        Args:
-            checkpoint: Checkpoint dictionary containing a
-                ``"perpendicular_line"`` entry.
-
-        Returns:
-            ``True`` when the ship is within
-            ``PERPENDICULAR_LINE_PROXIMITY`` of the checkpoint line.
-        """
-        line_start, line_end = checkpoint["perpendicular_line"]
-        return self._distance_from_point_to_line(
-            self.ship_pos, line_start, line_end
-        ) <= PERPENDICULAR_LINE_PROXIMITY
-
-    @staticmethod
-    def _distance_from_point_to_line(
-        point: np.ndarray,
-        line_start: np.ndarray,
-        line_end: np.ndarray,
-    ) -> float:
-        """Distance from a point to a line segment."""
-        line_vec = line_end - line_start
-        point_vec = point - line_start
-        mag_sq = np.dot(line_vec, line_vec)
-        if mag_sq == 0.0:
-            return float(np.linalg.norm(point - line_start))
-        proj = np.dot(point_vec, line_vec) / mag_sq
-        projected = line_start + proj * line_vec
-        return float(np.linalg.norm(point - projected))
+        return checkpoints

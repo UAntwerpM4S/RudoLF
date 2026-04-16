@@ -276,11 +276,17 @@ def test_animate_state_returns_flat_action_vector_when_bridge_disconnects():
 
 
 @pytest.mark.parametrize(
-    ("mirror_controls_in_ue5", "animate_steering_in_ue5", "animate_throttle_in_ue5", "expected_throttle"),
+    (
+        "mirror_controls_in_ue5",
+        "animate_steering_in_ue5",
+        "animate_throttle_in_ue5",
+        "expected_throttle",
+        "expected_brake",
+    ),
     [
-        (True, False, False, 0.75),
-        (False, True, False, 0.0),
-        (False, False, True, 0.75),
+        (True, False, False, 0.75, 0.0),
+        (False, True, False, 0.0, 1.0),
+        (False, False, True, 0.75, 0.0),
     ],
 )
 def test_visual_replay_controls_hold_brake_during_pose_mirroring(
@@ -288,6 +294,7 @@ def test_visual_replay_controls_hold_brake_during_pose_mirroring(
     animate_steering_in_ue5: bool,
     animate_throttle_in_ue5: bool,
     expected_throttle: float,
+    expected_brake: float,
 ):
     """Replay control visuals should not physically propel the UE5 ship."""
     adapter = PySimVisualisationAdapter()
@@ -306,7 +313,7 @@ def test_visual_replay_controls_hold_brake_during_pose_mirroring(
     )
 
     assert controls is not None
-    assert controls.brake == pytest.approx(1.0)
+    assert controls.brake == pytest.approx(expected_brake)
     assert controls.throttle == pytest.approx(expected_throttle)
 
 
@@ -328,5 +335,5 @@ def test_visual_replay_controls_apply_throttle_gain_to_mirrored_controls():
     )
 
     assert controls is not None
-    assert controls.brake == pytest.approx(1.0)
+    assert controls.brake == pytest.approx(0.0)
     assert controls.throttle == pytest.approx(0.375)

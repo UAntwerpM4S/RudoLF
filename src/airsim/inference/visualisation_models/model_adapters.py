@@ -262,8 +262,19 @@ def _build_visual_controls(
     airsim_module = bridge.airsim
     specs = adapter.extract_ship_specifications(env, ship_index=ship_index)
     replay_brake = 1.0
+    speed_ratio = None
+    try:
+        surge_speed, _, _ = adapter.extract_velocity(env, ship_index=ship_index)
+        surge_limits = getattr(specs, "surge_limits", None)
+        if surge_limits is not None and len(surge_limits) >= 2:
+            max_speed = max(abs(float(surge_limits[0])), abs(float(surge_limits[1])))
+            if max_speed > 1e-6:
+                speed_ratio = float(np.clip(abs(float(surge_speed)) / max_speed, 0.0, 1.0))
+    except Exception:
+        speed_ratio = None
+
     if mirror_controls_in_ue5:
-        return map_framework_actuator_state(
+        controls = map_framework_actuator_state(
             airsim_module,
             specs,
             rudder_angle=float(actuator_state[0]),
@@ -272,8 +283,14 @@ def _build_visual_controls(
             steering_gain=steering_visual_gain,
             throttle_gain=throttle_visual_gain,
         )
+        controls.brake = 0.0
+        if speed_ratio is not None:
+            controls.throttle = float(
+                np.clip(0.35 * float(controls.throttle) + 0.65 * speed_ratio, 0.0, 1.0)
+            )
+        return controls
     if animate_throttle_in_ue5:
-        return map_framework_visual_actuator_state(
+        controls = map_framework_visual_actuator_state(
             airsim_module,
             specs,
             rudder_angle=float(actuator_state[0]),
@@ -282,6 +299,12 @@ def _build_visual_controls(
             steering_gain=steering_visual_gain,
             throttle_gain=throttle_visual_gain,
         )
+        controls.brake = 0.0
+        if speed_ratio is not None:
+            controls.throttle = float(
+                np.clip(0.35 * float(controls.throttle) + 0.65 * speed_ratio, 0.0, 1.0)
+            )
+        return controls
     if animate_steering_in_ue5:
         return map_framework_steering_visual_state(
             airsim_module,
