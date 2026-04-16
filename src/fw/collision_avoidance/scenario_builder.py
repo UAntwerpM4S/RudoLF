@@ -11,7 +11,7 @@ class ScenarioBuilder:
     def __init__(self, env) -> None:
         self.env = env
         self.scenario_types = ["path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"]
-        self.scenario_probs = [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+        self.scenario_probs = [0.0, 0.0, 0.33, 0.33, 0.34, 0.0]
 
     def cache_checkpoint_segments(self) -> None:
         """

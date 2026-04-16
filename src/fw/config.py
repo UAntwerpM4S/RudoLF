@@ -5,6 +5,7 @@ from airsim.config.airsim_config import get_airsim_config  # re-export
 PPO_POLICY_NAME = "PPO"
 PPO2_POLICY_NAME = "PPO2"
 MULTI_PPO_POLICY_NAME = "MPPO"
+MULTI_POLICY_SINGLE_NAME = "MPSA"  # Multi-Policy Single Agent
 
 AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE = "{session_type}_session.csv"
 AIRSIM_BRIDGE_LOG_FILENAME = "airsim_telemetry.csv"
@@ -79,14 +80,34 @@ DEFAULT_HYPERPARAMETERS = {
         'device': "cpu",
         'model_dir': "models"
     },
+    MULTI_POLICY_SINGLE_NAME: {
+        'learning_rate': 3e-4,
+        'gamma': 0.99,
+        'gae_lambda': 0.95,
+        'entropy_coef': 0.01,
+        'value_loss_coef': 0.5,
+        'max_grad_norm': 0.5,
+        'clip_range': 0.2,
+        'eval_frequency': 100,
+        'num_envs': 12,
+        'num_epochs': 8,
+        'normalize': False,
+        'max_nbr_iterations': 5000,
+        'batch_size': 1024,
+        'device': "cpu",
+        'model_dir': "models",
+        'fixed_horizon': False,
+        'steps_per_update': 2048,
+    },
 }
 
 CONFIG_PARAMETERS = {
     # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander",
-    #   "PySimColav" (single colav env), "MultiColav" (3 colav envs for MPPO)
+    #   "PySimColav" (single colav env), "MultiColav" (3 colav envs for MPPO),
+    #   "MultiPolicyColavEnv" / "mpcolav" (single env with multi-policy switching)
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
-    'env_type': ["PySimColavEnv"],
+    'env_type': ["MultiPolicyColavEnv"],
     'action': "train",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,

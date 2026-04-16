@@ -203,18 +203,14 @@ class SinglePPOAgent(BasePPOAgent):
         Notes:
             - Each environment is deep-copied to ensure independence.
             - Wrapped with `Monitor` for logging episode statistics.
+            - Captures only `self.env` (not the full agent) so that
+              SubprocVecEnv on Windows does not pickle CUDA tensors.
         """
 
+        env = self.env  # capture only the lightweight env, not the agent
+
         def _init():
-            """
-            Create one monitored deep-copied environment instance.
-
-            Returns:
-                A monitored Gym environment copied from the agent base
-                environment.
-            """
-
-            return Monitor(copy.deepcopy(self.env))
+            return Monitor(copy.deepcopy(env))
 
         return _init
 
@@ -458,6 +454,7 @@ class SinglePPOAgent(BasePPOAgent):
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
             self.policy.save(policy_file_name)
+            print(f"[save] Saved policy to {policy_file_name}.zip")
         except Exception as e:
             raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
 

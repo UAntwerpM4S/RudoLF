@@ -83,7 +83,7 @@ class BaseAgent(ABC):
         # Normalize relative model paths so they always land under src/models.
         # This prevents cases where training from inside src/ creates src/src/models.
         if self.model_dir:
-            project_src_dir = Path(__file__).resolve().parents[2]
+            project_src_dir = Path(__file__).resolve().parents[1]
             model_dir_path = resolve_path_relative_to_src(self.model_dir, project_src_dir)
             self.model_dir = str(model_dir_path)
             os.makedirs(self.model_dir, exist_ok=True)

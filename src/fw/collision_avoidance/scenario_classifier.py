@@ -7,14 +7,14 @@ Scenarios:
   1  "head-on"          – Rule 14
   2  "overtaking"       – Rule 13
   3  "crossing-right"   – Rule 15, 16, TS on starboard (OS give-way)
-  4  "crossing-left"    – Rule 15, 17, TS on port (OS stand-on)
+  4  "crossing-left"    – Rule 15, 17, TS on port (OS stand-on) --> Omitted, because desired behavior is "path-following"
 """
 
 import math
 import numpy as np
 from typing import Optional
 
-SCENARIO_LABELS = ["path-following", "head-on", "overtaking", "crossing-right", "crossing-left"]
+SCENARIO_LABELS = ["path-following", "head-on", "overtaking", "crossing-right"]
 NUM_SCENARIOS = len(SCENARIO_LABELS)
 
 
@@ -155,4 +155,4 @@ class ScenarioClassifier:
             return 2
 
         # Crossing
-        return 3 if rel_bearing_os < 0 else 4
+        return 3 if rel_bearing_os < 0 else 0

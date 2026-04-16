@@ -1,0 +1,24 @@
+[project]
+name = "DDSHIP"
+description = "Framework for training of autonomous shipping agents"
+dynamic = ["version"]
+dependencies = [
+    "numpy",
+    "optuna",
+    "matplotlib",
+    "tensorboard",
+    "stable-baselines3",
+]
+
+# [project.scripts]
+# ddship = "TwoD.cli:main"
+
+# [build-system]
+# requires = ["setuptools>61", "setuptools_scm[toml]>=7.0"]
+# build-backend = "setuptools.build_meta"
+
+# [tool.setuptools_scm]
+# Section presence is enough to make this work.
+
+# [tool.setuptools]
+# include-package-data = false  # we don't want to include ALL files

@@ -148,8 +148,11 @@ class Trainer:
         metrics = self._scheduler.execute(configuration)
 
         last_env = self._envs[-1] if self._envs else None
-        env_type = last_env.gym_env.type_name if last_env else None
-        env_metrics = metrics.get(env_type) if env_type else None
+        # Use the wrapper repr (e.g. "MultiPolicyColavEnv") to match the
+        # key that SimpleScheduler stores in the metrics dict.  Previously
+        # this used gym_env.type_name which differs for wrapped environments.
+        env_key = str(last_env) if last_env else None
+        env_metrics = metrics.get(env_key) if env_key else None
 
         if env_metrics and env_metrics.get("status") == "success":
             try:
@@ -157,7 +160,7 @@ class Trainer:
             except AttributeError as e:
                 print(e)
         else:
-            print(f"No successful training found for environment '{env_type}' to visualize.")
+            print(f"No successful training found for environment '{env_key}' to visualize.")
 
         return metrics
 
@@ -189,8 +192,11 @@ class Trainer:
                             if sim_name:
                                 print(f"Visualization of {gym_env.ship_model.name} in a {sim_name}.")
 
-                        policy_name = f"Best_{gym_env.type_name}" if self._config[
-                            "visualize_best_trained"] else gym_env.type_name
+                        # Use the wrapper name (str(env)) to match the key
+                        # the scheduler used when saving the policy.
+                        env_name = str(env)
+                        policy_name = f"Best_{env_name}" if self._config[
+                            "visualize_best_trained"] else env_name
 
                         self._agent_mgr.set_environment(
                             env=gym_env,
