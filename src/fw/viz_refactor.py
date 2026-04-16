@@ -539,7 +539,7 @@ class MatplotlibRenderer:
                 ax_ukc   = axes[3][col]
 
                 # -- Trajectory map --
-                cls._plot_trajectory(ax_traj, episodes, colors, env, ship_id, m)
+                cls._plot_trajectory(ax_traj, episodes, colors, cls._get_ship_env(env, ship_id), ship_id, m)
 
                 # -- Cross-track error --
                 cls._plot_signal(
@@ -568,6 +568,13 @@ class MatplotlibRenderer:
             print(f"Trajectory figure saved to '{save_path}'")
         finally:
             plt.close('all')
+
+    @classmethod
+    def _get_ship_env(cls, env, ship_id: str):
+        """Return the sub-environment for a ship, or the env itself for single-ship."""
+        if hasattr(env, "sub_environments") and env.sub_environments:
+            return env.sub_environments.get(ship_id)
+        return env  # single-ship: env IS the ship env
 
     # ------------------------------------------------------------------
     # Sub-plot helpers
@@ -613,12 +620,12 @@ class MatplotlibRenderer:
             ax.scatter(*ep.path[-1], c="red",  s=80, zorder=5)
 
             # Collision events
-            for ev in ep.collision_events:
-                t = min(ev.timestep, len(ep.path) - 1)
-                marker = "x" if ev.is_collision else "^"
-                color  = "red" if ev.is_collision else "orange"
-                ax.scatter(*ep.path[t], marker=marker, c=color, s=120, zorder=6,
-                           label="Collision" if ev.is_collision else "Near-miss")
+            # for ev in ep.collision_events:
+            #     t = min(ev.timestep, len(ep.path) - 1)
+            #     marker = "x" if ev.is_collision else "^"
+            #     color  = "red" if ev.is_collision else "orange"
+            #     ax.scatter(*ep.path[t], marker=marker, c=color, s=120, zorder=6,
+            #                label="Collision" if ev.is_collision else "Near-miss")
 
         ax.set_title(
             f"Trajectory – {ship_id}\n"
@@ -846,11 +853,11 @@ def run_visualization(
     ship_data = collector.collect(num_episodes=num_episodes)
 
     # 2. Annotate collisions
-    annotator = CollisionAnnotator(
-        near_miss_threshold=near_miss_threshold,
-        collision_threshold=collision_threshold,
-    )
-    annotator.annotate(ship_data)
+    # annotator = CollisionAnnotator(
+    #     near_miss_threshold=near_miss_threshold,
+    #     collision_threshold=collision_threshold,
+    # )
+    # annotator.annotate(ship_data)
 
     # 3. Compute metrics
     metrics = MetricsComputer.compute(ship_data)
