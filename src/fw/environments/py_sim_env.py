@@ -905,6 +905,8 @@ class PySimEnv(BaseEnv):
         distance_traveled = abs(np.linalg.norm(self.ship_pos[i] - self.previous_ship_pos[i]))
         velocity = distance_traveled / self.time_step
         target_velocity = 4
+        thrust_change = abs(self.performed_action[i][1] - self.previous_action[i][1])
+        max_thrust_change = self.ships[i].specifications.max_thrust_rate * self.time_step / self.ships[i].specifications.max_thrust 
 
         reward = self.reward_calculator.calculate_reward(
             velocity=velocity,
@@ -914,7 +916,8 @@ class PySimEnv(BaseEnv):
             rudder_change=rudder_change,
             max_rudder_change=max_rudder_change,
             rudder_angle=float(self.performed_action[i][0]),
-            thrust_change=0.0,
+            thrust_change=thrust_change,
+            max_thrust_change=max_thrust_change,
         )
         
         num_non_zero = sum(1 for w in self.reward_calculator.reward_weights.values() if w != 0)
