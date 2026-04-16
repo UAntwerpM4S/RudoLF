@@ -12,7 +12,7 @@ class Reward:
     DEFAULT_WEIGHTS: Dict[str, float] = {
         "forward": -0.25,
         "heading_alignment": -0.5,
-        "cross_track": -0.00,
+        "cross_track": -0.05,
         "rudder_change": -0.4,
         "rudder_angle": -0.05,
         "thrust_change": 0.0,
@@ -70,6 +70,8 @@ class Reward:
     def r_rudder_angle_change(self, rudder_change: float, max_rudder_change: float, **_: float) -> float:
         # Penalize sudden rudder changes, saturating at -1 when over the max.
         weight = self.reward_weights.get("rudder_change", 1.0)
+        if weight == 0.0:
+            return 0.0  # No penalty if the component is disabled, even if the function is called.
         return (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else (-1/weight)
     
     @staticmethod
@@ -77,10 +79,12 @@ class Reward:
         # Penalize large rudder angles with a steeper curve beyond the threshold.
         return (abs(rudder_angle) / 0.2) ** (2 if abs(rudder_angle) < 0.2 else 4)
 
-    @staticmethod
-    def r_thrust_change(thrust_change: float = 0.0, **_: float) -> float:
+    def r_thrust_change(self, thrust_change: float, max_thrust_change: float, **_: float) -> float:
         # Optional penalty for thrust changes (currently pass-through).
-        return thrust_change
+        weight = self.reward_weights.get("thrust_change", 1.0)
+        if weight == 0.0:
+            return 0.0  # No penalty if the component is disabled, even if the function is called.
+        return (thrust_change / max_thrust_change) ** 1 if thrust_change < max_thrust_change else (-1/weight)
 
     def calculate_reward(
         self,
@@ -91,7 +95,8 @@ class Reward:
         rudder_change: float,
         max_rudder_change: float,
         rudder_angle: float,
-        thrust_change: float = 0.0,
+        thrust_change: float,
+        max_thrust_change: float
     ) -> float:
         # Aggregate the weighted sum of enabled components.
         reward = 0.0
@@ -105,6 +110,7 @@ class Reward:
             "max_rudder_change": max_rudder_change,
             "rudder_angle": rudder_angle,
             "thrust_change": thrust_change,
+            "max_thrust_change": max_thrust_change,
         }
 
         # Compute each component in order and apply its weight.
