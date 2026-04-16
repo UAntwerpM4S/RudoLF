@@ -6,6 +6,22 @@ from matplotlib.colors import to_rgb
 
 
 # ---------------
+# Shared constants
+# ---------------
+
+# One color per ship; cycles if there are more ships than entries
+SHIP_COLORS = [
+    "#1f77b4",  # blue
+    "#ff7f0e",  # orange
+    "#2ca02c",  # green
+    "#d62728",  # red
+    "#9467bd",  # purple
+    "#8c564b",  # brown
+    "#17becf",  # cyan
+]
+
+
+# ---------------
 # Output helpers
 # ---------------
 

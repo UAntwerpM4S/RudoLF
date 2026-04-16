@@ -6,23 +6,12 @@ import matplotlib.patches as patches
 
 from fw.ship_episode_data import ShipData
 from fw.metrics_computer import ShipMetrics
-from fw.output_helpers import shade_color, normalized_time_axis, resample_to_common_time
+from fw.output_helpers import SHIP_COLORS, shade_color, normalized_time_axis, resample_to_common_time
 
 
 # ---------------------------------------------------------------------------
 # Matplotlib renderer
 # ---------------------------------------------------------------------------
-
-# One color per ship (cycles if more ships than colors)
-SHIP_COLORS = [
-    "#1f77b4",  # blue
-    "#ff7f0e",  # orange
-    "#2ca02c",  # green
-    "#d62728",  # red
-    "#9467bd",  # purple
-    "#8c564b",  # brown
-    "#17becf",  # cyan
-]
 
 
 class MatplotlibRenderer:

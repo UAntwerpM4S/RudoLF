@@ -14,6 +14,7 @@ from fw.metrics_computer import MetricsComputer
 from fw.episode_collector import EpisodeCollector
 from fw.ship_episode_data import CollisionAnnotator
 from fw.matplotlib_renderer import MatplotlibRenderer
+from fw.output_helpers import compute_heading_error as _compute_heading_error
 
 from fw.environments.base_env import BaseEnv
 from fw.environments.lunar_lander import LunarLander
@@ -288,27 +289,6 @@ class AgentManager:
 
 
     @staticmethod
-    def compute_heading_error(env):
-        """
-        Compute heading error relative to desired path direction
-        """
-
-        # Get current checkpoint index and position
-        curr_checkpoint = env.checkpoints[env.checkpoint_index]
-        next_checkpoint = env.checkpoints[min(env.checkpoint_index + 1, len(env.checkpoints) - 1)]
-
-        # Calculate desired heading (angle of path segment)
-        desired_heading = np.arctan2(
-            next_checkpoint['pos'][1] - curr_checkpoint['pos'][1],
-            next_checkpoint['pos'][0] - curr_checkpoint['pos'][0]
-        )
-
-        # Calculate heading error (difference between current and desired heading)
-        heading_error = (env.phys_sim.state.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
-        return heading_error
-
-
-    @staticmethod
     def compute_metrics(cross_errors, rudder_angles, rudder_angle_changes, heading_errors, velocities):
         """
         Compute Mean Track Error Integral (mTEI), Maximum Track Error (MTE),
@@ -453,7 +433,7 @@ class AgentManager:
                             f"Check that _get_ship_env returns the correct env object."
                         )
 
-                    CollisionAnnotator().annotate(run_data.ships)
+                    CollisionAnnotator().annotate(run_data)
                     metrics = MetricsComputer.compute(run_data)
 
                     # Print summary (same output as before)
@@ -539,7 +519,7 @@ class AgentManager:
                     velocities.append(env.velocities)  # Store initial cross-track error
 
                     # Calculate initial heading error relative to desired path
-                    initial_heading_error = self.compute_heading_error(env)
+                    initial_heading_error = _compute_heading_error(env)
                     heading_errors.append(initial_heading_error)
 
                     while not done:
