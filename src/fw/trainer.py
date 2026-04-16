@@ -133,6 +133,8 @@ class Trainer:
             finally:
                 env.render_mode = self.prev_render_mode
                 self.prev_render_mode = None
+        else:
+            yield
 
 
     def train(self, configuration: dict = None) -> dict:
@@ -169,9 +171,6 @@ class Trainer:
             airsim_bridge: Description.
         """
         if envs is not None:
-            # Start shared figure
-            self._agent_mgr.begin_overlay_plot()
-
             for env_idx, env in enumerate(envs):
                 gym_env = env.gym_env
                 try:
@@ -201,9 +200,6 @@ class Trainer:
                         self._agent_mgr.visualize_trained_agent(num_episodes=1, live_animation=self._config["live_animation"], airsim_bridge=airsim_bridge)
                 except RuntimeError as e:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
-
-            # Finalize shared figure
-            self._agent_mgr.end_overlay_plot()
         else:
             print("No data found to visualize.")
 
