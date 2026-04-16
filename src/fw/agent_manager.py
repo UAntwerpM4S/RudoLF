@@ -639,13 +639,13 @@ class AgentManager:
                     env_cmap = self.ENV_COLORMAPS[env_color_index % len(self.ENV_COLORMAPS)]
 
                     # Plot paths for each episode with different colors
-                    colors = shade_color(env_cmap, num_episodes)
+                    color_set = shade_color(env_cmap, num_episodes)
 
                     line_style = ["-", "--", "-.", ":"][env_color_index % 4]
 
                     for i, path in enumerate(all_paths):
                         ax1.plot(path[:, 0], path[:, 1], '-',
-                                 color=colors[i], alpha=0.4,
+                                 color=color_set[i], alpha=0.4,
                                  label=f'{env.type_name} – Ep {i + 1} (R={total_rewards[i]:.1f})',
                                  linestyle=line_style)
 
@@ -698,7 +698,7 @@ class AgentManager:
                     for i, errors in enumerate(all_cross_errors):
                         timesteps = normalized_time_axis(len(errors))
                         ax2.plot(timesteps, errors, '-',
-                                 color=colors[i], alpha=0.2,
+                                 color=color_set[i], alpha=0.2,
                                  label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
 
                     # Plot average errors with higher alpha and thicker line
@@ -721,7 +721,7 @@ class AgentManager:
                     for i, actions in enumerate(all_rudder_actions):
                         resampled = resample_to_common_time(actions, COMMON_TIME)
                         ax3.plot(COMMON_TIME, resampled, '-',
-                                 color=colors[i], alpha=0.2,
+                                 color=color_set[i], alpha=0.2,
                                  label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
 
                     # Plot average rudder actions with higher alpha and thicker line
@@ -739,7 +739,7 @@ class AgentManager:
                     for i, ukcs in enumerate(all_ukc_measurements):
                         timesteps = normalized_time_axis(len(ukcs))
                         ax4.plot(timesteps, ukcs, '-',
-                                 color=colors[i], alpha=0.2,
+                                 color=color_set[i], alpha=0.2,
                                  label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
 
                     # Plot average ukcs with higher alpha and thicker line
