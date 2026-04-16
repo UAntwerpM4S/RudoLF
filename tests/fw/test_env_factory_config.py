@@ -133,8 +133,13 @@ def test_airsim_environment_receives_full_runtime_configuration(monkeypatch):
         "health_check_interval": 12.0,
         "csv_log_path": "bridge.csv",
         "save_slot": "slot_two",
+        "load_world_on_start": False,
+        "capture_live_start_pose": True,
         "simulation_speed": 3.0,
         "max_steps": 321,
+        "normalize_reward": False,
+        "reward_normalization_scale": 90.0,
+        "reset_mode": "bridge_reset",
     }
 
     get_environment(airsim_env_name, configuration=config)
@@ -147,6 +152,11 @@ def test_airsim_environment_receives_full_runtime_configuration(monkeypatch):
     assert captured["health_check_interval"] == 12.0
     assert captured["csv_log_path"] == "bridge.csv"
     assert captured["save_slot"] == "slot_two"
+    assert captured["load_world_on_start"] is False
+    assert captured["capture_live_start_pose"] is True
     assert captured["simulation_speed"] == 3.0
     assert captured["max_steps"] == 321
+    assert captured["normalize_reward"] is False
+    assert captured["reward_normalization_scale"] == 90.0
+    assert captured["reset_mode"] == "bridge_reset"
 

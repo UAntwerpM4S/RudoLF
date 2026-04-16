@@ -929,7 +929,12 @@ class AirSimBridge:
             return state_dict
         except Exception as exc:
             logger.warning("AirSim get_state failed: %s", exc)
-            return {}
+            return {
+                "state_read_failed": True,
+                "error": str(exc),
+                "step": self._step_count,
+                "wall_time_utc": datetime.now(timezone.utc).isoformat(),
+            }
 
     def _flush_csv(self) -> None:
         """Dump buffered sensor data to the configured CSV file.
