@@ -1,26 +1,31 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as colors
 import matplotlib.patches as patches
 
 from pathlib import Path
 from enum import auto, Enum
-from matplotlib.colors import to_rgb
 from contextlib import contextmanager
 from shapely.geometry.polygon import Polygon
 from shapely.geometry.multipolygon import MultiPolygon
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
-from fw.viz_refactor import EpisodeCollector, CollisionAnnotator, MetricsComputer, MatplotlibRenderer
-from airsim.communication.airsim_bridge import AirSimBridge
-from fw.environments.multi_sim_env import MultiSimEnv
-from fw.environments.lunar_lander import LunarLander
-from fw.environments.base_env import BaseEnv
 
-from fw.policies.single_ppo_agent import SinglePPOAgent
-from fw.policies.multi_ppo_agent import MultiPPOAgent
-from fw.policies.ppo2_agent import PPO2Agent
-from fw.policies.base_agent import BaseAgent
+from fw.metrics_computer import MetricsComputer
+from fw.episode_collector import EpisodeCollector
+from fw.ship_episode_data import CollisionAnnotator
+from fw.matplotlib_renderer import MatplotlibRenderer
+
+from fw.environments.base_env import BaseEnv
+from fw.environments.lunar_lander import LunarLander
+from fw.environments.multi_sim_env import MultiSimEnv
+from airsim.communication.airsim_bridge import AirSimBridge
+
 from fw.stop_condition import StopCondition
+from fw.policies.base_agent import BaseAgent
+from fw.policies.ppo2_agent import PPO2Agent
+from fw.policies.multi_ppo_agent import MultiPPOAgent
+from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
 
 
 class PolicyStrategy(Enum):
@@ -53,7 +58,7 @@ def shade_color(base_color, n, lo=0.45, hi=1.0):
     Generate n shaded variants of a base color by scaling lightness.
     """
 
-    rgb = np.array(to_rgb(base_color))
+    rgb = np.array(colors.to_rgb(base_color))
     factors = np.linspace(hi, lo, n)
 
     return [tuple(np.clip(rgb * f, 0, 1)) for f in factors]
