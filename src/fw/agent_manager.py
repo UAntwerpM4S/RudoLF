@@ -13,6 +13,7 @@ from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
 from fw.viz_refactor import EpisodeCollector, CollisionAnnotator, MetricsComputer, MatplotlibRenderer
 from airsim.communication.airsim_bridge import AirSimBridge
 from fw.environments.multi_sim_env import MultiSimEnv
+from fw.environments.lunar_lander import LunarLander
 from fw.environments.base_env import BaseEnv
 
 from fw.policies.single_ppo_agent import SinglePPOAgent
@@ -432,21 +433,34 @@ class AgentManager:
                     raw_env = raw_env.env
 
                 collector = EpisodeCollector(self._agent, raw_env)
-                ship_data = collector.collect(num_episodes=num_episodes)
+                run_data = collector.collect(num_episodes=num_episodes)
 
-                CollisionAnnotator().annotate(ship_data)
-                metrics = MetricsComputer.compute(ship_data)
+                if not isinstance(raw_env, LunarLander):
+                    # Diagnose empty collection early
+                    total_steps = sum(
+                        sum(len(ep.path) for ep in episodes)
+                        for episodes in run_data.ships.values()
+                    )
+                    if total_steps == 0:
+                        raise RuntimeError(
+                            f"EpisodeCollector collected 0 steps across all ships. "
+                            f"ship_ids={len(run_data.ships)}, env type={type(raw_env).__name__}. "
+                            f"Check that _get_ship_env returns the correct env object."
+                        )
 
-                # Print summary (same output as before)
-                for sid, m in metrics.items():
-                    print(f"\nAverage reward: {m.avg_reward:.2f}")
-                    print(f"mTEI={m.mTEI:.2f}  MTE={m.MTE:.2f}  mRA={m.mRA:.3f}  mHE={m.mHE:.3f} rad")
+                    CollisionAnnotator().annotate(run_data.ships)
+                    metrics = MetricsComputer.compute(run_data)
 
-                save_dir = self.agent.model_dir or "."
-                MatplotlibRenderer.render(
-                    ship_data, metrics, raw_env,
-                    save_path=f"{save_dir}/trajectory.png"
-                )
+                    # Print summary (same output as before)
+                    for sid, m in metrics.items():
+                        print(f"\nAverage reward: {m.avg_reward:.2f}")
+                        print(f"mTEI={m.mTEI:.2f}  MTE={m.MTE:.2f}  mRA={m.mRA:.3f}  mHE={m.mHE:.3f} rad")
+
+                    save_dir = self.agent.model_dir or "."
+                    MatplotlibRenderer.render(
+                        run_data.ships, metrics, raw_env,
+                        save_path=f"{save_dir}/trajectory.png"
+                    )
 
     def _visualize_trained_agent_legacy(
             self,

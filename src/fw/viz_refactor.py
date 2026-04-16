@@ -57,9 +57,9 @@ def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.n
     original_time = np.linspace(0.0, 1.0, signal.shape[0])
     if signal.ndim == 1:
         return np.interp(common_time, original_time, signal)
-    T = signal.shape[0]
+    t = signal.shape[0]
     rest_shape = signal.shape[1:]
-    flat_signal = signal.reshape(T, -1)
+    flat_signal = signal.reshape(t, -1)
     resampled = np.stack(
         [np.interp(common_time, original_time, flat_signal[:, i])
          for i in range(flat_signal.shape[1])],
@@ -119,6 +119,59 @@ class ShipEpisodeData:
 #   ship_data["ship_0"][episode_index] → ShipEpisodeData
 ShipData = dict[str, list[ShipEpisodeData]]
 
+@dataclass
+class RunData:
+    """
+    Container for a full evaluation run.
+    """
+    ships: dict[str, list[ShipEpisodeData]]
+    num_episodes: int
+
+class ShipDataExtractor:
+    """
+    Responsible ONLY for extracting data from env → accumulator.
+    """
+
+    @staticmethod
+    def record_initial(ship_env, acc):
+        if hasattr(ship_env, "ship_pos"):
+            acc["path"].append(np.copy(ship_env.ship_pos))
+        if hasattr(ship_env, "cross_error"):
+            acc["cross_errors"].append(ship_env.cross_error)
+        if hasattr(ship_env, "velocities"):
+            acc["velocities"].append(ship_env.velocities)
+        if hasattr(ship_env, "phys_sim"):
+            acc["heading_errors"].append(
+                EpisodeCollector._compute_heading_error(ship_env)
+            )
+
+    @staticmethod
+    def record_step(ship_env, acc):
+        if hasattr(ship_env, "ship_pos"):
+            acc["path"].append(np.copy(ship_env.ship_pos))
+
+        if hasattr(ship_env, "cross_error") and hasattr(ship_env, "checkpoint_index"):
+            if ship_env.checkpoint_index >= 2:
+                acc["cross_errors"].append(ship_env.cross_error)
+
+        if hasattr(ship_env, "heading_error"):
+            acc["heading_errors"].append(ship_env.heading_error)
+
+        if hasattr(ship_env, "velocities"):
+            acc["velocities"].append(ship_env.velocities)
+
+        if hasattr(ship_env, "performed_action"):
+            curr = ship_env.performed_action[0]
+            if acc["rudder_actions"]:
+                prev = acc["rudder_actions"][-1]
+                acc["rudder_changes"].append(abs(curr - prev))
+            else:
+                acc["rudder_changes"].append(0.0)
+
+            acc["rudder_actions"].append(curr)
+
+        if hasattr(ship_env, "ukc"):
+            acc["ukc_measurements"].append(ship_env.ukc)
 
 # ---------------------------------------------------------------------------
 # Episode collector
@@ -154,7 +207,7 @@ class EpisodeCollector:
     # Public API
     # ------------------------------------------------------------------
 
-    def collect(self, num_episodes: int = 5) -> ShipData:
+    def collect(self, num_episodes: int = 5) -> RunData:
         """
         Run `num_episodes` evaluation episodes.
 
@@ -170,19 +223,10 @@ class EpisodeCollector:
             for sid, data in episode_data.items():
                 ship_data[sid].append(data)
 
-        # Diagnose empty collection early
-        total_steps = sum(
-            sum(len(ep.path) for ep in episodes)
-            for episodes in ship_data.values()
+        return RunData(
+            ships=ship_data,
+            num_episodes=num_episodes,
         )
-        if total_steps == 0:
-            raise RuntimeError(
-                f"EpisodeCollector collected 0 steps across all ships. "
-                f"ship_ids={self._ship_ids}, env type={type(self._env).__name__}. "
-                f"Check that _get_ship_env returns the correct env object."
-            )
-
-        return ship_data
 
     # ------------------------------------------------------------------
     # Internal
@@ -205,6 +249,8 @@ class EpisodeCollector:
         # Capture initial state for each ship
         for sid in self._ship_ids:
             ship_env = self._get_ship_env(sid)
+            if ship_env is not None:
+                ShipDataExtractor.record_initial(ship_env, accumulators[sid])
             if ship_env is not None and hasattr(ship_env, "ship_pos"):
                 accumulators[sid]["path"].append(np.copy(ship_env.ship_pos))
             if ship_env is not None and hasattr(ship_env, "cross_error"):
@@ -222,13 +268,12 @@ class EpisodeCollector:
             env_done = np.logical_or(terminated, truncated)
             done = np.logical_or(done, env_done)
 
-            if not np.all(done):
-                steps += 1
-                self._record_step(accumulators, reward, steps)
+            steps += 1
+            self._record_step(accumulators, reward, steps)
 
-        # Finalise reward (running mean stored in accumulator)
+        # Finalize reward (running mean stored in accumulator)
         for sid in self._ship_ids:
-            accumulators[sid]["reward"] = accumulators[sid].get("_running_reward", 0.0)
+            accumulators[sid]["reward"] = accumulators[sid].get("_cumulative_reward", 0.0)
 
         print(f"Episode {episode + 1} finished after {steps} steps")
 
@@ -239,8 +284,6 @@ class EpisodeCollector:
 
     def _record_step(self, accumulators: dict, reward: float, steps: int) -> None:
         """Append one timestep of observations to each ship's accumulator."""
-        env = self._env
-
         for sid in self._ship_ids:
             ship_env = self._get_ship_env(sid)
             acc = accumulators[sid]
@@ -248,28 +291,18 @@ class EpisodeCollector:
             if ship_env is None:
                 continue
 
-            if hasattr(ship_env, "ship_pos"):
-                acc["path"].append(np.copy(ship_env.ship_pos))
-
-            # Cross-track error: gated on checkpoint index (mirrors original logic)
-            if hasattr(ship_env, "cross_error") and hasattr(ship_env, "checkpoint_index"):
-                if ship_env.checkpoint_index >= 2:
-                    acc["cross_errors"].append(ship_env.cross_error)
-
-            if hasattr(ship_env, "heading_error"):
-                acc["heading_errors"].append(ship_env.heading_error)
-            if hasattr(ship_env, "velocities"):
-                acc["velocities"].append(ship_env.velocities)
-            if hasattr(ship_env, "performed_action"):
-                prev = acc["rudder_actions"][-1] if acc["rudder_actions"] else 0.0
-                acc["rudder_actions"].append(ship_env.performed_action[0])
-                acc["rudder_changes"].append(abs(ship_env.performed_action[0] - prev))
-            if hasattr(ship_env, "ukc"):
-                acc["ukc_measurements"].append(ship_env.ukc)
+            ShipDataExtractor.record_step(ship_env, acc)
 
             # Running mean reward (simple incremental average)
-            prev_reward = acc.get("_running_reward", 0.0)
-            acc["_running_reward"] = prev_reward + (reward - prev_reward) / steps
+            if isinstance(reward, dict):
+                r = reward.get(sid, 0.0)
+            elif isinstance(reward, (list, np.ndarray)):
+                idx = self._ship_ids.index(sid)
+                r = reward[idx]
+            else:
+                r = reward  # shared scalar
+
+            acc["_cumulative_reward"] = acc.get("_cumulative_reward", 0.0) + r
 
     def _get_ship_env(self, ship_id: str):
         """Return the sub-environment for a ship, or the env itself for single-ship."""
@@ -304,7 +337,7 @@ class EpisodeCollector:
             heading_errors=np.array(acc["heading_errors"]),
             velocities=np.array(acc["velocities"]),
             ukc_measurements=np.array(acc["ukc_measurements"]),
-            reward=acc.get("_running_reward", 0.0),
+            reward=acc.get("_cumulative_reward", 0.0),
         )
 
     @staticmethod
@@ -352,9 +385,9 @@ class MetricsComputer:
     """
 
     @staticmethod
-    def compute(ship_data: ShipData) -> dict[str, ShipMetrics]:
+    def compute(run_data: RunData) -> dict[str, ShipMetrics]:
         result = {}
-        for ship_id, episodes in ship_data.items():
+        for ship_id, episodes in run_data.ships.items():
             result[ship_id] = MetricsComputer._compute_ship(ship_id, episodes)
         return result
 
@@ -375,7 +408,10 @@ class MetricsComputer:
 
         for ep in episodes:
             if ep.cross_errors.size:
-                per_ep_mTEI.append(np.mean(np.abs(ep.cross_errors)))
+                # Proper integral (normalized by length)
+                integral = np.trapezoid(np.abs(ep.cross_errors))
+                normalized = integral / len(ep.cross_errors)
+                per_ep_mTEI.append(normalized)
                 per_ep_MTE.append(np.max(np.abs(ep.cross_errors)))
             if ep.rudder_actions.size:
                 per_ep_mRA.append(np.mean(np.abs(ep.rudder_actions)))
@@ -456,15 +492,22 @@ class CollisionAnnotator:
             dist = float(np.linalg.norm(ep_a.path[t] - ep_b.path[t]))
             if dist < self.near_miss_threshold:
                 is_collision = dist < self.collision_threshold
-                event = CollisionEvent(
+                event_a = CollisionEvent(
                     timestep=t,
                     ship_a=ep_a.ship_id,
                     ship_b=ep_b.ship_id,
                     distance=dist,
                     is_collision=is_collision,
                 )
-                ep_a.collision_events.append(event)
-                ep_b.collision_events.append(event)
+                event_b = CollisionEvent(
+                    timestep=t,
+                    ship_a=ep_a.ship_id,
+                    ship_b=ep_b.ship_id,
+                    distance=dist,
+                    is_collision=is_collision,
+                )
+                ep_a.collision_events.append(event_a)
+                ep_b.collision_events.append(event_b)
 
 
 # ---------------------------------------------------------------------------
@@ -738,7 +781,6 @@ class PlotlyRenderer:
         for col, ship_id in enumerate(ship_ids, start=1):
             episodes = ship_data[ship_id]
             ship_color_hex = SHIP_COLORS[(col - 1) % len(SHIP_COLORS)]
-            m = metrics[ship_id]
 
             for ep_idx, ep in enumerate(episodes):
                 opacity = max(0.3, 1.0 - ep_idx * 0.12)
@@ -831,7 +873,7 @@ def run_visualization(
     ship_ids: Optional[list[str]] = None,
     near_miss_threshold: float = 50.0,
     collision_threshold: float = 15.0,
-) -> tuple[ShipData, dict[str, ShipMetrics]]:
+) -> tuple[RunData, dict[str, ShipMetrics]]:
     """
     Full pipeline: collect → annotate → compute metrics → render.
 
@@ -850,17 +892,17 @@ def run_visualization(
 
     # 1. Collect
     collector = EpisodeCollector(agent, env, ship_ids=ship_ids)
-    ship_data = collector.collect(num_episodes=num_episodes)
+    run_data = collector.collect(num_episodes=num_episodes)
 
     # 2. Annotate collisions
     # annotator = CollisionAnnotator(
     #     near_miss_threshold=near_miss_threshold,
     #     collision_threshold=collision_threshold,
     # )
-    # annotator.annotate(ship_data)
+    # annotator.annotate(run_data)
 
     # 3. Compute metrics
-    metrics = MetricsComputer.compute(ship_data)
+    metrics = MetricsComputer.compute(run_data)
 
     # 4. Print summary
     for sid, m in metrics.items():
@@ -871,7 +913,7 @@ def run_visualization(
     traj_path = os.path.join(save_dir, "trajectory.png")
     dash_path = os.path.join(save_dir, "dashboard.html")
 
-    MatplotlibRenderer.render(ship_data, metrics, env, save_path=traj_path)
-    PlotlyRenderer.render(ship_data, metrics, save_path=dash_path)
+    MatplotlibRenderer.render(run_data.ships, metrics, env, save_path=traj_path)
+    PlotlyRenderer.render(run_data.ships, metrics, save_path=dash_path)
 
-    return ship_data, metrics
+    return run_data, metrics
