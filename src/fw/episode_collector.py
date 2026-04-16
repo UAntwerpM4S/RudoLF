@@ -131,16 +131,6 @@ class EpisodeCollector:
             ship_env = self._get_ship_env(sid)
             if ship_env is not None:
                 ShipDataExtractor.record_initial(ship_env, accumulators[sid])
-            if ship_env is not None and hasattr(ship_env, "ship_pos"):
-                accumulators[sid]["path"].append(np.copy(ship_env.ship_pos))
-            if ship_env is not None and hasattr(ship_env, "cross_error"):
-                accumulators[sid]["cross_errors"].append(ship_env.cross_error)
-            if ship_env is not None and hasattr(ship_env, "velocities"):
-                accumulators[sid]["velocities"].append(ship_env.velocities)
-            if ship_env is not None and hasattr(ship_env, "phys_sim"):
-                accumulators[sid]["heading_errors"].append(
-                    compute_heading_error(ship_env)
-                )
 
         while not np.all(done):
             action, _, _ = self._agent.predict(state=state, deterministic=True)
@@ -151,9 +141,7 @@ class EpisodeCollector:
             steps += 1
             self._record_step(accumulators, reward, steps)
 
-        # Finalize reward (running mean stored in accumulator)
-        for sid in self._ship_ids:
-            accumulators[sid]["reward"] = accumulators[sid].get("_cumulative_reward", 0.0)
+        # reward is accumulated inline during _record_step; nothing to finalize here
 
         print(f"Episode {episode + 1} finished after {steps} steps")
 
@@ -182,7 +170,7 @@ class EpisodeCollector:
             else:
                 r = reward  # shared scalar
 
-            acc["_cumulative_reward"] = acc.get("_cumulative_reward", 0.0) + r
+            acc["reward"] = acc.get("reward", 0.0) + r
 
     def _get_ship_env(self, ship_id: str):
         """Return the sub-environment for a ship, or the env itself for single-ship."""
@@ -217,5 +205,5 @@ class EpisodeCollector:
             heading_errors=np.array(acc["heading_errors"]),
             velocities=np.array(acc["velocities"]),
             ukc_measurements=np.array(acc["ukc_measurements"]),
-            reward=acc.get("_cumulative_reward", 0.0),
+            reward=acc.get("reward", 0.0),
         )

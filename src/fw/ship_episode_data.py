@@ -82,13 +82,14 @@ class CollisionAnnotator:
         self.near_miss_threshold = near_miss_threshold
         self.collision_threshold = collision_threshold
 
-    def annotate(self, ship_data: ShipData) -> None:
+    def annotate(self, run_data: RunData) -> None:
         """
-        Annotate ship_data in-place with CollisionEvent objects.
+        Annotate run_data in-place with CollisionEvent objects.
 
         Iterates over all pairs of ships and compares positions at each
         shared timestep within each episode.
         """
+        ship_data = run_data.ships
         ship_ids = list(ship_data.keys())
 
         if len(ship_ids) < 2:
