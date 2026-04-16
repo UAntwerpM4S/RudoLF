@@ -1,3 +1,5 @@
+import random
+
 import numpy as np
 from fw.collision_avoidance.collision_entity import CollisionEntity
 
@@ -8,10 +10,76 @@ EPSILON = 1e-9
 
 
 class ScenarioBuilder:
+    """Episode-level scenario builder.
+
+    Reads scenario_types, scenario_probs, and encounter_range from the
+    environment so that subclass environments can configure them.
+
+    Subclass this builder (e.g. AdaptiveScenarioBuilder) to implement
+    step-level encounter spawning via on_step().
+    """
+
     def __init__(self, env) -> None:
         self.env = env
-        self.scenario_types = ["path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"]
-        self.scenario_probs = [0.0, 0.0, 0.33, 0.33, 0.34, 0.0]
+
+    # ------------------------------------------------------------------
+    # Lifecycle hooks (called by PySimColavBaseEnv)
+    # ------------------------------------------------------------------
+    def on_reset(self) -> None:
+        """Called at episode reset. Builds the full episode scenario."""
+        env = self.env
+        if not getattr(env, "enable_obstacles", False):
+            env.collision_entities = []
+            env._sync_collision_entity_views()
+            return
+        chosen_scenario = self.sample_collision_entity_scenario()
+        env.collision_entities = self.compute_collision_entity_positions(chosen_scenario, env.obstacle_count) or []
+        env._sync_collision_entity_views()
+
+    def on_step(self, dt: float) -> None:
+        """Called each environment step for step-level encounter spawning.
+
+        With probability ``encounter_prob`` and when no encounter is already
+        active, a single TS is spawned on the segment just outside the OS
+        encounter range.  Once the TS leaves forget range it is removed so
+        the next encounter can trigger.
+        """
+        env = self.env
+        if not getattr(env, "enable_obstacles", False):
+            env.collision_entities = []
+            env._sync_collision_entity_views()
+            return
+
+        encounter_prob = 0.4
+        encounter = env._rng.random() < encounter_prob
+
+        # Spawn a new encounter if none is active
+        if encounter and not env.collision_entities:
+            chosen_scenario = self.sample_collision_entity_scenario()
+            if chosen_scenario != "path-following":
+                seg_idx = self._find_segment_at_encounter_range()
+                if seg_idx is not None:
+                    entities = self.compute_collision_entity_positions(
+                        chosen_scenario, n=1, target_seg_idx=seg_idx,
+                    )
+                    env.collision_entities = entities or []
+                    env._sync_collision_entity_views()
+
+        # Clean up TS that has left forget range
+        if env.collision_entities and len(env.collision_entities) == 1:
+            if getattr(env, "ts_idx", None) is not None:
+                ts = env.collision_entities[env.ts_idx]
+                dist = env.collision_entities[0].distance_to_point(env.ship_pos)
+                if dist > env.forget_range:
+                    env.collision_entities = []
+                    env.ts_idx = None
+                    env._sync_collision_entity_views()
+                    # Reset the classifier so it doesn't hold a stale tracked_ts
+                    # index into the now-empty collision_entities list. Without
+                    # this, _calculate_colav_reward() reads tracked_ts=0 and
+                    # tries collision_entities[0] → IndexError.
+                    if hasattr(env, "scenario_classifier"):
+                        env.scenario_classifier.reset()
 
     def cache_checkpoint_segments(self) -> None:
         """
@@ -88,44 +156,83 @@ class ScenarioBuilder:
     def sample_collision_entity_scenario(self) -> None:
         """Sample the current episode's collision entities."""
         env = self.env
-        if not getattr(env, "enable_obstacles", False):
-            env.collision_entities = []
-            env._sync_collision_entity_views()
-            return
-
         env.obstacle_count = env._rng.choice(env.obstacle_population, p=env.obstacle_probs)
-        chosen_scenario = env._rng.choice(self.scenario_types, p=self.scenario_probs)
+        chosen_scenario = env._rng.choice(env.scenario_types, p=env.scenario_probs)
+        return chosen_scenario
 
-        env.collision_entities = self.compute_collision_entity_positions(chosen_scenario, env.obstacle_count) or []
-        env._sync_collision_entity_views()
+    def _find_segment_at_encounter_range(self) -> Optional[int]:
+        """Find the cached-segment index whose start lies just beyond
+        ``encounter_range`` ahead of the OS along the path.
 
-    def compute_collision_entity_positions(self, episode_type: Optional[str] = None, n: int = 1):
+        Walks forward from the OS's current checkpoint, accumulating
+        path length.  Returns the first segment index (into the cached
+        ``_seg_*`` arrays) where the accumulated distance exceeds
+        ``encounter_range``, or ``None`` if no such segment exists
+        (OS is too close to the end of the route).
+        """
+        env = self.env
+        accumulated = 0.0
+        encounter_range = float(env.encounter_range)
+
+        # Walk from the OS's current target checkpoint onward
+        start_cp = max(1, env.checkpoint_index)
+        for cp_idx in range(start_cp, len(env.checkpoints)):
+            # Map checkpoint-pair index to cached segment index
+            # _seg_cp_end_indices[seg_i] == cp_idx means segment seg_i
+            # connects checkpoints[cp_idx-1] -> checkpoints[cp_idx].
+            matches = np.where(env._seg_cp_end_indices == cp_idx)[0]
+            if len(matches) == 0:
+                continue
+            seg_i = int(matches[0])
+            seg_len = float(env._seg_lengths[seg_i])
+            accumulated += seg_len
+            if accumulated >= encounter_range:
+                return seg_i
+
+        return None
+
+    def compute_collision_entity_positions(
+        self,
+        scenario_type: Optional[str] = None,
+        n: int = 1,
+        target_seg_idx: Optional[int] = None,
+    ):
+        """Build collision entities for *episode_type*.
+
+        Args:
+            scenario_type: Scenario name (e.g. "head-on").
+            n: How many entities to create (episode-level).  For
+               step-level spawning this is always 1.
+            target_seg_idx: If given, force placement on this cached
+               segment index (used by step-level spawning).
+        """
         entities = []
-        match episode_type:
+        match scenario_type:
             case "path-following":
                 pass
             case "static":
-                entities.extend(self.compute_static_collision_entities())
+                entities.extend(self.compute_static_collision_entities(target_seg_idx=target_seg_idx))
             case "overtaking":
                 for i in range(n):
-                    entities.extend(self.compute_overtaking_collision_entities())
+                    entities.extend(self.compute_overtaking_collision_entities(target_seg_idx=target_seg_idx))
             case "head-on":
                 for i in range(n):
-                    entities.extend(self.compute_headon_collision_entities())
+                    entities.extend(self.compute_headon_collision_entities(target_seg_idx=target_seg_idx))
             case "crossing-right":
                 for i in range(n):
-                    entities.extend(self.compute_crossing_right_collision_entities())
+                    entities.extend(self.compute_crossing_right_collision_entities(target_seg_idx=target_seg_idx))
             case "crossing-left":
                 for i in range(n):
-                    entities.extend(self.compute_crossing_left_collision_entities())
+                    entities.extend(self.compute_crossing_left_collision_entities(target_seg_idx=target_seg_idx))
             case _:
-                raise ValueError(f"Unknown episode_type '{episode_type}'")
+                raise ValueError(f"Unknown episode_type '{scenario_type}'")
 
         return entities
 
-    def compute_static_collision_entities(self):
+    def compute_static_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
-        Randomly placed obstacle_count static obstacles along the path, laterally randomized (uniform)
+        Randomly placed obstacle_count static obstacles along the path, laterally randomized (uniform).
+        When target_seg_idx is given (step-level), places exactly one obstacle on that segment.
         """
         env = self.env
         if not hasattr(env, "checkpoints") or len(env.checkpoints) < 2:
@@ -135,22 +242,28 @@ class ScenarioBuilder:
         max_lat = float(getattr(env, "static_ship_lateral_max", 0.0))
         segment_margin_frac = float(getattr(env, "static_ship_segment_margin_frac", 0.0))
 
-        for _ in range(env.obstacle_count):
-            eligible_indices = list(range(3, len(env.checkpoints) - 2))
-            if not eligible_indices:
-                break
+        n_to_place = 1 if target_seg_idx is not None else env.obstacle_count
+        for _ in range(n_to_place):
+            if target_seg_idx is not None:
+                # Step-level: use the checkpoint index that corresponds to the
+                # cached segment's end checkpoint.
+                random_seg = int(env._seg_cp_end_indices[target_seg_idx])
+            else:
+                eligible_indices = list(range(3, len(env.checkpoints) - 2))
+                if not eligible_indices:
+                    break
 
-            seg_lengths = np.array([
-                np.linalg.norm(
-                    np.asarray(env.checkpoints[i]["pos"], dtype=np.float32)
-                    - np.asarray(env.checkpoints[i - 1]["pos"], dtype=np.float32)
-                )
-                for i in eligible_indices
-            ], dtype=np.float32)
-            seg_lengths = np.maximum(seg_lengths, EPSILON)
-            probs = seg_lengths / seg_lengths.sum()
+                seg_lengths = np.array([
+                    np.linalg.norm(
+                        np.asarray(env.checkpoints[i]["pos"], dtype=np.float32)
+                        - np.asarray(env.checkpoints[i - 1]["pos"], dtype=np.float32)
+                    )
+                    for i in eligible_indices
+                ], dtype=np.float32)
+                seg_lengths = np.maximum(seg_lengths, EPSILON)
+                probs = seg_lengths / seg_lengths.sum()
 
-            random_seg = int(eligible_indices[int(env._rng.choice(len(eligible_indices), p=probs))])
+                random_seg = int(eligible_indices[int(env._rng.choice(len(eligible_indices), p=probs))])
             pa = np.asarray(env.checkpoints[random_seg - 1]["pos"], dtype=np.float32)
             pb = np.asarray(env.checkpoints[random_seg]["pos"], dtype=np.float32)
             seg = (pb - pa).astype(np.float32)
@@ -207,25 +320,17 @@ class ScenarioBuilder:
 
         return collision_entities
 
-    def compute_overtaking_collision_entities(self):
+    def compute_overtaking_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
-        Places obstacles along the path, on segments that guarantee an overtaking scenario will take place.
-        This is based off the speed of the OS vs the speed of the TS. In other words, the TS is placed on a segment
-        that guarantees that the OS will pass it before the TS has reached the goal checkpoint.
+        Places an overtaking TS along the path.
 
-        Speed of the TS is randomized between overtaking_ts_v_min and overtaking_ts_v_max. The collision entities
-        that this function creates, can be advanced along the checkpoints at that speed by the environment.
+        Episode-level (target_seg_idx is None): selects a segment that
+        guarantees the OS will catch the TS before it reaches the goal.
+
+        Step-level (target_seg_idx given): places the TS on the specified
+        segment just outside encounter range.
         """
         env = self.env
-        seg_indices = getattr(env, "_eligible_dynamic_seg_indices", np.array([], dtype=np.int32))
-        if len(seg_indices) == 0:
-            return []
-
-        seg_lengths_arr = env._seg_lengths[seg_indices]
-        total_route_length = float(np.sum(seg_lengths_arr))
-        os_time_to_goal = total_route_length / max(env.os_nominal_speed, EPSILON)
-        ts_speed = float(env._rng.uniform(env.overtaking_ts_v_min, env.overtaking_ts_v_max))
-        ship_radius = float(env._rng.uniform(env.static_ship_radius_min, env.static_ship_radius_max))
 
         segment_margin_frac = float(getattr(env, "static_ship_segment_margin_frac", 0.0))
         t_min_global = max(0.0, segment_margin_frac)
@@ -233,33 +338,50 @@ class ScenarioBuilder:
         if t_min_global > t_max_global:
             t_min_global, t_max_global = 0.0, 1.0
 
-        candidate_segments = []
-        suffix_after = 0.0
-        for local_rev_idx in range(len(seg_indices) - 1, -1, -1):
-            seg_len = float(seg_lengths_arr[local_rev_idx])
-            required_remaining_len = os_time_to_goal * ts_speed
-            t_upper_time = 1.0 - ((required_remaining_len - suffix_after) / max(seg_len, EPSILON))
-            t_lo = t_min_global
-            t_hi = min(t_max_global, t_upper_time)
-            if t_hi > t_lo:
-                feasible_len = (t_hi - t_lo) * seg_len
-                candidate_segments.append({
-                    "seg_idx": int(seg_indices[local_rev_idx]),
-                    "t_lo": float(t_lo),
-                    "t_hi": float(t_hi),
-                    "weight": float(max(feasible_len, EPSILON)),
-                })
-            suffix_after += seg_len
+        ts_speed = float(env._rng.uniform(env.overtaking_ts_v_min, env.overtaking_ts_v_max))
+        ship_radius = float(env._rng.uniform(env.static_ship_radius_min, env.static_ship_radius_max))
 
-        if not candidate_segments:
-            return []
+        if target_seg_idx is not None:
+            # Step-level: place on the given segment
+            seg_idx = target_seg_idx
+            t_spawn = float(env._rng.uniform(t_min_global, t_max_global))
+        else:
+            # Episode-level: original timing-constrained placement
+            seg_indices = getattr(env, "_eligible_dynamic_seg_indices", np.array([], dtype=np.int32))
+            if len(seg_indices) == 0:
+                return []
 
-        weights = np.asarray([c["weight"] for c in candidate_segments], dtype=np.float32)
-        weights = weights / weights.sum()
-        choice = candidate_segments[int(env._rng.choice(len(candidate_segments), p=weights))]
+            seg_lengths_arr = env._seg_lengths[seg_indices]
+            total_route_length = float(np.sum(seg_lengths_arr))
+            os_time_to_goal = total_route_length / max(env.os_nominal_speed, EPSILON)
 
-        seg_idx = int(choice["seg_idx"])
-        t_spawn = float(env._rng.uniform(choice["t_lo"], choice["t_hi"]))
+            candidate_segments = []
+            suffix_after = 0.0
+            for local_rev_idx in range(len(seg_indices) - 1, -1, -1):
+                seg_len = float(seg_lengths_arr[local_rev_idx])
+                required_remaining_len = os_time_to_goal * ts_speed
+                t_upper_time = 1.0 - ((required_remaining_len - suffix_after) / max(seg_len, EPSILON))
+                t_lo = t_min_global
+                t_hi = min(t_max_global, t_upper_time)
+                if t_hi > t_lo:
+                    feasible_len = (t_hi - t_lo) * seg_len
+                    candidate_segments.append({
+                        "seg_idx": int(seg_indices[local_rev_idx]),
+                        "t_lo": float(t_lo),
+                        "t_hi": float(t_hi),
+                        "weight": float(max(feasible_len, EPSILON)),
+                    })
+                suffix_after += seg_len
+
+            if not candidate_segments:
+                return []
+
+            weights = np.asarray([c["weight"] for c in candidate_segments], dtype=np.float32)
+            weights = weights / weights.sum()
+            choice = candidate_segments[int(env._rng.choice(len(candidate_segments), p=weights))]
+
+            seg_idx = int(choice["seg_idx"])
+            t_spawn = float(env._rng.uniform(choice["t_lo"], choice["t_hi"]))
         pa = env._seg_starts[seg_idx]
         tangent = env._seg_tangents[seg_idx]
         normal = env._seg_normals[seg_idx]
@@ -292,29 +414,31 @@ class ScenarioBuilder:
             return []
         return [entity]
 
-    def compute_headon_collision_entities(self):
+    def compute_headon_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
-        Speed of the TS is randomized between headon_ts_v_min and headon_ts_v_max. The collision entities
-        that this function creates, can be advanced along the checkpoints at that speed by the environment
-        in reversed order, such that they approacch the TS head-on.
+        Places a head-on TS that travels backward along the path.
 
-        The head-on entities are made to allow for a lateral speed, that simulates dodging to starboard from the
-        perspective of the TS
+        Episode-level (target_seg_idx is None): picks a random eligible segment.
+        Step-level (target_seg_idx given): places on the specified segment.
         """
         env = self.env
-        seg_indices = getattr(env, "_eligible_dynamic_seg_indices", np.array([], dtype=np.int32))
-        if len(seg_indices) == 0:
-            return []
-
-        seg_lengths = np.maximum(env._seg_lengths[seg_indices], EPSILON)
-        probs = seg_lengths / seg_lengths.sum()
-        seg_idx = int(seg_indices[int(env._rng.choice(len(seg_indices), p=probs))])
 
         segment_margin_frac = float(getattr(env, "static_ship_segment_margin_frac", 0.0))
         t_min = max(0.0, segment_margin_frac)
         t_max = min(1.0, 1.0 - segment_margin_frac)
         if t_min > t_max:
             t_min, t_max = 0.0, 1.0
+
+        if target_seg_idx is not None:
+            seg_idx = target_seg_idx
+        else:
+            seg_indices = getattr(env, "_eligible_dynamic_seg_indices", np.array([], dtype=np.int32))
+            if len(seg_indices) == 0:
+                return []
+            seg_lengths = np.maximum(env._seg_lengths[seg_indices], EPSILON)
+            probs = seg_lengths / seg_lengths.sum()
+            seg_idx = int(seg_indices[int(env._rng.choice(len(seg_indices), p=probs))])
+
         t_spawn = float(env._rng.uniform(t_min, t_max))
 
         ts_speed = float(env._rng.uniform(env.headon_ts_v_min, env.headon_ts_v_max))
@@ -342,7 +466,7 @@ class ScenarioBuilder:
         entity.path_offset = 0.0
         entity.route_mode = "follow_checkpoints"
         entity.route_finished = False
-        entity.dodge_trigger_range = float(env.polar_max_range)
+        entity.dodge_trigger_range = float(env.encounter_range)
         entity.dodge_lateral_speed = 1.0
         entity.lateral_speed = 0.0
         entity.dodged = False
@@ -354,7 +478,7 @@ class ScenarioBuilder:
             return []
         return [entity]
 
-    def _compute_crossing_collision_entities(self, side: str):
+    def _compute_crossing_collision_entities(self, side: str, target_seg_idx: Optional[int] = None):
         """
         Shared logic for crossing-right and crossing-left scenarios.
 
@@ -362,22 +486,20 @@ class ScenarioBuilder:
         across it. The TS is activated (starts moving) once the OS enters
         activation range during stepping.
 
-        Placement offset d_ts is computed from the intercept equation so
-        the TS fits realistically inside the canal:
-
-            d_ts = activation_range * v_ts / sqrt(v_os² + v_ts²)
-
-        However, the actual speed at activation time is recomputed dynamically
-        in _step_collision_entities based on the real OS-to-crossing-point
-        distance, which accounts for path curvature.
+        Episode-level (target_seg_idx is None): tries all eligible segments.
+        Step-level (target_seg_idx given): only tries the specified segment.
 
         side: "starboard" for crossing-right (TS on OS starboard, OS give-way)
               "port"      for crossing-left  (TS on OS port, OS stand-on)
         """
         env = self.env
-        seg_indices = getattr(env, "_eligible_dynamic_seg_indices", np.array([], dtype=np.int32))
-        if len(seg_indices) == 0:
-            return []
+
+        if target_seg_idx is not None:
+            seg_indices = np.array([target_seg_idx], dtype=np.int32)
+        else:
+            seg_indices = getattr(env, "_eligible_dynamic_seg_indices", np.array([], dtype=np.int32))
+            if len(seg_indices) == 0:
+                return []
 
         segment_margin_frac = float(getattr(env, "static_ship_segment_margin_frac", 0.0))
         t_min = max(0.0, segment_margin_frac)
@@ -386,7 +508,7 @@ class ScenarioBuilder:
             t_min, t_max = 0.0, 1.0
 
         ship_radius = float(env._rng.uniform(env.static_ship_radius_min, env.static_ship_radius_max))
-        activation_range = float(env.polar_max_range) + float(getattr(env, "crossing_activation_margin", 50.0))
+        activation_range = float(env.encounter_range) + float(getattr(env, "crossing_activation_margin", 50.0))
 
         # Target bearing range at classification (radians).
         # d_ts = activation_range * sin(bearing) gives the lateral offset
@@ -475,19 +597,19 @@ class ScenarioBuilder:
         # No valid placement found across all segments
         return []
 
-    def compute_crossing_right_collision_entities(self):
+    def compute_crossing_right_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
         Crossing-right: TS on OS starboard side, heading across the path
         towards port. OS is the give-way vessel (must pass behind TS stern).
         """
-        return self._compute_crossing_collision_entities(side="starboard")
+        return self._compute_crossing_collision_entities(side="starboard", target_seg_idx=target_seg_idx)
 
-    def compute_crossing_left_collision_entities(self):
+    def compute_crossing_left_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
         Crossing-left: TS on OS port side, heading across the path
         towards starboard. OS is the stand-on vessel (maintain course/speed).
         """
-        return self._compute_crossing_collision_entities(side="port")
+        return self._compute_crossing_collision_entities(side="port", target_seg_idx=target_seg_idx)
 
     def check_collision_entity_collision(self) -> bool:
         """Checks collision between OS and TS"""
