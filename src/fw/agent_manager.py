@@ -272,6 +272,9 @@ class AgentManager:
                 returns zero steps.
         """
 
+        # Load checkpoint
+        # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
+
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
