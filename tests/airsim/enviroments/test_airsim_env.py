@@ -200,7 +200,7 @@ def _patch_env_dependencies(monkeypatch) -> None:
             "airsim_origin": [0.0, 0.0],
         }
     )
-    route = np.array([[0.0, 0.0], [100.0, 0.0], [200.0, 0.0]], dtype=np.float32)
+    route = np.array([[0.0, 0.0], [250.0, 0.0], [500.0, 0.0]], dtype=np.float32)
     outline = np.array(
         [[-50.0, -50.0], [250.0, -50.0], [250.0, 50.0], [-50.0, 50.0]],
         dtype=np.float32,
@@ -231,7 +231,7 @@ def test_reset_returns_valid_ppo_observation(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         use_pause_stepping=True,
         use_sim_time_stepping=True,
     )
@@ -258,7 +258,7 @@ def test_step_advances_route_with_pause_stepping(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         use_pause_stepping=True,
         use_sim_time_stepping=True,
         sim_time_per_action=0.2,
@@ -295,7 +295,7 @@ def test_step_accepts_progress_when_pause_flag_does_not_return(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         use_pause_stepping=True,
         use_sim_time_stepping=True,
         physics_update_timeout=0.05,
@@ -324,16 +324,18 @@ def test_step_reaches_target_and_terminates(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         use_pause_stepping=True,
         use_sim_time_stepping=True,
     )
     env.reset()
 
-    env.step(np.array([0.0, 1.0], dtype=np.float32))
-    _, reward, terminated, truncated, info = env.step(
-        np.array([0.0, 1.0], dtype=np.float32)
-    )
+    for _ in range(4):
+        _, reward, terminated, truncated, info = env.step(
+            np.array([0.0, 1.0], dtype=np.float32)
+        )
+        if terminated:
+            break
 
     assert terminated is True
     assert truncated is False
@@ -350,7 +352,7 @@ def test_default_rewind_reset_does_not_call_bridge_reset(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         reset_mode="rewind_pose",
         use_sim_time_stepping=True,
     )
@@ -370,7 +372,7 @@ def test_step_times_out_when_pause_mode_reports_no_progress(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         use_pause_stepping=True,
         use_sim_time_stepping=True,
         physics_update_timeout=0.02,
@@ -399,7 +401,7 @@ def test_step_truncates_when_no_valid_state_snapshot_is_available(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         use_pause_stepping=True,
         use_sim_time_stepping=True,
     )
@@ -428,7 +430,7 @@ def test_reset_raises_when_post_teleport_state_never_becomes_reliable(monkeypatc
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         use_pause_stepping=True,
         use_sim_time_stepping=True,
     )
@@ -448,7 +450,7 @@ def test_step_truncates_when_collision_info_cannot_be_read(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         training_mode=False,
     )
     env.reset()
@@ -474,7 +476,7 @@ def test_training_mode_does_not_reload_world_on_start(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         training_mode=True,
         save_slot="slot_two",
         use_sim_time_stepping=True,
@@ -494,7 +496,7 @@ def test_visual_mode_still_loads_world_on_start(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         training_mode=False,
         save_slot="slot_two",
         use_pause_stepping=False,
@@ -514,7 +516,7 @@ def test_training_mode_captures_live_startup_pose_without_world_reload(monkeypat
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         training_mode=True,
         load_world_on_start=False,
         capture_live_start_pose=True,
@@ -547,7 +549,7 @@ def test_training_mode_loads_world_once_then_respawns_from_captured_anchor(monke
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         training_mode=True,
         save_slot="simulator_1",
         load_world_on_start=True,
@@ -588,7 +590,7 @@ def test_training_run_events_include_startup_and_respawn(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         training_mode=True,
         load_world_on_start=False,
         capture_live_start_pose=True,
@@ -618,15 +620,17 @@ def test_training_run_events_include_checkpoint_and_episode_end(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         use_pause_stepping=True,
         use_sim_time_stepping=True,
     )
     env.reset()
     env.drain_run_events()
 
-    env.step(np.array([0.0, 1.0], dtype=np.float32))
-    env.step(np.array([0.0, 1.0], dtype=np.float32))
+    for _ in range(4):
+        _, _, terminated, _, _ = env.step(np.array([0.0, 1.0], dtype=np.float32))
+        if terminated:
+            break
     events = env.drain_run_events()
     event_types = [event["event_type"] for event in events]
 
@@ -643,7 +647,7 @@ def test_bridge_reset_mode_invokes_bridge_reset(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         reset_mode="bridge_reset",
         use_sim_time_stepping=True,
     )
@@ -663,7 +667,7 @@ def test_reward_normalization_can_be_disabled(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         normalize_reward=False,
         use_pause_stepping=True,
         use_sim_time_stepping=True,
@@ -685,7 +689,7 @@ def test_reward_penalizes_wide_fast_checkpoint_farming(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         normalize_reward=False,
         use_pause_stepping=True,
         use_sim_time_stepping=True,
@@ -743,7 +747,7 @@ def test_step_terminates_on_collision(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         training_mode=False,
     )
     env.reset()
@@ -768,7 +772,7 @@ def test_reset_prefers_vehicle_pose_when_car_state_lags(monkeypatch):
 
     env = AirSimEnv(
         ship_pos=[0.0, 0.0],
-        target_pos=[200.0, 0.0],
+        target_pos=[500.0, 0.0],
         use_pause_stepping=True,
         use_sim_time_stepping=True,
     )
@@ -794,7 +798,7 @@ def test_training_mode_rejects_pause_frame_stepping(monkeypatch):
     with pytest.raises(ValueError, match="use_sim_time_stepping=True"):
         AirSimEnv(
             ship_pos=[0.0, 0.0],
-            target_pos=[200.0, 0.0],
+            target_pos=[500.0, 0.0],
             training_mode=True,
             use_pause_stepping=True,
             use_sim_time_stepping=False,

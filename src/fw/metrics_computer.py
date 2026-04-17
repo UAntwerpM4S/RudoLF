@@ -145,9 +145,11 @@ class MetricsComputer:
                 per_ep_Mu.append(float(np.nanmax(v)))
 
         def safe_mean(lst: list) -> float:
+            """Return the mean of a list, or 0.0 if empty."""
             return float(np.nanmean(lst)) if lst else 0.0
 
         def safe_max(lst: list) -> float:
+            """Return the maximum of a list, or 0.0 if empty."""
             return float(np.nanmax(lst)) if lst else 0.0
 
         m.mTEI = safe_mean(per_ep_mTEI)
