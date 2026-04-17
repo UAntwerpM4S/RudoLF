@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class CollisionEvent:
-    """Represents a proximity event between two ships at a specific timestep.
+    """
+    Represents a proximity event between two ships at a specific timestep.
 
     A collision event is created when two ships come within a configured
     distance threshold. It may represent either a near-miss or a hard collision.
@@ -34,7 +35,8 @@ class CollisionEvent:
 
 @dataclass
 class ShipEpisodeData:
-    """Stores all recorded data for a single ship over one episode.
+    """
+    Stores all recorded data for a single ship over one episode.
 
     This structure contains time-series data collected during environment
     interaction, including trajectory, control actions, navigation errors,
@@ -75,7 +77,8 @@ ShipData = dict[str, list[ShipEpisodeData]]
 
 @dataclass
 class RunData:
-    """Container for a full evaluation run across all ships and episodes.
+    """
+    Container for a full evaluation run across all ships and episodes.
 
     Attributes:
         ships: Dictionary mapping ship IDs to lists of `ShipEpisodeData`,
@@ -92,7 +95,8 @@ class RunData:
 # ---------------------------------------------------------------------------
 
 class CollisionAnnotator:
-    """Detects and annotates near-miss and collision events between ships.
+    """
+    Detects and annotates near-miss and collision events between ships.
 
     This class compares ship trajectories across episodes and records spatial
     proximity events. Events are attached directly to the corresponding
@@ -104,7 +108,8 @@ class CollisionAnnotator:
     """
 
     def __init__(self, near_miss_threshold: float = 50.0, collision_threshold: float = 15.0):
-        """Initializes the collision detector with distance thresholds.
+        """
+        Initializes the collision detector with distance thresholds.
 
         Args:
             near_miss_threshold: Threshold for near-miss detection.
@@ -127,7 +132,8 @@ class CollisionAnnotator:
         self.collision_threshold = collision_threshold
 
     def annotate(self, run_data: RunData) -> None:
-        """Annotates a full run with collision and near-miss events.
+        """
+        Annotates a full run with collision and near-miss events.
 
         Iterates over all ship pairs and compares their trajectories
         timestep-by-timestep.
@@ -157,7 +163,8 @@ class CollisionAnnotator:
                     self._compare_paths(ep_a, ep_b)
 
     def _compare_paths(self, ep_a: ShipEpisodeData, ep_b: ShipEpisodeData) -> None:
-        """Compares two ship episodes and records proximity events.
+        """
+        Compares two ship episodes and records proximity events.
 
         Uses vectorized distance computation instead of a Python-level loop
         for better performance on long trajectories.

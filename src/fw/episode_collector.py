@@ -9,7 +9,8 @@ from fw.ship_episode_data import RunData, ShipData, ShipEpisodeData
 
 
 class ShipDataExtractor:
-    """Extracts and records ship-specific data from an environment.
+    """
+    Extracts and records ship-specific data from an environment.
 
     This utility class is responsible for pulling relevant state and action
     information from a ship environment and appending it to a per-ship
@@ -27,7 +28,8 @@ class ShipDataExtractor:
 
     @staticmethod
     def record_initial(ship_env, acc: dict) -> None:
-        """Records the initial state of a ship environment.
+        """
+        Records the initial state of a ship environment.
 
         Captures the starting values for position, cross-track error, velocity,
         heading error, and initializes rudder-related signals.
@@ -56,7 +58,8 @@ class ShipDataExtractor:
 
     @staticmethod
     def record_step(ship_env, acc: dict) -> None:
-        """Records a single timestep of ship data.
+        """
+        Records a single timestep of ship data.
 
         Appends current state and action-related values to the accumulator,
         including position, cross-track error, heading error, velocities,
@@ -108,7 +111,8 @@ class ShipDataExtractor:
 # ---------------------------------------------------------------------------
 
 class EpisodeCollector:
-    """Collects evaluation episodes and aggregates per-ship trajectory data.
+    """
+    Collects evaluation episodes and aggregates per-ship trajectory data.
 
     Executes one or more episodes using a trained agent and records timestep-level
     data (e.g., positions, errors, actions, rewards) for each ship. Supports both
@@ -141,7 +145,8 @@ class EpisodeCollector:
     # ------------------------------------------------------------------
 
     def collect(self, num_episodes: int = 5, live_animation: bool = False) -> RunData:
-        """Runs multiple evaluation episodes and collects per-ship data.
+        """
+        Runs multiple evaluation episodes and collects per-ship data.
 
         Args:
             num_episodes: Number of episodes to execute.
@@ -171,7 +176,8 @@ class EpisodeCollector:
 
     @contextmanager
     def _render_mode(self, ship_envs: dict[str, object], enabled: bool):
-        """Temporarily enables rendering for ship environments.
+        """
+        Temporarily enables rendering for ship environments.
 
         Args:
             ship_envs: Mapping of ship IDs to their environment instances.
@@ -208,7 +214,8 @@ class EpisodeCollector:
                     ship_env.render_mode = render_modes[sid]
 
     def _run_episode(self, episode: int, live_animation: bool = False) -> dict[str, ShipEpisodeData]:
-        """Executes a single episode and collects per-ship data.
+        """
+        Executes a single episode and collects per-ship data.
 
         Args:
             episode: Episode index used for bookkeeping.
@@ -274,7 +281,8 @@ class EpisodeCollector:
             ship_envs: dict[str, object],
             reward,
     ) -> None:
-        """Records one timestep of data for each ship.
+        """
+        Records one timestep of data for each ship.
 
         Args:
             accumulators: Per-ship data accumulators.
@@ -305,7 +313,8 @@ class EpisodeCollector:
             acc["reward"] = acc.get("reward", 0.0) + r
 
     def _get_ship_env(self, ship_id: str):
-        """Returns the environment corresponding to a given ship.
+        """
+        Returns the environment corresponding to a given ship.
 
         Args:
             ship_id: Identifier of the ship.
@@ -321,7 +330,8 @@ class EpisodeCollector:
 
     @staticmethod
     def _empty_accumulator(ship_id: str, episode: int) -> dict:
-        """Initializes an empty data accumulator for a ship.
+        """
+        Initializes an empty data accumulator for a ship.
 
         Args:
             ship_id: Identifier of the ship.
@@ -347,7 +357,8 @@ class EpisodeCollector:
 
     @staticmethod
     def _accumulator_to_episode_data(acc: dict) -> ShipEpisodeData:
-        """Converts a raw accumulator into structured episode data.
+        """
+        Converts a raw accumulator into structured episode data.
 
         Args:
             acc: Accumulator containing collected timestep data.

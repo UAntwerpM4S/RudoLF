@@ -12,7 +12,8 @@ from fw.ship_episode_data import RunData, ShipEpisodeData
 
 @dataclass
 class ShipMetrics:
-    """Aggregated performance metrics for a single ship over multiple episodes.
+    """
+    Aggregated performance metrics for a single ship over multiple episodes.
 
     This dataclass stores summary statistics computed from a set of episodes,
     including tracking performance, control effort, motion behavior, and reward
@@ -54,7 +55,8 @@ class ShipMetrics:
 
 
 class MetricsComputer:
-    """Computes aggregated per-ship metrics from evaluation run data.
+    """
+    Computes aggregated per-ship metrics from evaluation run data.
 
     This class processes `RunData` (containing multiple episodes per ship)
     and computes summary statistics such as tracking error, control effort,
@@ -66,7 +68,8 @@ class MetricsComputer:
 
     @staticmethod
     def compute(run_data: RunData) -> dict[str, ShipMetrics]:
-        """Computes metrics for all ships in a run.
+        """
+        Computes metrics for all ships in a run.
 
         Args:
             run_data: Evaluation output containing per-ship episode data.
@@ -82,7 +85,8 @@ class MetricsComputer:
 
     @staticmethod
     def _compute_ship(ship_id: str, episodes: list[ShipEpisodeData]) -> ShipMetrics:
-        """Computes aggregate metrics for a single ship.
+        """
+        Computes aggregate metrics for a single ship.
 
         Args:
             ship_id: Identifier of the ship.

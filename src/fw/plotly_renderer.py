@@ -12,7 +12,8 @@ from fw.output_helpers import SHIP_COLORS, normalized_time_axis, resample_to_com
 # ---------------------------------------------------------------------------
 
 class PlotlyRenderer:
-    """Renders an interactive multi-ship evaluation dashboard using Plotly.
+    """
+    Renders an interactive multi-ship evaluation dashboard using Plotly.
 
     Produces an HTML file containing an interactive visualization of ship
     trajectories and associated time-series signals. The dashboard supports
@@ -36,7 +37,8 @@ class PlotlyRenderer:
         metrics: dict[str, ShipMetrics],
         save_path: str = "dashboard.html",
     ) -> None:
-        """Generates an interactive HTML dashboard for multi-ship evaluation.
+        """
+        Generates an interactive HTML dashboard for multi-ship evaluation.
 
         Args:
             ship_data: Mapping of ship IDs to lists of `ShipEpisodeData`.

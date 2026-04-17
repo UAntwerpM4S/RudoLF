@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
+from shapely import Polygon, MultiPolygon
 from fw.ship_episode_data import ShipData
 from fw.metrics_computer import ShipMetrics
 from fw.output_helpers import SHIP_COLORS, shade_color, normalized_time_axis, resample_to_common_time
@@ -15,7 +16,8 @@ from fw.output_helpers import SHIP_COLORS, shade_color, normalized_time_axis, re
 
 
 class MatplotlibRenderer:
-    """Renders multi-ship episode data as a static matplotlib figure.
+    """
+    Renders multi-ship episode data as a static matplotlib figure.
 
     Produces a grid of subplots where each column corresponds to a ship and
     each row visualizes a different aspect of the episode data:
@@ -44,7 +46,8 @@ class MatplotlibRenderer:
         save_path: str = "trajectory.png",
         fig_width_per_ship: int = 10,
     ) -> None:
-        """Generates and saves a multi-ship trajectory visualization.
+        """
+        Generates and saves a multi-ship trajectory visualization.
 
         Args:
             ship_data: Mapping of ship IDs to lists of `ShipEpisodeData`.
@@ -88,7 +91,21 @@ class MatplotlibRenderer:
                 ax_rudder = axes[2][col]
                 ax_ukc    = axes[3][col]
 
-                cls._plot_trajectory(ax_traj, episodes, colors, cls._get_ship_env(env, ship_id), ship_id, m)
+                ship_env = cls._get_ship_env(env, ship_id)
+
+                # Add hatched pattern to first subplot
+                difference_coords = cls.create_hashed_area(ship_env.obstacles, ship_env.overall)
+                for coords in difference_coords:
+                    ax_traj.add_patch(patches.Polygon(
+                        coords,
+                        facecolor='none',
+                        edgecolor='gray',
+                        hatch='///',
+                        alpha=0.3,
+                        label='Low water level area' if coords is difference_coords[0] else ""
+                    ))
+
+                cls._plot_trajectory(ax_traj, episodes, colors, ship_env, ship_id, m)
 
                 cls._plot_signal(
                     ax_error, episodes, colors,
@@ -117,7 +134,8 @@ class MatplotlibRenderer:
 
     @classmethod
     def _get_ship_env(cls, env, ship_id: str):
-        """Retrieves the environment corresponding to a specific ship.
+        """
+        Retrieves the environment corresponding to a specific ship.
 
         Args:
             env: Environment instance, possibly containing sub-environments.
@@ -137,8 +155,31 @@ class MatplotlibRenderer:
     # ------------------------------------------------------------------
 
     @classmethod
+    def create_hashed_area(cls, obstacles, overall):
+        """
+        Create hashed pattern for the area between obstacles and Western Scheldt.
+        Args:
+            obstacles: Description.
+            overall: Description.
+        """
+
+        obstacle_poly = Polygon(obstacles)
+        overall_poly = Polygon(overall)
+        difference = overall_poly.difference(obstacle_poly)
+
+        if isinstance(difference, MultiPolygon):
+            coords = []
+            for poly in difference.geoms:
+                coords.append(np.array(poly.exterior.coords))
+        else:
+            coords = [np.array(difference.exterior.coords)]
+
+        return coords
+
+    @classmethod
     def _plot_trajectory(cls, ax, episodes, colors, env, ship_id, metrics):
-        """Plots the trajectory map for a single ship.
+        """
+        Plots the trajectory map for a single ship.
 
         Includes waterway geometry, checkpoints, episode paths, and start/end
         markers.
@@ -208,7 +249,8 @@ class MatplotlibRenderer:
 
     @classmethod
     def _plot_signal(cls, ax, episodes, colors, signal_attr, title, ylabel, ylim=None):
-        """Plots a generic time-series signal across episodes.
+        """
+        Plots a generic time-series signal across episodes.
 
         Each episode is plotted individually, along with an averaged signal
         computed after resampling to a common time axis.
@@ -257,7 +299,8 @@ class MatplotlibRenderer:
 
     @classmethod
     def _plot_rudder(cls, ax, episodes, colors, ship_id):
-        """Plots rudder actions over normalized episode time.
+        """
+        Plots rudder actions over normalized episode time.
 
         Rudder signals are resampled to a common time axis to allow comparison
         across episodes.

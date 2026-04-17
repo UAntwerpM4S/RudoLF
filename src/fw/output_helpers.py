@@ -31,7 +31,8 @@ SHIP_COLORS = [
 # ---------------
 
 def compute_heading_error(ship_env) -> float:
-    """Computes heading error relative to the next waypoint segment.
+    """
+    Computes heading error relative to the next waypoint segment.
 
     This function replicates the heading error computation used in the agent
     manager for a single ship sub-environment.
@@ -64,7 +65,8 @@ def compute_heading_error(ship_env) -> float:
 
 
 def normalized_time_axis(length: int) -> np.ndarray:
-    """Creates a normalized time axis for a sequence.
+    """
+    Creates a normalized time axis for a sequence.
 
     Maps sequence indices to percentage progress in [0, 100].
 
@@ -81,7 +83,8 @@ def normalized_time_axis(length: int) -> np.ndarray:
 
 
 def shade_color(base_color, n: int, lo: float = 0.45, hi: float = 1.0) -> list[tuple]:
-    """Generates shaded variations of a base color.
+    """
+    Generates shaded variations of a base color.
 
     Creates a gradient of `n` colors by scaling the RGB intensity.
 
@@ -103,7 +106,8 @@ def shade_color(base_color, n: int, lo: float = 0.45, hi: float = 1.0) -> list[t
 
 
 def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.ndarray:
-    """Resamples a signal to a shared normalized time axis.
+    """
+    Resamples a signal to a shared normalized time axis.
 
     Supports both 1D and multi-dimensional signals. Used to align episode
     data of varying lengths for averaging and comparison.

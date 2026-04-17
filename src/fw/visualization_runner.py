@@ -21,7 +21,8 @@ def run_visualization(
     near_miss_threshold: float = 50.0,
     collision_threshold: float = 15.0,
 ) -> tuple[RunData, dict[str, ShipMetrics]]:
-    """Runs the full evaluation + visualization pipeline.
+    """
+    Runs the full evaluation + visualization pipeline.
 
     This function executes the complete workflow for evaluating a trained agent:
     episode collection, collision annotation, metric computation, and rendering
