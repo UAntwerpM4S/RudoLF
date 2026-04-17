@@ -31,6 +31,7 @@ class CollisionEvent:
     distance: float
     is_collision: bool  # True if distance < hard collision threshold
 
+
 @dataclass
 class ShipEpisodeData:
     """Stores all recorded data for a single ship over one episode.
@@ -66,9 +67,11 @@ class ShipEpisodeData:
     reward: float = 0.0
     collision_events: list[CollisionEvent] = field(default_factory=list)
 
+
 # Type alias for the full data structure:
 #   ship_data["ship_0"][episode_index] → ShipEpisodeData
 ShipData = dict[str, list[ShipEpisodeData]]
+
 
 @dataclass
 class RunData:
@@ -82,6 +85,7 @@ class RunData:
 
     ships: dict[str, list[ShipEpisodeData]]
     num_episodes: int
+
 
 # ---------------------------------------------------------------------------
 # Collision annotator
@@ -105,7 +109,19 @@ class CollisionAnnotator:
         Args:
             near_miss_threshold: Threshold for near-miss detection.
             collision_threshold: Threshold for collision detection.
+
+        Raises:
+            ValueError: If collision_threshold >= near_miss_threshold or
+                either threshold is non-positive.
         """
+
+        if near_miss_threshold <= 0 or collision_threshold <= 0:
+            raise ValueError("Distance thresholds must be positive.")
+        if collision_threshold >= near_miss_threshold:
+            raise ValueError(
+                f"collision_threshold ({collision_threshold}) must be strictly less than "
+                f"near_miss_threshold ({near_miss_threshold})."
+            )
 
         self.near_miss_threshold = near_miss_threshold
         self.collision_threshold = collision_threshold
@@ -143,6 +159,9 @@ class CollisionAnnotator:
     def _compare_paths(self, ep_a: ShipEpisodeData, ep_b: ShipEpisodeData) -> None:
         """Compares two ship episodes and records proximity events.
 
+        Uses vectorized distance computation instead of a Python-level loop
+        for better performance on long trajectories.
+
         Args:
             ep_a: First ship episode.
             ep_b: Second ship episode.
@@ -156,23 +175,29 @@ class CollisionAnnotator:
         if min_len == 0:
             return
 
-        for t in range(min_len):
-            dist = float(np.linalg.norm(ep_a.path[t] - ep_b.path[t]))
-            if dist < self.near_miss_threshold:
-                is_collision = dist < self.collision_threshold
-                event_a = CollisionEvent(
-                    timestep=t,
-                    ship_a=ep_a.ship_id,
-                    ship_b=ep_b.ship_id,
-                    distance=dist,
-                    is_collision=is_collision,
-                )
-                event_b = CollisionEvent(
-                    timestep=t,
-                    ship_a=ep_a.ship_id,
-                    ship_b=ep_b.ship_id,
-                    distance=dist,
-                    is_collision=is_collision,
-                )
-                ep_a.collision_events.append(event_a)
-                ep_b.collision_events.append(event_b)
+        path_a = ep_a.path[:min_len]
+        path_b = ep_b.path[:min_len]
+        dists = np.linalg.norm(path_a - path_b, axis=1)
+
+        # Only iterate over timesteps where something interesting happened.
+        event_timesteps = np.flatnonzero(dists < self.near_miss_threshold)
+
+        for t in event_timesteps:
+            dist = float(dists[t])
+            is_collision = dist < self.collision_threshold
+
+            ep_a.collision_events.append(CollisionEvent(
+                timestep=int(t),
+                ship_a=ep_a.ship_id,
+                ship_b=ep_b.ship_id,
+                distance=dist,
+                is_collision=is_collision,
+            ))
+
+            ep_b.collision_events.append(CollisionEvent(
+                timestep=int(t),
+                ship_a=ep_a.ship_id,
+                ship_b=ep_b.ship_id,
+                distance=dist,
+                is_collision=is_collision,
+            ))

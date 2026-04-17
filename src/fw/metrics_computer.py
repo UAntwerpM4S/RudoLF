@@ -101,10 +101,22 @@ class MetricsComputer:
         if not episodes:
             return m
 
-        rewards, steps = zip(*((ep.reward, ep.rudder_actions.shape[0]) for ep in episodes))
-        m.avg_reward = float(np.mean(rewards) / steps)
-        m.best_reward = float(np.max(rewards) / steps)
-        m.worst_reward = float(np.min(rewards) / steps)
+        rewards = np.array([ep.reward for ep in episodes], dtype=float)
+
+        # Use rudder_actions length as step count proxy; fall back to path length.
+        step_counts = np.array([
+            ep.rudder_actions.shape[0] if ep.rudder_actions.size > 0
+            else max(ep.path.shape[0], 1)
+            for ep in episodes
+        ], dtype=float)
+
+        # Guard against zero-length episodes to avoid division by zero.
+        safe_steps = np.where(step_counts > 0, step_counts, 1.0)
+        normalized_rewards = rewards / safe_steps
+
+        m.avg_reward   = float(np.mean(normalized_rewards))
+        m.best_reward  = float(np.max(normalized_rewards))
+        m.worst_reward = float(np.min(normalized_rewards))
 
         per_ep_mTEI, per_ep_MTE = [], []
         per_ep_mRA, per_ep_MRA, per_ep_mRAC = [], [], []
@@ -112,24 +124,27 @@ class MetricsComputer:
 
         for ep in episodes:
             if ep.cross_errors.size:
-                # Proper integral (normalized by length)
-                integral = np.trapezoid(np.abs(ep.cross_errors))
-                normalized = integral / len(ep.cross_errors)
-                per_ep_mTEI.append(normalized)
-                per_ep_MTE.append(np.max(np.abs(ep.cross_errors)))
+                abs_cte = np.abs(ep.cross_errors)
+                per_ep_mTEI.append(float(np.nanmean(abs_cte)))   # correct mean
+                per_ep_MTE.append(float(np.nanmax(abs_cte)))
             if ep.rudder_actions.size:
-                per_ep_mRA.append(np.mean(np.abs(ep.rudder_actions)))
-                per_ep_MRA.append(np.max(np.abs(ep.rudder_actions)))
+                ra = np.abs(ep.rudder_actions)
+                per_ep_mRA.append(float(np.nanmean(ra)))
+                per_ep_MRA.append(float(np.nanmax(ra)))
             if ep.rudder_changes.size:
-                per_ep_mRAC.append(np.mean(ep.rudder_changes))
+                per_ep_mRAC.append(float(np.nanmean(np.abs(ep.rudder_changes))))
             if ep.heading_errors.size:
-                per_ep_mHE.append(np.mean(np.abs(ep.heading_errors)))
+                per_ep_mHE.append(float(np.nanmean(np.abs(ep.heading_errors))))
             if ep.velocities.size:
-                per_ep_mu.append(np.mean(np.abs(ep.velocities)))
-                per_ep_Mu.append(np.max(np.abs(ep.velocities)))
+                v = np.abs(ep.velocities).ravel()
+                per_ep_mu.append(float(np.nanmean(v)))
+                per_ep_Mu.append(float(np.nanmax(v)))
 
-        def safe_mean(lst): return float(np.mean(lst)) if lst else 0.0
-        def safe_max(lst):  return float(np.max(lst))  if lst else 0.0
+        def safe_mean(lst: list) -> float:
+            return float(np.nanmean(lst)) if lst else 0.0
+
+        def safe_max(lst: list) -> float:
+            return float(np.nanmax(lst)) if lst else 0.0
 
         m.mTEI = safe_mean(per_ep_mTEI)
         m.MTE  = safe_max(per_ep_MTE)
