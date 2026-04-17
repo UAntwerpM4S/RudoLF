@@ -71,6 +71,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.polar_obs_max = 0.1
 
         self.include_scenario_one_hot = bool(include_scenario_one_hot)
+        print(self.include_scenario_one_hot)
 
         # Polar-specific reward state
         self._colreg_initial_heading = None
@@ -87,7 +88,10 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         ).astype(np.float32)
 
         # Scenario parameters
-        scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
+        scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "episode"
+        scenario_probs = scenario_probs if scenario_probs is not None else [
+            0.0, 0.0, 1, 0.0, 0.0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+        ]
 
         # Call base init (encounter_range = polar_max_range)
         super().__init__(
@@ -110,7 +114,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             scenario_probs=scenario_probs,
             obstacle_population=obstacle_population,
             obstacle_weights=obstacle_weights,
-            scenario_obstacle_level=scenario_obstacle_level
+            scenario_obstacle_level=scenario_obstacle_level,
         )
 
         self.polar_scan_cached = None
@@ -118,9 +122,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Reward weights for polar COLAV shaping
         self.reward_weights = {
             "polar_distance": 0.7,
-            "colreg_bearing": 0.4,
-            "headon_bearing": 0.4,
-            "crossing_left_speed": 0.3,
+            "colreg_bearing": 0.08,
             "crossing_right": 0.5,
             "crossing_right_grav": 1.0,
         }
@@ -352,8 +354,9 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                               ) % (2.0 * math.pi) - math.pi
 
                 dist = ts.distance_to_point(os_pos)
+                print(clf.classify_range)
                 proximity = max(0.0, 1.0 - dist / clf.classify_range)
-                reward += self.reward_weights["headon_bearing"] * math.sin(rel_bearing) * proximity
+                reward += self.reward_weights["colreg_bearing"] * math.sin(rel_bearing) * proximity
 
                 if scenario == "head-on":
                     side = ts.ts_side_from_os_perspective(os_pos, os_heading)
@@ -386,15 +389,15 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 polar_crossing_keep = 0.1 + 0.9 * cri
                 reward += (1.0 - polar_crossing_keep) * _step_polar
 
-                if -math.pi / 2 <= rel_bearing <= math.pi / 2:
-                    crossing_signal = math.sin(rel_bearing)
-                elif rel_bearing < -math.pi / 2:
-                    crossing_signal = (-0.005 * (math.degrees(rel_bearing) + 90) ** 2) + math.sin(math.radians(-90))
-                else:
-                    crossing_signal = (-0.005 * (math.degrees(rel_bearing) - 90) ** 2) + math.sin(math.radians(90))
-                crossing_reward = crossing_signal * (1.0 - cri)
-                _step_crossing = self.reward_weights["crossing_right"] * crossing_reward
-                reward += _step_crossing
+                #if -math.pi / 2 <= rel_bearing <= math.pi / 2:
+                #    crossing_signal = math.sin(rel_bearing)
+                #elif rel_bearing < -math.pi / 2:
+                #    crossing_signal = (-0.005 * (math.degrees(rel_bearing) + 90) ** 2) + math.sin(math.radians(-90))
+                #else:
+                #    crossing_signal = (-0.005 * (math.degrees(rel_bearing) - 90) ** 2) + math.sin(math.radians(90))
+                #crossing_reward = crossing_signal * (1.0 - cri)
+                #_step_crossing = self.reward_weights["crossing_right"] * crossing_reward
+                #reward += _step_crossing
 
                 # Gravitation point
                 _step_grav = 0.0

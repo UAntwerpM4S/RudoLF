@@ -41,14 +41,14 @@ class ScenarioClassifier:
         self._scenario: int = 0
         self._overtaking_locked: bool = False
         self._headon_locked: bool = False
-        #self._crossing_right_locked: bool = False
+        self._crossing_right_locked: bool = False
 
     def reset(self) -> None:
         self._tracked_ts = None
         self._scenario = 0
         self._overtaking_locked = False
         self._headon_locked = False
-        #self._crossing_right_locked = False
+        self._crossing_right_locked = False
 
     def classify(self, os_pos: np.ndarray, os_heading: float, collision_entities: list) -> int:
         """Classify the encounter with the nearest dynamic TS. Returns scenario index."""
@@ -73,9 +73,9 @@ class ScenarioClassifier:
             self._scenario = 1
             return 1
 
-        #if self._crossing_right_locked:
-        #    self._scenario = 3
-        #    return 3
+        if self._crossing_right_locked:
+            self._scenario = 3
+            return 3
 
         self._scenario = self._classify_geometry(os_pos, os_heading, ts.get_position(), ts.get_heading())
 
@@ -85,8 +85,8 @@ class ScenarioClassifier:
         if self._scenario == 1:
             self._headon_locked = True
 
-        #if self._scenario == 3:
-        #    self._crossing_right_locked = True
+        if self._scenario == 3:
+            self._crossing_right_locked = True
 
 
         return self._scenario

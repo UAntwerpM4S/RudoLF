@@ -269,12 +269,23 @@ class AgentManager:
                 "Got a MultiSimEnv with multiple sub-environments."
             )
 
-        return MultiPolicySingleAgent(
+        agent = MultiPolicySingleAgent(
             environment=target_env,
             num_policies=NUM_SCENARIOS,
             policy_labels=list(SCENARIO_LABELS),
             **self._hyperparameters,
         )
+
+        pretrained_path = os.path.join(agent.model_dir, "pretrained_pf")
+        if os.path.exists(pretrained_path + ".zip"):
+            pid = 0
+            agent.load_individual_policy(pid, pretrained_path)
+            agent.pretrained_pid = pid
+            print("Loaded pretrained policy into slot 0")
+        else:
+            print(f"No pre-trained policy found at {pretrained_path}, starting from scratch.")
+
+        return agent
 
 
     def set_environment(self, env: BaseEnv, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,

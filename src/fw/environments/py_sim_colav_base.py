@@ -89,7 +89,7 @@ class PySimColavBaseEnv(PySimEnv):
             wind: bool = False,
             current: bool = False,
             numerical_damping: bool = False,
-            # --- COLAV configuration ---
+            # COLAV configuration
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
             encounter_range: float = 500.0,
@@ -445,7 +445,7 @@ class PySimColavBaseEnv(PySimEnv):
                      )
                      if min_dist <= self.encounter_range / 2:
                          entity.dodged = True
-                         dodge_angle = math.radians(20)
+                         dodge_angle = math.radians(0) # TODO: ~20° for evaluation
                          entity.set_heading(entity.get_heading() - dodge_angle)
                          entity.set_lateral_speed(0.0)
                          entity.route_mode = None

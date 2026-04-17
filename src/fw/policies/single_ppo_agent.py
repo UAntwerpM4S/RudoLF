@@ -454,7 +454,7 @@ class SinglePPOAgent(BasePPOAgent):
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
             self.policy.save(policy_file_name)
-            print(f"[save] Saved policy to {policy_file_name}.zip")
+            #print(f"[save] Saved policy to {policy_file_name}.zip")
         except Exception as e:
             raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
 

@@ -20,6 +20,7 @@ class ScenarioBuilder:
     """
 
     def __init__(self, env) -> None:
+        self.step_counter: int = 0
         self.env = env
 
     # ------------------------------------------------------------------
@@ -50,7 +51,10 @@ class ScenarioBuilder:
             env._sync_collision_entity_views()
             return
 
-        encounter_prob = 0.4
+        if self.step_counter != 100:
+            self.step_counter += 1
+            return
+        encounter_prob = 0.004
         encounter = env._rng.random() < encounter_prob
 
         # Spawn a new encounter if none is active
@@ -74,6 +78,7 @@ class ScenarioBuilder:
                     env.collision_entities = []
                     env.ts_idx = None
                     env._sync_collision_entity_views()
+                    self.step_counter = 0
                     # Reset the classifier so it doesn't hold a stale tracked_ts
                     # index into the now-empty collision_entities list. Without
                     # this, _calculate_colav_reward() reads tracked_ts=0 and

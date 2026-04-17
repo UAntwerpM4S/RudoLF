@@ -93,6 +93,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         self.num_policies = num_policies
         self.policy_labels = policy_labels or [f"policy_{i}" for i in range(num_policies)]
+        self.pretrained_pid = None
 
         if len(self.policy_labels) != num_policies:
             raise ValueError(
@@ -442,7 +443,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
     # ------------------------------------------------------------------
     # Training
     # ------------------------------------------------------------------
-    def _train_policy(self, policy_id: int, segments: List[dict]) -> float:
+    def _train_policy(self, policy_id: int, segments: List[dict]) -> Tuple[float, float, float, float]:
         """
         Run PPO optimization for a single policy on its collected segments.
 
@@ -455,11 +456,16 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 advantages, log_probs, returns.
 
         Returns:
-            float: Mean training loss, or NaN if no usable data.
+            Tuple[float, float, float, float]: Mean total loss, mean policy
+                loss, mean value loss, and mean entropy bonus (entropy coef *
+                mean entropy) across all minibatches/epochs.  All NaN if no
+                usable data.
         """
+        if policy_id == self.pretrained_pid:
+            return float("nan"), float("nan"), float("nan"), float("nan")
 
         if not segments:
-            return float("nan")
+            return float("nan"), float("nan"), float("nan"), float("nan")
 
         policy = self.policies[policy_id]
         optimizer = self.optimizers[policy_id]
@@ -492,13 +498,16 @@ class MultiPolicySingleAgent(BasePPOAgent):
         ).to(self.device)
 
         if all_advantages.numel() <= 1:
-            return float("nan")
+            return float("nan"), float("nan"), float("nan"), float("nan")
 
         # Normalize advantages
         all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
 
         batch_size = all_states.shape[0]
         loss_per_epoch = []
+        policy_loss_per_mb = []
+        value_loss_per_mb = []
+        entropy_bonus_per_mb = []
 
         for _ in range(self.num_epochs):
             indices = torch.randperm(batch_size)
@@ -534,7 +543,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 value_loss = nn.functional.mse_loss(state_values.squeeze(-1), mb_returns)
                 entropy_loss = dist.entropy().sum(dim=-1).mean()
 
-                loss = policy_loss + (self.value_loss_coef * value_loss) - (self.entropy_coef * entropy_loss)
+                entropy_bonus = self.entropy_coef * entropy_loss
+                loss = policy_loss + (self.value_loss_coef * value_loss) - entropy_bonus
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -542,8 +552,19 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 optimizer.step()
 
                 loss_per_epoch.append(loss.item())
+                policy_loss_per_mb.append(policy_loss.item())
+                value_loss_per_mb.append(value_loss.item())
+                entropy_bonus_per_mb.append(entropy_bonus.item())
 
-        return float(np.mean(loss_per_epoch)) if loss_per_epoch else float("nan")
+        if not loss_per_epoch:
+            return float("nan"), float("nan"), float("nan"), float("nan")
+
+        return (
+            float(np.mean(loss_per_epoch)),
+            float(np.mean(policy_loss_per_mb)),
+            float(np.mean(value_loss_per_mb)),
+            float(np.mean(entropy_bonus_per_mb)),
+        )
 
     # ------------------------------------------------------------------
     # Main training loop
@@ -600,11 +621,17 @@ class MultiPolicySingleAgent(BasePPOAgent):
             # --- 3. Train each policy on its segments ---
             iter_rewards = {}
             iter_losses = {}
+            iter_policy_losses = {}
+            iter_value_losses = {}
+            iter_entropy_bonuses = {}
 
             for pid in range(self.num_policies):
                 segs = accumulated_segments[pid]
-                loss = self._train_policy(pid, segs)
+                loss, policy_loss, value_loss, entropy_bonus = self._train_policy(pid, segs)
                 iter_losses[pid] = loss
+                iter_policy_losses[pid] = policy_loss
+                iter_value_losses[pid] = value_loss
+                iter_entropy_bonuses[pid] = entropy_bonus
 
                 if segs:
                     all_seg_rewards = np.concatenate([s["rewards"] for s in segs])
@@ -615,6 +642,9 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 training_metrics[self.policy_labels[pid]].append({
                     "iteration": iteration,
                     "loss": loss,
+                    "policy_loss": policy_loss,
+                    "value_loss": value_loss,
+                    "entropy_bonus": entropy_bonus,
                     "reward": iter_rewards[pid],
                     "n_steps": sum(len(s["rewards"]) for s in segs),
                 })
@@ -639,9 +669,13 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 for pid in range(self.num_policies):
                     label = self.policy_labels[pid]
                     r = iter_rewards[pid]
-                    l = iter_losses[pid]
+                    pl = iter_policy_losses[pid]
+                    vl = iter_value_losses[pid]
+                    eb = iter_entropy_bonuses[pid]
                     n = sum(len(s["rewards"]) for s in accumulated_segments[pid])
-                    parts.append(f"{label}: r={r:.3f}, l={l:.3f}, steps={n}")
+                    parts.append(
+                        f"{label}: r={r:.3f}, loss: p={pl:.3f}, v={vl:.3f}, e={eb:.3f}, steps={n}"
+                    )
                 print(f"[Iter {iteration}] " + " | ".join(parts))
 
             # Periodic checkpoint (all policies in one ZIP)
