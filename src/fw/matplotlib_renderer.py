@@ -29,7 +29,8 @@ class MatplotlibRenderer:
 
     Attributes:
         COMMON_TIME: Normalized time axis used for resampling signals to a
-            common length for averaging.
+            common length for averaging. Values in [0, 1] as expected by
+            resample_to_common_time.
     """
 
     COMMON_TIME = np.linspace(0.0, 1.0, 200)
@@ -61,7 +62,7 @@ class MatplotlibRenderer:
             - All matplotlib figures are closed after rendering to avoid leaks.
         """
 
-        ship_ids = [sid for sid in ship_data if ship_data[sid]]  # only ships with data
+        ship_ids = [sid for sid in ship_data if ship_data[sid]]
         n_ships = len(ship_ids)
         n_rows = 4
 
@@ -73,7 +74,7 @@ class MatplotlibRenderer:
             fig, axes = plt.subplots(
                 n_rows, n_ships,
                 figsize=(fig_width_per_ship * n_ships, 16),
-                squeeze=False,   # always (n_rows, n_ships) shape
+                squeeze=False,
             )
 
             for col, ship_id in enumerate(ship_ids):
@@ -82,15 +83,13 @@ class MatplotlibRenderer:
                 colors = shade_color(ship_color, len(episodes))
                 m = metrics[ship_id]
 
-                ax_traj  = axes[0][col]
-                ax_error = axes[1][col]
-                ax_rudder= axes[2][col]
-                ax_ukc   = axes[3][col]
+                ax_traj   = axes[0][col]
+                ax_error  = axes[1][col]
+                ax_rudder = axes[2][col]
+                ax_ukc    = axes[3][col]
 
-                # -- Trajectory map --
                 cls._plot_trajectory(ax_traj, episodes, colors, cls._get_ship_env(env, ship_id), ship_id, m)
 
-                # -- Cross-track error --
                 cls._plot_signal(
                     ax_error, episodes, colors,
                     signal_attr="cross_errors",
@@ -99,10 +98,8 @@ class MatplotlibRenderer:
                     ylim=(0, 45),
                 )
 
-                # -- Rudder actions --
                 cls._plot_rudder(ax_rudder, episodes, colors, ship_id)
 
-                # -- UKC --
                 cls._plot_signal(
                     ax_ukc, episodes, colors,
                     signal_attr="ukc_measurements",
@@ -116,7 +113,7 @@ class MatplotlibRenderer:
             plt.show()
             print(f"Trajectory figure saved to '{save_path}'")
         finally:
-            plt.close('all')
+            plt.close("all")
 
     @classmethod
     def _get_ship_env(cls, env, ship_id: str):
@@ -133,7 +130,7 @@ class MatplotlibRenderer:
 
         if hasattr(env, "sub_environments") and env.sub_environments:
             return env.sub_environments.get(ship_id)
-        return env  # single-ship: env IS the ship env
+        return env
 
     # ------------------------------------------------------------------
     # Sub-plot helpers
@@ -159,7 +156,6 @@ class MatplotlibRenderer:
             - Collision visualization hooks are present but currently disabled.
         """
 
-        # Waterway geometry
         if hasattr(env, "obstacles"):
             ax.add_patch(patches.Polygon(
                 env.obstacles, closed=True,
@@ -171,7 +167,6 @@ class MatplotlibRenderer:
                 edgecolor="brown", facecolor="none", lw=2, label="Western Scheldt",
             ))
 
-        # Checkpoints
         if hasattr(env, "checkpoints"):
             cp_pos = np.array([cp["pos"] for cp in env.checkpoints])
             ax.plot(cp_pos[:, 0], cp_pos[:, 1], "g--", alpha=0.5, label="Ideal path")
@@ -180,17 +175,16 @@ class MatplotlibRenderer:
                     cp["pos"], radius=10, color="gray", alpha=0.5, fill=True,
                 ))
 
-        # Episode paths
         for i, ep in enumerate(episodes):
             if ep.path.shape[0] < 2:
                 continue
+
             ax.plot(
                 ep.path[:, 0], ep.path[:, 1],
                 color=colors[i], alpha=0.5,
-                label=f"Ep {i + 1} (R={float(np.mean(ep.reward)):.1f})",
+                label=f"Ep {i + 1} (R={ep.reward:.1f})",
             )
 
-            # Start / end markers
             ax.scatter(*ep.path[0],  c="blue", s=80, zorder=5)
             ax.scatter(*ep.path[-1], c="red",  s=80, zorder=5)
 
@@ -228,11 +222,8 @@ class MatplotlibRenderer:
             ylabel: Label for the y-axis.
             ylim: Optional tuple specifying y-axis limits.
 
-        Returns:
-            None.
-
         Notes:
-            - Signals are normalized to episode progress [0, 1].
+            - Signals are normalized to episode progress [0, 100] on the x-axis.
             - Average signal is computed only if at least one valid signal exists.
         """
 
@@ -246,13 +237,12 @@ class MatplotlibRenderer:
             ax.plot(t, signal, color=colors[i], alpha=0.2)
             all_signals.append(signal)
 
-        # Average across episodes (resampled to common time)
         if all_signals:
-            resampled = [
-                resample_to_common_time(s, cls.COMMON_TIME) for s in all_signals
-            ]
+            # resample_to_common_time expects common_time in [0, 1]
+            resampled = [resample_to_common_time(s, cls.COMMON_TIME) for s in all_signals]
             avg = np.mean(resampled, axis=0)
-            t_common = normalized_time_axis(len(avg))
+            # Map COMMON_TIME [0, 1] → [0, 100] to match normalized_time_axis output
+            t_common = cls.COMMON_TIME * 100.0
             ax.plot(t_common, avg, color="black", alpha=0.7, lw=1.5, label="Average")
 
         ax.set_title(title)
@@ -278,9 +268,6 @@ class MatplotlibRenderer:
             colors: List of colors corresponding to episodes.
             ship_id: Identifier of the ship.
 
-        Returns:
-            None.
-
         Notes:
             - Episodes without rudder data are skipped.
             - No average curve is plotted for rudder actions.
@@ -290,10 +277,10 @@ class MatplotlibRenderer:
             if ep.rudder_actions.size == 0:
                 continue
             resampled = resample_to_common_time(ep.rudder_actions, cls.COMMON_TIME)
-            ax.plot(cls.COMMON_TIME, resampled, color=colors[i], alpha=0.2)
+            ax.plot(cls.COMMON_TIME * 100.0, resampled, color=colors[i], alpha=0.2)
 
         ax.set_title(f"Rudder actions – {ship_id}")
         ax.set_xlabel("Episode progress [%]")
         ax.set_ylabel("Rudder action")
-        ax.set_xlim(0.0, 1.0)
+        ax.set_xlim(0.0, 100.0)
         ax.grid(True)

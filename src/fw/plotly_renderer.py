@@ -65,6 +65,10 @@ class PlotlyRenderer:
         ship_ids = list(ship_data.keys())
         n_ships = len(ship_ids)
 
+        if n_ships == 0:
+            print("[PlotlyRenderer] No ship data to render — skipping.")
+            return
+
         # 4 rows: trajectory, cross-track error, rudder, UKC
         fig = make_subplots(
             rows=4, cols=n_ships,
@@ -83,7 +87,7 @@ class PlotlyRenderer:
             for ep_idx, ep in enumerate(episodes):
                 opacity = max(0.3, 1.0 - ep_idx * 0.12)
                 name = f"{ship_id} ep{ep_idx + 1} R={ep.reward:.1f}"
-                show_legend = col == 1  # avoid duplicate legend entries
+                show_legend = ep_idx == 0
 
                 # Trajectory
                 if ep.path.shape[0] >= 2:
@@ -128,8 +132,10 @@ class PlotlyRenderer:
 
                 # Rudder actions
                 if ep.rudder_actions.size:
+                    # resample_to_common_time expects common_time in [0, 1];
+                    # we pass ct/100 so the x-axis stays in [0, 100] for display.
                     ct = np.linspace(0, 100, 200)
-                    resampled = resample_to_common_time(ep.rudder_actions, ct / 100)
+                    resampled = resample_to_common_time(ep.rudder_actions, ct / 100.0)
                     fig.add_trace(go.Scatter(
                         x=ct, y=resampled,
                         mode="lines", name=name,

@@ -49,12 +49,19 @@ def compute_heading_error(ship_env) -> float:
     checkpoints = ship_env.checkpoints
     idx = ship_env.checkpoint_index
     curr = checkpoints[idx]
-    nxt = checkpoints[min(idx + 1, len(checkpoints) - 1)]
+    if idx + 1 < len(checkpoints):
+        nxt = checkpoints[idx + 1]
+    else:
+        # At final checkpoint: reuse the last valid segment direction
+        nxt = checkpoints[idx]
+        curr = checkpoints[max(idx - 1, 0)]
+
     desired = np.arctan2(
         nxt["pos"][1] - curr["pos"][1],
         nxt["pos"][0] - curr["pos"][0],
     )
     return (ship_env.phys_sim.state.heading - desired + np.pi) % (2 * np.pi) - np.pi
+
 
 def normalized_time_axis(length: int) -> np.ndarray:
     """Creates a normalized time axis for a sequence.
@@ -73,7 +80,7 @@ def normalized_time_axis(length: int) -> np.ndarray:
     return np.linspace(0.0, 100.0, length)
 
 
-def shade_color(base_color, n, lo=0.45, hi=1.0):
+def shade_color(base_color, n: int, lo: float = 0.45, hi: float = 1.0) -> list[tuple]:
     """Generates shaded variations of a base color.
 
     Creates a gradient of `n` colors by scaling the RGB intensity.
@@ -88,6 +95,8 @@ def shade_color(base_color, n, lo=0.45, hi=1.0):
         list[tuple]: List of RGB tuples representing shaded colors.
     """
 
+    if n <= 0:
+        return []
     rgb = np.array(to_rgb(base_color))
     factors = np.linspace(hi, lo, n)
     return [tuple(np.clip(rgb * f, 0, 1)) for f in factors]
@@ -101,10 +110,13 @@ def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.n
 
     Args:
         signal: Input array of shape (T,) or (T, ...).
-        common_time: Target time axis in normalized coordinates.
+        common_time: Target time axis in normalized coordinates [0, 1].
 
     Returns:
-        np.ndarray: Resampled signal with shape (len(common_time), ...) .
+        np.ndarray: Resampled signal with shape (len(common_time), ...).
+
+    Raises:
+        ValueError: If signal is empty (shape[0] == 0).
 
     Notes:
         - Single-sample signals are repeated across the full time axis.
@@ -113,11 +125,18 @@ def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.n
     """
 
     signal = np.asarray(signal)
+
+    if signal.shape[0] == 0:
+        raise ValueError("Cannot resample an empty signal (shape[0] == 0).")
+
     if signal.shape[0] == 1:
         return np.repeat(signal, len(common_time), axis=0)
+
     original_time = np.linspace(0.0, 1.0, signal.shape[0])
+
     if signal.ndim == 1:
         return np.interp(common_time, original_time, signal)
+
     t = signal.shape[0]
     rest_shape = signal.shape[1:]
     flat_signal = signal.reshape(t, -1)

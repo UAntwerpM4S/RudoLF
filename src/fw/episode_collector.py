@@ -26,7 +26,7 @@ class ShipDataExtractor:
     """
 
     @staticmethod
-    def record_initial(ship_env, acc):
+    def record_initial(ship_env, acc: dict) -> None:
         """Records the initial state of a ship environment.
 
         Captures the starting values for position, cross-track error, velocity,
@@ -49,15 +49,13 @@ class ShipDataExtractor:
         if hasattr(ship_env, "velocities"):
             acc["velocities"].append(ship_env.velocities)
         if hasattr(ship_env, "phys_sim"):
-            acc["heading_errors"].append(
-                compute_heading_error(ship_env)
-            )
+            acc["heading_errors"].append(compute_heading_error(ship_env))
         if hasattr(ship_env, "performed_action"):
             acc["rudder_actions"].append(0.0)
             acc["rudder_changes"].append(0.0)
 
     @staticmethod
-    def record_step(ship_env, acc):
+    def record_step(ship_env, acc: dict) -> None:
         """Records a single timestep of ship data.
 
         Appends current state and action-related values to the accumulator,
@@ -84,6 +82,8 @@ class ShipDataExtractor:
 
         if hasattr(ship_env, "heading_error"):
             acc["heading_errors"].append(ship_env.heading_error)
+        elif hasattr(ship_env, "phys_sim"):
+            acc["heading_errors"].append(compute_heading_error(ship_env))
 
         if hasattr(ship_env, "velocities"):
             acc["velocities"].append(ship_env.velocities)
@@ -95,13 +95,13 @@ class ShipDataExtractor:
                 acc["rudder_changes"].append(abs(curr - prev))
             else:
                 acc["rudder_changes"].append(0.0)
-
             acc["rudder_actions"].append(curr)
 
         if hasattr(ship_env, "ukc"):
             if len(acc["ukc_measurements"]) == 0:
                 acc["ukc_measurements"].append(ship_env.ukc)
             acc["ukc_measurements"].append(ship_env.ukc)
+
 
 # ---------------------------------------------------------------------------
 # Episode collector
@@ -131,7 +131,7 @@ class EpisodeCollector:
 
         if ship_ids is not None:
             self._ship_ids = ship_ids
-        elif hasattr(env, "sub_environments") and self._env.sub_environments:  # <-- add truthiness check
+        elif hasattr(env, "sub_environments") and env.sub_environments:
             self._ship_ids = list(env.sub_environments.keys())
         else:
             self._ship_ids = ["ship_0"]
@@ -190,24 +190,22 @@ class EpisodeCollector:
             yield
             return
 
-        render_modes = {}
+        render_modes: dict[str, object] = {}
 
         try:
             for sid, ship_env in ship_envs.items():
                 if ship_env is None:
                     continue
-
                 render_modes[sid] = ship_env.render_mode
                 ship_env.render_mode = "human"
-
             yield
-
         finally:
             for sid, ship_env in ship_envs.items():
                 if ship_env is None:
                     continue
-
-                ship_env.render_mode = render_modes[sid]
+                # Only restore if we successfully captured the original mode.
+                if sid in render_modes:
+                    ship_env.render_mode = render_modes[sid]
 
     def _run_episode(self, episode: int, live_animation: bool = False) -> dict[str, ShipEpisodeData]:
         """Executes a single episode and collects per-ship data.
@@ -224,10 +222,7 @@ class EpisodeCollector:
         ship_ids = self._ship_ids
 
         # Cache ship environments once
-        ship_envs = {
-            sid: self._get_ship_env(sid)
-            for sid in ship_ids
-        }
+        ship_envs = {sid: self._get_ship_env(sid) for sid in ship_ids}
 
         # Initialise per-ship accumulators
         accumulators: dict[str, dict] = {
@@ -298,16 +293,14 @@ class EpisodeCollector:
 
             acc = accumulators[sid]
 
-            # Record state
             ShipDataExtractor.record_step(ship_env, acc)
 
-            # Running mean reward (simple incremental average)
             if isinstance(reward, dict):
                 r = reward.get(sid, 0.0)
             elif isinstance(reward, (list, np.ndarray)):
-                r = reward[idx]
+                r = float(reward[idx])
             else:
-                r = reward  # shared scalar
+                r = float(reward)  # shared scalar
 
             acc["reward"] = acc.get("reward", 0.0) + r
 
