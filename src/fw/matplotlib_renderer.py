@@ -15,21 +15,21 @@ from fw.output_helpers import SHIP_COLORS, shade_color, normalized_time_axis, re
 
 
 class MatplotlibRenderer:
-    """
-    Produces a static multi-ship trajectory figure.
+    """Renders multi-ship episode data as a static matplotlib figure.
 
-    Layout (per ship column):
-        Row 0 – Trajectory map
-        Row 1 – Cross-track error over time
-        Row 2 – Rudder actions over time
-        Row 3 – UKC over time
+    Produces a grid of subplots where each column corresponds to a ship and
+    each row visualizes a different aspect of the episode data:
+        - Row 0: Trajectory map
+        - Row 1: Cross-track error over time
+        - Row 2: Rudder actions over time
+        - Row 3: Under-keel clearance (UKC) over time
 
-    Each ship gets its own color; episodes within a ship are shaded variants.
-    Collision events are annotated on the trajectory map.
+    Episodes for a given ship are shown as color variations of a base ship color.
+    Aggregate (average) signals are overlaid where applicable.
 
-    Usage
-    -----
-        MatplotlibRenderer.render(ship_data, metrics, env, save_path="trajectory.png")
+    Attributes:
+        COMMON_TIME: Normalized time axis used for resampling signals to a
+            common length for averaging.
     """
 
     COMMON_TIME = np.linspace(0.0, 1.0, 200)
@@ -43,6 +43,24 @@ class MatplotlibRenderer:
         save_path: str = "trajectory.png",
         fig_width_per_ship: int = 10,
     ) -> None:
+        """Generates and saves a multi-ship trajectory visualization.
+
+        Args:
+            ship_data: Mapping of ship IDs to lists of `ShipEpisodeData`.
+            metrics: Mapping of ship IDs to computed `ShipMetrics`.
+            env: Environment instance (single-ship or multi-ship).
+            save_path: File path where the generated figure is saved.
+            fig_width_per_ship: Width (in inches) allocated per ship column.
+
+        Returns:
+            None.
+
+        Notes:
+            - Ships without episode data are skipped.
+            - The figure is displayed and saved to disk.
+            - All matplotlib figures are closed after rendering to avoid leaks.
+        """
+
         ship_ids = [sid for sid in ship_data if ship_data[sid]]  # only ships with data
         n_ships = len(ship_ids)
         n_rows = 4
@@ -102,7 +120,17 @@ class MatplotlibRenderer:
 
     @classmethod
     def _get_ship_env(cls, env, ship_id: str):
-        """Return the sub-environment for a ship, or the env itself for single-ship."""
+        """Retrieves the environment corresponding to a specific ship.
+
+        Args:
+            env: Environment instance, possibly containing sub-environments.
+            ship_id: Identifier of the ship.
+
+        Returns:
+            The sub-environment for the given ship in multi-ship mode,
+            otherwise the main environment.
+        """
+
         if hasattr(env, "sub_environments") and env.sub_environments:
             return env.sub_environments.get(ship_id)
         return env  # single-ship: env IS the ship env
@@ -113,7 +141,23 @@ class MatplotlibRenderer:
 
     @classmethod
     def _plot_trajectory(cls, ax, episodes, colors, env, ship_id, metrics):
-        """Trajectory map with waterway, checkpoints, paths, and collision markers."""
+        """Plots the trajectory map for a single ship.
+
+        Includes waterway geometry, checkpoints, episode paths, and start/end
+        markers.
+
+        Args:
+            ax: Matplotlib axis to draw on.
+            episodes: List of `ShipEpisodeData` for the ship.
+            colors: List of colors corresponding to episodes.
+            env: Ship-specific environment instance.
+            ship_id: Identifier of the ship.
+            metrics: `ShipMetrics` instance for summary statistics.
+
+        Notes:
+            - Only episodes with at least two path points are plotted.
+            - Collision visualization hooks are present but currently disabled.
+        """
 
         # Waterway geometry
         if hasattr(env, "obstacles"):
@@ -170,7 +214,28 @@ class MatplotlibRenderer:
 
     @classmethod
     def _plot_signal(cls, ax, episodes, colors, signal_attr, title, ylabel, ylim=None):
-        """Generic time-series plot (cross-track error, UKC, …)."""
+        """Plots a generic time-series signal across episodes.
+
+        Each episode is plotted individually, along with an averaged signal
+        computed after resampling to a common time axis.
+
+        Args:
+            ax: Matplotlib axis to draw on.
+            episodes: List of `ShipEpisodeData`.
+            colors: List of colors corresponding to episodes.
+            signal_attr: Name of the attribute to extract from each episode.
+            title: Plot title.
+            ylabel: Label for the y-axis.
+            ylim: Optional tuple specifying y-axis limits.
+
+        Returns:
+            None.
+
+        Notes:
+            - Signals are normalized to episode progress [0, 1].
+            - Average signal is computed only if at least one valid signal exists.
+        """
+
         all_signals = []
 
         for i, ep in enumerate(episodes):
@@ -202,7 +267,25 @@ class MatplotlibRenderer:
 
     @classmethod
     def _plot_rudder(cls, ax, episodes, colors, ship_id):
-        """Rudder actions resampled to common time."""
+        """Plots rudder actions over normalized episode time.
+
+        Rudder signals are resampled to a common time axis to allow comparison
+        across episodes.
+
+        Args:
+            ax: Matplotlib axis to draw on.
+            episodes: List of `ShipEpisodeData`.
+            colors: List of colors corresponding to episodes.
+            ship_id: Identifier of the ship.
+
+        Returns:
+            None.
+
+        Notes:
+            - Episodes without rudder data are skipped.
+            - No average curve is plotted for rudder actions.
+        """
+
         for i, ep in enumerate(episodes):
             if ep.rudder_actions.size == 0:
                 continue
