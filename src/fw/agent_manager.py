@@ -222,7 +222,7 @@ class AgentManager:
 
 
     @staticmethod
-    def compute_metrics(cross_errors, rudder_angles, rudder_angle_changes, heading_errors, velocities):
+    def compute_metrics(cross_errors, rudder_angles, rudder_angle_changes, thrust_values, thrust_changes, heading_errors, velocities):
         """
         Compute Mean Track Error Integral (mTEI), Maximum Track Error (MTE),
         and Mean Heading Error Integral (mHEI)
@@ -236,11 +236,22 @@ class AgentManager:
         all_mRAs = []
         all_MRAs = []
         all_mRACs = []
+        all_mTs = []
+        all_MTs = []
+        all_mTCs = []
         all_mHEs = []
         all_mus = []
         all_Mus = []
 
-        for ct_errors, rudder_angle, rudder_angle_change, heading_errors, velocity in zip(cross_errors, rudder_angles, rudder_angle_changes, heading_errors, velocities):
+        for ct_errors, rudder_angle, rudder_angle_change, thrust_value, thrust_change, heading_errors, velocity in zip(
+            cross_errors,
+            rudder_angles,
+            rudder_angle_changes,
+            thrust_values,
+            thrust_changes,
+            heading_errors,
+            velocities,
+        ):
             # Calculate mTEI
             n = len(ct_errors)
             mTEI = np.sum(np.abs(ct_errors)) / n
@@ -262,6 +273,17 @@ class AgentManager:
             mRAC = np.sum(np.abs(rudder_angle_change)) / n
             all_mRACs.append(mRAC)
 
+            # Calculate thrust metrics
+            n_t = max(1, len(thrust_value))
+            mT = np.sum(np.abs(thrust_value)) / n_t
+            all_mTs.append(mT)
+
+            MT = np.max(np.abs(thrust_value)) if len(thrust_value) > 0 else 0.0
+            all_MTs.append(MT)
+
+            mTC = np.sum(np.abs(thrust_change)) / n_t
+            all_mTCs.append(mTC)
+
             # Calculate mHE
             mHE = np.sum(np.abs(heading_errors)) / n
             all_mHEs.append(mHE)
@@ -274,7 +296,19 @@ class AgentManager:
             Mu = np.max(np.abs(velocity))
             all_Mus.append(Mu)
 
-        return np.mean(all_mTEIs), np.mean(all_MTEs), np.mean(all_mRAs), np.mean(all_MRAs), np.mean(all_mRACs), np.mean(all_mHEs), np.mean(all_mus), np.mean(all_Mus)
+        return (
+            np.mean(all_mTEIs),
+            np.mean(all_MTEs),
+            np.mean(all_mRAs),
+            np.mean(all_MRAs),
+            np.mean(all_mRACs),
+            np.mean(all_mTs),
+            np.mean(all_MTs),
+            np.mean(all_mTCs),
+            np.mean(all_mHEs),
+            np.mean(all_mus),
+            np.mean(all_Mus),
+        )
 
 
     # Plot paths in the first subplot
@@ -366,6 +400,8 @@ class AgentManager:
                 all_cross_errors = []  # Store cross-track errors for each episode
                 all_rudder_angles = []
                 all_rudder_angle_changes = []
+                all_thrust_values = []
+                all_thrust_changes = []
                 all_velocities = []
                 all_rudder_actions = []
                 all_ukc_measurements = []
@@ -377,6 +413,7 @@ class AgentManager:
                 _ms = hasattr(env, 'phys_sims')            # True = multi-ship env
                 _s = (lambda a: a[0]) if _ms else (lambda a: a)              # index first ship
                 _steer = (lambda pa: pa[0][0]) if _ms else (lambda pa: float(pa[0]))  # rudder
+                _thrust = (lambda pa: pa[0][1]) if _ms else (lambda pa: float(pa[1]))  # thrust
 
                 for episode in range(num_episodes):
                     state, _ = env.reset()
@@ -392,7 +429,10 @@ class AgentManager:
                     rudder_actions = []
                     velocities = []
                     previous_rudder_action = 0.0
+                    previous_thrust_action = 0.0
                     rudder_changes = []
+                    thrust_values = []
+                    thrust_changes = []
                     ukc_measurements = []
                     path_positions = [np.copy(_s(env.ship_pos))]  # Store initial position
                     cross_errors.append(_s(env.cross_error))  # Store initial cross-track error
@@ -419,7 +459,10 @@ class AgentManager:
                             velocities.append(_s(env.velocities))
                             rudder_actions.append(_steer(env.performed_action))
                             rudder_changes.append(abs(_steer(env.performed_action) - previous_rudder_action))
+                            thrust_values.append(_thrust(env.performed_action))
+                            thrust_changes.append(abs(_thrust(env.performed_action) - previous_thrust_action))
                             previous_rudder_action = _steer(env.performed_action)
+                            previous_thrust_action = _thrust(env.performed_action)
                             ukc_measurements.append(env.ukc[0] if _ms else 0.0)
 
                             episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
@@ -448,6 +491,8 @@ class AgentManager:
                     all_cross_errors.append(np.array(cross_errors))
                     all_rudder_angles.append(np.array(rudder_actions))
                     all_rudder_angle_changes.append(np.array(rudder_changes))
+                    all_thrust_values.append(np.array(thrust_values))
+                    all_thrust_changes.append(np.array(thrust_changes))
                     all_heading_errors.append(np.array(heading_errors))
                     all_velocities.append(np.array(velocities))
                     all_rudder_actions.append(np.array(rudder_actions))
@@ -455,7 +500,15 @@ class AgentManager:
                     total_rewards.append(episode_reward)
 
                 # Calculate mTEI, MTE, and mHEI
-                mTEI, MTE, mRA, MRA, mRAC, mHE, mu, Mu = self.compute_metrics(all_cross_errors, all_rudder_angles, all_rudder_angle_changes, all_heading_errors, all_velocities)
+                mTEI, MTE, mRA, MRA, mRAC, mT, MT, mTC, mHE, mu, Mu = self.compute_metrics(
+                    all_cross_errors,
+                    all_rudder_angles,
+                    all_rudder_angle_changes,
+                    all_thrust_values,
+                    all_thrust_changes,
+                    all_heading_errors,
+                    all_velocities,
+                )
 
                 # Print summary statistics
                 avg_reward = np.mean(total_rewards)
@@ -470,6 +523,9 @@ class AgentManager:
                 print(f"Mean Rudder Angle (mRA): {mRA:.3f}")
                 print(f"Maximum Rudder Angle (MRA): {MRA:.3f}")
                 print(f"Mean Rudder Angle Change (mRAC): {mRAC:.4f}")
+                print(f"Mean Thrust (mT): {mT:.3f}")
+                print(f"Maximum Thrust (MT): {MT:.3f}")
+                print(f"Mean Thrust Change (mTC): {mTC:.4f}")
                 print(f"Mean LOS Guidance Heading Error (mHE): {mHE:.3f} rad")
 
                 evaluation_summary = {
@@ -483,6 +539,9 @@ class AgentManager:
                     "mRA": float(mRA),
                     "MRA": float(MRA),
                     "mRAC": float(mRAC),
+                    "mT": float(mT),
+                    "MT": float(MT),
+                    "mTC": float(mTC),
                     "mHE": float(mHE),
                 }
 

@@ -506,7 +506,7 @@ class Trainer:
         # Format: key1-value1_key2-value2 (with underscores replacing dots in values).
         if reward_weights:
             weights_str = "_".join(
-                f"{key}{str(value).replace('.', '')}"
+                f"{str(value).replace('.', '')}"
                 for key, value in sorted(reward_weights.items())
             )
         else:
