@@ -155,7 +155,10 @@ class Trainer:
 
         if env_metrics and env_metrics.get("status") == "success":
             try:
-                self.visualize([last_env])
+                if env_type == "AirSimEnv":
+                    print("Skipping automatic post-training visualization for AirSimEnv.")
+                else:
+                    self.visualize([last_env])
             except AttributeError as e:
                 print(e)
         else:

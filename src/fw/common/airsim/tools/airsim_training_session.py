@@ -109,7 +109,7 @@ class AirSimTrainingSession:
                 "device": device,
             },
             export_dir=self.session_dir,
-            flush_interval=1,
+            flush_interval=25,
             fieldnames=self._RUN_LOG_FIELDNAMES,
             csv_filename=self.run_log_path.name,
             metadata_filename=self.metadata_path.name,

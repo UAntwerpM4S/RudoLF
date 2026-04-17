@@ -47,19 +47,21 @@ _DEFAULT_TRAJECTORY_CSV = _FW_ENV_DIR / "trajectory_points_no_scale.csv"
 _DEFAULT_OVERALL_CSV = _FW_ENV_DIR / "env_Sche_no_scale.csv"
 _DEFAULT_OBSTACLES_CSV = _FW_ENV_DIR / "env_Sche_250cm_no_scale.csv"
 
-_ROUTE_POINT_SPACING_M = 160.0
-_CHECKPOINT_RADIUS_M = 45.0
-_TARGET_RADIUS_M = 65.0
+_ROUTE_POINT_SPACING_M = 80.0
+_CHECKPOINT_RADIUS_M = 60.0
+_TARGET_RADIUS_M = 80.0
 _CROSS_TRACK_LIMIT_M = 250.0
 _SPEED_SCALE_MPS = 15.0
-_MIN_DISTANCE_SCALE_M = 400.0
-_SUCCESS_REWARD = 120.0
-_CHECKPOINT_REWARD = 8.0
-_COLLISION_PENALTY = -60.0
-_OFFTRACK_PENALTY = -45.0
-_DISCONNECT_PENALTY = -80.0
-_TIMEOUT_PENALTY = -20.0
-_DEFAULT_REWARD_NORMALIZATION_SCALE = 160.0
+_YAW_RATE_SCALE_RADPS = math.radians(45.0)
+_CROSS_TRACK_DELTA_SCALE_M = 20.0
+_MIN_DISTANCE_SCALE_M = 500.0
+_SUCCESS_REWARD = 100.0
+_CHECKPOINT_REWARD = 5.0
+_COLLISION_PENALTY = -50.0
+_OFFTRACK_PENALTY = -25.0
+_DISCONNECT_PENALTY = -50.0
+_TIMEOUT_PENALTY = -15.0
+_DEFAULT_REWARD_NORMALIZATION_SCALE = 5.0
 _RESET_SETTLE_TIMEOUT_S = 1.5
 _RESET_SETTLE_POLL_S = 0.05
 _RESET_POSITION_TOLERANCE_M = 25.0
@@ -74,6 +76,12 @@ _OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR = "ppo_route_relative_car"
 _CONTROL_INTERFACE_CAR_PHYSICS = "car_physics"
 _RESET_MODE_REWIND_POSE = "rewind_pose"
 _RESET_MODE_BRIDGE_RESET = "bridge_reset"
+_CROSS_TRACK_LINEAR_PENALTY = 0.15
+_CROSS_TRACK_QUADRATIC_PENALTY = 0.10
+_HEADING_PENALTY = 0.10
+_CROSS_TRACK_GROWTH_PENALTY = 0.15
+_SPEED_TRACKING_PENALTY = 0.0
+_CHECKPOINT_QUALITY_MIN = 0.30
 _OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR = (
     "current_checkpoint_forward",
     "current_checkpoint_lateral",
@@ -84,7 +92,9 @@ _OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR = (
     "heading_error_cos",
     "heading_error_sin",
     "cross_track_error",
+    "cross_track_error_delta",
     "forward_speed",
+    "yaw_rate",
     "executed_action_steering",
     "executed_action_throttle",
     "route_progress_ratio",
@@ -357,8 +367,10 @@ class AirSimEnv(BaseEnv):
         )
         self.ship_heading = 0.0
         self.ship_speed = 0.0
+        self.ship_yaw_rate = 0.0
         self.heading_error = 0.0
         self.cross_error = 0.0
+        self.cross_track_error_delta = 0.0
         self.velocities = 0.0
         self.ukc = 0.0
         self.step_count = 0
@@ -506,6 +518,8 @@ class AirSimEnv(BaseEnv):
         self.previous_action = self.neutral_action()
         self.performed_action = self.neutral_action()
         self.last_policy_action = self.neutral_action()
+        self.ship_yaw_rate = 0.0
+        self.cross_track_error_delta = 0.0
         self._episode_start_checkpoint_index = start_index
         self.checkpoint_index = min(start_index + 1, len(self.checkpoints) - 1)
         self._route_progress_m = float(self.route_cumulative_distances[start_index])
@@ -571,12 +585,14 @@ class AirSimEnv(BaseEnv):
         previous_target_distance = self._distance_to_target()
         previous_checkpoint_distance = self._distance_to_checkpoint(self.checkpoint_index)
         previous_heading_error = float(self.heading_error)
+        previous_cross_error = float(self.cross_error)
 
         self.bridge.set_controls(controls)
         self.last_physics_wait_s = self._advance_simulation()
         state_updated = self._refresh_state_from_bridge(track_sync=True)
         self.step_count += 1
         self.performed_action = effective_action.copy()
+        self.cross_track_error_delta = float(self.cross_error - previous_cross_error) if state_updated else 0.0
 
         if not state_updated:
             logger.warning(
@@ -625,6 +641,7 @@ class AirSimEnv(BaseEnv):
             previous_target_distance=previous_target_distance,
             previous_checkpoint_distance=previous_checkpoint_distance,
             previous_heading_error=previous_heading_error,
+            previous_cross_error=previous_cross_error,
             checkpoint_reward=checkpoint_reward,
             success=success,
             collision=collision,
@@ -911,7 +928,10 @@ class AirSimEnv(BaseEnv):
             if len(self.route_cumulative_distances)
             else 1.0
         )
-        self._distance_scale_m = max(_MIN_DISTANCE_SCALE_M, self.route_length_m)
+        self._distance_scale_m = min(
+            max(_MIN_DISTANCE_SCALE_M, 3.0 * _ROUTE_POINT_SPACING_M),
+            800.0,
+        )
         self.checkpoints = self._build_checkpoints(
             self.route_points,
             self.route_cumulative_distances,
@@ -1139,6 +1159,7 @@ class AirSimEnv(BaseEnv):
                 yaw_rate = self._airsim_yaw_rate_to_framework(float(state.get("ang_vel_z", 0.0)))
             except (TypeError, ValueError):
                 yaw_rate = 0.0
+        self.ship_yaw_rate = float(yaw_rate)
         if track_sync:
             self._update_sync_metrics()
         projection = self._project_onto_route(self.ship_pos)
@@ -1155,7 +1176,7 @@ class AirSimEnv(BaseEnv):
             heading=float(self.ship_heading),
             u=float(self.ship_speed),
             v=0.0,
-            r=float(yaw_rate),
+            r=float(self.ship_yaw_rate),
         )
         if state_failed:
             self._state_update_reliable = False
@@ -1325,6 +1346,7 @@ class AirSimEnv(BaseEnv):
         previous_target_distance: float,
         previous_checkpoint_distance: float,
         previous_heading_error: float,
+        previous_cross_error: float,
         checkpoint_reward: float,
         success: bool,
         collision: bool,
@@ -1338,16 +1360,39 @@ class AirSimEnv(BaseEnv):
         checkpoint_delta = previous_checkpoint_distance - self._distance_to_checkpoint(self.checkpoint_index)
         heading_improvement = abs(previous_heading_error) - abs(self.heading_error)
         steering_delta = abs(float(self.performed_action[0]) - float(self.previous_action[0]))
+        cross_track_ratio = min(abs(self.cross_error) / _CROSS_TRACK_LIMIT_M, 1.0)
+        previous_cross_track_ratio = min(abs(previous_cross_error) / _CROSS_TRACK_LIMIT_M, 1.0)
+        cross_track_growth = max(cross_track_ratio - previous_cross_track_ratio, 0.0)
+        heading_ratio = min(abs(self.heading_error) / math.pi, 1.0)
+        speed_ratio = min(max(self.ship_speed, 0.0) / _SPEED_SCALE_MPS, 1.0)
+        tracking_quality = max(cross_track_ratio, heading_ratio)
+        checkpoint_quality = max(
+            _CHECKPOINT_QUALITY_MIN,
+            1.0 - (0.65 * cross_track_ratio + 0.25 * heading_ratio),
+        )
 
         reward = 0.0
-        reward += 4.0 * (progress_delta / max(_ROUTE_POINT_SPACING_M, 1.0))
-        reward += 0.7 * (target_delta / max(self._distance_scale_m, 1.0))
-        reward += 0.5 * (checkpoint_delta / max(_CHECKPOINT_RADIUS_M, 1.0))
-        reward += 0.25 * heading_improvement
-        reward -= 0.25 * min(abs(self.cross_error) / _CROSS_TRACK_LIMIT_M, 1.0)
-        reward -= 0.08 * min(abs(self.heading_error) / math.pi, 1.0)
-        reward -= 0.05 * steering_delta
-        reward += checkpoint_reward
+        
+        # Alive bonus: reward the agent for staying on track.
+        reward += 0.3 * max(0.0, 1.0 - cross_track_ratio)
+
+        # Speed reward: reward forward speed when heading aligns with route.
+        # Replaces the old _SPEED_TRACKING_PENALTY which punished the agent
+        # for moving fast, creating a local optimum at zero speed.
+        reward += 0.15 * speed_ratio * max(0.0, math.cos(self.heading_error))
+
+        reward += 2.5 * (progress_delta / max(_ROUTE_POINT_SPACING_M, 1.0))
+        reward += 0.5 * (target_delta / max(self._distance_scale_m, 1.0))
+        reward += 0.3 * (checkpoint_delta / max(_CHECKPOINT_RADIUS_M, 1.0))
+        reward += 0.15 * heading_improvement
+        
+        reward -= _CROSS_TRACK_LINEAR_PENALTY * cross_track_ratio
+        reward -= _CROSS_TRACK_QUADRATIC_PENALTY * (cross_track_ratio ** 2)
+        reward -= _HEADING_PENALTY * heading_ratio
+        reward -= _CROSS_TRACK_GROWTH_PENALTY * cross_track_growth
+        reward -= 0.03 * steering_delta
+        
+        reward += checkpoint_reward * checkpoint_quality
 
         if success:
             reward += _SUCCESS_REWARD
@@ -1384,9 +1429,9 @@ class AirSimEnv(BaseEnv):
     def _build_observation(self) -> np.ndarray:
         """Build the PPO observation vector from the current route state.
 
-        The current car-physics training profile intentionally keeps the
-        observation route-relative and minimal: no surge/sway state, no
-        absolute yaw, and no yaw-rate term are exposed to PPO yet.
+        The current car-physics training profile keeps the observation
+        route-relative while also exposing the minimum extra dynamics needed
+        for tighter turn control: yaw-rate and cross-track trend.
         """
         builder_name = _OBSERVATION_BUILDERS.get(
             (self.control_interface, self.observation_profile)
@@ -1422,7 +1467,15 @@ class AirSimEnv(BaseEnv):
                 math.cos(self.heading_error),
                 math.sin(self.heading_error),
                 float(np.clip(self.cross_error / _CROSS_TRACK_LIMIT_M, -1.0, 1.0)),
+                float(
+                    np.clip(
+                        self.cross_track_error_delta / _CROSS_TRACK_DELTA_SCALE_M,
+                        -1.0,
+                        1.0,
+                    )
+                ),
                 float(np.clip(self.ship_speed / _SPEED_SCALE_MPS, 0.0, 1.0)),
+                float(np.clip(self.ship_yaw_rate / _YAW_RATE_SCALE_RADPS, -1.0, 1.0)),
                 float(self.performed_action[0]),
                 float(self.performed_action[1]),
                 float(np.clip(self._route_progress_ratio, 0.0, 1.0)),
@@ -1525,11 +1578,13 @@ class AirSimEnv(BaseEnv):
         return {
             "checkpoint_index": int(self.checkpoint_index),
             "cross_track_error": float(self.cross_error),
+            "cross_track_error_delta": float(self.cross_track_error_delta),
             "heading_error": float(self.heading_error),
             "route_progress_m": float(self._route_progress_m),
             "route_progress_ratio": float(self._route_progress_ratio),
             "target_distance": float(self._distance_to_target()),
             "speed": float(self.ship_speed),
+            "yaw_rate": float(self.ship_yaw_rate),
             "mdp_step_seconds": float(self.mdp_step_seconds),
             "physics_wait_s": float(self.last_physics_wait_s),
             "step_latency_s": float(self.last_step_latency_s),

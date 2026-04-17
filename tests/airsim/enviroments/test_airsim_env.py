@@ -238,7 +238,7 @@ def test_reset_returns_valid_ppo_observation(monkeypatch):
     obs, info = env.reset()
 
     assert env.action_space.shape == (2,)
-    assert env.observation_space.shape == (14,)
+    assert env.observation_space.shape == (16,)
     assert obs.dtype == np.float32
     assert env.observation_space.contains(obs)
     assert info["outcome"] == "reset"
@@ -278,6 +278,8 @@ def test_step_advances_route_with_pause_stepping(monkeypatch):
     assert env.observation_space.contains(obs)
     assert -1.0 <= reward <= 1.0
     assert info["checkpoint_index"] >= 1
+    assert "cross_track_error_delta" in info
+    assert "yaw_rate" in info
     assert info["state_update_reliable"] is True
     assert info["repeated_state_count"] == 0
     assert info["reward"] == pytest.approx(reward)
@@ -672,6 +674,64 @@ def test_reward_normalization_can_be_disabled(monkeypatch):
 
     assert reward == pytest.approx(info["raw_reward"])
     assert info["reward"] == pytest.approx(info["raw_reward"])
+
+    env.close()
+
+
+def test_reward_penalizes_wide_fast_checkpoint_farming(monkeypatch):
+    """Wide, fast, worsening tracking should score worse than centered tracking."""
+    _patch_env_dependencies(monkeypatch)
+    from airsim.environments.airsim_env import AirSimEnv
+
+    env = AirSimEnv(
+        ship_pos=[0.0, 0.0],
+        target_pos=[200.0, 0.0],
+        normalize_reward=False,
+        use_pause_stepping=True,
+        use_sim_time_stepping=True,
+    )
+    env.reset()
+    env._route_progress_m = 120.0
+    env.performed_action = np.array([0.0, 1.0], dtype=np.float32)
+    env.previous_action = np.array([0.0, 1.0], dtype=np.float32)
+
+    env.ship_speed = 5.6
+    env.ship_yaw_rate = 0.0
+    env.heading_error = np.deg2rad(4.0)
+    env.cross_error = 18.0
+    centered_reward = env._compute_reward(
+        previous_progress=118.0,
+        previous_target_distance=env._distance_to_target() + 2.0,
+        previous_checkpoint_distance=env._distance_to_checkpoint(env.checkpoint_index) + 2.0,
+        previous_heading_error=np.deg2rad(6.0),
+        previous_cross_error=16.0,
+        checkpoint_reward=8.0,
+        success=False,
+        collision=False,
+        offtrack=False,
+        disconnected=False,
+        truncated=False,
+    )
+
+    env.ship_speed = 5.6
+    env.ship_yaw_rate = 0.0
+    env.heading_error = np.deg2rad(32.0)
+    env.cross_error = 180.0
+    wide_reward = env._compute_reward(
+        previous_progress=118.0,
+        previous_target_distance=env._distance_to_target() + 2.0,
+        previous_checkpoint_distance=env._distance_to_checkpoint(env.checkpoint_index) + 2.0,
+        previous_heading_error=np.deg2rad(28.0),
+        previous_cross_error=140.0,
+        checkpoint_reward=8.0,
+        success=False,
+        collision=False,
+        offtrack=False,
+        disconnected=False,
+        truncated=False,
+    )
+
+    assert centered_reward > wide_reward
 
     env.close()
 

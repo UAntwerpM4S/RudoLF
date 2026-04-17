@@ -34,6 +34,7 @@ from fw.policies.ppo_policy import PPOPolicy
 _DEFAULT_SHIP_POS = list(DEFAULT_FRAMEWORK_SHIP_POS)
 _DEFAULT_TARGET_POS = list(DEFAULT_FRAMEWORK_TARGET_POS)
 _SRC_DIR = Path(__file__).resolve().parents[3]
+_MAX_VISUAL_UPDATE_HZ = 240.0
 
 
 def _interpolate_actuator_state(
@@ -209,21 +210,66 @@ def _resolve_interpolation_steps(
     return max(1, steps)
 
 
-def _should_snap_visual_update(total_duration: float, min_render_hz: float) -> bool:
+def _resolve_visual_update_interval(
+    total_duration: float,
+    interpolation_steps: int,
+    min_render_hz: float,
+    max_update_hz: float = _MAX_VISUAL_UPDATE_HZ,
+) -> float:
+    """Resolve the UE5 pose-update interval for one replay segment.
+
+    Args:
+        total_duration: Planned total interpolation duration in seconds.
+        interpolation_steps: Requested interpolation step count for the motion.
+        min_render_hz: Minimum desired render frequency in Hertz.
+        max_update_hz: Hard cap on pose pushes to UE5 in Hertz.
+
+    Returns:
+        float: Update interval in seconds used for pose pushes.
+    """
+    total_duration = max(float(total_duration), 0.0)
+    interpolation_steps = max(1, int(interpolation_steps))
+
+    render_interval = 1.0 / float(min_render_hz) if min_render_hz > 0.0 else 0.0
+    interpolation_interval = (
+        total_duration / float(interpolation_steps) if total_duration > 0.0 else 0.0
+    )
+
+    if render_interval > 0.0 and interpolation_interval > 0.0:
+        update_interval = min(render_interval, interpolation_interval)
+    else:
+        update_interval = max(render_interval, interpolation_interval)
+
+    if update_interval <= 0.0:
+        update_interval = 1e-3
+
+    if max_update_hz > 0.0:
+        update_interval = max(update_interval, 1.0 / float(max_update_hz))
+
+    return float(update_interval)
+
+
+def _should_snap_visual_update(
+    total_duration: float,
+    update_interval_s: float,
+    interpolation_steps: int,
+) -> bool:
     """Return whether a visual update should skip time-based interpolation.
 
     Args:
         total_duration: Planned total interpolation duration in seconds.
-        min_render_hz: Minimum desired render frequency in Hertz.
+        update_interval_s: Effective pose-update interval for the segment.
+        interpolation_steps: Requested interpolation step count.
 
     Returns:
         bool: ``True`` when interpolation should snap directly to the final
         visual state.
     """
     total_duration = max(float(total_duration), 0.0)
-    min_step_interval = 1.0 / float(min_render_hz) if min_render_hz > 0.0 else 0.0
-    snap_threshold = max(1e-3, min_step_interval)
-    return total_duration <= snap_threshold
+    update_interval_s = max(float(update_interval_s), 1e-3)
+    if total_duration <= 1e-9:
+        return True
+    return total_duration <= update_interval_s and int(interpolation_steps) <= 1
 
 
 def _build_visual_controls(
@@ -273,6 +319,15 @@ def _build_visual_controls(
     except Exception:
         speed_ratio = None
 
+    def _apply_visual_speed_matching(controls: Any):
+        """Align the replay throttle visual with the framework speed envelope."""
+        if controls is None or speed_ratio is None:
+            return controls
+        controls.throttle = float(
+            np.clip(float(speed_ratio) * max(float(throttle_visual_gain), 0.0), 0.0, 1.0)
+        )
+        return controls
+
     if mirror_controls_in_ue5:
         controls = map_framework_actuator_state(
             airsim_module,
@@ -284,11 +339,7 @@ def _build_visual_controls(
             throttle_gain=throttle_visual_gain,
         )
         controls.brake = 0.0
-        if speed_ratio is not None:
-            controls.throttle = float(
-                np.clip(0.35 * float(controls.throttle) + 0.65 * speed_ratio, 0.0, 1.0)
-            )
-        return controls
+        return _apply_visual_speed_matching(controls)
     if animate_throttle_in_ue5:
         controls = map_framework_visual_actuator_state(
             airsim_module,
@@ -300,11 +351,7 @@ def _build_visual_controls(
             throttle_gain=throttle_visual_gain,
         )
         controls.brake = 0.0
-        if speed_ratio is not None:
-            controls.throttle = float(
-                np.clip(0.35 * float(controls.throttle) + 0.65 * speed_ratio, 0.0, 1.0)
-            )
-        return controls
+        return _apply_visual_speed_matching(controls)
     if animate_steering_in_ue5:
         return map_framework_steering_visual_state(
             airsim_module,
@@ -438,8 +485,12 @@ def _animate_framework_state(
     if lock_path_in_ue5 and min_render_hz > 0.0:
         total_duration = max(total_duration, interpolation_steps / float(min_render_hz))
 
-    min_step_interval = 1.0 / min_render_hz if min_render_hz > 0.0 else 0.0
-    if _should_snap_visual_update(total_duration, min_render_hz):
+    visual_update_interval = _resolve_visual_update_interval(
+        total_duration=total_duration,
+        interpolation_steps=interpolation_steps,
+        min_render_hz=min_render_hz,
+    )
+    if _should_snap_visual_update(total_duration, visual_update_interval, interpolation_steps):
         _send_pose(1.0)
         _send_controls(1.0)
         return target_motion_state, target_actuator_state
@@ -452,7 +503,7 @@ def _animate_framework_state(
 
     start_time = time.perf_counter()
     deadline = start_time + total_duration
-    _last_pose_time = start_time - min_step_interval
+    _last_pose_time = start_time - visual_update_interval
 
     while True:
         now = time.perf_counter()
@@ -462,7 +513,7 @@ def _animate_framework_state(
         if not bridge.is_connected:
             break
 
-        if is_final or (now - _last_pose_time >= min_step_interval):
+        if is_final or (now - _last_pose_time >= visual_update_interval):
             _send_pose(alpha)
             _last_pose_time = now
 

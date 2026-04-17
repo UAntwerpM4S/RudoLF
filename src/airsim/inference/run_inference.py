@@ -294,6 +294,7 @@ def run_inference(
             draw_calibration_reference=draw_calibration_reference,
             use_pause_stepping=False,
             simulation_speed=1.0,
+            capture_live_start_pose=True,
             csv_log_path=str(session_exporter.bridge_log_path),
         )
         session_exporter.update_metadata(
