@@ -11,7 +11,20 @@ from dataclasses import dataclass, field
 
 @dataclass
 class CollisionEvent:
-    """Records a near-miss or collision between two ships at a given timestep."""
+    """Represents a proximity event between two ships at a specific timestep.
+
+    A collision event is created when two ships come within a configured
+    distance threshold. It may represent either a near-miss or a hard collision.
+
+    Attributes:
+        timestep: Time index at which the event occurred.
+        ship_a: Identifier of the first ship.
+        ship_b: Identifier of the second ship.
+        distance: Euclidean distance between ships at the event timestep.
+        is_collision: True if distance is below the collision threshold,
+            otherwise False (near-miss).
+    """
+
     timestep: int
     ship_a: str
     ship_b: str
@@ -20,24 +33,27 @@ class CollisionEvent:
 
 @dataclass
 class ShipEpisodeData:
-    """
-    All recorded data for a single ship over a single episode.
+    """Stores all recorded data for a single ship over one episode.
 
-    Attributes
-    ----------
-    ship_id     : identifier matching the key in MultiSimEnv.sub_environments
-    episode     : zero-based episode index
-    path        : (T, 2) array of (x, y) positions
-    cross_errors: cross-track errors per step (length may be < T due to
-                  checkpoint gating in the original code)
-    rudder_actions     : rudder angle at each step
-    rudder_changes     : absolute change in rudder angle per step
-    heading_errors     : heading error (rad) per step
-    velocities         : surge velocity per step
-    ukc_measurements   : under-keel clearance per step
-    reward             : scalar episode reward
-    collision_events   : populated later by CollisionAnnotator
+    This structure contains time-series data collected during environment
+    interaction, including trajectory, control actions, navigation errors,
+    and collision events.
+
+    Attributes:
+        ship_id: Identifier of the ship (matches environment sub-environment key).
+        episode: Zero-based episode index.
+
+        path: Array of shape (T, 2) containing (x, y) positions.
+        cross_errors: Cross-track error per timestep.
+        rudder_actions: Rudder angle at each timestep.
+        rudder_changes: Absolute change in rudder angle per timestep.
+        heading_errors: Heading error (radians) per timestep.
+        velocities: Surge velocity per timestep.
+        ukc_measurements: Under-keel clearance per timestep.
+        reward: Total episode reward.
+        collision_events: List of detected `CollisionEvent` instances.
     """
+
     ship_id: str
     episode: int
     path: np.ndarray = field(default_factory=lambda: np.empty((0, 2)))
@@ -56,9 +72,14 @@ ShipData = dict[str, list[ShipEpisodeData]]
 
 @dataclass
 class RunData:
+    """Container for a full evaluation run across all ships and episodes.
+
+    Attributes:
+        ships: Dictionary mapping ship IDs to lists of `ShipEpisodeData`,
+            one list per episode.
+        num_episodes: Total number of episodes executed in the run.
     """
-    Container for a full evaluation run.
-    """
+
     ships: dict[str, list[ShipEpisodeData]]
     num_episodes: int
 
@@ -67,28 +88,41 @@ class RunData:
 # ---------------------------------------------------------------------------
 
 class CollisionAnnotator:
-    """
-    Detects near-miss and collision events between ships and attaches them
-    to the relevant ShipEpisodeData objects.
+    """Detects and annotates near-miss and collision events between ships.
 
-    Parameters
-    ----------
-    near_miss_threshold : distance (same units as ship_pos) below which
-                          a near-miss event is recorded
-    collision_threshold : distance below which a hard collision is recorded
+    This class compares ship trajectories across episodes and records spatial
+    proximity events. Events are attached directly to the corresponding
+    `ShipEpisodeData` objects.
+
+    Args:
+        near_miss_threshold: Distance below which a near-miss event is recorded.
+        collision_threshold: Distance below which a hard collision is recorded.
     """
 
     def __init__(self, near_miss_threshold: float = 50.0, collision_threshold: float = 15.0):
+        """Initializes the collision detector with distance thresholds.
+
+        Args:
+            near_miss_threshold: Threshold for near-miss detection.
+            collision_threshold: Threshold for collision detection.
+        """
+
         self.near_miss_threshold = near_miss_threshold
         self.collision_threshold = collision_threshold
 
     def annotate(self, run_data: RunData) -> None:
-        """
-        Annotate run_data in-place with CollisionEvent objects.
+        """Annotates a full run with collision and near-miss events.
 
-        Iterates over all pairs of ships and compares positions at each
-        shared timestep within each episode.
+        Iterates over all ship pairs and compares their trajectories
+        timestep-by-timestep.
+
+        Args:
+            run_data: Complete evaluation run data to annotate.
+
+        Returns:
+            None. The input object is modified in-place.
         """
+
         ship_data = run_data.ships
         ship_ids = list(ship_data.keys())
 
@@ -107,7 +141,17 @@ class CollisionAnnotator:
                     self._compare_paths(ep_a, ep_b)
 
     def _compare_paths(self, ep_a: ShipEpisodeData, ep_b: ShipEpisodeData) -> None:
-        """Compare two ships' paths and record proximity events on both."""
+        """Compares two ship episodes and records proximity events.
+
+        Args:
+            ep_a: First ship episode.
+            ep_b: Second ship episode.
+
+        Notes:
+            - Only compares up to the minimum shared trajectory length.
+            - Events are appended symmetrically to both episodes.
+        """
+
         min_len = min(len(ep_a.path), len(ep_b.path))
         if min_len == 0:
             return

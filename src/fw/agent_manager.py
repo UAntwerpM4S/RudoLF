@@ -1,20 +1,13 @@
 import os
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as colors
-import matplotlib.patches as patches
 
 from pathlib import Path
 from enum import auto, Enum
 from contextlib import contextmanager
-from shapely.geometry.polygon import Polygon
-from shapely.geometry.multipolygon import MultiPolygon
 
 from fw.metrics_computer import MetricsComputer
 from fw.episode_collector import EpisodeCollector
 from fw.ship_episode_data import CollisionAnnotator
 from fw.matplotlib_renderer import MatplotlibRenderer
-from fw.output_helpers import compute_heading_error as _compute_heading_error
 
 from fw.environments.base_env import BaseEnv
 from fw.environments.lunar_lander import LunarLander
@@ -44,58 +37,6 @@ class PolicyStrategy(Enum):
     REUSE_OTHER_POLICY = auto()
 
 
-def normalized_time_axis(length: int) -> np.ndarray:
-    """
-    Return a normalized time axis in [0, 1] for a trajectory of given length.
-    """
-
-    if length <= 1:
-        return np.array([0.0])
-    return np.linspace(0.0, 100.0, length)
-
-
-def shade_color(base_color, n, lo=0.45, hi=1.0):
-    """
-    Generate n shaded variants of a base color by scaling lightness.
-    """
-
-    rgb = np.array(colors.to_rgb(base_color))
-    factors = np.linspace(hi, lo, n)
-
-    return [tuple(np.clip(rgb * f, 0, 1)) for f in factors]
-
-
-def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.ndarray:
-    """
-    Resample a 1D signal defined over normalized time [0,1] onto a common grid.
-    """
-
-    signal = np.asarray(signal)
-
-    if signal.shape[0] == 1:
-        return np.repeat(signal, len(common_time), axis=0)
-
-    original_time = np.linspace(0.0, 1.0, signal.shape[0])
-
-    # --- 1D case (fast path) ---
-    if signal.ndim == 1:
-        return np.interp(common_time, original_time, signal)
-
-    # --- ND case ---
-    # reshape to (T, -1), interpolate each column, then reshape back
-    T = signal.shape[0]
-    rest_shape = signal.shape[1:]
-
-    flat_signal = signal.reshape(T, -1)  # (T, D)
-
-    resampled = np.stack([
-        np.interp(common_time, original_time, flat_signal[:, i])
-        for i in range(flat_signal.shape[1])
-    ], axis=1)
-
-    return resampled.reshape(len(common_time), *rest_shape)
-
-
 class AgentManager:
     """
     AgentManager class for managing agents and environments during training.
@@ -103,16 +44,6 @@ class AgentManager:
     This class includes methods for training, saving/loading policies, and
     visualizing paths taken by the agent during evaluation.
     """
-
-    ENV_COLORMAPS = [
-        "#ff7f0e",  # orange
-        "#1f77b4",  # blue
-        "#2ca02c",  # green
-        "#d62728",  # red
-        "#9467bd",  # purple
-        "#8c564b",  # brown
-        "#17becf",  # cyan
-    ]
 
     def __init__(self, agent_type: str, hyperparameters: dict):
         """
@@ -288,89 +219,6 @@ class AgentManager:
             self.get_env().fh_sim.dispose()
 
 
-    @staticmethod
-    def compute_metrics(cross_errors, rudder_angles, rudder_angle_changes, heading_errors, velocities):
-        """
-        Compute Mean Track Error Integral (mTEI), Maximum Track Error (MTE),
-        and Mean Heading Error Integral (mHEI)
-
-        mTEI = (1/(N1-N0+1)) * sum(|e(k)|)
-        MTE = max{|e(N0)|, |e(N0+1)|, ..., |e(N1)|}
-        mHEI = (1/(N1-N0+1)) * sum(|e_psi(k)|)
-        """
-
-        all_mTEIs = []
-        all_MTEs = []
-        all_mRAs = []
-        all_MRAs = []
-        all_mRACs = []
-        all_mHEs = []
-        all_mus = []
-        all_Mus = []
-
-        for ct_errors, rudder_angle, rudder_angle_change, heading_errors, velocity in zip(cross_errors, rudder_angles, rudder_angle_changes, heading_errors, velocities):
-            # Calculate mTEI
-            n = len(ct_errors)
-            mTEI = np.sum(np.abs(ct_errors)) / n
-            all_mTEIs.append(mTEI)
-
-            # Calculate MTE
-            MTE = np.max(np.abs(ct_errors))
-            all_MTEs.append(MTE)
-
-            # Calculate mRA
-            mRA = np.sum(np.abs(rudder_angle)) / n
-            all_mRAs.append(mRA)
-
-            # Calculate MRA
-            MRA = np.max(np.abs(rudder_angle))
-            all_MRAs.append(MRA)
-
-            # Calculate mRAC
-            mRAC = np.sum(np.abs(rudder_angle_change)) / n
-            all_mRACs.append(mRAC)
-
-            # Calculate mHE
-            mHE = np.sum(np.abs(heading_errors)) / n
-            all_mHEs.append(mHE)
-
-            # Calculate mu
-            mu = np.sum(np.abs(velocity)) / n
-            all_mus.append(mu)
-
-            # Calculate Mu
-            Mu = np.max(np.abs(velocity))
-            all_Mus.append(Mu)
-
-        return np.mean(all_mTEIs), np.mean(all_MTEs), np.mean(all_mRAs), np.mean(all_MRAs), np.mean(all_mRACs), np.mean(all_mHEs), np.mean(all_mus), np.mean(all_Mus)
-
-
-    # Plot paths in the first subplot
-    # Create hashed pattern for the area between obstacles and Western Scheldt
-    @staticmethod
-    def create_hashed_area(obstacles, overall):
-        """
-        Create hashed area.
-
-        Args:
-            obstacles: Description.
-            overall: Description.
-        """
-
-        obstacle_poly = Polygon(obstacles)
-        overall_poly = Polygon(overall)
-        difference = overall_poly.difference(obstacle_poly)
-
-        if isinstance(difference, MultiPolygon):
-            coords = []
-            for poly in difference.geoms:
-                coords.append(np.array(poly.exterior.coords))
-        else:
-            coords = [np.array(difference.exterior.coords)]
-
-        return coords
-
-
     @contextmanager
     def smoothing(self, env):
         """
@@ -391,421 +239,74 @@ class AgentManager:
         else:
             yield
 
+
+    @staticmethod
+    def _get_ship_env(env, ship_id: str):
+        """Return the sub-environment for a ship, or the env itself for single-ship."""
+        if hasattr(env, "sub_environments") and env.sub_environments:
+            return env.sub_environments.get(ship_id)
+        return env  # single-ship: env IS the ship env
+
+
     def visualize_trained_agent(
             self,
             num_episodes: int = 5,
             live_animation: bool = False,
             env_color_index: int = 0,
             airsim_bridge: AirSimBridge = None,
-            _use_legacy: bool = False,  # escape hatch during transition
     ) -> None:
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
-
-        if _use_legacy:
-            self._visualize_trained_agent_legacy(
-                num_episodes, live_animation, env_color_index, airsim_bridge
-            )
-        else:
-            self.agent.set_policy_eval()
-            env = self.get_env()
-
-            with self.smoothing(env):
-                raw_env = self.get_env()
-                if hasattr(raw_env, 'envs'):  # VecEnv wrapping
-                    raw_env = raw_env.envs[0]
-                elif hasattr(raw_env, 'env'):  # gym Wrapper
-                    raw_env = raw_env.env
-
-                collector = EpisodeCollector(self._agent, raw_env)
-                run_data = collector.collect(num_episodes=num_episodes)
-
-                if not isinstance(raw_env, LunarLander):
-                    # Diagnose empty collection early
-                    total_steps = sum(
-                        sum(len(ep.path) for ep in episodes)
-                        for episodes in run_data.ships.values()
-                    )
-                    if total_steps == 0:
-                        raise RuntimeError(
-                            f"EpisodeCollector collected 0 steps across all ships. "
-                            f"ship_ids={len(run_data.ships)}, env type={type(raw_env).__name__}. "
-                            f"Check that _get_ship_env returns the correct env object."
-                        )
-
-                    CollisionAnnotator().annotate(run_data)
-                    metrics = MetricsComputer.compute(run_data)
-
-                    # Print summary (same output as before)
-                    for sid, m in metrics.items():
-                        print(f"\nAverage reward: {m.avg_reward:.2f}")
-                        print(f"mTEI={m.mTEI:.2f}  MTE={m.MTE:.2f}  mRA={m.mRA:.3f}  mHE={m.mHE:.3f} rad")
-
-                    save_dir = self.agent.model_dir or "."
-                    MatplotlibRenderer.render(
-                        run_data.ships, metrics, raw_env,
-                        save_path=f"{save_dir}/trajectory.png"
-                    )
-
-    def _visualize_trained_agent_legacy(
-            self,
-            num_episodes: int = 5,
-            live_animation: bool = False,
-            env_color_index: int = 0,
-            airsim_bridge: AirSimBridge = None,
-    ) -> None:
-        """
-        Run and visualize a trained agent in the environment over multiple episodes.
-
-        Args:
-            num_episodes (int, optional): Number of episodes to visualize (default is 5).
-            live_animation (bool, optional): Enable live animation of the agent in the environment.
-            env_color_index (int, optional): Index of the environment color.
-            airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
-
-        Raises:
-            RuntimeError: If no agent is created.
-        """
-
-        # Load checkpoint
-        # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
-
-        if not self._agent:
-            raise RuntimeError("No agent has been created yet!")
-
-        print(f"\nRunning {num_episodes} episodes...")
 
         self.agent.set_policy_eval()
         env = self.get_env()
-        
-        # T-011 / Visualisation logic: prepare Fossen->AirSim coord transform if bridge active
-        coord_transform = None
-        if airsim_bridge and airsim_bridge.is_connected:
-            from airsim.communication.coord_transform import CoordTransform
-            coord_transform = CoordTransform()
 
         with self.smoothing(env):
-            if hasattr(env, "ship_pos"):
-                # Store results for each episode
-                all_paths = []
-                all_heading_errors = []
-                total_rewards = []
-                all_cross_errors = []  # Store cross-track errors for each episode
-                all_rudder_angles = []
-                all_rudder_angle_changes = []
-                all_velocities = []
-                all_rudder_actions = []
-                all_ukc_measurements = []
-                start_pos = None
+            raw_env = self.get_env()
+            if hasattr(raw_env, 'envs'):  # VecEnv wrapping
+                raw_env = raw_env.envs[0]
+            elif hasattr(raw_env, 'env'):  # gym Wrapper
+                raw_env = raw_env.env
 
-                for episode in range(num_episodes):
-                    state, _ = env.reset()
-                    episode_reward = 0
-                    done = False
-                    steps = 0
+            collector = EpisodeCollector(self._agent, raw_env)
+            run_data = collector.collect(num_episodes=num_episodes, live_animation=live_animation)
 
-                    start_pos = np.copy(env.ship_pos)
-
-                    # Store heading errors for this episode
-                    cross_errors = []
-                    heading_errors = []
-                    rudder_actions = []
-                    velocities = []
-                    previous_rudder_action = 0.0
-                    rudder_changes = []
-                    ukc_measurements = []
-                    path_positions = [np.copy(env.ship_pos)]  # Store initial position
-                    cross_errors.append(env.cross_error)  # Store initial cross-track error
-                    velocities.append(env.velocities)  # Store initial cross-track error
-
-                    # Calculate initial heading error relative to desired path
-                    initial_heading_error = _compute_heading_error(env)
-                    heading_errors.append(initial_heading_error)
-
-                    while not done:
-                        # Select action
-                        action, _, _ = self._agent.predict(state=state, deterministic=True)
-
-                        # Take step in environment
-                        state, reward, terminated, truncated, _ = env.step(action)
-                        done = terminated or truncated
-
-                        if not done:
-                            # Store current position and errors
-                            path_positions.append(np.copy(env.ship_pos))
-                            if env.checkpoint_index >= 2:
-                                cross_errors.append(env.cross_error)
-                            heading_errors.append(env.heading_error)
-                            velocities.append(env.velocities)
-                            rudder_actions.append(env.performed_action[0])
-                            rudder_changes.append(abs(env.performed_action[0] - previous_rudder_action))
-                            previous_rudder_action = env.performed_action[0]
-                            ukc_measurements.append(env.ukc)
-
-                            episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
-                            steps += 1
-
-                            # Uncomment for animated evaluation
-                            if live_animation:
-                                env.render()
-                            
-                            # Bridge position to UE5 if connected
-                            if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
-                                ax, ay, _ = coord_transform.fossen_to_airsim(
-                                    float(env.ship_pos[0]), 
-                                    float(env.ship_pos[1])
-                                )
-                                ayaw = coord_transform.fossen_heading_to_airsim_yaw(
-                                    float(env.phys_sim.state.heading)
-                                )
-                                airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
-                                
-                        else:
-                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
-                            break
-
-                    all_paths.append(np.array(path_positions))
-                    all_cross_errors.append(np.array(cross_errors))
-                    all_rudder_angles.append(np.array(rudder_actions))
-                    all_rudder_angle_changes.append(np.array(rudder_changes))
-                    all_heading_errors.append(np.array(heading_errors))
-                    all_velocities.append(np.array(velocities))
-                    all_rudder_actions.append(np.array(rudder_actions))
-                    all_ukc_measurements.append(np.array(ukc_measurements))
-                    total_rewards.append(episode_reward)
-
-                # Calculate mTEI, MTE, and mHEI
-                mTEI, MTE, mRA, MRA, mRAC, mHE, mu, Mu = self.compute_metrics(all_cross_errors, all_rudder_angles, all_rudder_angle_changes, all_heading_errors, all_velocities)
-
-                # Print summary statistics
-                avg_reward = np.mean(total_rewards)
-                print(f"\nEvaluation completed!")
-                print(f"Average reward: {avg_reward:.2f}")
-                print(f"Best episode reward: {max(total_rewards):.2f}")
-                print(f"Worst episode reward: {min(total_rewards):.2f}")
-                print(f"Mean Surge Velocity (mu): {mu:.2f}")
-                print(f"Maximum Surge Velocity (Mu): {Mu:.2f}")
-                print(f"Mean Track Error Integral (mTEI): {mTEI:.2f}")
-                print(f"Maximum Track Error (MTE): {MTE:.2f}")
-                print(f"Mean Rudder Angle (mRA): {mRA:.3f}")
-                print(f"Maximum Rudder Angle (MRA): {MRA:.3f}")
-                print(f"Mean Rudder Angle Change (mRAC): {mRAC:.4f}")
-                print(f"Mean LOS Guidance Heading Error (mHE): {mHE:.3f} rad")
-
-                try:
-                    # AirSimEnv has no obstacles/overall for matplotlib — skip trajectory plot.
-                    # Create a figure with two subplots
-                    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 16))
-
-                    # Add hatched pattern to first subplot
-                    difference_coords = self.create_hashed_area(env.obstacles, env.overall)
-                    for coords in difference_coords:
-                        ax1.add_patch(patches.Polygon(
-                            coords,
-                            facecolor='none',
-                            edgecolor='gray',
-                            hatch='///',
-                            alpha=0.3,
-                            label='Low water level area' if coords is difference_coords[0] else ""
-                        ))
-
-                    # Plot checkpoints
-                    checkpoint_positions = [checkpoint['pos'] for checkpoint in env.checkpoints]
-                    checkpoint_positions = np.array(checkpoint_positions)
-                    for checkpoint in env.checkpoints:
-                        circle = plt.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
-                                            radius=10,
-                                            color='gray',
-                                            alpha=0.5,
-                                            fill=True)
-                        ax1.add_patch(circle)
-
-                    # Draw the path between checkpoints
-                    ax1.plot(checkpoint_positions[:, 0], checkpoint_positions[:, 1],
-                             'g--', alpha=0.5, label='Ideal Path')
-
-                    # Plot obstacles
-                    polygon_patch = patches.Polygon(env.obstacles, closed=True,
-                                                    edgecolor='r', facecolor='none',
-                                                    lw=2, label='Waterway')
-                    ax1.add_patch(polygon_patch)
-
-                    western_scheldt = patches.Polygon(env.overall, closed=True,
-                                                      edgecolor='brown', facecolor='none',
-                                                      lw=2, label='Western Scheldt')
-                    ax1.add_patch(western_scheldt)
-
-                    # Select colormap for this environment
-                    env_cmap = self.ENV_COLORMAPS[env_color_index % len(self.ENV_COLORMAPS)]
-
-                    # Plot paths for each episode with different colors
-                    color_set = shade_color(env_cmap, num_episodes)
-
-                    line_style = ["-", "--", "-.", ":"][env_color_index % 4]
-
-                    for i, path in enumerate(all_paths):
-                        ax1.plot(path[:, 0], path[:, 1], '-',
-                                 color=color_set[i], alpha=0.4,
-                                 label=f'{env.type_name} – Ep {i + 1} (R={total_rewards[i]:.1f})',
-                                 linestyle=line_style)
-
-                    # Plot start and target positions
-                    ax1.scatter([start_pos[0]], [start_pos[1]], c='blue', s=100, label='Start')
-                    ax1.scatter([env.target_pos[0]], [env.target_pos[1]], c='red', s=100, label='Target')
-
-                    ax1.set_title('Trajectory with Heading Control')
-                    ax1.set_xlabel('X Position')
-                    ax1.set_ylabel('Y Position')
-                    ax1.legend(loc='upper left')
-                    ax1.grid(True)
-                    ax1.axis('equal')
-
-                    # Compute average errors and actions across episodes
-                    # First, find the maximum length among all episodes
-                    max_error_length = max(len(errors) for errors in all_cross_errors)
-                    max_ukc_length = max(len(actions) for actions in all_ukc_measurements)
-
-                    # Initialize arrays to store the sum and count for averaging
-                    error_sum = np.zeros(max_error_length)
-                    error_count = np.zeros(max_error_length)
-                    rudder_resampled = []
-                    ukc_sum = np.zeros(max_ukc_length)
-                    ukc_count = np.zeros(max_ukc_length)
-
-                    COMMON_TIME = np.linspace(0.0, 1.0, 200)
-
-                    # Sum up all values and count occurrences at each timestep
-                    for errors in all_cross_errors:
-                        for i, error in enumerate(errors):
-                            error_sum[i] += error
-                            error_count[i] += 1
-
-                    for actions in all_rudder_actions:
-                        rudder_resampled.append(
-                            resample_to_common_time(actions, COMMON_TIME)
-                        )
-
-                    for ukcs in all_ukc_measurements:
-                        for i, ukc in enumerate(ukcs):
-                            ukc_sum[i] += ukc
-                            ukc_count[i] += 1
-
-                    # Calculate averages (avoid division by zero)
-                    avg_errors = np.divide(error_sum, error_count, out=np.zeros_like(error_sum), where=error_count != 0)
-                    avg_ukcs = np.divide(ukc_sum, ukc_count, out=np.zeros_like(ukc_sum), where=ukc_count != 0)
-
-                    # Plot individual episode errors with lower alpha
-                    for i, errors in enumerate(all_cross_errors):
-                        timesteps = normalized_time_axis(len(errors))
-                        ax2.plot(timesteps, errors, '-',
-                                 color=color_set[i], alpha=0.2,
-                                 label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
-
-                    # Plot average errors with higher alpha and thicker line
-                    timesteps = normalized_time_axis(len(avg_errors))
-                    ax2.plot(timesteps, avg_errors, '-',
-                             color='black', alpha=0.2,
-                             label='Average Cross-track Error', linestyle=line_style)
-
-                    ax2.set_title(f'Cross-Track Error Over Time (Individual and Average Policy)')
-                    ax2.set_xlabel('Episode progress [%]')
-                    ax2.set_ylabel('Cross-Track Error')
-                    ax2.legend(loc='upper right')
-                    ax2.grid(True)
-                    ax2.set_ylim(0, 45)
-                    ax2.set_autoscale_on(False)
-                    ax2.axhline(45, color='k', lw=0.8, ls='--', alpha=0.4)
-                    ax2.axhline(0, color='k', lw=0.8, ls='--', alpha=0.4)
-
-                    # Plot individual episode rudder actions with lower alpha
-                    for i, actions in enumerate(all_rudder_actions):
-                        resampled = resample_to_common_time(actions, COMMON_TIME)
-                        ax3.plot(COMMON_TIME, resampled, '-',
-                                 color=color_set[i], alpha=0.2,
-                                 label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
-
-                    # Plot average rudder actions with higher alpha and thicker line
-                    # timesteps = np.arange(len(avg_rudder))
-                    # ax3.plot(timesteps, avg_rudder, '-', color='black', alpha=0.6, lw=2, label='Average Rudder')
-
-                    ax3.set_title(f'Rudder Actions Over Time (Individual and Average Policy)')
-                    ax3.set_xlabel('Episode progress [%]')
-                    ax3.set_ylabel('Rudder Action')
-                    ax3.legend(loc='upper right')
-                    ax3.grid(True)
-                    ax3.set_xlim(0.0, 1.0)
-
-                    # Plot individual episode ukcs with lower alpha
-                    for i, ukcs in enumerate(all_ukc_measurements):
-                        timesteps = normalized_time_axis(len(ukcs))
-                        ax4.plot(timesteps, ukcs, '-',
-                                 color=color_set[i], alpha=0.2,
-                                 label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
-
-                    # Plot average ukcs with higher alpha and thicker line
-                    timesteps = normalized_time_axis(len(avg_ukcs))
-                    ax4.plot(timesteps, avg_ukcs, '-',
-                             color='black', alpha=0.2,
-                             label='Average UKC', linestyle=line_style)
-
-                    ax4.set_title(f'UKC Over Time (Individual and Average Policy)')
-                    ax4.set_xlabel('Episode progress [%]')
-                    ax4.set_ylabel('UKC')
-                    ax4.legend(loc='upper right')
-                    ax4.grid(True)
-                    ax4.set_ylim(0, 45)
-                    ax4.set_autoscale_on(False)
-                    ax4.axhline(45, color='k', lw=0.8, ls='--', alpha=0.4)
-                    ax4.axhline(0, color='k', lw=0.8, ls='--', alpha=0.4)
-
-                    # Adjust layout and save
-                    plt.tight_layout()
-
-                    trajectory_file_name = (
-                        f'{self.agent.model_dir}/trajectory.png'
-                        if self.agent.model_dir
-                        else 'trajectory.png'
+            if not isinstance(raw_env, LunarLander):
+                # Diagnose empty collection early
+                total_steps = sum(
+                    sum(len(ep.path) for ep in episodes)
+                    for episodes in run_data.ships.values()
+                )
+                if total_steps == 0:
+                    raise RuntimeError(
+                        f"EpisodeCollector collected 0 steps across all ships. "
+                        f"ship_ids={len(run_data.ships)}, env type={type(raw_env).__name__}. "
+                        f"Check that _get_ship_env returns the correct env object."
                     )
 
-                    plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
-                    plt.show()
+                CollisionAnnotator().annotate(run_data)
+                metrics = MetricsComputer.compute(run_data)
 
-                    print(f"\nPath and error visualization saved as 'trajectory.png'")
-                finally:
-                    plt.close('all')
+                # Print summary (same output as before)
+                for sid, m in metrics.items():
+                    print(f"\n{self._get_ship_env(raw_env, sid).env_name} evaluation completed!")
+                    print(f"Average reward: {m.avg_reward:.2f}")
+                    print(f"Best episode reward: {m.best_reward:.2f}")
+                    print(f"Worst episode reward: {m.worst_reward:.2f}")
+                    print(f"Mean Surge Velocity (mu): {m.mu:.2f}")
+                    print(f"Maximum Surge Velocity (Mu): {m.Mu:.2f}")
+                    print(f"Mean Track Error Integral (mTEI): {m.mTEI:.2f}")
+                    print(f"Maximum Track Error (MTE): {m.MTE:.2f}")
+                    print(f"Mean Rudder Angle (mRA): {m.mRA:.3f}")
+                    print(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
+                    print(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
+                    print(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
 
-                    # Cleanup the environment
-                    if hasattr(env, "fh_sim"):
-                        env.fh_sim.dispose()
-            else:
-                # Reset the environment
-                obs, _ = env.reset()
-
-                # Render the environment before starting the loop
-                env.render()
-
-                # Run the agent in the environment
-                done = False
-                while not done:
-                    # The agent chooses an action based on the current observation
-                    prediction = self._agent.predict(state=obs, deterministic=True)
-                    action = prediction[0]
-                    obs, _, terminated, truncated, _ = env.step(action)
-                    done = terminated or truncated
-
-                    # Render the environment each step to visualize the agent's action
-                    env.render()
-                    
-                    # Bridge position to UE5 if connected
-                    if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
-                        ax, ay, _ = coord_transform.fossen_to_airsim(
-                            float(env.ship_pos[0]), 
-                            float(env.ship_pos[1])
-                        )
-                        ayaw = coord_transform.fossen_heading_to_airsim_yaw(
-                            float(env.phys_sim.state.heading)
-                        )
-                        airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
+                save_dir = self.agent.model_dir or "."
+                MatplotlibRenderer.render(
+                    run_data.ships, metrics, raw_env,
+                    save_path=f"{save_dir}/trajectory.png"
+                )
 
 
     def get_env(self):

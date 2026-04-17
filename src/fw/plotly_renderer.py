@@ -12,21 +12,21 @@ from fw.output_helpers import SHIP_COLORS, normalized_time_axis, resample_to_com
 # ---------------------------------------------------------------------------
 
 class PlotlyRenderer:
-    """
-    Produces an interactive HTML dashboard for multi-ship comparison.
+    """Renders an interactive multi-ship evaluation dashboard using Plotly.
 
-    Requires: pip install plotly
+    Produces an HTML file containing an interactive visualization of ship
+    trajectories and associated time-series signals. The dashboard supports
+    zooming, hovering, and toggling visibility of individual ships and episodes.
 
-    Features
-    --------
-    - Toggle individual ships and episodes via the legend
-    - Hover to see exact position, timestep, and reward
-    - Zoom into collision events
-    - Cross-track error, rudder, and UKC panels below the map
+    Layout:
+        Each ship is shown in a separate column with four stacked panels:
+            1. Trajectory (with optional collision markers)
+            2. Cross-track error
+            3. Rudder actions
+            4. Under-keel clearance (UKC)
 
-    Usage
-    -----
-        PlotlyRenderer.render(ship_data, metrics, save_path="dashboard.html")
+    Requirements:
+        plotly (pip install plotly)
     """
 
     @classmethod
@@ -36,6 +36,25 @@ class PlotlyRenderer:
         metrics: dict[str, ShipMetrics],
         save_path: str = "dashboard.html",
     ) -> None:
+        """Generates an interactive HTML dashboard for multi-ship evaluation.
+
+        Args:
+            ship_data: Mapping of ship IDs to lists of `ShipEpisodeData`.
+            metrics: Mapping of ship IDs to computed `ShipMetrics` (currently
+                not directly visualized but used for future extensions).
+            save_path: Output path for the generated HTML file.
+
+        Returns:
+            None.
+
+        Notes:
+            - Ships are assigned colors from a fixed palette (`SHIP_COLORS`).
+            - Each episode is rendered with decreasing opacity for readability.
+            - Collision and near-miss events are shown on the trajectory plot.
+            - Legend grouping allows toggling full ship trajectories.
+            - Requires Plotly; gracefully exits if not installed.
+        """
+
         try:
             import plotly.graph_objects as go
             from plotly.subplots import make_subplots

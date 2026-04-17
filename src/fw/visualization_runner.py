@@ -21,20 +21,43 @@ def run_visualization(
     near_miss_threshold: float = 50.0,
     collision_threshold: float = 15.0,
 ) -> tuple[RunData, dict[str, ShipMetrics]]:
-    """
-    Full pipeline: collect → annotate → compute metrics → render.
+    """Runs the full evaluation + visualization pipeline.
 
-    Returns (ship_data, metrics) so callers can do further analysis.
+    This function executes the complete workflow for evaluating a trained agent:
+    episode collection, collision annotation, metric computation, and rendering
+    of both static and interactive visualizations.
 
-    Example
-    -------
+    Pipeline:
+        1. Collect episodes using EpisodeCollector
+        2. Annotate collision and near-miss events
+        3. Compute per-ship metrics
+        4. Print summary statistics
+        5. Generate Matplotlib trajectory plot
+        6. Generate Plotly interactive dashboard
+
+    Args:
+        agent: Trained RL agent with a `predict(state, deterministic=True)` method.
+        env: Environment instance (single-ship or multi-ship).
+        num_episodes: Number of evaluation episodes to run.
+        save_dir: Directory where output files are saved.
+        ship_ids: Optional list of ship identifiers to evaluate.
+        near_miss_threshold: Distance threshold for near-miss detection.
+        collision_threshold: Distance threshold for collision detection.
+
+    Returns:
+        Tuple containing:
+            RunData: Full recorded episode data for all ships.
+            dict[str, ShipMetrics]: Computed metrics per ship.
+
+    Example:
         ship_data, metrics = run_visualization(
             agent=manager.agent,
             env=manager.get_env(),
             num_episodes=5,
-            save_dir=manager.agent.model_dir or ".",
+            save_dir="results/",
         )
     """
+
     import os
 
     # 1. Collect

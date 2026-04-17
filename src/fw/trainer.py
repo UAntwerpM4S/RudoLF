@@ -115,26 +115,6 @@ class Trainer:
             raise TypeError("Scheduler must have an 'envs' attribute and an 'execute' method.")
 
         self._scheduler = scheduler
-        self.prev_render_mode = None
-
-
-    @contextmanager
-    def render(self, env):
-        """Render.
-
-        Args:
-            env: Description.
-        """
-        if hasattr(env, "render_mode"):
-            try:
-                self.prev_render_mode = env.render_mode
-                env.render_mode = "human"
-                yield
-            finally:
-                env.render_mode = self.prev_render_mode
-                self.prev_render_mode = None
-        else:
-            yield
 
 
     def train(self, configuration: dict = None) -> dict:
@@ -174,30 +154,29 @@ class Trainer:
             for env_idx, env in enumerate(envs):
                 gym_env = env.gym_env
                 try:
-                    with self.render(gym_env):
-                        sim = getattr(gym_env, "phys_sim", None)
-                        if sim is not None:
-                            sim_name = (
-                                f"{gym_env.dynamics_model.name}-based simulator"
-                                if hasattr(sim, "_dynamics")
-                                else f"{getattr(sim, '_engine')} simulator"
-                                if hasattr(sim, "_engine")
-                                else None
-                            )
-
-                            if sim_name:
-                                print(f"Visualization of {gym_env.ship_model.name} in a {sim_name}.")
-
-                        policy_name = f"Best_{gym_env.type_name}" if self._config[
-                            "visualize_best_trained"] else gym_env.type_name
-
-                        self._agent_mgr.set_environment(
-                            env=gym_env,
-                            policy_strategy=PolicyStrategy.REUSE_OTHER_POLICY,
-                            other_env_name=policy_name,
+                    sim = getattr(gym_env, "phys_sim", None)
+                    if sim is not None:
+                        sim_name = (
+                            f"{gym_env.dynamics_model.name}-based simulator"
+                            if hasattr(sim, "_dynamics")
+                            else f"{getattr(sim, '_engine')} simulator"
+                            if hasattr(sim, "_engine")
+                            else None
                         )
 
-                        self._agent_mgr.visualize_trained_agent(num_episodes=1, live_animation=self._config["live_animation"], airsim_bridge=airsim_bridge)
+                        if sim_name:
+                            print(f"Visualization of {gym_env.ship_model.name} in a {sim_name}.")
+
+                    policy_name = f"Best_{gym_env.type_name}" if self._config[
+                        "visualize_best_trained"] else gym_env.type_name
+
+                    self._agent_mgr.set_environment(
+                        env=gym_env,
+                        policy_strategy=PolicyStrategy.REUSE_OTHER_POLICY,
+                        other_env_name=policy_name,
+                    )
+
+                    self._agent_mgr.visualize_trained_agent(num_episodes=1, live_animation=self._config["live_animation"], airsim_bridge=airsim_bridge)
                 except RuntimeError as e:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
         else:
