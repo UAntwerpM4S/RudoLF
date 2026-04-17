@@ -5,6 +5,7 @@ from __future__ import annotations
 import gymnasium as gym
 import numpy as np
 import pytest
+from types import SimpleNamespace
 
 from fw.stop_condition import StopCondition
 from fw.policies.single_ppo_agent import SinglePPOAgent
@@ -47,6 +48,12 @@ class _DummyEnv:
     )
 
 
+class _DummyAirSimEnv(_DummyEnv):
+    """Minimal AirSim env stub for AirSim-specific PPO safeguards."""
+
+    type_name = "AirSimEnv"
+
+
 def test_learn_reraises_keyboard_interrupt_and_skips_final_checkpoint(tmp_path, monkeypatch):
     """Interrupted training should not look like a successful completed run."""
     import fw.policies.single_ppo_agent as single_ppo_agent_module
@@ -73,3 +80,48 @@ def test_learn_reraises_keyboard_interrupt_and_skips_final_checkpoint(tmp_path, 
     assert save_calls == []
     assert metrics_dumped == []
     assert not list(tmp_path.glob("*iterations*.csv"))
+
+
+def test_learn_raises_after_repeated_untrainable_airsim_batches(tmp_path, monkeypatch):
+    """AirSim training should fail fast instead of looping forever on empty batches."""
+    import fw.policies.single_ppo_agent as single_ppo_agent_module
+
+    agent = SinglePPOAgent(environment=_DummyAirSimEnv(), model_dir=str(tmp_path))
+    fake_logger = SimpleNamespace(
+        path=tmp_path / "iterations.csv",
+        log_iteration=lambda **kwargs: None,
+        save=lambda: None,
+    )
+    fake_session = SimpleNamespace(
+        iteration_logger=fake_logger,
+        run_log_path=tmp_path / "run_log.csv",
+        metadata_path=tmp_path / "metadata.json",
+        route_plot_path=tmp_path / "route_plot.png",
+        training_metrics_plot_path=tmp_path / "training_metrics.png",
+        log_run_events=lambda *args, **kwargs: None,
+        set_route_snapshot=lambda *args, **kwargs: None,
+        finalize=lambda *args, **kwargs: None,
+    )
+    short_episode = [
+        {
+            "rewards": np.array([0.0], dtype=np.float32),
+            "advantages": np.array([0.0], dtype=np.float32),
+        }
+    ]
+
+    monkeypatch.setattr(
+        single_ppo_agent_module,
+        "AirSimTrainingSession",
+        lambda *args, **kwargs: fake_session,
+    )
+    monkeypatch.setattr(
+        SinglePPOAgent,
+        "MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES",
+        3,
+    )
+    monkeypatch.setattr(agent, "run_parallel_episodes", lambda _num_envs: short_episode)
+    monkeypatch.setattr(agent, "_drain_env_run_events", lambda: [])
+    monkeypatch.setattr(agent, "_get_training_export_snapshot", lambda: None)
+
+    with pytest.raises(RuntimeError, match="untrainable rollout batches"):
+        agent.learn(stop_condition=StopCondition(max_time_steps=10))

@@ -39,6 +39,7 @@ class SinglePPOAgent(BasePPOAgent):
 
     MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20
     MINIMUM_TRAINABLE_TRAJECTORY_LENGTH = 2
+    MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES = 25
 
     def __init__(self, *args, **kwargs):
         """
@@ -455,6 +456,7 @@ class SinglePPOAgent(BasePPOAgent):
         iteration = 0
         last_completed_iteration = -1
         skipped_short_rollouts = 0
+        consecutive_untrainable_airsim_batches = 0
         interrupted = False
         stop_reason = ""
         cached_route_snapshot = None
@@ -490,7 +492,29 @@ class SinglePPOAgent(BasePPOAgent):
                     )
 
                 if not batch_data:
+                    if is_airsim_env:
+                        consecutive_untrainable_airsim_batches += 1
+                        if (
+                            consecutive_untrainable_airsim_batches == 1
+                            or consecutive_untrainable_airsim_batches % 5 == 0
+                        ):
+                            print(
+                                "[Warning] AirSim produced no trainable rollout batch. "
+                                "Consecutive empty batches: "
+                                f"{consecutive_untrainable_airsim_batches}/"
+                                f"{self.MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES}."
+                            )
+                        if (
+                            consecutive_untrainable_airsim_batches
+                            >= self.MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES
+                        ):
+                            raise RuntimeError(
+                                "AirSim training aborted after repeated untrainable rollout "
+                                "batches. Check reset stability, startup pose capture, or "
+                                "episode termination conditions before retrying."
+                            )
                     continue
+                consecutive_untrainable_airsim_batches = 0
 
                 for episode_result in batch_data:
                     episode_data.append(episode_result)

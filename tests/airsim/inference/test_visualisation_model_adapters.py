@@ -82,7 +82,16 @@ def _framework_env(
         ship_pos=np.array([12.0, 34.0], dtype=np.float32) if ship_pos is None else ship_pos,
         phys_sims=[SimpleNamespace(state=SimpleNamespace(heading=heading, u=u, v=v, r=r))],
         performed_action=performed_action,
-        ships=[SimpleNamespace(specifications=SimpleNamespace(max_rudder_angle=1.0, min_thrust=-1.0, max_thrust=1.0))],
+        ships=[
+            SimpleNamespace(
+                specifications=SimpleNamespace(
+                    max_rudder_angle=1.0,
+                    min_thrust=-1.0,
+                    max_thrust=1.0,
+                    surge_limits=(0.0, 5.0),
+                )
+            )
+        ],
     )
 
 
@@ -217,7 +226,14 @@ def test_motion_state_from_env_supports_single_ship_attribute_layout():
         ship_pos=np.array([12.0, 34.0], dtype=np.float32),
         phys_sim=SimpleNamespace(state=SimpleNamespace(heading=0.3, u=4.0, v=1.5, r=0.2)),
         performed_action=np.array([0.2, 0.6], dtype=np.float32),
-        ship=SimpleNamespace(specifications=SimpleNamespace(max_rudder_angle=1.0, min_thrust=-1.0, max_thrust=1.0)),
+        ship=SimpleNamespace(
+            specifications=SimpleNamespace(
+                max_rudder_angle=1.0,
+                min_thrust=-1.0,
+                max_thrust=1.0,
+                surge_limits=(0.0, 5.0),
+            )
+        ),
     )
 
     motion_state = adapter.motion_state_from_env(env, _bridge())
@@ -275,6 +291,17 @@ def test_animate_state_returns_flat_action_vector_when_bridge_disconnects():
     np.testing.assert_allclose(actuator_state, np.array([0.25, 0.75], dtype=np.float32))
 
 
+def test_visual_update_interval_adapts_to_short_fast_replay_segments():
+    """Fast replay should tighten pose-update cadence instead of snapping to 90 Hz."""
+    interval = module._resolve_visual_update_interval(
+        total_duration=0.02,
+        interpolation_steps=20,
+        min_render_hz=90.0,
+    )
+
+    assert interval == pytest.approx(1.0 / 240.0, abs=1e-9)
+
+
 @pytest.mark.parametrize(
     (
         "mirror_controls_in_ue5",
@@ -284,9 +311,9 @@ def test_animate_state_returns_flat_action_vector_when_bridge_disconnects():
         "expected_brake",
     ),
     [
-        (True, False, False, 0.75, 0.0),
+        (True, False, False, 0.8, 0.0),
         (False, True, False, 0.0, 1.0),
-        (False, False, True, 0.75, 0.0),
+        (False, False, True, 0.8, 0.0),
     ],
 )
 def test_visual_replay_controls_hold_brake_during_pose_mirroring(
@@ -296,7 +323,7 @@ def test_visual_replay_controls_hold_brake_during_pose_mirroring(
     expected_throttle: float,
     expected_brake: float,
 ):
-    """Replay control visuals should not physically propel the UE5 ship."""
+    """Replay throttle visuals should follow the framework speed envelope."""
     adapter = PySimVisualisationAdapter()
     env = _framework_env()
 
@@ -318,7 +345,7 @@ def test_visual_replay_controls_hold_brake_during_pose_mirroring(
 
 
 def test_visual_replay_controls_apply_throttle_gain_to_mirrored_controls():
-    """Mirrored replay controls should respect calibrated throttle scaling."""
+    """Mirrored replay throttle should scale from framework speed, not raw thrust."""
     adapter = PySimVisualisationAdapter()
     env = _framework_env()
 
@@ -336,4 +363,4 @@ def test_visual_replay_controls_apply_throttle_gain_to_mirrored_controls():
 
     assert controls is not None
     assert controls.brake == pytest.approx(0.0)
-    assert controls.throttle == pytest.approx(0.375)
+    assert controls.throttle == pytest.approx(0.4)

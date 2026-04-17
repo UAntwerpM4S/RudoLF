@@ -166,9 +166,11 @@ def test_build_training_env_config_applies_speed_profile_defaults():
     assert config["simulation_speed"] == 20.0
     assert config["use_pause_stepping"] is True
     assert config["use_sim_time_stepping"] is True
-    assert config["sim_time_per_action"] == 0.1
-    assert config["time_step"] == 0.1
+    assert config["sim_time_per_action"] == 0.05
+    assert config["time_step"] == 0.05
     assert config["frames_per_step"] == 8
+    assert config["physics_update_timeout"] == 1.2
+    assert config["state_poll_interval"] == 0.003
     assert config["load_world_on_start"] is True
     assert config["capture_live_start_pose"] is True
 
