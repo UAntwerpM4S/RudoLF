@@ -7,15 +7,19 @@ from fw.base_scheduler import BaseScheduler
 
 
 class SimpleScheduler(BaseScheduler):
-    """Scheduler class to manage environment switching and coordinate multi-environment training."""
+    """
+    Scheduler class to manage environment switching and coordinate multi-environment training.
+    """
 
     def __init__(self, agent_mgr, envs):
-        """Initializes the Scheduler with an agent manager and a list of environments.
+        """
+        Initializes the Scheduler with an agent manager and a list of environments.
 
         Args:
             agent_mgr: The AgentManager instance responsible for training and policy management.
             envs (list): List of environments used for training.
         """
+
         super().__init__(agent_mgr, envs)
 
         self.current_env = None
@@ -28,7 +32,8 @@ class SimpleScheduler(BaseScheduler):
         policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
         other_policy_name: str = None
     ):
-        """Switches to a different environment.
+        """
+        Switches to a different environment.
 
         Args:
             env_index (int): Index of the environment to switch to.
@@ -38,6 +43,7 @@ class SimpleScheduler(BaseScheduler):
         Raises:
             RuntimeError: If no environments are available or if the index is invalid.
         """
+
         if not self.envs:
             raise RuntimeError("No environments available in Scheduler.")
 
@@ -74,7 +80,8 @@ class SimpleScheduler(BaseScheduler):
 
 
     def execute(self, configuration=None):
-        """Executes the training process across all environments.
+        """
+        Executes the training process across all environments.
 
         Args:
             configuration (dict, optional): A dictionary where each key is an environment name
@@ -83,6 +90,7 @@ class SimpleScheduler(BaseScheduler):
         Returns:
             dict: Metrics for each environment, including training status and duration.
         """
+
         metrics = {}
         policy_strategy = PolicyStrategy.REUSE_OTHER_POLICY
 
