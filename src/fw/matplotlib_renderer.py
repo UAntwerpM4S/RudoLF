@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -59,11 +60,19 @@ class MatplotlibRenderer:
         Returns:
             None.
 
+        Raises:
+            ValueError: If fig_width_per_ship is not positive.
+
         Notes:
             - Ships without episode data are skipped.
             - The figure is displayed and saved to disk.
             - All matplotlib figures are closed after rendering to avoid leaks.
         """
+
+        if fig_width_per_ship <= 0:
+            raise ValueError(
+                f"fig_width_per_ship must be positive, got {fig_width_per_ship}."
+            )
 
         ship_ids = [sid for sid in ship_data if ship_data[sid]]
         n_ships = len(ship_ids)
@@ -93,17 +102,25 @@ class MatplotlibRenderer:
 
                 ship_env = cls._get_ship_env(env, ship_id)
 
-                # Add hatched pattern to first subplot
-                difference_coords = cls.create_hashed_area(ship_env.obstacles, ship_env.overall)
-                for coords in difference_coords:
-                    ax_traj.add_patch(patches.Polygon(
-                        coords,
-                        facecolor='none',
-                        edgecolor='gray',
-                        hatch='///',
-                        alpha=0.3,
-                        label='Low water level area' if coords is difference_coords[0] else ""
-                    ))
+                if ship_env is None:
+                    warnings.warn(
+                        f"[MatplotlibRenderer] Could not resolve environment for ship '{ship_id}'. "
+                        f"Trajectory and obstacle overlays will be skipped.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                else:
+                    # Add hatched pattern to first subplot
+                    difference_coords = cls.create_hashed_area(ship_env.obstacles, ship_env.overall)
+                    for i, coords in enumerate(difference_coords):
+                        ax_traj.add_patch(patches.Polygon(
+                            coords,
+                            facecolor='none',
+                            edgecolor='gray',
+                            hatch='///',
+                            alpha=0.3,
+                            label='Low water level area' if i == 0 else "",
+                        ))
 
                 cls._plot_trajectory(ax_traj, episodes, colors, ship_env, ship_id, m)
 
@@ -155,29 +172,40 @@ class MatplotlibRenderer:
     # ------------------------------------------------------------------
 
     @classmethod
-    def create_hashed_area(cls, obstacles, overall):
+    def create_hashed_area(cls, obstacles, overall) -> list[np.ndarray]:
         """
-        Create hashed pattern for the area between obstacles and Western Scheldt.
+        Creates a hatched polygon for the area between obstacles and the overall boundary.
+
+        Computes the set difference between the overall boundary polygon and the
+        navigable obstacle polygon, returning the exterior coordinates of each
+        resulting polygon (or sub-polygon for MultiPolygon results).
+
         Args:
-            obstacles: Description.
-            overall: Description.
+            obstacles: Sequence of (x, y) coordinates defining the navigable boundary.
+            overall: Sequence of (x, y) coordinates defining the outer boundary
+                (e.g., Western Scheldt).
+
+        Returns:
+            List of np.ndarray, each of shape (N, 2), representing the exterior
+            coordinate rings of the hatched difference area.
+
+        Notes:
+            - Returns an empty list if the difference geometry is empty.
         """
 
         obstacle_poly = Polygon(obstacles)
         overall_poly = Polygon(overall)
         difference = overall_poly.difference(obstacle_poly)
 
-        if isinstance(difference, MultiPolygon):
-            coords = []
-            for poly in difference.geoms:
-                coords.append(np.array(poly.exterior.coords))
-        else:
-            coords = [np.array(difference.exterior.coords)]
+        if difference.is_empty:
+            return []
 
-        return coords
+        if isinstance(difference, MultiPolygon):
+            return [np.array(poly.exterior.coords) for poly in difference.geoms]
+        return [np.array(difference.exterior.coords)]
 
     @classmethod
-    def _plot_trajectory(cls, ax, episodes, colors, env, ship_id, metrics):
+    def _plot_trajectory(cls, ax, episodes, colors, env, ship_id, metrics) -> None:
         """
         Plots the trajectory map for a single ship.
 
@@ -188,33 +216,36 @@ class MatplotlibRenderer:
             ax: Matplotlib axis to draw on.
             episodes: List of `ShipEpisodeData` for the ship.
             colors: List of colors corresponding to episodes.
-            env: Ship-specific environment instance.
+            env: Ship-specific environment instance. May be None.
             ship_id: Identifier of the ship.
             metrics: `ShipMetrics` instance for summary statistics.
 
         Notes:
             - Only episodes with at least two path points are plotted.
+            - env may be None for ships whose environment could not be resolved;
+              geometry overlays are skipped in that case.
             - Collision visualization hooks are present but currently disabled.
         """
 
-        if hasattr(env, "obstacles"):
-            ax.add_patch(patches.Polygon(
-                env.obstacles, closed=True,
-                edgecolor="r", facecolor="none", lw=2, label="Waterway",
-            ))
-        if hasattr(env, "overall"):
-            ax.add_patch(patches.Polygon(
-                env.overall, closed=True,
-                edgecolor="brown", facecolor="none", lw=2, label="Western Scheldt",
-            ))
-
-        if hasattr(env, "checkpoints"):
-            cp_pos = np.array([cp["pos"] for cp in env.checkpoints])
-            ax.plot(cp_pos[:, 0], cp_pos[:, 1], "g--", alpha=0.5, label="Ideal path")
-            for cp in env.checkpoints:
-                ax.add_patch(plt.Circle(
-                    cp["pos"], radius=10, color="gray", alpha=0.5, fill=True,
+        if env is not None:
+            if hasattr(env, "obstacles"):
+                ax.add_patch(patches.Polygon(
+                    env.obstacles, closed=True,
+                    edgecolor="r", facecolor="none", lw=2, label="Waterway",
                 ))
+            if hasattr(env, "overall"):
+                ax.add_patch(patches.Polygon(
+                    env.overall, closed=True,
+                    edgecolor="brown", facecolor="none", lw=2, label="Western Scheldt",
+                ))
+
+            if hasattr(env, "checkpoints"):
+                cp_pos = np.array([cp["pos"] for cp in env.checkpoints])
+                ax.plot(cp_pos[:, 0], cp_pos[:, 1], "g--", alpha=0.5, label="Ideal path")
+                for cp in env.checkpoints:
+                    ax.add_patch(plt.Circle(
+                        cp["pos"], radius=10, color="gray", alpha=0.5, fill=True,
+                    ))
 
         for i, ep in enumerate(episodes):
             if ep.path.shape[0] < 2:
@@ -248,7 +279,16 @@ class MatplotlibRenderer:
         ax.axis("equal")
 
     @classmethod
-    def _plot_signal(cls, ax, episodes, colors, signal_attr, title, ylabel, ylim=None):
+    def _plot_signal(
+        cls,
+        ax,
+        episodes,
+        colors,
+        signal_attr: str,
+        title: str,
+        ylabel: str,
+        ylim: tuple[float, float] | None = None,
+    ) -> None:
         """
         Plots a generic time-series signal across episodes.
 
@@ -290,7 +330,7 @@ class MatplotlibRenderer:
         ax.set_title(title)
         ax.set_xlabel("Episode progress [%]")
         ax.set_ylabel(ylabel)
-        if ylim:
+        if ylim is not None:
             ax.set_ylim(*ylim)
             ax.axhline(ylim[0], color="k", lw=0.8, ls="--", alpha=0.4)
             ax.axhline(ylim[1], color="k", lw=0.8, ls="--", alpha=0.4)
@@ -298,7 +338,7 @@ class MatplotlibRenderer:
         ax.grid(True)
 
     @classmethod
-    def _plot_rudder(cls, ax, episodes, colors, ship_id):
+    def _plot_rudder(cls, ax, episodes, colors, ship_id: str) -> None:
         """
         Plots rudder actions over normalized episode time.
 
