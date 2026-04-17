@@ -250,21 +250,18 @@ class EpisodeCollector:
         with self._render_mode(ship_envs, live_animation):
             while not np.all(done):
                 action, _, _ = self._agent.predict(state=state, deterministic=True)
-
                 state, reward, terminated, truncated, _ = env.step(action)
 
                 env_done = np.logical_or(terminated, truncated)
                 done = np.logical_or(done, env_done)
 
                 steps += 1
-
                 self._record_step(accumulators, ship_envs, reward)
 
                 if live_animation:
                     for ship_env in ship_envs.values():
                         if ship_env is not None:
                             ship_env.render()
-
 
         # reward is accumulated inline during _record_step; nothing to finalize here
 
