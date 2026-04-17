@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 import numpy as np
 
 from typing import Optional
@@ -140,6 +141,9 @@ class EpisodeCollector:
         else:
             self._ship_ids = ["ship_0"]
 
+        if not self._ship_ids:
+            raise ValueError("ship_ids must contain at least one entry.")
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -156,7 +160,13 @@ class EpisodeCollector:
         Returns:
             RunData containing aggregated per-ship `ShipEpisodeData` for each
             episode.
+
+        Raises:
+            ValueError: If num_episodes is not positive.
         """
+
+        if num_episodes <= 0:
+            raise ValueError(f"num_episodes must be positive, got {num_episodes}.")
 
         ship_data: ShipData = {sid: [] for sid in self._ship_ids}
 
@@ -223,6 +233,9 @@ class EpisodeCollector:
 
         Returns:
             Dictionary mapping ship IDs to `ShipEpisodeData`.
+
+        Raises:
+            RuntimeError: If the environment reset does not return a valid state.
         """
 
         env = self._env
@@ -230,6 +243,16 @@ class EpisodeCollector:
 
         # Cache ship environments once
         ship_envs = {sid: self._get_ship_env(sid) for sid in ship_ids}
+
+        # Warn if any ship environment could not be resolved
+        missing = [sid for sid, senv in ship_envs.items() if senv is None]
+        if missing:
+            warnings.warn(
+                f"Could not resolve sub-environments for ship(s): {missing}. "
+                f"Their data will be empty.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
         # Initialise per-ship accumulators
         accumulators: dict[str, dict] = {
