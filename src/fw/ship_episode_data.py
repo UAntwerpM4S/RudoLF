@@ -32,6 +32,12 @@ class CollisionEvent:
     distance: float
     is_collision: bool  # True if distance < hard collision threshold
 
+    def __post_init__(self) -> None:
+        if self.timestep < 0:
+            raise ValueError(f"timestep must be non-negative, got {self.timestep}.")
+        if self.distance < 0.0:
+            raise ValueError(f"distance must be non-negative, got {self.distance}.")
+
 
 @dataclass
 class ShipEpisodeData:
@@ -69,6 +75,21 @@ class ShipEpisodeData:
     reward: float = 0.0
     collision_events: list[CollisionEvent] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        if not self.ship_id:
+            raise ValueError("ship_id must be a non-empty string.")
+        if self.episode < 0:
+            raise ValueError(f"episode must be non-negative, got {self.episode}.")
+        # Ensure path always has shape (T, 2), even when constructed from a list.
+        path = np.asarray(self.path)
+        if path.ndim == 1 and path.size == 0:
+            object.__setattr__(self, "path", np.empty((0, 2)))
+        elif path.ndim != 2 or path.shape[1] != 2:
+            if not (path.ndim == 2 and path.shape[0] == 0):
+                raise ValueError(
+                    f"path must have shape (T, 2), got {path.shape}."
+                )
+
 
 # Type alias for the full data structure:
 #   ship_data["ship_0"][episode_index] → ShipEpisodeData
@@ -88,6 +109,12 @@ class RunData:
 
     ships: dict[str, list[ShipEpisodeData]]
     num_episodes: int
+
+    def __post_init__(self) -> None:
+        if self.num_episodes < 0:
+            raise ValueError(f"num_episodes must be non-negative, got {self.num_episodes}.")
+        if self.ships is None:
+            raise ValueError("ships must not be None.")
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +170,9 @@ class CollisionAnnotator:
 
         Returns:
             None. The input object is modified in-place.
+
+        Raises:
+            ValueError: If episode counts differ across ships (inconsistent RunData).
         """
 
         ship_data = run_data.ships
@@ -151,7 +181,15 @@ class CollisionAnnotator:
         if len(ship_ids) < 2:
             return  # nothing to compare in single-ship setup
 
-        num_episodes = len(next(iter(ship_data.values())))
+        episode_counts = {sid: len(ship_data[sid]) for sid in ship_ids}
+        unique_counts = set(episode_counts.values())
+        if len(unique_counts) > 1:
+            raise ValueError(
+                f"Inconsistent episode counts across ships: {episode_counts}. "
+                f"All ships must have the same number of episodes."
+            )
+
+        num_episodes = next(iter(unique_counts))
 
         for episode_idx in range(num_episodes):
             for i in range(len(ship_ids)):
@@ -193,18 +231,20 @@ class CollisionAnnotator:
             dist = float(dists[t])
             is_collision = dist < self.collision_threshold
 
-            ep_a.collision_events.append(CollisionEvent(
+            event_a = CollisionEvent(
                 timestep=int(t),
                 ship_a=ep_a.ship_id,
                 ship_b=ep_b.ship_id,
                 distance=dist,
                 is_collision=is_collision,
-            ))
+            )
+            event_b = CollisionEvent(
+                timestep=int(t),
+                ship_a=ep_a.ship_id,
+                ship_b=ep_b.ship_id,
+                distance=dist,
+                is_collision=is_collision,
+            )
 
-            ep_b.collision_events.append(CollisionEvent(
-                timestep=int(t),
-                ship_a=ep_a.ship_id,
-                ship_b=ep_b.ship_id,
-                distance=dist,
-                is_collision=is_collision,
-            ))
+            ep_a.collision_events.append(event_a)
+            ep_b.collision_events.append(event_b)
