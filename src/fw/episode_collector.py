@@ -130,6 +130,7 @@ class EpisodeCollector:
     """
 
     def __init__(self, agent, env, ship_ids: Optional[list[str]] = None, airsim_bridge=None):
+        """Initialize the EpisodeCollector."""
         self._agent = agent
         self._env = env
         self._airsim_bridge = airsim_bridge
