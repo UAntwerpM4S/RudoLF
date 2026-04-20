@@ -15,9 +15,9 @@
       "show_minimap": "Enable or disable the UE5 top-down minimap during model visualization.",
       "throttle_visual_gain": "Scales mirrored throttle so UE5 visual propulsion matches the framework replay speed envelope. 5.0/5.6 is the calibrated default for the current ship."
     },
-    "model_visualise": true,
+    "model_visualise": false,
     "model_family": "auto",
-    "inference_visualise": false,
+    "inference_visualise": true,
     "model_path": "models/PySimEnv_PPO_policy.zip",
     "inference_model_path": "models/AirSimEnv_PPO_policy.zip",
     "environment_name": "auto",
@@ -40,7 +40,7 @@
     "lock_path_in_ue5": false,
     "episodes": 1,
     "max_steps": 60000,
-    "device": "cpu",
+    "device": "cuda",
     "log_every": 50,
     "draw_calibration_reference": true
   },
@@ -70,10 +70,13 @@
       "curriculum_enabled": "false => train directly on the full AirSim route without staged curriculum starts.",
       "control_interface": "Current UE5 control interface. Keep 'car_physics' for the existing car-based AirSim controls; future hydro models can introduce new interfaces later.",
       "observation_profile": "Current PPO observation contract. 'ppo_route_relative_car' keeps the observation route-relative while exposing turn-rate and cross-track trend cues needed for tighter AirSim route tracking.",
-      "guidance_assist_enabled": "false is recommended for PPO research/training stability so the policy acts directly on the environment without a hidden helper controller."
+      "guidance_assist_enabled": "false is recommended for PPO research/training stability so the policy acts directly on the environment without a hidden helper controller.",
+      "steering_dynamics_enabled": "true => apply vessel-like steering dynamics (low-pass + slew-rate) before controls are sent to UE5.",
+      "steering_smoothing_alpha": "Low-pass blend factor in [0,1] for steering. Higher values track policy faster; lower values are smoother.",
+      "max_steering_rate_per_second": "Maximum absolute steering change per simulated second in normalized [-1,1] steering space."
     },
     "speed_profile": "safe",
-    "max_policy_updates": 2000,
+    "max_policy_updates": 600,
     "max_steps": 120000,
     "simulation_speed": 20.0,
     "draw_calibration_reference": false,
@@ -96,7 +99,10 @@
     "curriculum_enabled": false,
     "control_interface": "car_physics",
     "observation_profile": "ppo_route_relative_car",
-    "guidance_assist_enabled": false
+    "guidance_assist_enabled": false,
+    "steering_dynamics_enabled": true,
+    "steering_smoothing_alpha": 0.65,
+    "max_steering_rate_per_second": 3.2
   },
   "airsim": {
     "_remarks": {

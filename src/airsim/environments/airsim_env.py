@@ -50,17 +50,17 @@ _DEFAULT_OBSTACLES_CSV = _FW_ENV_DIR / "env_Sche_250cm_no_scale.csv"
 _ROUTE_POINT_SPACING_M = 80.0
 _CHECKPOINT_RADIUS_M = 60.0
 _TARGET_RADIUS_M = 80.0
-_CROSS_TRACK_LIMIT_M = 250.0
+_CROSS_TRACK_LIMIT_M = 150.0
 _SPEED_SCALE_MPS = 15.0
 _YAW_RATE_SCALE_RADPS = math.radians(45.0)
 _CROSS_TRACK_DELTA_SCALE_M = 20.0
 _MIN_DISTANCE_SCALE_M = 500.0
-_SUCCESS_REWARD = 100.0
-_CHECKPOINT_REWARD = 5.0
-_COLLISION_PENALTY = -50.0
-_OFFTRACK_PENALTY = -25.0
-_DISCONNECT_PENALTY = -50.0
-_TIMEOUT_PENALTY = -15.0
+_SUCCESS_REWARD = 5.0
+_CHECKPOINT_REWARD = 1.0
+_COLLISION_PENALTY = -5.0
+_OFFTRACK_PENALTY = -4.0
+_DISCONNECT_PENALTY = -5.0
+_TIMEOUT_PENALTY = -2.5
 _DEFAULT_REWARD_NORMALIZATION_SCALE = 5.0
 _RESET_SETTLE_TIMEOUT_S = 1.5
 _RESET_SETTLE_POLL_S = 0.05
@@ -77,11 +77,22 @@ _CONTROL_INTERFACE_CAR_PHYSICS = "car_physics"
 _RESET_MODE_REWIND_POSE = "rewind_pose"
 _RESET_MODE_BRIDGE_RESET = "bridge_reset"
 _CROSS_TRACK_LINEAR_PENALTY = 0.15
-_CROSS_TRACK_QUADRATIC_PENALTY = 0.10
-_HEADING_PENALTY = 0.10
+_CROSS_TRACK_QUADRATIC_PENALTY = 0.35
+_HEADING_PENALTY = 0.20
 _CROSS_TRACK_GROWTH_PENALTY = 0.15
+_YAW_RATE_PENALTY = 0.12
+_STEERING_DELTA_PENALTY = 0.08
+_STEERING_MAGNITUDE_PENALTY = 0.02
 _SPEED_TRACKING_PENALTY = 0.0
-_CHECKPOINT_QUALITY_MIN = 0.30
+_PRECISION_TRACKING_BONUS = 2.0
+_DEFAULT_STEERING_SMOOTHING_ALPHA = 0.65
+_DEFAULT_MAX_STEERING_RATE_PER_SECOND = 3.2
+_CHECKPOINT_QUALITY_MIN = 0.0
+_SUCCESS_QUALITY_FLOOR = 0.25
+_CHECKPOINT_PASS_MAX_CROSS_TRACK_M = 120.0
+_CHECKPOINT_PASS_MAX_HEADING_RAD = math.radians(75.0)
+_SUCCESS_MAX_CROSS_TRACK_M = 60.0
+_SUCCESS_MAX_HEADING_RAD = math.radians(45.0)
 _OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR = (
     "current_checkpoint_forward",
     "current_checkpoint_lateral",
@@ -99,6 +110,7 @@ _OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR = (
     "executed_action_throttle",
     "route_progress_ratio",
     "checkpoint_progress_ratio",
+    "previous_action_steering",
 )
 _OBSERVATION_FIELDS_BY_PROFILE = {
     _OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR: _OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR,
@@ -212,6 +224,9 @@ class AirSimEnv(BaseEnv):
         guidance_assist_enabled: bool = False,
         guidance_residual_steering_scale: float = 0.45,
         guidance_residual_throttle_scale: float = 0.55,
+        steering_dynamics_enabled: bool = True,
+        steering_smoothing_alpha: float = _DEFAULT_STEERING_SMOOTHING_ALPHA,
+        max_steering_rate_per_second: float = _DEFAULT_MAX_STEERING_RATE_PER_SECOND,
         control_interface: str = _CONTROL_INTERFACE_CAR_PHYSICS,
         observation_profile: str = _OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR,
     ) -> None:
@@ -261,6 +276,9 @@ class AirSimEnv(BaseEnv):
             "guidance_assist_enabled": bool(guidance_assist_enabled),
             "guidance_residual_steering_scale": float(guidance_residual_steering_scale),
             "guidance_residual_throttle_scale": float(guidance_residual_throttle_scale),
+            "steering_dynamics_enabled": bool(steering_dynamics_enabled),
+            "steering_smoothing_alpha": float(steering_smoothing_alpha),
+            "max_steering_rate_per_second": float(max_steering_rate_per_second),
             "control_interface": str(control_interface),
             "observation_profile": str(observation_profile),
         }
@@ -314,6 +332,9 @@ class AirSimEnv(BaseEnv):
         self.guidance_assist_enabled = bool(guidance_assist_enabled)
         self.guidance_residual_steering_scale = float(guidance_residual_steering_scale)
         self.guidance_residual_throttle_scale = float(guidance_residual_throttle_scale)
+        self.steering_dynamics_enabled = bool(steering_dynamics_enabled)
+        self.steering_smoothing_alpha = float(np.clip(steering_smoothing_alpha, 0.0, 1.0))
+        self.max_steering_rate_per_second = max(float(max_steering_rate_per_second), 0.0)
         self.control_interface = str(control_interface).strip().lower() or _CONTROL_INTERFACE_CAR_PHYSICS
         self.observation_profile = (
             str(observation_profile).strip().lower()
@@ -357,6 +378,10 @@ class AirSimEnv(BaseEnv):
         self.last_step_latency_s = 0.0
         self.last_controls: dict[str, float] = {"steering": 0.0, "throttle": 0.0, "brake": 1.0}
         self.last_policy_action = np.array([0.0, -1.0], dtype=np.float32)
+        self.last_steering_target = 0.0
+        self.last_steering_rate_limited = False
+        self.last_checkpoint_reward_raw = 0.0
+        self.last_checkpoint_reward_effective = 0.0
         self.previous_action = self.neutral_action()
         self.performed_action = self.neutral_action()
         self.ship_pos = self.initial_ship_pos.copy()
@@ -375,6 +400,8 @@ class AirSimEnv(BaseEnv):
         self.ukc = 0.0
         self.step_count = 0
         self.checkpoint_index = 1
+        self._episode_abs_cross_track_sum = 0.0
+        self._episode_quality_samples = 0
 
         self.overall = self._load_outline_points(_DEFAULT_OVERALL_CSV)
         self.obstacles = self._load_outline_points(_DEFAULT_OBSTACLES_CSV)
@@ -518,8 +545,14 @@ class AirSimEnv(BaseEnv):
         self.previous_action = self.neutral_action()
         self.performed_action = self.neutral_action()
         self.last_policy_action = self.neutral_action()
+        self.last_steering_target = 0.0
+        self.last_steering_rate_limited = False
         self.ship_yaw_rate = 0.0
         self.cross_track_error_delta = 0.0
+        self.last_checkpoint_reward_raw = 0.0
+        self.last_checkpoint_reward_effective = 0.0
+        self._episode_abs_cross_track_sum = 0.0
+        self._episode_quality_samples = 0
         self._episode_start_checkpoint_index = start_index
         self.checkpoint_index = min(start_index + 1, len(self.checkpoints) - 1)
         self._route_progress_m = float(self.route_cumulative_distances[start_index])
@@ -619,7 +652,11 @@ class AirSimEnv(BaseEnv):
             )
             return observation, float(reward), False, True, info
 
+        self._episode_abs_cross_track_sum += abs(self.cross_error)
+        self._episode_quality_samples += 1
+
         checkpoint_reward = self._update_checkpoint_progress()
+        self.last_checkpoint_reward_raw = float(checkpoint_reward)
         allow_early_failure = (
             not self.training_mode
             or self.step_count > _EARLY_FAILURE_GRACE_STEPS
@@ -629,6 +666,8 @@ class AirSimEnv(BaseEnv):
         collision = bool(collision_status) if collision_status is not None else False
         success = self._has_reached_target()
         offtrack = bool(abs(self.cross_error) > _CROSS_TRACK_LIMIT_M) if allow_early_failure else False
+        if collision or offtrack:
+            success = False
         terminated = bool(success or collision or offtrack or not self.bridge.is_connected)
         truncated = bool(
             self.step_count >= self.max_steps
@@ -675,16 +714,17 @@ class AirSimEnv(BaseEnv):
             )
 
         if terminated or truncated:
-            self._episode_success = success
-            self._update_curriculum_after_episode(success=success)
+            curriculum_success = bool(success and not collision and not offtrack and not truncated)
+            self._episode_success = curriculum_success
+            self._update_curriculum_after_episode(success=curriculum_success)
 
         outcome = "running"
-        if success:
-            outcome = "success"
-        elif collision:
+        if collision:
             outcome = "collision"
         elif offtrack:
             outcome = "offtrack"
+        elif success:
+            outcome = "success"
         elif not self.bridge.is_connected:
             outcome = "disconnected"
         elif collision_read_failed:
@@ -1266,18 +1306,50 @@ class AirSimEnv(BaseEnv):
     def _compose_effective_action(self, action: np.ndarray) -> np.ndarray:
         """Blend residual policy output with an optional guidance prior."""
         action = validate_policy_action(action)
-        if not self.guidance_assist_enabled:
+        if self.guidance_assist_enabled:
+            guidance = self._guidance_action()
+            effective = np.array(
+                [
+                    guidance[0] + action[0] * self.guidance_residual_steering_scale,
+                    guidance[1] + action[1] * self.guidance_residual_throttle_scale,
+                ],
+                dtype=np.float32,
+            )
+        else:
+            effective = action
+
+        effective = np.clip(effective, -1.0, 1.0).astype(np.float32, copy=False)
+        return self._apply_steering_dynamics(effective)
+
+    def _apply_steering_dynamics(self, action: np.ndarray) -> np.ndarray:
+        """Apply vessel-like steering dynamics to reduce left-right snap commands."""
+        action = validate_policy_action(action, action_name="effective action")
+        target_steering = float(action[0])
+        self.last_steering_target = target_steering
+        self.last_steering_rate_limited = False
+
+        if not self.steering_dynamics_enabled:
             return action
 
-        guidance = self._guidance_action()
-        effective = np.array(
-            [
-                guidance[0] + action[0] * self.guidance_residual_steering_scale,
-                guidance[1] + action[1] * self.guidance_residual_throttle_scale,
-            ],
-            dtype=np.float32,
-        )
-        return np.clip(effective, -1.0, 1.0).astype(np.float32)
+        previous_steering = float(self.performed_action[0])
+        alpha = float(np.clip(self.steering_smoothing_alpha, 0.0, 1.0))
+        smoothed_steering = previous_steering + alpha * (target_steering - previous_steering)
+
+        max_step_delta = float(self.max_steering_rate_per_second) * float(self.mdp_step_seconds)
+        if max_step_delta > 0.0:
+            limited_steering = float(
+                np.clip(
+                    smoothed_steering,
+                    previous_steering - max_step_delta,
+                    previous_steering + max_step_delta,
+                )
+            )
+            self.last_steering_rate_limited = abs(limited_steering - smoothed_steering) > 1e-6
+            smoothed_steering = limited_steering
+
+        filtered = action.copy()
+        filtered[0] = float(np.clip(smoothed_steering, -1.0, 1.0))
+        return filtered.astype(np.float32, copy=False)
 
     def _guidance_action(self) -> np.ndarray:
         """Build a conservative route-following prior in policy-action space."""
@@ -1303,6 +1375,11 @@ class AirSimEnv(BaseEnv):
         """Advance the current checkpoint index from route progress."""
         reward = 0.0
         while self.checkpoint_index < len(self.checkpoints) - 1:
+            if abs(self.cross_error) > _CHECKPOINT_PASS_MAX_CROSS_TRACK_M:
+                break
+            if abs(self.heading_error) > _CHECKPOINT_PASS_MAX_HEADING_RAD:
+                break
+
             checkpoint = self.checkpoints[self.checkpoint_index]
             threshold = checkpoint["distance_m"] - checkpoint["radius"]
             if self._route_progress_m < threshold:
@@ -1319,10 +1396,16 @@ class AirSimEnv(BaseEnv):
                 ship_y=float(self.ship_pos[1]),
                 heading_deg=float(math.degrees(self.ship_heading)),
             )
+            # Avoid reward bursts when progress jumps across many checkpoints in one RL step.
+            break
         return reward
 
     def _has_reached_target(self) -> bool:
         """Return whether the ship has reached the route target."""
+        if abs(self.cross_error) > _SUCCESS_MAX_CROSS_TRACK_M:
+            return False
+        if abs(self.heading_error) > _SUCCESS_MAX_HEADING_RAD:
+            return False
         return (
             self._distance_to_target() <= self.checkpoints[-1]["radius"]
             or self._route_progress_m >= self.route_length_m - self.checkpoints[-1]["radius"]
@@ -1368,7 +1451,12 @@ class AirSimEnv(BaseEnv):
         tracking_quality = max(cross_track_ratio, heading_ratio)
         checkpoint_quality = max(
             _CHECKPOINT_QUALITY_MIN,
-            1.0 - (0.65 * cross_track_ratio + 0.25 * heading_ratio),
+            1.0 - (0.85 * (cross_track_ratio ** 2) + 0.35 * heading_ratio),
+        )
+        episode_mean_cross_track_ratio = min(
+            (self._episode_abs_cross_track_sum / max(self._episode_quality_samples, 1))
+            / _CROSS_TRACK_LIMIT_M,
+            1.0,
         )
 
         reward = 0.0
@@ -1376,12 +1464,19 @@ class AirSimEnv(BaseEnv):
         # Alive bonus: reward the agent for staying on track.
         reward += 0.3 * max(0.0, 1.0 - cross_track_ratio)
 
+        # Precision tracking bonus: give a large reward near the ideal path,
+        # but only when heading is aligned so centerline "crossing" is not rewarded.
+        if cross_track_ratio < 0.1:
+            precision_centering = 1.0 - (cross_track_ratio / 0.1)
+            precision_alignment = max(0.0, math.cos(self.heading_error))
+            reward += _PRECISION_TRACKING_BONUS * precision_centering * precision_alignment
+
         # Speed reward: reward forward speed when heading aligns with route.
         # Replaces the old _SPEED_TRACKING_PENALTY which punished the agent
         # for moving fast, creating a local optimum at zero speed.
         reward += 0.15 * speed_ratio * max(0.0, math.cos(self.heading_error))
 
-        reward += 2.5 * (progress_delta / max(_ROUTE_POINT_SPACING_M, 1.0))
+        reward += 1.0 * (progress_delta / max(_ROUTE_POINT_SPACING_M, 1.0))
         reward += 0.5 * (target_delta / max(self._distance_scale_m, 1.0))
         reward += 0.3 * (checkpoint_delta / max(_CHECKPOINT_RADIUS_M, 1.0))
         reward += 0.15 * heading_improvement
@@ -1390,14 +1485,28 @@ class AirSimEnv(BaseEnv):
         reward -= _CROSS_TRACK_QUADRATIC_PENALTY * (cross_track_ratio ** 2)
         reward -= _HEADING_PENALTY * heading_ratio
         reward -= _CROSS_TRACK_GROWTH_PENALTY * cross_track_growth
-        reward -= 0.03 * steering_delta
-        
-        reward += checkpoint_reward * checkpoint_quality
+
+        reward -= _YAW_RATE_PENALTY * abs(self.ship_yaw_rate / _YAW_RATE_SCALE_RADPS)
+        reward -= _STEERING_DELTA_PENALTY * steering_delta
+        reward -= _STEERING_MAGNITUDE_PENALTY * abs(float(self.performed_action[0]))
+
+        effective_checkpoint_reward = checkpoint_reward * checkpoint_quality
+        self.last_checkpoint_reward_effective = float(effective_checkpoint_reward)
+        reward += effective_checkpoint_reward
 
         if success:
-            reward += _SUCCESS_REWARD
+            # Success is discounted when either instantaneous or episode-level tracking quality is poor.
+            instant_success_quality = max(0.0, 1.0 - tracking_quality)
+            episode_success_quality = max(0.0, 1.0 - episode_mean_cross_track_ratio)
+            success_quality = 0.4 * instant_success_quality + 0.6 * episode_success_quality
+            reward += _SUCCESS_REWARD * (
+                _SUCCESS_QUALITY_FLOOR
+                + (1.0 - _SUCCESS_QUALITY_FLOOR) * success_quality
+            )
         if collision:
             reward += _COLLISION_PENALTY
+            # Collisions are hard failures; keep terminal reward strictly negative.
+            reward = min(reward, _COLLISION_PENALTY)
         if offtrack:
             reward += _OFFTRACK_PENALTY
         if disconnected:
@@ -1480,6 +1589,7 @@ class AirSimEnv(BaseEnv):
                 float(self.performed_action[1]),
                 float(np.clip(self._route_progress_ratio, 0.0, 1.0)),
                 float(np.clip(self.checkpoint_index / max(len(self.checkpoints) - 1, 1), 0.0, 1.0)),
+                float(self.previous_action[0]),
             ],
             dtype=np.float32,
         )
@@ -1585,6 +1695,13 @@ class AirSimEnv(BaseEnv):
             "target_distance": float(self._distance_to_target()),
             "speed": float(self.ship_speed),
             "yaw_rate": float(self.ship_yaw_rate),
+            "steering_target": float(self.last_steering_target),
+            "steering_rate_limited": bool(self.last_steering_rate_limited),
+            "checkpoint_reward_raw": float(self.last_checkpoint_reward_raw),
+            "checkpoint_reward_effective": float(self.last_checkpoint_reward_effective),
+            "episode_mean_abs_cross_track_error": float(
+                self._episode_abs_cross_track_sum / max(self._episode_quality_samples, 1)
+            ),
             "mdp_step_seconds": float(self.mdp_step_seconds),
             "physics_wait_s": float(self.last_physics_wait_s),
             "step_latency_s": float(self.last_step_latency_s),
@@ -1594,6 +1711,9 @@ class AirSimEnv(BaseEnv):
             "state_update_reliable": bool(self._state_update_reliable),
             "repeated_state_count": int(self._repeated_state_count),
             "guidance_assist_enabled": bool(self.guidance_assist_enabled),
+            "steering_dynamics_enabled": bool(self.steering_dynamics_enabled),
+            "steering_smoothing_alpha": float(self.steering_smoothing_alpha),
+            "max_steering_rate_per_second": float(self.max_steering_rate_per_second),
             "control_interface": str(self.control_interface),
             "observation_profile": str(self.observation_profile),
             "outcome": str(outcome),

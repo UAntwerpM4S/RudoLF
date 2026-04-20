@@ -39,6 +39,9 @@ def test_build_training_env_config_uses_runtime_settings(tmp_path):
             "guidance_assist_enabled": True,
             "guidance_residual_steering_scale": 0.42,
             "guidance_residual_throttle_scale": 0.57,
+            "steering_dynamics_enabled": False,
+            "steering_smoothing_alpha": 0.8,
+            "max_steering_rate_per_second": 1.75,
             "control_interface": "car_physics",
             "observation_profile": "ppo_route_relative_car",
             "latency_warning_threshold": 1.25,
@@ -94,6 +97,9 @@ def test_build_training_env_config_uses_runtime_settings(tmp_path):
     assert config["guidance_assist_enabled"] is True
     assert config["guidance_residual_steering_scale"] == 0.42
     assert config["guidance_residual_throttle_scale"] == 0.57
+    assert config["steering_dynamics_enabled"] is False
+    assert config["steering_smoothing_alpha"] == 0.8
+    assert config["max_steering_rate_per_second"] == 1.75
     assert config["control_interface"] == "car_physics"
     assert config["observation_profile"] == "ppo_route_relative_car"
     assert config["latency_warning_threshold"] == 1.25
@@ -148,6 +154,9 @@ def test_build_training_env_config_defaults_to_direct_policy_control():
     assert config["curriculum_enabled"] is False
     assert config["load_world_on_start"] is True
     assert config["capture_live_start_pose"] is True
+    assert config["steering_dynamics_enabled"] is True
+    assert config["steering_smoothing_alpha"] == 0.65
+    assert config["max_steering_rate_per_second"] == 3.2
 
 
 def test_build_training_env_config_applies_speed_profile_defaults():

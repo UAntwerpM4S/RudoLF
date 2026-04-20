@@ -77,8 +77,9 @@ def run_visualization(
 
     # 4. Print summary
     for sid, m in metrics.items():
-        print(f"\n[{sid}]  avg_R={m.avg_reward:.2f}  mTEI={m.mTEI:.2f}  MTE={m.MTE:.2f}"
-              f"  mRA={m.mRA:.3f}  mHE={m.mHE:.3f} rad  mu={m.mu:.2f}")
+        print(f"\n[{sid}]  avg_R={m.avg_reward:.2f}  mTEI={m.mTEI:.2f}  MTE={m.MTE:.2f}")
+        print(f"      mRA={m.mRA:.3f}  mRAC={m.mRAC:.3f}  vRA={m.vRA:.4f}  sCF={m.sCF:.2%}")
+        print(f"      mHE={m.mHE:.3f} rad  mu={m.mu:.2f}")
 
     # 5. Render
     traj_path = os.path.join(save_dir, "trajectory.png")

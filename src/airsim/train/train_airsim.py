@@ -246,6 +246,15 @@ def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -
             "guidance_residual_throttle_scale": float(
                 training_cfg.get("guidance_residual_throttle_scale", 0.60)
             ),
+            "steering_dynamics_enabled": bool(
+                training_cfg.get("steering_dynamics_enabled", True)
+            ),
+            "steering_smoothing_alpha": float(
+                training_cfg.get("steering_smoothing_alpha", 0.65)
+            ),
+            "max_steering_rate_per_second": float(
+                training_cfg.get("max_steering_rate_per_second", 3.2)
+            ),
             "control_interface": str(
                 training_cfg.get("control_interface", "car_physics")
             ),

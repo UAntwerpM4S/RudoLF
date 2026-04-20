@@ -238,7 +238,7 @@ def test_reset_returns_valid_ppo_observation(monkeypatch):
     obs, info = env.reset()
 
     assert env.action_space.shape == (2,)
-    assert env.observation_space.shape == (16,)
+    assert env.observation_space.shape == (17,)
     assert obs.dtype == np.float32
     assert env.observation_space.contains(obs)
     assert info["outcome"] == "reset"
@@ -313,6 +313,35 @@ def test_step_accepts_progress_when_pause_flag_does_not_return(monkeypatch):
     assert terminated is False
     assert truncated is False
     assert info["pause_timeout"] is False
+
+    env.close()
+
+
+def test_steering_dynamics_rate_limit_blocks_snap_reversal(monkeypatch):
+    """Steering dynamics should bound abrupt left-right rudder reversals."""
+    _patch_env_dependencies(monkeypatch)
+    from airsim.environments.airsim_env import AirSimEnv
+
+    env = AirSimEnv(
+        ship_pos=[0.0, 0.0],
+        target_pos=[500.0, 0.0],
+        use_pause_stepping=True,
+        use_sim_time_stepping=True,
+        sim_time_per_action=0.1,
+        steering_smoothing_alpha=1.0,
+        max_steering_rate_per_second=2.0,
+    )
+    env.reset()
+
+    first = env._compose_effective_action(np.array([1.0, 1.0], dtype=np.float32))
+    env.performed_action = first.copy()
+    second = env._compose_effective_action(np.array([-1.0, 1.0], dtype=np.float32))
+
+    assert first[0] == pytest.approx(0.2)
+    assert second[0] == pytest.approx(0.0, abs=1e-6)
+    assert first[1] == pytest.approx(1.0)
+    assert second[1] == pytest.approx(1.0)
+    assert env.last_steering_rate_limited is True
 
     env.close()
 

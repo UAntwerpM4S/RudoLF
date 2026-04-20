@@ -205,6 +205,9 @@ def get_default_runtime_settings() -> Dict[str, Any]:
             "time_step": 0.05,
             "physics_update_timeout": 1.2,
             "state_poll_interval": 0.003,
+            "steering_dynamics_enabled": True,
+            "steering_smoothing_alpha": 0.65,
+            "max_steering_rate_per_second": 3.2,
         },
         "airsim": {
             **AirSimConfig().to_dict(),
