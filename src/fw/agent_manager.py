@@ -4,6 +4,7 @@ from pathlib import Path
 from enum import auto, Enum
 from contextlib import contextmanager
 
+from fw.plotly_renderer import PlotlyRenderer
 from fw.metrics_computer import MetricsComputer
 from fw.episode_collector import EpisodeCollector
 from fw.ship_episode_data import CollisionAnnotator
@@ -330,6 +331,10 @@ class AgentManager:
                     run_data.ships, metrics, raw_env,
                     save_path=f"{save_dir}/trajectory.png",
                 )
+
+                # PlotlyRenderer.render(
+                #     run_data.ships, metrics,
+                # )
 
     def get_env(self):
         """
