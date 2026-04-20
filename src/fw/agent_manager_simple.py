@@ -55,10 +55,7 @@ class AgentManager:
         """
 
         try:
-            if self._overlay_active and self._fig is not None:
-                ax = self._axes
-            else:
-                fig, ax = plt.subplots(figsize=(12, 8))
+            fig, ax = plt.subplots(figsize=(12, 8))
 
             # Draw environment boundaries
             ax.plot(
@@ -141,8 +138,10 @@ class AgentManager:
             # Save the figure
             plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
             print("\nPath visualization saved as 'trajectory.png'.")
-        except Exception:
-            pass
+
+            plt.show()
+        finally:
+            plt.close('all')
 
 
     def __init__(self, agent_type: str, hyperparameters: dict):
@@ -158,35 +157,6 @@ class AgentManager:
         self._agent_type = agent_type
         self.prev_smoothing_setting = None
         self._hyperparameters = hyperparameters
-
-        self._fig = None
-        self._axes = None
-        self._overlay_active = False
-
-
-    def begin_overlay_plot(self):
-        """
-        Create a persistent matplotlib figure for overlaying multiple environments.
-        """
-
-        if self._fig is None:
-            self._fig, self._axes = plt.subplots(figsize=(12, 8))
-            self._overlay_active = True
-
-
-    def end_overlay_plot(self):
-        """
-        Finalize and close the persistent matplotlib figure.
-        """
-
-        if self._fig is not None:
-            plt.tight_layout()
-            plt.show()
-            plt.close(self._fig)
-
-            self._fig = None
-            self._axes = None
-            self._overlay_active = False
 
 
     @property
@@ -478,6 +448,7 @@ class AgentManager:
                 obs, _ = env.reset()
 
                 # Render the environment before starting the loop
+                env.render_mode = "human"
                 env.render()
 
                 # Run the agent in the environment
@@ -492,12 +463,6 @@ class AgentManager:
                     # Render the environment each step to visualize the agent's action
                     env.render()
 
-                if self._fig is not None and self._overlay_active:
-                    plt.close(self._fig)
-
-                    self._fig = None
-                    self._axes = None
-                    self._overlay_active = False
 
     def get_env(self):
         """
