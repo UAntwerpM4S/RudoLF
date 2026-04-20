@@ -131,7 +131,7 @@ class AgentManagerSimple:
 
     def __init__(self, agent_type: str, hyperparameters: dict):
         """
-        Initialize the AgentManager.
+        Initialize AgentManagerSimple.
 
         Args:
             agent_type (str): Type of agent to use (e.g., 'PPO').

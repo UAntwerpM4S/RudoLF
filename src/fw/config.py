@@ -6,7 +6,12 @@ from airsim.config.airsim_config import get_airsim_config  # re-export
 
 class VisualizationMode(Enum):
     """
-    Enumeration of supported visualization modes.
+    Visualization modes for rendering simulation results.
+
+    Attributes:
+        SIMPLE: Vessel trajectory only.
+        COMPLEX: Trajectory with diagnostics (cross-track error, rudder input,
+            UKC, and performance metrics).
     """
 
     SIMPLE = auto()
