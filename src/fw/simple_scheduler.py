@@ -2,7 +2,7 @@ import time
 import logging
 import traceback
 
-from fw.agent_manager import PolicyStrategy
+from fw.config import PolicyStrategy
 from fw.base_scheduler import BaseScheduler
 
 
