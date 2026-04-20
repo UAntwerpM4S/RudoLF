@@ -1,7 +1,6 @@
 import os
 
 from pathlib import Path
-from enum import auto, Enum
 from contextlib import contextmanager
 
 from fw.plotly_renderer import PlotlyRenderer
