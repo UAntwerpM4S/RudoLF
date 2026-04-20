@@ -4,8 +4,6 @@ import csv
 import importlib
 from datetime import datetime
 from datetime import datetime
-from threading import Lock
-from joblib import Parallel, delayed
 
 from enum import Enum
 from pathlib import Path
@@ -297,8 +295,7 @@ class Trainer:
                 }
 
             verbose: Print progress information.
-            max_workers: Maximum number of parallel workers. Defaults to number
-                of CPUs (capped at number of configurations).
+            max_workers: Kept for API compatibility. Evaluation now runs sequentially.
 
         Returns:
             Dict mapping config index to:
@@ -329,8 +326,6 @@ class Trainer:
         results = {}
         # Track success order for summaries (only successful configs).
         evaluation_order = []
-        # Serialize console output across threads for clean logs.
-        print_lock = Lock()
 
         def _evaluate_single_config(config_idx: int, config: Dict[str, Any]) -> tuple[int, Dict[str, Any], bool]:
             """Train one reward configuration in an isolated trainer instance."""
@@ -345,14 +340,13 @@ class Trainer:
                 reward_weights = config.get("reward_weights", None)
 
                 if verbose:
-                    with print_lock:
-                        print(f"\n[{config_idx + 1}] Environment: {canonical_name}")
-                        print(f"    Reward Profile: {reward_name}")
-                        if reward_weights:
-                            # Print custom weights so differences are visible in logs.
-                            for key, value in reward_weights.items():
-                                print(f"      - {key}: {value}")
-                        print("    Starting training...")
+                    print(f"\n[{config_idx + 1}] Environment: {canonical_name}")
+                    print(f"    Reward Profile: {reward_name}")
+                    if reward_weights:
+                        # Print custom weights so differences are visible in logs.
+                        for key, value in reward_weights.items():
+                            print(f"      - {key}: {value}")
+                    print("    Starting training...")
 
                 # Build a fresh environment per configuration (no factory cache reuse).
                 env = self._build_eval_environment(canonical_name, config)
@@ -366,10 +360,9 @@ class Trainer:
                 trajectory_file = self._save_evaluation_trajectory_snapshot(trainer, reward_weights)
 
                 if verbose:
-                    with print_lock:
-                        if trajectory_file is not None:
-                            print(f"    Saved trajectory: {trajectory_file}")
-                        print("    ✓ Training completed")
+                    if trajectory_file is not None:
+                        print(f"    Saved trajectory: {trajectory_file}")
+                    print("    ✓ Training completed")
 
                 # Return a normalized success payload for downstream summary/export.
                 return config_idx, {
@@ -384,8 +377,7 @@ class Trainer:
 
             except Exception as e:
                 if verbose:
-                    with print_lock:
-                        print(f"    ✗ Training failed: {e}")
+                    print(f"    ✗ Training failed: {e}")
 
                 # Keep a consistent shape on failure so downstream code can continue.
                 return config_idx, {
@@ -398,17 +390,10 @@ class Trainer:
                     "status": f"failed: {str(e)}"
                 }, False
 
-        # Choose worker count: cap by number of configs, minimum 1.
-        worker_count = max_workers if max_workers is not None else (os.cpu_count() or 1)
-        worker_count = max(1, min(worker_count, len(reward_configs)))
-
-        # Use joblib for parallel execution across reward configurations.
-        # n_jobs=1 runs sequentially, n_jobs>1 uses threading (no pickling needed).
-        # backend='threading' avoids pickling issues with non-picklable trainer objects.
-        job_results = Parallel(n_jobs=worker_count, backend='threading', verbose=10 if verbose else 0)(
-            delayed(_evaluate_single_config)(config_idx, config)
-            for config_idx, config in enumerate(reward_configs)
-        )
+        # Run reward configurations sequentially to preserve a single environment execution flow.
+        job_results = []
+        for config_idx, config in enumerate(reward_configs):
+            job_results.append(_evaluate_single_config(config_idx, config))
 
         # Collect results from parallel execution.
         for idx, result, is_success in job_results:
@@ -507,7 +492,7 @@ class Trainer:
         if reward_weights:
             weights_str = "_".join(
                 f"{str(value).replace('.', '')}"
-                for key, value in sorted(reward_weights.items())
+                for value in reward_weights.values()
             )
         else:
             weights_str = "default"
@@ -559,11 +544,13 @@ class Trainer:
                 "Mean LOS Guidance Heading Error (mHE)",
             ]
 
-            weight_keys = sorted({
-                weight_key
-                for result in results.values()
-                for weight_key in (result.get("reward_weights") or {}).keys()
-            })
+            # Preserve weight column order from configuration insertion order.
+            weight_keys = []
+            for idx in sorted(results.keys()):
+                weights = results[idx].get("reward_weights") or {}
+                for weight_key in weights.keys():
+                    if weight_key not in weight_keys:
+                        weight_keys.append(weight_key)
 
             with open(filepath, 'w', newline='') as f:
                 writer = csv.writer(f)

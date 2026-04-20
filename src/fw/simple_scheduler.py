@@ -22,6 +22,15 @@ class SimpleScheduler(BaseScheduler):
         self._previous_env_name = None
 
 
+    @staticmethod
+    def _format_reward_weight_suffix(reward_weights) -> str:
+        """Build a compact filename suffix from reward weights."""
+        if not reward_weights:
+            return "default"
+
+        return "_".join(str(value).replace(".", "") for value in reward_weights.values())
+
+
     def _switch_environment(
         self,
         env_index: int,
@@ -104,6 +113,10 @@ class SimpleScheduler(BaseScheduler):
                     try:
                         save_name = f"{self.current_env}_{self.agent_mgr.agent_type}_policy"
                         self.agent_mgr.agent.save_policy(save_name)
+
+                        reward_weights = getattr(self.current_env.gym_env, "reward_weights", None)
+                        weight_suffix = self._format_reward_weight_suffix(reward_weights)
+                        self.agent_mgr.agent.save_policy(f"{save_name}_{weight_suffix}")
                     except Exception as e:
                         self._previous_env_name = None
                         raise RuntimeError("Failed to save the policy.") from e
