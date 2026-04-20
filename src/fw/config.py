@@ -1,6 +1,37 @@
+from enum import Enum, auto
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from airsim.config.airsim_config import get_airsim_config  # re-export
+
+
+class VisualizationMode(Enum):
+    """
+    Visualization modes for rendering simulation results.
+
+    Attributes:
+        SIMPLE: Vessel trajectory only.
+        COMPLEX: Trajectory with diagnostics (cross-track error, rudder input,
+            UKC, and performance metrics).
+    """
+
+    SIMPLE = auto()
+    COMPLEX = auto()
+
+
+class PolicyStrategy(Enum):
+    """
+    Defines strategies for handling policies during environment switching.
+
+    Attributes:
+        RESET_POLICY: Start with a fresh policy.
+        REUSE_CURRENT_POLICY: Continue training with the current policy.
+        REUSE_OTHER_POLICY: Load and use a policy trained on another environment.
+    """
+
+    RESET_POLICY = auto()
+    REUSE_CURRENT_POLICY = auto()
+    REUSE_OTHER_POLICY = auto()
+
 
 PPO_POLICY_NAME = "PPO"
 PPO2_POLICY_NAME = "PPO2"
@@ -89,6 +120,7 @@ CONFIG_PARAMETERS = {
     'current': False,
     'numerical_damping': False,
     'visualize_best_trained': False,
+    'viz_mode': VisualizationMode.COMPLEX,  # Either "simple" or "complex"
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,

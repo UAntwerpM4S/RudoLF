@@ -5,8 +5,8 @@ import importlib
 from enum import Enum
 from pathlib import Path
 from fw.agent_manager import AgentManager
-from fw.agent_manager import PolicyStrategy
-from fw.config import get_config_parameters, get_hyperparameters
+from fw.agent_manager_simple import AgentManagerSimple
+from fw.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
 
 # logging.basicConfig(level=logging.INFO)  # Configure logging once, possibly in main script.
 
@@ -106,7 +106,11 @@ class Trainer:
 
         self._envs = envs
         self._config = get_config_parameters()
-        self._agent_mgr = AgentManager(agent_type, get_hyperparameters(agent_type))
+
+        if self._config["viz_mode"] == VisualizationMode.SIMPLE:
+            self._agent_mgr = AgentManagerSimple(agent_type, get_hyperparameters(agent_type))
+        else:
+            self._agent_mgr = AgentManager(agent_type, get_hyperparameters(agent_type))
 
         # Dynamically load the scheduler based on its name
         try:
@@ -194,5 +198,3 @@ class Trainer:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
         else:
             print("No data found to visualize.")
-
-
