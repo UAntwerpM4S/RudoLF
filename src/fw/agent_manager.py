@@ -20,22 +20,7 @@ from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
-
-
-class PolicyStrategy(Enum):
-    """
-    Defines strategies for handling policies during environment switching.
-
-    Attributes:
-        RESET_POLICY: Start with a fresh policy.
-        REUSE_CURRENT_POLICY: Continue training with the current policy.
-        REUSE_OTHER_POLICY: Load and use a policy trained on another environment.
-    """
-
-    RESET_POLICY = auto()
-    REUSE_CURRENT_POLICY = auto()
-    REUSE_OTHER_POLICY = auto()
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
 
 
 class AgentManager:
