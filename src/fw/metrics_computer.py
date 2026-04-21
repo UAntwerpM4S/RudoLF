@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from fw.ship_episode_data import RunData, ShipEpisodeData
 
 
@@ -52,6 +53,12 @@ class ShipMetrics:
     avg_reward: float = 0.0
     best_reward: float = 0.0
     worst_reward: float = 0.0
+    # Env-reported collision / COLREG metrics, aggregated across episodes.
+    num_episodes: int = 0
+    collision_count: int = 0
+    collision_type_count: dict = field(default_factory=dict)
+    collision_side_count: dict = field(default_factory=dict)
+    colreg_violation_count: int = 0
 
 
 class MetricsComputer:
@@ -160,5 +167,16 @@ class MetricsComputer:
         m.mHE  = safe_mean(per_ep_mHE)
         m.mu   = safe_mean(per_ep_mu)
         m.Mu   = safe_max(per_ep_Mu)
+
+        # Aggregate env-reported collision / COLREG info.
+        m.num_episodes = len(episodes)
+        m.collision_count = sum(1 for ep in episodes if ep.collision)
+        m.collision_type_count = dict(
+            Counter(ep.collision_type for ep in episodes if ep.collision and ep.collision_type)
+        )
+        m.collision_side_count = dict(
+            Counter(ep.collision_side for ep in episodes if ep.collision and ep.collision_side)
+        )
+        m.colreg_violation_count = sum(int(ep.colreg_violations) for ep in episodes)
 
         return m

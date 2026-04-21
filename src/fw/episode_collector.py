@@ -270,10 +270,11 @@ class EpisodeCollector:
             if ship_env is not None:
                 ShipDataExtractor.record_initial(ship_env, accumulators[sid])
 
+        info = {}
         with self._render_mode(ship_envs, live_animation):
             while not np.all(done):
                 action, _, _ = self._agent.predict(state=state, deterministic=True)
-                state, reward, terminated, truncated, _ = env.step(action)
+                state, reward, terminated, truncated, info = env.step(action)
 
                 env_done = np.logical_or(terminated, truncated)
                 done = np.logical_or(done, env_done)
@@ -287,6 +288,18 @@ class EpisodeCollector:
                             ship_env.render()
 
         # reward is accumulated inline during _record_step; nothing to finalize here
+
+        # Attach terminal info per ship (env-reported collision / COLREG data).
+        for idx, sid in enumerate(ship_ids):
+            ship_info = info[idx] if isinstance(info, (list, tuple)) else info
+            if not isinstance(ship_info, dict):
+                continue
+            ci = ship_info.get("collision_info", {}) or {}
+            acc = accumulators[sid]
+            acc["collision"] = bool(ci.get("collision", False))
+            acc["collision_type"] = ci.get("collision_type")
+            acc["collision_side"] = ci.get("collision_side")
+            acc["colreg_violations"] = int(ship_info.get("colreg_violations", 0) or 0)
 
         print(f"Episode {episode + 1} finished after {steps} steps")
 
@@ -373,6 +386,10 @@ class EpisodeCollector:
             "velocities": [],
             "ukc_measurements": [],
             "reward": 0.0,
+            "collision": False,
+            "collision_type": None,
+            "collision_side": None,
+            "colreg_violations": 0,
         }
 
     @staticmethod
@@ -401,4 +418,8 @@ class EpisodeCollector:
             velocities=np.array(acc["velocities"]),
             ukc_measurements=np.array(acc["ukc_measurements"]),
             reward=acc.get("reward", 0.0),
+            collision=acc.get("collision", False),
+            collision_type=acc.get("collision_type"),
+            collision_side=acc.get("collision_side"),
+            colreg_violations=acc.get("colreg_violations", 0),
         )

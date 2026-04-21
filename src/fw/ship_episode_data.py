@@ -74,6 +74,11 @@ class ShipEpisodeData:
     ukc_measurements: np.ndarray = field(default_factory=lambda: np.array([]))
     reward: float = 0.0
     collision_events: list[CollisionEvent] = field(default_factory=list)
+    # Terminal info reported by the env at episode end (COLAV-specific).
+    collision: bool = False
+    collision_type: str | None = None
+    collision_side: str | None = None
+    colreg_violations: int = 0
 
     def __post_init__(self) -> None:
         if not self.ship_id:
