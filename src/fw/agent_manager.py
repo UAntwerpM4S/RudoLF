@@ -4,6 +4,9 @@ from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import torch.optim as optim
+
+from fw.policies.ppo_policy import PPOPolicy
 
 from pathlib import Path
 from enum import auto, Enum

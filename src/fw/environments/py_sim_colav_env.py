@@ -68,10 +68,9 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.polar_n_sectors = 54
         self.polar_fov = np.radians(270)
         self.polar_max_range = 500.0
-        self.polar_obs_max = 0.1
+        self.polar_obs_max = 0.1 * self.polar_max_range / 250
 
         self.include_scenario_one_hot = bool(include_scenario_one_hot)
-        print(self.include_scenario_one_hot)
 
         # Polar-specific reward state
         self._colreg_initial_heading = None
@@ -90,7 +89,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "episode"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.0, 0.0, 1, 0.0, 0.0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.0, 0.0, 0.0, 1.0, 0.0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -122,9 +121,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Reward weights for polar COLAV shaping
         self.reward_weights = {
             "polar_distance": 0.7,
-            "colreg_bearing": 0.08,
+            "colreg_bearing": 5.0,
             "crossing_right": 0.5,
-            "crossing_right_grav": 1.0,
+            "crossing_right_grav_side": 1.5,
+            "crossing_right_grav_proximity": 2.0,
+            "crossing_right_grav_proximity_scale": 100.0,
         }
 
     # -------------------------
@@ -338,6 +339,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         if clf.label != "crossing-right":
             self._crossing_right_grav_point = None
 
+        _headon_term = 0.0
+        _step_grav = 0.0
         if self.ts_idx is not None and self.ts_idx < len(self.collision_entities):
             ts_idx = self.ts_idx
             ts = self.collision_entities[ts_idx]
@@ -349,14 +352,18 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 ts_pos = ts.get_position()
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
+                os_u = float(self.phys_sim.state.u)
+                os_v = float(self.phys_sim.state.v)
                 rel_bearing = (
                                       math.atan2(dy, dx) - os_heading + math.pi
                               ) % (2.0 * math.pi) - math.pi
 
                 dist = ts.distance_to_point(os_pos)
-                print(clf.classify_range)
-                proximity = max(0.0, 1.0 - dist / clf.classify_range)
-                reward += self.reward_weights["colreg_bearing"] * math.sin(rel_bearing) * proximity
+                proximity = max(0.0, 1.0 - dist / self.polar_max_range)
+                cri = self._compute_cri(os_pos, os_heading, os_u, os_v, ts)
+                _sin_b = math.sin(rel_bearing)
+                _headon_term = self.reward_weights["colreg_bearing"] * _sin_b * (1-cri)
+                reward += _headon_term
 
                 if scenario == "head-on":
                     side = ts.ts_side_from_os_perspective(os_pos, os_heading)
@@ -400,17 +407,29 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 #reward += _step_crossing
 
                 # Gravitation point
-                _step_grav = 0.0
+                # Two shaping terms:
+                #   side      : -sin(bearing) -> peaks at bearing = -pi/2 (grav on starboard)
+                #   proximity : exp(-d/scale) -> peaks when OS is close to the grav point
+                # Together they incentivize "pass close to, and leave on the right"
+                # which is the COLREG-compliant pass-astern for crossing-right.
                 if self._crossing_right_grav_point is None:
                     self._crossing_right_grav_point = ts.get_position().copy()
                 grav = self._crossing_right_grav_point
                 grav_dx = float(grav[0] - os_pos[0])
                 grav_dy = float(grav[1] - os_pos[1])
-                grav_approach = math.cos(os_heading) * grav_dx + math.sin(os_heading) * grav_dy
-                if grav_approach > 0.0:
-                    grav_bearing = (math.atan2(grav_dy, grav_dx) - os_heading + math.pi) % (2.0 * math.pi) - math.pi
-                    _step_grav = self.reward_weights["crossing_right_grav"] * math.cos(grav_bearing)
-                    reward += _step_grav
+                grav_dist = math.sqrt(grav_dx * grav_dx + grav_dy * grav_dy)
+                grav_bearing = (math.atan2(grav_dy, grav_dx) - os_heading + math.pi) % (2.0 * math.pi) - math.pi
+
+                side_signal = -math.sin(grav_bearing)
+                proximity_scale = self.reward_weights["crossing_right_grav_proximity_scale"]
+                proximity_signal = math.exp(-grav_dist / proximity_scale)
+
+                _step_grav_side = self.reward_weights["crossing_right_grav_side"] * side_signal
+                _step_grav_prox = self.reward_weights["crossing_right_grav_proximity"] * proximity_signal
+                _step_grav = _step_grav_side + _step_grav_prox
+                reward += _step_grav
+
+                #print(f"[step: {self.step_count} grav_bearing: {grav_bearing}] reward: {reward} = base_reward ({base_reward}) r_grav ({_step_grav}) - _step_polar ({_step_polar}) + cri ({cri}")
 
                 # COLREG violation tracking
                 ts_pos = ts.get_position()
@@ -429,7 +448,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                         "dist": dist,
                         "scenario": scenario,
                     })
-
         return reward, done
 
     # -----------------------

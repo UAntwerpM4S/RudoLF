@@ -125,13 +125,14 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=1.75,
             patience=4,
-            max_time_steps=1500,
+            max_time_steps=500,
         ),
         multi_policy_colav_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=0.75,
             patience=4,
-            max_time_steps=750,
+            max_time_steps=200
+
         ),
     }
 

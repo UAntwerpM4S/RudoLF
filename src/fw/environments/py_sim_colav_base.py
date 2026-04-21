@@ -141,8 +141,8 @@ class PySimColavBaseEnv(PySimEnv):
         self.os_nominal_speed = 2.0
         self.overtaking_ts_v_min = 1.0
         self.overtaking_ts_v_max = self.os_nominal_speed - 0.3
-        self.headon_ts_v_min = self.os_nominal_speed + 1.0
-        self.headon_ts_v_max = self.os_nominal_speed + 3.0
+        self.headon_ts_v_min = self.os_nominal_speed
+        self.headon_ts_v_max = self.os_nominal_speed
         self.crossing_ts_v_min = 1.0
         self.crossing_ts_v_max = 5.0
         self.crossing_activation_margin = 0.0
@@ -350,10 +350,11 @@ class PySimColavBaseEnv(PySimEnv):
             # Failure penalty
             success = self.checkpoint_index >= len(self.checkpoints)
             if terminated and not success:
-                reward = -250.0
+                reward = -20.0
+                pass
 
             if self.step_count >= self.max_steps and not terminated:
-                reward = -250
+                # reward = -250
                 truncated = True
 
             self.phys_sim.state.terminated = terminated
@@ -373,7 +374,7 @@ class PySimColavBaseEnv(PySimEnv):
             "min_distance": self._current_episode_min_dist,
         }
 
-        return self._get_obs(), reward, terminated or truncated, False, info
+        return self._get_obs(), reward, terminated | truncated, False, info
 
     # --------------------------------
     # Reward (override in subclass)
@@ -443,12 +444,12 @@ class PySimColavBaseEnv(PySimEnv):
                          float(np.linalg.norm(entity_pos - os_pos))
                          for os_pos in active_ship_positions
                      )
-                     if min_dist <= self.encounter_range / 2:
-                         entity.dodged = True
-                         dodge_angle = math.radians(0) # TODO: ~20° for evaluation
-                         entity.set_heading(entity.get_heading() - dodge_angle)
-                         entity.set_lateral_speed(0.0)
-                         entity.route_mode = None
+                     #if min_dist <= self.encounter_range / 2:
+                     #    entity.dodged = True
+                     #    dodge_angle = math.radians(20)
+                     #    entity.set_heading(entity.get_heading() - dodge_angle)
+                     #    entity.set_lateral_speed(0.0)
+                     #    entity.route_mode = None
 
             if getattr(entity, "entity_type", "") in ("crossing-right", "crossing-left"):
                 if not getattr(entity, "crossing_activated", False) and active_ship_positions:

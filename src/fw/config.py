@@ -88,7 +88,7 @@ DEFAULT_HYPERPARAMETERS = {
         'value_loss_coef': 0.1,
         'max_grad_norm': 0.5,
         'clip_range': 0.2,
-        'eval_frequency': 100,
+        'eval_frequency': 10,
         'num_envs': 12,
         'num_epochs': 8,
         'normalize': False,
@@ -96,7 +96,7 @@ DEFAULT_HYPERPARAMETERS = {
         'batch_size': 1024,
         'device': "cpu",
         'model_dir': "models",
-        'fixed_horizon': True,
+        'fixed_horizon': False,
         'steps_per_update': 8192,
     },
 }
@@ -107,7 +107,7 @@ CONFIG_PARAMETERS = {
     #   "MultiPolicyColavEnv" / "mpcolav" (single env with multi-policy switching)
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
-    'env_type': ["PySimColav"],
+    'env_type': ["MultiPolicyColavEnv"],
     'action': "visualize",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
@@ -116,7 +116,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': True,
+    'live_animation': False,
     # AirSim settings are now in airsim.config.airsim_config
     # Use get_airsim_config() to access them.
 }
