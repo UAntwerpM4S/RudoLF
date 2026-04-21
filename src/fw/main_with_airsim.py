@@ -348,7 +348,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         "episode_log_path": str(effective_training_cfg.get("episode_log_path", "")),
         "normalize_reward": bool(effective_training_cfg.get("normalize_reward", True)),
         "reward_normalization_scale": float(
-            effective_training_cfg.get("reward_normalization_scale", 160.0)
+            effective_training_cfg.get("reward_normalization_scale", 5.0)
         ),
         "reset_mode": str(effective_training_cfg.get("reset_mode", "rewind_pose")),
         "progress_log_interval_steps": int(effective_training_cfg.get("progress_log_interval_steps", 0)),
@@ -358,7 +358,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         "use_pause_stepping": bool(effective_training_cfg.get("use_pause_stepping", is_training)),
         "simulation_speed": effective_simulation_speed,
         "max_steps": effective_max_steps,
-        "frames_per_step": int(effective_training_cfg.get("frames_per_step", 10)),
+        "frames_per_step": int(effective_training_cfg.get("frames_per_step", 8)),
         "time_step": float(effective_training_cfg.get("time_step", 0.1)),
         "physics_update_timeout": float(effective_training_cfg.get("physics_update_timeout", 1.0)),
         "state_poll_interval": float(effective_training_cfg.get("state_poll_interval", 0.005)),

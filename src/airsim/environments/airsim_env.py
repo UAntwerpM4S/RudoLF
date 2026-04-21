@@ -21,6 +21,13 @@ from typing import Any, Optional
 
 import gymnasium as gym
 import numpy as np
+try:
+    from msgpackrpc.error import TransportError as _MsgpackTransportError
+except Exception:  # pragma: no cover - optional dependency fallback
+    class _MsgpackTransportError(Exception):
+        """Fallback TransportError type when msgpackrpc is unavailable."""
+
+        pass
 
 from airsim.communication.airsim_bridge import AirSimBridge
 from airsim.communication.control_mapping import (
@@ -55,8 +62,8 @@ _SPEED_SCALE_MPS = 15.0
 _YAW_RATE_SCALE_RADPS = math.radians(45.0)
 _CROSS_TRACK_DELTA_SCALE_M = 20.0
 _MIN_DISTANCE_SCALE_M = 500.0
-_SUCCESS_REWARD = 5.0
 _CHECKPOINT_REWARD = 1.0
+_SUCCESS_REWARD = 5.0
 _COLLISION_PENALTY = -5.0
 _OFFTRACK_PENALTY = -4.0
 _DISCONNECT_PENALTY = -5.0
@@ -69,30 +76,33 @@ _WORLD_LOAD_SETTLE_TIMEOUT_S = 6.0
 _WORLD_LOAD_SETTLE_POLL_S = 0.2
 _WORLD_LOAD_SETTLE_POSITION_EPS_M = 0.25
 _WORLD_LOAD_SETTLE_YAW_EPS_RAD = math.radians(2.0)
-_EARLY_FAILURE_GRACE_STEPS = 3
+_EARLY_FAILURE_GRACE_STEPS = 4
 _STATE_PROGRESS_POSITION_EPS_M = 0.05
 _STATE_PROGRESS_YAW_EPS_RAD = math.radians(0.5)
 _OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR = "ppo_route_relative_car"
 _CONTROL_INTERFACE_CAR_PHYSICS = "car_physics"
 _RESET_MODE_REWIND_POSE = "rewind_pose"
 _RESET_MODE_BRIDGE_RESET = "bridge_reset"
-_CROSS_TRACK_LINEAR_PENALTY = 0.15
-_CROSS_TRACK_QUADRATIC_PENALTY = 0.35
-_HEADING_PENALTY = 0.20
-_CROSS_TRACK_GROWTH_PENALTY = 0.15
-_YAW_RATE_PENALTY = 0.12
-_STEERING_DELTA_PENALTY = 0.08
-_STEERING_MAGNITUDE_PENALTY = 0.02
-_SPEED_TRACKING_PENALTY = 0.0
-_PRECISION_TRACKING_BONUS = 2.0
 _DEFAULT_STEERING_SMOOTHING_ALPHA = 0.65
 _DEFAULT_MAX_STEERING_RATE_PER_SECOND = 3.2
-_CHECKPOINT_QUALITY_MIN = 0.0
-_SUCCESS_QUALITY_FLOOR = 0.25
 _CHECKPOINT_PASS_MAX_CROSS_TRACK_M = 120.0
 _CHECKPOINT_PASS_MAX_HEADING_RAD = math.radians(75.0)
 _SUCCESS_MAX_CROSS_TRACK_M = 60.0
 _SUCCESS_MAX_HEADING_RAD = math.radians(45.0)
+_STRICT_CTE_LIMIT_M = 10.0
+_HARD_OFFTRACK_CTE_LIMIT_M = 150.0
+_SOFT_OFFTRACK_CTE_LIMIT_M = 90.0
+_OFFTRACK_LIMIT_DECAY_EPISODES = 450
+_OFFTRACK_NEXT_CHECKPOINT_FACTOR = 1.6
+_STRICT_TRACK_DECAY_M = 45.0
+_PRECISION_BONUS_THRESHOLD_M = 8.0
+_PRECISION_BONUS = 0.35
+_MIN_ADAPTIVE_OFFTRACK_M = 90.0
+_STRICT_PROGRESS_SCALE_M = 20.0
+_STRICT_SUCCESS_BONUS = 5.0
+_STRICT_FAILURE_REWARD = -1.0
+_STEERING_MAGNITUDE_PENALTY_WEIGHT = 0.04
+_STEERING_RATE_PENALTY_WEIGHT = 0.06
 _OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR = (
     "current_checkpoint_forward",
     "current_checkpoint_lateral",
@@ -121,8 +131,59 @@ _OBSERVATION_BUILDERS = {
 _CONTROL_MAPPERS = {
     _CONTROL_INTERFACE_CAR_PHYSICS: map_direct_policy_action,
 }
-_AIRSIM_READ_EXCEPTIONS = (AttributeError, OSError, RuntimeError)
+_AIRSIM_READ_EXCEPTIONS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    ConnectionError,
+    TimeoutError,
+    _MsgpackTransportError,
+)
 _AIRSIM_DECODE_EXCEPTIONS = (AttributeError, TypeError, ValueError)
+
+
+def normalize_navigation_state(
+    state: dict[str, float | int],
+    *,
+    xy_center: tuple[float, float] = (2200.0, 2200.0),
+    xy_half_span: float = 2500.0,
+    route_progress_scale_m: float = 4000.0,
+    speed_scale_mps: float = _SPEED_SCALE_MPS,
+    checkpoint_count: int = 1,
+) -> np.ndarray:
+    """Normalize raw ship telemetry into a compact ``[-1, 1]`` vector.
+
+    This helper is intended for pipelines that consume the run-log schema
+    directly (large ``ship_x``/``ship_y`` values and heading in degrees).
+    """
+    safe_half_span = max(float(xy_half_span), 1e-6)
+    safe_progress_scale = max(float(route_progress_scale_m), 1e-6)
+    safe_speed_scale = max(float(speed_scale_mps), 1e-6)
+    safe_checkpoint_count = max(int(checkpoint_count), 1)
+
+    ship_x = float(state.get("ship_x", 0.0))
+    ship_y = float(state.get("ship_y", 0.0))
+    heading_deg = float(state.get("heading_deg", 0.0)) % 360.0
+    speed = max(float(state.get("speed", 0.0)), 0.0)
+    cross_track_error = float(state.get("cross_track_error", 0.0))
+    route_progress_m = float(state.get("route_progress_m", 0.0))
+    checkpoint_index = int(state.get("checkpoint_index", 0))
+
+    heading_norm = (heading_deg / 180.0) - 1.0
+    checkpoint_ratio = checkpoint_index / safe_checkpoint_count
+
+    return np.array(
+        [
+            np.clip((ship_x - float(xy_center[0])) / safe_half_span, -1.0, 1.0),
+            np.clip((ship_y - float(xy_center[1])) / safe_half_span, -1.0, 1.0),
+            np.clip(heading_norm, -1.0, 1.0),
+            np.clip(speed / safe_speed_scale, -1.0, 1.0),
+            np.clip(cross_track_error / _CROSS_TRACK_LIMIT_M, -1.0, 1.0),
+            np.clip(route_progress_m / safe_progress_scale, -1.0, 1.0),
+            np.clip((2.0 * checkpoint_ratio) - 1.0, -1.0, 1.0),
+        ],
+        dtype=np.float32,
+    )
 
 
 def _normalize_angle(angle_rad: float) -> float:
@@ -402,6 +463,9 @@ class AirSimEnv(BaseEnv):
         self.checkpoint_index = 1
         self._episode_abs_cross_track_sum = 0.0
         self._episode_quality_samples = 0
+        self._episode_max_abs_cross_track_error = 0.0
+        self._episode_reward_sum = 0.0
+        self._episode_reward_steps = 0
 
         self.overall = self._load_outline_points(_DEFAULT_OVERALL_CSV)
         self.obstacles = self._load_outline_points(_DEFAULT_OBSTACLES_CSV)
@@ -541,6 +605,9 @@ class AirSimEnv(BaseEnv):
         if not reset_settled:
             raise RuntimeError("AirSimEnv reset failed because the post-teleport state never stabilized.")
 
+        # Keep reset behavior unchanged while forcing a deterministic zero-velocity start state.
+        self._enforce_zero_velocity_after_reset()
+
         self.step_count = 0
         self.previous_action = self.neutral_action()
         self.performed_action = self.neutral_action()
@@ -553,6 +620,9 @@ class AirSimEnv(BaseEnv):
         self.last_checkpoint_reward_effective = 0.0
         self._episode_abs_cross_track_sum = 0.0
         self._episode_quality_samples = 0
+        self._episode_max_abs_cross_track_error = 0.0
+        self._episode_reward_sum = 0.0
+        self._episode_reward_steps = 0
         self._episode_start_checkpoint_index = start_index
         self.checkpoint_index = min(start_index + 1, len(self.checkpoints) - 1)
         self._route_progress_m = float(self.route_cumulative_distances[start_index])
@@ -605,6 +675,7 @@ class AirSimEnv(BaseEnv):
 
         step_start = time.perf_counter()
         action = validate_policy_action(action)
+        self.previous_action = self.performed_action.copy()
         self.last_policy_action = action.copy()
         effective_action = self._compose_effective_action(action)
         controls = self._map_policy_action_to_controls(effective_action)
@@ -614,10 +685,7 @@ class AirSimEnv(BaseEnv):
             "brake": float(getattr(controls, "brake", 0.0)),
         }
 
-        previous_progress = float(self._route_progress_m)
-        previous_target_distance = self._distance_to_target()
-        previous_checkpoint_distance = self._distance_to_checkpoint(self.checkpoint_index)
-        previous_heading_error = float(self.heading_error)
+        previous_state = self._build_reward_state()
         previous_cross_error = float(self.cross_error)
 
         self.bridge.set_controls(controls)
@@ -654,20 +722,33 @@ class AirSimEnv(BaseEnv):
 
         self._episode_abs_cross_track_sum += abs(self.cross_error)
         self._episode_quality_samples += 1
+        self._episode_max_abs_cross_track_error = max(
+            self._episode_max_abs_cross_track_error,
+            abs(float(self.cross_error)),
+        )
 
         checkpoint_reward = self._update_checkpoint_progress()
         self.last_checkpoint_reward_raw = float(checkpoint_reward)
-        allow_early_failure = (
-            not self.training_mode
-            or self.step_count > _EARLY_FAILURE_GRACE_STEPS
-        )
-        collision_status = self._detect_collision() if allow_early_failure else False
+        self.last_checkpoint_reward_effective = float(checkpoint_reward)
+
+        collision_status = self._detect_collision()
         collision_read_failed = collision_status is None
         collision = bool(collision_status) if collision_status is not None else False
-        success = self._has_reached_target()
-        offtrack = bool(abs(self.cross_error) > _CROSS_TRACK_LIMIT_M) if allow_early_failure else False
-        if collision or offtrack:
-            success = False
+
+        current_state = self._build_reward_state()
+        raw_reward, offtrack = self.calculate_reward(
+            current_state=current_state,
+            previous_state=previous_state,
+            checkpoint_reward=checkpoint_reward,
+        )
+        all_checkpoints_passed = bool(self.checkpoint_index >= len(self.checkpoints) - 1)
+        reached_target = self._has_reached_target()
+        success = bool(
+            reached_target
+            and not offtrack
+            and not collision
+            and self.bridge.is_connected
+        )
         terminated = bool(success or collision or offtrack or not self.bridge.is_connected)
         truncated = bool(
             self.step_count >= self.max_steps
@@ -675,22 +756,25 @@ class AirSimEnv(BaseEnv):
             or collision_read_failed
         )
 
-        raw_reward = self._compute_reward(
-            previous_progress=previous_progress,
-            previous_target_distance=previous_target_distance,
-            previous_checkpoint_distance=previous_checkpoint_distance,
-            previous_heading_error=previous_heading_error,
-            previous_cross_error=previous_cross_error,
-            checkpoint_reward=checkpoint_reward,
-            success=success,
-            collision=collision,
-            offtrack=offtrack,
-            disconnected=not self.bridge.is_connected,
-            truncated=truncated,
-        )
+        if success:
+            raw_reward += _SUCCESS_REWARD
+            all_checkpoints_passed = True
+        if collision:
+            raw_reward += _COLLISION_PENALTY
+            raw_reward = min(raw_reward, _COLLISION_PENALTY)
+        if offtrack:
+            raw_reward = min(raw_reward, _OFFTRACK_PENALTY)
+        if not self.bridge.is_connected:
+            raw_reward += _DISCONNECT_PENALTY
         if collision_read_failed:
-            raw_reward = min(raw_reward, _TIMEOUT_PENALTY)
+            raw_reward = min(raw_reward, -0.5)
+        if truncated and self._last_pause_timeout:
+            raw_reward += _TIMEOUT_PENALTY
+
         reward = self._normalize_reward(raw_reward)
+
+        self._episode_reward_sum += reward
+        self._episode_reward_steps += 1
 
         self.last_step_latency_s = time.perf_counter() - step_start
         if (
@@ -741,6 +825,7 @@ class AirSimEnv(BaseEnv):
             terminated=terminated,
             truncated=truncated,
             outcome=outcome,
+            all_checkpoints_passed=all_checkpoints_passed,
         )
         if terminated or truncated:
             self._record_run_event(
@@ -1014,6 +1099,39 @@ class AirSimEnv(BaseEnv):
         )
         self.bridge.set_controls(controls)
         self.last_controls = {"steering": 0.0, "throttle": 0.0, "brake": 1.0}
+
+    def _enforce_zero_velocity_after_reset(self) -> None:
+        """Explicitly zero linear/angular velocity immediately after reset settle."""
+        try:
+            pose = self.bridge.get_vehicle_pose()
+            airsim_x = float(pose.position.x_val)
+            airsim_y = float(pose.position.y_val)
+            airsim_z = float(pose.position.z_val)
+            airsim_yaw = float(yaw_from_quaternion(pose.orientation))
+        except _AIRSIM_READ_EXCEPTIONS:
+            logger.debug("Could not read pose while enforcing reset zero-velocity state.", exc_info=True)
+            self._apply_parked_controls()
+            return
+
+        try:
+            self.bridge.set_kinematics(
+                airsim_x,
+                airsim_y,
+                airsim_z,
+                airsim_yaw,
+                linear_velocity_x=0.0,
+                linear_velocity_y=0.0,
+                linear_velocity_z=0.0,
+                angular_velocity_x=0.0,
+                angular_velocity_y=0.0,
+                angular_velocity_z=0.0,
+                preserve_current_z=False,
+                preserve_roll_pitch=False,
+            )
+        except Exception:
+            logger.debug("Could not enforce reset zero-velocity state via kinematics.", exc_info=True)
+
+        self._apply_parked_controls()
 
     def _set_pause_mode(self, is_paused: bool) -> None:
         """Toggle paused stepping mode."""
@@ -1411,6 +1529,47 @@ class AirSimEnv(BaseEnv):
             or self._route_progress_m >= self.route_length_m - self.checkpoints[-1]["radius"]
         )
 
+    def _distance_to_next_checkpoint(self) -> float:
+        """Return Euclidean distance to the next active checkpoint."""
+        next_idx = min(self.checkpoint_index + 1, len(self.checkpoints) - 1)
+        next_pos = self.checkpoints[next_idx]["pos"]
+        return float(np.linalg.norm(next_pos - self.ship_pos))
+
+    def _effective_offtrack_limit_m(self) -> float:
+        """Return the active off-track threshold for the current episode step.
+
+        The threshold follows a two-part schedule:
+            1) A curriculum anneal from a generous limit to a stricter limit
+               across early episodes.
+            2) A next-checkpoint-aware expansion so the threshold does not
+               collapse too aggressively in wide turns.
+        """
+        anneal_ratio = float(
+            np.clip(
+                (self._episode_index - 1) / max(_OFFTRACK_LIMIT_DECAY_EPISODES, 1),
+                0.0,
+                1.0,
+            )
+        )
+        scheduled_limit = float(
+            _HARD_OFFTRACK_CTE_LIMIT_M
+            - (_HARD_OFFTRACK_CTE_LIMIT_M - _SOFT_OFFTRACK_CTE_LIMIT_M) * anneal_ratio
+        )
+        checkpoint_aware_limit = float(
+            np.clip(
+                _OFFTRACK_NEXT_CHECKPOINT_FACTOR * self._distance_to_next_checkpoint(),
+                _MIN_ADAPTIVE_OFFTRACK_M,
+                _HARD_OFFTRACK_CTE_LIMIT_M,
+            )
+        )
+        return float(
+            np.clip(
+                max(scheduled_limit, checkpoint_aware_limit),
+                _SOFT_OFFTRACK_CTE_LIMIT_M,
+                _HARD_OFFTRACK_CTE_LIMIT_M,
+            )
+        )
+
     def _detect_collision(self) -> bool | None:
         """Return whether AirSim reported a collision this step."""
         try:
@@ -1422,100 +1581,92 @@ class AirSimEnv(BaseEnv):
         self._last_collision = bool(getattr(collision, "has_collided", False))
         return self._last_collision
 
-    def _compute_reward(
+    def _build_reward_state(self) -> dict[str, float | int]:
+        """Capture the run-log state schema used by the strict reward."""
+        return {
+            "route_progress_m": float(self._route_progress_m),
+            "cross_track_error": float(self.cross_error),
+            "ship_x": float(self.ship_pos[0]),
+            "ship_y": float(self.ship_pos[1]),
+            "heading_deg": float(math.degrees(self.ship_heading)),
+            "speed": float(self.ship_speed),
+            "checkpoint_index": int(self.checkpoint_index),
+        }
+
+    def calculate_reward(
         self,
-        *,
-        previous_progress: float,
-        previous_target_distance: float,
-        previous_checkpoint_distance: float,
-        previous_heading_error: float,
-        previous_cross_error: float,
-        checkpoint_reward: float,
-        success: bool,
-        collision: bool,
-        offtrack: bool,
-        disconnected: bool,
-        truncated: bool,
-    ) -> float:
-        """Compute a shaped route-following reward for PPO."""
-        progress_delta = self._route_progress_m - previous_progress
-        target_delta = previous_target_distance - self._distance_to_target()
-        checkpoint_delta = previous_checkpoint_distance - self._distance_to_checkpoint(self.checkpoint_index)
-        heading_improvement = abs(previous_heading_error) - abs(self.heading_error)
-        steering_delta = abs(float(self.performed_action[0]) - float(self.previous_action[0]))
-        cross_track_ratio = min(abs(self.cross_error) / _CROSS_TRACK_LIMIT_M, 1.0)
-        previous_cross_track_ratio = min(abs(previous_cross_error) / _CROSS_TRACK_LIMIT_M, 1.0)
-        cross_track_growth = max(cross_track_ratio - previous_cross_track_ratio, 0.0)
-        heading_ratio = min(abs(self.heading_error) / math.pi, 1.0)
-        speed_ratio = min(max(self.ship_speed, 0.0) / _SPEED_SCALE_MPS, 1.0)
-        tracking_quality = max(cross_track_ratio, heading_ratio)
-        checkpoint_quality = max(
-            _CHECKPOINT_QUALITY_MIN,
-            1.0 - (0.85 * (cross_track_ratio ** 2) + 0.35 * heading_ratio),
+        current_state: dict[str, float | int],
+        previous_state: dict[str, float | int],
+        checkpoint_reward: float = 0.0,
+    ) -> tuple[float, bool]:
+        """Return a stable dense reward and whether this step is off-track."""
+        current_cte = abs(float(current_state.get("cross_track_error", 0.0)))
+        previous_cte = abs(float(previous_state.get("cross_track_error", current_cte)))
+        effective_limit = self._effective_offtrack_limit_m()
+        enforce_offtrack = self.step_count > _EARLY_FAILURE_GRACE_STEPS
+        offtrack = bool(enforce_offtrack and current_cte > effective_limit)
+
+        current_progress = float(current_state.get("route_progress_m", 0.0))
+        previous_progress = float(previous_state.get("route_progress_m", current_progress))
+        progress_delta = float(current_progress - previous_progress)
+        progress_reward = float(
+            np.clip(progress_delta / max(_STRICT_PROGRESS_SCALE_M, 1e-6), -0.25, 1.0)
         )
-        episode_mean_cross_track_ratio = min(
-            (self._episode_abs_cross_track_sum / max(self._episode_quality_samples, 1))
-            / _CROSS_TRACK_LIMIT_M,
-            1.0,
+        checkpoint_bonus = float(
+            np.clip(checkpoint_reward / max(_CHECKPOINT_REWARD, 1e-6), 0.0, 1.0)
         )
 
-        reward = 0.0
-        
-        # Alive bonus: reward the agent for staying on track.
-        reward += 0.3 * max(0.0, 1.0 - cross_track_ratio)
+        track_reward = float(np.exp(-current_cte / max(_STRICT_TRACK_DECAY_M, 1e-6)))
+        heading_ratio = float(np.clip(abs(self.heading_error) / math.pi, 0.0, 1.0))
+        heading_alignment = max(0.0, math.cos(self.heading_error))
+        speed_ratio = float(np.clip(self.ship_speed / _SPEED_SCALE_MPS, 0.0, 1.0))
+        cte_ratio = float(np.clip(current_cte / max(effective_limit, 1e-6), 0.0, 1.5))
+        previous_cte_ratio = float(
+            np.clip(previous_cte / max(effective_limit, 1e-6), 0.0, 1.5)
+        )
+        cte_growth = max(0.0, cte_ratio - previous_cte_ratio)
 
-        # Precision tracking bonus: give a large reward near the ideal path,
-        # but only when heading is aligned so centerline "crossing" is not rewarded.
-        if cross_track_ratio < 0.1:
-            precision_centering = 1.0 - (cross_track_ratio / 0.1)
-            precision_alignment = max(0.0, math.cos(self.heading_error))
-            reward += _PRECISION_TRACKING_BONUS * precision_centering * precision_alignment
+        current_steering = float(self.last_policy_action[0])
+        previous_steering = (
+            float(self.previous_action[0])
+            if hasattr(self, "previous_action")
+            else current_steering
+        )
+        steering_delta = abs(current_steering - previous_steering)
+        steering_penalty = float(
+            _STEERING_MAGNITUDE_PENALTY_WEIGHT * abs(current_steering) +
+            _STEERING_RATE_PENALTY_WEIGHT * steering_delta
+        )
+        yaw_penalty = 0.05 * float(
+            np.clip(abs(self.ship_yaw_rate) / max(_YAW_RATE_SCALE_RADPS, 1e-6), 0.0, 1.0)
+        )
 
-        # Speed reward: reward forward speed when heading aligns with route.
-        # Replaces the old _SPEED_TRACKING_PENALTY which punished the agent
-        # for moving fast, creating a local optimum at zero speed.
-        reward += 0.15 * speed_ratio * max(0.0, math.cos(self.heading_error))
+        precision_bonus = 0.0
+        if current_cte < _PRECISION_BONUS_THRESHOLD_M:
+            precision_bonus = _PRECISION_BONUS * max(0.0, math.cos(self.heading_error))
 
-        reward += 1.0 * (progress_delta / max(_ROUTE_POINT_SPACING_M, 1.0))
-        reward += 0.5 * (target_delta / max(self._distance_scale_m, 1.0))
-        reward += 0.3 * (checkpoint_delta / max(_CHECKPOINT_RADIUS_M, 1.0))
-        reward += 0.15 * heading_improvement
-        
-        reward -= _CROSS_TRACK_LINEAR_PENALTY * cross_track_ratio
-        reward -= _CROSS_TRACK_QUADRATIC_PENALTY * (cross_track_ratio ** 2)
-        reward -= _HEADING_PENALTY * heading_ratio
-        reward -= _CROSS_TRACK_GROWTH_PENALTY * cross_track_growth
+        dense_reward = (
+            0.30
+            + 0.75 * track_reward
+            + 0.70 * progress_reward
+            + 0.90 * checkpoint_bonus
+            + 0.35 * heading_alignment * speed_ratio
+            + precision_bonus
+            - 0.25 * cte_ratio
+            - 0.20 * cte_growth
+            - 0.20 * heading_ratio
+            - steering_penalty
+            - yaw_penalty
+        )
 
-        reward -= _YAW_RATE_PENALTY * abs(self.ship_yaw_rate / _YAW_RATE_SCALE_RADPS)
-        reward -= _STEERING_DELTA_PENALTY * steering_delta
-        reward -= _STEERING_MAGNITUDE_PENALTY * abs(float(self.performed_action[0]))
-
-        effective_checkpoint_reward = checkpoint_reward * checkpoint_quality
-        self.last_checkpoint_reward_effective = float(effective_checkpoint_reward)
-        reward += effective_checkpoint_reward
-
-        if success:
-            # Success is discounted when either instantaneous or episode-level tracking quality is poor.
-            instant_success_quality = max(0.0, 1.0 - tracking_quality)
-            episode_success_quality = max(0.0, 1.0 - episode_mean_cross_track_ratio)
-            success_quality = 0.4 * instant_success_quality + 0.6 * episode_success_quality
-            reward += _SUCCESS_REWARD * (
-                _SUCCESS_QUALITY_FLOOR
-                + (1.0 - _SUCCESS_QUALITY_FLOOR) * success_quality
-            )
-        if collision:
-            reward += _COLLISION_PENALTY
-            # Collisions are hard failures; keep terminal reward strictly negative.
-            reward = min(reward, _COLLISION_PENALTY)
         if offtrack:
-            reward += _OFFTRACK_PENALTY
-        if disconnected:
-            reward += _DISCONNECT_PENALTY
-        if truncated and self._last_pause_timeout:
-            reward += _TIMEOUT_PENALTY
+            dense_reward += _OFFTRACK_PENALTY
 
-        self.previous_action = self.performed_action.copy()
-        return float(reward)
+        self.last_checkpoint_reward_effective = float(
+            checkpoint_reward * max(0.0, 1.0 - min(cte_ratio, 1.0))
+        )
+        return float(dense_reward), offtrack
+
 
     def _normalize_reward(self, reward: float) -> float:
         """Scale route rewards into the PPO-friendly ``[-1, 1]`` interval."""
@@ -1683,12 +1834,27 @@ class AirSimEnv(BaseEnv):
         terminated: bool,
         truncated: bool,
         outcome: str,
+        all_checkpoints_passed: bool | None = None,
     ) -> dict[str, Any]:
         """Build the step info dictionary shared by training and inference."""
+        reached_target = bool(self._has_reached_target())
+        if all_checkpoints_passed is None:
+            all_checkpoints_passed = bool(
+                self.checkpoint_index >= len(self.checkpoints) - 1
+                or reached_target
+            )
         return {
             "checkpoint_index": int(self.checkpoint_index),
+            "route_total_checkpoints": int(max(len(self.checkpoints) - 1, 1)),
             "cross_track_error": float(self.cross_error),
             "cross_track_error_delta": float(self.cross_track_error_delta),
+            "strict_cte_limit_m": float(_STRICT_CTE_LIMIT_M),
+            "hard_offtrack_cte_limit_m": float(_HARD_OFFTRACK_CTE_LIMIT_M),
+            "effective_offtrack_limit_m": float(self._effective_offtrack_limit_m()),
+            "strict_cte_violation": bool(abs(self.cross_error) > _STRICT_CTE_LIMIT_M),
+            "hard_offtrack_violation": bool(abs(self.cross_error) > _HARD_OFFTRACK_CTE_LIMIT_M),
+            "episode_max_abs_cross_track_error": float(self._episode_max_abs_cross_track_error),
+            "all_checkpoints_passed": bool(all_checkpoints_passed),
             "heading_error": float(self.heading_error),
             "route_progress_m": float(self._route_progress_m),
             "route_progress_ratio": float(self._route_progress_ratio),
@@ -1719,6 +1885,14 @@ class AirSimEnv(BaseEnv):
             "outcome": str(outcome),
             "reward": float(reward),
             "raw_reward": float(raw_reward),
+            "episode_average_reward": float(
+                self._episode_reward_sum / max(self._episode_reward_steps, 1)
+            ),
+            "strict_success": bool(
+                outcome == "success"
+                and self._episode_max_abs_cross_track_error <= _STRICT_CTE_LIMIT_M
+                and bool(all_checkpoints_passed)
+            ),
             "terminated": bool(terminated),
             "truncated": bool(truncated),
         }

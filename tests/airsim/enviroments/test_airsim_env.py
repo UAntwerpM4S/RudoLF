@@ -727,44 +727,90 @@ def test_reward_penalizes_wide_fast_checkpoint_farming(monkeypatch):
     env._route_progress_m = 120.0
     env.performed_action = np.array([0.0, 1.0], dtype=np.float32)
     env.previous_action = np.array([0.0, 1.0], dtype=np.float32)
+    env.last_policy_action = np.array([0.0, 1.0], dtype=np.float32)
 
     env.ship_speed = 5.6
     env.ship_yaw_rate = 0.0
     env.heading_error = np.deg2rad(4.0)
     env.cross_error = 18.0
-    centered_reward = env._compute_reward(
-        previous_progress=118.0,
-        previous_target_distance=env._distance_to_target() + 2.0,
-        previous_checkpoint_distance=env._distance_to_checkpoint(env.checkpoint_index) + 2.0,
-        previous_heading_error=np.deg2rad(6.0),
-        previous_cross_error=16.0,
+    prev_centered = {"cross_track_error": 16.0, "route_progress_m": 118.0}
+    curr_centered = {"cross_track_error": 18.0, "route_progress_m": 120.0}
+    centered_reward = env.calculate_reward(
+        previous_state=prev_centered,
+        current_state=curr_centered,
         checkpoint_reward=8.0,
-        success=False,
-        collision=False,
-        offtrack=False,
-        disconnected=False,
-        truncated=False,
     )
 
-    env.ship_speed = 5.6
-    env.ship_yaw_rate = 0.0
-    env.heading_error = np.deg2rad(32.0)
-    env.cross_error = 180.0
-    wide_reward = env._compute_reward(
-        previous_progress=118.0,
-        previous_target_distance=env._distance_to_target() + 2.0,
-        previous_checkpoint_distance=env._distance_to_checkpoint(env.checkpoint_index) + 2.0,
-        previous_heading_error=np.deg2rad(28.0),
-        previous_cross_error=140.0,
+    prev_wide = {"cross_track_error": 140.0, "route_progress_m": 118.0}
+    curr_wide = {"cross_track_error": 180.0, "route_progress_m": 120.0}
+    wide_reward = env.calculate_reward(
+        previous_state=prev_wide,
+        current_state=curr_wide,
         checkpoint_reward=8.0,
-        success=False,
-        collision=False,
-        offtrack=False,
-        disconnected=False,
-        truncated=False,
     )
 
     assert centered_reward > wide_reward
+
+    env.close()
+
+
+def test_offtrack_limit_anneals_towards_stricter_tracking(monkeypatch):
+    """The off-track threshold should tighten over episodes near checkpoints."""
+    _patch_env_dependencies(monkeypatch)
+    from airsim.environments.airsim_env import AirSimEnv
+
+    env = AirSimEnv(
+        ship_pos=[0.0, 0.0],
+        target_pos=[500.0, 0.0],
+        use_pause_stepping=True,
+        use_sim_time_stepping=True,
+    )
+    env.reset()
+    env.checkpoint_index = len(env.checkpoints) - 2
+    env.ship_pos = env.checkpoints[-1]["pos"].copy()
+    env.ship_pos[0] -= 5.0
+
+    env._episode_index = 1
+    early_limit = env._effective_offtrack_limit_m()
+
+    env._episode_index = 2000
+    late_limit = env._effective_offtrack_limit_m()
+
+    assert early_limit > late_limit
+    assert early_limit == pytest.approx(150.0)
+    assert late_limit == pytest.approx(90.0)
+
+    env.close()
+
+
+def test_calculate_reward_offtrack_penalty_is_shaped(monkeypatch):
+    """Off-track reward should remain strongly negative without hard clipping to -1."""
+    _patch_env_dependencies(monkeypatch)
+    from airsim.environments.airsim_env import AirSimEnv
+
+    env = AirSimEnv(
+        ship_pos=[0.0, 0.0],
+        target_pos=[500.0, 0.0],
+        normalize_reward=True,
+        reward_normalization_scale=5.0,
+        use_pause_stepping=True,
+        use_sim_time_stepping=True,
+    )
+    env.reset()
+    env.step_count = 20
+
+    previous_state = {"cross_track_error": 20.0, "route_progress_m": 100.0}
+    current_state = {"cross_track_error": 220.0, "route_progress_m": 101.0}
+
+    raw_reward, offtrack = env.calculate_reward(
+        previous_state=previous_state,
+        current_state=current_state,
+        checkpoint_reward=0.0,
+    )
+
+    assert offtrack is True
+    assert raw_reward <= -3.5
+    assert -1.0 < env._normalize_reward(raw_reward) < -0.5
 
     env.close()
 
