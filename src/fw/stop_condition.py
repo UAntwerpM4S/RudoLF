@@ -3,7 +3,10 @@ from typing import Optional, Tuple
 
 
 class Criterion(Enum):
-    """Criterion."""
+    """
+    Criterion.
+    """
+
     NBR_POLICY_UPDATES = auto()
     TARGET_REWARD = auto()
     TARGET_REWARD_AND_LOSS = auto()
@@ -11,7 +14,8 @@ class Criterion(Enum):
 
 
 class StopCondition:
-    """Defines stopping criteria for training loops.
+    """
+    Defines stopping criteria for training loops.
 
     Supports multiple stopping strategies such as a fixed number of policy updates
     or achieving a target reward for a number of consecutive evaluations ("patience").
@@ -32,7 +36,8 @@ class StopCondition:
         target_loss: Optional[float]=None,
         patience: Optional[int] = None
     ):
-        """Initializes the StopCondition instance.
+        """
+        Initializes the StopCondition instance.
 
         Args:
             stop_criterion (Criterion): Criterion used to decide stopping.
@@ -41,6 +46,7 @@ class StopCondition:
             target_loss (float, optional): Target loss threshold for stopping.
             patience (int, optional): Number of consecutive successful evaluations needed to stop.
         """
+
         self.stop_criterion = stop_criterion
         self.max_time_steps = max_time_steps
         self.patience = max(1, patience) if patience is not None else 1
@@ -73,7 +79,8 @@ class StopCondition:
         mean_reward: Optional[float] = None,
         mean_loss: Optional[float] = None,
     ) -> Tuple[bool, str]:
-        """Evaluates whether the training should stop.
+        """
+        Evaluates whether the training should stop.
 
         Args:
             current_step (int): The current number of training steps.
@@ -83,6 +90,7 @@ class StopCondition:
         Returns:
             Tuple[bool, str]: Whether to stop and the reason.
         """
+
         if current_step >= self.max_time_steps:
             return True, f"Reached max_time_steps = {self.max_time_steps}"
 
@@ -110,7 +118,10 @@ class StopCondition:
 
 
     def _check_condition(self, condition: bool, success_msg: str) -> Tuple[bool, str]:
-        """Helper method to handle counter-based conditions."""
+        """
+        Helper method to handle counter-based conditions.
+        """
+
         if condition:
             self._counter += 1
             if self._counter >= self.patience:
@@ -121,11 +132,13 @@ class StopCondition:
 
 
     def __str__(self) -> str:
-        """Returns a string representation of the stopping condition.
+        """
+        Returns a string representation of the stopping condition.
 
         Returns:
             str: Description of the stopping condition.
         """
+
         base = {
             Criterion.NBR_POLICY_UPDATES: f"{self.max_time_steps} policy updates",
             Criterion.TARGET_REWARD: f"target reward {self.target_reward} for {self.patience} consecutive step(s)",
