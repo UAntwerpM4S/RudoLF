@@ -207,10 +207,7 @@ def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -
             "episode_log_path": episode_log_path,
             "normalize_reward": bool(training_cfg.get("normalize_reward", True)),
             "reward_normalization_scale": float(
-                training_cfg.get(
-                    "reward_normalization_scale",
-                    160.0,
-                )
+                training_cfg.get("reward_normalization_scale", 5.0)
             ),
             "reset_mode": str(training_cfg.get("reset_mode", "rewind_pose")),
             "progress_log_interval_steps": int(
