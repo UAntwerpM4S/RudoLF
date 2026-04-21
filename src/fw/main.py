@@ -31,6 +31,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         multi_colav_env_name,
         multi_policy_colav_env_name,
         py_sim_colav_env_name,
+        py_sim_colav_replanner_env_name,
         resolve_environment_names,
         initialize_all_environments
     )
@@ -83,7 +84,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
         py_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=1.75,
-            patience=4,
             max_time_steps=1300,
         ),
         multi_sim_env_name: StopCondition(
@@ -125,13 +125,19 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=1.75,
             patience=4,
-            max_time_steps=1300,
+            max_time_steps=1,
         ),
         multi_policy_colav_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=1.75,
             patience=4,
             max_time_steps=750,
+        ),
+        py_sim_colav_replanner_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=1.00,
+            patience=4,
+            max_time_steps=300,
         ),
     }
 
@@ -212,4 +218,3 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     if not executed_any_step:
         print("[main] No environments remaining after AirSim fallback. Exiting.")
-        raise SystemExit(1)

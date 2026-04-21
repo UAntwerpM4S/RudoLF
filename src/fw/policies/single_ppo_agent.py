@@ -378,7 +378,7 @@ class SinglePPOAgent(BasePPOAgent):
             mean_advantage = total_advantage / len(batch_data) if batch_data else 0
 
             training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
-            print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
+            #print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
 
             # Save the best policy so far
             if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:

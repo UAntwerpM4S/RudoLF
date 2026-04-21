@@ -95,6 +95,12 @@ class CollisionEntity:
         self.x += (self.speed * forward_x + self.lateral_speed * starboard_x) * dt
         self.y += (self.speed * forward_y + self.lateral_speed * starboard_y) * dt
 
+    def get_radius(self) -> float:
+        return float(self.radius)
+    
+    def get_entity_type(self) -> str:
+        return self.entity_type
+
     def distance_to_point(self, point: np.ndarray) -> float:
         point = np.asarray(point, dtype=np.float32)
         return float(np.linalg.norm(self.get_position() - point))

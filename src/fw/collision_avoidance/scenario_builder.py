@@ -158,6 +158,7 @@ class ScenarioBuilder:
         env = self.env
         env.obstacle_count = env._rng.choice(env.obstacle_population, p=env.obstacle_probs)
         chosen_scenario = env._rng.choice(env.scenario_types, p=env.scenario_probs)
+        #print(f"Chosen scenario: {chosen_scenario} with {env.obstacle_count} obstacle(s)")
         return chosen_scenario
 
     def _find_segment_at_encounter_range(self) -> Optional[int]:

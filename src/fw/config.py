@@ -31,12 +31,12 @@ DEFAULT_HYPERPARAMETERS = {
         'max_grad_norm': 0.5,
         'clip_range': 0.2,
         'eval_frequency': 100,
-        'num_envs': 4,
+        'num_envs': 1,
         'num_epochs': 8,
         'normalize': False,
         'max_nbr_iterations': 5000,
         'batch_size': 512,
-        'device': "cuda",
+        'device': "cpu",
         'model_dir': "models",
         'fixed_horizon': False,
         'steps_per_update': 2048,
@@ -105,10 +105,11 @@ CONFIG_PARAMETERS = {
     # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander",
     #   "PySimColav" (single colav env), "MultiColav" (3 colav envs for MPPO),
     #   "MultiPolicyColavEnv" / "mpcolav" (single env with multi-policy switching)
+    #   "pysimcolavplanner" (single env with a planner-based policy)
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
-    'env_type': ["MultiPolicyColavEnv"],
-    'action': "train",  # Valid action values: "train", "visualize"
+    'env_type': ["pysimcolavplanner"],
+    'action': "visualize",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
     'numerical_damping': False,

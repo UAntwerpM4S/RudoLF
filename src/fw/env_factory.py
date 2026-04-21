@@ -19,6 +19,7 @@ from fw.environments.lunar_lander import LunarLander
 from fw.environments.py_sim_polar_env import PySimPolarEnv
 from fw.environments.multi_sim_env import MultiSimEnv
 from fw.environments.py_sim_colav_env import PySimColavEnv
+from fw.environments.py_sim_colav_planner import PySimColavPlannerEnv as PlannerPySimColavEnv
 
 
 class EnvironmentRegistryError(Exception):
@@ -371,45 +372,6 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
         )
 
 
-class MultiPolicyColavEnvironment(BaseEnvironment):
-    """
-    Single PySimColavEnv with scenario one-hot encoding enabled, for use
-    with MultiPolicySingleAgent.  The environment appends a one-hot vector
-    to the observation indicating the active scenario type, allowing the
-    agent to route each timestep to the correct policy.
-    """
-
-    def __init__(self, name, configuration):
-        super().__init__(name, configuration)
-
-        # Registration probe — return a lightweight dummy.
-        if name == "":
-            self._env = type("MultiPolicyColavEnv", (), {})()
-            return
-
-        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
-        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
-        config = get_config_parameters()
-
-        self._env = PySimColavEnv(
-            time_step=1.0,
-            max_steps=1500,
-            ship_pos=ship_pos,
-            target_pos=target_pos,
-            dynamics_model=config["dynamics_model"],
-            ship_model=config["ship_model"],
-            wind=config["wind"],
-            current=config["current"],
-            numerical_damping=config["numerical_damping"],
-            enable_obstacles=True,
-            use_polar_scan=True,
-            eval=True,
-            eval_scenario="crossing-right",
-            eval_obstacle_count=1,
-            include_scenario_one_hot=True,
-        )
-
-
 class MultiColavEnvironment(BaseEnvironment):
     """
     Multi-environment wrapper that creates three PySimColavEnv instances,
@@ -461,6 +423,46 @@ class MultiColavEnvironment(BaseEnvironment):
         self._env = MultiSimEnv(
             sub_environments=[head_on_env, overtaking_env, crossing_right_env]
         )
+
+class PySimColavPlannerEnv(BaseEnvironment):
+    """
+    Class for a COLAV replanner environment.
+    """
+
+    def __init__(self, name, configuration):
+        """Create the default PySimColav environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Optional runtime configuration forwarded by the
+                environment factory.
+        """
+        super().__init__(name, configuration)
+
+        # During registration probe (name==""), return a dummy to avoid
+        # instantiating the full environment. The class name determines the
+        # registered key in the factory.
+        if name == "":
+            self._env = type("PySimColavPlannerEnv", (), {})()
+            return
+
+        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
+        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+        config = get_config_parameters()
+
+        self._env = PlannerPySimColavEnv(
+            time_step=2.0,
+            max_steps=1500,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            dynamics_model=config["dynamics_model"],
+            ship_model=config["ship_model"],
+            wind=config["wind"],
+            current=config["current"],
+            numerical_damping=config["numerical_damping"],
+            enable_obstacles=True,
+        )
+
 
 
 class FhSimEnvironment(BaseEnvironment):
@@ -670,6 +672,7 @@ multi_sim_env_name = "MultiSimEnv"
 py_sim_colav_env_name = "PySimColavEnv"
 multi_policy_colav_env_name = "MultiPolicyColavEnv"
 multi_colav_env_name = "MultiSimEnv_colav"
+py_sim_colav_replanner_env_name = "PySimColavPlannerEnv"
 
 _ENVIRONMENT_NAME_ALIASES = {
     py_sim_env_name.lower(): py_sim_env_name,
@@ -694,6 +697,8 @@ _ENVIRONMENT_NAME_ALIASES = {
     multi_colav_env_name.lower(): multi_colav_env_name,
     "multicolav": multi_colav_env_name,
     "multisimcolav": multi_colav_env_name,
+    py_sim_colav_replanner_env_name.lower(): py_sim_colav_replanner_env_name,
+    "pysimcolavplanner": py_sim_colav_replanner_env_name,
 }
 
 
@@ -774,3 +779,4 @@ def initialize_all_environments():
     get(lunar_env_name, configuration={})
     get(py_sim_polar_env_name, configuration={})
     get(multi_sim_env_name, configuration={})
+    get(py_sim_colav_replanner_env_name, configuration={})

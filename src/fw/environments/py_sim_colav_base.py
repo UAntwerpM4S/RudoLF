@@ -133,7 +133,7 @@ class PySimColavBaseEnv(PySimEnv):
             "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
         self.scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.0, 0.0, 0.33, 0.33, 0.34, 0.0
+            0.0, 1, 0.0, 0.0, 0.0, 0.0
         ]
         self.scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "episode"
 
