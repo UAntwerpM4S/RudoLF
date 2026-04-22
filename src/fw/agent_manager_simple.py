@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from pathlib import Path
-from enum import auto, Enum
 from contextlib import contextmanager
 from fw.environments.base_env import BaseEnv
 from fw.environments.multi_sim_env import MultiSimEnv
