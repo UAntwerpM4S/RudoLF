@@ -20,7 +20,9 @@ class ScenarioBuilder:
     """
 
     def __init__(self, env) -> None:
+        self.step_counter: int = 0
         self.env = env
+        self.chosen_scenario: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Lifecycle hooks (called by PySimColavBaseEnv)
@@ -31,10 +33,32 @@ class ScenarioBuilder:
         if not getattr(env, "enable_obstacles", False):
             env.collision_entities = []
             env._sync_collision_entity_views()
+            self.chosen_scenario = "path-following"
+            self._push_episode_scenario_to_classifier("path-following")
             return
         chosen_scenario = self.sample_collision_entity_scenario()
+        self.chosen_scenario = chosen_scenario
         env.collision_entities = self.compute_collision_entity_positions(chosen_scenario, env.obstacle_count) or []
         env._sync_collision_entity_views()
+        # Lock the classifier to the builder's choice so misclassification
+        # (e.g. a head-on being geometrically labelled as crossing-right)
+        # cannot poison reward shaping during training.
+        self._push_episode_scenario_to_classifier(chosen_scenario)
+
+    def _push_episode_scenario_to_classifier(self, scenario_label: Optional[str]) -> None:
+        """Propagate the builder's chosen scenario to the classifier.
+
+        Only applies when scenario_obstacle_level == "episode"; step-level
+        spawning keeps the classifier in geometric mode since multiple
+        distinct encounters may occur within a single episode.
+        """
+        env = self.env
+        if getattr(env, "scenario_obstacle_level", None) != "episode":
+            return
+        clf = getattr(env, "scenario_classifier", None)
+        if clf is None:
+            return
+        clf.set_episode_scenario(scenario_label)
 
     def on_step(self, dt: float) -> None:
         """Called each environment step for step-level encounter spawning.
@@ -50,7 +74,10 @@ class ScenarioBuilder:
             env._sync_collision_entity_views()
             return
 
-        encounter_prob = 0.4
+        if self.step_counter != 100:
+            self.step_counter += 1
+            return
+        encounter_prob = 0.004
         encounter = env._rng.random() < encounter_prob
 
         # Spawn a new encounter if none is active
@@ -74,6 +101,7 @@ class ScenarioBuilder:
                     env.collision_entities = []
                     env.ts_idx = None
                     env._sync_collision_entity_views()
+                    self.step_counter = 0
                     # Reset the classifier so it doesn't hold a stale tracked_ts
                     # index into the now-empty collision_entities list. Without
                     # this, _calculate_colav_reward() reads tracked_ts=0 and
@@ -124,9 +152,9 @@ class ScenarioBuilder:
         n = len(env._seg_lengths)
         self._all_seg_indices = np.arange(n, dtype=np.int32)
 
-        # Match your static/overtaking convention of skipping the first few and last few
+        # Match static/overtaking convention of skipping the first few and last few
         if n > 5:
-            env._eligible_dynamic_seg_indices = np.arange(2, n - 2, dtype=np.int32)
+            env._eligible_dynamic_seg_indices = np.arange(5, n - 2, dtype=np.int32)
         else:
             env._eligible_dynamic_seg_indices = env._all_seg_indices.copy()
 
@@ -250,7 +278,7 @@ class ScenarioBuilder:
                 # cached segment's end checkpoint.
                 random_seg = int(env._seg_cp_end_indices[target_seg_idx])
             else:
-                eligible_indices = list(range(3, len(env.checkpoints) - 2))
+                eligible_indices = list(range(5, len(env.checkpoints) - 3))
                 if not eligible_indices:
                     break
 

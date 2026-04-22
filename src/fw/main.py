@@ -28,7 +28,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
         lunar_env_name,
         py_sim_polar_env_name,
         multi_sim_env_name,
-        multi_colav_env_name,
         multi_policy_colav_env_name,
         py_sim_colav_env_name,
         py_sim_colav_replanner_env_name,
@@ -115,23 +114,18 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.NBR_POLICY_UPDATES,
             max_time_steps=600,
         ),
-        multi_colav_env_name: StopCondition(
-            stop_criterion=Criterion.TARGET_REWARD,
-            target_reward=1.75,
-            patience=4,
-            max_time_steps=1300,
-        ),
         py_sim_colav_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=1.75,
             patience=4,
-            max_time_steps=1,
+            max_time_steps=500,
         ),
         multi_policy_colav_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
-            target_reward=1.75,
+            target_reward=0.75,
             patience=4,
-            max_time_steps=750,
+            max_time_steps=200
+
         ),
         py_sim_colav_replanner_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,

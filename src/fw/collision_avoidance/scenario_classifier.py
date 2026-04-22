@@ -16,6 +16,21 @@ from typing import Optional
 
 SCENARIO_LABELS = ["path-following", "head-on", "overtaking", "crossing-right"]
 NUM_SCENARIOS = len(SCENARIO_LABELS)
+SCENARIO_INDEX = {label: i for i, label in enumerate(SCENARIO_LABELS)}
+
+# Map the scenario_builder's full label set onto the classifier's reduced
+# label set. "static" means no dynamic TS is present, so the agent should
+# simply follow its path. "crossing-left" is treated as path-following too
+# because OS is the stand-on vessel and the desired behavior is to maintain
+# course and speed (see Rule 17 / module docstring).
+_BUILDER_TO_CLASSIFIER = {
+    "path-following": "path-following",
+    "static": "path-following",
+    "head-on": "head-on",
+    "overtaking": "overtaking",
+    "crossing-right": "crossing-right",
+    "crossing-left": "path-following",
+}
 
 
 def _normalize_angle(angle: float) -> float:
@@ -41,17 +56,53 @@ class ScenarioClassifier:
         self._scenario: int = 0
         self._overtaking_locked: bool = False
         self._headon_locked: bool = False
-        #self._crossing_right_locked: bool = False
+        self._crossing_right_locked: bool = False
+        # When set, classify() bypasses geometric classification and always
+        # returns this scenario. Used when scenario_obstacle_level="episode":
+        # the ScenarioBuilder commits to a scenario at reset, so the
+        # classifier should honor that choice rather than risk misclassifying
+        # e.g. a head-on as crossing-right (which would poison reward shaping).
+        self._episode_scenario_label: Optional[str] = None
 
     def reset(self) -> None:
         self._tracked_ts = None
         self._scenario = 0
         self._overtaking_locked = False
         self._headon_locked = False
-        #self._crossing_right_locked = False
+        self._crossing_right_locked = False
+        self._episode_scenario_label = None
+
+    def set_episode_scenario(self, scenario_label: Optional[str]) -> None:
+        """Lock the classifier to an episode-level scenario.
+
+        When a label is set, classify() short-circuits the geometric
+        classification and always returns this scenario's index.
+
+        Pass None to release the lock and resume geometric classification.
+        """
+        if scenario_label is None:
+            self._episode_scenario_label = None
+            return
+
+        mapped = _BUILDER_TO_CLASSIFIER.get(scenario_label)
+        if mapped is None:
+            raise ValueError(
+                f"Unknown scenario label '{scenario_label}'. "
+                f"Expected one of {list(_BUILDER_TO_CLASSIFIER.keys())}."
+            )
+        self._episode_scenario_label = mapped
+        self._scenario = SCENARIO_INDEX[mapped]
 
     def classify(self, os_pos: np.ndarray, os_heading: float, collision_entities: list) -> int:
         """Classify the encounter with the nearest dynamic TS. Returns scenario index."""
+        # Episode-level lock: honor the scenario chosen by ScenarioBuilder
+        # and skip geometric inference entirely. We still select a tracked
+        # TS so reward shaping can reference it (e.g. for colreg_bearing).
+        if self._episode_scenario_label is not None:
+            self._tracked_ts = self._select_ts(os_pos, collision_entities)
+            self._scenario = SCENARIO_INDEX[self._episode_scenario_label]
+            return self._scenario
+
         ts_idx = self._select_ts(os_pos, collision_entities)
 
         if ts_idx is None:
@@ -73,9 +124,9 @@ class ScenarioClassifier:
             self._scenario = 1
             return 1
 
-        #if self._crossing_right_locked:
-        #    self._scenario = 3
-        #    return 3
+        if self._crossing_right_locked:
+            self._scenario = 3
+            return 3
 
         self._scenario = self._classify_geometry(os_pos, os_heading, ts.get_position(), ts.get_heading())
 
@@ -85,8 +136,8 @@ class ScenarioClassifier:
         if self._scenario == 1:
             self._headon_locked = True
 
-        #if self._scenario == 3:
-        #    self._crossing_right_locked = True
+        if self._scenario == 3:
+            self._crossing_right_locked = True
 
 
         return self._scenario

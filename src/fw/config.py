@@ -1,6 +1,37 @@
+from enum import Enum, auto
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from airsim.config.airsim_config import get_airsim_config  # re-export
+
+
+class VisualizationMode(Enum):
+    """
+    Visualization modes for rendering simulation results.
+
+    Attributes:
+        SIMPLE: Vessel trajectory only.
+        COMPLEX: Trajectory with diagnostics (cross-track error, rudder input,
+            UKC, and performance metrics).
+    """
+
+    SIMPLE = auto()
+    COMPLEX = auto()
+
+
+class PolicyStrategy(Enum):
+    """
+    Defines strategies for handling policies during environment switching.
+
+    Attributes:
+        RESET_POLICY: Start with a fresh policy.
+        REUSE_CURRENT_POLICY: Continue training with the current policy.
+        REUSE_OTHER_POLICY: Load and use a policy trained on another environment.
+    """
+
+    RESET_POLICY = auto()
+    REUSE_CURRENT_POLICY = auto()
+    REUSE_OTHER_POLICY = auto()
+
 
 PPO_POLICY_NAME = "PPO"
 PPO2_POLICY_NAME = "PPO2"
@@ -38,8 +69,8 @@ DEFAULT_HYPERPARAMETERS = {
         'batch_size': 512,
         'device': "cpu",
         'model_dir': "models",
-        'fixed_horizon': False,
-        'steps_per_update': 2048,
+        'fixed_horizon': True,
+        'steps_per_update': 8192,
     },
     PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,
@@ -85,10 +116,10 @@ DEFAULT_HYPERPARAMETERS = {
         'gamma': 0.99,
         'gae_lambda': 0.95,
         'entropy_coef': 0.01,
-        'value_loss_coef': 0.5,
+        'value_loss_coef': 0.1,
         'max_grad_norm': 0.5,
         'clip_range': 0.2,
-        'eval_frequency': 100,
+        'eval_frequency': 10,
         'num_envs': 12,
         'num_epochs': 8,
         'normalize': False,
@@ -97,13 +128,13 @@ DEFAULT_HYPERPARAMETERS = {
         'device': "cpu",
         'model_dir': "models",
         'fixed_horizon': False,
-        'steps_per_update': 2048,
+        'steps_per_update': 8192,
     },
 }
 
 CONFIG_PARAMETERS = {
     # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander",
-    #   "PySimColav" (single colav env), "MultiColav" (3 colav envs for MPPO),
+    #   "PySimColav" (single colav env),
     #   "MultiPolicyColavEnv" / "mpcolav" (single env with multi-policy switching)
     #   "pysimcolavplanner" (single env with a planner-based policy)
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
@@ -114,10 +145,11 @@ CONFIG_PARAMETERS = {
     'current': False,
     'numerical_damping': False,
     'visualize_best_trained': False,
+    'viz_mode': VisualizationMode.COMPLEX,  # Either "simple" or "complex"
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': False,
+    'live_animation': True,
     # AirSim settings are now in airsim.config.airsim_config
     # Use get_airsim_config() to access them.
 }
