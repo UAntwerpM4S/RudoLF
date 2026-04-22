@@ -83,8 +83,24 @@ class Reward:
         # Optional penalty for thrust changes (currently pass-through).
         weight = self.reward_weights.get("thrust_change", 1.0)
         if weight == 0.0:
-            return 0.0  # No penalty if the component is disabled, even if the function is called.
+            return 0.0
         return (thrust_change / max_thrust_change) ** 1 if thrust_change < max_thrust_change else (-1/weight)
+
+    def r_thrust_change_quadratic(self, thrust_change: float, max_thrust_change: float, **_: float) -> float:
+        # Optional penalty for thrust changes (currently pass-through).
+        weight = self.reward_weights.get("thrust_change", 1.0)
+        if weight == 0.0:
+            return 0.0
+        
+        normalized_change = abs(thrust_change) / max_thrust_change
+        
+        # Smooth quadratic penalty that steepens near the limit
+        if normalized_change < 0.5:
+            return normalized_change ** 2  # Gentle for small changes
+        elif normalized_change < 1.0:
+            return 0.25 + 2 * (normalized_change - 0.5) ** 2  # Steeper
+        else:
+            return -1 / weight  # Hard violation penalty
 
     def calculate_reward(
         self,
