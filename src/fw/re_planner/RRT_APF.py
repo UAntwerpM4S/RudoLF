@@ -114,6 +114,7 @@ class RRTAPFReplanner(RRTStarReplanner):
         start: np.ndarray,
         goal: np.ndarray,
         obstacle_center: np.ndarray,
+        obstacle_radius: float,
         search_inner: float,
         search_outer: float,
         dim: int,
@@ -131,7 +132,7 @@ class RRTAPFReplanner(RRTStarReplanner):
         kd: Optional[KDTree] = None
         kd_dirty = True
 
-        dynamic_obstacles = [(np.asarray(obstacle_center, dtype=float), float(search_inner))]
+        dynamic_obstacles = [(np.asarray(obstacle_center, dtype=float), float(obstacle_radius))]
 
         def rebuild_kd() -> None:
             nonlocal kd, kd_dirty

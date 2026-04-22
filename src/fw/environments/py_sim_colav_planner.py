@@ -288,7 +288,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             return
 
         try:
-            replanned = self.rrt_replanner.replan(
+            replanned = self.rrt_apf_replanner.replan(
                 obstacle_center=obstacle_center,
                 ship_trajectory=trajectory,
                 obstacle_radius=obstacle_radius,
