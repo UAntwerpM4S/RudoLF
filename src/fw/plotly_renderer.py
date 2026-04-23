@@ -43,7 +43,7 @@ class PlotlyRenderer:
         Args:
             ship_data: Mapping of ship IDs to lists of `ShipEpisodeData`.
             metrics: Mapping of ship IDs to computed `ShipMetrics` (currently
-                not directly visualized but used for future extensions).
+                not directly visualized but reserved for future extensions).
             save_path: Output path for the generated HTML file.
 
         Returns:
@@ -84,6 +84,9 @@ class PlotlyRenderer:
 
         for col, ship_id in enumerate(ship_ids, start=1):
             episodes = ship_data[ship_id]
+            if not episodes:
+                continue
+
             ship_color_hex = SHIP_COLORS[(col - 1) % len(SHIP_COLORS)]
 
             for ep_idx, ep in enumerate(episodes):
@@ -135,8 +138,8 @@ class PlotlyRenderer:
                 # Rudder actions
                 if ep.rudder_actions.size:
                     # resample_to_common_time expects common_time in [0, 1];
-                    # we pass ct/100 so the x-axis stays in [0, 100] for display.
-                    ct = np.linspace(0, 100, 200)
+                    # divide ct by 100 so the x-axis stays in [0, 100] for display.
+                    ct = np.linspace(0.0, 100.0, 200)
                     resampled = resample_to_common_time(ep.rudder_actions, ct / 100.0)
                     fig.add_trace(go.Scatter(
                         x=ct, y=resampled,

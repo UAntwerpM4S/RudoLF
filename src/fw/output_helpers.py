@@ -45,15 +45,28 @@ def compute_heading_error(ship_env) -> float:
 
     Returns:
         float: Angular error in radians, wrapped to [-pi, pi].
+
+    Raises:
+        AttributeError: If ship_env is missing required attributes.
+        ValueError: If checkpoints list is empty.
+        IndexError: If checkpoint_index is out of range.
     """
 
     checkpoints = ship_env.checkpoints
+    if not checkpoints:
+        raise ValueError("ship_env.checkpoints must not be empty.")
+
     idx = ship_env.checkpoint_index
+    if idx < 0 or idx >= len(checkpoints):
+        raise IndexError(
+            f"checkpoint_index {idx} is out of range for checkpoints of length {len(checkpoints)}."
+        )
+
     curr = checkpoints[idx]
     if idx + 1 < len(checkpoints):
         nxt = checkpoints[idx + 1]
     else:
-        # At final checkpoint: reuse the last valid segment direction
+        # At final checkpoint: reuse the last valid segment direction.
         nxt = checkpoints[idx]
         curr = checkpoints[max(idx - 1, 0)]
 
@@ -71,13 +84,21 @@ def normalized_time_axis(length: int) -> np.ndarray:
     Maps sequence indices to percentage progress in [0, 100].
 
     Args:
-        length: Number of timesteps.
+        length: Number of timesteps. Must be a non-negative integer.
 
     Returns:
         np.ndarray: Array of shape (length,) with values in [0, 100].
+            Returns an empty array when length is 0.
+
+    Raises:
+        ValueError: If length is negative.
     """
 
-    if length <= 1:
+    if length < 0:
+        raise ValueError(f"length must be non-negative, got {length}.")
+    if length == 0:
+        return np.array([], dtype=float)
+    if length == 1:
         return np.array([0.0])
     return np.linspace(0.0, 100.0, length)
 
@@ -90,16 +111,25 @@ def shade_color(base_color, n: int, lo: float = 0.45, hi: float = 1.0) -> list[t
 
     Args:
         base_color: Matplotlib-compatible color string or RGB tuple.
-        n: Number of shaded variants to generate.
-        lo: Minimum brightness scaling factor.
-        hi: Maximum brightness scaling factor.
+        n: Number of shaded variants to generate. Must be non-negative.
+        lo: Minimum brightness scaling factor. Must be in [0, 1].
+        hi: Maximum brightness scaling factor. Must be in [0, 1].
 
     Returns:
         list[tuple]: List of RGB tuples representing shaded colors.
+            Returns an empty list when n <= 0.
+
+    Raises:
+        ValueError: If lo or hi are outside [0, 1], or if lo >= hi.
     """
 
     if n <= 0:
         return []
+    if not (0.0 <= lo <= 1.0 and 0.0 <= hi <= 1.0):
+        raise ValueError(f"lo and hi must be in [0, 1], got lo={lo}, hi={hi}.")
+    if lo >= hi:
+        raise ValueError(f"lo ({lo}) must be strictly less than hi ({hi}).")
+
     rgb = np.array(to_rgb(base_color))
     factors = np.linspace(hi, lo, n)
     return [tuple(np.clip(rgb * f, 0, 1)) for f in factors]
@@ -115,12 +145,14 @@ def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.n
     Args:
         signal: Input array of shape (T,) or (T, ...).
         common_time: Target time axis in normalized coordinates [0, 1].
+            Must be a 1-D array with at least one element.
 
     Returns:
         np.ndarray: Resampled signal with shape (len(common_time), ...).
 
     Raises:
         ValueError: If signal is empty (shape[0] == 0).
+        ValueError: If common_time is empty or not 1-D.
 
     Notes:
         - Single-sample signals are repeated across the full time axis.
@@ -129,6 +161,13 @@ def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.n
     """
 
     signal = np.asarray(signal)
+    common_time = np.asarray(common_time)
+
+    if common_time.ndim != 1 or common_time.size == 0:
+        raise ValueError(
+            f"common_time must be a non-empty 1-D array, "
+            f"got shape {common_time.shape}."
+        )
 
     if signal.shape[0] == 0:
         raise ValueError("Cannot resample an empty signal (shape[0] == 0).")
