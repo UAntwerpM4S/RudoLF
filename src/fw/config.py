@@ -34,7 +34,7 @@ DEFAULT_HYPERPARAMETERS = {
         'normalize': False,
         'max_nbr_iterations': 200000,
         'batch_size': 64,
-        'device': "cuda", # Consider using "cuda" for airsim training if you have a compatible GPU and the necessary setup.
+        'device': "cpu", # Consider using "cuda" for airsim training if you have a compatible GPU and the necessary setup.
         'model_dir': "models"
     },
     PPO2_POLICY_NAME: {
@@ -82,7 +82,7 @@ CONFIG_PARAMETERS = {
     # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander"
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
-    'env_type': ["AirSimEnv"],
+    'env_type': ["PySimEnv","AirSimEnv"],
     'action': "train",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,

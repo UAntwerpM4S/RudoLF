@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
+
 from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 
 
@@ -104,3 +106,28 @@ def test_airsim_training_session_writes_logs_metadata_and_plots(tmp_path):
     assert metadata["interrupted"] is False
     assert metadata["run_event_count"] == 2
     assert metadata["route_summary"]["checkpoint_count"] == 3
+
+
+def test_auto_normalize_series_maps_data_to_minus_one_plus_one():
+    """Metric series should be rescaled to the full ``[-1, 1]`` interval."""
+    normalized, value_min, value_max = AirSimTrainingSession._auto_normalize_series(
+        np.array([2.0, 4.0, 6.0], dtype=float)
+    )
+
+    assert np.allclose(normalized, np.array([-1.0, 0.0, 1.0], dtype=float))
+    assert value_min == 2.0
+    assert value_max == 6.0
+
+
+def test_auto_normalize_series_keeps_constant_series_centered():
+    """Constant finite data should map to zero without crashing."""
+    normalized, value_min, value_max = AirSimTrainingSession._auto_normalize_series(
+        np.array([np.nan, 5.0, 5.0, np.nan], dtype=float)
+    )
+
+    assert np.isnan(normalized[0])
+    assert normalized[1] == 0.0
+    assert normalized[2] == 0.0
+    assert np.isnan(normalized[3])
+    assert value_min == 5.0
+    assert value_max == 5.0

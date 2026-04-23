@@ -227,8 +227,73 @@ class AirSimTrainingSession:
             for row in training_metrics:
                 writer.writerow(_json_safe(row))
 
+    @staticmethod
+    def _auto_normalize_series(values: np.ndarray) -> tuple[np.ndarray, float, float]:
+        """Map one metric series to ``[-1, 1]`` while preserving NaNs."""
+        series = np.asarray(values, dtype=float)
+        normalized = np.full(series.shape, np.nan, dtype=float)
+        finite_mask = np.isfinite(series)
+        if not np.any(finite_mask):
+            return normalized, float("nan"), float("nan")
+
+        finite_values = series[finite_mask]
+        value_min = float(np.min(finite_values))
+        value_max = float(np.max(finite_values))
+        span = float(value_max - value_min)
+
+        if span <= 1e-12:
+            normalized[finite_mask] = 0.0
+        else:
+            normalized[finite_mask] = (
+                ((series[finite_mask] - value_min) / span) * 2.0
+            ) - 1.0
+        return np.clip(normalized, -1.0, 1.0), value_min, value_max
+
+    @staticmethod
+    def _rolling_average(arr: np.ndarray, window: int) -> tuple[np.ndarray, np.ndarray]:
+        """Return ``(array_indices, rolling_means)`` for valid window positions.
+
+        The returned indices map directly into the original array so the caller
+        can pair them with the matching x-coordinates.
+        """
+        if window < 2 or len(arr) < window:
+            return np.array([], dtype=float), np.array([], dtype=float)
+        rolled = np.array(
+            [np.nanmean(arr[i : i + window]) for i in range(len(arr) - window + 1)],
+            dtype=float,
+        )
+        indices = np.arange(window - 1, len(arr), dtype=float)
+        return indices, rolled
+
+    @staticmethod
+    def _load_max_checkpoint_per_episode(
+        run_log_path: Path,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Read ``run_log.csv`` and return per-episode max checkpoint index arrays."""
+        if not run_log_path.exists():
+            return np.array([], dtype=float), np.array([], dtype=float)
+        episode_max: dict[int, int] = {}
+        try:
+            with run_log_path.open("r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        ep = int(row["episode"])
+                        cp = int(row["checkpoint_index"])
+                        if ep > 0:
+                            episode_max[ep] = max(episode_max.get(ep, 0), cp)
+                    except (KeyError, TypeError, ValueError):
+                        continue
+        except OSError:
+            return np.array([], dtype=float), np.array([], dtype=float)
+        if not episode_max:
+            return np.array([], dtype=float), np.array([], dtype=float)
+        episodes = np.array(sorted(episode_max), dtype=float)
+        checkpoints = np.array([episode_max[int(ep)] for ep in episodes], dtype=float)
+        return episodes, checkpoints
+
     def _save_training_metrics_plot(self, training_metrics: list[dict[str, Any]]) -> None:
-        """Render reward, loss, and advantage curves to disk."""
+        """Render reward, loss, advantage, and per-episode checkpoint curves to disk."""
         if not training_metrics:
             return
 
@@ -236,6 +301,8 @@ class AirSimTrainingSession:
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+
+        _ROLLING_WINDOW = 5
 
         iterations = np.arange(len(training_metrics), dtype=float)
         rewards = np.asarray([row.get("reward", np.nan) for row in training_metrics], dtype=float)
@@ -245,21 +312,80 @@ class AirSimTrainingSession:
             dtype=float,
         )
 
-        fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+        normalized_reward, reward_min, reward_max = self._auto_normalize_series(rewards)
+        normalized_loss, loss_min, loss_max = self._auto_normalize_series(losses)
+        normalized_advantage, advantage_min, advantage_max = self._auto_normalize_series(
+            advantages
+        )
 
-        axes[0].plot(iterations, rewards, color="#1f77b4", linewidth=1.8)
-        axes[0].set_ylabel("Reward")
-        axes[0].set_title("AirSim Training Metrics")
-        axes[0].grid(True, alpha=0.3)
+        episode_x, episode_max_cp = self._load_max_checkpoint_per_episode(self.run_log_path)
+        has_cp_data = len(episode_x) > 0
 
-        axes[1].plot(iterations, losses, color="#d62728", linewidth=1.5)
-        axes[1].set_ylabel("Loss")
-        axes[1].grid(True, alpha=0.3)
+        if has_cp_data:
+            fig, all_axes = plt.subplots(4, 1, figsize=(12, 14))
+            axes = all_axes[:3]
+            for ax in axes[1:]:
+                ax.sharex(axes[0])
+            ax_cp = all_axes[3]
+        else:
+            fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+            ax_cp = None
 
-        axes[2].plot(iterations, advantages, color="#2ca02c", linewidth=1.5)
-        axes[2].set_ylabel("Advantage")
-        axes[2].set_xlabel("Iteration")
-        axes[2].grid(True, alpha=0.3)
+        plots = (
+            ("Reward", normalized_reward, reward_min, reward_max, "#1f77b4", 1.8),
+            ("Loss", normalized_loss, loss_min, loss_max, "#d62728", 1.5),
+            ("Advantage", normalized_advantage, advantage_min, advantage_max, "#2ca02c", 1.5),
+        )
+
+        for axis, (name, values, value_min, value_max, color, line_width) in zip(
+            axes,
+            plots,
+            strict=False,
+        ):
+            axis.plot(iterations, values, color=color, linewidth=line_width, alpha=0.45)
+            roll_idx, roll_y = self._rolling_average(values, _ROLLING_WINDOW)
+            if len(roll_idx) > 0:
+                axis.plot(
+                    iterations[roll_idx.astype(int)],
+                    roll_y,
+                    color=color,
+                    linewidth=line_width + 0.3,
+                    linestyle="--",
+                    label=f"avg-{_ROLLING_WINDOW}",
+                )
+            axis.axhline(0.0, color="#666666", linewidth=0.8, alpha=0.55)
+            axis.set_ylabel(f"{name} (norm)")
+            axis.set_ylim(-1.05, 1.05)
+            if np.isfinite(value_min) and np.isfinite(value_max):
+                axis.text(
+                    0.01,
+                    0.93,
+                    f"raw range: [{value_min:.4f}, {value_max:.4f}]",
+                    transform=axis.transAxes,
+                    fontsize=9,
+                    va="top",
+                )
+            axis.grid(True, alpha=0.3)
+
+        axes[0].set_title("AirSim Training Metrics (Auto-Normalized to [-1, 1])")
+
+        if has_cp_data and ax_cp is not None:
+            ax_cp.plot(episode_x, episode_max_cp, color="#ff7f0e", linewidth=1.2, alpha=0.45)
+            roll_idx_ep, roll_y_ep = self._rolling_average(episode_max_cp, _ROLLING_WINDOW)
+            if len(roll_idx_ep) > 0:
+                ax_cp.plot(
+                    episode_x[roll_idx_ep.astype(int)],
+                    roll_y_ep,
+                    color="#ff7f0e",
+                    linewidth=1.6,
+                    linestyle="--",
+                )
+            ax_cp.set_ylabel("Max Checkpoint")
+            ax_cp.set_xlabel("Episode")
+            ax_cp.set_ylim(bottom=0)
+            ax_cp.grid(True, alpha=0.3)
+        else:
+            axes[2].set_xlabel("Iteration")
 
         fig.tight_layout()
         fig.savefig(self.training_metrics_plot_path, bbox_inches="tight", dpi=180)
