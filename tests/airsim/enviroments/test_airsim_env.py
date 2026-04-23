@@ -238,7 +238,7 @@ def test_reset_returns_valid_ppo_observation(monkeypatch):
     obs, info = env.reset()
 
     assert env.action_space.shape == (2,)
-    assert env.observation_space.shape == (17,)
+    assert env.observation_space.shape == (18,)
     assert obs.dtype == np.float32
     assert env.observation_space.contains(obs)
     assert info["outcome"] == "reset"

@@ -103,6 +103,27 @@ _STRICT_SUCCESS_BONUS = 5.0
 _STRICT_FAILURE_REWARD = -1.0
 _STEERING_MAGNITUDE_PENALTY_WEIGHT = 0.04
 _STEERING_RATE_PENALTY_WEIGHT = 0.06
+_LOS_LOOKAHEAD_FRACTION = 0.5
+_LOG_SCALE_HALF_VALUE_FRACTION = 0.3
+
+
+def _log_scale_signed(value: float, scale: float) -> float:
+    """Map a signed distance to [-1, 1] with logarithmic compression.
+
+    Values near zero get finer resolution; the input magnitude equal to
+    ``scale`` maps to exactly ±1. The input magnitude equal to
+    ``_LOG_SCALE_HALF_VALUE_FRACTION * scale`` maps to approximately ±0.5,
+    giving the policy more precision when close to a checkpoint.
+    """
+    if scale <= 1e-6:
+        return 0.0
+    half_value = _LOG_SCALE_HALF_VALUE_FRACTION * scale
+    k = math.log(3.0) / max(half_value, 1e-6)
+    log_max = math.log1p(k * scale)
+    scaled = math.log1p(k * abs(value)) / log_max
+    return math.copysign(min(scaled, 1.0), value)
+
+
 _OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR = (
     "current_checkpoint_forward",
     "current_checkpoint_lateral",
@@ -121,6 +142,7 @@ _OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR = (
     "route_progress_ratio",
     "checkpoint_progress_ratio",
     "previous_action_steering",
+    "los_heading_error",
 )
 _OBSERVATION_FIELDS_BY_PROFILE = {
     _OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR: _OBSERVATION_FIELDS_ROUTE_RELATIVE_CAR,
@@ -391,8 +413,8 @@ class AirSimEnv(BaseEnv):
         self._curriculum_success_streak = 0
 
         self.guidance_assist_enabled = bool(guidance_assist_enabled)
-        self.guidance_residual_steering_scale = float(guidance_residual_steering_scale)
-        self.guidance_residual_throttle_scale = float(guidance_residual_throttle_scale)
+        self.guidance_residual_steering_scale = float(np.clip(guidance_residual_steering_scale, 0.0, 1.0))
+        self.guidance_residual_throttle_scale = float(np.clip(guidance_residual_throttle_scale, 0.0, 1.0))
         self.steering_dynamics_enabled = bool(steering_dynamics_enabled)
         self.steering_smoothing_alpha = float(np.clip(steering_smoothing_alpha, 0.0, 1.0))
         self.max_steering_rate_per_second = max(float(max_steering_rate_per_second), 0.0)
@@ -457,7 +479,6 @@ class AirSimEnv(BaseEnv):
         self.heading_error = 0.0
         self.cross_error = 0.0
         self.cross_track_error_delta = 0.0
-        self.velocities = 0.0
         self.ukc = 0.0
         self.step_count = 0
         self.checkpoint_index = 1
@@ -1300,7 +1321,6 @@ class AirSimEnv(BaseEnv):
         self.ship_pos = np.array([framework_x, framework_y], dtype=np.float32)
         self.ship_heading = float(framework_heading)
         self.ship_speed = 0.0
-        self.velocities = 0.0
         self._last_ue5_timestamp = 0
         yaw_rate = 0.0
         if not state_failed:
@@ -1308,7 +1328,6 @@ class AirSimEnv(BaseEnv):
                 self.ship_speed = float(max(float(state.get("speed", 0.0)), 0.0))
             except (TypeError, ValueError):
                 self.ship_speed = 0.0
-            self.velocities = float(self.ship_speed)
             try:
                 self._last_ue5_timestamp = int(state.get("timestamp", 0) or 0)
             except (TypeError, ValueError):
@@ -1716,14 +1735,18 @@ class AirSimEnv(BaseEnv):
         next_local = self._world_to_ship_frame(next_checkpoint)
         target_local = self._world_to_ship_frame(self.target_pos)
 
+        lookahead_m = max(self._distance_scale_m * _LOS_LOOKAHEAD_FRACTION, 20.0)
+        los_correction = math.atan2(-float(self.cross_error), lookahead_m)
+        los_heading_error = _normalize_angle(float(self.heading_error) + los_correction)
+
         observation = np.array(
             [
-                current_local[0] / self._distance_scale_m,
-                current_local[1] / self._distance_scale_m,
-                next_local[0] / self._distance_scale_m,
-                next_local[1] / self._distance_scale_m,
-                target_local[0] / self._distance_scale_m,
-                target_local[1] / self._distance_scale_m,
+                _log_scale_signed(float(current_local[0]), self._distance_scale_m),
+                _log_scale_signed(float(current_local[1]), self._distance_scale_m),
+                _log_scale_signed(float(next_local[0]), self._distance_scale_m),
+                _log_scale_signed(float(next_local[1]), self._distance_scale_m),
+                _log_scale_signed(float(target_local[0]), self._distance_scale_m),
+                _log_scale_signed(float(target_local[1]), self._distance_scale_m),
                 math.cos(self.heading_error),
                 math.sin(self.heading_error),
                 float(np.clip(self.cross_error / _CROSS_TRACK_LIMIT_M, -1.0, 1.0)),
@@ -1741,6 +1764,7 @@ class AirSimEnv(BaseEnv):
                 float(np.clip(self._route_progress_ratio, 0.0, 1.0)),
                 float(np.clip(self.checkpoint_index / max(len(self.checkpoints) - 1, 1), 0.0, 1.0)),
                 float(self.previous_action[0]),
+                float(np.clip(los_heading_error / math.pi, -1.0, 1.0)),
             ],
             dtype=np.float32,
         )
@@ -1871,7 +1895,6 @@ class AirSimEnv(BaseEnv):
             "mdp_step_seconds": float(self.mdp_step_seconds),
             "physics_wait_s": float(self.last_physics_wait_s),
             "step_latency_s": float(self.last_step_latency_s),
-            "ue5_timestamp": int(self._last_ue5_timestamp),
             "collision": bool(self._last_collision),
             "pause_timeout": bool(self._last_pause_timeout),
             "state_update_reliable": bool(self._state_update_reliable),
