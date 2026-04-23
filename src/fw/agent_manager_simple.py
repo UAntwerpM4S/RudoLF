@@ -4,11 +4,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from pathlib import Path
-from enum import auto, Enum
 from contextlib import contextmanager
 from fw.environments.base_env import BaseEnv
 from fw.environments.multi_sim_env import MultiSimEnv
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
 from airsim.communication.airsim_bridge import AirSimBridge
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
@@ -20,24 +19,9 @@ MIN_GRID_POS = -11700
 MAX_GRID_POS = 14500
 
 
-class PolicyStrategy(Enum):
+class AgentManagerSimple:
     """
-    Defines strategies for handling policies during environment switching.
-
-    Attributes:
-        RESET_POLICY: Start with a fresh policy.
-        REUSE_CURRENT_POLICY: Continue training with the current policy.
-        REUSE_OTHER_POLICY: Load and use a policy trained on another environment.
-    """
-
-    RESET_POLICY = auto()
-    REUSE_CURRENT_POLICY = auto()
-    REUSE_OTHER_POLICY = auto()
-
-
-class AgentManager:
-    """
-    AgentManager class for managing agents and environments during training.
+    AgentManagerSimple class for managing agents and environments during training.
 
     This class includes methods for training, saving/loading policies, and
     visualizing paths taken by the agent during evaluation.
@@ -55,10 +39,7 @@ class AgentManager:
         """
 
         try:
-            if self._overlay_active and self._fig is not None:
-                ax = self._axes
-            else:
-                fig, ax = plt.subplots(figsize=(12, 8))
+            fig, ax = plt.subplots(figsize=(12, 8))
 
             # Draw environment boundaries
             ax.plot(
@@ -141,13 +122,15 @@ class AgentManager:
             # Save the figure
             plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
             print("\nPath visualization saved as 'trajectory.png'.")
-        except Exception:
-            pass
+
+            plt.show()
+        finally:
+            plt.close('all')
 
 
     def __init__(self, agent_type: str, hyperparameters: dict):
         """
-        Initialize the Agent.
+        Initialize AgentManagerSimple.
 
         Args:
             agent_type (str): Type of agent to use (e.g., 'PPO').
@@ -156,37 +139,9 @@ class AgentManager:
 
         self._agent = None
         self._agent_type = agent_type
-        self.prev_smoothing_setting = None
         self._hyperparameters = hyperparameters
-
-        self._fig = None
-        self._axes = None
-        self._overlay_active = False
-
-
-    def begin_overlay_plot(self):
-        """
-        Create a persistent matplotlib figure for overlaying multiple environments.
-        """
-
-        if self._fig is None:
-            self._fig, self._axes = plt.subplots(figsize=(12, 8))
-            self._overlay_active = True
-
-
-    def end_overlay_plot(self):
-        """
-        Finalize and close the persistent matplotlib figure.
-        """
-
-        if self._fig is not None:
-            plt.tight_layout()
-            plt.show()
-            plt.close(self._fig)
-
-            self._fig = None
-            self._axes = None
-            self._overlay_active = False
+        self.prev_smoothing_setting = None
+        self.prev_render_mode = None
 
 
     @property
@@ -324,6 +279,25 @@ class AgentManager:
                 print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
 
 
+    @contextmanager
+    def rendering(self, env):
+        """Render.
+
+        Args:
+            env: Description.
+        """
+        if hasattr(env, "render_mode"):
+            try:
+                self.prev_render_mode = env.render_mode
+                env.render_mode = "human"
+                yield
+            finally:
+                env.render_mode = self.prev_render_mode
+                self.prev_render_mode = None
+        else:
+            yield
+
+
     def train(self, stop_condition: StopCondition) -> None:
         """
         Train the agent in the assigned environment.
@@ -403,7 +377,7 @@ class AgentManager:
             from airsim.communication.coord_transform import CoordTransform
             coord_transform = CoordTransform()
 
-        with self.smoothing(env):
+        with self.smoothing(env), self.rendering(env):
             if hasattr(env, "ship_pos"):
                 # Store results for each episode
                 all_paths = []
@@ -492,12 +466,6 @@ class AgentManager:
                     # Render the environment each step to visualize the agent's action
                     env.render()
 
-                if self._fig is not None and self._overlay_active:
-                    plt.close(self._fig)
-
-                    self._fig = None
-                    self._axes = None
-                    self._overlay_active = False
 
     def get_env(self):
         """
