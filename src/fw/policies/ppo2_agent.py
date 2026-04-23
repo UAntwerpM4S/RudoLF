@@ -111,6 +111,11 @@ class PPO2Agent(BaseAgent):
         """
 
         def _init():
+            """Create one monitored environment instance for a worker process.
+
+            Returns:
+                A monitored Gym environment instance for the given worker rank.
+            """
             return Monitor(self.create_env(), f"logs/env_{rank}")
 
         return _init

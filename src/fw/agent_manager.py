@@ -1,115 +1,48 @@
 import os
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 
 from pathlib import Path
-from gymnasium import Env
-from enum import auto, Enum
-from matplotlib.colors import to_rgb
 from contextlib import contextmanager
-from shapely.geometry.polygon import Polygon
-from shapely.geometry.multipolygon import MultiPolygon
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME
+
+from fw.plotly_renderer import PlotlyRenderer
+from fw.metrics_computer import MetricsComputer
+from fw.episode_collector import EpisodeCollector
+from fw.ship_episode_data import CollisionAnnotator
+from fw.matplotlib_renderer import MatplotlibRenderer
+
+from fw.environments.base_env import BaseEnv
+from fw.environments.lunar_lander import LunarLander
+from fw.environments.multi_sim_env import MultiSimEnv
 from airsim.communication.airsim_bridge import AirSimBridge
+
 from fw.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
-from fw.policies.ppo_agent import PPOAgent
-
-
-class PolicyStrategy(Enum):
-    """Defines strategies for handling policies during environment switching.
-
-    Attributes:
-        RESET_POLICY: Start with a fresh policy.
-        REUSE_CURRENT_POLICY: Continue training with the current policy.
-        REUSE_OTHER_POLICY: Load and use a policy trained on another environment.
-    """
-    RESET_POLICY = auto()
-    REUSE_CURRENT_POLICY = auto()
-    REUSE_OTHER_POLICY = auto()
-
-
-def normalized_time_axis(length: int) -> np.ndarray:
-    """Return a normalized time axis in [0, 1] for a trajectory of given length."""
-    if length <= 1:
-        return np.array([0.0])
-    return np.linspace(0.0, 100.0, length)
-
-
-def shade_color(base_color, n, lo=0.45, hi=1.0):
-    """
-    Generate n shaded variants of a base color by scaling lightness.
-    """
-    rgb = np.array(to_rgb(base_color))
-    factors = np.linspace(hi, lo, n)
-
-    return [tuple(np.clip(rgb * f, 0, 1)) for f in factors]
-
-
-def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.ndarray:
-    """
-    Resample a 1D signal defined over normalized time [0,1] onto a common grid.
-    """
-    if len(signal) == 1:
-        return np.full_like(common_time, signal[0])
-
-    original_time = np.linspace(0.0, 1.0, len(signal))
-    return np.interp(common_time, original_time, signal)
+from fw.policies.multi_ppo_agent import MultiPPOAgent
+from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
 
 
 class AgentManager:
-    """AgentManager class for managing agents and environments during training.
+    """
+    AgentManager class for managing agents and environments during training.
 
     This class includes methods for training, saving/loading policies, and
     visualizing paths taken by the agent during evaluation.
     """
 
-    ENV_COLORMAPS = [
-        "#ff7f0e",  # orange
-        "#1f77b4",  # blue
-        "#2ca02c",  # green
-        "#d62728",  # red
-        "#9467bd",  # purple
-        "#8c564b",  # brown
-        "#17becf",  # cyan
-    ]
-
     def __init__(self, agent_type: str, hyperparameters: dict):
-        """Initialize the Agent.
+        """
+        Initialize the AgentManager.
 
         Args:
             agent_type (str): Type of agent to use (e.g., 'PPO').
             hyperparameters (dict): Hyperparameters for configuring the agent.
         """
+
         self._agent = None
         self._agent_type = agent_type
         self.prev_smoothing_setting = None
         self._hyperparameters = hyperparameters
-
-        self._fig = None
-        self._axes = None
-        self._overlay_active = False
-
-
-    def begin_overlay_plot(self):
-        """Create a persistent matplotlib figure for overlaying multiple environments."""
-        if self._fig is None:
-            self._fig, self._axes = plt.subplots(4, 1, figsize=(12, 16))
-            self._overlay_active = True
-
-    def end_overlay_plot(self):
-        """Finalize and close the persistent matplotlib figure."""
-        if self._fig is not None:
-            plt.tight_layout()
-            plt.show()
-            plt.close(self._fig)
-
-            self._fig = None
-            self._axes = None
-            self._overlay_active = False
-
 
     @property
     def agent_type(self) -> str:
@@ -119,8 +52,8 @@ class AgentManager:
         Returns:
             str: The agent type.
         """
-        return self._agent_type
 
+        return self._agent_type
 
     @property
     def agent(self) -> BaseAgent:
@@ -130,34 +63,105 @@ class AgentManager:
         Returns:
             BaseAgent: The agent.
         """
+
         return self._agent
 
+    def _build_single_agent(self, env):
+        """
+        Create a `SinglePPOAgent` from the given environment.
 
-    def set_environment(self, env: Env, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
-                        other_env_name: str = None) -> None:
+        If the environment exposes a `sub_environments` attribute, this method
+        ensures that exactly one sub-environment is used. Otherwise, the environment
+        itself is used directly.
+
+        Args:
+            env: Environment instance, optionally containing `sub_environments`.
+
+        Returns:
+            SinglePPOAgent: Initialized PPO agent for a single environment.
+
+        Raises:
+            RuntimeError: If more than one sub-environment is provided.
+        """
+
+        sub_envs = getattr(env, "sub_environments", None)
+
+        if sub_envs is None or len(sub_envs) < 1:
+            target_env = env
+        elif len(sub_envs) == 1:
+            target_env = next(iter(sub_envs.values()))
+        else:
+            raise RuntimeError("SinglePPOAgent requires exactly one sub-environment.")
+
+        return SinglePPOAgent(environment=target_env, **self._hyperparameters)
+
+    def _build_multi_agent(self, env):
+        """
+        Create a `MultiPPOAgent` composed of multiple `SinglePPOAgent` instances.
+
+        Each sub-environment in the provided `MultiSimEnv` is assigned its own
+        `SinglePPOAgent`. These agents are then combined into a `MultiPPOAgent`
+        for coordinated training.
+
+        Args:
+            env (MultiSimEnv): Multi-environment containing sub-environments.
+
+        Returns:
+            MultiPPOAgent: Initialized multi-agent PPO trainer.
+
+        Raises:
+            TypeError: If `env` is not an instance of `MultiSimEnv`.
+            ValueError: If no sub-environments are defined.
+        """
+
+        if not isinstance(env, MultiSimEnv):
+            raise TypeError("MultiPPOAgent requires a MultiSimEnv instance.")
+
+        if not env.sub_environments:
+            raise ValueError("MultiSimEnv must contain at least one sub-environment.")
+
+        agents = [
+            SinglePPOAgent(environment=sub_env, **self._hyperparameters)
+            for sub_env in env.sub_environments.values()
+        ]
+
+        return MultiPPOAgent(environment=env, agents=agents, **self._hyperparameters)
+
+    def set_environment(
+        self,
+        env: BaseEnv,
+        policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
+        other_env_name: str = None,
+    ) -> None:
         """
         Assign an environment to the agent and configure the policy strategy.
 
         Args:
-            env (Env): The environment to set.
-            policy_strategy (PolicyStrategy, optional): Strategy for handling policy (reset, reuse current, or reuse other). Default is PolicyStrategy.RESET_POLICY.
-            other_env_name (str, optional): Name of the environment whose policy should be reused (if applicable).
+            env (BaseEnv): The environment to set.
+            policy_strategy (PolicyStrategy, optional): Strategy for handling
+                policy (reset, reuse current, or reuse other).
+                Default is PolicyStrategy.RESET_POLICY.
+            other_env_name (str, optional): Name of the environment whose policy
+                should be reused (if applicable).
 
         Raises:
             RuntimeError: If an unknown policy type is specified.
         """
+
         policy_file_name = None
 
         if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._agent:
-            policy_file_name = f'{self.get_env().type_name}_{self._agent_type}_policy'
+            policy_file_name = f"{self.get_env().type_name}_{self._agent_type}_policy"
             self._agent.save_policy(policy_file_name)
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
-            policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
+            policy_file_name = f"{other_env_name}_{self._agent_type}_policy"
 
         if PPO_POLICY_NAME == self._agent_type:
-            self._agent = PPOAgent(environment=env, **self._hyperparameters)
+            self._agent = self._build_single_agent(env)
         elif PPO2_POLICY_NAME == self._agent_type:
             self._agent = PPO2Agent(environment=env, **self._hyperparameters)
+        elif MULTI_PPO_POLICY_NAME == self._agent_type:
+            self._agent = self._build_multi_agent(env)
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 
@@ -177,171 +181,40 @@ class AgentManager:
                 print(f"[Fallback] The policy file {policy_file_name} does not exist.")
                 print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
 
-
     def train(self, stop_condition: StopCondition) -> None:
         """
         Train the agent in the assigned environment.
 
         Args:
-            stop_condition (StopCondition): The condition that determines when training should stop.
+            stop_condition (StopCondition): The condition that determines when
+                training should stop.
 
         Raises:
-            RuntimeError: If no agent is created.
+            RuntimeError: If no agent has been created yet.
         """
+
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
         # Start training
-        self._agent.learn(
-            stop_condition=stop_condition,
-        )
+        self._agent.learn(stop_condition=stop_condition)
 
         # Cleanup the environment
         if hasattr(self.get_env(), "fh_sim"):
             self.get_env().fh_sim.dispose()
 
-
-    @staticmethod
-    def compute_heading_error(env):
-        """
-        Compute heading error relative to desired path direction
-        """
-        # Get current checkpoint index and position
-        curr_checkpoint = env.checkpoints[env.checkpoint_index[0]]
-        next_checkpoint = env.checkpoints[min(env.checkpoint_index[0] + 1, len(env.checkpoints) - 1)]
-
-        # Calculate desired heading (angle of path segment)
-        desired_heading = np.arctan2(
-            next_checkpoint['pos'][1] - curr_checkpoint['pos'][1],
-            next_checkpoint['pos'][0] - curr_checkpoint['pos'][0]
-        )
-
-        # Calculate heading error (difference between current and desired heading)
-        heading_error = (env.phys_sims[0].state.heading - desired_heading + np.pi) % (2 * np.pi) - np.pi
-        return heading_error
-
-
-    @staticmethod
-    def compute_metrics(cross_errors, rudder_angles, rudder_angle_changes, thrust_values, thrust_changes, heading_errors, velocities):
-        """
-        Compute Mean Track Error Integral (mTEI), Maximum Track Error (MTE),
-        and Mean Heading Error Integral (mHEI)
-
-        mTEI = (1/(N1-N0+1)) * sum(|e(k)|)
-        MTE = max{|e(N0)|, |e(N0+1)|, ..., |e(N1)|}
-        mHEI = (1/(N1-N0+1)) * sum(|e_psi(k)|)
-        """
-        all_mTEIs = []
-        all_MTEs = []
-        all_mRAs = []
-        all_MRAs = []
-        all_mRACs = []
-        all_mTs = []
-        all_MTs = []
-        all_mTCs = []
-        all_mHEs = []
-        all_mus = []
-        all_Mus = []
-
-        for ct_errors, rudder_angle, rudder_angle_change, thrust_value, thrust_change, heading_errors, velocity in zip(
-            cross_errors,
-            rudder_angles,
-            rudder_angle_changes,
-            thrust_values,
-            thrust_changes,
-            heading_errors,
-            velocities,
-        ):
-            # Calculate mTEI
-            n = len(ct_errors)
-            mTEI = np.sum(np.abs(ct_errors)) / n
-            all_mTEIs.append(mTEI)
-
-            # Calculate MTE
-            MTE = np.max(np.abs(ct_errors))
-            all_MTEs.append(MTE)
-
-            # Calculate mRA
-            mRA = np.sum(np.abs(rudder_angle)) / n
-            all_mRAs.append(mRA)
-
-            # Calculate MRA
-            MRA = np.max(np.abs(rudder_angle))
-            all_MRAs.append(MRA)
-
-            # Calculate mRAC
-            mRAC = np.sum(np.abs(rudder_angle_change)) / n
-            all_mRACs.append(mRAC)
-
-            # Calculate thrust metrics
-            n_t = max(1, len(thrust_value))
-            mT = np.sum(np.abs(thrust_value)) / n_t
-            all_mTs.append(mT)
-
-            MT = np.max(np.abs(thrust_value)) if len(thrust_value) > 0 else 0.0
-            all_MTs.append(MT)
-
-            mTC = np.sum(np.abs(thrust_change)) / n_t
-            all_mTCs.append(mTC)
-
-            # Calculate mHE
-            mHE = np.sum(np.abs(heading_errors)) / n
-            all_mHEs.append(mHE)
-
-            # Calculate mu
-            mu = np.sum(np.abs(velocity)) / n
-            all_mus.append(mu)
-
-            # Calculate Mu
-            Mu = np.max(np.abs(velocity))
-            all_Mus.append(Mu)
-
-        return (
-            np.mean(all_mTEIs),
-            np.mean(all_MTEs),
-            np.mean(all_mRAs),
-            np.mean(all_MRAs),
-            np.mean(all_mRACs),
-            np.mean(all_mTs),
-            np.mean(all_MTs),
-            np.mean(all_mTCs),
-            np.mean(all_mHEs),
-            np.mean(all_mus),
-            np.mean(all_Mus),
-        )
-
-
-    # Plot paths in the first subplot
-    # Create hashed pattern for the area between obstacles and Western Scheldt
-    @staticmethod
-    def create_hashed_area(obstacles, overall):
-        """Create hashed area.
-
-        Args:
-            obstacles: Description.
-            overall: Description.
-        """
-        obstacle_poly = Polygon(obstacles)
-        overall_poly = Polygon(overall)
-        difference = overall_poly.difference(obstacle_poly)
-
-        if isinstance(difference, MultiPolygon):
-            coords = []
-            for poly in difference.geoms:
-                coords.append(np.array(poly.exterior.coords))
-        else:
-            coords = [np.array(difference.exterior.coords)]
-
-        return coords
-
-
     @contextmanager
     def smoothing(self, env):
-        """Smoothing.
+        """
+        Context manager that temporarily disables environment smoothing.
 
         Args:
-            env: Description.
+            env: Environment that may expose an `enable_smoothing` attribute.
+
+        Yields:
+            None.
         """
+
         if hasattr(env, "enable_smoothing"):
             try:
                 self.prev_smoothing_setting = env.enable_smoothing
@@ -350,6 +223,18 @@ class AgentManager:
             finally:
                 env.enable_smoothing = self.prev_smoothing_setting
                 self.prev_smoothing_setting = None
+        else:
+            yield
+
+    @staticmethod
+    def _get_ship_env(env, ship_id: str):
+        """
+        Return the sub-environment for a ship, or the env itself for single-ship.
+        """
+
+        if hasattr(env, "sub_environments") and env.sub_environments:
+            return env.sub_environments.get(ship_id)
+        return env  # single-ship: env IS the ship env
 
     def visualize_trained_agent(
             self,
@@ -361,7 +246,7 @@ class AgentManager:
         ) -> dict | None:
 
         """
-        Run and visualize a trained agent in the environment over multiple episodes.
+        Evaluates and visualizes the trained agent over multiple episodes.
 
         Args:
             num_episodes (int, optional): Number of episodes to visualize (default is 5).
@@ -371,410 +256,72 @@ class AgentManager:
             return_summary (bool, optional): Return evaluation summary metrics when available.
 
         Raises:
-            RuntimeError: If no agent is created.
+            RuntimeError: If no agent has been created or if the collector
+                returns zero steps.
         """
+
         # Load checkpoint
         # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
 
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
-        print(f"\nRunning {num_episodes} episodes...")
-
         self.agent.set_policy_eval()
         env = self.get_env()
-        
-        # T-011 / Visualisation logic: prepare Fossen->AirSim coord transform if bridge active
-        coord_transform = None
-        if airsim_bridge and airsim_bridge.is_connected:
-            from airsim.communication.coord_transform import CoordTransform
-            coord_transform = CoordTransform()
 
         with self.smoothing(env):
-            if hasattr(env, "ship_pos"):
-                evaluation_summary = None
-                # Store results for each episode
-                all_paths = []
-                all_heading_errors = []
-                total_rewards = []
-                all_cross_errors = []  # Store cross-track errors for each episode
-                all_rudder_angles = []
-                all_rudder_angle_changes = []
-                all_thrust_values = []
-                all_thrust_changes = []
-                all_velocities = []
-                all_rudder_actions = []
-                all_ukc_measurements = []
-                start_pos = None
+            raw_env = self.get_env()
+            if hasattr(raw_env, "envs"):    # VecEnv wrapping
+                raw_env = raw_env.envs[0]
+            elif hasattr(raw_env, "env"):   # gym Wrapper
+                raw_env = raw_env.env
 
-                # AirSimEnv is single-ship (flat scalar/array attributes).
-                # PySimEnv/FhSimEnv is multi-ship (list-of-arrays).
-                # Normalise access once so the episode loop works for both.
-                _ms = hasattr(env, 'phys_sims')            # True = multi-ship env
-                _s = (lambda a: a[0]) if _ms else (lambda a: a)              # index first ship
-                _steer = (lambda pa: pa[0][0]) if _ms else (lambda pa: float(pa[0]))  # rudder
-                _thrust = (lambda pa: pa[0][1]) if _ms else (lambda pa: float(pa[1]))  # thrust
+            is_lunar_lander = isinstance(raw_env, LunarLander)
 
-                for episode in range(num_episodes):
-                    state, _ = env.reset()
-                    episode_reward = 0
-                    done = False
-                    steps = 0
+            collector = EpisodeCollector(self._agent, raw_env)
+            run_data = collector.collect(num_episodes=num_episodes, live_animation=live_animation if not is_lunar_lander else True)
 
-                    start_pos = np.copy(_s(env.ship_pos))
-
-                    # Store heading errors for this episode
-                    cross_errors = []
-                    heading_errors = []
-                    rudder_actions = []
-                    velocities = []
-                    previous_rudder_action = 0.0
-                    previous_thrust_action = 0.0
-                    rudder_changes = []
-                    thrust_values = []
-                    thrust_changes = []
-                    ukc_measurements = []
-                    path_positions = [np.copy(_s(env.ship_pos))]  # Store initial position
-                    cross_errors.append(_s(env.cross_error))  # Store initial cross-track error
-                    velocities.append(_s(env.velocities))  # Store initial cross-track error
-
-                    # Calculate initial heading error relative to desired path
-                    initial_heading_error = self.compute_heading_error(env)
-                    heading_errors.append(initial_heading_error)
-
-                    while not done:
-                        # Select action
-                        action, _, _ = self._agent.predict(state=state, deterministic=True)
-
-                        # Take step in environment
-                        state, reward, terminated, truncated, _ = env.step(action)
-                        done = terminated or truncated
-
-                        if not done:
-                            # Store current position and errors
-                            path_positions.append(np.copy(_s(env.ship_pos)))
-                            if _s(env.checkpoint_index) >= 2:
-                                cross_errors.append(_s(env.cross_error))
-                            heading_errors.append(_s(env.heading_error))
-                            velocities.append(_s(env.velocities))
-                            rudder_actions.append(_steer(env.performed_action))
-                            rudder_changes.append(abs(_steer(env.performed_action) - previous_rudder_action))
-                            thrust_values.append(_thrust(env.performed_action))
-                            thrust_changes.append(abs(_thrust(env.performed_action) - previous_thrust_action))
-                            previous_rudder_action = _steer(env.performed_action)
-                            previous_thrust_action = _thrust(env.performed_action)
-                            ukc_measurements.append(env.ukc[0] if _ms else 0.0)
-
-                            episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
-                            steps += 1
-
-                            # Uncomment for animated evaluation
-                            if live_animation:
-                                env.render()
-                            
-                            # Bridge position to UE5 if connected
-                            if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
-                                ax, ay, _ = coord_transform.fossen_to_airsim(
-                                    float(env.ship_pos[0][0]), 
-                                    float(env.ship_pos[0][1])
-                                )
-                                ayaw = coord_transform.fossen_heading_to_airsim_yaw(
-                                    float(env.phys_sims[0].state.heading)
-                                )
-                                airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
-                                
-                        else:
-                            print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
-                            break
-
-                    all_paths.append(np.array(path_positions))
-                    all_cross_errors.append(np.array(cross_errors))
-                    all_rudder_angles.append(np.array(rudder_actions))
-                    all_rudder_angle_changes.append(np.array(rudder_changes))
-                    all_thrust_values.append(np.array(thrust_values))
-                    all_thrust_changes.append(np.array(thrust_changes))
-                    all_heading_errors.append(np.array(heading_errors))
-                    all_velocities.append(np.array(velocities))
-                    all_rudder_actions.append(np.array(rudder_actions))
-                    all_ukc_measurements.append(np.array(ukc_measurements))
-                    total_rewards.append(episode_reward)
-
-                # Calculate mTEI, MTE, and mHEI
-                mTEI, MTE, mRA, MRA, mRAC, mT, MT, mTC, mHE, mu, Mu = self.compute_metrics(
-                    all_cross_errors,
-                    all_rudder_angles,
-                    all_rudder_angle_changes,
-                    all_thrust_values,
-                    all_thrust_changes,
-                    all_heading_errors,
-                    all_velocities,
+            if not is_lunar_lander:
+                # Diagnose empty collection early
+                total_steps = sum(
+                    sum(len(ep.path) for ep in episodes)
+                    for episodes in run_data.ships.values()
                 )
-
-                # Print summary statistics
-                avg_reward = np.mean(total_rewards)
-                print(f"\nEvaluation completed!")
-                print(f"Average reward: {avg_reward:.2f}")
-                print(f"Best episode reward: {max(total_rewards):.2f}")
-                print(f"Worst episode reward: {min(total_rewards):.2f}")
-                print(f"Mean Surge Velocity (mu): {mu:.2f}")
-                print(f"Maximum Surge Velocity (Mu): {Mu:.2f}")
-                print(f"Mean Track Error Integral (mTEI): {mTEI:.2f}")
-                print(f"Maximum Track Error (MTE): {MTE:.2f}")
-                print(f"Mean Rudder Angle (mRA): {mRA:.3f}")
-                print(f"Maximum Rudder Angle (MRA): {MRA:.3f}")
-                print(f"Mean Rudder Angle Change (mRAC): {mRAC:.4f}")
-                print(f"Mean Thrust (mT): {mT:.3f}")
-                print(f"Maximum Thrust (MT): {MT:.3f}")
-                print(f"Mean Thrust Change (mTC): {mTC:.4f}")
-                print(f"Mean LOS Guidance Heading Error (mHE): {mHE:.3f} rad")
-
-                evaluation_summary = {
-                    "average_reward": float(avg_reward),
-                    "best_episode_reward": float(max(total_rewards)),
-                    "worst_episode_reward": float(min(total_rewards)),
-                    "mu": float(mu),
-                    "Mu": float(Mu),
-                    "mTEI": float(mTEI),
-                    "MTE": float(MTE),
-                    "mRA": float(mRA),
-                    "MRA": float(MRA),
-                    "mRAC": float(mRAC),
-                    "mT": float(mT),
-                    "MT": float(MT),
-                    "mTC": float(mTC),
-                    "mHE": float(mHE),
-                }
-
-                try:
-                    # AirSimEnv has no obstacles/overall for matplotlib — skip trajectory plot.
-                    if not _ms:
-                        return evaluation_summary if return_summary else None
-
-                    # Create a figure with two subplots
-                    if self._overlay_active and self._fig is not None:
-                        ax1, ax2, ax3, ax4 = self._axes
-                    else:
-                        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 16))
-
-                    # Add hatched pattern to first subplot
-                    difference_coords = self.create_hashed_area(env.obstacles, env.overall)
-                    for coords in difference_coords:
-                        ax1.add_patch(patches.Polygon(
-                            coords,
-                            facecolor='none',
-                            edgecolor='gray',
-                            hatch='///',
-                            alpha=0.3,
-                            label='Low water level area' if coords is difference_coords[0] else ""
-                        ))
-
-                    # Plot checkpoints
-                    checkpoint_positions = [checkpoint['pos'] for checkpoint in env.checkpoints]
-                    checkpoint_positions = np.array(checkpoint_positions)
-                    for checkpoint in env.checkpoints:
-                        circle = plt.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
-                                            radius=10,
-                                            color='gray',
-                                            alpha=0.5,
-                                            fill=True)
-                        ax1.add_patch(circle)
-
-                    # Draw the path between checkpoints
-                    ax1.plot(checkpoint_positions[:, 0], checkpoint_positions[:, 1],
-                             'g--', alpha=0.5, label='Ideal Path')
-
-                    # Plot obstacles
-                    polygon_patch = patches.Polygon(env.obstacles, closed=True,
-                                                    edgecolor='r', facecolor='none',
-                                                    lw=2, label='Waterway')
-                    ax1.add_patch(polygon_patch)
-
-                    western_scheldt = patches.Polygon(env.overall, closed=True,
-                                                      edgecolor='brown', facecolor='none',
-                                                      lw=2, label='Western Scheldt')
-                    ax1.add_patch(western_scheldt)
-
-                    # Select colormap for this environment
-                    env_cmap = self.ENV_COLORMAPS[env_color_index % len(self.ENV_COLORMAPS)]
-
-                    # Plot paths for each episode with different colors
-                    colors = shade_color(env_cmap, num_episodes)
-
-                    line_style = ["-", "--", "-.", ":"][env_color_index % 4]
-
-                    for i, path in enumerate(all_paths):
-                        ax1.plot(path[:, 0], path[:, 1], '-',
-                                 color=colors[i], alpha=0.4,
-                                 label=f'{env.type_name} – Ep {i + 1} (R={total_rewards[i]:.1f})',
-                                 linestyle=line_style)
-
-                    # Plot start and target positions
-                    ax1.scatter([start_pos[0]], [start_pos[1]], c='blue', s=100, label='Start')
-                    ax1.scatter([env.target_pos[0]], [env.target_pos[1]], c='red', s=100, label='Target')
-
-                    ax1.set_title('Trajectory with Heading Control')
-                    ax1.set_xlabel('X Position')
-                    ax1.set_ylabel('Y Position')
-                    ax1.legend(loc='upper left')
-                    ax1.grid(True)
-                    ax1.axis('equal')
-
-                    # Compute average errors and actions across episodes
-                    # First, find the maximum length among all episodes
-                    max_error_length = max(len(errors) for errors in all_cross_errors)
-                    max_ukc_length = max(len(actions) for actions in all_ukc_measurements)
-
-                    # Initialize arrays to store the sum and count for averaging
-                    error_sum = np.zeros(max_error_length)
-                    error_count = np.zeros(max_error_length)
-                    rudder_resampled = []
-                    ukc_sum = np.zeros(max_ukc_length)
-                    ukc_count = np.zeros(max_ukc_length)
-
-                    COMMON_TIME = np.linspace(0.0, 1.0, 200)
-
-                    # Sum up all values and count occurrences at each timestep
-                    for errors in all_cross_errors:
-                        for i, error in enumerate(errors):
-                            error_sum[i] += error
-                            error_count[i] += 1
-
-                    for actions in all_rudder_actions:
-                        rudder_resampled.append(
-                            resample_to_common_time(actions, COMMON_TIME)
-                        )
-
-                    for ukcs in all_ukc_measurements:
-                        for i, ukc in enumerate(ukcs):
-                            ukc_sum[i] += ukc
-                            ukc_count[i] += 1
-
-                    # Calculate averages (avoid division by zero)
-                    avg_errors = np.divide(error_sum, error_count, out=np.zeros_like(error_sum), where=error_count != 0)
-                    avg_ukcs = np.divide(ukc_sum, ukc_count, out=np.zeros_like(ukc_sum), where=ukc_count != 0)
-
-                    # Plot individual episode errors with lower alpha
-                    for i, errors in enumerate(all_cross_errors):
-                        timesteps = normalized_time_axis(len(errors))
-                        ax2.plot(timesteps, errors, '-',
-                                 color=colors[i], alpha=0.2,
-                                 label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
-
-                    # Plot average errors with higher alpha and thicker line
-                    timesteps = normalized_time_axis(len(avg_errors))
-                    ax2.plot(timesteps, avg_errors, '-',
-                             color='black', alpha=0.2,
-                             label='Average Cross-track Error', linestyle=line_style)
-
-                    ax2.set_title(f'Cross-Track Error Over Time (Individual and Average Policy)')
-                    ax2.set_xlabel('Episode progress [%]')
-                    ax2.set_ylabel('Cross-Track Error')
-                    ax2.legend(loc='upper right')
-                    ax2.grid(True)
-                    ax2.set_ylim(0, 45)
-                    ax2.set_autoscale_on(False)
-                    ax2.axhline(45, color='k', lw=0.8, ls='--', alpha=0.4)
-                    ax2.axhline(0, color='k', lw=0.8, ls='--', alpha=0.4)
-
-                    # Plot individual episode rudder actions with lower alpha
-                    for i, actions in enumerate(all_rudder_actions):
-                        resampled = resample_to_common_time(actions, COMMON_TIME)
-                        ax3.plot(COMMON_TIME, resampled, '-',
-                                 color=colors[i], alpha=0.2,
-                                 label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
-
-                    # Plot average rudder actions with higher alpha and thicker line
-                    # timesteps = np.arange(len(avg_rudder))
-                    # ax3.plot(timesteps, avg_rudder, '-', color='black', alpha=0.6, lw=2, label='Average Rudder')
-
-                    ax3.set_title(f'Rudder Actions Over Time (Individual and Average Policy)')
-                    ax3.set_xlabel('Episode progress [%]')
-                    ax3.set_ylabel('Rudder Action')
-                    ax3.legend(loc='upper right')
-                    ax3.grid(True)
-                    ax3.set_xlim(0.0, 1.0)
-
-                    # Plot individual episode ukcs with lower alpha
-                    for i, ukcs in enumerate(all_ukc_measurements):
-                        timesteps = normalized_time_axis(len(ukcs))
-                        ax4.plot(timesteps, ukcs, '-',
-                                 color=colors[i], alpha=0.2,
-                                 label=f'Episode {i + 1}' if i == 0 else "", linestyle=line_style)
-
-                    # Plot average ukcs with higher alpha and thicker line
-                    timesteps = normalized_time_axis(len(avg_ukcs))
-                    ax4.plot(timesteps, avg_ukcs, '-',
-                             color='black', alpha=0.2,
-                             label='Average UKC', linestyle=line_style)
-
-                    ax4.set_title(f'UKC Over Time (Individual and Average Policy)')
-                    ax4.set_xlabel('Episode progress [%]')
-                    ax4.set_ylabel('UKC')
-                    ax4.legend(loc='upper right')
-                    ax4.grid(True)
-                    ax4.set_ylim(0, 45)
-                    ax4.set_autoscale_on(False)
-                    ax4.axhline(45, color='k', lw=0.8, ls='--', alpha=0.4)
-                    ax4.axhline(0, color='k', lw=0.8, ls='--', alpha=0.4)
-
-                    # Adjust layout and save
-                    plt.tight_layout()
-
-                    trajectory_file_name = (
-                        f'{self.agent.model_dir}/trajectory.png'
-                        if self.agent.model_dir
-                        else 'trajectory.png'
+                if total_steps == 0:
+                    raise RuntimeError(
+                        f"EpisodeCollector collected 0 steps across all ships. "
+                        f"ship_ids={len(run_data.ships)}, env type={type(raw_env).__name__}. "
+                        f"Check that _get_ship_env returns the correct env object."
                     )
 
-                    plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
+                CollisionAnnotator().annotate(run_data)
+                metrics = MetricsComputer.compute(run_data)
 
-                    print(f"\nPath and error visualization saved as 'trajectory.png'")
-                finally:
-                    # Cleanup the environment
-                    if hasattr(env, "fh_sim"):
-                        env.fh_sim.dispose()
+                for sid, m in metrics.items():
+                    ship_env = self._get_ship_env(raw_env, sid)
+                    env_name = getattr(ship_env, "env_name", sid)
+                    print(f"\n{env_name} evaluation completed!")
+                    print(f"Average reward: {m.avg_reward:.2f}")
+                    print(f"Best episode reward: {m.best_reward:.2f}")
+                    print(f"Worst episode reward: {m.worst_reward:.2f}")
+                    print(f"Mean Surge Velocity (mu): {m.mu:.2f}")
+                    print(f"Maximum Surge Velocity (Mu): {m.Mu:.2f}")
+                    print(f"Mean Track Error Integral (mTEI): {m.mTEI:.2f}")
+                    print(f"Maximum Track Error (MTE): {m.MTE:.2f}")
+                    print(f"Mean Rudder Angle (mRA): {m.mRA:.3f}")
+                    print(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
+                    print(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
+                    print(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
 
-                if return_summary:
-                    return evaluation_summary
-            else:
-                # Reset the environment
-                obs, _ = env.reset()
+                save_dir = self.agent.model_dir or "."
+                MatplotlibRenderer.render(
+                    run_data.ships, metrics, raw_env,
+                    save_path=f"{save_dir}/trajectory.png",
+                )
 
-                # Render the environment before starting the loop
-                env.render()
-
-                # Run the agent in the environment
-                done = False
-                while not done:
-                    # The agent chooses an action based on the current observation
-                    prediction = self._agent.predict(state=obs, deterministic=True)
-                    action = prediction[0].squeeze()
-                    obs, _, terminated, truncated, _ = env.step(action)
-                    done = terminated or truncated
-
-                    # Render the environment each step to visualize the agent's action
-                    env.render()
-                    
-                    # Bridge position to UE5 if connected
-                    if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
-                        ax, ay, _ = coord_transform.fossen_to_airsim(
-                            float(env.ship_pos[0][0]), 
-                            float(env.ship_pos[0][1])
-                        )
-                        ayaw = coord_transform.fossen_heading_to_airsim_yaw(
-                            float(env.phys_sims[0].state.heading)
-                        )
-                        airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
-
-                if self._fig is not None and self._overlay_active:
-                    plt.close(self._fig)
-
-                    self._fig = None
-                    self._axes = None
-                    self._overlay_active = False
-
-                return None
-
+                # PlotlyRenderer.render(
+                #     run_data.ships, metrics,
+                # )
 
     def get_env(self):
         """
@@ -783,5 +330,5 @@ class AgentManager:
         Returns:
             The environment object.
         """
-        return self._agent.get_env()
 
+        return self._agent.get_env()

@@ -2,20 +2,24 @@ import time
 import logging
 import traceback
 
-from fw.agent_manager import PolicyStrategy
+from fw.config import PolicyStrategy
 from fw.base_scheduler import BaseScheduler
 
 
 class SimpleScheduler(BaseScheduler):
-    """Scheduler class to manage environment switching and coordinate multi-environment training."""
+    """
+    Scheduler class to manage environment switching and coordinate multi-environment training.
+    """
 
     def __init__(self, agent_mgr, envs):
-        """Initializes the Scheduler with an agent manager and a list of environments.
+        """
+        Initializes the Scheduler with an agent manager and a list of environments.
 
         Args:
             agent_mgr: The AgentManager instance responsible for training and policy management.
             envs (list): List of environments used for training.
         """
+
         super().__init__(agent_mgr, envs)
 
         self.current_env = None
@@ -37,7 +41,8 @@ class SimpleScheduler(BaseScheduler):
         policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
         other_policy_name: str = None
     ):
-        """Switches to a different environment.
+        """
+        Switches to a different environment.
 
         Args:
             env_index (int): Index of the environment to switch to.
@@ -47,6 +52,7 @@ class SimpleScheduler(BaseScheduler):
         Raises:
             RuntimeError: If no environments are available or if the index is invalid.
         """
+
         if not self.envs:
             raise RuntimeError("No environments available in Scheduler.")
 
@@ -57,11 +63,20 @@ class SimpleScheduler(BaseScheduler):
                 f"Invalid environment index '{env_index}'. Only {len(self.envs)} environment(s) available."
             )
 
-        if hasattr(self.current_env.gym_env, "phys_sims"):
-            if hasattr(self.current_env.gym_env.phys_sims[0], "_dynamics"):
-                print(f"Setting up a {self.current_env.gym_env.dynamics_model.name}-based simulator for {self.current_env.gym_env.num_ships} {self.current_env.gym_env.ship_model.name} ship(s).")
-            elif hasattr(self.current_env.gym_env.phys_sims[0], "_engine"):
-                print(f"Setting up an {self.current_env.gym_env.phys_sims[0]._engine} simulator for {self.current_env.gym_env.num_ships} {self.current_env.gym_env.ship_model.name} ship(s).")
+        gym_env = self.current_env.gym_env
+        sim = getattr(gym_env, "phys_sim", None)
+
+        if sim is not None:
+            sim_name = (
+                f"{gym_env.dynamics_model.name}-based simulator"
+                if hasattr(sim, "_dynamics")
+                else f"{getattr(sim, '_engine')} simulator"
+                if hasattr(sim, "_engine")
+                else None
+            )
+
+            if sim_name:
+                print(f"Setting up a {sim_name} for a {gym_env.ship_model.name} ship.")
 
         # Set the desired environment and prepare policy according to the strategy
         self.agent_mgr.set_environment(
@@ -74,7 +89,8 @@ class SimpleScheduler(BaseScheduler):
 
 
     def execute(self, configuration=None):
-        """Executes the training process across all environments.
+        """
+        Executes the training process across all environments.
 
         Args:
             configuration (dict, optional): A dictionary where each key is an environment name
@@ -83,6 +99,7 @@ class SimpleScheduler(BaseScheduler):
         Returns:
             dict: Metrics for each environment, including training status and duration.
         """
+
         metrics = {}
         policy_strategy = PolicyStrategy.REUSE_OTHER_POLICY
 
