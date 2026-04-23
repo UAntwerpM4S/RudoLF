@@ -1,8 +1,11 @@
 """Pure-logic tests for minimap placement and follow-view behaviour."""
 
+from types import SimpleNamespace
+
 import numpy as np
 
 from airsim.inference.minimap_fossen_airsim import (
+    _extract_primary_ship_pose,
     _estimate_view_half_span,
     _preferred_view_center,
     _resolve_minimap_pixels,
@@ -95,4 +98,17 @@ def test_should_shift_view_when_ship_nears_view_edge():
 
     assert _should_shift_view(np.array([600.0, 0.0]), center, 1000.0) is True
     assert _should_shift_view(np.array([400.0, 0.0]), center, 1000.0) is False
+
+
+def test_extract_primary_ship_pose_supports_single_ship_layout():
+    """Primary minimap pose extraction should support ``phys_sim`` env layout."""
+    env = SimpleNamespace(
+        ship_pos=np.array([10.0, 20.0], dtype=np.float64),
+        phys_sim=SimpleNamespace(state=SimpleNamespace(heading=0.75)),
+    )
+
+    pos, heading = _extract_primary_ship_pose(env)
+
+    np.testing.assert_allclose(pos, np.array([10.0, 20.0], dtype=np.float64))
+    assert heading == 0.75
 

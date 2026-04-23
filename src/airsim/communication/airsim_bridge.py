@@ -38,6 +38,7 @@ import time
 import logging
 import csv
 import os
+from datetime import datetime, timezone
 from collections import deque
 from typing import Any, Dict, Optional
 from fw.common.airsim.tools.angles import (
@@ -165,6 +166,7 @@ class AirSimBridge:
         self._last_health_check: float = time.monotonic()
         self._step_count: int = 0
         self._sensor_buffer: deque = deque(maxlen=1000)
+        self._simulation_speed: float = 1.0
         self.coord_transform = None
         self.render_z: float = 0.0
 
@@ -248,7 +250,12 @@ class AirSimBridge:
 
     @property
     def is_connected(self) -> bool:
-        """Whether the bridge currently has an active AirSim connection."""
+        """Whether the bridge currently has an active AirSim connection.
+
+        Returns:
+            bool: ``True`` when the bridge currently has a usable AirSim
+            connection.
+        """
         return self._connected
 
     @property
@@ -261,6 +268,40 @@ class AirSimBridge:
         if not self._ensure_connected():
             raise ConnectionError("Cannot access AirSim client: bridge disconnected.")
         return self._client
+
+    def get_client(self) -> Any:
+        """Return the active AirSim client via a method-style public API.
+
+        Returns:
+            Any: Active AirSim ``CarClient`` instance.
+
+        Raises:
+            ConnectionError: If the bridge is currently disconnected.
+        """
+        return self.client
+
+    @property
+    def airsim(self) -> Any:
+        """Expose the imported ``cosysairsim`` module without using private state.
+
+        Returns:
+            Any: Imported ``cosysairsim`` module used by the bridge.
+
+        Raises:
+            ConnectionError: If the AirSim module was never initialized.
+        """
+        if self._airsim is None:
+            raise ConnectionError("Cannot access AirSim module: bridge not initialized.")
+        return self._airsim
+
+    @property
+    def current_controls(self) -> Any:
+        """Return the latest control payload sent to AirSim, if any.
+
+        Returns:
+            Any: Most recently forwarded AirSim control object, or ``None``.
+        """
+        return self._controls
 
     # -- Health check --
 
@@ -332,51 +373,94 @@ class AirSimBridge:
             logger.warning("AirSim set_controls failed: %s", exc)
 
     def get_car_state(self) -> Any:
-        """Return the latest AirSim car state."""
+        """Return the latest AirSim car state.
+
+        Returns:
+            Any: Current ``CarState`` object returned by AirSim.
+
+        Raises:
+            ConnectionError: If the bridge is disconnected.
+        """
         if not self._ensure_connected():
             raise ConnectionError("Cannot read AirSim car state: bridge disconnected.")
         return self._client.getCarState()
 
     def get_vehicle_pose(self) -> Any:
-        """Return the latest AirSim vehicle pose."""
+        """Return the latest AirSim vehicle pose.
+
+        Returns:
+            Any: Current AirSim vehicle pose object.
+
+        Raises:
+            ConnectionError: If the bridge is disconnected.
+        """
         if not self._ensure_connected():
             raise ConnectionError("Cannot read AirSim vehicle pose: bridge disconnected.")
         return self._client.simGetVehiclePose()
 
     def set_vehicle_pose(self, pose: Any, ignore_collision: bool = True) -> None:
-        """Set the AirSim vehicle pose."""
+        """Set the AirSim vehicle pose.
+
+        Args:
+            pose: AirSim ``Pose`` object to apply.
+            ignore_collision: Whether to ignore collisions during teleport.
+        """
         if not self._ensure_connected():
             return
         self._client.simSetVehiclePose(pose, ignore_collision=ignore_collision)
 
     def get_collision_info(self) -> Any:
-        """Return collision information for the active vehicle."""
+        """Return collision information for the active vehicle.
+
+        Returns:
+            Any: AirSim collision-info payload.
+
+        Raises:
+            ConnectionError: If the bridge is disconnected.
+        """
         if not self._ensure_connected():
             raise ConnectionError("Cannot read AirSim collision info: bridge disconnected.")
         return self._client.simGetCollisionInfo()
 
     def set_pause(self, is_paused: bool) -> None:
-        """Pause or unpause the simulation."""
+        """Pause or unpause the simulation.
+
+        Args:
+            is_paused: Desired paused state.
+        """
         if not self._ensure_connected():
             return
         self._client.simPause(is_paused)
 
     def continue_for_frames(self, frames: int) -> None:
-        """Advance the simulation by a fixed number of frames."""
+        """Advance the simulation by a fixed number of frames.
+
+        Args:
+            frames: Number of frames to advance while paused.
+        """
         if not self._ensure_connected():
             return
         self._client.simContinueForFrames(frames)
 
     def is_paused(self) -> bool:
-        """Return True if the UE5 simulation is currently paused."""
+        """Return whether the UE5 simulation is currently paused.
+
+        Returns:
+            bool: ``True`` when the UE5 simulation is paused.
+        """
         if not self._ensure_connected():
             return False
         return bool(self._client.simIsPause())
 
     def set_simulation_speed(self, simulation_speed: float) -> None:
-        """Set the UE5 simulation speed multiplier."""
+        """Set the UE5 simulation speed multiplier.
+
+        Args:
+            simulation_speed: New UE5 simulation-speed multiplier.
+        """
         if not self._ensure_connected():
             return
+        self._simulation_speed = float(simulation_speed)
         self._client.simSetSimulationSpeed(simulation_speed)
 
     def flush_persistent_markers(self) -> None:
@@ -392,7 +476,14 @@ class AirSimBridge:
         thickness: float,
         is_persistent: bool = True,
     ) -> None:
-        """Draw a line strip in UE5."""
+        """Draw a line strip in UE5.
+
+        Args:
+            points: Sequence of AirSim ``Vector3r`` points.
+            color_rgba: RGBA color values in the range ``[0, 1]``.
+            thickness: Rendered line thickness.
+            is_persistent: Whether the line should persist in the scene.
+        """
         if not self._ensure_connected():
             return
         self._client.simPlotLineStrip(
@@ -409,7 +500,14 @@ class AirSimBridge:
         size: float,
         is_persistent: bool = True,
     ) -> None:
-        """Draw points in UE5."""
+        """Draw points in UE5.
+
+        Args:
+            points: Sequence of AirSim ``Vector3r`` points.
+            color_rgba: RGBA color values in the range ``[0, 1]``.
+            size: Rendered point size.
+            is_persistent: Whether the points should persist in the scene.
+        """
         if not self._ensure_connected():
             return
         self._client.simPlotPoints(
@@ -614,7 +712,22 @@ class AirSimBridge:
         preserve_current_z: bool = False,
         preserve_roll_pitch: bool = False,
     ) -> None:
-        """Set vehicle pose and kinematics in UE5 for smoother visual playback."""
+        """Set vehicle pose and kinematics in UE5 for smoother visual playback.
+
+        Args:
+            x: X coordinate in AirSim NED frame.
+            y: Y coordinate in AirSim NED frame.
+            z: Z coordinate in AirSim NED frame.
+            yaw: Yaw angle in radians in AirSim NED frame.
+            linear_velocity_x: X component of linear velocity.
+            linear_velocity_y: Y component of linear velocity.
+            linear_velocity_z: Z component of linear velocity.
+            angular_velocity_x: X component of angular velocity.
+            angular_velocity_y: Y component of angular velocity.
+            angular_velocity_z: Z component of angular velocity.
+            preserve_current_z: Whether to preserve the current UE5 heave.
+            preserve_roll_pitch: Whether to preserve current UE5 roll/pitch.
+        """
         if not self._ensure_connected():
             return
 
@@ -680,13 +793,18 @@ class AirSimBridge:
             pos = kinematics.position
             lin_vel = kinematics.linear_velocity
             ang_vel = kinematics.angular_velocity
+            lin_acc = getattr(kinematics, "linear_acceleration", None)
             
             # T-007: Quaternion to Yaw conversion & validation
             quat = kinematics.orientation
+            roll, pitch = _roll_pitch_from_quaternion(quat)
             yaw = _yaw_from_quaternion(quat)
             yaw_norm = _normalize_angle(yaw)
+            controls = self._controls
 
             state_dict = {
+                "step": self._step_count,
+                "wall_time_utc": datetime.now(timezone.utc).isoformat(),
                 "timestamp": s.timestamp,
                 "speed": s.speed,
                 "gear": s.gear,
@@ -696,10 +814,19 @@ class AirSimBridge:
                 "vel_x": lin_vel.x_val,
                 "vel_y": lin_vel.y_val,
                 "vel_z": lin_vel.z_val,
+                "accel_x": float(getattr(lin_acc, "x_val", 0.0)),
+                "accel_y": float(getattr(lin_acc, "y_val", 0.0)),
+                "accel_z": float(getattr(lin_acc, "z_val", 0.0)),
                 "ang_vel_x": ang_vel.x_val,
                 "ang_vel_y": ang_vel.y_val,
                 "ang_vel_z": ang_vel.z_val,
-                "yaw": yaw_norm
+                "roll": roll,
+                "pitch": pitch,
+                "yaw": yaw_norm,
+                "control_steering": float(getattr(controls, "steering", 0.0) if controls is not None else 0.0),
+                "control_throttle": float(getattr(controls, "throttle", 0.0) if controls is not None else 0.0),
+                "control_brake": float(getattr(controls, "brake", 0.0) if controls is not None else 0.0),
+                "simulation_speed": self._simulation_speed,
             }
 
             # T-008: Buffer sensor data
@@ -715,11 +842,18 @@ class AirSimBridge:
             return {}
 
     def _flush_csv(self) -> None:
-        """Helper to dump buffered sensor data to a CSV file."""
+        """Dump buffered sensor data to the configured CSV file.
+
+        The method is a no-op when CSV logging is disabled or the buffer is
+        empty.
+        """
         if not self.config.csv_log_path or not self._sensor_buffer:
             return
 
         try:
+            csv_dir = os.path.dirname(self.config.csv_log_path)
+            if csv_dir:
+                os.makedirs(csv_dir, exist_ok=True)
             file_exists = os.path.isfile(self.config.csv_log_path)
             with open(self.config.csv_log_path, mode='a', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=list(self._sensor_buffer[0].keys()))
@@ -730,64 +864,206 @@ class AirSimBridge:
         except Exception as exc:
             logger.warning("Failed to dump sensor buffer to CSV: %s", exc)
 
-    def load_world_save(
-        self,
-        save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
-        reload_timeout: float = 90.0,
-        poll_interval: float = 0.5,
-        reconnect_delay: float = 1.5,
-    ) -> None:
-        """Load a UE5 save slot and reconnect after the level reload completes."""
-        if not self._ensure_connected():
-            raise ConnectionError("Cannot load world save: bridge disconnected.")
+    def _snapshot_vehicle_position(self) -> Optional[tuple[float, float, float]]:
+        """Return the current vehicle position when available.
 
-        logger.info("Loading world save '%s'...", save_slot)
-        self._client.simSetSaveSlot(save_slot)
-        self._client.simRequestLoad()
+        Returns:
+            Optional[tuple[float, float, float]]: Current vehicle position in
+            AirSim coordinates, or ``None`` when it cannot be read.
+        """
+        if self._client is None:
+            return None
+        try:
+            pose = self._client.simGetVehiclePose()
+        except Exception:
+            return None
+        return (
+            float(pose.position.x_val),
+            float(pose.position.y_val),
+            float(pose.position.z_val),
+        )
 
-        start = time.monotonic()
-        went_down = False
-        while time.monotonic() - start < 10.0:
-            if not is_ue5_reachable(self.config.ip, self.config.port):
-                went_down = True
-                logger.info("UE5 RPC port went offline - level is reloading...")
-                break
-            time.sleep(poll_interval)
+    @staticmethod
+    def _position_delta_m(
+        before: Optional[tuple[float, float, float]],
+        after: Optional[tuple[float, float, float]],
+    ) -> Optional[float]:
+        """Return the Euclidean distance between two vehicle positions.
 
-        if not went_down:
-            logger.debug("UE5 RPC port never went down after save-load request.")
+        Args:
+            before: Position sampled before an operation.
+            after: Position sampled after an operation.
 
-        logger.info("Waiting for UE5 to finish reloading (timeout=%ds)...", int(reload_timeout))
-        while time.monotonic() - start < reload_timeout:
-            if is_ue5_reachable(self.config.ip, self.config.port):
-                break
-            time.sleep(poll_interval)
-        else:
-            raise TimeoutError(
-                f"UE5 did not finish reloading within {reload_timeout:.0f} s."
-            )
+        Returns:
+            Optional[float]: Distance in meters, or ``None`` when either
+            position is unavailable.
+        """
+        if before is None or after is None:
+            return None
+        dx = float(after[0] - before[0])
+        dy = float(after[1] - before[1])
+        dz = float(after[2] - before[2])
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
 
+    def _reconnect_after_world_reload(self, reconnect_delay: float) -> None:
+        """Reconnect the AirSim client after a world reload or reload attempt.
+
+        Args:
+            reconnect_delay: Delay in seconds before attempting reconnection.
+
+        Raises:
+            ConnectionError: If reconnection fails.
+        """
         time.sleep(reconnect_delay)
         self._connected = False
         self._client = None
         self._controls = None
+        self._simulation_speed = 1.0
         if self._airsim is None:
             raise ConnectionError("Cannot reconnect: cosysairsim module not available.")
         self._connect_with_retry(self._airsim)
         if not self._connected:
             raise ConnectionError("AirSimBridge failed to reconnect after level reload.")
 
-    def prepare_fossen_visualisation(
+    def _fallback_reset_after_unconfirmed_reload(self, settle_s: float = 1.0) -> None:
+        """Reset the active session when a save-slot reload could not be confirmed.
+
+        Args:
+            settle_s: Seconds to wait after the fallback reset.
+
+        Raises:
+            ConnectionError: If fallback reset cannot be applied.
+        """
+        if not self._connected or self._client is None or self._airsim is None:
+            raise ConnectionError(
+                "Cannot apply fallback reset: AirSim bridge is not connected."
+            )
+
+        logger.warning(
+            "Falling back to an in-session vehicle reset because save-slot reload "
+            "was not clearly observed."
+        )
+        try:
+            self._client.reset()
+            time.sleep(max(float(settle_s), 0.0))
+            self._client.enableApiControl(True)
+            self._controls = self._airsim.CarControls()
+            self._step_count = 0
+        except Exception as exc:
+            raise ConnectionError(
+                "Fallback reset failed after an unconfirmed save-slot reload."
+            ) from exc
+
+    def load_world_save(
+        self,
+        save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
+        reload_timeout: float = 90.0,
+        poll_interval: float = 0.5,
+        reconnect_delay: float = 1.5,
+        max_reload_attempts: int = 2,
+        min_observed_pose_shift_m: float = 1.0,
+        fallback_reset_settle_s: float = 1.0,
+    ) -> None:
+        """Load a UE5 save slot and reconnect after the level reload completes.
+
+        Some UE5/CosysAirSim sessions do not always expose a clean RPC drop when
+        ``simRequestLoad()`` is issued. In that case this method retries the
+        reload once and, if the reload still cannot be confirmed, falls back to
+        a local vehicle reset so the caller does not continue blindly in a stale
+        moved-away session.
+        """
+        if not self._ensure_connected():
+            raise ConnectionError("Cannot load world save: bridge disconnected.")
+
+        attempts = max(1, int(max_reload_attempts))
+        for attempt_index in range(attempts):
+            logger.info(
+                "Loading world save '%s' (attempt %d/%d)...",
+                save_slot,
+                attempt_index + 1,
+                attempts,
+            )
+            position_before_reload = self._snapshot_vehicle_position()
+            self._client.simSetSaveSlot(save_slot)
+            self._client.simRequestLoad()
+
+            start = time.monotonic()
+            went_down = False
+            while time.monotonic() - start < 10.0:
+                if not is_ue5_reachable(self.config.ip, self.config.port):
+                    went_down = True
+                    logger.info("UE5 RPC port went offline - level is reloading...")
+                    break
+                time.sleep(poll_interval)
+
+            if not went_down:
+                logger.warning(
+                    "UE5 RPC port never went down after save-load request on attempt %d/%d.",
+                    attempt_index + 1,
+                    attempts,
+                )
+
+            logger.info(
+                "Waiting for UE5 to finish reloading (timeout=%ds)...",
+                int(reload_timeout),
+            )
+            while time.monotonic() - start < reload_timeout:
+                if is_ue5_reachable(self.config.ip, self.config.port):
+                    break
+                time.sleep(poll_interval)
+            else:
+                raise TimeoutError(
+                    f"UE5 did not finish reloading within {reload_timeout:.0f} s."
+                )
+
+            self._reconnect_after_world_reload(reconnect_delay)
+            position_after_reload = self._snapshot_vehicle_position()
+            observed_shift_m = self._position_delta_m(
+                position_before_reload,
+                position_after_reload,
+            )
+
+            if went_down or observed_shift_m is None:
+                return
+            if observed_shift_m >= float(min_observed_pose_shift_m):
+                logger.info(
+                    "Observed %.2f m pose shift after save-load request; accepting reload.",
+                    observed_shift_m,
+                )
+                return
+
+            logger.warning(
+                "Save-load attempt %d/%d did not clearly reload the session "
+                "(RPC stayed up, pose shift %.2f m).",
+                attempt_index + 1,
+                attempts,
+                observed_shift_m,
+            )
+
+        self._fallback_reset_after_unconfirmed_reload(
+            settle_s=fallback_reset_settle_s
+        )
+
+    def prepare_model_visualisation(
         self,
         save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
         simulation_speed: float = DEFAULT_AIRSIM_SIMULATION_SPEED,
         draw_reference: bool = True,
     ):
-        """Prepare UE5 for framework-driven Fossen visualisation."""
+        """Prepare UE5 for framework-model visualisation.
+
+        Args:
+            save_slot: UE5 save slot to load before playback.
+            simulation_speed: Simulation-speed multiplier to apply.
+            draw_reference: Whether to draw the calibration reference overlay.
+
+        Returns:
+            Any: Loaded coordinate-transform object used for replay.
+        """
         from fw.common.airsim.tools.calibrate_coords import load_saved_calibration_reference
 
         self.load_world_save(save_slot=save_slot)
-        self._client.simSetSimulationSpeed(simulation_speed)
+        self.set_simulation_speed(simulation_speed)
         spawn_pose = self._client.simGetVehiclePose()
         self.render_z = float(spawn_pose.position.z_val)
         self.coord_transform, _ = load_saved_calibration_reference(
@@ -797,7 +1073,7 @@ class AirSimBridge:
 
         # Park vehicle immediately after world load so its physics engine does
         # not drift around (and disturb the water surface) during the window
-        # between the save-slot reload and the first Fossen pose update.
+        # between the save-slot reload and the first framework pose update.
         try:
             _park = self._airsim.CarControls()
             _park.throttle = 0.0

@@ -1,9 +1,47 @@
+from enum import Enum, auto
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from airsim.config.airsim_config import get_airsim_config  # re-export
 
+
+class VisualizationMode(Enum):
+    """
+    Visualization modes for rendering simulation results.
+
+    Attributes:
+        SIMPLE: Vessel trajectory only.
+        COMPLEX: Trajectory with diagnostics (cross-track error, rudder input,
+            UKC, and performance metrics).
+    """
+
+    SIMPLE = auto()
+    COMPLEX = auto()
+
+
+class PolicyStrategy(Enum):
+    """
+    Defines strategies for handling policies during environment switching.
+
+    Attributes:
+        RESET_POLICY: Start with a fresh policy.
+        REUSE_CURRENT_POLICY: Continue training with the current policy.
+        REUSE_OTHER_POLICY: Load and use a policy trained on another environment.
+    """
+
+    RESET_POLICY = auto()
+    REUSE_CURRENT_POLICY = auto()
+    REUSE_OTHER_POLICY = auto()
+
+
 PPO_POLICY_NAME = "PPO"
 PPO2_POLICY_NAME = "PPO2"
+MULTI_PPO_POLICY_NAME = "MPPO"
+
+AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE = "{session_type}_session.csv"
+AIRSIM_BRIDGE_LOG_FILENAME = "airsim_telemetry.csv"
+AIRSIM_METADATA_FILENAME = "metadata.json"
+AIRSIM_INFERENCE_TRAJECTORY_PLOT_FILENAME = "inference_trajectory.png"
+AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME = "trajectory_2d_vs_3d.png"
 
 
 """
@@ -52,7 +90,24 @@ DEFAULT_HYPERPARAMETERS = {
         'log_dir': "logs",
         'tensorboard_log': "logs/tensorboard",
         'verbose': True
-    }
+    },
+    MULTI_PPO_POLICY_NAME: {
+        'learning_rate': 1e-4,
+        'gamma': 0.95,
+        'gae_lambda': 0.95,
+        'entropy_coef': 0.01,
+        'value_loss_coef': 0.5,
+        'max_grad_norm': 0.5,
+        'clip_range': 0.05,
+        'eval_frequency': 100,
+        'num_envs': 1,
+        'num_epochs': 10,
+        'normalize': False,
+        'max_nbr_iterations': 200000,
+        'batch_size': 64,
+        'device': "cpu",
+        'model_dir': "models"
+    },
 }
 
 CONFIG_PARAMETERS = {
@@ -65,6 +120,7 @@ CONFIG_PARAMETERS = {
     'current': False,
     'numerical_damping': False,
     'visualize_best_trained': False,
+    'viz_mode': VisualizationMode.COMPLEX,  # Either "simple" or "complex"
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,

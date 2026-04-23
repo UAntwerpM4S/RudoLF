@@ -13,10 +13,19 @@ import logging
 import multiprocessing
 
 if __name__ == "__main__":
+    import os
+
+    verbose = str(os.environ.get("FW_AIRSIM_VERBOSE", "0")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.INFO if verbose else logging.WARNING,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+    logging.getLogger("sim").setLevel(logging.INFO if verbose else logging.ERROR)
     multiprocessing.set_start_method("spawn", force=True)
 
     from fw.trainer import Trainer
@@ -32,7 +41,9 @@ if __name__ == "__main__":
 
     # training_mode=True  → disables UE5 rendering + fast frame-stepping (optimal for training)
     # training_mode=False → full UE5 rendering + real-time stepping (required for visualize)
-    env_config = {"training_mode": ACTION == "train"}
+    env_config = {
+        "training_mode": ACTION == "train",
+    }
 
     # Register the AirSim environment (creates AirSimEnv, connects to UE5)
     env = get_environment(airsim_env_name, configuration=env_config)
