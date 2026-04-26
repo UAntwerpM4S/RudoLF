@@ -79,6 +79,11 @@ class ShipEpisodeData:
     collision_type: str | None = None
     collision_side: str | None = None
     colreg_violations: int = 0
+    # Scenario classification diagnostics: one record per encounter captured
+    # at encounter entry. Each record is {"gt": str, "pred": str} using the
+    # 5-way extended label space (path-following / head-on / overtaking /
+    # crossing-right / crossing-left). Empty list when no encounters occurred.
+    scenario_encounters: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.ship_id:

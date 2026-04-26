@@ -21,6 +21,7 @@ class ScenarioBuilder:
 
     def __init__(self, env) -> None:
         self.step_counter: int = 0
+        self.n_recovery_steps: int = 500
         self.env = env
         self.chosen_scenario: Optional[str] = None
 
@@ -28,32 +29,62 @@ class ScenarioBuilder:
     # Lifecycle hooks (called by PySimColavBaseEnv)
     # ------------------------------------------------------------------
     def on_reset(self) -> None:
-        """Called at episode reset. Builds the full episode scenario."""
+        """Called at episode reset.
+
+        Resets per-episode builder state regardless of mode (so the
+        recovery counter doesn't leak across episodes after early
+        terminations such as collisions). At episode level, also builds
+        the full episode scenario; at step level, entities are spawned
+        later by ``on_step()``.
+        """
         env = self.env
+
+        # Reset per-episode state. Without this the step_counter retains
+        # whatever value it had when the previous episode terminated —
+        # if it was already at n_recovery_steps, the very first step of
+        # the new episode is eligible for an encounter, which collides
+        # with the start-of-path skip the user expects.
+        self.step_counter = 0
+        self.chosen_scenario = None
+
+        # Step-level mode: encounters are spawned by on_step(). We've
+        # already reset the counter above, so just clear entities and
+        # exit; do not run the episode-level builder.
+        if getattr(env, "scenario_obstacle_level", None) == "step":
+            env.collision_entities = []
+            env._sync_collision_entity_views()
+            return
+
         if not getattr(env, "enable_obstacles", False):
             env.collision_entities = []
             env._sync_collision_entity_views()
             self.chosen_scenario = "path-following"
-            self._push_episode_scenario_to_classifier("path-following")
+            self._push_scenario_to_classifier("path-following")
             return
         chosen_scenario = self.sample_collision_entity_scenario()
         self.chosen_scenario = chosen_scenario
         env.collision_entities = self.compute_collision_entity_positions(chosen_scenario, env.obstacle_count) or []
+        # Tag every spawned entity with its ground-truth scenario (used by
+        # the classifier's ground_truth_label property and by metrics).
+        for entity in env.collision_entities:
+            if getattr(entity, "spawn_scenario_label", None) is None:
+                entity.spawn_scenario_label = chosen_scenario
         env._sync_collision_entity_views()
         # Lock the classifier to the builder's choice so misclassification
         # (e.g. a head-on being geometrically labelled as crossing-right)
         # cannot poison reward shaping during training.
-        self._push_episode_scenario_to_classifier(chosen_scenario)
+        self._push_scenario_to_classifier(chosen_scenario)
 
-    def _push_episode_scenario_to_classifier(self, scenario_label: Optional[str]) -> None:
+    def _push_scenario_to_classifier(self, scenario_label: Optional[str]) -> None:
         """Propagate the builder's chosen scenario to the classifier.
 
-        Only applies when scenario_obstacle_level == "episode"; step-level
-        spawning keeps the classifier in geometric mode since multiple
-        distinct encounters may occur within a single episode.
+        Only applies when the env has ground_truth_classification=True.
+        When False, the classifier runs in pure geometric mode at both
+        episode and step levels (so its misclassification rate can be
+        measured against the builder's ground truth).
         """
         env = self.env
-        if getattr(env, "scenario_obstacle_level", None) != "episode":
+        if not getattr(env, "ground_truth_classification", True):
             return
         clf = getattr(env, "scenario_classifier", None)
         if clf is None:
@@ -74,7 +105,7 @@ class ScenarioBuilder:
             env._sync_collision_entity_views()
             return
 
-        if self.step_counter != 100:
+        if self.step_counter != self.n_recovery_steps:
             self.step_counter += 1
             return
         encounter_prob = 0.004
@@ -89,8 +120,15 @@ class ScenarioBuilder:
                     entities = self.compute_collision_entity_positions(
                         chosen_scenario, n=1, target_seg_idx=seg_idx,
                     )
+                    if entities:
+                        for entity in entities:
+                            if getattr(entity, "spawn_scenario_label", None) is None:
+                                entity.spawn_scenario_label = chosen_scenario
                     env.collision_entities = entities or []
                     env._sync_collision_entity_views()
+                    if entities:
+                        # Honor ground_truth_classification for step-level too.
+                        self._push_scenario_to_classifier(chosen_scenario)
 
         # Clean up TS that has left forget range
         if env.collision_entities and len(env.collision_entities) == 1:
@@ -192,18 +230,34 @@ class ScenarioBuilder:
         """Find the cached-segment index whose start lies just beyond
         ``encounter_range`` ahead of the OS along the path.
 
-        Walks forward from the OS's current checkpoint, accumulating
-        path length.  Returns the first segment index (into the cached
-        ``_seg_*`` arrays) where the accumulated distance exceeds
-        ``encounter_range``, or ``None`` if no such segment exists
-        (OS is too close to the end of the route).
+        Walks forward from the OS's current position (projected onto its
+        current segment), accumulating remaining path length.  Returns the
+        first segment index (into the cached ``_seg_*`` arrays) where the
+        accumulated distance exceeds ``encounter_range`` AND the segment
+        is one of the eligible dynamic segments, or ``None`` if no such
+        segment exists (OS is too close to the start/end of the route).
+
+        Note on the "remaining" accounting: the first iteration must use
+        the *remaining* distance on the OS's current segment, not the
+        full segment length. Without this correction, when the OS is
+        deep inside its current segment (which is the common case after
+        the recovery wait), the function over-counts by up to one full
+        ``CHECKPOINTS_DISTANCE`` and returns a segment that is well
+        inside ``encounter_range`` — leaving the agent no time to react.
         """
         env = self.env
         accumulated = 0.0
         encounter_range = float(env.encounter_range)
 
+        eligible = getattr(env, "_eligible_dynamic_seg_indices", None)
+        if eligible is None or len(eligible) == 0:
+            return None
+        eligible_set = set(int(i) for i in eligible.tolist())
+
         # Walk from the OS's current target checkpoint onward
         start_cp = max(1, env.checkpoint_index)
+        first = True
+        ship_pos = np.asarray(env.ship_pos, dtype=np.float32)
         for cp_idx in range(start_cp, len(env.checkpoints)):
             # Map checkpoint-pair index to cached segment index
             # _seg_cp_end_indices[seg_i] == cp_idx means segment seg_i
@@ -213,9 +267,29 @@ class ScenarioBuilder:
                 continue
             seg_i = int(matches[0])
             seg_len = float(env._seg_lengths[seg_i])
-            accumulated += seg_len
+
+            if first:
+                # Project the OS onto the current segment and use the
+                # remaining distance to its end checkpoint, not the
+                # full segment length.
+                pa = env._seg_starts[seg_i]
+                tangent = env._seg_tangents[seg_i]
+                travelled = float(np.dot(ship_pos - pa, tangent))
+                travelled = float(np.clip(travelled, 0.0, seg_len))
+                accumulated += seg_len - travelled
+                first = False
+            else:
+                accumulated += seg_len
+
             if accumulated >= encounter_range:
-                return seg_i
+                # Honor the start/end skip applied at episode level: if
+                # the segment that lands "just past encounter_range"
+                # falls in the excluded first-few or last-few region,
+                # skip this encounter entirely rather than spawning on
+                # an off-limits segment.
+                if seg_i in eligible_set:
+                    return seg_i
+                return None
 
         return None
 

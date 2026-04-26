@@ -65,6 +65,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         *args,
         num_policies: int,
         policy_labels: Optional[List[str]] = None,
+        steps_per_policy_update: int = 4096,
         **kwargs,
     ):
         """
@@ -76,6 +77,16 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 the length of the one-hot suffix appended by the environment.
             policy_labels (list[str], optional): Human-readable names for
                 each policy.  Defaults to ``["policy_0", ...]``.
+            steps_per_policy_update (int): Minimum number of segment steps a
+                slot must have accumulated (across one or more iterations)
+                before its PPO update fires. Iterations where a slot is
+                below threshold append the new segments to a per-slot
+                pending buffer and skip the optimizer step. When the
+                threshold is reached, the buffered segments are flushed
+                through one PPO update and the buffer is cleared.
+                Because a slot's policy/value networks do not change
+                between updates, accumulating across iterations does not
+                introduce off-policy bias for that slot.
             **kwargs: Keyword arguments forwarded to ``BasePPOAgent``.
 
         Raises:
@@ -93,7 +104,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         self.num_policies = num_policies
         self.policy_labels = policy_labels or [f"policy_{i}" for i in range(num_policies)]
-        self.pretrained_pid = None
+        self.frozen_pids: set = set()
 
         if len(self.policy_labels) != num_policies:
             raise ValueError(
@@ -138,6 +149,17 @@ class MultiPolicySingleAgent(BasePPOAgent):
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4
+
+        # Per-policy update gating: accumulate segments across iterations
+        # until the slot's pending step count crosses
+        # ``steps_per_policy_update``, then flush through one PPO update.
+        self.steps_per_policy_update = int(steps_per_policy_update)
+        self._pending_segments: Dict[int, List[dict]] = {
+            k: [] for k in range(num_policies)
+        }
+        self._pending_steps: Dict[int, int] = {
+            k: 0 for k in range(num_policies)
+        }
 
     # ------------------------------------------------------------------
     # One-hot extraction & validation
@@ -461,7 +483,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 mean entropy) across all minibatches/epochs.  All NaN if no
                 usable data.
         """
-        if policy_id == self.pretrained_pid:
+        if policy_id in self.frozen_pids:
             return float("nan"), float("nan"), float("nan"), float("nan")
 
         if not segments:
@@ -627,12 +649,33 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
             for pid in range(self.num_policies):
                 segs = accumulated_segments[pid]
-                loss, policy_loss, value_loss, entropy_bonus = self._train_policy(pid, segs)
+
+                # Push this iteration's segments into the per-slot pending
+                # buffer; the update only fires once the buffer crosses
+                # ``steps_per_policy_update``.
+                self._pending_segments[pid].extend(segs)
+                self._pending_steps[pid] += sum(len(s["rewards"]) for s in segs)
+
+                if self._pending_steps[pid] >= self.steps_per_policy_update:
+                    update_segs = self._pending_segments[pid]
+                    loss, policy_loss, value_loss, entropy_bonus = self._train_policy(
+                        pid, update_segs,
+                    )
+                    flushed_steps = self._pending_steps[pid]
+                    self._pending_segments[pid] = []
+                    self._pending_steps[pid] = 0
+                else:
+                    loss = policy_loss = value_loss = entropy_bonus = float("nan")
+                    flushed_steps = 0
+
                 iter_losses[pid] = loss
                 iter_policy_losses[pid] = policy_loss
                 iter_value_losses[pid] = value_loss
                 iter_entropy_bonuses[pid] = entropy_bonus
 
+                # Reward reflects only this iteration's freshly collected
+                # segments (not the pending buffer), so the per-iteration
+                # reward curve isn't smeared by stale data.
                 if segs:
                     all_seg_rewards = np.concatenate([s["rewards"] for s in segs])
                     iter_rewards[pid] = float(np.mean(all_seg_rewards))
@@ -647,11 +690,16 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     "entropy_bonus": entropy_bonus,
                     "reward": iter_rewards[pid],
                     "n_steps": sum(len(s["rewards"]) for s in segs),
+                    "pending_steps": self._pending_steps[pid],
+                    "flushed_steps": flushed_steps,
                 })
 
-                # Save best policy per scenario
+                # Save best policy per scenario (only on iterations where
+                # an update actually fired, so we don't snapshot a stale
+                # policy against a noisy single-iteration reward).
                 if (
-                    iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE
+                    flushed_steps > 0
+                    and iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE
                     and not np.isnan(iter_rewards[pid])
                     and iter_rewards[pid] > best_rewards[pid]
                 ):
@@ -673,8 +721,11 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     vl = iter_value_losses[pid]
                     eb = iter_entropy_bonuses[pid]
                     n = sum(len(s["rewards"]) for s in accumulated_segments[pid])
+                    pending = self._pending_steps[pid]
+                    upd = "" if np.isnan(pl) else " [upd]"
                     parts.append(
-                        f"{label}: r={r:.3f}, loss: p={pl:.3f}, v={vl:.3f}, e={eb:.3f}, steps={n}"
+                        f"{label}: r={r:.3f}, loss: p={pl:.3f}, v={vl:.3f}, e={eb:.3f}, "
+                        f"steps={n}, pending={pending}{upd}"
                     )
                 print(f"[Iter {iteration}] " + " | ".join(parts))
 
@@ -800,7 +851,12 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     f"Failed to load multi-policy archive: {e}"
                 ) from e
 
-    def load_individual_policy(self, policy_id: int, policy_file_name: str) -> None:
+    def load_individual_policy(
+        self,
+        policy_id: int,
+        policy_file_name: str,
+        frozen: bool = False,
+    ) -> None:
         """
         Load a single pre-trained policy (e.g. from a ``SinglePPOAgent``
         checkpoint) into one of the N policy slots.
@@ -812,6 +868,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
             policy_id (int): Which slot to load into (0..N-1).
             policy_file_name (str): Path to a ``SinglePPOAgent``-style
                 ``.zip`` policy file.
+            frozen (bool): If True, the slot is excluded from PPO updates
+                (kept fixed during training).
 
         Raises:
             IndexError: If ``policy_id`` is out of range.
@@ -828,6 +886,46 @@ class MultiPolicySingleAgent(BasePPOAgent):
         self.optimizers[policy_id] = optim.Adam(
             loaded.network.parameters(), lr=self.learning_rate,
         )
+
+        if frozen:
+            self.frozen_pids.add(policy_id)
+        else:
+            self.frozen_pids.discard(policy_id)
+
+    def load_pretrained_policies(
+        self,
+        directory: str,
+        specs: Dict[int, dict],
+    ) -> None:
+        """
+        Load multiple pre-trained policies from a single directory.
+
+        Args:
+            directory (str): Directory containing the pre-trained ``.zip``
+                policy files.
+            specs (dict[int, dict]): Mapping ``policy_id -> {"file": str,
+                "frozen": bool}``.  ``file`` is the file name (without
+                ``.zip``) inside ``directory``.  ``frozen`` defaults to
+                False.
+
+        Slots whose file is missing are left untouched and a warning is
+        printed.
+        """
+
+        for pid, spec in specs.items():
+            file_stem = spec["file"]
+            frozen = bool(spec.get("frozen", False))
+            full_path = os.path.join(directory, file_stem)
+            zip_path = full_path if full_path.endswith(".zip") else full_path + ".zip"
+
+            if not os.path.exists(zip_path):
+                print(f"[pretrained] No file at {zip_path}, slot {pid} left unchanged.")
+                continue
+
+            self.load_individual_policy(pid, full_path, frozen=frozen)
+            label = self.policy_labels[pid]
+            state = "frozen" if frozen else "trainable"
+            print(f"[pretrained] Loaded '{file_stem}' into slot {pid} ({label}) [{state}]")
 
     def _save_single_policy(self, policy_id: int, policy_file_name: str) -> None:
         """

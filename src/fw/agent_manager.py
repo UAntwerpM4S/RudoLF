@@ -164,14 +164,15 @@ class AgentManager:
             **self._hyperparameters,
         )
 
-        pretrained_path = os.path.join(agent.model_dir, "pretrained_pf")
-        if os.path.exists(pretrained_path + ".zip"):
-            pid = 0
-            agent.load_individual_policy(pid, pretrained_path)
-            agent.pretrained_pid = pid
-            print("Loaded pretrained policy into slot 0")
-        else:
-            print(f"No pre-trained policy found at {pretrained_path}, starting from scratch.")
+        # Directory holding the pre-trained per-scenario policies and the
+        # spec describing which slots to populate and whether to freeze them.
+        # File names are given without the ``.zip`` extension.
+        pretrained_dir = agent.model_dir
+        pretrained_specs = {
+            0: {"file": "pretrained_pf", "frozen": False},
+            3: {"file": "pretrained_cr", "frozen": False},
+        }
+        agent.load_pretrained_policies(pretrained_dir, pretrained_specs)
 
         return agent
 
@@ -365,7 +366,37 @@ class AgentManager:
                     print(f"Collision per side: {m.collision_side_count}")
                     print(f"COLREG violation count: {m.colreg_violation_count}")
 
+                    # Scenario classification diagnostics — per encounter
+                    # (one record captured at encounter entry).
+                    enc_rate = (
+                        m.encounter_misclassification_count / m.num_encounters * 100
+                        if m.num_encounters else 0.0
+                    )
+                    print(
+                        f"Scenario misclassification — "
+                        f"{m.encounter_misclassification_count}/{m.num_encounters} encounters "
+                        f"({enc_rate:.2f}%)"
+                    )
+                    if m.encounter_confusion:
+                        print("Encounter confusion (gt → pred: count):")
+                        for (gt, pred), cnt in sorted(m.encounter_confusion.items()):
+                            tag = "" if gt == pred else "  [MISMATCH]"
+                            print(f"  {gt} → {pred}: {cnt}{tag}")
+
                 save_dir = self.agent.model_dir or "."
+
+                for sid in metrics.keys():
+                    ship_env = self._get_ship_env(raw_env, sid)
+                    env_name = getattr(ship_env, "env_name", sid)
+                    if hasattr(ship_env, "plot_min_distance_PDF"):
+                        ship_env.plot_min_distance_PDF(
+                            save_path=f"{save_dir}/{env_name}_min_distance_PDF.png",
+                        )
+                    if hasattr(ship_env, "plot_scenario_confusion_matrix"):
+                        ship_env.plot_scenario_confusion_matrix(
+                            save_path=f"{save_dir}/{env_name}_scenario_confusion_matrix.png",
+                        )
+
                 MatplotlibRenderer.render(
                     run_data.ships, metrics, raw_env,
                     save_path=f"{save_dir}/trajectory.png",

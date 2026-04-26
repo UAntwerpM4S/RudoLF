@@ -7,7 +7,7 @@ import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import gymnasium as gym
-from fw.collision_avoidance.scenario_classifier import NUM_SCENARIOS
+from fw.collision_avoidance.scenario_classifier import NUM_SCENARIOS, EXTENDED_SCENARIO_LABELS
 from scipy.stats import gaussian_kde
 
 import math
@@ -59,6 +59,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             obstacle_population: Optional[list] = None,
             obstacle_weights: Optional[list] = None,
             scenario_obstacle_level: Optional[str] = None,
+            ground_truth_classification: bool = True,
             **kwargs,
     ) -> None:
 
@@ -87,9 +88,9 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         ).astype(np.float32)
 
         # Scenario parameters
-        scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "episode"
+        scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.0, 0.0, 0.0, 1.0, 0.0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.0, 0.0, 0.0, 0.6, 0.4, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -114,6 +115,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             obstacle_population=obstacle_population,
             obstacle_weights=obstacle_weights,
             scenario_obstacle_level=scenario_obstacle_level,
+            ground_truth_classification=ground_truth_classification,
         )
 
         self.polar_scan_cached = None
@@ -122,10 +124,23 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.reward_weights = {
             "polar_distance": 0.7,
             "colreg_bearing": 5.0,
-            "crossing_right": 0.5,
-            "crossing_right_grav_side": 1.5,
-            "crossing_right_grav_proximity": 2.0,
-            "crossing_right_grav_proximity_scale": 100.0,
+            # Crossing-right shaping in the OS->TS bearing frame.
+            #   x   = bearing of TS as seen from OS (math convention, CCW+)
+            #   R   = A * tanh(k * (x - e1))
+            # Zero crossing (and max gradient) at x = e1, chosen as the
+            # "most positive" end of the encounter range so that the agent
+            # gets the strongest learning signal right at encounter entry.
+            # The wrap discontinuity at x = +/- pi is intentional: reaching
+            # +A via the wrap requires first traversing a long stretch of
+            # negative reward, so the agent cannot exploit it.
+            "crossing_right": 1.0,
+            "crossing_right_steepness": 1.0,
+            "crossing_right_zero": -0.34906585,  # -20deg
+            # Soft gate that fades the crossing-right shaping after TS leaves
+            # the forward sector. Multiplier is ~1 for |x| < pi/2 (TS in front
+            # = encounter active) and ~0 for |x| > pi/2 (TS abeam/astern =
+            # passed). Transition width is set by gate_steepness.
+            "crossing_right_gate_steepness": 4.0,
         }
 
     # -------------------------
@@ -248,9 +263,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         """Extend observation space with polar scan sectors + CRI."""
         base_space = super()._initialize_observation_space()
 
-        if not getattr(self, "use_polar_scan", False):
-            return base_space
-
         polar_low = np.zeros(self.polar_n_sectors, dtype=np.float32)
         polar_high = np.full(self.polar_n_sectors, self.polar_obs_max, dtype=np.float32)
 
@@ -273,7 +285,12 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         base_obs = super()._get_obs()
 
         if not getattr(self, "use_polar_scan", False):
-            return base_obs
+            zeros_polar = np.zeros(self.polar_n_sectors, dtype=np.float32)
+            zeros_cri = np.zeros(1, dtype=np.float32)
+            obs = np.hstack([base_obs, zeros_polar, zeros_cri]).astype(np.float32)
+            if getattr(self, "include_scenario_one_hot", False):
+                obs = np.hstack([obs, np.zeros(NUM_SCENARIOS, dtype=np.float32)]).astype(np.float32)
+            return obs
 
         scan = self.polar_scan_cached
         if scan is None:
@@ -281,7 +298,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             self.polar_scan_cached = scan
 
         if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
-            self.scenario_classifier.classify(
+            self.scenario_classifier.classify_path_projected(
                 self.ship_pos,
                 self.phys_sim.state.heading,
                 self.collision_entities,
@@ -383,56 +400,40 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
             elif scenario == "crossing-right":
                 ts_pos = ts.get_position()
+
+                # x = bearing of TS as seen from OS, in OS body frame
+                # (math convention, CCW positive). x in (-pi, pi]:
+                #   x =  0     -> TS dead ahead
+                #   x = +pi/2  -> TS on OS port
+                #   x = -pi/2  -> TS on OS starboard
+                #   x = +/-pi  -> TS astern
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
-                rel_bearing = (
-                                      math.atan2(dy, dx) - os_heading + math.pi
-                              ) % (2.0 * math.pi) - math.pi
+                x = (
+                    math.atan2(dy, dx) - os_heading + math.pi
+                ) % (2.0 * math.pi) - math.pi
 
-                os_u = float(self.phys_sim.state.u)
-                os_v = float(self.phys_sim.state.v)
-                cri = self._compute_cri(os_pos, os_heading, os_u, os_v, ts)
+                # R(x) = A * tanh(k * (x - e1)).
+                # Zero crossing (and max gradient) at x = e1, set to the
+                # "most positive" end of the encounter range so the unlearned
+                # agent enters at the steepest part of the curve. The wrap
+                # discontinuity at x = +/- pi is intentional: reaching +A
+                # via the wrap requires traversing a long stretch of negative
+                # reward first, so it cannot be exploited.
+                k = float(self.reward_weights["crossing_right_steepness"])
+                e1 = float(self.reward_weights["crossing_right_zero"])
+                k_gate = float(self.reward_weights["crossing_right_gate_steepness"])
 
-                polar_crossing_keep = 0.1 + 0.9 * cri
-                reward += (1.0 - polar_crossing_keep) * _step_polar
+                # Front/back-sector soft gate on |x|: ~1 when TS is in the
+                # forward sector (|x| < pi/2 = encounter active), ~0 once
+                # TS is abeam/astern (|x| > pi/2 = passed). Fades the
+                # shaping so path-following reward dominates after the pass.
+                #gate = 0.5 * (1.0 - math.tanh(k_gate * (abs(x) - 0.5 * math.pi)))
 
-                #if -math.pi / 2 <= rel_bearing <= math.pi / 2:
-                #    crossing_signal = math.sin(rel_bearing)
-                #elif rel_bearing < -math.pi / 2:
-                #    crossing_signal = (-0.005 * (math.degrees(rel_bearing) + 90) ** 2) + math.sin(math.radians(-90))
-                #else:
-                #    crossing_signal = (-0.005 * (math.degrees(rel_bearing) - 90) ** 2) + math.sin(math.radians(90))
-                #crossing_reward = crossing_signal * (1.0 - cri)
-                #_step_crossing = self.reward_weights["crossing_right"] * crossing_reward
-                #reward += _step_crossing
-
-                # Gravitation point
-                # Two shaping terms:
-                #   side      : -sin(bearing) -> peaks at bearing = -pi/2 (grav on starboard)
-                #   proximity : exp(-d/scale) -> peaks when OS is close to the grav point
-                # Together they incentivize "pass close to, and leave on the right"
-                # which is the COLREG-compliant pass-astern for crossing-right.
-                if self._crossing_right_grav_point is None:
-                    self._crossing_right_grav_point = ts.get_position().copy()
-                grav = self._crossing_right_grav_point
-                grav_dx = float(grav[0] - os_pos[0])
-                grav_dy = float(grav[1] - os_pos[1])
-                grav_dist = math.sqrt(grav_dx * grav_dx + grav_dy * grav_dy)
-                grav_bearing = (math.atan2(grav_dy, grav_dx) - os_heading + math.pi) % (2.0 * math.pi) - math.pi
-
-                side_signal = -math.sin(grav_bearing)
-                proximity_scale = self.reward_weights["crossing_right_grav_proximity_scale"]
-                proximity_signal = math.exp(-grav_dist / proximity_scale)
-
-                _step_grav_side = self.reward_weights["crossing_right_grav_side"] * side_signal
-                _step_grav_prox = self.reward_weights["crossing_right_grav_proximity"] * proximity_signal
-                _step_grav = _step_grav_side + _step_grav_prox
-                reward += _step_grav
-
-                #print(f"[step: {self.step_count} grav_bearing: {grav_bearing}] reward: {reward} = base_reward ({base_reward}) r_grav ({_step_grav}) - _step_polar ({_step_polar}) + cri ({cri}")
+                crossing_right_signal = self.reward_weights["crossing_right"] * math.tanh(k * (x - e1))
+                reward += crossing_right_signal
 
                 # COLREG violation tracking
-                ts_pos = ts.get_position()
                 side = ts.ts_side_from_os_perspective(os_pos, os_heading)
                 if ts.passed_by_os(os_pos, os_heading) and self.ts_passed != ts_idx:
                     self.ts_passed = ts_idx
@@ -448,6 +449,20 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                         "dist": dist,
                         "scenario": scenario,
                     })
+
+                    # Re-lock the scenario to "path-following" now that the
+                    # TS has been passed (|rel_bearing| > pi/2). This forces
+                    # the MultiPolicySingleAgent to switch to the
+                    # path-following policy for the recovery phase, while
+                    # the TS is still in forget range. The lock clears
+                    # automatically via scenario_classifier.reset() when the
+                    # TS leaves forget range (see scenario_builder.on_step).
+                    # We deliberately do NOT release to geometric mode here:
+                    # post-pass geometry can be classified as "overtaking"
+                    # (OS abaft TS beam) which would route to the wrong
+                    # policy.
+                    if self.ground_truth_classification:
+                        clf.set_episode_scenario("path-following")
         return reward, done
 
     # -----------------------
@@ -496,6 +511,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     def plot_min_distance_PDF(self, save_path: str = "min_distance_PDF.png") -> None:
         """Plot probability density of minimum center-to-center distance
         to collision entities across non-collision evaluation episodes."""
+        print("plot min dist PDF")
+
         if not self._current_episode_collided and self._current_episode_min_dist < float("inf"):
             self._episode_min_distances.append(self._current_episode_min_dist)
 
@@ -578,6 +595,75 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"Min-distance PDF saved as '{save_path}'")
+        plt.close(fig)
+
+    def plot_scenario_confusion_matrix(
+        self,
+        save_path: str = "scenario_confusion_matrix.png",
+    ) -> None:
+        """Plot a confusion matrix over encounters aggregated across episodes.
+
+        Rows = builder ground-truth scenario, columns = geometric classifier
+        prediction at encounter entry. One entry per encounter (multiple
+        encounters may occur per episode in step-level generation).
+        """
+        print("plot scenario confusion")
+        # Flush current episode's encounters if the run ended without another
+        # env_specific_reset() being called.
+        encounters = list(self._all_encounters)
+        if self._episode_encounters:
+            encounters.extend(self._episode_encounters)
+
+        if not encounters:
+            print("No encounters to plot scenario confusion matrix for.")
+            return
+
+        labels = list(EXTENDED_SCENARIO_LABELS)
+        label_to_idx = {lbl: i for i, lbl in enumerate(labels)}
+        n = len(labels)
+
+        matrix = np.zeros((n, n), dtype=np.int32)
+        for enc in encounters:
+            gt = enc.get("gt")
+            pred = enc.get("pred")
+            if gt not in label_to_idx or pred not in label_to_idx:
+                continue
+            matrix[label_to_idx[gt], label_to_idx[pred]] += 1
+
+        total = int(matrix.sum())
+        correct = int(np.trace(matrix))
+        accuracy = (correct / total * 100.0) if total else 0.0
+
+        fig, ax = plt.subplots(figsize=(8, 7))
+        im = ax.imshow(matrix, cmap="Blues", aspect="equal")
+
+        ax.set_xticks(np.arange(n))
+        ax.set_yticks(np.arange(n))
+        ax.set_xticklabels(labels, rotation=30, ha="right")
+        ax.set_yticklabels(labels)
+        ax.set_xlabel("Geometric prediction (at encounter entry)")
+        ax.set_ylabel("Ground truth (builder scenario)")
+        ax.set_title(
+            f"Scenario confusion matrix — {total} encounters, "
+            f"accuracy {accuracy:.1f}% ({correct}/{total})"
+        )
+
+        # Overlay counts. Use white text on dark cells for readability.
+        thresh = matrix.max() / 2.0 if matrix.max() > 0 else 0.5
+        for i in range(n):
+            for j in range(n):
+                val = int(matrix[i, j])
+                color = "white" if val > thresh else "black"
+                ax.text(
+                    j, i, str(val),
+                    ha="center", va="center",
+                    color=color, fontsize=10, fontweight="bold",
+                )
+
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Encounter count")
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"Scenario confusion matrix saved as '{save_path}'")
         plt.close(fig)
 
 

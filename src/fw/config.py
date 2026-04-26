@@ -129,6 +129,13 @@ DEFAULT_HYPERPARAMETERS = {
         'model_dir': "models",
         'fixed_horizon': False,
         'steps_per_update': 8192,
+        # Min segment-step count a slot must accumulate (across one or
+        # more iterations) before its PPO update fires. With
+        # steps_per_update=8192 spread across N=4 unevenly populated slots,
+        # individual slots can get as little as ~500 steps/iter; gating at
+        # 4096 means the busy slots update every iteration while the rare
+        # ones update every ~2-4 iterations on a healthier batch.
+        'steps_per_policy_update': 4096,
     },
 }
 
@@ -139,7 +146,7 @@ CONFIG_PARAMETERS = {
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["MultiPolicyColavEnv"],
-    'action': "visualize",  # Valid action values: "train", "visualize"
+    'action': "train",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
     'numerical_damping': False,
@@ -148,7 +155,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': True,
+    'live_animation': False,
     # AirSim settings are now in airsim.config.airsim_config
     # Use get_airsim_config() to access them.
 }

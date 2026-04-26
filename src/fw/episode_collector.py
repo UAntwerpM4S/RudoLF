@@ -300,6 +300,10 @@ class EpisodeCollector:
             acc["collision_type"] = ci.get("collision_type")
             acc["collision_side"] = ci.get("collision_side")
             acc["colreg_violations"] = int(ship_info.get("colreg_violations", 0) or 0)
+            clf_info = ship_info.get("classification", {}) or {}
+            encounters = clf_info.get("encounters", []) or []
+            # Copy each dict so downstream mutation can't affect env state.
+            acc["scenario_encounters"] = [dict(enc) for enc in encounters]
 
         print(f"Episode {episode + 1} finished after {steps} steps")
 
@@ -390,6 +394,7 @@ class EpisodeCollector:
             "collision_type": None,
             "collision_side": None,
             "colreg_violations": 0,
+            "scenario_encounters": [],
         }
 
     @staticmethod
@@ -422,4 +427,5 @@ class EpisodeCollector:
             collision_type=acc.get("collision_type"),
             collision_side=acc.get("collision_side"),
             colreg_violations=acc.get("colreg_violations", 0),
+            scenario_encounters=acc.get("scenario_encounters", []),
         )

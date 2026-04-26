@@ -59,6 +59,12 @@ class ShipMetrics:
     collision_type_count: dict = field(default_factory=dict)
     collision_side_count: dict = field(default_factory=dict)
     colreg_violation_count: int = 0
+    # Scenario classification diagnostics, aggregated per-encounter across
+    # all episodes (5-way extended label space). In step-level generation an
+    # episode may contain multiple encounters; each contributes one record.
+    num_encounters: int = 0
+    encounter_misclassification_count: int = 0
+    encounter_confusion: dict = field(default_factory=dict)   # {(gt, pred): count}
 
 
 class MetricsComputer:
@@ -178,5 +184,25 @@ class MetricsComputer:
             Counter(ep.collision_side for ep in episodes if ep.collision and ep.collision_side)
         )
         m.colreg_violation_count = sum(int(ep.colreg_violations) for ep in episodes)
+
+        # Classification diagnostics — one record per encounter.
+        confusion: dict[tuple[str, str], int] = {}
+        mismatches = 0
+        total = 0
+        for ep in episodes:
+            for enc in ep.scenario_encounters:
+                gt = enc.get("gt")
+                pred = enc.get("pred")
+                if gt is None or pred is None:
+                    continue
+                total += 1
+                key = (gt, pred)
+                confusion[key] = confusion.get(key, 0) + 1
+                if gt != pred:
+                    mismatches += 1
+
+        m.num_encounters = total
+        m.encounter_misclassification_count = mismatches
+        m.encounter_confusion = confusion
 
         return m

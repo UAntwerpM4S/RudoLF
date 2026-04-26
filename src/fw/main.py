@@ -122,10 +122,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
         ),
         multi_policy_colav_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
-            target_reward=0.75,
+            target_reward=5.0,
             patience=4,
-            max_time_steps=200
-
+            max_time_steps=750
         ),
     }
 
@@ -149,6 +148,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
         Returns:
             The agent type string (e.g. "PPO", "MPPO", or "MPSA").
         """
+
+
         from fw.environments.multi_sim_env import MultiSimEnv
         for env in envs:
             if getattr(env.gym_env, "include_scenario_one_hot", False):
@@ -193,10 +194,12 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 executed_any_step = True
             standard_envs = []
             if action == "train":
+
                 logging.getLogger("airsim").setLevel(logging.INFO)
             if _run_airsim_extension(action):
                 executed_any_step = True
             continue
+
 
         env = build_default_environment(env_name)
         standard_envs.append(env)
