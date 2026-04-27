@@ -90,7 +90,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.0, 0.0, 0.0, 0.0, 1.0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.0, 0.0, 0.0, 0.55, 0.45, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -142,6 +142,41 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             # passed). Transition width is set by gate_steepness.
             "crossing_right_gate_steepness": 4.0,
         }
+
+    # -------------------------
+    # Evaluation-mode overrides
+    # -------------------------
+    def set_evaluation_parameters(self) -> None:
+        """Flip on the eval-only realism overrides for trained-model evaluation.
+
+        Called by AgentManager.visualize_trained_agent before running episodes.
+        Overrides set here take effect on the next reset/spawn — they are read
+        by the scenario builder (lateral spawn) and the base env step loop
+        (OU wander, head-on dodge). Training runs leave these at their safe
+        defaults (set in PySimColavBaseEnv.__init__) and are unaffected.
+        """
+        self.eval = True
+
+        # Variable TS radii
+        self.enable_variable_ship_size = True
+        self.static_ship_radius_min = 20.0
+        self.static_ship_radius_max = 40.0
+
+        # Lateral lane spawn (parallel-to-path)
+        # Head-on: 30 m to OS-port +/- 10 m (a "left lane")
+        self.headon_lateral_mean = 30.0
+        self.headon_lateral_jitter = 10.0
+        # Overtaking: same lane as OS, +/- 10 m jitter only
+        self.overtaking_lateral_jitter = 10.0
+
+        # Ornstein-Uhlenbeck wander on entity.path_offset
+        self.enable_path_offset_ou = True
+        self.ou_theta = 0.1
+        self.ou_sigma = 1.0
+        self.ou_clip = 8.0
+
+        # Late dodge for head-on TS at encounter_range/2
+        self.enable_headon_dodge = True
 
     # -------------------------
     # Polar scan geometry

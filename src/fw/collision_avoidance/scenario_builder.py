@@ -489,7 +489,12 @@ class ScenarioBuilder:
         normal = env._seg_normals[seg_idx]
         seg_len = float(env._seg_lengths[seg_idx])
         base = pa + tangent * (t_spawn * seg_len)
-        spawn_pos = base + normal * 0.0
+        # Lateral jitter (eval-mode realism): no mean shift since overtaker shares OS lane.
+        # Sign convention: entity travels along path, so entity-starboard = -normal.
+        # Positive path_offset => entity's starboard => OS's starboard.
+        jitter = float(getattr(env, "overtaking_lateral_jitter", 0.0))
+        lat = float(env._rng.uniform(-jitter, jitter)) if jitter > 0.0 else 0.0
+        spawn_pos = base + (-normal) * lat
         ts_heading = float(math.atan2(tangent[1], tangent[0]))
 
         entity = CollisionEntity(
@@ -505,7 +510,8 @@ class ScenarioBuilder:
         entity.path_segment_index = int(seg_idx)
         entity.next_checkpoint_index = int(env._seg_cp_end_indices[seg_idx])
         entity.path_direction = 1
-        entity.path_offset = 0.0
+        entity.path_offset = lat
+        entity.path_offset_mean = lat
         entity.route_mode = "follow_checkpoints"
         entity.route_finished = False
 
@@ -546,10 +552,17 @@ class ScenarioBuilder:
         ts_speed = float(env._rng.uniform(env.headon_ts_v_min, env.headon_ts_v_max))
         ship_radius = float(env._rng.uniform(env.static_ship_radius_min, env.static_ship_radius_max))
         tangent = env._seg_tangents[seg_idx]
+        normal = env._seg_normals[seg_idx]
         reverse_tangent = -tangent
         pa = env._seg_starts[seg_idx]
         seg_len = float(env._seg_lengths[seg_idx])
-        spawn_pos = pa + tangent * (t_spawn * seg_len)
+        # Lateral lane (eval-mode realism): mean shift to OS-port ("left lane")
+        # plus uniform jitter. Sign: head-on travels against path, so entity-starboard
+        # equals +normal (= path-port = OS-port). Positive path_offset => OS-port lane.
+        mean_shift = float(getattr(env, "headon_lateral_mean", 0.0))
+        jitter = float(getattr(env, "headon_lateral_jitter", 0.0))
+        lat = mean_shift + (float(env._rng.uniform(-jitter, jitter)) if jitter > 0.0 else 0.0)
+        spawn_pos = pa + tangent * (t_spawn * seg_len) + normal * lat
         ts_heading = float(math.atan2(reverse_tangent[1], reverse_tangent[0]))
 
         entity = CollisionEntity(
@@ -565,7 +578,8 @@ class ScenarioBuilder:
         entity.path_segment_index = int(seg_idx)
         entity.next_checkpoint_index = int(env._seg_cp_end_indices[seg_idx] - 1)
         entity.path_direction = -1
-        entity.path_offset = 0.0
+        entity.path_offset = lat
+        entity.path_offset_mean = lat
         entity.route_mode = "follow_checkpoints"
         entity.route_finished = False
         entity.dodge_trigger_range = float(env.encounter_range)

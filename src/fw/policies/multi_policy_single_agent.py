@@ -31,6 +31,7 @@ import numpy as np
 import zipfile
 import tempfile
 
+from collections import deque
 from typing import Optional, Tuple, Union, List, Dict
 from fw.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
@@ -38,6 +39,150 @@ from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.common.tools.logging_utils import dump_metrics_to_csv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+
+
+class CollapseWatchdog:
+    """
+    Per-policy collapse detection with weights-only rollback.
+
+    Tracks a rolling mean of per-iteration reward for each policy.  Whenever
+    the rolling mean reaches a new peak, the policy's network ``state_dict``
+    is snapshotted in memory (deep-cloned tensors).  After a warmup period,
+    the current rolling mean is compared against the peak rolling mean.  The
+    watchdog triggers when ``smoothed / peak < ratio_threshold``, where
+    ``ratio_threshold`` is typically negative (e.g. ``-1.75`` means "current
+    is at -175% of peak").
+
+    On trigger, the watchdog returns the snapshotted ``state_dict``; the
+    caller is responsible for applying it via ``network.load_state_dict``.
+    Rollbacks are weights-only (the optimizer's parameter buffers are left
+    intact, so momentum is preserved on the same parameter tensors).
+
+    Safeguards:
+      * ``warmup_iterations``: no rollback before this many iterations have
+        elapsed.
+      * ``min_gap_between_rollbacks``: enforce a cooldown for each policy.
+      * ``max_rollbacks``: cap the total rollbacks per policy.
+      * ``min_peak_for_trigger``: require the peak rolling mean to be above
+        this floor before the ratio test is meaningful (the formulation is
+        ill-defined for non-positive peaks).
+    """
+
+    def __init__(
+        self,
+        num_policies: int,
+        policy_labels: List[str],
+        window_size: int = 10,
+        ratio_threshold: float = -1.75,
+        warmup_iterations: int = 50,
+        min_gap_between_rollbacks: int = 10,
+        max_rollbacks: int = 3,
+        min_peak_for_trigger: float = 0.1,
+    ):
+        self.num_policies = num_policies
+        self.policy_labels = policy_labels
+        self.window_size = int(window_size)
+        self.ratio_threshold = float(ratio_threshold)
+        self.warmup_iterations = int(warmup_iterations)
+        self.min_gap_between_rollbacks = int(min_gap_between_rollbacks)
+        self.max_rollbacks = int(max_rollbacks)
+        self.min_peak_for_trigger = float(min_peak_for_trigger)
+
+        self._reward_history: Dict[int, deque] = {
+            pid: deque(maxlen=self.window_size) for pid in range(num_policies)
+        }
+        self._best_smoothed: Dict[int, float] = {
+            pid: float("-inf") for pid in range(num_policies)
+        }
+        self._best_state_dict: Dict[int, Optional[dict]] = {
+            pid: None for pid in range(num_policies)
+        }
+        self._last_rollback_iter: Dict[int, int] = {
+            pid: -10 ** 9 for pid in range(num_policies)
+        }
+        self._rollback_count: Dict[int, int] = {
+            pid: 0 for pid in range(num_policies)
+        }
+
+    def observe(
+        self,
+        pid: int,
+        iteration: int,
+        reward: float,
+        network: nn.Module,
+    ) -> Optional[dict]:
+        """
+        Record this iteration's reward for ``pid`` and, if appropriate,
+        either snapshot a new best or return a rollback ``state_dict``.
+
+        Args:
+            pid (int): Policy index.
+            iteration (int): Current training iteration.
+            reward (float): Mean reward for ``pid`` this iteration (NaN if
+                the policy collected no segments — will be ignored).
+            network (nn.Module): The policy's live network; snapshotted
+                (cloned) when a new peak rolling mean is observed.
+
+        Returns:
+            Optional[dict]: A cloned ``state_dict`` to load if a collapse
+                is detected; ``None`` otherwise.
+        """
+        if reward is None or np.isnan(reward):
+            return None
+
+        self._reward_history[pid].append(float(reward))
+
+        # Need a full window before the rolling mean is meaningful
+        if len(self._reward_history[pid]) < self.window_size:
+            return None
+
+        smoothed = float(np.mean(self._reward_history[pid]))
+
+        # New best — snapshot the current network state
+        if smoothed > self._best_smoothed[pid]:
+            self._best_smoothed[pid] = smoothed
+            self._best_state_dict[pid] = {
+                k: v.detach().clone() for k, v in network.state_dict().items()
+            }
+
+        # Watchdog disabled until warmup elapses
+        if iteration < self.warmup_iterations:
+            return None
+
+        # Out of rollback budget
+        if self._rollback_count[pid] >= self.max_rollbacks:
+            return None
+
+        # No usable peak yet (peak too small / negative — ratio test
+        # would be meaningless or trigger-happy)
+        peak = self._best_smoothed[pid]
+        if peak <= self.min_peak_for_trigger or self._best_state_dict[pid] is None:
+            return None
+
+        # Cooldown after a previous rollback for this policy
+        if iteration - self._last_rollback_iter[pid] < self.min_gap_between_rollbacks:
+            return None
+
+        # Trigger condition: current rolling mean is far below the peak.
+        # E.g. ratio_threshold = -1.75 means "smoothed must be below -175%
+        # of peak" (so for peak=0.7, smoothed < -1.225 triggers).
+        if smoothed / peak < self.ratio_threshold:
+            return self._best_state_dict[pid]
+
+        return None
+
+    def record_rollback(self, pid: int, iteration: int) -> None:
+        """
+        Mark a rollback as having occurred for ``pid`` at ``iteration``.
+
+        Clears the rolling reward history so that the post-rollback
+        rolling mean is not dragged down by the collapsed iterations
+        still sitting in the window.  The best snapshot itself is
+        retained: subsequent improvements may still surpass it.
+        """
+        self._rollback_count[pid] += 1
+        self._last_rollback_iter[pid] = iteration
+        self._reward_history[pid].clear()
 
 
 class MultiPolicySingleAgent(BasePPOAgent):
@@ -66,6 +211,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
         num_policies: int,
         policy_labels: Optional[List[str]] = None,
         steps_per_policy_update: int = 4096,
+        watchdog_enabled: bool = True,
+        watchdog_kwargs: Optional[dict] = None,
         **kwargs,
     ):
         """
@@ -87,6 +234,15 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 Because a slot's policy/value networks do not change
                 between updates, accumulating across iterations does not
                 introduce off-policy bias for that slot.
+            watchdog_enabled (bool): If True, instantiate a
+                ``CollapseWatchdog`` that monitors per-policy rolling-mean
+                reward and rolls back to the best snapshot when a collapse
+                is detected.  Per-policy and weights-only.
+            watchdog_kwargs (Optional[dict]): Override defaults for the
+                ``CollapseWatchdog`` (``window_size``, ``ratio_threshold``,
+                ``warmup_iterations``, ``min_gap_between_rollbacks``,
+                ``max_rollbacks``, ``min_peak_for_trigger``).  Ignored if
+                ``watchdog_enabled`` is False.
             **kwargs: Keyword arguments forwarded to ``BasePPOAgent``.
 
         Raises:
@@ -160,6 +316,17 @@ class MultiPolicySingleAgent(BasePPOAgent):
         self._pending_steps: Dict[int, int] = {
             k: 0 for k in range(num_policies)
         }
+
+        # Collapse watchdog (per-policy, weights-only rollback)
+        if watchdog_enabled:
+            wd_kwargs = dict(watchdog_kwargs or {})
+            self.watchdog: Optional[CollapseWatchdog] = CollapseWatchdog(
+                num_policies=num_policies,
+                policy_labels=self.policy_labels,
+                **wd_kwargs,
+            )
+        else:
+            self.watchdog = None
 
     # ------------------------------------------------------------------
     # One-hot extraction & validation
@@ -705,6 +872,41 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 ):
                     best_rewards[pid] = iter_rewards[pid]
                     self._save_single_policy(pid, best_policy_files[pid])
+
+                # Collapse watchdog: track rolling-mean reward, snapshot
+                # the network at new peaks, and roll back on collapse.
+                # Skipped for frozen slots (which don't update anyway).
+                rollback_triggered = False
+                if self.watchdog is not None and pid not in self.frozen_pids:
+                    rollback_state = self.watchdog.observe(
+                        pid=pid,
+                        iteration=iteration,
+                        reward=iter_rewards[pid],
+                        network=self.policies[pid].network,
+                    )
+                    if rollback_state is not None:
+                        self.policies[pid].network.load_state_dict(rollback_state)
+                        # Discard pending segments — they were collected
+                        # under the now-discarded post-collapse weights and
+                        # would be off-policy w.r.t. the rolled-back net.
+                        self._pending_segments[pid] = []
+                        self._pending_steps[pid] = 0
+                        self.watchdog.record_rollback(pid, iteration)
+                        rollback_triggered = True
+                        print(
+                            f"[watchdog] iter {iteration}: collapse detected for "
+                            f"'{self.policy_labels[pid]}' "
+                            f"(peak smoothed={self.watchdog._best_smoothed[pid]:.3f}, "
+                            f"rollback {self.watchdog._rollback_count[pid]}/"
+                            f"{self.watchdog.max_rollbacks}). "
+                            f"Rolled back to best rolling-mean snapshot."
+                        )
+
+                # Annotate the most recent metrics record with watchdog state
+                if training_metrics[self.policy_labels[pid]]:
+                    training_metrics[self.policy_labels[pid]][-1][
+                        "rollback_triggered"
+                    ] = rollback_triggered
 
             # --- 4. Logging ---
             valid_rewards = [r for r in iter_rewards.values() if not np.isnan(r)]

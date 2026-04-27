@@ -164,6 +164,18 @@ class PySimColavBaseEnv(PySimEnv):
         self.eval = bool(eval)
         self.min_distance = float("inf")
 
+        # Evaluation-mode realism overrides (all default to OFF/no-op so training
+        # is unaffected; flipped on by PySimColavPolarEnv.set_evaluation_parameters
+        # which is called from agent_manager.visualize_trained_agent).
+        self.headon_lateral_mean = 0.0          # mean lateral shift for head-on TS [m]
+        self.headon_lateral_jitter = 0.0        # uniform +/- jitter around the mean [m]
+        self.overtaking_lateral_jitter = 0.0    # uniform +/- jitter for overtaking TS [m]
+        self.enable_path_offset_ou = False      # OU wander applied to entity.path_offset
+        self.ou_theta = 0.1                     # OU mean-reversion rate
+        self.ou_sigma = 1.0                     # OU noise scale [m / sqrt(s)]
+        self.ou_clip = 8.0                      # max deviation from mean [m]
+        self.enable_headon_dodge = False        # late dodge for head-on TS at encounter_range/2
+
         # Per-episode minimum distance tracking
         self._episode_min_distances: list[float] = []
         self._current_episode_min_dist: float = float("inf")
@@ -532,12 +544,12 @@ class PySimColavBaseEnv(PySimEnv):
                          float(np.linalg.norm(entity_pos - os_pos))
                          for os_pos in active_ship_positions
                      )
-                     #if min_dist <= self.encounter_range / 2:
-                     #    entity.dodged = True
-                     #    dodge_angle = math.radians(20)
-                     #    entity.set_heading(entity.get_heading() - dodge_angle)
-                     #    entity.set_lateral_speed(0.0)
-                     #    entity.route_mode = None
+                     if self.enable_headon_dodge and min_dist <= self.encounter_range / 2:
+                         entity.dodged = True
+                         dodge_angle = math.radians(20)
+                         entity.set_heading(entity.get_heading() - dodge_angle)
+                         entity.set_lateral_speed(0.0)
+                         entity.route_mode = None
 
             if getattr(entity, "entity_type", "") in ("crossing-right", "crossing-left"):
                 if not getattr(entity, "crossing_activated", False) and active_ship_positions:
@@ -586,6 +598,20 @@ class PySimColavBaseEnv(PySimEnv):
                             entity.set_speed(v_ts)
 
             route_mode = getattr(entity, "route_mode", None)
+
+            # OU wander on path_offset for path-following TS (head-on / overtaking).
+            # Mean-reverting noise around the entity's spawn-time lateral lane.
+            if (self.enable_path_offset_ou
+                    and route_mode == "follow_checkpoints"
+                    and hasattr(entity, "path_offset_mean")):
+                x = float(getattr(entity, "path_offset", 0.0))
+                mu = float(entity.path_offset_mean)
+                dt = float(self.time_step)
+                dx = self.ou_theta * (mu - x) * dt + self.ou_sigma * math.sqrt(dt) * float(self._rng.standard_normal())
+                x_new = x + dx
+                lo = mu - self.ou_clip
+                hi = mu + self.ou_clip
+                entity.path_offset = float(np.clip(x_new, lo, hi))
 
             if route_mode == "follow_checkpoints":
                 self._advance_entity_along_checkpoints(entity, self.time_step)

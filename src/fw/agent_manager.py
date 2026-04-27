@@ -324,6 +324,15 @@ class AgentManager:
             elif hasattr(raw_env, "env"):   # gym Wrapper
                 raw_env = raw_env.env
 
+            # Flip on eval-time realism overrides (variable TS radii, lateral
+            # lane spawn, OU wander, late head-on dodge). All overrides are
+            # opt-in via env attributes that default to no-op in training.
+            if hasattr(raw_env, "set_evaluation_parameters"):
+                raw_env.set_evaluation_parameters()
+            for sub in getattr(raw_env, "sub_environments", {}).values():
+                if hasattr(sub, "set_evaluation_parameters"):
+                    sub.set_evaluation_parameters()
+
             is_lunar_lander = isinstance(raw_env, LunarLander)
 
             collector = EpisodeCollector(self._agent, raw_env)
