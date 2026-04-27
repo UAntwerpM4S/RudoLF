@@ -57,9 +57,10 @@ flowchart LR
     K --> L["PySimEnv or FhSimEnv"]
     L --> F
 
-    H --> M["exports/<session>"]
-    J --> M
-    D --> M
+    D --> M["logs/ (episode CSV)"]
+    H --> N["AirSimSessionExporter"]
+    J --> N
+    N --> O["exports/&lt;session&gt;/"]
 ```
 
 ## Component Diagram
@@ -87,9 +88,11 @@ flowchart TD
     M --> P["UE5TopDownMinimap"]
     L --> Q["AirSimSessionExporter"]
     M --> Q
+    Q --> R["exports/&lt;session&gt;/"]
 
-    R["StrictSuccessStoppingCallback"] --> F
-    S["TrainingLogSummary"] --> F
+    F -.->|writes episode CSV| T["logs/"]
+    S["StrictSuccessStoppingCallback"] -.->|monitors SB3 training| F
+    T -.->|read by| U["TrainingLogSummary"]
 ```
 
 ## How It Fits Into The Framework
@@ -130,13 +133,13 @@ The execution decision is made in this order:
 Current checked-in defaults in the source are not neutral:
 
 - `src/fw/config.py`
-  - `env_type = ["AirSimEnv"]`
-  - `action = "visualize"`
+  - `env_type = ["PySimEnv", "AirSimEnv"]`
+  - `action = "train"`
 - `src/airsim/config/runtime_settings.json`
   - `visualization.model_visualise = true`
   - `visualization.inference_visualise = false`
 
-So the repository currently defaults to an AirSim model-visualisation workflow unless those values are changed.
+So the repository currently defaults to a sequential PySimEnv → AirSimEnv training run. If `action` is switched to `"visualize"`, the AirSim step will execute `run_visualise_models.py` because `model_visualise` is true.
 
 ## Package Layout
 
@@ -158,9 +161,11 @@ src/airsim/
 |   |-- plot_airsim_path.py
 |   |-- run_inference.py
 |   |-- run_visualise_models.py
+|   |-- verify_headless_plot.py
 |   `-- visualisation_models/
 |       |-- __init__.py
 |       `-- model_adapters.py
+|-- poc/                          ← historical, not the current reference
 |-- train/
 |   |-- strict_success_callback.py
 |   |-- train_airsim.py
@@ -172,11 +177,21 @@ Shared AirSim utilities live under:
 
 ```text
 src/fw/common/airsim/
+|-- classes/
+|   `-- path_resolution.py
 `-- tools/
+    |-- airsim_export.py
+    |-- airsim_training_session.py
     |-- analyze_telemetry.py
     |-- angles.py
     |-- calibrate_coords.py
-    `-- path_utils.py
+    |-- path_utils.py
+    |-- print_ue5_ship_framework_pose.py
+    |-- print_ue5_ship_pose.py
+    |-- telemetry_export.py
+    |-- telemetry_exporter.py
+    |-- trajectory_analysis.py
+    `-- util.py
 ```
 
 ## Runtime Paths
@@ -364,17 +379,34 @@ Important keys:
 - `training.steering_dynamics_enabled`
 - `training.normalize_reward`
 
-## Exports
+## Outputs
 
-All AirSim runtime paths write session folders under `exports/`.
+Output paths differ between training and the two inference/visualisation runners.
+
+### Training — `logs/`
 
 | File | Contents |
 |------|---------|
-| `metadata.json` | model info, runtime config, `performance_summary` |
-| `airsim_telemetry.csv` | UE5-side position, velocity, controls, timestamps |
+| `logs/airsim_training_episode_log.csv` | per-episode: checkpoint progress, speed, CTE, outcome |
+
+Path is configurable via `training.episode_log_path` in `runtime_settings.json`. `TrainingLogSummary` reads this file when computing curriculum frontier recommendations. `StrictSuccessStoppingCallback` writes nothing — it monitors SB3 training state in memory only.
+
+### Inference and visualisation — `exports/<session>/`
+
+Both runners create a timestamped session folder via `AirSimSessionExporter`.
+
+Folder naming:
+
+- `exports/inference_{model_stem}_{timestamp}/` — from `run_inference.py`
+- `exports/visualisation_{family}_{model_stem}_{timestamp}/` — from `run_visualise_models.py`
+
+| File | Contents |
+|------|---------|
 | `inference_session.csv` | per-step reward, obs, outcome (inference runner) |
 | `visualisation_session.csv` | per-step framework state, controls (visualisation runner) |
-| `trajectory_2d_vs_3d.png` | side-by-side 2D vs 3D trajectory comparison |
+| `airsim_telemetry.csv` | UE5-side position, velocity, controls, timestamps (from bridge) |
+| `metadata.json` | model info, runtime config, `performance_summary` block |
+| `trajectory_2d_vs_3d.png` | side-by-side 2D (framework) vs 3D (UE5) trajectory |
 
 `metadata.json` always includes a `performance_summary` block with total reward, duration, 2D/3D distance, mean/max cross-track error, and per-episode outcome.
 
@@ -459,11 +491,14 @@ Important test modules:
 
 - `tests/airsim/communication/test_bridge.py`
 - `tests/airsim/communication/test_control_mapping.py`
-- `tests/airsim/environments/test_airsim_env.py`
+- `tests/airsim/communication/test_airsim_bridge.py`
+- `tests/airsim/enviroments/test_airsim_env.py` ← folder name is a typo in the repo
 - `tests/airsim/inference/test_model_visualisation_dispatch.py`
+- `tests/airsim/inference/test_fossen_visualisation_timing.py`
 - `tests/airsim/inference/test_visualisation_model_adapters.py`
 - `tests/airsim/inference/test_visualise_models_minimap_save.py`
 - `tests/airsim/inference/test_run_inference_airsim_env.py`
+- `tests/airsim/train/test_train_airsim.py`
 - `tests/fw/test_main_fallback.py`
 - `tests/fw/test_env_factory_config.py`
 

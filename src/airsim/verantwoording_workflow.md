@@ -101,12 +101,12 @@ Wanneer `fw.main` gestart wordt, gebeurt dit:
 
 De standaard frameworkflow gebruikt momenteel standaard:
 
-- `env_type = "PySimEnv"`
+- `env_type = ["PySimEnv", "AirSimEnv"]`
 - `action = "train"`
 
 maar beide kunnen in `fw.config` aangepast worden.
 
-Dat betekent dat de fallback standaard resulteert in een klassieke PySim-trainingsrun, maar desgewenst ook een andere framework-omgeving of visualisatie kan zijn.
+Dat betekent dat de fallback bij een mislukte AirSim-stap resulteert in de overige geconfigureerde omgevingen in `env_type`. Bij de huidige standaardinstellingen is dat een `PySimEnv`-trainingsrun.
 
 ## Scenario 2: `python -m fw.main_with_airsim`
 

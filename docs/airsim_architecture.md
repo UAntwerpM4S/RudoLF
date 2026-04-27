@@ -46,12 +46,12 @@ flowchart TD
     G --> J["CosysAirSim RPC"]
     J --> K["UE5 runtime session"]
 
-    D --> L["AirSimSessionExporter"]
-    E --> L
-    F --> L
+    D --> L["logs/airsim_training_episode_log.csv"]
+    L -.->|read by| N["TrainingLogSummary"]
 
-    D --> M["StrictSuccessStoppingCallback"]
-    D --> N["TrainingLogSummary"]
+    E --> M["AirSimSessionExporter"]
+    F --> M
+    M --> O["exports/&lt;session&gt;/"]
 ```
 
 ## Runtime Routing Overview
@@ -113,8 +113,9 @@ flowchart LR
     R["coord_transform.py"] --> A
     R --> F
 
-    S["StrictSuccessStoppingCallback"] --> F
-    T["TrainingLogSummary"] --> F
+    S["StrictSuccessStoppingCallback"] -.->|monitors SB3 training| F
+    U["logs/ episode CSV"] -.->|read by| T["TrainingLogSummary"]
+    F -.->|writes| U
 ```
 
 ## UML Class Diagram
@@ -128,7 +129,7 @@ classDiagram
         +set_controls(controls)
         +get_car_state()
         +get_vehicle_pose()
-        +set_vehicle_pose(x, y, z, yaw, ...)
+        +set_pose(x, y, z, yaw, ...)
         +set_object_pose(object_name, x, y, z, yaw)
         +set_kinematics(x, y, z, yaw, ...)
         +set_pause(is_paused)
@@ -203,7 +204,7 @@ classDiagram
     ModelVisualisationAdapter --> AirSimBridge
     ModelVisualisationAdapter --> CoordTransform
     UE5TopDownMinimap --> AirSimBridge
-    StrictSuccessStoppingCallback --> AirSimEnv
+    StrictSuccessStoppingCallback ..|> BaseCallback : extends (SB3)
 ```
 
 ## UML Sequence: AirSimEnv Inference
@@ -392,9 +393,11 @@ src/airsim/
 |   |-- plot_airsim_path.py
 |   |-- run_inference.py
 |   |-- run_visualise_models.py
+|   |-- verify_headless_plot.py
 |   `-- visualisation_models/
 |       |-- __init__.py
 |       `-- model_adapters.py
+|-- poc/                          ← historical, not the current reference
 |-- train/
 |   |-- strict_success_callback.py
 |   |-- train_airsim.py
@@ -402,11 +405,21 @@ src/airsim/
 `-- verantwoording_workflow.md
 
 src/fw/common/airsim/
+|-- classes/
+|   `-- path_resolution.py
 `-- tools/
+    |-- airsim_export.py
+    |-- airsim_training_session.py
     |-- analyze_telemetry.py
     |-- angles.py
     |-- calibrate_coords.py
-    `-- path_utils.py
+    |-- path_utils.py
+    |-- print_ue5_ship_framework_pose.py
+    |-- print_ue5_ship_pose.py
+    |-- telemetry_export.py
+    |-- telemetry_exporter.py
+    |-- trajectory_analysis.py
+    `-- util.py
 ```
 
 ## Public Interface: `AirSimBridge`
@@ -441,7 +454,7 @@ src/fw/common/airsim/
 - `flush_persistent_markers()`
 - `plot_line_strip(points, color_rgba, thickness, is_persistent=True)`
 - `plot_points(points, color_rgba, size, is_persistent=True)`
-- `set_vehicle_pose(x, y, z, yaw, preserve_current_z, preserve_roll_pitch)`
+- `set_pose(x, y, z, yaw, preserve_current_z, preserve_roll_pitch)`
 - `set_object_pose(object_name, x, y, z, yaw)`
 - `set_kinematics(x, y, z, yaw, velocities...)`
 
@@ -486,16 +499,35 @@ src/fw/common/airsim/
 | Bridge config | `src/airsim/config/airsim_config.py` | IP, port, timeout, retries, health check interval |
 | Calibration | `src/airsim/config/calibration.json` | coordinate anchor pair, scale, rotation, mirrors |
 
-## Export Artifacts
+## Output Artifacts
 
-Each AirSim runtime path writes a timestamped session folder under `exports/`.
+Output paths differ between training and the two inference/visualisation runners.
+
+### Training logs — `logs/`
+
+| File | Written by | Contents |
+|------|-----------|---------|
+| `logs/airsim_training_episode_log.csv` | `train_airsim.py` | per-episode: checkpoint progress, speed, CTE, outcome |
+
+Path is configurable via `training.episode_log_path` in `runtime_settings.json`. This file is what `TrainingLogSummary` reads when computing curriculum frontier recommendations.
+
+`StrictSuccessStoppingCallback` does not write any files — it monitors SB3 training callbacks in memory only and prints a console message when the stopping threshold is reached.
+
+### Session exports — `exports/<session>/`
+
+Both inference and visualisation runners create a timestamped session folder via `AirSimSessionExporter`.
+
+Folder naming:
+
+- `exports/inference_{model_stem}_{timestamp}/` — from `run_inference.py`
+- `exports/visualisation_{family}_{model_stem}_{timestamp}/` — from `run_visualise_models.py`
 
 | File | Created by | Contents |
 |------|-----------|---------|
-| `metadata.json` | both runners | model info, runtime config, `performance_summary` block |
-| `airsim_telemetry.csv` | bridge | UE5-side position, velocity, controls, timestamps |
 | `inference_session.csv` | `run_inference.py` | per-step reward, obs fields, outcome |
 | `visualisation_session.csv` | `run_visualise_models.py` | per-step framework state, controls, outcome |
+| `airsim_telemetry.csv` | bridge (via `csv_log_path`) | UE5-side position, velocity, controls, timestamps |
+| `metadata.json` | both runners | model info, runtime config, `performance_summary` block |
 | `trajectory_2d_vs_3d.png` | both runners | side-by-side 2D (framework) vs 3D (UE5) trajectory |
 
 `metadata.json` includes a `performance_summary` block with:
@@ -531,13 +563,13 @@ AirSim-specific tests:
 - `tests/airsim/communication/test_bridge.py`
 - `tests/airsim/communication/test_control_mapping.py`
 - `tests/airsim/communication/test_airsim_bridge.py`
-- `tests/airsim/environments/test_airsim_env.py`
+- `tests/airsim/enviroments/test_airsim_env.py` ← folder name is a typo in the repo
 - `tests/airsim/inference/test_model_visualisation_dispatch.py`
 - `tests/airsim/inference/test_fossen_visualisation_timing.py`
-- `tests/airsim/inference/test_minimap_layout.py`
 - `tests/airsim/inference/test_visualise_models_minimap_save.py`
 - `tests/airsim/inference/test_run_inference_airsim_env.py`
 - `tests/airsim/inference/test_visualisation_model_adapters.py`
+- `tests/airsim/train/test_train_airsim.py`
 
 Framework-routing tests:
 
