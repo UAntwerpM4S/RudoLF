@@ -113,7 +113,7 @@ Between framework steps, the runner interpolates motion to avoid discrete jumps 
 
 | Setting | Description |
 |---------|-------------|
-| `render_interpolation_steps` | Number of sub-steps per framework step (default 8) |
+| `render_interpolation_steps` | Number of sub-steps per framework step (runtime_settings.json default: 8) |
 | `max_translation_step` | Max position delta per sub-step (adaptive clamp) |
 | `max_yaw_step_deg` | Max yaw delta per sub-step (adaptive clamp) |
 | `use_kinematics_in_ue5` | Use `simSetKinematics()` for smooth velocity-aware motion |
