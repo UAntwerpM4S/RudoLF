@@ -24,7 +24,7 @@ Related docs:
 - the model was trained in `PySimEnv` or `FhSimEnv`
 - framework physics should remain authoritative
 - UE5 is only used as renderer / mirror
-- you want the replay minimap tooling
+- you want the replay minimap tooling and smooth interpolated motion
 
 ## Runtime Decision Path
 
@@ -32,17 +32,17 @@ Related docs:
 
 Decision rules:
 
-- `visualization.model_visualise=true` -> run `run_visualise_models.py`
-- `visualization.inference_visualise=true` -> run `run_inference.py`
+- `visualization.model_visualise=true` → run `run_visualise_models.py`
+- `visualization.inference_visualise=true` → run `run_inference.py`
 - if both replay and inference flags are true, replay wins
 
 ## `run_inference.py`
 
 ### Scope
 
-`run_inference.py` is now AirSim-only.
+`run_inference.py` is AirSim-only.
 
-It is meant for PPO policies trained inside the UE5-backed `AirSimEnv`. It no longer contains a framework-replay compatibility path or a separate direct-control mode.
+It is meant for PPO policies trained inside the UE5-backed `AirSimEnv`. It does not contain a framework-replay compatibility path or a separate direct-control mode.
 
 ### Effective control loop
 
@@ -52,36 +52,84 @@ It is meant for PPO policies trained inside the UE5-backed `AirSimEnv`. It no lo
 4. predict an action from the current observation
 5. call `env.step(action)`
 6. let `AirSimEnv.step()` handle:
-   - action validation
-   - action smoothing
-   - control mapping
+   - action validation and clipping to `[-1, 1]`
+   - steering dynamics (low-pass filter + rate limiter)
+   - control mapping to `CarControls`
    - control send to UE5
-   - physics wait
+   - physics step (pause-stepping or sim-time-stepping)
    - state readback
-   - observation update
-   - reward calculation
-   - checkpoint progress
+   - 18-field observation update
+   - reward calculation and normalization
+   - checkpoint progress tracking
    - termination / truncation detection
 7. stop the episode when `terminated` or `truncated` becomes true
 8. call `env.close()` on shutdown
 
+### Exports
+
+Each run creates a timestamped session folder in `exports/`.
+
+| File | Contents |
+|------|---------|
+| `metadata.json` | model path, runtime config, `performance_summary` block |
+| `airsim_telemetry.csv` | UE5-side position, velocity, controls, timestamps (from bridge) |
+| `inference_session.csv` | per-step: episode, x, y, heading, speed, reward, steering, throttle, checkpoint index, CTE, outcome |
+| `trajectory_2d_vs_3d.png` | side-by-side 2D (framework) vs 3D (UE5) trajectory comparison |
+
+`performance_summary` in `metadata.json` includes:
+
+- total reward, total duration
+- cumulative 2D and 3D distance
+- mean and max cross-track error
+- per-episode outcome and metrics
+
 ### What this means for tasks
 
-- `T-026` is handled through the native `AirSimEnv.step()` action -> physics -> feedback loop
+- `T-026` is handled through the native `AirSimEnv.step()` action → physics → feedback loop
 - `T-027` is handled through `AirSimEnv.reset()`, `AirSimEnv.step()`, and `AirSimEnv.close()`
 
 ## `run_visualise_models.py`
 
+### Scope
+
+`run_visualise_models.py` is the modular framework-model replay runner.
+
+Framework physics remain authoritative. UE5 is used only as renderer and mirror.
+
 ### Effective replay loop
 
-1. resolve adapter from model family and environment
-2. build framework env
+1. resolve adapter from model family and environment name (registry in `visualisation_models/model_adapters.py`)
+2. build framework env (`PySimEnv` or `FhSimEnv`)
 3. load PPO policy
 4. step framework env locally
-5. convert motion to AirSim coordinates
-6. mirror pose/kinematics/object state into UE5
-7. update minimap if enabled
+5. extract motion state (x, y, yaw, vx, vy, yaw_rate) via `CoordTransform`
+6. mirror pose/kinematics/object state into UE5 with smooth interpolation
+7. update UE5 top-down minimap camera if enabled
 8. export telemetry bundle
+
+### Motion interpolation
+
+Between framework steps, the runner interpolates motion to avoid discrete jumps in UE5.
+
+| Setting | Description |
+|---------|-------------|
+| `render_interpolation_steps` | Number of sub-steps per framework step (default 8) |
+| `max_translation_step` | Max position delta per sub-step (adaptive clamp) |
+| `max_yaw_step_deg` | Max yaw delta per sub-step (adaptive clamp) |
+| `use_kinematics_in_ue5` | Use `simSetKinematics()` for smooth velocity-aware motion |
+| `min_render_hz` | Minimum render update rate |
+
+### Control animation
+
+The runner can optionally animate the ship's steering and throttle visuals in UE5 independently of physics.
+
+| Setting | Description |
+|---------|-------------|
+| `mirror_controls_in_ue5` | Pass raw controls through to UE5 |
+| `animate_steering_in_ue5` | Animate steering wheel/rudder visuals |
+| `animate_throttle_in_ue5` | Animate propulsion/throttle visuals |
+| `steering_visual_gain` | Steering animation scaling (default 0.35) |
+| `throttle_visual_gain` | Throttle animation scaling (default 0.892) |
 
 ### Supported adapters
 
@@ -90,7 +138,16 @@ Current adapter families:
 - `pysim`
 - `fhsim`
 
-The adapter registry lives in `visualisation_models/model_adapters.py`.
+The adapter registry lives in `visualisation_models/model_adapters.py`. Each adapter implements `ModelVisualisationAdapter` and provides environment construction, pose/velocity extraction, and control animation.
+
+### Exports
+
+| File | Contents |
+|------|---------|
+| `metadata.json` | model info, runtime config, `performance_summary` block |
+| `airsim_telemetry.csv` | UE5-side position, velocity, controls, timestamps |
+| `visualisation_session.csv` | per-step: episode, framework state, controls, outcome |
+| `trajectory_2d_vs_3d.png` | side-by-side 2D vs 3D trajectory comparison |
 
 ## Minimap
 
@@ -98,48 +155,16 @@ The adapter registry lives in `visualisation_models/model_adapters.py`.
 
 `UE5TopDownMinimap` uses a top-down AirSim camera rendered inside UE5.
 
-## Exports
+The camera is positioned above the current ship position and pointed straight down. When `ue5_camera_follow_heading=true`, the camera rotates to follow ship heading.
 
-Both runners create a timestamped session folder in `exports/`.
-
-Typical files:
-
-- `metadata.json`
-- `airsim_telemetry.csv`
-- `inference_session.csv` or `visualisation_session.csv`
-- `trajectory_2d_vs_3d.png`
-
-`metadata.json` now also stores a `performance_summary` block with:
-
-- total reward
-- total duration
-- cumulative 2D distance
-- cumulative 3D distance
-- mean and max cross-track error
-- per-episode outcome and metrics
-
-## BI Metrics And Comparison
-
-AirSim runners now reuse exported telemetry for post-run analysis:
-
-- session telemetry (`*_session.csv`) provides reward, cross-track error, and 2D path
-- bridge telemetry (`airsim_telemetry.csv`) provides UE5 3D path
-
-After each run:
-
-- a console summary is printed with key performance indicators
-- a side-by-side `2D vs 3D` trajectory figure is exported
-
-## Text Overlay Status
-
-UE5 text overlays are currently disabled.
-
-That means:
-
-- no HUD status banner
-- no in-world status text near the ship
-
-The runners now rely on console logging and exported telemetry instead.
+| Setting | Description |
+|---------|-------------|
+| `show_minimap` | Enable minimap (default false) |
+| `minimap_update_hz` | Maximum camera update rate |
+| `ue5_camera_name` | Name of the camera actor in UE5 |
+| `ue5_camera_height_m` | Camera height above ship (default 120 m) |
+| `ue5_camera_fov_deg` | Camera field of view |
+| `ue5_camera_follow_heading` | Rotate camera with ship heading |
 
 ## Commands
 
@@ -157,18 +182,18 @@ python -m airsim.inference.run_inference --model models/AirSimEnv_PPO_policy.zip
 python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_policy.zip
 ```
 
-### Verbose diagnostics (optional)
+### Verbose diagnostics
 
 Both runners default to concise console output.
 
-Use CLI verbose mode when needed:
+Use `--verbose` when needed:
 
 ```bash
 python -m airsim.inference.run_inference --model models/AirSimEnv_PPO_policy.zip --verbose
 python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_policy.zip --verbose
 ```
 
-Or set environment-level verbose mode for `fw.main_with_airsim` / `airsim.train.train_airsim`:
+Or set environment-level verbose mode:
 
 ```bash
 set FW_AIRSIM_VERBOSE=1
@@ -201,8 +226,14 @@ set FW_AIRSIM_VERBOSE=1
 - `visualization.bridge_telemetry_hz`
 - `visualization.render_interpolation_steps`
 - `visualization.throttle_visual_gain`
+- `visualization.steering_visual_gain`
 - `visualization.use_kinematics_in_ue5`
 - `visualization.vehicle_object_name`
+- `visualization.ue5_camera_name`
+- `visualization.ue5_camera_height_m`
+- `visualization.ue5_camera_follow_heading`
+- `visualization.draw_ship_trail_in_ue5`
+- `visualization.ship_trail_min_segment_m`
 
 ## Troubleshooting
 
@@ -228,4 +259,4 @@ set FW_AIRSIM_VERBOSE=1
 
 ### `plot_airsim_path.py`
 
-This tool still exists as a standalone telemetry plotter. It is not wired into the main runtime paths automatically.
+This tool exists as a standalone telemetry plotter. It is not wired into the main runtime paths automatically.

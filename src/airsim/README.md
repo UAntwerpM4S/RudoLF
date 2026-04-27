@@ -1,14 +1,14 @@
-﻿# AirSim Integration Package
+# AirSim Integration Package
 
 `src/airsim` contains the Unreal Engine 5 / CosysAirSim integration layer for the RudoLF framework.
 
-It supports three practical runtime paths:
+It supports three runtime paths:
 
 - `AirSimEnv` training inside UE5.
 - `run_inference.py` for policy inference against live UE5 state.
 - `run_visualise_models.py` for framework-driven replay where `PySimEnv` or `FhSimEnv` remains authoritative and UE5 is used as renderer.
 
-No UE5 text overlay or in-world status text is currently active. That feature was removed temporarily.
+No UE5 text overlay or in-world status text is currently active.
 
 ## Scope
 
@@ -20,11 +20,11 @@ The AirSim package is responsible for:
 - exposing a Gymnasium environment backed by UE5
 - replaying framework trajectories into UE5
 - exporting telemetry and session metadata
-- providing matplotlib and UE5-camera minimap options for replay
+- providing a UE5-camera top-down minimap for replay
 
 It is not responsible for:
 
-- policy architecture itself
+- policy architecture
 - scheduler orchestration
 - framework environment registration logic
 - long-term analytics outside exported CSV/metadata bundles
@@ -44,7 +44,7 @@ flowchart LR
     B --> C{"runtime_settings.json"}
 
     C -->|train| D["AirSimEnv via fw.env_factory"]
-    D --> E["Trainer / AgentManager"]
+    D --> E["Trainer + StrictSuccessStoppingCallback"]
     E --> F["AirSimBridge"]
     F --> G["UE5 + CosysAirSim"]
 
@@ -76,23 +76,27 @@ flowchart TD
     F --> G["reward + checkpoint logic"]
     F --> H["episode reset / close"]
     F --> I["telemetry snapshot fields"]
+    F --> J["steering dynamics"]
+    F --> K["curriculum (soft, via offtrack decay)"]
 
-    J["run_inference.py"] --> F
-    K["run_visualise_models.py"] --> L["visualisation_models/model_adapters.py"]
-    L --> M["PySimEnv / FhSimEnv"]
-    M --> A
+    L["run_inference.py"] --> F
+    M["run_visualise_models.py"] --> N["visualisation_models/model_adapters.py"]
+    N --> O["PySimEnv / FhSimEnv"]
+    O --> A
 
-K --> N["UE5TopDownMinimap"]
-    K --> O["UE5TopDownMinimap"]
-    J --> P["AirSimSessionExporter"]
-    K --> P
+    M --> P["UE5TopDownMinimap"]
+    L --> Q["AirSimSessionExporter"]
+    M --> Q
+
+    R["StrictSuccessStoppingCallback"] --> F
+    S["TrainingLogSummary"] --> F
 ```
 
 ## How It Fits Into The Framework
 
 ### Ordered framework execution
 
-`fw.main` is still the top-level framework entrypoint.
+`fw.main` is the top-level framework entrypoint.
 
 When `env_type` contains `AirSimEnv`, `fw.main` delegates that stage to `fw.main_with_airsim` while keeping the configured environment order intact. This is what allows mixed sequences such as:
 
@@ -115,7 +119,7 @@ The execution decision is made in this order:
 
 ### AirSim-specialized entrypoint
 
-`fw.main_with_airsim` reads `src/airsim/config/runtime_settings.json` and decides whether it should:
+`fw.main_with_airsim` reads `src/airsim/config/runtime_settings.json` and decides whether to:
 
 - train through `AirSimEnv`
 - run UE5 inference through `run_inference.py`
@@ -132,13 +136,12 @@ Current checked-in defaults in the source are not neutral:
   - `visualization.model_visualise = true`
   - `visualization.inference_visualise = false`
 
-So the repository currently defaults to an AirSim model-visualisation workflow
-unless those values are changed.
+So the repository currently defaults to an AirSim model-visualisation workflow unless those values are changed.
 
 ## Package Layout
 
 ```text
-airsim/
+src/airsim/
 |-- communication/
 |   |-- airsim_bridge.py
 |   |-- control_mapping.py
@@ -159,7 +162,9 @@ airsim/
 |       |-- __init__.py
 |       `-- model_adapters.py
 |-- train/
-|   `-- train_airsim.py
+|   |-- strict_success_callback.py
+|   |-- train_airsim.py
+|   `-- training_log_analysis.py
 `-- verantwoording_workflow.md
 ```
 
@@ -167,10 +172,11 @@ Shared AirSim utilities live under:
 
 ```text
 src/fw/common/airsim/
-|-- tools/analyze_telemetry.py
-|-- tools/angles.py
-|-- tools/calibrate_coords.py
-`-- tools/path_utils.py
+`-- tools/
+    |-- analyze_telemetry.py
+    |-- angles.py
+    |-- calibrate_coords.py
+    `-- path_utils.py
 ```
 
 ## Runtime Paths
@@ -190,10 +196,10 @@ This path is selected by:
 Control flow:
 
 1. policy action enters `AirSimEnv.step()`
-2. action is validated and smoothed
-3. the AirSimEnv control mapping is applied
-4. `AirSimBridge.set_controls()` sends controls to UE5
-5. UE5 advances physics
+2. action is validated and clipped to `[-1, 1]`
+3. steering dynamics filter is applied (low-pass + rate limiter)
+4. the AirSimEnv control mapping sends `CarControls` to UE5
+5. UE5 advances physics (pause-stepping or sim-time-stepping)
 6. AirSim state is read back
 7. observation, reward, checkpoint progress, and termination are computed
 
@@ -203,9 +209,39 @@ Key code:
 - `src/airsim/communication/control_mapping.py`
 - `src/airsim/communication/airsim_bridge.py`
 
+#### Training speed profiles
+
+| Profile | sim speed | Pause stepping | time_step | Use case |
+|---------|-----------|----------------|-----------|---------|
+| `normal` | 1.0× | off | 0.1 s | Debug / real-time |
+| `safe` | 20.0× | on | 0.05 s | **Recommended for new training** |
+| `fast` | 40.0× | on | 0.1 s | Faster iteration |
+| `turbo` | 80.0× | on | 0.1 s | Maximum throughput |
+| `custom` | configurable | configurable | configurable | Manual override |
+
+Set via `training.speed_profile` in `runtime_settings.json`.
+
+#### Early stopping
+
+`StrictSuccessStoppingCallback` halts training automatically once the policy achieves N consecutive strict-success episodes.
+
+Success criteria per episode:
+
+1. All route checkpoints passed
+2. Max CTE ≤ `strict_cte_limit_m` (default 10 m)
+3. Average reward ≥ `min_average_episode_reward` (default 0.95 normalized)
+
+#### Curriculum learning
+
+When `curriculum_enabled=true`, `AirSimEnv` applies a soft curriculum via offtrack-limit decay over approximately 450 episodes, allowing the policy to first learn coarse route following before fine tracking is enforced.
+
+`TrainingLogSummary` reads episode CSV logs and recommends a curriculum frontier checkpoint based on median/modal checkpoint progress and high-speed offtrack ratios.
+
+**Full curriculum scheduling and optional transfer learning are the final planned implementation stage and are not yet active.**
+
 ### 2. Live inference against UE5
 
-`run_inference.py` is now dedicated to models trained directly in `AirSimEnv`.
+`run_inference.py` is dedicated to models trained directly in `AirSimEnv`.
 
 This path is selected by:
 
@@ -216,7 +252,7 @@ This path is selected by:
   - `visualization.inference_visualise = true`
   - `visualization.model_visualise = false`
 
-Its runtime loop intentionally mirrors training:
+Its runtime loop mirrors training:
 
 1. `AirSimEnv.reset()` starts each episode and restores the ship pose
 2. the PPO policy predicts an action from the current observation
@@ -224,12 +260,7 @@ Its runtime loop intentionally mirrors training:
 4. termination and truncation come directly from `AirSimEnv.step()`
 5. `AirSimEnv.close()` shuts the session down cleanly
 
-This means:
-
-- `T-026` is implemented through the native `AirSimEnv` send-action and feedback loop
-- `T-027` is implemented through native episode reset, stop detection, and ship repositioning
-
-For framework-trained models such as `PySimEnv` and `FhSimEnv`, `run_visualise_models.py` remains the preferred and supported replay path.
+For framework-trained models (`PySimEnv`, `FhSimEnv`), `run_visualise_models.py` is the supported replay path.
 
 ### 3. Framework replay mirrored into UE5
 
@@ -247,12 +278,62 @@ Control flow:
 
 1. adapter is resolved from model family and environment name
 2. framework env (`PySimEnv` or `FhSimEnv`) is stepped locally
-3. motion state is converted to AirSim coordinates
-4. bridge mirrors pose or kinematics into UE5
-5. optional UE5 top-down minimap is updated
+3. motion state is converted to AirSim coordinates via `CoordTransform`
+4. bridge mirrors pose or kinematics into UE5 with smooth interpolation
+5. optional UE5 top-down camera minimap is updated
 6. visualisation and bridge telemetry are exported
 
 This path is the current reference path for visual model replay.
+
+## Observation Space
+
+`AirSimEnv` uses observation profile `"ppo_route_relative_car"` — an 18-dimensional continuous vector in the vehicle-fixed frame.
+
+| Index | Field | Description |
+|-------|-------|-------------|
+| 0 | `current_checkpoint_forward` | Forward distance to current checkpoint |
+| 1 | `current_checkpoint_lateral` | Lateral offset to current checkpoint |
+| 2 | `next_checkpoint_forward` | Forward distance to next checkpoint |
+| 3 | `next_checkpoint_lateral` | Lateral offset to next checkpoint |
+| 4 | `target_forward` | Forward distance to final route target |
+| 5 | `target_lateral` | Lateral offset to final target |
+| 6 | `heading_error_cos` | Cosine of heading alignment error |
+| 7 | `heading_error_sin` | Sine of heading alignment error |
+| 8 | `cross_track_error` | Current signed lateral deviation from route |
+| 9 | `cross_track_error_delta` | Rate of change of cross-track error |
+| 10 | `forward_speed` | Surge velocity (m/s) |
+| 11 | `yaw_rate` | Angular velocity (rad/s) |
+| 12 | `executed_action_steering` | Last applied steering command |
+| 13 | `executed_action_throttle` | Last applied throttle command |
+| 14 | `route_progress_ratio` | Fraction of total route completed |
+| 15 | `checkpoint_progress_ratio` | Progress within current checkpoint window |
+| 16 | `previous_action_steering` | Prior steering action (one-step history) |
+| 17 | `los_heading_error` | Line-of-sight heading error to next waypoint |
+
+Checkpoints are spaced every 80 m along the route.
+
+## Reward Structure
+
+| Event | Value |
+|-------|-------|
+| Checkpoint passed | +1.0 |
+| Precision bonus (pass within 8 m) | +0.35 |
+| Route success (final target) | +5.0 |
+| Collision | -5.0 |
+| Off-track | -4.0 |
+| Disconnect | -5.0 |
+| Timeout | -2.5 |
+
+Normalization divides all shaped rewards by `reward_normalization_scale` (default `5.0`) then clips to `[-1, 1]`.
+
+## Coordinate System
+
+| Frame | X | Y | Heading/Yaw |
+|-------|---|---|-------------|
+| Framework | East | North | CCW+ from East |
+| AirSim (NED) | North | East | CW+ from North |
+
+`CoordTransform` handles bidirectional conversion. The anchor pair, scale, rotation, and optional axis mirrors are stored in `calibration.json` and created interactively by `calibrate_coords`.
 
 ## Configuration
 
@@ -267,12 +348,9 @@ In `src/fw/config.py`:
 
 In `src/airsim/config/runtime_settings.json`:
 
-- `airsim`
-  - connection, save slot, simulation speed
-- `training`
-  - pause stepping, frames per step, time step, watchdogs
-- `visualization`
-  - replay mode selection, minimap options, interpolation, camera settings
+- `airsim` — connection (IP, port, save slot, simulation speed)
+- `training` — speed profile, pause stepping, frames per step, time step, curriculum, steering dynamics, reward normalization
+- `visualization` — replay mode selection, minimap options, interpolation, camera settings, control animation
 
 Important keys:
 
@@ -281,36 +359,43 @@ Important keys:
 - `visualization.model_family`
 - `visualization.environment_name`
 - `visualization.show_minimap`
+- `training.speed_profile`
+- `training.curriculum_enabled`
+- `training.steering_dynamics_enabled`
+- `training.normalize_reward`
+
 ## Exports
 
 All AirSim runtime paths write session folders under `exports/`.
 
-Typical files:
+| File | Contents |
+|------|---------|
+| `metadata.json` | model info, runtime config, `performance_summary` |
+| `airsim_telemetry.csv` | UE5-side position, velocity, controls, timestamps |
+| `inference_session.csv` | per-step reward, obs, outcome (inference runner) |
+| `visualisation_session.csv` | per-step framework state, controls (visualisation runner) |
+| `trajectory_2d_vs_3d.png` | side-by-side 2D vs 3D trajectory comparison |
 
-- `metadata.json`
-- `airsim_telemetry.csv`
-- `inference_session.csv` or `visualisation_session.csv`
-
-These are created through `AirSimSessionExporter`.
+`metadata.json` always includes a `performance_summary` block with total reward, duration, 2D/3D distance, mean/max cross-track error, and per-episode outcome.
 
 ## Minimap And Plotting
 
-Replay minimap support uses:
+Replay minimap uses:
 
-- `UE5TopDownMinimap`
-  - top-down camera view rendered from UE5
+- `UE5TopDownMinimap` — top-down camera positioned above the ship, rendered from UE5, optionally following ship heading
 
-`plot_airsim_path.py` still exists as a standalone telemetry plotter. It is not currently integrated into the main replay runner.
+`plot_airsim_path.py` is a standalone telemetry plotter. It is not integrated into the main runtime runners.
 
 ## Current Visual Cues In UE5
 
 Active:
 
-- persistent path/reference markers drawn with `plot_line_strip`
-- start/end points and other debug markers
-- UE5 top-down minimap rendering when enabled
+- persistent path/reference markers drawn with `plot_line_strip` and `plot_points`
+- start/end debug markers
+- optional ship trail (blue persistent line)
+- UE5 top-down minimap when `show_minimap=true`
 
-Inactive for now:
+Inactive:
 
 - UE5 HUD status text
 - in-world text labels near the ship
@@ -343,6 +428,18 @@ python -m airsim.inference.run_inference --model models/AirSimEnv_PPO_policy.zip
 python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_policy.zip
 ```
 
+### Coordinate calibration
+
+```bash
+python -m fw.common.airsim.tools.calibrate_coords
+```
+
+### Telemetry analysis
+
+```bash
+python -m fw.common.airsim.tools.analyze_telemetry
+```
+
 ## Related Docs
 
 - [AirSim Step-By-Step Setup Guide](../../docs/airsim_setup_step_by_step.md)
@@ -352,19 +449,21 @@ python -m airsim.inference.run_visualise_models --model models/PySimEnv_PPO_poli
 
 ## Tests
 
-Examples:
-
 ```bash
 python -m pytest tests/airsim -v
 python -m pytest tests/fw/test_main_fallback.py -v
 python -m pytest tests/fw/test_env_factory_config.py -v
 ```
 
-Important modules:
+Important test modules:
 
+- `tests/airsim/communication/test_bridge.py`
+- `tests/airsim/communication/test_control_mapping.py`
+- `tests/airsim/environments/test_airsim_env.py`
 - `tests/airsim/inference/test_model_visualisation_dispatch.py`
 - `tests/airsim/inference/test_visualisation_model_adapters.py`
 - `tests/airsim/inference/test_visualise_models_minimap_save.py`
+- `tests/airsim/inference/test_run_inference_airsim_env.py`
 - `tests/fw/test_main_fallback.py`
 - `tests/fw/test_env_factory_config.py`
 
@@ -373,3 +472,4 @@ Important modules:
 - `poc/` is historical and not the current reference implementation.
 - `run_visualise_models.py` is the preferred replay path for framework-trained policies.
 - `run_inference.py` is the preferred path for live UE5-native inference and validation.
+- Full curriculum scheduling and optional transfer learning are pending (final implementation stage).
