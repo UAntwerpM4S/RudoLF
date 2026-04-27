@@ -1,4 +1,4 @@
-﻿# Verantwoording Workflow
+# Verantwoording Workflow
 
 ## Doel van deze workflow
 
@@ -9,7 +9,7 @@ Deze notitie beschrijft de huidige werking van de framework-entrypoints in combi
 - framework-keuzes en AirSim-keuzes van elkaar te scheiden;
 - graceful fallback te voorzien wanneer UE5 niet beschikbaar is.
 
-De huidige structuur is dus bewust opgesplitst in een generieke entrypoint en een AirSim-uitbreiding.
+De huidige structuur is bewust opgesplitst in een generieke entrypoint en een AirSim-uitbreiding.
 
 ## Huidige bestanden en rollen
 
@@ -34,11 +34,11 @@ De klassieke frameworkflow gebruikt de waarden uit `fw.config.CONFIG_PARAMETERS`
 
 Deze entrypoint leest de AirSim-runtime-instellingen en beslist welke AirSim-flow uitgevoerd moet worden:
 
-- AirSim training;
-- Framework-gebaseerde visualisatie in UE5;
-- inference-gebaseerde visualisatie in UE5.
+- AirSim training (met geconfigureerd snelheidsprofiel);
+- Framework-gebaseerde visualisatie in UE5 (`run_visualise_models.py`);
+- Inference-gebaseerde visualisatie in UE5 (`run_inference.py`).
 
-Deze file bevat dus de gespecialiseerde AirSim-logica, terwijl `fw.main` de algemene framework-entrypoint blijft.
+Deze file bevat de gespecialiseerde AirSim-logica, terwijl `fw.main` de algemene framework-entrypoint blijft.
 
 ## Waarom deze opsplitsing
 
@@ -64,10 +64,12 @@ De framework-config in `fw.config` bepaalt:
 
 De AirSim-runtime-instellingen in `airsim/config/runtime_settings.json` bepalen onder meer:
 
-- `model_visualise`;
-- `inference_visualise`;
-- `training.speed_profile` (`normal`, `safe`, `fast`, `turbo`, `custom`);
+- `model_visualise` en `inference_visualise` — welke visualisatieroute gevolgd wordt;
+- `training.speed_profile` — `normal`, `safe`, `fast`, `turbo` of `custom`;
 - `training.simulation_speed` en `training.frames_per_step` (bij `custom`);
+- `training.curriculum_enabled` — zachte curriculumondersteuning via offtrack-limietdaling;
+- `training.steering_dynamics_enabled` — low-pass filter + snelheidslimiet op stuuracties;
+- `training.normalize_reward` en `training.reward_normalization_scale`;
 - `save_slot` en andere UE5/AirSim-instellingen.
 
 Omdat dit bestand geldige JSON moet blijven, worden toelichtingen niet als comments geschreven maar in `_remarks`-velden.
@@ -76,7 +78,7 @@ Deze beslissingen horen logisch thuis in de AirSim-entrypoint en niet in de klas
 
 ### 3. Graceful fallback bij ontbrekende UE5-verbinding
 
-AirSim-visualisatie vereist een actieve UE5/AirSim-verbinding. Wanneer UE5 niet draait of niet bereikbaar is, mag de volledige frameworkrun niet onnodig crashen.
+AirSim-visualisatie en -training vereisen een actieve UE5/AirSim-verbinding. Wanneer UE5 niet draait of niet bereikbaar is, mag de volledige frameworkrun niet onnodig crashen.
 
 Daarom is de huidige flow als volgt:
 
@@ -140,10 +142,58 @@ Binnen de AirSim-flow geldt:
 - `train` met `AirSimEnv` start training in AirSim;
 - trainingssnelheid en stepping-gedrag worden gestuurd via `training.speed_profile` of via expliciete `training.*` waarden;
 - AirSim-visualisatie kiest op basis van runtime-instellingen tussen:
-  - modulaire framework-modelvisualisatie in UE5;
-  - inference-visualisatie in UE5.
+  - modulaire framework-modelvisualisatie in UE5 (`model_visualise`);
+  - inference-visualisatie in UE5 (`inference_visualise`).
 
 Met andere woorden: bij AirSim wordt `visualize` niet meer gekozen via een `main`-blok in runtime settings, maar via de AirSim-specifieke visualisatievlaggen.
+
+## Trainingssnelheidsprofielen
+
+De trainingssnelheid wordt bepaald door `training.speed_profile` in `runtime_settings.json`.
+
+| Profiel | Simsnelheid | Pause stepping | time_step | Gebruik |
+|---------|-------------|----------------|-----------|---------|
+| `normal` | 1.0× | uit | 0.1 s | Debug / realtime |
+| `safe` | 20.0× | aan | 0.05 s | **Aanbevolen voor nieuwe training** |
+| `fast` | 40.0× | aan | 0.1 s | Snellere iteratie |
+| `turbo` | 80.0× | aan | 0.1 s | Maximum doorvoer |
+| `custom` | vrij | vrij | vrij | Handmatig |
+
+`safe` is aanbevolen voor initiële trainingsruns. Het combineert deterministisch pause-stepping met een conservatieve simsnelheid om fysische instabiliteit te reduceren.
+
+## Curriculumleren
+
+Curriculumleren wordt gedeeltelijk ondersteund via een zachte offtrack-limietdaling in `AirSimEnv`.
+
+Wanneer `curriculum_enabled=true`:
+
+- de offtrack-limiet start ruim en daalt geleidelijk over ca. 450 episodes;
+- dit laat de policy eerst globale routenavigatie leren, waarna strakker sporen vereist is.
+
+`TrainingLogSummary` in `train/training_log_analysis.py` analyseert episode-CSV-logs en stelt een curriculumfrontier voor op basis van mediaan/modusvoortgang per checkpoint en het aandeel high-speed offtrack-runs.
+
+**Volledig curriculumschema en optioneel transfer learning zijn nog niet actief. Dit is het laatste geplande implementatiestadium.**
+
+## Vroegtijdig stoppen
+
+`StrictSuccessStoppingCallback` stopt training automatisch wanneer de policy een configureerbaar aantal opeenvolgende strict-success-episodes bereikt.
+
+Succescriteria per episode:
+
+1. Alle routecheckpoints gepasseerd.
+2. Maximale CTE ≤ `strict_cte_limit_m` (standaard 10 m).
+3. Gemiddeld episoderendement ≥ `min_average_episode_reward` (standaard 0.95 genormaliseerd).
+
+## Stuurgedrag en steering dynamics
+
+Wanneer `steering_dynamics_enabled=true` worden policy-outputs niet ruw doorgestuurd naar UE5.
+
+Twee filters worden opeenvolgend toegepast:
+
+1. **Low-pass filter** — exponentiële afvlakking met `steering_smoothing_alpha`.
+2. **Snelheidslimiet** — de verandering per stap wordt beperkt tot `max_steering_rate_per_second × time_step`.
+
+Dit emuleert de traagheid van scheepsbesturing en voorkomt dat discrete actiessprongen de fysica destabiliseren.
 
 ## Gedrag met en zonder UE5
 
@@ -159,7 +209,7 @@ Als UE5 bereikbaar is:
 
 Als UE5 niet bereikbaar is:
 
-- een UE5-afhankelijke AirSim-visualisatie zal netjes stoppen met melding;
+- een UE5-afhankelijke AirSim-visualisatie of -training zal netjes stoppen met melding;
 - `fw.main_with_airsim` zal dan eindigen zonder traceback;
 - `fw.main` zal in dat geval terugvallen op zijn klassieke frameworkflow.
 
@@ -174,6 +224,7 @@ De huidige opzet maakt expliciet onderscheid tussen:
 - algemene frameworklogica;
 - AirSim-specialisatie;
 - runtime-gestuurde visualisatieroutes binnen de AirSim-tak;
+- trainingssnelheidsprofielen en deterministische steppingmodi;
 - fallback-gedrag.
 
 Daardoor is het eenvoudiger om:
@@ -204,15 +255,26 @@ python -m fw.main_with_airsim
 
 wordt gebruikt wanneer expliciet een pure AirSim-run gewenst is, zonder fallback naar de generieke frameworkflow.
 
+## Geplande uitbreidingen
+
+Het volgende is gepland als laatste implementatiestadium:
+
+- **Volledig curriculumschema** — gestructureerde multi-fase curriculumprogressie op basis van `TrainingLogSummary`-aanbevelingen.
+- **Optioneel transfer learning** — hergebruik van policy-gewichten getraind in `PySimEnv` of `FhSimEnv` als startpunt voor `AirSimEnv`-training, om initieel leren te versnellen.
+
+Deze functies zijn bewust uitgesteld totdat de basistraining in `AirSimEnv` stabiel en reproduceerbaar is.
+
 ## Samenvatting
 
-De huidige workflow is dus bewust opgebouwd rond een generieke basis-entrypoint en een gespecialiseerde AirSim-uitbreiding.
+De huidige workflow is bewust opgebouwd rond een generieke basis-entrypoint en een gespecialiseerde AirSim-uitbreiding.
 
 Belangrijkste redenen:
 
 - behoud van de klassieke frameworkflow;
 - duidelijke scheiding van verantwoordelijkheden;
 - gescheiden framework- en AirSim-configuratie;
+- meerdere trainingssnelheidsprofielen met deterministische stepping;
+- zachte curriculumondersteuning;
 - graceful fallback wanneer UE5 niet beschikbaar is.
 
 Daardoor is de huidige integratie robuuster, beter uitlegbaar en praktischer in gebruik tijdens ontwikkeling en testen.
