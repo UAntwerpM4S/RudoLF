@@ -93,7 +93,7 @@ class PySimColavBaseEnv(PySimEnv):
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
             encounter_range: float = 500.0,
-            eval: bool = True,
+            eval: bool = False,
             # Scenario type configuration
             scenario_types: Optional[list] = None,
             scenario_probs: Optional[list] = None,
@@ -402,6 +402,16 @@ class PySimColavBaseEnv(PySimEnv):
 
             if self.step_count >= self.max_steps and not terminated:
                 # reward = -250
+                truncated = True
+
+            # Focused-encounter training: scenario builder requests clean
+            # truncation when the post-encounter countdown elapses.  Treated
+            # exactly like a max-steps truncation (no failure penalty).
+            if (
+                not terminated
+                and not truncated
+                and getattr(self.scenario_builder, "_truncate_requested", False)
+            ):
                 truncated = True
 
             self.phys_sim.state.terminated = terminated

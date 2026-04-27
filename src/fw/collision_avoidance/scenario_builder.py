@@ -21,9 +21,25 @@ class ScenarioBuilder:
 
     def __init__(self, env) -> None:
         self.step_counter: int = 0
+        # Legacy default; effective values are read from the env per call
+        # (see ``_active_cooldown`` / ``_active_encounter_prob``).
         self.n_recovery_steps: int = 500
         self.env = env
         self.chosen_scenario: Optional[str] = None
+
+        # ----------------------------------------------------------
+        # Focused-encounter training state (per episode)
+        # ----------------------------------------------------------
+        # Number of encounters that have already spawned in the current
+        # episode.  In focused-encounter training we cap this at 1.
+        self._encounters_this_episode: int = 0
+        # When True, the post-encounter countdown is active: we no longer
+        # spawn encounters, just count steps until clean truncation.
+        self._post_encounter_active: bool = False
+        self._post_encounter_counter: int = 0
+        # Set to True when the post-encounter countdown elapses.  Read by
+        # PySimColavBaseEnv.step() to flag the episode as truncated.
+        self._truncate_requested: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle hooks (called by PySimColavBaseEnv)
@@ -46,6 +62,12 @@ class ScenarioBuilder:
         # with the start-of-path skip the user expects.
         self.step_counter = 0
         self.chosen_scenario = None
+
+        # Reset focused-encounter training state
+        self._encounters_this_episode = 0
+        self._post_encounter_active = False
+        self._post_encounter_counter = 0
+        self._truncate_requested = False
 
         # Step-level mode: encounters are spawned by on_step(). We've
         # already reset the counter above, so just clear entities and
@@ -91,13 +113,42 @@ class ScenarioBuilder:
             return
         clf.set_episode_scenario(scenario_label)
 
+    def _is_training_focused(self) -> bool:
+        """True when focused-encounter training is active for this env."""
+        env = self.env
+        return (
+            not getattr(env, "eval", False)
+            and bool(getattr(env, "focused_encounter_mode", False))
+        )
+
+    def _active_cooldown(self) -> int:
+        """Pre-encounter cooldown (steps) for the current train/eval mode."""
+        env = self.env
+        if getattr(env, "eval", False):
+            return int(getattr(env, "eval_encounter_cooldown", 500))
+        return int(getattr(env, "train_encounter_cooldown", 150))
+
+    def _active_encounter_prob(self) -> float:
+        """Encounter spawn probability per step for the current mode."""
+        env = self.env
+        if getattr(env, "eval", False):
+            return float(getattr(env, "eval_encounter_prob", 0.004))
+        return float(getattr(env, "train_encounter_prob", 1.0))
+
     def on_step(self, dt: float) -> None:
         """Called each environment step for step-level encounter spawning.
 
-        With probability ``encounter_prob`` and when no encounter is already
-        active, a single TS is spawned on the segment just outside the OS
-        encounter range.  Once the TS leaves forget range it is removed so
-        the next encounter can trigger.
+        Behavior depends on training vs eval mode:
+
+        * **Eval mode**: original behavior — after a cooldown, a TS may
+          spawn each step with ``eval_encounter_prob``.  Multiple
+          encounters per episode are allowed; episode runs to ``max_steps``.
+        * **Focused-encounter training mode**: a single encounter per
+          episode.  After ``train_encounter_cooldown`` steps of recovery,
+          a TS spawns with probability ``train_encounter_prob`` (typically
+          1.0).  Once the TS leaves ``forget_range``, a post-encounter
+          countdown of ``post_encounter_steps`` runs and then ``_truncate_requested``
+          is set so the env step loop can clean-truncate the episode.
         """
         env = self.env
         if not getattr(env, "enable_obstacles", False):
@@ -105,32 +156,56 @@ class ScenarioBuilder:
             env._sync_collision_entity_views()
             return
 
-        if self.step_counter != self.n_recovery_steps:
+        is_focused = self._is_training_focused()
+
+        # ----------------------------------------------------------
+        # 1. Post-encounter countdown (focused training only)
+        #    Runs after the (only) encounter's TS has left forget range.
+        # ----------------------------------------------------------
+        if self._post_encounter_active:
+            self._post_encounter_counter += 1
+            if self._post_encounter_counter >= int(getattr(env, "post_encounter_steps", 150)):
+                self._truncate_requested = True
+            return
+
+        # ----------------------------------------------------------
+        # 2. Pre-encounter cooldown / recovery
+        # ----------------------------------------------------------
+        cooldown = self._active_cooldown()
+        if self.step_counter != cooldown:
             self.step_counter += 1
             return
-        encounter_prob = 0.004
-        encounter = env._rng.random() < encounter_prob
 
-        # Spawn a new encounter if none is active
-        if encounter and not env.collision_entities:
-            chosen_scenario = self.sample_collision_entity_scenario()
-            if chosen_scenario != "path-following":
-                seg_idx = self._find_segment_at_encounter_range()
-                if seg_idx is not None:
-                    entities = self.compute_collision_entity_positions(
-                        chosen_scenario, n=1, target_seg_idx=seg_idx,
-                    )
-                    if entities:
-                        for entity in entities:
-                            if getattr(entity, "spawn_scenario_label", None) is None:
-                                entity.spawn_scenario_label = chosen_scenario
-                    env.collision_entities = entities or []
-                    env._sync_collision_entity_views()
-                    if entities:
-                        # Honor ground_truth_classification for step-level too.
-                        self._push_scenario_to_classifier(chosen_scenario)
+        # ----------------------------------------------------------
+        # 3. Encounter spawn (skip if focused training already had one)
+        # ----------------------------------------------------------
+        spawn_blocked = is_focused and self._encounters_this_episode >= 1
+        if not spawn_blocked:
+            encounter_prob = self._active_encounter_prob()
+            encounter = env._rng.random() < encounter_prob
 
-        # Clean up TS that has left forget range
+            if encounter and not env.collision_entities:
+                chosen_scenario = self.sample_collision_entity_scenario()
+                if chosen_scenario != "path-following":
+                    seg_idx = self._find_segment_at_encounter_range()
+                    if seg_idx is not None:
+                        entities = self.compute_collision_entity_positions(
+                            chosen_scenario, n=1, target_seg_idx=seg_idx,
+                        )
+                        if entities:
+                            for entity in entities:
+                                if getattr(entity, "spawn_scenario_label", None) is None:
+                                    entity.spawn_scenario_label = chosen_scenario
+                        env.collision_entities = entities or []
+                        env._sync_collision_entity_views()
+                        if entities:
+                            # Honor ground_truth_classification for step-level too.
+                            self._push_scenario_to_classifier(chosen_scenario)
+                            self._encounters_this_episode += 1
+
+        # ----------------------------------------------------------
+        # 4. Clean up TS that has left forget range
+        # ----------------------------------------------------------
         if env.collision_entities and len(env.collision_entities) == 1:
             if getattr(env, "ts_idx", None) is not None:
                 ts = env.collision_entities[env.ts_idx]
@@ -146,6 +221,12 @@ class ScenarioBuilder:
                     # tries collision_entities[0] → IndexError.
                     if hasattr(env, "scenario_classifier"):
                         env.scenario_classifier.reset()
+
+                    # Focused training: encounter is over — start the
+                    # post-encounter countdown to clean truncation.
+                    if is_focused:
+                        self._post_encounter_active = True
+                        self._post_encounter_counter = 0
 
     def cache_checkpoint_segments(self) -> None:
         """

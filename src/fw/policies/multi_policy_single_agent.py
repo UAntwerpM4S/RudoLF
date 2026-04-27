@@ -76,7 +76,7 @@ class CollapseWatchdog:
         ratio_threshold: float = -1.75,
         warmup_iterations: int = 50,
         min_gap_between_rollbacks: int = 10,
-        max_rollbacks: int = 3,
+        max_rollbacks: int = 100,
         min_peak_for_trigger: float = 0.1,
     ):
         self.num_policies = num_policies

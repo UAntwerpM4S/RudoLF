@@ -51,7 +51,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             enable_obstacles: bool = True,
             use_polar_scan: bool = True,
             enable_variable_ship_size: bool = False,
-            eval: bool = True,
+            eval: bool = False,
             include_scenario_one_hot: bool = False,
             # Scenario configuration (passed to base)
             scenario_types: Optional[list] = None,
@@ -60,9 +60,17 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             obstacle_weights: Optional[list] = None,
             scenario_obstacle_level: Optional[str] = None,
             ground_truth_classification: bool = True,
+            # Focused-encounter training configuration
+            focused_encounter_mode: bool = True,
+            train_encounter_prob: float = 1.0,
+            train_encounter_cooldown: int = 150,
+            eval_encounter_prob: float = 0.004,
+            eval_encounter_cooldown: int = 500,
+            post_encounter_steps: int = 150,
+            skip_tail_segments: int = 7,
+            random_segment_start: bool = True,
             **kwargs,
     ) -> None:
-
         # Polar scan configuration
         self.use_polar_scan = bool(use_polar_scan)
         self.polar_scan_cached = None
@@ -72,6 +80,17 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.polar_obs_max = 0.1 * self.polar_max_range / 250
 
         self.include_scenario_one_hot = bool(include_scenario_one_hot)
+
+        # focused encounter (path following -> encounter -> path following --> terminate)
+        # to produce shorter episodes with more equal step distribution across encounter/path-following
+        self.focused_encounter_mode = bool(focused_encounter_mode)
+        self.train_encounter_prob = float(train_encounter_prob)
+        self.train_encounter_cooldown = int(train_encounter_cooldown)
+        self.eval_encounter_prob = float(eval_encounter_prob)
+        self.eval_encounter_cooldown = int(eval_encounter_cooldown)
+        self.post_encounter_steps = int(post_encounter_steps)
+        self.skip_tail_segments = int(skip_tail_segments)
+        self.random_segment_start = bool(random_segment_start)
 
         # Polar-specific reward state
         self._colreg_initial_heading = None
@@ -90,7 +109,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.0, 0.0, 0.0, 0.55, 0.45, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.0, 0.0, 0.0, 0.4, 0.6, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -156,27 +175,30 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         defaults (set in PySimColavBaseEnv.__init__) and are unaffected.
         """
         self.eval = True
+        #
+        # # Variable TS radii
+        # self.enable_variable_ship_size = True
+        # self.static_ship_radius_min = 20.0
+        # self.static_ship_radius_max = 40.0
+        #
+        # # Lateral lane spawn (parallel-to-path)
+        # # Head-on: 30 m to OS-port +/- 10 m (a "left lane")
+        # self.headon_lateral_mean = 30.0
+        # self.headon_lateral_jitter = 10.0
+        # # Overtaking: same lane as OS, +/- 10 m jitter only
+        # self.overtaking_lateral_jitter = 10.0
+        #
+        # # Ornstein-Uhlenbeck wander on entity.path_offset
+        # self.enable_path_offset_ou = True
+        # self.ou_theta = 0.1
+        # self.ou_sigma = 1.0
+        # self.ou_clip = 8.0
+        #
+        # # Late dodge for head-on TS at encounter_range/2
+        # self.enable_headon_dodge = True
 
-        # Variable TS radii
-        self.enable_variable_ship_size = True
-        self.static_ship_radius_min = 20.0
-        self.static_ship_radius_max = 40.0
-
-        # Lateral lane spawn (parallel-to-path)
-        # Head-on: 30 m to OS-port +/- 10 m (a "left lane")
-        self.headon_lateral_mean = 30.0
-        self.headon_lateral_jitter = 10.0
-        # Overtaking: same lane as OS, +/- 10 m jitter only
-        self.overtaking_lateral_jitter = 10.0
-
-        # Ornstein-Uhlenbeck wander on entity.path_offset
-        self.enable_path_offset_ou = True
-        self.ou_theta = 0.1
-        self.ou_sigma = 1.0
-        self.ou_clip = 8.0
-
-        # Late dodge for head-on TS at encounter_range/2
-        self.enable_headon_dodge = True
+        # Let OS always start from the original position
+        self.random_segment_start = False
 
     # -------------------------
     # Polar scan geometry
