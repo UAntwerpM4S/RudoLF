@@ -369,8 +369,8 @@ class AgentManager:
                     print(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
                     print(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
                     print(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
-                    cr_pct = (m.collision_count / m.num_episodes * 100) if m.num_episodes else 0.0
-                    print(f"Collision rate (CR): {cr_pct:.2f}%")
+                    cr_pct = (m.collision_count / m.num_encounters * 100) if m.num_encounters else 0.0
+                    print(f"Collision rate (CR): {cr_pct:.2f}% ({m.collision_count}/{m.num_encounters} encounters)")
                     print(f"Collision per type: {m.collision_type_count}")
                     print(f"Collision per side: {m.collision_side_count}")
                     print(f"COLREG violation count: {m.colreg_violation_count}")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 import numpy as np
+from collections import deque
 
 from typing import Optional
 from contextlib import contextmanager
@@ -270,11 +271,32 @@ class EpisodeCollector:
             if ship_env is not None:
                 ShipDataExtractor.record_initial(ship_env, accumulators[sid])
 
+        # Rolling buffers for collision diagnostic (last 100 steps)
+        _value_buffer: deque = deque(maxlen=100)
+        _dist_buffer: deque = deque(maxlen=100)
+
+        # Resolve the primary ship env once for distance queries
+        _primary_ship_env = next(iter(ship_envs.values()), None)
+
         info = {}
         with self._render_mode(ship_envs, live_animation):
             while not np.all(done):
-                action, _, _ = self._agent.predict(state=state, deterministic=True)
+                action, _, value = self._agent.predict(state=state, deterministic=True)
+                _value_buffer.append(float(value))
                 state, reward, terminated, truncated, info = env.step(action)
+
+                # Current minimum distance to any collision entity (post-step)
+                _cur_dist = float("inf")
+                if (
+                    _primary_ship_env is not None
+                    and getattr(_primary_ship_env, "collision_entities", None)
+                    and getattr(_primary_ship_env, "ship_pos", None) is not None
+                ):
+                    _cur_dist = min(
+                        e.distance_to_point(_primary_ship_env.ship_pos)
+                        for e in _primary_ship_env.collision_entities
+                    )
+                _dist_buffer.append(_cur_dist)
 
                 env_done = np.logical_or(terminated, truncated)
                 done = np.logical_or(done, env_done)
@@ -288,6 +310,38 @@ class EpisodeCollector:
                             ship_env.render()
 
         # reward is accumulated inline during _record_step; nothing to finalize here
+
+        # Collision value diagnostic: print pre-collision value + distance history.
+        _terminal_info = info[0] if isinstance(info, (list, tuple)) else info
+        if isinstance(_terminal_info, dict):
+            _col_info = _terminal_info.get("collision_info", {}) or {}
+            if _col_info.get("collision"):
+                _vbuf = list(_value_buffer)
+                _dbuf = list(_dist_buffer)
+                _col_type = _col_info.get("collision_type", "unknown")
+                _n = len(_vbuf)
+                print(
+                    f"\n[VALUE_DIAG] Episode {episode} — collision! type={_col_type}, "
+                    f"steps_in_buffer={_n}"
+                )
+                if _vbuf:
+                    # Print step | value | dist side-by-side for readability
+                    _offset = max(0, 100 - _n)
+                    header = f"  {'step':>5}  {'value':>9}  {'min_dist':>10}"
+                    print(header)
+                    for i, (v, d) in enumerate(zip(_vbuf, _dbuf)):
+                        _d_str = f"{d:10.1f}" if d < float("inf") else "       inf"
+                        print(f"  {_offset + i:>5}  {v:>9.3f}  {_d_str}")
+                    print(
+                        f"  --- value: min={min(_vbuf):.3f}  max={max(_vbuf):.3f}  "
+                        f"final={_vbuf[-1]:.3f}  mean_last10={float(np.mean(_vbuf[-10:])):.3f}"
+                    )
+                    _finite_dists = [d for d in _dbuf if d < float("inf")]
+                    if _finite_dists:
+                        print(
+                            f"  --- dist:  min={min(_finite_dists):.1f}m  "
+                            f"final={_dbuf[-1]:.1f}m"
+                        )
 
         # Attach terminal info per ship (env-reported collision / COLREG data).
         for idx, sid in enumerate(ship_ids):

@@ -364,39 +364,58 @@ class ScenarioClassifier:
 
     def _classify_geometry_extended(self, os_pos, os_heading, ts_pos, ts_heading) -> int:
         """
-        Classifies the TS based on relative bearing and heading difference,
-        returning an *extended* 5-way index that distinguishes crossing-left
-        (TS on port, not head-on, not overtaking) from path-following.
+        Classifies a tracked TS by *heading difference* — the most stable
+        signal once a TS is within range. The heading difference is folded
+        to [0, pi] and bucketed by which canonical angle it's nearest:
 
-        Use this for metrics. For the reduced 4-way classifier output, collapse
-        the result via `_BUILDER_TO_CLASSIFIER[EXTENDED_SCENARIO_LABELS[ext]]`.
+          * near pi   -> head-on        (reciprocal courses)
+          * near 0    -> overtaking     (aligned courses)
+          * near pi/2 -> crossing       (perpendicular courses; left/right
+                                         disambiguated by relative bearing)
+
+        Bucket boundaries fall naturally at pi/4 and 3*pi/4 from taking the
+        nearest of the three canonical angles. Bearing is consulted only to
+        pick crossing-left vs crossing-right.
+
+        This function never returns "path-following": the caller has already
+        confirmed a TS is tracked. The "no TS in range" path-following case
+        is handled in _finalize_scenario when ext is None.
+
+        Returns an *extended* 5-way index. The reduced 4-way classifier
+        output (which collapses crossing-left to path-following per the
+        Rule 17 "stand-on" convention) is produced downstream via
+        `_BUILDER_TO_CLASSIFIER[EXTENDED_SCENARIO_LABELS[ext]]`.
+
+        The legacy parameters (head_on_bearing_tol, overtaking_abaft_angle,
+        crossing_heading_tol, head_on_heading_tol) are retained on the class
+        for backward compatibility but are no longer consulted here. Earlier
+        bearing-based gates were brittle under the head-on lateral lane
+        offset (headon_lateral_mean) and produced 100% head-on -> path-
+        following misclassification.
         """
         dx = float(ts_pos[0] - os_pos[0])
         dy = float(ts_pos[1] - os_pos[1])
 
-        # Relative bearing of TS from OS
-        rel_bearing_os = _normalize_angle(math.atan2(dy, dx) - os_heading)
-
-        # Heading difference
+        # Heading difference, folded to [0, pi].
         delta_heading = abs(_normalize_angle(ts_heading - os_heading))
 
-        # Bearing of OS from TS (for overtaking: is OS abaft TS's beam?)
-        rel_bearing_ts = _normalize_angle(math.atan2(-dy, -dx) - ts_heading)
+        # Distance to each canonical heading-difference value.
+        dist_reciprocal    = abs(delta_heading - math.pi)
+        dist_aligned       = delta_heading
+        dist_perpendicular = abs(delta_heading - math.pi / 2.0)
 
-        # Head-on: TS nearly ahead, courses nearly reciprocal
-        if abs(rel_bearing_os) < self.head_on_bearing_tol and delta_heading > (math.pi - self.head_on_heading_tol):
+        closest = min(dist_reciprocal, dist_aligned, dist_perpendicular)
+
+        if closest == dist_reciprocal:
             return EXTENDED_SCENARIO_INDEX["head-on"]
 
-        # Overtaking: OS is abaft TS's beam
-        if abs(rel_bearing_ts) > self.overtaking_abaft_angle:
+        if closest == dist_aligned:
             return EXTENDED_SCENARIO_INDEX["overtaking"]
 
-        # Crossing: headings must be roughly perpendicular (45°–135°). This
-        # prevents head-on encounters that fall outside the head-on bearing/
-        # heading tolerances from being mislabelled as crossing.
-        if abs(delta_heading - math.pi / 2) < self.crossing_heading_tol:
-            if rel_bearing_os < 0:
-                return EXTENDED_SCENARIO_INDEX["crossing-right"]
-            return EXTENDED_SCENARIO_INDEX["crossing-left"]
-
-        return EXTENDED_SCENARIO_INDEX["path-following"]
+        # Perpendicular bucket: TS on OS-starboard -> crossing-right,
+        # TS on OS-port -> crossing-left. Math convention: rel_bearing_os
+        # is CCW-positive in OS body frame, so negative means starboard.
+        rel_bearing_os = _normalize_angle(math.atan2(dy, dx) - os_heading)
+        if rel_bearing_os < 0:
+            return EXTENDED_SCENARIO_INDEX["crossing-right"]
+        return EXTENDED_SCENARIO_INDEX["crossing-left"]

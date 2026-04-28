@@ -124,7 +124,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=5.0,
             patience=4,
-            max_time_steps=3000
+            max_time_steps=250
         ),
     }
 

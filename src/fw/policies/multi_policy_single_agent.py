@@ -72,10 +72,10 @@ class CollapseWatchdog:
         self,
         num_policies: int,
         policy_labels: List[str],
-        window_size: int = 10,
-        ratio_threshold: float = -1.75,
+        window_size: int = 6,
+        ratio_threshold: float = -1.0,
         warmup_iterations: int = 50,
-        min_gap_between_rollbacks: int = 10,
+        min_gap_between_rollbacks: int = 5,
         max_rollbacks: int = 100,
         min_peak_for_trigger: float = 0.1,
     ):

@@ -63,11 +63,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             # Focused-encounter training configuration
             focused_encounter_mode: bool = True,
             train_encounter_prob: float = 1.0,
-            train_encounter_cooldown: int = 150,
+            train_encounter_cooldown: int = 50,
             eval_encounter_prob: float = 0.004,
             eval_encounter_cooldown: int = 500,
             post_encounter_steps: int = 150,
-            skip_tail_segments: int = 7,
+            skip_tail_segments: int = 10,
             random_segment_start: bool = True,
             **kwargs,
     ) -> None:
@@ -78,6 +78,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.polar_fov = np.radians(270)
         self.polar_max_range = 500.0
         self.polar_obs_max = 0.1 * self.polar_max_range / 250
+        self.distance_penalty_start = 200
 
         self.include_scenario_one_hot = bool(include_scenario_one_hot)
 
@@ -152,7 +153,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             # The wrap discontinuity at x = +/- pi is intentional: reaching
             # +A via the wrap requires first traversing a long stretch of
             # negative reward, so the agent cannot exploit it.
-            "crossing_right": 1.0,
+            "crossing_right": 1.5,
             "crossing_right_steepness": 1.0,
             "crossing_right_zero": -0.34906585,  # -20deg
             # Soft gate that fades the crossing-right shaping after TS leaves
@@ -175,27 +176,27 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         defaults (set in PySimColavBaseEnv.__init__) and are unaffected.
         """
         self.eval = True
-        #
-        # # Variable TS radii
-        # self.enable_variable_ship_size = True
-        # self.static_ship_radius_min = 20.0
-        # self.static_ship_radius_max = 40.0
-        #
-        # # Lateral lane spawn (parallel-to-path)
-        # # Head-on: 30 m to OS-port +/- 10 m (a "left lane")
-        # self.headon_lateral_mean = 30.0
-        # self.headon_lateral_jitter = 10.0
-        # # Overtaking: same lane as OS, +/- 10 m jitter only
-        # self.overtaking_lateral_jitter = 10.0
-        #
-        # # Ornstein-Uhlenbeck wander on entity.path_offset
-        # self.enable_path_offset_ou = True
-        # self.ou_theta = 0.1
-        # self.ou_sigma = 1.0
-        # self.ou_clip = 8.0
-        #
-        # # Late dodge for head-on TS at encounter_range/2
-        # self.enable_headon_dodge = True
+
+        # Variable TS radii
+        self.enable_variable_ship_size = True
+        self.static_ship_radius_min = 20.0
+        self.static_ship_radius_max = 40.0
+
+        # Lateral lane spawn (parallel-to-path)
+        # Head-on: 30 m to OS-port +/- 10 m (a "left lane")
+        self.headon_lateral_mean = 30.0
+        self.headon_lateral_jitter = 10.0
+        # Overtaking: same lane as OS, +/- 10 m jitter only
+        self.overtaking_lateral_jitter = 10.0
+
+        # Ornstein-Uhlenbeck wander on entity.path_offset
+        self.enable_path_offset_ou = True
+        self.ou_theta = 0.1
+        self.ou_sigma = 1.0
+        self.ou_clip = 8.0
+
+        # Late dodge for head-on TS at encounter_range/2
+        self.enable_headon_dodge = True
 
         # Let OS always start from the original position
         self.random_segment_start = False
@@ -392,15 +393,16 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             max_close = float(np.max(self.polar_scan_cached))
             min_dist_n = 1.0 - (max_close / max(float(self.polar_obs_max), 1e-6))
 
-            d_ramp_start = 100
+            d_ramp_start = self.distance_penalty_start
             ramp_max_penalty = 5.0
             min_dist = min_dist_n * self.polar_max_range
 
             if min_dist < d_ramp_start:
-                collision_boundary = 0.0
+                collision_boundary = 40.0
+                a = -2.6
                 ramp_t = (min_dist - collision_boundary) / max(d_ramp_start - collision_boundary, EPSILON)
                 ramp_t = float(np.clip(ramp_t, 0.0, 1.0))
-                exp_t = (np.exp(ramp_t) - 1.0) / (np.e - 1.0)
+                exp_t = (np.exp(a * ramp_t) - 1.0) / (np.exp(a) - 1.0)
                 ramp_penalty = ramp_max_penalty * (1.0 - exp_t)
                 _step_polar = self.reward_weights['polar_distance'] * ramp_penalty
                 reward -= _step_polar

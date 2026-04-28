@@ -186,16 +186,20 @@ class MetricsComputer:
         m.colreg_violation_count = sum(int(ep.colreg_violations) for ep in episodes)
 
         # Classification diagnostics — one record per encounter.
+        # num_encounters counts all encounter starts (including those without
+        # a gt label); classification accuracy metrics only use labelled ones.
         confusion: dict[tuple[str, str], int] = {}
         mismatches = 0
         total = 0
+        classified = 0
         for ep in episodes:
             for enc in ep.scenario_encounters:
+                total += 1
                 gt = enc.get("gt")
                 pred = enc.get("pred")
                 if gt is None or pred is None:
                     continue
-                total += 1
+                classified += 1
                 key = (gt, pred)
                 confusion[key] = confusion.get(key, 0) + 1
                 if gt != pred:

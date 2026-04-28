@@ -397,7 +397,7 @@ class PySimColavBaseEnv(PySimEnv):
             # Failure penalty
             success = self.checkpoint_index >= len(self.checkpoints)
             if terminated and not success:
-                reward = -20.0
+                reward = -250.0
                 pass
 
             if self.step_count >= self.max_steps and not terminated:
@@ -503,12 +503,13 @@ class PySimColavBaseEnv(PySimEnv):
             return
 
         gt_ext = clf.ground_truth_extended_label
-        if gt_ext is None:
-            # Tracked entity exists but was not tagged by the builder.
-            # Should not happen in normal operation — skip defensively.
-            return
-        pred_ext = clf.geometric_extended_label
+        pred_ext = clf.geometric_extended_label if gt_ext is not None else None
 
+        # Always record the encounter start so n_encounters is correct.
+        # gt_ext may be None when the tracked entity was not tagged by the
+        # builder (should not happen in normal operation, but handled
+        # defensively). Such records are excluded from classification
+        # accuracy metrics but still count toward the encounter total.
         self._episode_encounters.append({"gt": gt_ext, "pred": pred_ext})
 
     # ---------------------------
