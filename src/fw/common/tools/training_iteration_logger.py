@@ -9,6 +9,14 @@ from typing import Any
 
 from fw.common.tools.path_utils import resolve_path_relative_to_src
 
+try:
+    import psutil as _psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    _PSUTIL_AVAILABLE = False
+
+_MEMORY_GROWTH_ALERT_RATIO = 2.0  # alert when RSS doubles since last sample (leak indicator)
+
 
 class TrainingIterationLogger:
     """Buffer PPO iteration rows and write them to CSV on demand."""
@@ -25,6 +33,7 @@ class TrainingIterationLogger:
         "loss",
         "num_episode_batches",
         "elapsed_seconds",
+        "rss_mb",
     )
 
     def __init__(
@@ -47,6 +56,17 @@ class TrainingIterationLogger:
         self._agent_type = str(agent_type)
         self._device = str(device)
         self._rows: list[dict[str, Any]] = []
+        self._prev_rss_mb: float = 0.0
+        self._psutil_proc = _psutil.Process() if _PSUTIL_AVAILABLE else None
+
+    def _sample_rss_mb(self) -> float:
+        """Return current process RSS in MiB, or 0.0 if psutil is unavailable."""
+        if self._psutil_proc is None:
+            return 0.0
+        try:
+            return self._psutil_proc.memory_info().rss / (1024 * 1024)
+        except Exception:
+            return 0.0
 
     def log_iteration(
         self,
@@ -59,6 +79,14 @@ class TrainingIterationLogger:
         elapsed_seconds: float,
     ) -> None:
         """Append one training-iteration row to the CSV file."""
+        rss_mb = self._sample_rss_mb()
+        if self._prev_rss_mb > 0.0 and rss_mb > self._prev_rss_mb * _MEMORY_GROWTH_ALERT_RATIO:
+            print(
+                f"[Alert] Memory growth: {self._prev_rss_mb:.1f} MB → {rss_mb:.1f} MB "
+                f"(+{rss_mb - self._prev_rss_mb:.1f} MB) at iteration {iteration}."
+            )
+        self._prev_rss_mb = rss_mb
+
         row: dict[str, Any] = {
             "run_started_utc": self._run_started_text,
             "logged_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -71,6 +99,7 @@ class TrainingIterationLogger:
             "loss": float(loss),
             "num_episode_batches": int(num_episode_batches),
             "elapsed_seconds": float(elapsed_seconds),
+            "rss_mb": round(rss_mb, 2),
         }
         self._rows.append(row)
 
