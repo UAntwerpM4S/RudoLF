@@ -144,6 +144,15 @@ class SinglePPOAgent(BasePPOAgent):
             print(f"[Warning] Very short trajectory detected. Length: {all_advantages.numel()}")
             return float('nan')
 
+        for name, tensor in (
+            ("states", all_states),
+            ("advantages", all_advantages),
+            ("returns", all_returns),
+        ):
+            if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+                print(f"[Alert] NaN/Inf detected in {name} before PPO update — skipping batch.")
+                return float('nan')
+
         # Normalize advantages
         all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
 
@@ -191,10 +200,20 @@ class SinglePPOAgent(BasePPOAgent):
                 # Total loss
                 loss = policy_loss + (self.value_loss_coef * value_loss) - (self.entropy_coef * entropy_loss)
 
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"[Alert] NaN/Inf loss detected (policy={policy_loss.item():.4f}, "
+                          f"value={value_loss.item():.4f}) — skipping update step.")
+                    continue
+
                 # Optimize
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.policy.network.parameters(), self.max_grad_norm)
+                grad_norm = nn.utils.clip_grad_norm_(
+                    self.policy.network.parameters(), self.max_grad_norm
+                )
+                if float(grad_norm) > 10.0 * self.max_grad_norm:
+                    print(f"[Alert] Exploding gradient: norm={float(grad_norm):.2f} "
+                          f"(threshold={self.max_grad_norm:.2f}). Clipping applied.")
                 self.optimizer.step()
 
                 loss_per_epoch.append(loss.item())

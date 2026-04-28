@@ -10,7 +10,9 @@ import csv
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import numpy as np
 
 
 @dataclass(frozen=True)
@@ -335,6 +337,92 @@ def format_performance_summary(title: str, summary: RunPerformanceSummary) -> st
     return "\n".join(lines)
 
 
+def _extract_xy(rows: List[Dict[str, Any]], x_key: str = "x", y_key: str = "y") -> np.ndarray:
+    """Extract a (N, 2) float array from telemetry rows."""
+    points = []
+    for row in rows:
+        x = _safe_float(row.get(x_key, row.get("pos_x", 0.0)))
+        y = _safe_float(row.get(y_key, row.get("pos_y", 0.0)))
+        points.append((x, y))
+    return np.array(points, dtype=float) if points else np.empty((0, 2), dtype=float)
+
+
+def _resample_by_arclength(points: np.ndarray, n_samples: int) -> np.ndarray:
+    """Resample a (N, 2) polyline to *n_samples* equally spaced arc-length positions."""
+    if len(points) < 2:
+        return points
+    deltas = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    arc = np.concatenate([[0.0], np.cumsum(deltas)])
+    total = arc[-1]
+    if total < 1e-9:
+        return np.tile(points[0], (n_samples, 1))
+    sample_arc = np.linspace(0.0, total, n_samples)
+    xs = np.interp(sample_arc, arc, points[:, 0])
+    ys = np.interp(sample_arc, arc, points[:, 1])
+    return np.stack([xs, ys], axis=1)
+
+
+def _normalize_shape(points: np.ndarray) -> np.ndarray:
+    """Translate to centroid and scale by max extent so both trajectories are comparable."""
+    if len(points) == 0:
+        return points
+    centered = points - points.mean(axis=0)
+    scale = np.linalg.norm(centered, axis=1).max()
+    return centered / scale if scale > 1e-9 else centered
+
+
+def _dtw_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """Compute Dynamic Time Warping distance between two (N, 2) trajectories."""
+    n, m = len(a), len(b)
+    cost = np.full((n, m), np.inf, dtype=float)
+    cost[0, 0] = float(np.linalg.norm(a[0] - b[0]))
+    for i in range(1, n):
+        cost[i, 0] = cost[i - 1, 0] + float(np.linalg.norm(a[i] - b[0]))
+    for j in range(1, m):
+        cost[0, j] = cost[0, j - 1] + float(np.linalg.norm(a[0] - b[j]))
+    for i in range(1, n):
+        for j in range(1, m):
+            cost[i, j] = float(np.linalg.norm(a[i] - b[j])) + min(
+                cost[i - 1, j], cost[i, j - 1], cost[i - 1, j - 1]
+            )
+    return float(cost[-1, -1])
+
+
+def compute_trajectory_similarity(
+    session_rows: List[Dict[str, Any]],
+    bridge_rows: List[Dict[str, Any]],
+    n_samples: int = 150,
+) -> Tuple[float, float]:
+    """Compute shape-based RMSE and DTW distance between 2D and 3D trajectories.
+
+    Both trajectories are resampled to *n_samples* points by arc-length and
+    then shape-normalised (centroid subtracted, scaled to unit extent) before
+    comparison, making the metric coordinate-system agnostic.
+
+    Args:
+        session_rows: Framework session telemetry rows (fields ``x``/``y``).
+        bridge_rows: AirSim bridge telemetry rows (fields ``pos_x``/``pos_y``).
+        n_samples: Number of arc-length sample points for resampling.
+
+    Returns:
+        Tuple ``(rmse, dtw)`` — lower values indicate more similar shapes.
+        Both values are ``float('nan')`` when either trajectory is empty.
+    """
+    pts_2d = _extract_xy(session_rows, x_key="x", y_key="y")
+    pts_3d = _extract_xy(bridge_rows, x_key="pos_x", y_key="pos_y")
+
+    if len(pts_2d) < 2 or len(pts_3d) < 2:
+        return float("nan"), float("nan")
+
+    r2d = _normalize_shape(_resample_by_arclength(pts_2d, n_samples))
+    r3d = _normalize_shape(_resample_by_arclength(pts_3d, n_samples))
+
+    diffs = r2d - r3d
+    rmse = float(np.sqrt(np.mean(np.sum(diffs ** 2, axis=1))))
+    dtw = _dtw_distance(r2d, r3d)
+    return rmse, dtw
+
+
 def render_side_by_side_trajectory_plot(
     session_csv_path: str | Path,
     bridge_csv_path: str | Path,
@@ -402,7 +490,12 @@ def render_side_by_side_trajectory_plot(
         ax_3d.set_ylabel("AirSim Y (m)")
         ax_3d.set_zlabel("AirSim Z (m)")
 
-        fig.suptitle(title)
+        rmse, dtw = compute_trajectory_similarity(session_rows, bridge_rows)
+        if math.isfinite(rmse) and math.isfinite(dtw):
+            metrics_text = f"Shape RMSE: {rmse:.4f}  |  DTW: {dtw:.4f}  (normalised, lower = more similar)"
+            fig.suptitle(f"{title}\n{metrics_text}", fontsize=10)
+        else:
+            fig.suptitle(title)
         fig.tight_layout()
 
         output = Path(output_path)

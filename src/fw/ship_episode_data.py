@@ -33,6 +33,7 @@ class CollisionEvent:
     is_collision: bool  # True if distance < hard collision threshold
 
     def __post_init__(self) -> None:
+        """Validate that timestep and distance are non-negative."""
         if self.timestep < 0:
             raise ValueError(f"timestep must be non-negative, got {self.timestep}.")
         if self.distance < 0.0:
@@ -76,6 +77,7 @@ class ShipEpisodeData:
     collision_events: list[CollisionEvent] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        """Validate fields and normalize path shape to (T, 2)."""
         if not self.ship_id:
             raise ValueError("ship_id must be a non-empty string.")
         if self.episode < 0:
@@ -111,6 +113,7 @@ class RunData:
     num_episodes: int
 
     def __post_init__(self) -> None:
+        """Validate that num_episodes is non-negative and ships is not None."""
         if self.num_episodes < 0:
             raise ValueError(f"num_episodes must be non-negative, got {self.num_episodes}.")
         if self.ships is None:
