@@ -56,6 +56,8 @@ class ShipEpisodeData:
         cross_errors: Cross-track error per timestep.
         rudder_actions: Rudder angle at each timestep.
         rudder_changes: Absolute change in rudder angle per timestep.
+        thrust_actions: Thrust command at each timestep.
+        thrust_changes: Absolute change in thrust command per timestep.
         heading_errors: Heading error (radians) per timestep.
         velocities: Surge velocity per timestep.
         ukc_measurements: Under-keel clearance per timestep.
@@ -69,6 +71,8 @@ class ShipEpisodeData:
     cross_errors: np.ndarray = field(default_factory=lambda: np.array([]))
     rudder_actions: np.ndarray = field(default_factory=lambda: np.array([]))
     rudder_changes: np.ndarray = field(default_factory=lambda: np.array([]))
+    thrust_actions: np.ndarray = field(default_factory=lambda: np.array([]))
+    thrust_changes: np.ndarray = field(default_factory=lambda: np.array([]))
     heading_errors: np.ndarray = field(default_factory=lambda: np.array([]))
     velocities: np.ndarray = field(default_factory=lambda: np.array([]))
     ukc_measurements: np.ndarray = field(default_factory=lambda: np.array([]))

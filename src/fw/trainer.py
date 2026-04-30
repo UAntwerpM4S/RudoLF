@@ -175,8 +175,11 @@ class Trainer:
                     collect_evaluation_summary=True,
                     show_plots=show_plots,
                 )
-                if summaries and env_type in summaries:
-                    env_metrics["evaluation_summary"] = summaries[env_type]
+                if summaries:
+                    env_metrics["evaluation_summary"] = (
+                        summaries.get(env_type)
+                        or next(iter(summaries.values()))
+                    )
             except AttributeError as e:
                 print(e)
         else:
@@ -201,10 +204,6 @@ class Trainer:
             show_plots: Whether to show interactive matplotlib windows.
         """
         summaries = {} if collect_evaluation_summary else None
-        if envs is not None:
-            if show_plots:
-                # Start shared figure
-                self._agent_mgr.begin_overlay_plot()
 
         if envs is not None:
             for env_idx, env in enumerate(envs):
@@ -232,11 +231,32 @@ class Trainer:
                         other_env_name=policy_name,
                     )
 
-                    self._agent_mgr.visualize_trained_agent(num_episodes=1, live_animation=self._config["live_animation"], airsim_bridge=airsim_bridge)
+                    env_summary = self._agent_mgr.visualize_trained_agent(
+                        num_episodes=1,
+                        live_animation=self._config["live_animation"],
+                        airsim_bridge=airsim_bridge,
+                        return_summary=collect_evaluation_summary,
+                        show_plots=show_plots,
+                    )
+                    if collect_evaluation_summary and env_summary is not None:
+                        summaries[gym_env.type_name] = (
+                            env_summary.get(gym_env.type_name)
+                            if isinstance(env_summary, dict)
+                            else None
+                        ) or (
+                            next(iter(env_summary.values()))
+                            if isinstance(env_summary, dict) and env_summary
+                            else env_summary
+                        )
                 except RuntimeError as e:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
         else:
             print("No data found to visualize.")
+
+        if collect_evaluation_summary:
+            return summaries
+
+        return None
 
     @staticmethod
     def _build_eval_environment(canonical_name: str, config: Dict[str, Any]):
@@ -264,7 +284,6 @@ class Trainer:
         reward_configs: List[Dict[str, Any]],
         training_configuration: Dict[str, Any] = None,
         verbose: bool = True,
-        max_workers: int | None = None,
     ) -> Dict[int, Dict[str, Any]]:
         """Evaluate and compare different reward configurations.
 
@@ -449,16 +468,17 @@ class Trainer:
         print("  Metrics:")
         for env_type, env_metrics in metrics.items():
             if isinstance(env_metrics, dict):
+                print(f"    [{env_type}]")
                 for key, value in env_metrics.items():
                     if isinstance(value, float):
-                        print(f"    {key}: {value:.4f}")
+                        print(f"      {key}: {value:.4f}")
                     else:
-                        print(f"    {key}: {value}")
+                        print(f"      {key}: {value}")
 
 
     @staticmethod
     def _save_evaluation_trajectory_snapshot(eval_trainer: "Trainer", reward_weights: dict | None) -> str | None:
-        """Rename evaluate_reward trajectory output to trajectory_weights_time.png.
+        """Save evaluate_reward trajectory output as trajectory_{weights}.png.
 
         Args:
             eval_trainer: Trainer instance that just completed one evaluation run.
@@ -470,14 +490,31 @@ class Trainer:
         # Access the agent model directory to locate the latest trajectory output.
         agent = getattr(eval_trainer._agent_mgr, "agent", None)
         model_dir = getattr(agent, "model_dir", None) if agent is not None else None
-        source_path = os.path.join(model_dir, "trajectory.png") if model_dir else "trajectory.png"
+        if not model_dir:
+            model_dir = "models"
+        os.makedirs(model_dir, exist_ok=True)
+        # Look for possible produced image files inside the model dir or cwd.
+        candidates = [
+            os.path.join(model_dir, "trajectory.png"),
+            os.path.join(model_dir, "image_trajectory.png"),
+            os.path.join(model_dir, "image.png"),
+            os.path.join(model_dir, "image_metrics.png"),
+            "trajectory.png",
+            "image_trajectory.png",
+            "image.png",
+            "image_metrics.png",
+        ]
 
-        # If no trajectory image was produced, do nothing.
-        if not os.path.exists(source_path):
+        found = {}
+        for p in candidates:
+            if os.path.exists(p):
+                name = os.path.basename(p)
+                found[name] = p
+
+        if not found:
             return None
 
-        # Create a compact string representation of reward weights for the filename.
-        # Format: key1-value1_key2-value2 (with underscores replacing dots in values).
+        # Create compact weights string used as suffix: replace dots in values.
         if reward_weights:
             weights_str = "_".join(
                 f"{str(value).replace('.', '')}"
@@ -486,14 +523,34 @@ class Trainer:
         else:
             weights_str = "default"
 
-        # Timestamp to avoid name collisions when running multiple configs quickly.
-        time_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        target_name = f"trajectory_{weights_str}_{time_stamp}.png"
-        target_path = os.path.join(model_dir, target_name) if model_dir else target_name
+        # Helper to move a single file with suffix handling.
+        def _move_with_suffix(src_path: str, prefix: str) -> str:
+            target_name = f"{prefix}_{weights_str}.png"
+            target_path = os.path.join(model_dir, target_name)
+            if os.path.exists(target_path):
+                time_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                target_name = f"{prefix}_{weights_str}_{time_stamp}.png"
+                target_path = os.path.join(model_dir, target_name)
+            os.replace(src_path, target_path)
+            return target_path
 
-        # Atomic rename/replace to keep the latest file consistent.
-        os.replace(source_path, target_path)
-        return target_path
+        # Prefer to return the trajectory image path if available.
+        trajectory_target = None
+
+        # If a canonical 'trajectory.png' or 'image_trajectory.png' exists, move it.
+        if 'trajectory.png' in found:
+            trajectory_target = _move_with_suffix(found['trajectory.png'], 'trajectory')
+        elif 'image_trajectory.png' in found:
+            trajectory_target = _move_with_suffix(found['image_trajectory.png'], 'image_trajectory')
+        elif 'image.png' in found:
+            # image.png may be a combined file; move as trajectory fallback
+            trajectory_target = _move_with_suffix(found['image.png'], 'trajectory')
+
+        # Also move metrics image if present
+        if 'image_metrics.png' in found:
+            _move_with_suffix(found['image_metrics.png'], 'image_metrics')
+
+        return trajectory_target
 
 
     def export_evaluation_results(self, results: Dict[int, Dict[str, Any]], filepath: str) -> None:
@@ -530,6 +587,9 @@ class Trainer:
                 "Mean Rudder Angle (mRA)",
                 "Maximum Rudder Angle (MRA)",
                 "Mean Rudder Angle Change (mRAC)",
+                "Mean Thrust (mT)",
+                "Maximum Thrust (MT)",
+                "Mean Thrust Change (mTC)",
                 "Mean LOS Guidance Heading Error (mHE)",
             ]
 
@@ -578,6 +638,9 @@ class Trainer:
                         summary.get("mRA"),
                         summary.get("MRA"),
                         summary.get("mRAC"),
+                        summary.get("mT"),
+                        summary.get("MT"),
+                        summary.get("mTC"),
                         summary.get("mHE"),
                     ]
 

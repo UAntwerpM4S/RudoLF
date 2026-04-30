@@ -27,7 +27,14 @@ class AgentManagerSimple:
     visualizing paths taken by the agent during evaluation.
     """
 
-    def render(self, env, start_pos: np.ndarray, all_paths: list, total_rewards: list) -> None:
+    def render(
+        self,
+        env,
+        start_pos: np.ndarray,
+        all_paths: list,
+        total_rewards: list,
+        show_plots: bool = True,
+    ) -> None:
         """
         Render and save a visualization of paths taken by the agent.
 
@@ -113,17 +120,16 @@ class AgentManagerSimple:
             # Set aspect ratio to be equal
             ax.set_aspect('equal', adjustable='box')
 
-            trajectory_file_name = (
-                f'{self._agent.model_dir}/trajectory.png'
-                if self._agent.model_dir
-                else 'trajectory.png'
-            )
+            model_dir = self._agent.model_dir or 'models'
+            os.makedirs(model_dir, exist_ok=True)
+            trajectory_file_name = f'{model_dir}/trajectory.png'
 
             # Save the figure
             plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
             print("\nPath visualization saved as 'trajectory.png'.")
 
-            plt.show()
+            if show_plots:
+                plt.show()
         finally:
             plt.close('all')
 
@@ -346,7 +352,9 @@ class AgentManagerSimple:
             live_animation: bool = False,
             env_color_index: int = 0,
             airsim_bridge: AirSimBridge = None,
-    ) -> None:
+            return_summary: bool = False,
+            show_plots: bool = True,
+        ) -> dict | None:
         """
         Run and visualize a trained agent in the environment over multiple episodes.
 
@@ -355,6 +363,8 @@ class AgentManagerSimple:
             live_animation (bool, optional): Enable live animation of the agent in the environment.
             env_color_index (int, optional): Index of the environment color.
             airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
+            return_summary (bool, optional): Return evaluation summary metrics when available.
+            show_plots (bool, optional): Show plot windows when visualization is generated.
 
         Raises:
             RuntimeError: If no agent is created.
@@ -442,7 +452,23 @@ class AgentManagerSimple:
                 print(f"Best episode reward: {max(total_rewards):.2f}")
                 print(f"Worst episode reward: {min(total_rewards):.2f}")
 
-                self.render(env, start_pos, all_paths, total_rewards)
+                self.render(
+                    env,
+                    start_pos,
+                    all_paths,
+                    total_rewards,
+                    show_plots=show_plots,
+                )
+
+                if return_summary:
+                    env_name = getattr(env, "type_name", "environment")
+                    return {
+                        env_name: {
+                            "average_reward": float(avg_reward),
+                            "best_episode_reward": float(max(total_rewards)),
+                            "worst_episode_reward": float(min(total_rewards)),
+                        }
+                    }
 
                 # Cleanup the environment
                 if hasattr(env, "fh_sim"):
@@ -465,6 +491,8 @@ class AgentManagerSimple:
 
                     # Render the environment each step to visualize the agent's action
                     env.render()
+
+                return None
 
 
     def get_env(self):

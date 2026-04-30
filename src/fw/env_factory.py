@@ -285,12 +285,16 @@ class MultiPySimEnvironment(BaseEnvironment):
         single_pysim_env1 = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
                              dynamics_model=config["dynamics_model"], ship_model=config["ship_model"],
                              wind=config["wind"], current=config["current"],
-                             numerical_damping=config["numerical_damping"])
+                             numerical_damping=config["numerical_damping"],
+                             reward_name=self.configuration.get("reward_name", "default"),
+                             reward_weights=self.configuration.get("reward_weights", None))
 
         single_pysim_env2 = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
                              dynamics_model=config["dynamics_model"], ship_model=config["ship_model"],
                              wind=config["wind"], current=config["current"],
-                             numerical_damping=config["numerical_damping"])
+                             numerical_damping=config["numerical_damping"],
+                             reward_name=self.configuration.get("reward_name", "default"),
+                             reward_weights=self.configuration.get("reward_weights", None))
 
         self._env = MultiSimEnv(sub_environments=[single_pysim_env1, single_pysim_env2])
 
