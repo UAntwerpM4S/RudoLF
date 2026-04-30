@@ -124,16 +124,25 @@ class SimpleScheduler(BaseScheduler):
                 duration = time.time() - start_time
 
                 # Save policy if reusing it later
-                self._previous_env_name = self.current_env if policy_strategy != PolicyStrategy.RESET_POLICY else None
+                self._previous_env_name = (
+                    self.current_env.gym_env.type_name
+                    if policy_strategy != PolicyStrategy.RESET_POLICY
+                    else None
+                )
 
                 if self._previous_env_name:
                     try:
-                        save_name = f"{self.current_env}_{self.agent_mgr.agent_type}_policy"
-                        self.agent_mgr.agent.save_policy(save_name)
+                        env_name = self.current_env.gym_env.type_name
+                        save_name = f"{env_name}_{self.agent_mgr.agent_type}_policy"
+                        #self.agent_mgr.agent.save_policy(save_name)
 
                         reward_weights = getattr(self.current_env.gym_env, "reward_weights", None)
                         weight_suffix = self._format_reward_weight_suffix(reward_weights)
-                        self.agent_mgr.agent.save_policy(f"{save_name}_{weight_suffix}")
+                        # If reward_weights is empty, use the standard policy name without any suffix.
+                        if weight_suffix == "default":
+                            self.agent_mgr.agent.save_policy(save_name)
+                        else:
+                            self.agent_mgr.agent.save_policy(f"{save_name}_{weight_suffix}")
                     except Exception as e:
                         self._previous_env_name = None
                         raise RuntimeError("Failed to save the policy.") from e

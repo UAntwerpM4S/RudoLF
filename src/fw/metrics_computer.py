@@ -30,6 +30,10 @@ class ShipMetrics:
 
         mRAC: Mean Rudder Angle Change (control smoothness indicator).
 
+        mT: Mean Thrust (average absolute thrust command).
+        MT: Maximum Thrust.
+        mTC: Mean Thrust Change (thrust smoothness indicator).
+
         mHE: Mean Heading Error (average absolute heading deviation).
 
         mu: Mean surge velocity magnitude.
@@ -46,6 +50,9 @@ class ShipMetrics:
     mRA: float = 0.0    # Mean Rudder Angle
     MRA: float = 0.0    # Max Rudder Angle
     mRAC: float = 0.0   # Mean Rudder Angle Change
+    mT: float = 0.0     # Mean thrust
+    MT: float = 0.0     # Max thrust
+    mTC: float = 0.0    # Mean thrust change
     mHE: float = 0.0    # Mean Heading Error
     mu: float = 0.0     # Mean surge velocity
     Mu: float = 0.0     # Max surge velocity
@@ -126,6 +133,7 @@ class MetricsComputer:
 
         per_ep_mTEI, per_ep_MTE = [], []
         per_ep_mRA, per_ep_MRA, per_ep_mRAC = [], [], []
+        per_ep_mT, per_ep_MT, per_ep_mTC = [], [], []
         per_ep_mHE, per_ep_mu, per_ep_Mu = [], [], []
 
         for ep in episodes:
@@ -139,6 +147,12 @@ class MetricsComputer:
                 per_ep_MRA.append(float(np.nanmax(ra)))
             if ep.rudder_changes.size:
                 per_ep_mRAC.append(float(np.nanmean(np.abs(ep.rudder_changes))))
+            if ep.thrust_actions.size:
+                thrust = np.abs(ep.thrust_actions)
+                per_ep_mT.append(float(np.nanmean(thrust)))
+                per_ep_MT.append(float(np.nanmax(thrust)))
+            if ep.thrust_changes.size:
+                per_ep_mTC.append(float(np.nanmean(np.abs(ep.thrust_changes))))
             if ep.heading_errors.size:
                 per_ep_mHE.append(float(np.nanmean(np.abs(ep.heading_errors))))
             if ep.velocities.size:
@@ -157,6 +171,9 @@ class MetricsComputer:
         m.mRA  = safe_mean(per_ep_mRA)
         m.MRA  = safe_max(per_ep_MRA)
         m.mRAC = safe_mean(per_ep_mRAC)
+        m.mT   = safe_mean(per_ep_mT)
+        m.MT   = safe_max(per_ep_MT)
+        m.mTC  = safe_mean(per_ep_mTC)
         m.mHE  = safe_mean(per_ep_mHE)
         m.mu   = safe_mean(per_ep_mu)
         m.Mu   = safe_max(per_ep_Mu)

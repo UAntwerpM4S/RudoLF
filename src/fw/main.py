@@ -83,7 +83,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=0.99,
             patience=4,
-            max_time_steps=1500,
+            max_time_steps=5,
         ),
         multi_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
@@ -143,7 +143,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
             trainer.visualize(envs, airsim_bridge=None)
         else:
             metrics = trainer.train(configuration)
-            print(f"Training metrics (grouped): {metrics}")
+            if action == "evaluate_reward":
+                print(f"Training metrics (grouped): {metrics}")
         return True
 
     # Both visualize and train now follow env_type order exactly (for airsim),
@@ -167,6 +168,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
             trainer.export_evaluation_results(results, results_file)
             print(f"[main] Reward evaluation complete. Results exported to '{results_file}'.")
             executed_any_step = True
+            # evaluate_reward is a standalone mode; avoid running standard train/visualize afterwards.
+            raise SystemExit(0)
         except Exception as exc:
             print(f"[main] Reward evaluation failed: {exc}")
             raise SystemExit(1)

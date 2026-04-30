@@ -56,6 +56,8 @@ class ShipDataExtractor:
         if hasattr(ship_env, "performed_action"):
             acc["rudder_actions"].append(0.0)
             acc["rudder_changes"].append(0.0)
+            acc["thrust_actions"].append(0.0)
+            acc["thrust_changes"].append(0.0)
 
     @staticmethod
     def record_step(ship_env, acc: dict) -> None:
@@ -94,12 +96,20 @@ class ShipDataExtractor:
 
         if hasattr(ship_env, "performed_action"):
             curr = ship_env.performed_action[0]
+            curr_thrust = ship_env.performed_action[1]
             if acc["rudder_actions"]:
                 prev = acc["rudder_actions"][-1]
                 acc["rudder_changes"].append(abs(curr - prev))
             else:
                 acc["rudder_changes"].append(0.0)
             acc["rudder_actions"].append(curr)
+
+            if acc["thrust_actions"]:
+                prev_thrust = acc["thrust_actions"][-1]
+                acc["thrust_changes"].append(abs(curr_thrust - prev_thrust))
+            else:
+                acc["thrust_changes"].append(0.0)
+            acc["thrust_actions"].append(curr_thrust)
 
         if hasattr(ship_env, "ukc"):
             if len(acc["ukc_measurements"]) == 0:
@@ -369,6 +379,8 @@ class EpisodeCollector:
             "cross_errors": [],
             "rudder_actions": [],
             "rudder_changes": [],
+            "thrust_actions": [],
+            "thrust_changes": [],
             "heading_errors": [],
             "velocities": [],
             "ukc_measurements": [],
@@ -397,6 +409,8 @@ class EpisodeCollector:
             cross_errors=np.array(acc["cross_errors"]),
             rudder_actions=np.array(acc["rudder_actions"]),
             rudder_changes=np.array(acc["rudder_changes"]),
+            thrust_actions=np.array(acc["thrust_actions"]),
+            thrust_changes=np.array(acc["thrust_changes"]),
             heading_errors=np.array(acc["heading_errors"]),
             velocities=np.array(acc["velocities"]),
             ukc_measurements=np.array(acc["ukc_measurements"]),
