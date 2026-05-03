@@ -34,6 +34,16 @@ if __name__ == "__main__" or __name__ == "fw.main":
         initialize_all_environments
     )
 
+    # MultiPolicySingleAgent (MPSA) policy-id (pid) layout used in this app:
+    #   pid 0 = path-following
+    #   pid 1 = head-on
+    #   pid 2 = overtaking
+    #   pid 3 = crossing-right
+    # The pid → label mapping comes from SCENARIO_LABELS in
+    # collision_avoidance.scenario_classifier and is passed into the agent
+    # via ``policy_labels`` from agent_manager._build_multi_policy_single_agent.
+    # Per-pid hyperparameters in DEFAULT_HYPERPARAMETERS[MPSA] (e.g.
+    # ``log_std_bounds``) are keyed by pid and reference this mapping.
     framework_config = get_config_parameters()
     configured_env_names = resolve_environment_names(
         framework_config.get("env_type", py_sim_env_name)
@@ -124,7 +134,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=5.0,
             patience=4,
-            max_time_steps=250
+            max_time_steps=1500
         ),
     }
 
@@ -184,7 +194,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
         return True
 
     # Both visualize and train now follow env_type order exactly (for airsim),
-    # but standard environments are batched to preserve Trainer functionality.
+    # but standard environments are batched to preserve Trainer
+    # functionality.
     executed_any_step = False
     standard_envs = []
 

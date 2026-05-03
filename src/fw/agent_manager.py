@@ -167,10 +167,18 @@ class AgentManager:
         # Directory holding the pre-trained per-scenario policies and the
         # spec describing which slots to populate and whether to freeze them.
         # File names are given without the ``.zip`` extension.
+        # Slot mapping (from SCENARIO_LABELS):
+        #   0 = path-following   ← pretrained_pf
+        #   1 = head-on          ← pretrained_ho
+        #   2 = overtaking       (no pretrained file, slot stays randomly initialized)
+        #   3 = crossing-right   ← pretrained_cr
+        # All loaded slots are unfrozen (frozen=False) so they continue to
+        # train from the pretrained weights as a warm start.
         pretrained_dir = agent.model_dir
         pretrained_specs = {
-            0: {"file": "pretrained_pf", "frozen": False},
-            3: {"file": "pretrained_cr", "frozen": False},
+            #0: {"file": "pretrained_pf", "frozen": False},
+            #1: {"file": "pretrained_ho", "frozen": False},
+            #3: {"file": "pretrained_cr", "frozen": False},
         }
         agent.load_pretrained_policies(pretrained_dir, pretrained_specs)
 

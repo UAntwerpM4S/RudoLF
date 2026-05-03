@@ -54,9 +54,12 @@ class CollapseWatchdog:
     is at -175% of peak").
 
     On trigger, the watchdog returns the snapshotted ``state_dict``; the
-    caller is responsible for applying it via ``network.load_state_dict``.
-    Rollbacks are weights-only (the optimizer's parameter buffers are left
-    intact, so momentum is preserved on the same parameter tensors).
+    caller is responsible for applying it via ``network.load_state_dict``
+    and (recommended) for re-initializing the corresponding optimizer so
+    that Adam's ``m``/``v`` moment buffers — which accumulated during the
+    collapse phase — do not push the rolled-back weights back along the
+    failure trajectory. Without an optimizer reset, weights-only rollback
+    can produce a rollback ping-pong on policies with high reward variance.
 
     Safeguards:
       * ``warmup_iterations``: no rollback before this many iterations have
@@ -213,6 +216,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         steps_per_policy_update: int = 4096,
         watchdog_enabled: bool = True,
         watchdog_kwargs: Optional[dict] = None,
+        log_std_bounds: Optional[Dict[int, Tuple[float, float]]] = None,
         **kwargs,
     ):
         """
@@ -243,6 +247,17 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 ``warmup_iterations``, ``min_gap_between_rollbacks``,
                 ``max_rollbacks``, ``min_peak_for_trigger``).  Ignored if
                 ``watchdog_enabled`` is False.
+            log_std_bounds (Optional[Dict[int, Tuple[float, float]]]):
+                Per-policy ``(log_std_min, log_std_max)`` clamp passed to
+                each slot's ``ActorCriticNetwork``. Keyed by policy id
+                (``0..num_policies-1``). Slots not present in the dict
+                use the ``ActorCriticNetwork`` defaults ``(-20, 2)``,
+                preserving the historical (effectively-unclamped)
+                behavior. The pid → label mapping is owned by the caller;
+                this implementation makes no assumption about which pid
+                corresponds to which scenario. Use this to floor
+                exploration noise on a specific policy without touching
+                the network architecture.
             **kwargs: Keyword arguments forwarded to ``BasePPOAgent``.
 
         Raises:
@@ -287,10 +302,33 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         self.action_space = action_space
 
+        # Resolve per-policy log_std bounds. Stored on the agent so that
+        # subsequent re-initializations (e.g. after a watchdog rollback that
+        # rebuilds the optimizer, or after loading a pretrained slot) can
+        # re-apply the configured bounds to the slot's network. Keys are
+        # policy ids — this class is agnostic to what each pid means.
+        self.log_std_bounds: Dict[int, Tuple[float, float]] = {}
+        if log_std_bounds:
+            for key, bounds in log_std_bounds.items():
+                pid = int(key)
+                if not 0 <= pid < num_policies:
+                    raise ValueError(
+                        f"log_std_bounds key {key!r} (pid={pid}) is out of "
+                        f"range [0, {num_policies})."
+                    )
+                lo, hi = bounds
+                self.log_std_bounds[pid] = (float(lo), float(hi))
+
         # Create N independent policies and optimizers
         self.policies: List[PPOPolicy] = [
-            PPOPolicy(self.policy_obs_dim, self.output_dim, str(self.device))
-            for _ in range(num_policies)
+            PPOPolicy(
+                self.policy_obs_dim,
+                self.output_dim,
+                str(self.device),
+                log_std_min=self.log_std_bounds.get(pid, (-20.0, 2.0))[0],
+                log_std_max=self.log_std_bounds.get(pid, (-20.0, 2.0))[1],
+            )
+            for pid in range(num_policies)
         ]
 
         self.optimizers: List[optim.Adam] = [
@@ -886,6 +924,19 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     )
                     if rollback_state is not None:
                         self.policies[pid].network.load_state_dict(rollback_state)
+                        # Reset this policy's Adam optimizer state. The
+                        # exponential moving averages of past gradients
+                        # (Adam's ``m`` and ``v`` buffers) were accumulated
+                        # during the collapse phase and, if reused after
+                        # rolling weights back, would push the network
+                        # right along the failure trajectory — producing
+                        # a rapid second collapse and a rollback ping-pong.
+                        # A fresh optimizer ensures the next gradient steps
+                        # are computed cleanly from the rolled-back weights.
+                        self.optimizers[pid] = optim.Adam(
+                            self.policies[pid].network.parameters(),
+                            lr=self.learning_rate,
+                        )
                         # Discard pending segments — they were collected
                         # under the now-discarded post-collapse weights and
                         # would be off-policy w.r.t. the rolled-back net.
@@ -1042,6 +1093,15 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     saved = torch.load(agent_path, map_location=self.device, weights_only=False)
                     self.policies[i] = PPOPolicy.build_policy_from_state(saved, self.device)
 
+                    # Override saved bounds with the agent's configured ones
+                    # (config is the source of truth for log_std clamps).
+                    if i in self.log_std_bounds:
+                        lo, hi = self.log_std_bounds[i]
+                        self.policies[i].log_std_min = lo
+                        self.policies[i].log_std_max = hi
+                        self.policies[i].network.log_std_min = lo
+                        self.policies[i].network.log_std_max = hi
+
                 # Rebuild optimizers for the loaded networks
                 self.optimizers = [
                     optim.Adam(p.network.parameters(), lr=self.learning_rate)
@@ -1084,6 +1144,17 @@ class MultiPolicySingleAgent(BasePPOAgent):
             )
 
         loaded = PPOPolicy.load(policy_file_name, str(self.device))
+
+        # Re-apply this slot's configured log_std bounds (the loaded
+        # checkpoint may have been saved with different bounds, but the
+        # agent's config is the source of truth).
+        if policy_id in self.log_std_bounds:
+            lo, hi = self.log_std_bounds[policy_id]
+            loaded.log_std_min = lo
+            loaded.log_std_max = hi
+            loaded.network.log_std_min = lo
+            loaded.network.log_std_max = hi
+
         self.policies[policy_id] = loaded
         self.optimizers[policy_id] = optim.Adam(
             loaded.network.parameters(), lr=self.learning_rate,

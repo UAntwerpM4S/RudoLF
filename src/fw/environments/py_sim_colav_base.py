@@ -280,8 +280,13 @@ class PySimColavBaseEnv(PySimEnv):
     # -------------------------
     # Utility & Math
     # -------------------------
-    def _compute_cri(self, os_pos, os_heading, os_u, os_v, ts) -> float:
-        """Compute Collision Risk Index (CRI) for a target ship."""
+    def _compute_cri(self, os_pos, os_heading, os_u, os_v, ts) -> Tuple[float, float, float]:
+        """Compute (CRI, TCPA, DCPA) for a target ship.
+
+        TCPA in seconds (positive = approaching, negative = receding).
+        DCPA in metres. Falls back to (0, 0, current_range) when relative
+        velocity is effectively zero.
+        """
         ts_pos = ts.get_position()
         ts_vel = ts.get_velocity()
 
@@ -297,7 +302,7 @@ class PySimColavBaseEnv(PySimEnv):
 
         vr_sq = dvx * dvx + dvy * dvy
         if vr_sq < 1e-12:
-            return 0.0
+            return 0.0, 0.0, math.sqrt(dx * dx + dy * dy)
 
         tcpa = -(dx * dvx + dy * dvy) / vr_sq
         dcpa_x = dx + dvx * tcpa
@@ -311,7 +316,8 @@ class PySimColavBaseEnv(PySimEnv):
         else:
             cri_tcpa = self.cri_k2 * math.exp(self.cri_alpha2 * tcpa / self.cri_T)
 
-        return self.cri_omega1 * cri_dcpa + self.cri_omega2 * cri_tcpa
+        cri = self.cri_omega1 * cri_dcpa + self.cri_omega2 * cri_tcpa
+        return cri, tcpa, dcpa
 
     # -----------------------
     # Dynamics update & step
@@ -363,6 +369,8 @@ class PySimColavBaseEnv(PySimEnv):
         if self.phys_sim.state.terminated and self.phys_sim.state.truncated:
             print("condition triggered")
 
+        # Bank-collision diagnostic: fires whenever the ship is out of open
+        # water, regardless of which side (env vs phys_sim) terminated first.
         if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
             reward, terminated = self._calculate_colav_reward()
 
@@ -374,6 +382,8 @@ class PySimColavBaseEnv(PySimEnv):
                     terminated = True
 
             bank_collision = not self._ship_in_open_water(self.ship_pos)
+            if bank_collision:
+                terminated = True
 
             # Build collision info
             self._last_collision_info = {}
@@ -398,7 +408,6 @@ class PySimColavBaseEnv(PySimEnv):
             success = self.checkpoint_index >= len(self.checkpoints)
             if terminated and not success:
                 reward = -250.0
-                pass
 
             if self.step_count >= self.max_steps and not terminated:
                 # reward = -250

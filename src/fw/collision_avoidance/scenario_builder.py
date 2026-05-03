@@ -33,6 +33,12 @@ class ScenarioBuilder:
         # Number of encounters that have already spawned in the current
         # episode.  In focused-encounter training we cap this at 1.
         self._encounters_this_episode: int = 0
+        # When True, a "path-following encounter" is active: no TS is
+        # spawned, we just count PF-only steps until the encounter timer
+        # elapses, then transition into the post-encounter countdown.
+        # This is the "no-obstacle" branch of focused-encounter training.
+        self._pathfollowing_encounter_active: bool = False
+        self._pathfollowing_encounter_counter: int = 0
         # When True, the post-encounter countdown is active: we no longer
         # spawn encounters, just count steps until clean truncation.
         self._post_encounter_active: bool = False
@@ -65,6 +71,8 @@ class ScenarioBuilder:
 
         # Reset focused-encounter training state
         self._encounters_this_episode = 0
+        self._pathfollowing_encounter_active = False
+        self._pathfollowing_encounter_counter = 0
         self._post_encounter_active = False
         self._post_encounter_counter = 0
         self._truncate_requested = False
@@ -169,6 +177,24 @@ class ScenarioBuilder:
             return
 
         # ----------------------------------------------------------
+        # 1b. Path-following encounter active (focused training only)
+        #     The episode sampled "path-following" as its encounter type,
+        #     so no TS is spawned — we just run PF for
+        #     ``pathfollowing_encounter_steps`` and then transition into
+        #     the post-encounter countdown so the episode terminates with
+        #     the same 150-step PF tail as a normal TS encounter.
+        # ----------------------------------------------------------
+        if self._pathfollowing_encounter_active:
+            self._pathfollowing_encounter_counter += 1
+            if self._pathfollowing_encounter_counter >= int(
+                getattr(env, "pathfollowing_encounter_steps", 150)
+            ):
+                self._pathfollowing_encounter_active = False
+                self._post_encounter_active = True
+                self._post_encounter_counter = 0
+            return
+
+        # ----------------------------------------------------------
         # 2. Pre-encounter cooldown / recovery
         # ----------------------------------------------------------
         cooldown = self._active_cooldown()
@@ -186,7 +212,20 @@ class ScenarioBuilder:
 
             if encounter and not env.collision_entities:
                 chosen_scenario = self.sample_collision_entity_scenario()
-                if chosen_scenario != "path-following":
+                if chosen_scenario == "path-following":
+                    # Focused training: treat the sampled "path-following"
+                    # as the encounter — start the PF-only encounter timer
+                    # and lock the classifier to PF for the duration so
+                    # reward shaping / observations stay in pure-PF mode.
+                    # Outside focused training the no-op behavior is kept
+                    # (eval mode does not have a single-encounter window,
+                    # so a PF "encounter" has no meaning there).
+                    if is_focused:
+                        self._pathfollowing_encounter_active = True
+                        self._pathfollowing_encounter_counter = 0
+                        self._push_scenario_to_classifier("path-following")
+                        self._encounters_this_episode += 1
+                else:
                     seg_idx = self._find_segment_at_encounter_range()
                     if seg_idx is not None:
                         entities = self.compute_collision_entity_positions(

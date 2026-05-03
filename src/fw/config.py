@@ -98,7 +98,7 @@ DEFAULT_HYPERPARAMETERS = {
         'learning_rate': 1e-4,
         'gamma': 0.99,
         'gae_lambda': 0.95,
-        'entropy_coef': 0.01,
+        'entropy_coef': 0.03,
         'value_loss_coef': 0.5,
         'max_grad_norm': 0.5,
         'clip_range': 0.2,
@@ -115,7 +115,7 @@ DEFAULT_HYPERPARAMETERS = {
         'learning_rate': 3e-4,
         'gamma': 0.99,
         'gae_lambda': 0.95,
-        'entropy_coef': 0.01,
+        'entropy_coef': 0.025,
         'value_loss_coef': 0.1,
         'max_grad_norm': 0.5,
         'clip_range': 0.2,
@@ -124,12 +124,23 @@ DEFAULT_HYPERPARAMETERS = {
         'num_epochs': 8,
         'normalize': False,
         'max_nbr_iterations': 5000,
-        'batch_size': 1024,
+        'batch_size': 2048,
         'device': "cpu",
         'model_dir': "models",
         'fixed_horizon': False,
         'steps_per_update': 8192,
-        'steps_per_policy_update': 4096,
+        'steps_per_policy_update': 8192,
+        # Per-pid log_std clamp. Path-following (pid 0) is floored just
+        # below the natural commitment point (log_std ≈ -1.42 for
+        # entropy_coef=0.025, action_dim=2). The floor is inactive until
+        # the policy naturally collapses past that point, then holds
+        # σ at ≈ 0.22 indefinitely so under-sampled path segments retain
+        # enough exploration noise to be learned even after the rest of
+        # the path has committed. Other pids are unfloored (default
+        # (-20, 2)) and behave exactly as before.
+        'log_std_bounds': {
+            0: (-1.5, 2.0),
+        },
     },
 }
 
@@ -140,7 +151,7 @@ CONFIG_PARAMETERS = {
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["MultiPolicyColavEnv"],
-    'action': "train",  # Valid action values: "train", "visualize"
+    'action': "visualize",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
     'numerical_damping': False,
@@ -149,7 +160,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': False,
+    'live_animation': True,
     # AirSim settings are now in airsim.config.airsim_config
     # Use get_airsim_config() to access them.
 }

@@ -63,10 +63,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             # Focused-encounter training configuration
             focused_encounter_mode: bool = True,
             train_encounter_prob: float = 1.0,
-            train_encounter_cooldown: int = 50,
+            train_encounter_cooldown: int = 150,
             eval_encounter_prob: float = 0.004,
             eval_encounter_cooldown: int = 500,
-            post_encounter_steps: int = 150,
+            post_encounter_steps: int = 75,
+            pathfollowing_encounter_steps: int = 75,
             skip_tail_segments: int = 10,
             random_segment_start: bool = True,
             **kwargs,
@@ -76,9 +77,9 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.polar_scan_cached = None
         self.polar_n_sectors = 54
         self.polar_fov = np.radians(270)
-        self.polar_max_range = 500.0
+        self.polar_max_range = 750.0
         self.polar_obs_max = 0.1 * self.polar_max_range / 250
-        self.distance_penalty_start = 200
+        self.distance_penalty_start = 150
 
         self.include_scenario_one_hot = bool(include_scenario_one_hot)
 
@@ -90,6 +91,19 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.eval_encounter_prob = float(eval_encounter_prob)
         self.eval_encounter_cooldown = int(eval_encounter_cooldown)
         self.post_encounter_steps = int(post_encounter_steps)
+        # Length of a "path-following encounter" — the focused-encounter
+        # variant where the sampled scenario is "path-following" (no TS
+        # spawned). The episode structure becomes:
+        #   train_encounter_cooldown PF steps (preroll)
+        #   -> pathfollowing_encounter_steps PF-only steps (the "encounter")
+        #   -> post_encounter_steps PF steps (postroll)
+        #   -> clean truncation
+        # Useful when "path-following" appears in scenario_probs with a
+        # nonzero weight: it gives the PF policy more focused training on
+        # path stretches that would otherwise only be visited in passing
+        # during longer combined episodes (e.g. the final stretch where
+        # bank collisions tend to occur).
+        self.pathfollowing_encounter_steps = int(pathfollowing_encounter_steps)
         self.skip_tail_segments = int(skip_tail_segments)
         self.random_segment_start = bool(random_segment_start)
 
@@ -110,7 +124,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.0, 0.0, 0.0, 0.0, 1.0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.05, 0.0, 0.0, 0.475, 0.475, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -139,28 +153,31 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         )
 
         self.polar_scan_cached = None
+        self.enable_reward_diag = False
 
         # Reward weights for polar COLAV shaping
         self.reward_weights = {
-            "polar_distance": 0.7,
+            "polar_distance": 0.65,
+            # Separate (smaller) weight applied when the active scenario is
+            # path-following. Same shaping curve as ``polar_distance``, just
+            # a different scalar — gives the PF policy a continuous bank-
+            # proximity signal across the path so it never has to learn the
+            # bank purely from the sparse -250 collision cliff. Set to 0.0
+            # to fully disable polar penalty during PF (original behavior).
+            "polar_distance_pf": 0.15,
             "colreg_bearing": 5.0,
-            # Crossing-right shaping in the OS->TS bearing frame.
-            #   x   = bearing of TS as seen from OS (math convention, CCW+)
-            #   R   = A * tanh(k * (x - e1))
-            # Zero crossing (and max gradient) at x = e1, chosen as the
-            # "most positive" end of the encounter range so that the agent
-            # gets the strongest learning signal right at encounter entry.
-            # The wrap discontinuity at x = +/- pi is intentional: reaching
-            # +A via the wrap requires first traversing a long stretch of
-            # negative reward, so the agent cannot exploit it.
-            "crossing_right": 1.5,
+            "crossing_right": 4.0,
             "crossing_right_steepness": 1.0,
             "crossing_right_zero": -0.34906585,  # -20deg
-            # Soft gate that fades the crossing-right shaping after TS leaves
-            # the forward sector. Multiplier is ~1 for |x| < pi/2 (TS in front
-            # = encounter active) and ~0 for |x| > pi/2 (TS abeam/astern =
-            # passed). Transition width is set by gate_steepness.
             "crossing_right_gate_steepness": 4.0,
+            # Post-CPA cross-track recovery penalty.
+            # Saturating tanh(cte/scale) gated by (1 - g_tcpa) so it is dormant
+            # during pure PF (g_tcpa=1.0 default) and during approach
+            # (g_tcpa≈1 pre-CPA), and only ramps in post-CPA recovery.
+            # cte_recovery_max=0.5 sits at ~half the per-step PF baseline (0.9)
+            # at saturation, comparable to a typical heading_alignment penalty.
+            "cte_recovery_max": 0.5,
+            "cte_recovery_scale": 60.0,
         }
 
     # -------------------------
@@ -178,25 +195,25 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.eval = True
 
         # Variable TS radii
-        self.enable_variable_ship_size = True
-        self.static_ship_radius_min = 20.0
-        self.static_ship_radius_max = 40.0
+        #self.enable_variable_ship_size = True
+        #self.static_ship_radius_min = 20.0
+        #self.static_ship_radius_max = 40.0
 
         # Lateral lane spawn (parallel-to-path)
         # Head-on: 30 m to OS-port +/- 10 m (a "left lane")
-        self.headon_lateral_mean = 30.0
-        self.headon_lateral_jitter = 10.0
+        #self.headon_lateral_mean = 30.0
+        #self.headon_lateral_jitter = 10.0
         # Overtaking: same lane as OS, +/- 10 m jitter only
-        self.overtaking_lateral_jitter = 10.0
+        #self.overtaking_lateral_jitter = 10.0
 
         # Ornstein-Uhlenbeck wander on entity.path_offset
-        self.enable_path_offset_ou = True
-        self.ou_theta = 0.1
-        self.ou_sigma = 1.0
-        self.ou_clip = 8.0
+        #self.enable_path_offset_ou = True
+        #self.ou_theta = 0.1
+        #self.ou_sigma = 1.0
+        #self.ou_clip = 8.0
 
         # Late dodge for head-on TS at encounter_range/2
-        self.enable_headon_dodge = True
+        #self.enable_headon_dodge = True
 
         # Let OS always start from the original position
         self.random_segment_start = False
@@ -318,17 +335,18 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # Observation
     # -----------------------
     def _initialize_observation_space(self) -> gym.spaces.Box:
-        """Extend observation space with polar scan sectors + CRI."""
+        """Extend observation space with polar scan sectors + tanh-TCPA scalar."""
         base_space = super()._initialize_observation_space()
 
         polar_low = np.zeros(self.polar_n_sectors, dtype=np.float32)
         polar_high = np.full(self.polar_n_sectors, self.polar_obs_max, dtype=np.float32)
 
-        cri_low = np.zeros(1, dtype=np.float32)
-        cri_high = np.ones(1, dtype=np.float32)
+        # tanh(TCPA / cri_T) is bounded in (-1, +1).
+        tcpa_low = -np.ones(1, dtype=np.float32)
+        tcpa_high = np.ones(1, dtype=np.float32)
 
-        extended_low = np.hstack([base_space.low, polar_low, cri_low])
-        extended_high = np.hstack([base_space.high, polar_high, cri_high])
+        extended_low = np.hstack([base_space.low, polar_low, tcpa_low])
+        extended_high = np.hstack([base_space.high, polar_high, tcpa_high])
 
         if getattr(self, "include_scenario_one_hot", False):
             one_hot_low = np.zeros(NUM_SCENARIOS, dtype=np.float32)
@@ -339,15 +357,24 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         return gym.spaces.Box(low=extended_low, high=extended_high, dtype=np.float32)
 
     def _get_obs(self) -> np.ndarray:
-        """Extend observation with polar scan data and CRI scalar."""
+        """Extend observation with polar scan data and a TCPA phase scalar."""
         base_obs = super()._get_obs()
+
+        clf = self.scenario_classifier
+
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            clf.classify_path_projected(
+                self.ship_pos,
+                self.phys_sim.state.heading,
+                self.collision_entities,
+            )
 
         if not getattr(self, "use_polar_scan", False):
             zeros_polar = np.zeros(self.polar_n_sectors, dtype=np.float32)
-            zeros_cri = np.zeros(1, dtype=np.float32)
-            obs = np.hstack([base_obs, zeros_polar, zeros_cri]).astype(np.float32)
+            zeros_tcpa = np.zeros(1, dtype=np.float32)
+            obs = np.hstack([base_obs, zeros_polar, zeros_tcpa]).astype(np.float32)
             if getattr(self, "include_scenario_one_hot", False):
-                obs = np.hstack([obs, np.zeros(NUM_SCENARIOS, dtype=np.float32)]).astype(np.float32)
+                obs = np.hstack([obs, clf.get_one_hot()]).astype(np.float32)
             return obs
 
         scan = self.polar_scan_cached
@@ -355,24 +382,28 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             scan = self._get_polar_scan()
             self.polar_scan_cached = scan
 
-        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
-            self.scenario_classifier.classify_path_projected(
-                self.ship_pos,
-                self.phys_sim.state.heading,
-                self.collision_entities,
-            )
-
-        cri_value = 0.0
-        clf = self.scenario_classifier
+        # Encounter phase as a single scalar: tanh(TCPA / cri_T) in [-1, +1].
+        #   ~+1 -> TS still far in the future (approaching),
+        #    0  -> at CPA,
+        #   ~-1 -> TS already past CPA (receding).
+        # Replaces the CRI feature: gives the policy an explicit, signed
+        # representation of "approach vs recovery" without conflating it
+        # with bearing-derived risk magnitude.
+        tcpa_norm = 0.0
         if clf.tracked_ts is not None:
             ts = self.collision_entities[clf.tracked_ts]
             os_pos = self.ship_pos
             os_heading = self.phys_sim.state.heading
             os_u = float(self.phys_sim.state.u)
             os_v = float(self.phys_sim.state.v)
-            cri_value = float(np.clip(self._compute_cri(os_pos, os_heading, os_u, os_v, ts), 0.0, 1.0))
+            _, tcpa, _ = self._compute_cri(os_pos, os_heading, os_u, os_v, ts)
+            tcpa_norm = float(math.tanh(tcpa / max(self.cri_T, 1e-6)))
 
-        obs = np.hstack([base_obs, scan, np.array([cri_value], dtype=np.float32)]).astype(np.float32)
+        obs = np.hstack([
+            base_obs,
+            scan.astype(np.float32),
+            np.array([tcpa_norm], dtype=np.float32),
+        ]).astype(np.float32)
 
         if getattr(self, "include_scenario_one_hot", False):
             obs = np.hstack([obs, self.scenario_classifier.get_one_hot()]).astype(np.float32)
@@ -387,7 +418,54 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         base_reward, done = super()._calculate_colav_reward()
         reward = base_reward
 
-        # Polar distance penalty
+        clf = self.scenario_classifier
+        self.ts_idx = clf.tracked_ts
+
+        # TCPA-based phase gate: 1 during approach (TCPA > 0), 0 after CPA
+        # (TCPA < 0). Smooth transition centred on CPA. Active for the
+        # encounter-shaping scenarios (head-on, overtaking, crossing-right);
+        # path-following is not gated.
+        g_tcpa = 1.0
+        if (
+            self.ts_idx is not None
+            and self.ts_idx < len(self.collision_entities)
+            and clf.label in ("crossing-right", "head-on", "overtaking")
+        ):
+            ts = self.collision_entities[self.ts_idx]
+            os_u = float(self.phys_sim.state.u)
+            os_v = float(self.phys_sim.state.v)
+            _, tcpa, _ = self._compute_cri(
+                self.ship_pos, self.phys_sim.state.heading, os_u, os_v, ts,
+            )
+            k_tcpa = float(self.reward_weights.get("tcpa_gate_steepness", 0.05))
+            g_tcpa = 0.5 * (1.0 + math.tanh(k_tcpa * tcpa))
+
+        # Post-CPA cross-track recovery penalty.
+        # super()._calculate_colav_reward() above ran the base PF reward, which
+        # set self.cross_error to the unsigned perpendicular distance from the
+        # current path segment. The base file deliberately weights r_cte at 0
+        # (py_sim_env.py:962) — we add a saturating, recovery-only CTE penalty
+        # here so the encounter-policy gets an explicit "off-line costs you"
+        # signal once g_tcpa fades the COLREG shaping (post-CPA), without
+        # suppressing the dive during the approach phase or polluting pure-PF
+        # reward (where g_tcpa stays at 1.0 → factor=0).
+        cte_max = float(self.reward_weights.get("cte_recovery_max", 0.0))
+        _step_cte_recovery = 0.0
+        if cte_max > 0.0:
+            cte_scale = float(self.reward_weights.get("cte_recovery_scale", 60.0))
+            cte = float(getattr(self, "cross_error", 0.0))
+            _step_cte_recovery = (
+                cte_max * math.tanh(cte / max(cte_scale, EPSILON)) * (1.0 - g_tcpa)
+            )
+            reward -= _step_cte_recovery
+
+        # Polar distance penalty.
+        # Active in *all* scenarios (including path-following) so that the
+        # bank shows up as a continuous cost in the reward, not just at the
+        # final cliff. PF uses a separate, smaller weight by default to
+        # avoid overpowering the path-tracking signal — set
+        # ``polar_distance_pf`` to 0.0 to recover the original "polar
+        # penalty disabled during PF" behavior.
         _step_polar = 0.0
         if getattr(self, "use_polar_scan", False) and self.polar_scan_cached is not None:
             max_close = float(np.max(self.polar_scan_cached))
@@ -399,16 +477,28 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
             if min_dist < d_ramp_start:
                 collision_boundary = 40.0
-                a = -2.6
+                a = -2.6 # -2.6
                 ramp_t = (min_dist - collision_boundary) / max(d_ramp_start - collision_boundary, EPSILON)
                 ramp_t = float(np.clip(ramp_t, 0.0, 1.0))
                 exp_t = (np.exp(a * ramp_t) - 1.0) / (np.exp(a) - 1.0)
                 ramp_penalty = ramp_max_penalty * (1.0 - exp_t)
-                _step_polar = self.reward_weights['polar_distance'] * ramp_penalty
+                # During crossing-right recovery (TS already passed by OS but
+                # classifier still locked to "crossing-right" until TS leaves
+                # forget range), drop to the attenuated PF polar weight. Same
+                # shaping curve, smaller scalar, so the recovery phase is
+                # rewarded like path-following but the bank-proximity signal
+                # is no longer suppressed by g_tcpa.
+                in_cr_recovery = (
+                    clf.label == "crossing-right"
+                    and self.ts_idx is not None
+                    and self.ts_passed == self.ts_idx
+                )
+                if clf.label == "path-following" or in_cr_recovery:
+                    polar_weight = float(self.reward_weights.get("polar_distance_pf", 0.0))
+                else:
+                    polar_weight = float(self.reward_weights["polar_distance"])
+                _step_polar = polar_weight * ramp_penalty
                 reward -= _step_polar
-
-        clf = self.scenario_classifier
-        self.ts_idx = clf.tracked_ts
 
         if clf.label != "crossing-left":
             self._crossing_left_initial_speed = None
@@ -417,6 +507,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
         _headon_term = 0.0
         _step_grav = 0.0
+        crossing_right_signal = 0.0
         if self.ts_idx is not None and self.ts_idx < len(self.collision_entities):
             ts_idx = self.ts_idx
             ts = self.collision_entities[ts_idx]
@@ -428,17 +519,17 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 ts_pos = ts.get_position()
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
-                os_u = float(self.phys_sim.state.u)
-                os_v = float(self.phys_sim.state.v)
                 rel_bearing = (
                                       math.atan2(dy, dx) - os_heading + math.pi
                               ) % (2.0 * math.pi) - math.pi
 
-                dist = ts.distance_to_point(os_pos)
-                proximity = max(0.0, 1.0 - dist / self.polar_max_range)
-                cri = self._compute_cri(os_pos, os_heading, os_u, os_v, ts)
                 _sin_b = math.sin(rel_bearing)
-                _headon_term = self.reward_weights["colreg_bearing"] * _sin_b * (1-cri)
+                # TCPA-gated bearing reward. The (1-CRI) factor used previously
+                # damped the term close to CPA but did not fade it post-CPA;
+                # the term then dominated the base PF reward through recovery
+                # (e.g. dist=750m, CRI≈0.01 → near-full magnitude). Switching
+                # to g_tcpa fades the shaping cleanly once the TS is past CPA.
+                _headon_term = self.reward_weights["colreg_bearing"] * _sin_b * g_tcpa
                 reward += _headon_term
 
                 if scenario == "head-on":
@@ -453,7 +544,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                         self._passing_snapshots.append({
                             "os_pos": np.copy(os_pos),
                             "ts_pos": ts_pos.copy(),
-                            "dist": dist,
+                            "dist": ts.distance_to_point(os_pos),
                             "scenario": scenario,
                         })
 
@@ -468,7 +559,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 #   x = +/-pi  -> TS astern
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
-                x = (
+                beta = (
                     math.atan2(dy, dx) - os_heading + math.pi
                 ) % (2.0 * math.pi) - math.pi
 
@@ -489,7 +580,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 # shaping so path-following reward dominates after the pass.
                 #gate = 0.5 * (1.0 - math.tanh(k_gate * (abs(x) - 0.5 * math.pi)))
 
-                crossing_right_signal = self.reward_weights["crossing_right"] * math.tanh(k * (x - e1))
+                crossing_right_signal = (
+                    self.reward_weights["crossing_right"]
+                    * math.tanh(k * (beta - e1))
+                    * g_tcpa
+                )
                 reward += crossing_right_signal
 
                 # COLREG violation tracking
@@ -509,19 +604,57 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                         "scenario": scenario,
                     })
 
-                    # Re-lock the scenario to "path-following" now that the
-                    # TS has been passed (|rel_bearing| > pi/2). This forces
-                    # the MultiPolicySingleAgent to switch to the
-                    # path-following policy for the recovery phase, while
-                    # the TS is still in forget range. The lock clears
-                    # automatically via scenario_classifier.reset() when the
-                    # TS leaves forget range (see scenario_builder.on_step).
-                    # We deliberately do NOT release to geometric mode here:
-                    # post-pass geometry can be classified as "overtaking"
-                    # (OS abaft TS beam) which would route to the wrong
-                    # policy.
-                    if self.ground_truth_classification:
-                        clf.set_episode_scenario("path-following")
+                    # Keep the scenario locked to "crossing-right" through
+                    # the recovery phase. The TCPA gate (g_tcpa) fades the
+                    # crossing-right shaping and polar penalty toward zero
+                    # after CPA, so the agent receives effectively only the
+                    # path-following reward during recovery while remaining
+                    # under the crossing-right policy. The lock clears
+                    # automatically when the TS leaves forget range (see
+                    # scenario_builder.on_step → scenario_classifier.reset).
+                    # We do NOT switch to "path-following" here: doing so
+                    # would route recovery states to the path-following
+                    # policy and pollute its training distribution with
+                    # post-encounter recovery, which is what the TCPA gate
+                    # was introduced to avoid.
+
+        # ----------------------------------------------------------
+        # Per-step reward diagnostics. Toggle via env.enable_reward_diag.
+        # ----------------------------------------------------------
+        if (
+            getattr(self, "enable_reward_diag", False)
+            and self.ts_idx is not None
+            and self.ts_idx < len(self.collision_entities)
+        ):
+            ts = self.collision_entities[self.ts_idx]
+            os_pos = self.ship_pos
+            os_heading = self.phys_sim.state.heading
+            os_u = float(self.phys_sim.state.u)
+            os_v = float(self.phys_sim.state.v)
+            ts_pos = ts.get_position()
+            dx = float(ts_pos[0] - os_pos[0])
+            dy = float(ts_pos[1] - os_pos[1])
+            beta = (
+                math.atan2(dy, dx) - os_heading + math.pi
+            ) % (2.0 * math.pi) - math.pi
+            cri, tcpa, dcpa = self._compute_cri(
+                os_pos, os_heading, os_u, os_v, ts,
+            )
+            dist = ts.distance_to_point(os_pos)
+            side = ts.ts_side_from_os_perspective(os_pos, os_heading)
+            print(
+                f"[REW] step={getattr(self, 'step_count', -1):4d} "
+                f"scen={clf.label:14s} side={side:9s} "
+                f"beta={math.degrees(beta):+6.1f}deg "
+                f"dist={dist:6.1f} "
+                f"tcpa={tcpa:+7.1f}s dcpa={dcpa:6.1f}m cri={cri:.3f} "
+                f"g_tcpa={g_tcpa:.3f} "
+                f"cr_sig={crossing_right_signal:+7.3f} "
+                f"polar={_step_polar:+7.3f} "
+                f"cte_rec={_step_cte_recovery:+7.3f} "
+                f"base={base_reward:+7.3f} total={reward:+7.3f}"
+            )
+
         return reward, done
 
     # -----------------------
