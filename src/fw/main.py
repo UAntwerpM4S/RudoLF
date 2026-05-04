@@ -92,10 +92,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
             max_time_steps=1300,
         ),
         airsim_env_name: StopCondition(
-            stop_criterion=Criterion.TARGET_REWARD,
-            target_reward=1.75,
-            patience=4,
-            max_time_steps=1300,
+            stop_criterion=Criterion.NBR_POLICY_UPDATES,
+            max_time_steps=350,
         ),
         fh_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,

@@ -29,10 +29,8 @@ class ShipMetrics:
         MRA: Maximum Rudder Angle.
 
         mRAC: Mean Rudder Angle Change (control smoothness indicator).
-
-        mT: Mean Thrust (average absolute thrust command).
-        MT: Maximum Thrust.
-        mTC: Mean Thrust Change (thrust smoothness indicator).
+        vRA: Steering Variance (spread of rudder commands).
+        sCF: Steering Sign-Change Frequency (oscillation indicator).
 
         mHE: Mean Heading Error (average absolute heading deviation).
 
@@ -50,9 +48,8 @@ class ShipMetrics:
     mRA: float = 0.0    # Mean Rudder Angle
     MRA: float = 0.0    # Max Rudder Angle
     mRAC: float = 0.0   # Mean Rudder Angle Change
-    mT: float = 0.0     # Mean thrust
-    MT: float = 0.0     # Max thrust
-    mTC: float = 0.0    # Mean thrust change
+    vRA: float = 0.0    # Steering Variance
+    sCF: float = 0.0    # Steering Sign-Change Frequency
     mHE: float = 0.0    # Mean Heading Error
     mu: float = 0.0     # Mean surge velocity
     Mu: float = 0.0     # Max surge velocity
@@ -133,7 +130,7 @@ class MetricsComputer:
 
         per_ep_mTEI, per_ep_MTE = [], []
         per_ep_mRA, per_ep_MRA, per_ep_mRAC = [], [], []
-        per_ep_mT, per_ep_MT, per_ep_mTC = [], [], []
+        per_ep_vRA, per_ep_sCF = [], []
         per_ep_mHE, per_ep_mu, per_ep_Mu = [], [], []
 
         for ep in episodes:
@@ -142,17 +139,27 @@ class MetricsComputer:
                 per_ep_mTEI.append(float(np.nanmean(abs_cte)))   # correct mean
                 per_ep_MTE.append(float(np.nanmax(abs_cte)))
             if ep.rudder_actions.size:
-                ra = np.abs(ep.rudder_actions)
-                per_ep_mRA.append(float(np.nanmean(ra)))
-                per_ep_MRA.append(float(np.nanmax(ra)))
+                ra_raw = ep.rudder_actions
+                ra_abs = np.abs(ra_raw)
+                per_ep_mRA.append(float(np.nanmean(ra_abs)))
+                per_ep_MRA.append(float(np.nanmax(ra_abs)))
+                per_ep_vRA.append(float(np.nanvar(ra_raw)))
+                
+                # Sign-change frequency
+                if ra_raw.size > 1:
+                    signs = np.sign(ra_raw)
+                    # Filter out zeros to avoid double counting zero-crossings
+                    nz_signs = signs[signs != 0]
+                    if nz_signs.size > 1:
+                        sign_changes = np.sum(nz_signs[:-1] != nz_signs[1:])
+                        per_ep_sCF.append(float(sign_changes / (ra_raw.size - 1)))
+                    else:
+                        per_ep_sCF.append(0.0)
+                else:
+                    per_ep_sCF.append(0.0)
+
             if ep.rudder_changes.size:
                 per_ep_mRAC.append(float(np.nanmean(np.abs(ep.rudder_changes))))
-            if ep.thrust_actions.size:
-                thrust = np.abs(ep.thrust_actions)
-                per_ep_mT.append(float(np.nanmean(thrust)))
-                per_ep_MT.append(float(np.nanmax(thrust)))
-            if ep.thrust_changes.size:
-                per_ep_mTC.append(float(np.nanmean(np.abs(ep.thrust_changes))))
             if ep.heading_errors.size:
                 per_ep_mHE.append(float(np.nanmean(np.abs(ep.heading_errors))))
             if ep.velocities.size:
@@ -161,31 +168,11 @@ class MetricsComputer:
                 per_ep_Mu.append(float(np.nanmax(v)))
 
         def safe_mean(lst: list) -> float:
-            """Compute mean of list, returning 0.0 for empty lists.
-            
-            Uses np.nanmean to ignore NaN values. Returns 0.0 if list is empty
-            to avoid warnings and ensure consistent behavior across episodes.
-            
-            Args:
-                lst: List of numeric values (may contain NaN).
-            
-            Returns:
-                float: Mean of non-NaN values, or 0.0 if list is empty.
-            """
+            """Return the mean of a list, or 0.0 if empty."""
             return float(np.nanmean(lst)) if lst else 0.0
 
         def safe_max(lst: list) -> float:
-            """Compute maximum of list, returning 0.0 for empty lists.
-            
-            Uses np.nanmax to ignore NaN values. Returns 0.0 if list is empty
-            to avoid warnings and ensure consistent behavior across episodes.
-            
-            Args:
-                lst: List of numeric values (may contain NaN).
-            
-            Returns:
-                float: Maximum of non-NaN values, or 0.0 if list is empty.
-            """
+            """Return the maximum of a list, or 0.0 if empty."""
             return float(np.nanmax(lst)) if lst else 0.0
 
         m.mTEI = safe_mean(per_ep_mTEI)
@@ -193,9 +180,8 @@ class MetricsComputer:
         m.mRA  = safe_mean(per_ep_mRA)
         m.MRA  = safe_max(per_ep_MRA)
         m.mRAC = safe_mean(per_ep_mRAC)
-        m.mT   = safe_mean(per_ep_mT)
-        m.MT   = safe_max(per_ep_MT)
-        m.mTC  = safe_mean(per_ep_mTC)
+        m.vRA  = safe_mean(per_ep_vRA)
+        m.sCF  = safe_mean(per_ep_sCF)
         m.mHE  = safe_mean(per_ep_mHE)
         m.mu   = safe_mean(per_ep_mu)
         m.Mu   = safe_max(per_ep_Mu)

@@ -56,8 +56,6 @@ class ShipDataExtractor:
         if hasattr(ship_env, "performed_action"):
             acc["rudder_actions"].append(0.0)
             acc["rudder_changes"].append(0.0)
-            acc["thrust_actions"].append(0.0)
-            acc["thrust_changes"].append(0.0)
 
     @staticmethod
     def record_step(ship_env, acc: dict) -> None:
@@ -96,20 +94,12 @@ class ShipDataExtractor:
 
         if hasattr(ship_env, "performed_action"):
             curr = ship_env.performed_action[0]
-            curr_thrust = ship_env.performed_action[1]
             if acc["rudder_actions"]:
                 prev = acc["rudder_actions"][-1]
                 acc["rudder_changes"].append(abs(curr - prev))
             else:
                 acc["rudder_changes"].append(0.0)
             acc["rudder_actions"].append(curr)
-
-            if acc["thrust_actions"]:
-                prev_thrust = acc["thrust_actions"][-1]
-                acc["thrust_changes"].append(abs(curr_thrust - prev_thrust))
-            else:
-                acc["thrust_changes"].append(0.0)
-            acc["thrust_actions"].append(curr_thrust)
 
         if hasattr(ship_env, "ukc"):
             if len(acc["ukc_measurements"]) == 0:
@@ -140,21 +130,17 @@ class EpisodeCollector:
             to ["ship_0"].
     """
 
-    def __init__(self, agent, env, ship_ids: Optional[list[str]] = None):
-        """Initialize the collector and resolve the ship IDs to track.
-
-        Args:
-            agent: Trained agent used to produce actions during evaluation.
-            env: Environment to evaluate, either single-ship or multi-ship.
-            ship_ids: Optional explicit ship ID list. If omitted, the collector
-                uses ``env.sub_environments`` when available, otherwise
-                defaults to ``["ship_0"]``.
-
-        Raises:
-            ValueError: If the resolved ship ID list is empty.
-        """
+    def __init__(self, agent, env, ship_ids: Optional[list[str]] = None, airsim_bridge=None):
+        """Initialize the EpisodeCollector."""
         self._agent = agent
         self._env = env
+        self._airsim_bridge = airsim_bridge
+
+        if self._airsim_bridge and self._airsim_bridge.is_connected:
+            from airsim.communication.coord_transform import CoordTransform
+            self._coord_transform = CoordTransform()
+        else:
+            self._coord_transform = None
 
         if ship_ids is not None:
             self._ship_ids = ship_ids
@@ -303,6 +289,15 @@ class EpisodeCollector:
                 steps += 1
                 self._record_step(accumulators, ship_envs, reward)
 
+                if self._coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
+                    ax, ay, _ = self._coord_transform.framework_to_airsim(
+                        float(env.ship_pos[0]), float(env.ship_pos[1])
+                    )
+                    ayaw = self._coord_transform.framework_heading_to_airsim_yaw(
+                        float(env.phys_sim.state.heading)
+                    )
+                    self._airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
+
                 if live_animation:
                     for ship_env in ship_envs.values():
                         if ship_env is not None:
@@ -391,8 +386,6 @@ class EpisodeCollector:
             "cross_errors": [],
             "rudder_actions": [],
             "rudder_changes": [],
-            "thrust_actions": [],
-            "thrust_changes": [],
             "heading_errors": [],
             "velocities": [],
             "ukc_measurements": [],
@@ -421,8 +414,6 @@ class EpisodeCollector:
             cross_errors=np.array(acc["cross_errors"]),
             rudder_actions=np.array(acc["rudder_actions"]),
             rudder_changes=np.array(acc["rudder_changes"]),
-            thrust_actions=np.array(acc["thrust_actions"]),
-            thrust_changes=np.array(acc["thrust_changes"]),
             heading_errors=np.array(acc["heading_errors"]),
             velocities=np.array(acc["velocities"]),
             ukc_measurements=np.array(acc["ukc_measurements"]),
