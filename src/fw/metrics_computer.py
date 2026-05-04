@@ -176,7 +176,6 @@ class MetricsComputer:
 
         # Aggregate env-reported collision / COLREG info.
         m.num_episodes = len(episodes)
-        m.collision_count = sum(1 for ep in episodes if ep.collision)
         m.collision_type_count = dict(
             Counter(ep.collision_type for ep in episodes if ep.collision and ep.collision_type)
         )
@@ -188,13 +187,19 @@ class MetricsComputer:
         # Classification diagnostics — one record per encounter.
         # num_encounters counts all encounter starts (including those without
         # a gt label); classification accuracy metrics only use labelled ones.
+        # collision_count is encounter-level: number of encounters that ended
+        # with the OS in a collision (matches the "collided" flag the
+        # min-distance plot uses).
         confusion: dict[tuple[str, str], int] = {}
         mismatches = 0
         total = 0
         classified = 0
+        collided_encounters = 0
         for ep in episodes:
             for enc in ep.scenario_encounters:
                 total += 1
+                if enc.get("collided", False):
+                    collided_encounters += 1
                 gt = enc.get("gt")
                 pred = enc.get("pred")
                 if gt is None or pred is None:
@@ -206,6 +211,7 @@ class MetricsComputer:
                     mismatches += 1
 
         m.num_encounters = total
+        m.collision_count = collided_encounters
         m.encounter_misclassification_count = mismatches
         m.encounter_confusion = confusion
 

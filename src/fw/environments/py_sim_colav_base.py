@@ -181,10 +181,25 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_episode_min_dist: float = float("inf")
         self._current_episode_collided: bool = False
 
+        # Per-encounter minimum distance tracking. Each completed encounter
+        # contributes a {"gt", "pred", "min_dist", "collided"} record stored
+        # on the same _episode_encounters / _all_encounters lists used by the
+        # confusion matrix; "min_dist" is the closest center-to-center
+        # distance to any collision entity observed *while the encounter was
+        # active*. Records are finalized on encounter end (tracked → None)
+        # or on episode reset / terminal step if mid-encounter.
+        self._in_encounter: bool = False
+        self._current_encounter_min_dist: float = float("inf")
+        self._current_encounter_collided: bool = False
+
         self._last_collision_info = {}
         self._colreg_violations = 0
         self._colreg_correct = 0
         self.ts_passed = None
+        self._prev_passing_signal = None
+        self._prev_passing_ts_idx = None
+        self._prev_os_pos = None
+        self._prev_ts_pos = None
 
         # Classification metrics (GT vs geometric). One record per encounter,
         # where an encounter is the interval from "a TS becomes tracked" to
@@ -357,6 +372,8 @@ class PySimColavBaseEnv(PySimEnv):
                 dist = entity.distance_to_point(self.ship_pos)
                 if dist < self._current_episode_min_dist:
                     self._current_episode_min_dist = dist
+                if self._in_encounter and dist < self._current_encounter_min_dist:
+                    self._current_encounter_min_dist = dist
 
         # Post-entity-step hook (subclass: e.g. rebuild polar geometries)
         self._on_entities_stepped()
@@ -429,6 +446,8 @@ class PySimColavBaseEnv(PySimEnv):
         # Track collision for min-distance exclusion
         if self._last_collision_info.get("collision"):
             self._current_episode_collided = True
+            if self._in_encounter:
+                self._current_encounter_collided = True
 
         obs = self._get_obs()
 
@@ -496,8 +515,11 @@ class PySimColavBaseEnv(PySimEnv):
         each one contributes an independent record.
         """
         # _get_obs() skips re-running the classifier on terminal steps,
-        # so the classifier state is stale — do not sample it.
+        # so the classifier state is stale — do not sample it. Still
+        # finalize an in-progress encounter so its min_dist/collided flags
+        # are written into the record before the episode ends.
         if self.phys_sim.state.terminated or self.phys_sim.state.truncated:
+            self._finalize_active_encounter()
             return
 
         clf = self.scenario_classifier
@@ -505,21 +527,50 @@ class PySimColavBaseEnv(PySimEnv):
         prev = self._prev_tracked_ts
         self._prev_tracked_ts = curr
 
+        # Encounter end: tracked → None. Finalize the per-encounter
+        # min_dist / collided fields on the most recent record.
+        if prev is not None and curr is None:
+            self._finalize_active_encounter()
+            return
+
         # Only act on the transition None → tracked (start of encounter).
-        # Transitions tracked → None (end of encounter) need no bookkeeping
-        # since we already captured the record at entry.
         if curr is None or prev is not None:
             return
 
         gt_ext = clf.ground_truth_extended_label
         pred_ext = clf.geometric_extended_label if gt_ext is not None else None
 
+        # Reset per-encounter min-dist state. The distance loop in step()
+        # for this very step has already updated _current_episode_min_dist
+        # but not the encounter-scoped tracker (since _in_encounter was
+        # still False); we begin accumulating from the next step.
+        self._in_encounter = True
+        self._current_encounter_min_dist = float("inf")
+        self._current_encounter_collided = False
+
         # Always record the encounter start so n_encounters is correct.
         # gt_ext may be None when the tracked entity was not tagged by the
         # builder (should not happen in normal operation, but handled
         # defensively). Such records are excluded from classification
         # accuracy metrics but still count toward the encounter total.
-        self._episode_encounters.append({"gt": gt_ext, "pred": pred_ext})
+        self._episode_encounters.append({
+            "gt": gt_ext,
+            "pred": pred_ext,
+            "min_dist": float("inf"),
+            "collided": False,
+        })
+
+    def _finalize_active_encounter(self) -> None:
+        """Write per-encounter min_dist / collided into the latest record."""
+        if not self._in_encounter or not self._episode_encounters:
+            self._in_encounter = False
+            return
+        rec = self._episode_encounters[-1]
+        rec["min_dist"] = float(self._current_encounter_min_dist)
+        rec["collided"] = bool(self._current_encounter_collided)
+        self._in_encounter = False
+        self._current_encounter_min_dist = float("inf")
+        self._current_encounter_collided = False
 
     # ---------------------------
     # Collision-entity helpers
@@ -730,6 +781,11 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_episode_min_dist = float("inf")
         self._current_episode_collided = False
 
+        # Finalize any encounter still active at reset (defensive — terminal
+        # steps already finalize via _update_classification_metrics).
+        if hasattr(self, "_finalize_active_encounter"):
+            self._finalize_active_encounter()
+
         self.collision_entities = []
         self.obstacle_count = 0
         self.obstacle_pos = None
@@ -742,6 +798,8 @@ class PySimColavBaseEnv(PySimEnv):
         self.ts_passed = None
         self._colreg_violations = 0
         self._colreg_correct = 0
+        self._prev_passing_signal = None
+        self._prev_passing_ts_idx = None
 
         # Flush any encounters from the previous episode into the global
         # accumulator (used by plot_scenario_confusion_matrix), then reset

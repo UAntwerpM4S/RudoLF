@@ -43,8 +43,6 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 
 class CollapseWatchdog:
     """
-    Per-policy collapse detection with weights-only rollback.
-
     Tracks a rolling mean of per-iteration reward for each policy.  Whenever
     the rolling mean reaches a new peak, the policy's network ``state_dict``
     is snapshotted in memory (deep-cloned tensors).  After a warmup period,
@@ -56,10 +54,10 @@ class CollapseWatchdog:
     On trigger, the watchdog returns the snapshotted ``state_dict``; the
     caller is responsible for applying it via ``network.load_state_dict``
     and (recommended) for re-initializing the corresponding optimizer so
-    that Adam's ``m``/``v`` moment buffers — which accumulated during the
-    collapse phase — do not push the rolled-back weights back along the
-    failure trajectory. Without an optimizer reset, weights-only rollback
-    can produce a rollback ping-pong on policies with high reward variance.
+    that Adam's ``m``/``v`` moment buffers to avoid pushing the rolled-back
+    weights back along the failure trajectory. Without an optimizer reset,
+    weights-only rollback can produce a rollback ping-pong on policies with
+    high reward variance.
 
     Safeguards:
       * ``warmup_iterations``: no rollback before this many iterations have

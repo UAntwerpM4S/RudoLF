@@ -137,7 +137,7 @@ DEFAULT_HYPERPARAMETERS = {
         # σ at ≈ 0.22 indefinitely so under-sampled path segments retain
         # enough exploration noise to be learned even after the rest of
         # the path has committed. Other pids are unfloored (default
-        # (-20, 2)) and behave exactly as before.
+        # (-20, 2)).
         'log_std_bounds': {
             0: (-1.5, 2.0),
         },
@@ -151,7 +151,7 @@ CONFIG_PARAMETERS = {
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["MultiPolicyColavEnv"],
-    'action': "visualize",  # Valid action values: "train", "visualize"
+    'action': "train",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
     'numerical_damping': False,
@@ -160,7 +160,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': True,
+    'live_animation': False,
     # AirSim settings are now in airsim.config.airsim_config
     # Use get_airsim_config() to access them.
 }

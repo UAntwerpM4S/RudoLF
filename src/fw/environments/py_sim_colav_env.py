@@ -4,11 +4,8 @@ Extends PySimColavBaseEnv with a polar rangefinder observation and
 COLREG-aware reward shaping for the polar/rangefinder approach.
 """
 import matplotlib
-import matplotlib.patches as patches
-import matplotlib.pyplot as plt
 import gymnasium as gym
-from fw.collision_avoidance.scenario_classifier import NUM_SCENARIOS, EXTENDED_SCENARIO_LABELS
-from scipy.stats import gaussian_kde
+from fw.collision_avoidance.scenario_classifier import NUM_SCENARIOS
 
 import math
 
@@ -79,7 +76,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.polar_fov = np.radians(270)
         self.polar_max_range = 750.0
         self.polar_obs_max = 0.1 * self.polar_max_range / 250
-        self.distance_penalty_start = 150
+        self.distance_penalty_start = 100 # TODO: 100
 
         self.include_scenario_one_hot = bool(include_scenario_one_hot)
 
@@ -106,11 +103,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.pathfollowing_encounter_steps = int(pathfollowing_encounter_steps)
         self.skip_tail_segments = int(skip_tail_segments)
         self.random_segment_start = bool(random_segment_start)
-
-        # Polar-specific reward state
-        self._colreg_initial_heading = None
-        self._crossing_left_initial_speed = None
-        self._crossing_right_grav_point = None
 
         # Pre-compute polar ray directions
         bin_width = float(self.polar_fov) / float(self.polar_n_sectors)
@@ -157,27 +149,10 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
         # Reward weights for polar COLAV shaping
         self.reward_weights = {
-            "polar_distance": 0.65,
-            # Separate (smaller) weight applied when the active scenario is
-            # path-following. Same shaping curve as ``polar_distance``, just
-            # a different scalar — gives the PF policy a continuous bank-
-            # proximity signal across the path so it never has to learn the
-            # bank purely from the sparse -250 collision cliff. Set to 0.0
-            # to fully disable polar penalty during PF (original behavior).
+            "polar_distance_colreg": 0.65,
             "polar_distance_pf": 0.15,
-            "colreg_bearing": 5.0,
-            "crossing_right": 4.0,
-            "crossing_right_steepness": 1.0,
-            "crossing_right_zero": -0.34906585,  # -20deg
-            "crossing_right_gate_steepness": 4.0,
-            # Post-CPA cross-track recovery penalty.
-            # Saturating tanh(cte/scale) gated by (1 - g_tcpa) so it is dormant
-            # during pure PF (g_tcpa=1.0 default) and during approach
-            # (g_tcpa≈1 pre-CPA), and only ramps in post-CPA recovery.
-            # cte_recovery_max=0.5 sits at ~half the per-step PF baseline (0.9)
-            # at saturation, comparable to a typical heading_alignment penalty.
-            "cte_recovery_max": 0.5,
-            "cte_recovery_scale": 60.0,
+            "colreg_bearing": 2.5,
+            "crossing_right": 2.0,
         }
 
     # -------------------------
@@ -321,9 +296,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         if getattr(self, "use_polar_scan", False):
             self.polar_scan_cached = None
 
-        self._colreg_initial_heading = None
         self._crossing_left_initial_speed = None
-        self._crossing_right_grav_point = None
 
         if getattr(self, "use_polar_scan", False):
             self._rebuild_polar_scan_geometries()
@@ -421,10 +394,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         clf = self.scenario_classifier
         self.ts_idx = clf.tracked_ts
 
-        # TCPA-based phase gate: 1 during approach (TCPA > 0), 0 after CPA
-        # (TCPA < 0). Smooth transition centred on CPA. Active for the
-        # encounter-shaping scenarios (head-on, overtaking, crossing-right);
-        # path-following is not gated.
         g_tcpa = 1.0
         if (
             self.ts_idx is not None
@@ -437,35 +406,10 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             _, tcpa, _ = self._compute_cri(
                 self.ship_pos, self.phys_sim.state.heading, os_u, os_v, ts,
             )
-            k_tcpa = float(self.reward_weights.get("tcpa_gate_steepness", 0.05))
+            k_tcpa = 0.15
             g_tcpa = 0.5 * (1.0 + math.tanh(k_tcpa * tcpa))
 
-        # Post-CPA cross-track recovery penalty.
-        # super()._calculate_colav_reward() above ran the base PF reward, which
-        # set self.cross_error to the unsigned perpendicular distance from the
-        # current path segment. The base file deliberately weights r_cte at 0
-        # (py_sim_env.py:962) — we add a saturating, recovery-only CTE penalty
-        # here so the encounter-policy gets an explicit "off-line costs you"
-        # signal once g_tcpa fades the COLREG shaping (post-CPA), without
-        # suppressing the dive during the approach phase or polluting pure-PF
-        # reward (where g_tcpa stays at 1.0 → factor=0).
-        cte_max = float(self.reward_weights.get("cte_recovery_max", 0.0))
-        _step_cte_recovery = 0.0
-        if cte_max > 0.0:
-            cte_scale = float(self.reward_weights.get("cte_recovery_scale", 60.0))
-            cte = float(getattr(self, "cross_error", 0.0))
-            _step_cte_recovery = (
-                cte_max * math.tanh(cte / max(cte_scale, EPSILON)) * (1.0 - g_tcpa)
-            )
-            reward -= _step_cte_recovery
 
-        # Polar distance penalty.
-        # Active in *all* scenarios (including path-following) so that the
-        # bank shows up as a continuous cost in the reward, not just at the
-        # final cliff. PF uses a separate, smaller weight by default to
-        # avoid overpowering the path-tracking signal — set
-        # ``polar_distance_pf`` to 0.0 to recover the original "polar
-        # penalty disabled during PF" behavior.
         _step_polar = 0.0
         if getattr(self, "use_polar_scan", False) and self.polar_scan_cached is not None:
             max_close = float(np.max(self.polar_scan_cached))
@@ -476,37 +420,17 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             min_dist = min_dist_n * self.polar_max_range
 
             if min_dist < d_ramp_start:
-                collision_boundary = 40.0
+                distance_penalty_peak = 40.0
                 a = -2.6 # -2.6
-                ramp_t = (min_dist - collision_boundary) / max(d_ramp_start - collision_boundary, EPSILON)
+                ramp_t = (min_dist - distance_penalty_peak) / max(d_ramp_start - distance_penalty_peak, EPSILON)
                 ramp_t = float(np.clip(ramp_t, 0.0, 1.0))
                 exp_t = (np.exp(a * ramp_t) - 1.0) / (np.exp(a) - 1.0)
                 ramp_penalty = ramp_max_penalty * (1.0 - exp_t)
-                # During crossing-right recovery (TS already passed by OS but
-                # classifier still locked to "crossing-right" until TS leaves
-                # forget range), drop to the attenuated PF polar weight. Same
-                # shaping curve, smaller scalar, so the recovery phase is
-                # rewarded like path-following but the bank-proximity signal
-                # is no longer suppressed by g_tcpa.
-                in_cr_recovery = (
-                    clf.label == "crossing-right"
-                    and self.ts_idx is not None
-                    and self.ts_passed == self.ts_idx
-                )
-                if clf.label == "path-following" or in_cr_recovery:
-                    polar_weight = float(self.reward_weights.get("polar_distance_pf", 0.0))
-                else:
-                    polar_weight = float(self.reward_weights["polar_distance"])
+                polar_weight = float(self.reward_weights["polar_distance_colreg"])
                 _step_polar = polar_weight * ramp_penalty
                 reward -= _step_polar
 
-        if clf.label != "crossing-left":
-            self._crossing_left_initial_speed = None
-        if clf.label != "crossing-right":
-            self._crossing_right_grav_point = None
-
         _headon_term = 0.0
-        _step_grav = 0.0
         crossing_right_signal = 0.0
         if self.ts_idx is not None and self.ts_idx < len(self.collision_entities):
             ts_idx = self.ts_idx
@@ -524,99 +448,73 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                               ) % (2.0 * math.pi) - math.pi
 
                 _sin_b = math.sin(rel_bearing)
-                # TCPA-gated bearing reward. The (1-CRI) factor used previously
-                # damped the term close to CPA but did not fade it post-CPA;
-                # the term then dominated the base PF reward through recovery
-                # (e.g. dist=750m, CRI≈0.01 → near-full magnitude). Switching
-                # to g_tcpa fades the shaping cleanly once the TS is past CPA.
+
                 _headon_term = self.reward_weights["colreg_bearing"] * _sin_b * g_tcpa
                 reward += _headon_term
 
-                if scenario == "head-on":
-                    side = ts.ts_side_from_os_perspective(os_pos, os_heading)
-                    if ts.passed_by_os(os_pos, os_heading) and self.ts_passed != ts_idx:
-                        self.ts_passed = ts_idx
-                        if side == "port":
-                            self._colreg_correct += 1
-                        elif side == "starboard":
-                            self._colreg_violations += 1
-
-                        self._passing_snapshots.append({
-                            "os_pos": np.copy(os_pos),
-                            "ts_pos": ts_pos.copy(),
-                            "dist": ts.distance_to_point(os_pos),
-                            "scenario": scenario,
-                        })
-
             elif scenario == "crossing-right":
                 ts_pos = ts.get_position()
-
-                # x = bearing of TS as seen from OS, in OS body frame
-                # (math convention, CCW positive). x in (-pi, pi]:
-                #   x =  0     -> TS dead ahead
-                #   x = +pi/2  -> TS on OS port
-                #   x = -pi/2  -> TS on OS starboard
-                #   x = +/-pi  -> TS astern
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
                 beta = (
                     math.atan2(dy, dx) - os_heading + math.pi
                 ) % (2.0 * math.pi) - math.pi
 
-                # R(x) = A * tanh(k * (x - e1)).
-                # Zero crossing (and max gradient) at x = e1, set to the
+                # R(x) = A * tanh(k * (x - beta_start)).
+                # Zero crossing (and max gradient) at x = beta_start, set to the
                 # "most positive" end of the encounter range so the unlearned
-                # agent enters at the steepest part of the curve. The wrap
-                # discontinuity at x = +/- pi is intentional: reaching +A
-                # via the wrap requires traversing a long stretch of negative
-                # reward first, so it cannot be exploited.
-                k = float(self.reward_weights["crossing_right_steepness"])
-                e1 = float(self.reward_weights["crossing_right_zero"])
-                k_gate = float(self.reward_weights["crossing_right_gate_steepness"])
-
-                # Front/back-sector soft gate on |x|: ~1 when TS is in the
-                # forward sector (|x| < pi/2 = encounter active), ~0 once
-                # TS is abeam/astern (|x| > pi/2 = passed). Fades the
-                # shaping so path-following reward dominates after the pass.
-                #gate = 0.5 * (1.0 - math.tanh(k_gate * (abs(x) - 0.5 * math.pi)))
+                # agent enters at the steepest part of the curve.
+                k = 1
+                beta_start = -0.34906585 # -20deg
 
                 crossing_right_signal = (
                     self.reward_weights["crossing_right"]
-                    * math.tanh(k * (beta - e1))
+                    * math.tanh(k * (beta - beta_start))
                     * g_tcpa
                 )
                 reward += crossing_right_signal
 
-                # COLREG violation tracking
-                side = ts.ts_side_from_os_perspective(os_pos, os_heading)
-                if ts.passed_by_os(os_pos, os_heading) and self.ts_passed != ts_idx:
-                    self.ts_passed = ts_idx
-                    if side == "port":
-                        self._colreg_correct += 1
-                    elif side == "starboard":
-                        self._colreg_violations += 1
-
-                    dist = ts.distance_to_point(os_pos)
-                    self._passing_snapshots.append({
-                        "os_pos": np.copy(os_pos),
-                        "ts_pos": ts_pos.copy(),
-                        "dist": dist,
-                        "scenario": scenario,
-                    })
-
-                    # Keep the scenario locked to "crossing-right" through
-                    # the recovery phase. The TCPA gate (g_tcpa) fades the
-                    # crossing-right shaping and polar penalty toward zero
-                    # after CPA, so the agent receives effectively only the
-                    # path-following reward during recovery while remaining
-                    # under the crossing-right policy. The lock clears
-                    # automatically when the TS leaves forget range (see
-                    # scenario_builder.on_step → scenario_classifier.reset).
-                    # We do NOT switch to "path-following" here: doing so
-                    # would route recovery states to the path-following
-                    # policy and pollute its training distribution with
-                    # post-encounter recovery, which is what the TCPA gate
-                    # was introduced to avoid.
+        # Passing detection: TS-frame sign-flip on lateral (crossing-right) or
+        # longitudinal (head-on) offset. Linearly interpolate the sub-step
+        # crossing point so the dotted snapshot line lies on the TS track.
+        if (
+            self.ts_idx is not None
+            and self.ts_idx < len(self.collision_entities)
+            and clf.label in ("head-on", "crossing-right")
+        ):
+            ts = self.collision_entities[self.ts_idx]
+            os_pos_now = self.ship_pos
+            ts_pos_now = ts.get_position()
+            signal = ts.passing_signal(os_pos_now, clf.label)
+            prev = self._prev_passing_signal
+            if (
+                prev is not None
+                and self._prev_passing_ts_idx == self.ts_idx
+                and prev * signal < 0.0
+                and self.ts_passed != self.ts_idx
+            ):
+                t = prev / (prev - signal)
+                os_at = self._prev_os_pos + t * (os_pos_now - self._prev_os_pos)
+                ts_at = self._prev_ts_pos + t * (ts_pos_now - self._prev_ts_pos)
+                self.ts_passed = self.ts_idx
+                side = ts.ts_side_from_os_perspective(os_pos_now, self.phys_sim.state.heading)
+                if side == "port":
+                    self._colreg_correct += 1
+                elif side == "starboard":
+                    self._colreg_violations += 1
+                self._passing_snapshots.append({
+                    "os_pos": np.asarray(os_at, dtype=np.float32),
+                    "ts_pos": np.asarray(ts_at, dtype=np.float32),
+                    "dist": float(np.linalg.norm(os_at - ts_at)),
+                    "scenario": clf.label,
+                })
+            self._prev_passing_signal = signal
+            self._prev_passing_ts_idx = self.ts_idx
+            self._prev_os_pos = np.copy(os_pos_now)
+            self._prev_ts_pos = np.copy(ts_pos_now)
+        else:
+            self._prev_passing_signal = None
+            self._prev_passing_ts_idx = None
 
         # ----------------------------------------------------------
         # Per-step reward diagnostics. Toggle via env.enable_reward_diag.
@@ -651,7 +549,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 f"g_tcpa={g_tcpa:.3f} "
                 f"cr_sig={crossing_right_signal:+7.3f} "
                 f"polar={_step_polar:+7.3f} "
-                f"cte_rec={_step_cte_recovery:+7.3f} "
                 f"base={base_reward:+7.3f} total={reward:+7.3f}"
             )
 
@@ -700,163 +597,20 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # -----------------------
     # Evaluation
     # -----------------------
-    def plot_min_distance_PDF(self, save_path: str = "min_distance_PDF.png") -> None:
-        """Plot probability density of minimum center-to-center distance
-        to collision entities across non-collision evaluation episodes."""
-        print("plot min dist PDF")
-
-        if not self._current_episode_collided and self._current_episode_min_dist < float("inf"):
-            self._episode_min_distances.append(self._current_episode_min_dist)
-
-        distances = np.array(self._episode_min_distances)
-        if len(distances) == 0:
-            print("No non-collision episodes to plot min-distance png for.")
-            return
-
-        fig, ax = plt.subplots(figsize=(10, 6))
-
-        n_bins = max(10, len(distances) // 3)
-        ax.hist(distances, bins=n_bins, density=True, alpha=0.6, color="steelblue",
-                edgecolor="white", label="Histogram (density)")
-
-        kde = gaussian_kde(distances)
-        x_grid = np.linspace(max(0, distances.min() - 5), distances.max() + 10, 300)
-        ax.plot(x_grid, kde(x_grid), color="darkblue", linewidth=2, label="KDE")
-
-        arrow_coords = ("data", "axes fraction")
-        arrow_kwargs = dict(arrowstyle="<->", lw=1.5)
-        text_kwargs = dict(ha="center", va="top", fontsize=8, fontweight="bold")
-
-        os_r = float(self.own_ship_radius)
-        ts_r_min = float(self.static_ship_radius_min)
-        ts_r_max = float(self.static_ship_radius_max)
-        variable_ts = ts_r_min != ts_r_max
-
-        row1_y = -0.06
-        if os_r > 0:
-            ax.annotate("", xy=(os_r, row1_y), xytext=(0, row1_y),
-                         arrowprops=dict(**arrow_kwargs, color="red"),
-                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
-            ax.text(os_r / 2, row1_y - 0.02, f"OS radius = {os_r:.0f}m",
-                    transform=ax.get_xaxis_transform(), color="red",
-                    clip_on=False, **text_kwargs)
-
-        row2_y = row1_y - 0.08
-        if variable_ts:
-            ax.annotate("", xy=(os_r + ts_r_min, row2_y), xytext=(os_r, row2_y),
-                         arrowprops=dict(**arrow_kwargs, color="orange"),
-                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
-            ax.text(os_r + ts_r_min / 2, row2_y - 0.02,
-                    f"min TS radius = {ts_r_min:.0f}m",
-                    transform=ax.get_xaxis_transform(), color="orange",
-                    clip_on=False, **text_kwargs)
-            row3_y = row2_y - 0.08
-            ax.annotate("", xy=(os_r + ts_r_max, row3_y), xytext=(os_r, row3_y),
-                         arrowprops=dict(**arrow_kwargs, color="darkorange"),
-                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
-            ax.text(os_r + ts_r_max / 2, row3_y - 0.02,
-                    f"max TS radius = {ts_r_max:.0f}m",
-                    transform=ax.get_xaxis_transform(), color="darkorange",
-                    clip_on=False, **text_kwargs)
-        else:
-            ax.annotate("", xy=(os_r + ts_r_min, row2_y), xytext=(os_r, row2_y),
-                         arrowprops=dict(**arrow_kwargs, color="orange"),
-                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
-            ax.text(os_r + ts_r_min / 2, row2_y - 0.02,
-                    f"TS radius = {ts_r_min:.0f}m",
-                    transform=ax.get_xaxis_transform(), color="orange",
-                    clip_on=False, **text_kwargs)
-
-        collision_dist_min = os_r + ts_r_min
-        collision_dist_max = os_r + ts_r_max
-        ax.axvline(collision_dist_min, color="red", linestyle="--", alpha=0.6,
-                   label=f"Collision boundary (min) = {collision_dist_min:.0f}m")
-        if variable_ts:
-            ax.axvline(collision_dist_max, color="darkorange", linestyle="--", alpha=0.6,
-                       label=f"Collision boundary (max) = {collision_dist_max:.0f}m")
-
-        ax.set_ylim(bottom=0)
-        ax.set_xlim(left=0)
-
-        ax.set_xlabel("Minimum center-to-center distance to collision entity [m]")
-        ax.set_ylabel("Probability density")
-        ax.set_title(f"Min-distance PDF ({len(distances)} non-collision episodes)")
-        ax.legend(loc="upper right")
-        ax.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        print(f"Min-distance PDF saved as '{save_path}'")
-        plt.close(fig)
+    def plot_min_distance_stats(
+        self,
+        pdf_save_path: str = "min_distance_PDF.png",
+        boxplot_save_path: str = "min_distance_boxplots.png",
+    ) -> None:
+        from fw.collision_avoidance.colav_statistics import plot_min_distance_stats
+        plot_min_distance_stats(self, pdf_save_path, boxplot_save_path)
 
     def plot_scenario_confusion_matrix(
         self,
         save_path: str = "scenario_confusion_matrix.png",
     ) -> None:
-        """Plot a confusion matrix over encounters aggregated across episodes.
-
-        Rows = builder ground-truth scenario, columns = geometric classifier
-        prediction at encounter entry. One entry per encounter (multiple
-        encounters may occur per episode in step-level generation).
-        """
-        print("plot scenario confusion")
-        # Flush current episode's encounters if the run ended without another
-        # env_specific_reset() being called.
-        encounters = list(self._all_encounters)
-        if self._episode_encounters:
-            encounters.extend(self._episode_encounters)
-
-        if not encounters:
-            print("No encounters to plot scenario confusion matrix for.")
-            return
-
-        labels = list(EXTENDED_SCENARIO_LABELS)
-        label_to_idx = {lbl: i for i, lbl in enumerate(labels)}
-        n = len(labels)
-
-        matrix = np.zeros((n, n), dtype=np.int32)
-        for enc in encounters:
-            gt = enc.get("gt")
-            pred = enc.get("pred")
-            if gt not in label_to_idx or pred not in label_to_idx:
-                continue
-            matrix[label_to_idx[gt], label_to_idx[pred]] += 1
-
-        total = int(matrix.sum())
-        correct = int(np.trace(matrix))
-        accuracy = (correct / total * 100.0) if total else 0.0
-
-        fig, ax = plt.subplots(figsize=(8, 7))
-        im = ax.imshow(matrix, cmap="Blues", aspect="equal")
-
-        ax.set_xticks(np.arange(n))
-        ax.set_yticks(np.arange(n))
-        ax.set_xticklabels(labels, rotation=30, ha="right")
-        ax.set_yticklabels(labels)
-        ax.set_xlabel("Geometric prediction (at encounter entry)")
-        ax.set_ylabel("Ground truth (builder scenario)")
-        ax.set_title(
-            f"Scenario confusion matrix — {total} encounters, "
-            f"accuracy {accuracy:.1f}% ({correct}/{total})"
-        )
-
-        # Overlay counts. Use white text on dark cells for readability.
-        thresh = matrix.max() / 2.0 if matrix.max() > 0 else 0.5
-        for i in range(n):
-            for j in range(n):
-                val = int(matrix[i, j])
-                color = "white" if val > thresh else "black"
-                ax.text(
-                    j, i, str(val),
-                    ha="center", va="center",
-                    color=color, fontsize=10, fontweight="bold",
-                )
-
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Encounter count")
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        print(f"Scenario confusion matrix saved as '{save_path}'")
-        plt.close(fig)
+        from fw.collision_avoidance.colav_statistics import plot_scenario_confusion_matrix
+        plot_scenario_confusion_matrix(self, save_path)
 
 
 # Backwards-compatible alias

@@ -125,6 +125,20 @@ class CollisionEntity:
         rel_bearing = (rel_bearing + math.pi) % (2.0 * math.pi) - math.pi
         return abs(rel_bearing) > math.pi / 2.0
 
+    def passing_signal(self, os_pos, scenario: str) -> float:
+        """Signed scalar in TS frame whose sign-flip marks an OS-passes-TS event.
+
+        crossing-right: lateral offset (cross with TS heading); flips when OS
+            crosses the TS heading axis (stern/bow crossing).
+        head-on: longitudinal offset (dot with TS heading); flips when OS
+            passes TS abeam (relative bearing TS->OS = +/-90 deg).
+        """
+        dx = float(os_pos[0]) - self.x
+        dy = float(os_pos[1]) - self.y
+        if scenario == "crossing-right":
+            return math.cos(self.heading) * dy - math.sin(self.heading) * dx
+        return math.cos(self.heading) * dx + math.sin(self.heading) * dy
+
     def ts_side_from_os_perspective(self, os_pos: np.ndarray, os_heading: float) -> str:
         """
         Which side of the OS is this TS on?

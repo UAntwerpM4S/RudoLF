@@ -405,9 +405,10 @@ class AgentManager:
                 for sid in metrics.keys():
                     ship_env = self._get_ship_env(raw_env, sid)
                     env_name = getattr(ship_env, "env_name", sid)
-                    if hasattr(ship_env, "plot_min_distance_PDF"):
-                        ship_env.plot_min_distance_PDF(
-                            save_path=f"{save_dir}/{env_name}_min_distance_PDF.png",
+                    if hasattr(ship_env, "plot_min_distance_stats"):
+                        ship_env.plot_min_distance_stats(
+                            pdf_save_path=f"{save_dir}/{env_name}_min_distance_PDF.png",
+                            boxplot_save_path=f"{save_dir}/{env_name}_min_distance_boxplots.png",
                         )
                     if hasattr(ship_env, "plot_scenario_confusion_matrix"):
                         ship_env.plot_scenario_confusion_matrix(
