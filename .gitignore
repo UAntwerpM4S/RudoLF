@@ -168,3 +168,6 @@ project/log/
 project/build/
 
 src/fw/training_files/
+src/logs/
+src/exports/
+src/models/

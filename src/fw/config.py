@@ -47,7 +47,6 @@ AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME = "trajectory_2d_vs_3d.png"
 """
 Following (hyper)parameters are for fine-tuning the agent. The key of the dictionary
 that they are linked to, is the name of the environment that they're associated with.
-
 In the long term this should be moved to a config-file which will then be read.
 """
 
@@ -110,11 +109,20 @@ DEFAULT_HYPERPARAMETERS = {
     },
 }
 
+AIRSIM_HYPERPARAMETER_OVERRIDES = {
+    PPO_POLICY_NAME: {
+        'learning_rate': 3e-4,
+        'gamma': 0.99,
+        'clip_range': 0.2,
+        'device': 'cuda', # AirSim training benefits from GPU acceleration, can be switched to 'cpu' if CUDA is not available or not applicable.
+    },
+}
+
 CONFIG_PARAMETERS = {
     # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander"
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
-    'env_type': ["PySimEnv", "AirSimEnv"],
+    'env_type': ["PySimEnv","AirSimEnv"],
     'action': "train",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
@@ -130,10 +138,18 @@ CONFIG_PARAMETERS = {
 }
 
 
-def get_hyperparameters(agent_name):
-    """Get validated hyperparameters"""
+def get_hyperparameters(agent_name, env_name=None):
+    """Get validated hyperparameters.
+
+    AirSim uses the base PPO tuning set. Other environments get the legacy
+    PPO settings through the override map so their training behavior stays
+    separate from the AirSim tuning.
+    """
     try:
-        return DEFAULT_HYPERPARAMETERS[agent_name].copy()
+        params = DEFAULT_HYPERPARAMETERS[agent_name].copy()
+        if env_name == "AirSimEnv":
+            params.update(AIRSIM_HYPERPARAMETER_OVERRIDES.get(agent_name, {}))
+        return params
     except KeyError:
         raise ValueError(f"Unknown agent type: {agent_name}")
 

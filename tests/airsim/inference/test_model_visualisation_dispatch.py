@@ -40,7 +40,6 @@ def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
             "max_yaw_step_deg": 1.5,
             "lock_path_in_ue5": False,
             "vehicle_object_name": "",
-            "show_minimap": True,
         },
         "airsim": {
             "ip": "",

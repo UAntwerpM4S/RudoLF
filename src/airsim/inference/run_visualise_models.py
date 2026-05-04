@@ -21,10 +21,7 @@ from airsim.config.airsim_config import (  # noqa: E402
     AirSimConfig,
     DEFAULT_AIRSIM_SAVE_SLOT,
     DEFAULT_AIRSIM_SIMULATION_SPEED,
-)
-from airsim.inference.minimap_models_ue5 import (  # noqa: E402
-    UE5TopDownMinimap,
-    VisualiseModelsMinimap,
+    DEFAULT_THROTTLE_VISUAL_GAIN,
 )
 from airsim.inference.visualisation_models import (  # noqa: E402
     ModelVisualisationAdapter,
@@ -47,7 +44,6 @@ from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MIN_LOG_INTERVAL_S = 0.25
-_DEFAULT_MINIMAP_UPDATE_HZ = 20.0
 _DEFAULT_BRIDGE_TELEMETRY_HZ = 12.0
 _DEFAULT_STARTUP_SETTLE_S = 0.4
 _DEFAULT_TRAIL_MIN_SEGMENT_M = 1.5
@@ -219,26 +215,17 @@ class VisualiseModelsRunner:
         animate_throttle_in_ue5: bool = True,
         render_interpolation_steps: int = 4,
         steering_visual_gain: float = 0.35,
-        throttle_visual_gain: float = 1.0,
+        throttle_visual_gain: float = DEFAULT_THROTTLE_VISUAL_GAIN,
         use_kinematics_in_ue5: bool = False,
         min_render_hz: float = 90.0,
         max_translation_step: float = 0.15,
         max_yaw_step_deg: float = 1.5,
         lock_path_in_ue5: bool = False,
         vehicle_object_name: str = "",
-        show_minimap: bool = True,
-        use_ue5_camera_minimap: bool = False,
-        ue5_camera_name: str = "TopDownCam",
-        ue5_camera_fov_deg: float = 38.0,
-        ue5_camera_height_m: float = 120.0,
-        ue5_camera_follow_heading: bool = False,
-        ue5_preview_window: bool = True,
-        save_matplotlib_minimap: bool = False,
         draw_ship_trail_in_ue5: bool = True,
         ship_trail_thickness: float = 14.0,
         ship_trail_min_segment_m: float = _DEFAULT_TRAIL_MIN_SEGMENT_M,
         min_log_interval_s: float = _DEFAULT_MIN_LOG_INTERVAL_S,
-        minimap_update_hz: float = _DEFAULT_MINIMAP_UPDATE_HZ,
         bridge_telemetry_hz: float = _DEFAULT_BRIDGE_TELEMETRY_HZ,
         startup_settle_s: float = _DEFAULT_STARTUP_SETTLE_S,
         verbose: bool = False,
@@ -268,19 +255,10 @@ class VisualiseModelsRunner:
             max_yaw_step_deg: Maximum yaw delta per interpolation step in degrees.
             lock_path_in_ue5: Whether to lock motion onto the framework path.
             vehicle_object_name: Optional UE5 vehicle object override.
-            show_minimap: Whether to create a minimap during playback.
-            use_ue5_camera_minimap: Whether to use the UE5 top-down camera minimap.
-            ue5_camera_name: UE5 camera name for the top-down minimap.
-            ue5_camera_fov_deg: UE5 top-down camera field of view.
-            ue5_camera_height_m: UE5 top-down camera follow height.
-            ue5_camera_follow_heading: Whether the UE5 minimap camera follows heading.
-            ue5_preview_window: Whether to show the UE5 camera preview window.
-            save_matplotlib_minimap: Whether to save the matplotlib minimap snapshot when supported.
             draw_ship_trail_in_ue5: Whether to draw a persistent blue trail behind the ship in UE5.
             ship_trail_thickness: Thickness of the persistent blue ship trail in UE5.
             ship_trail_min_segment_m: Minimum movement before adding a new UE5 trail segment.
             min_log_interval_s: Minimum wall-clock interval between info logs.
-            minimap_update_hz: Maximum minimap refresh rate.
             bridge_telemetry_hz: Maximum bridge telemetry polling rate.
             startup_settle_s: Startup settle window before stepping begins.
             verbose: Whether to emit detailed per-step logging.
@@ -297,7 +275,6 @@ class VisualiseModelsRunner:
         print(f"  Family     : {self.adapter.family}")
         print(f"  Environment: {selected_env}")
         print(f"  Save slot  : {save_slot}")
-        print(f"  Camera map : {'UE5 top-down' if use_ue5_camera_minimap else 'matplotlib minimap'}")
         print(banner)
 
         policy = self._load_policy(model_path, device=device)
@@ -333,18 +310,9 @@ class VisualiseModelsRunner:
                     "max_yaw_step_deg": max_yaw_step_deg,
                     "lock_path_in_ue5": lock_path_in_ue5,
                     "vehicle_object_name": vehicle_object_name,
-                    "show_minimap": show_minimap,
-                    "use_ue5_camera_minimap": use_ue5_camera_minimap,
-                    "ue5_camera_name": ue5_camera_name,
-                    "ue5_camera_fov_deg": ue5_camera_fov_deg,
-                    "ue5_camera_height_m": ue5_camera_height_m,
-                    "ue5_camera_follow_heading": ue5_camera_follow_heading,
-                    "ue5_preview_window": ue5_preview_window,
-                    "save_matplotlib_minimap": save_matplotlib_minimap,
                     "draw_ship_trail_in_ue5": draw_ship_trail_in_ue5,
                     "ship_trail_thickness": float(ship_trail_thickness),
                     "ship_trail_min_segment_m": float(ship_trail_min_segment_m),
-                    "minimap_update_hz": float(minimap_update_hz),
                     "bridge_telemetry_hz": float(bridge_telemetry_hz),
                     "startup_settle_s": float(startup_settle_s),
                 },
@@ -361,7 +329,6 @@ class VisualiseModelsRunner:
             comparison_plot_path = session_exporter.export_dir / AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME
             bridge = None
             env = None
-            minimap = None
 
             def _trail_point_from_motion_state(motion_state: np.ndarray):
                 """Return the current UE5 trail point for the ship path marker.
@@ -403,7 +370,6 @@ class VisualiseModelsRunner:
 
                 env = self._build_environment(selected_env, max_steps=max_steps)
                 max_yaw_step_rad = np.deg2rad(max_yaw_step_deg)
-                minimap_update_interval_s = 1.0 / max(float(minimap_update_hz), 1.0)
                 bridge_telemetry_interval_s = 1.0 / max(float(bridge_telemetry_hz), 1.0)
                 target_step_interval_s = env.time_step / max(float(simulation_speed), 1e-6)
                 target_step_rate_hz = 1.0 / max(target_step_interval_s, 1e-6)
@@ -415,7 +381,6 @@ class VisualiseModelsRunner:
                     max(float(startup_settle_s), 0.0),
                     max(0.05, target_step_interval_s * float(steps_per_ue5_update)),
                 )
-                last_minimap_update_at = 0.0
                 last_bridge_telemetry_at = 0.0
 
                 bridge.prepare_model_visualisation(
@@ -435,29 +400,6 @@ class VisualiseModelsRunner:
                     print(f"\n-- Visualisation episode {episode + 1}/{num_episodes} --")
                     obs, _ = env.reset()
                     previous_trail_point = None
-
-                    if show_minimap:
-                        if minimap is not None:
-                            minimap.close()
-                        try:
-                            if use_ue5_camera_minimap:
-                                minimap = UE5TopDownMinimap(
-                                    bridge,
-                                    camera_name=ue5_camera_name,
-                                    fov_degrees=ue5_camera_fov_deg,
-                                    height_offset_m=ue5_camera_height_m,
-                                    follow_heading=ue5_camera_follow_heading,
-                                    enable_preview_window=ue5_preview_window,
-                                )
-                            else:
-                                minimap = VisualiseModelsMinimap(
-                                    env,
-                                    save_dir=str(session_exporter.export_dir),
-                                    max_fps=float(minimap_update_hz),
-                                )
-                        except Exception as exc:
-                            logger.warning("Minimap unavailable: %s", exc)
-                            minimap = None
 
                     previous_motion_state = self._motion_state_from_env(env, bridge)
                     previous_actuator_state = None
@@ -519,10 +461,6 @@ class VisualiseModelsRunner:
                         step += 1
 
                         now = time.perf_counter()
-                        if minimap is not None and (now - last_minimap_update_at) >= minimap_update_interval_s:
-                            last_minimap_update_at = now
-                            minimap.update(env)
-
                         target_motion_state = self._motion_state_from_env(env, bridge)
                         steps_since_ue5_update += 1
                         batched_steps = steps_since_ue5_update
@@ -638,11 +576,7 @@ class VisualiseModelsRunner:
                         }
                     )
 
-                    if save_matplotlib_minimap and minimap is not None and hasattr(minimap, "finish"):
-                        minimap.finish(total_reward, episode=episode + 1)
             finally:
-                if minimap is not None:
-                    minimap.close()
                 try:
                     if bridge is not None and bridge.is_connected:
                         bridge.set_simulation_speed(1.0)
@@ -757,19 +691,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lock-path-in-ue5", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--no-calibration-reference", action="store_true", default=False)
     parser.add_argument("--vehicle-object-name", default="", dest="vehicle_object_name")
-    parser.add_argument("--no-minimap", action="store_true", default=False, dest="no_minimap")
-    parser.add_argument("--use-ue5-camera-minimap", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--ue5-camera-name", default="TopDownCam")
-    parser.add_argument("--ue5-camera-fov-deg", type=float, default=38.0)
-    parser.add_argument("--ue5-camera-height-m", type=float, default=120.0)
-    parser.add_argument("--ue5-camera-follow-heading", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--ue5-preview-window", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--save-matplotlib-minimap", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--draw-ship-trail-in-ue5", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--ship-trail-thickness", type=float, default=14.0)
     parser.add_argument("--ship-trail-min-segment-m", type=float, default=_DEFAULT_TRAIL_MIN_SEGMENT_M)
     parser.add_argument("--min-log-interval-s", type=float, default=_DEFAULT_MIN_LOG_INTERVAL_S)
-    parser.add_argument("--minimap-update-hz", type=float, default=_DEFAULT_MINIMAP_UPDATE_HZ)
     parser.add_argument("--bridge-telemetry-hz", type=float, default=_DEFAULT_BRIDGE_TELEMETRY_HZ)
     parser.add_argument("--startup-settle-s", type=float, default=_DEFAULT_STARTUP_SETTLE_S)
     parser.add_argument("--verbose", action="store_true", default=False)
@@ -808,19 +733,10 @@ if __name__ == "__main__":
         max_yaw_step_deg=args.max_yaw_step_deg,
         lock_path_in_ue5=args.lock_path_in_ue5,
         vehicle_object_name=args.vehicle_object_name,
-        show_minimap=not args.no_minimap,
-        use_ue5_camera_minimap=args.use_ue5_camera_minimap,
-        ue5_camera_name=args.ue5_camera_name,
-        ue5_camera_fov_deg=args.ue5_camera_fov_deg,
-        ue5_camera_height_m=args.ue5_camera_height_m,
-        ue5_camera_follow_heading=args.ue5_camera_follow_heading,
-        ue5_preview_window=args.ue5_preview_window,
-        save_matplotlib_minimap=args.save_matplotlib_minimap,
         draw_ship_trail_in_ue5=args.draw_ship_trail_in_ue5,
         ship_trail_thickness=args.ship_trail_thickness,
         ship_trail_min_segment_m=args.ship_trail_min_segment_m,
         min_log_interval_s=args.min_log_interval_s,
-        minimap_update_hz=args.minimap_update_hz,
         bridge_telemetry_hz=args.bridge_telemetry_hz,
         startup_settle_s=args.startup_settle_s,
         verbose=args.verbose,
