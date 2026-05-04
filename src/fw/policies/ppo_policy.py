@@ -1,4 +1,5 @@
 import os
+import re
 import torch
 import zipfile
 import tempfile
@@ -6,9 +7,9 @@ import numpy as np
 
 from typing import Tuple, Dict, Any
 from fw.policies.actor_critic_network import ActorCriticNetwork
+from fw.common.tools.ppo_utils import _normalize_policy_zip_path
 
 POLICY_FILE_NAME = 'policy.pth'
-
 
 def get_device(device: str = "auto") -> torch.device:
     """Retrieve the PyTorch device to be used for computations.
@@ -178,6 +179,11 @@ class PPOPolicy:
         Args:
             filename (str): The path to the file where the model should be saved.
         """
+        zip_path = _normalize_policy_zip_path(filename)
+        parent_dir = os.path.dirname(zip_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Paths for temp files
             params_path = os.path.join(tmp_dir, POLICY_FILE_NAME)
@@ -187,7 +193,7 @@ class PPOPolicy:
                 params_path,
 			)
 
-            with zipfile.ZipFile(f"{filename}.zip", 'w') as zip_file:
+            with zipfile.ZipFile(zip_path, 'w') as zip_file:
                 zip_file.write(params_path, arcname=POLICY_FILE_NAME)
 
 
@@ -206,9 +212,10 @@ class PPOPolicy:
             RuntimeError: If the model file is corrupted or the device doesn't match.
         """
         device = get_device(device)
+        zip_path = _normalize_policy_zip_path(filename)
 
         try:
-            with zipfile.ZipFile(f"{filename}.zip", 'r') as zip_file:
+            with zipfile.ZipFile(zip_path, 'r') as zip_file:
                 with zip_file.open(POLICY_FILE_NAME) as policy_file:
                     saved_variables = torch.load(policy_file, map_location=device, weights_only=False)
         except (FileNotFoundError, KeyError) as e:

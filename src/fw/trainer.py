@@ -1,10 +1,26 @@
 import os
 import re
+import csv
 import importlib
+from datetime import datetime
 
 from enum import Enum
 from pathlib import Path
+from typing import Dict, List, Any
 from fw.agent_manager import AgentManager
+from fw.env_factory import (
+    resolve_environment_name,
+    py_sim_env_name,
+    fh_sim_env_name,
+    airsim_env_name,
+    lunar_env_name,
+    py_sim_polar_env_name,
+    PySimEnvironment,
+    FhSimEnvironment,
+    AirSimEnvironment,
+    LunarEnvironment,
+    PySimPolarEnvironment,
+)
 from fw.agent_manager_simple import AgentManagerSimple
 from fw.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
 
@@ -103,7 +119,7 @@ class Trainer:
             RuntimeError: If the scheduler class cannot be found or initialized.
             TypeError: If the scheduler does not have required attributes.
         """
-
+        self._agent_type = agent_type
         self._envs = envs
         self._config = get_config_parameters()
         self._hyperparameter_env_name = self._resolve_hyperparameter_env_name()
@@ -157,13 +173,14 @@ class Trainer:
         return None
 
 
-    def train(self, configuration: dict = None) -> dict:
-        """
-        Starts the training process.
+    def train(self, configuration: dict = None, show_plots: bool = True) -> dict:
+        """Starts the training process.
 
         Args:
             configuration (dict, optional): Additional configuration parameters
                 for training, such as number of steps per environment.
+            show_plots (bool, optional): Show interactive visualization windows.
+                If False, only save outputs without opening matplotlib windows.
 
         Returns:
             dict: Training metrics collected during execution.
@@ -180,22 +197,40 @@ class Trainer:
                 if env_type == "AirSimEnv":
                     print("Skipping automatic post-training visualization for AirSimEnv.")
                 else:
-                    self.visualize([last_env])
+                    summaries = self.visualize(
+                        [last_env],
+                        collect_evaluation_summary=True,
+                        show_plots=show_plots,
+                    )
+                    if summaries:
+                        env_metrics["evaluation_summary"] = (
+                            summaries.get(env_type)
+                            or next(iter(summaries.values()))
+                        )
             except AttributeError as e:
                 print(e)
         else:
             print(f"No successful training found for environment '{env_type}' to visualize.")
 
         return metrics
+    
 
-    def visualize(self, envs, airsim_bridge=None):
-        """
-        Visualize.
+    def visualize(
+        self,
+        envs,
+        airsim_bridge=None,
+        collect_evaluation_summary: bool = False,
+        show_plots: bool = True,
+    ):
+        """Visualize.
 
         Args:
             envs: Description.
             airsim_bridge: Description.
+            collect_evaluation_summary: Whether to return final evaluation metrics.
+            show_plots: Whether to show interactive matplotlib windows.
         """
+        summaries = {} if collect_evaluation_summary else None
 
         if envs is not None:
             for env_idx, env in enumerate(envs):
@@ -223,8 +258,443 @@ class Trainer:
                         other_env_name=policy_name,
                     )
 
-                    self._agent_mgr.visualize_trained_agent(num_episodes=1, live_animation=self._config["live_animation"], airsim_bridge=airsim_bridge)
+                    env_summary = self._agent_mgr.visualize_trained_agent(
+                        num_episodes=1,
+                        live_animation=self._config["live_animation"],
+                        airsim_bridge=airsim_bridge,
+                        return_summary=collect_evaluation_summary,
+                        show_plots=show_plots,
+                    )
+                    if collect_evaluation_summary and env_summary is not None:
+                        summaries[gym_env.type_name] = (
+                            env_summary.get(gym_env.type_name)
+                            if isinstance(env_summary, dict)
+                            else None
+                        ) or (
+                            next(iter(env_summary.values()))
+                            if isinstance(env_summary, dict) and env_summary
+                            else env_summary
+                        )
                 except RuntimeError as e:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
         else:
             print("No data found to visualize.")
+
+        if collect_evaluation_summary:
+            return summaries
+
+        return None
+
+    @staticmethod
+    def _build_eval_environment(canonical_name: str, config: Dict[str, Any]):
+        """Build a fresh environment wrapper for reward evaluation.
+
+        This bypasses the factory cache so each reward configuration gets
+        its own independent environment instance.
+        """
+        # Avoid factory-level caching so each reward config is isolated.
+        if canonical_name == py_sim_env_name:
+            return PySimEnvironment(canonical_name, config)
+        if canonical_name == fh_sim_env_name:
+            return FhSimEnvironment(canonical_name, config)
+        if canonical_name == airsim_env_name:
+            return AirSimEnvironment(canonical_name, config)
+        if canonical_name == lunar_env_name:
+            return LunarEnvironment(canonical_name, config)
+        if canonical_name == py_sim_polar_env_name:
+            return PySimPolarEnvironment(canonical_name, config)
+        raise ValueError(f"Unsupported environment '{canonical_name}' for reward evaluation")
+    
+
+    def evaluate_reward(
+        self,
+        reward_configs: List[Dict[str, Any]],
+        training_configuration: Dict[str, Any] = None,
+        verbose: bool = True,
+    ) -> Dict[int, Dict[str, Any]]:
+        """Evaluate and compare different reward configurations.
+
+        Trains a separate, independent policy for each reward configuration.
+        Stores and displays metrics for comparison.
+
+        Args:
+            reward_configs: List of environment configuration dicts. Each dict should have:
+                - "type": Environment type (e.g., "PySimEnvironment")
+                - "reward_name": Reward profile name (e.g., "default", "heading_only")
+                - "reward_weights": Dict of component weights (optional)
+
+            training_configuration: Dict of Stop Conditions keyed by environment type.
+                Example:
+                {
+                    "PySimEnvironment": StopCondition(...),
+                }
+
+            verbose: Print progress information.
+            max_workers: Kept for API compatibility. Evaluation now runs sequentially.
+
+        Returns:
+            Dict mapping config index to:
+            {
+                "config": original configuration,
+                "env_type": environment type,
+                "reward_name": reward profile name,
+                "reward_weights": weights used,
+                "metrics": training metrics dict,
+                "status": success/failure status
+            }
+        """
+        # Enforce explicit configs to avoid silent no-op evaluations.
+        if not reward_configs:
+            raise ValueError("reward_configs must not be empty")
+
+        # Allow caller to pass only reward configs and use default stop conditions.
+        if training_configuration is None:
+            training_configuration = {}
+
+        # Print a header once to make multi-config output readable.
+        if verbose:
+            print(f"\n{'='*80}")
+            print(f"Starting Reward Evaluation: {len(reward_configs)} configurations")
+            print(f"{'='*80}\n")
+
+        # Accumulate results keyed by config index for stable reporting.
+        results = {}
+        # Track success order for summaries (only successful configs).
+        evaluation_order = []
+
+        def _evaluate_single_config(config_idx: int, config: Dict[str, Any]) -> tuple[int, Dict[str, Any], bool]:
+            """Train one reward configuration in an isolated trainer instance."""
+            try:
+                # Extract environment type (required for building the env).
+                if "type" not in config:
+                    raise ValueError("Configuration missing required 'type' key")
+
+                env_type = config["type"]
+                canonical_name = resolve_environment_name(env_type)
+                reward_name = config.get("reward_name", "default")
+                reward_weights = config.get("reward_weights", None)
+
+                if verbose:
+                    print(f"\n[{config_idx + 1}] Environment: {canonical_name}")
+                    print(f"    Reward Profile: {reward_name}")
+                    if reward_weights:
+                        # Print custom weights so differences are visible in logs.
+                        for key, value in reward_weights.items():
+                            print(f"      - {key}: {value}")
+                    print("    Starting training...")
+
+                # Build a fresh environment per configuration (no factory cache reuse).
+                env = self._build_eval_environment(canonical_name, config)
+
+                # Create an independent trainer to avoid shared state.
+                trainer = Trainer(self._agent_type, [env], "SimpleScheduler")
+
+                # Train once and keep plots off to avoid multi-threaded UI issues.
+                metrics = trainer.train(training_configuration, show_plots=False)
+                # Snapshot the trajectory image with a unique name per config.
+                trajectory_file = self._save_evaluation_trajectory_snapshot(trainer, reward_weights)
+
+                if verbose:
+                    if trajectory_file is not None:
+                        print(f"    Saved trajectory: {trajectory_file}")
+                    print("    Training completed")
+
+                # Return a normalized success payload for downstream summary/export.
+                return config_idx, {
+                    "config": config,
+                    "env_type": canonical_name,
+                    "reward_name": reward_name,
+                    "reward_weights": reward_weights,
+                    "metrics": metrics,
+                    "trajectory_file": trajectory_file,
+                    "status": "success"
+                }, True
+
+            except Exception as e:
+                if verbose:
+                    print(f"    Training failed: {e}")
+
+                # Keep a consistent shape on failure so downstream code can continue.
+                return config_idx, {
+                    "config": config,
+                    "env_type": config.get("type", "Unknown"),
+                    "reward_name": config.get("reward_name", "unknown"),
+                    "reward_weights": config.get("reward_weights", None),
+                    "metrics": None,
+                    "trajectory_file": None,
+                    "status": f"failed: {str(e)}"
+                }, False
+
+        # Run reward configurations sequentially to preserve a single environment execution flow.
+        job_results = []
+        for config_idx, config in enumerate(reward_configs):
+            job_results.append(_evaluate_single_config(config_idx, config))
+
+        # Collect results from parallel execution.
+        for idx, result, is_success in job_results:
+            results[idx] = result
+            if is_success:
+                evaluation_order.append(idx)
+
+        # Normalize ordering so summaries are deterministic.
+        evaluation_order.sort()
+
+        if verbose:
+            self._print_comparison_summary(results, evaluation_order)
+
+        return results
+
+
+    def _print_comparison_summary(self, results: Dict[int, Dict[str, Any]], evaluation_order: List[int]) -> None:
+        """Print a summary comparing all evaluated configurations.
+
+        Args:
+            results: Results dictionary from evaluate_reward.
+            evaluation_order: Order in which configs were evaluated.
+        """
+        # Human-friendly summary header.
+        print(f"\n{'='*80}")
+        print("REWARD CONFIGURATION COMPARISON SUMMARY")
+        print(f"{'='*80}\n")
+
+        if not results:
+            print("No configurations evaluated.")
+            return
+
+        # Print detailed results for each successful configuration.
+        for idx in evaluation_order:
+            result = results[idx]
+            print(f"Configuration {idx}: {result['env_type']}")
+            print(f"  Reward Profile: {result['reward_name']}")
+
+            if result['reward_weights']:
+                print("  Weights:")
+                for key, value in result['reward_weights'].items():
+                    print(f"    - {key}: {value}")
+
+            if result['status'] == "success":
+                print("  Status: SUCCESS")
+                self._print_metrics(result['metrics'])
+            else:
+                print(f"  Status: FAILED ({result['status']})")
+
+            print("-" * 80)
+
+
+    def _print_metrics(self, metrics: Dict[str, Any]) -> None:
+        """Pretty-print training metrics.
+
+        Args:
+            metrics: Metrics dictionary from training.
+        """
+        # Guard against empty metrics so the summary doesn't crash.
+        if not metrics:
+            print("  Metrics: None")
+            return
+
+        print("  Metrics:")
+        for env_type, env_metrics in metrics.items():
+            if isinstance(env_metrics, dict):
+                print(f"    [{env_type}]")
+                for key, value in env_metrics.items():
+                    if isinstance(value, float):
+                        print(f"      {key}: {value:.4f}")
+                    else:
+                        print(f"      {key}: {value}")
+
+
+    @staticmethod
+    def _save_evaluation_trajectory_snapshot(eval_trainer: "Trainer", reward_weights: dict | None) -> str | None:
+        """Save evaluate_reward trajectory output as trajectory_{weights}.png.
+
+        Args:
+            eval_trainer: Trainer instance that just completed one evaluation run.
+            reward_weights: Dictionary of reward weights used in this configuration (or None for default).
+
+        Returns:
+            Saved file path or None when no trajectory file exists.
+        """
+        # Access the agent model directory to locate the latest trajectory output.
+        agent = getattr(eval_trainer._agent_mgr, "agent", None)
+        model_dir = getattr(agent, "model_dir", None) if agent is not None else None
+        if not model_dir:
+            model_dir = "models"
+        os.makedirs(model_dir, exist_ok=True)
+        # Look for possible produced image files inside the model dir or cwd.
+        candidates = [
+            os.path.join(model_dir, "trajectory.png"),
+            os.path.join(model_dir, "image_trajectory.png"),
+            os.path.join(model_dir, "image.png"),
+            os.path.join(model_dir, "image_metrics.png"),
+            "trajectory.png",
+            "image_trajectory.png",
+            "image.png",
+            "image_metrics.png",
+        ]
+
+        found = {}
+        for p in candidates:
+            if os.path.exists(p):
+                name = os.path.basename(p)
+                found[name] = p
+
+        if not found:
+            return None
+
+        # Create compact weights string used as suffix: replace dots in values.
+        if reward_weights:
+            weights_str = "_".join(
+                f"{str(value).replace('.', '')}"
+                for value in reward_weights.values()
+            )
+        else:
+            weights_str = "default"
+
+        # Helper to move a single file with suffix handling.
+        def _move_with_suffix(src_path: str, prefix: str) -> str:
+            """Move a file to a new location with weights suffix and timestamp collision handling.
+            
+            Constructs target filename as prefix_weights_str.png. If target already exists,
+            appends timestamp to avoid overwriting. Uses os.replace to atomically move the file.
+            
+            Args:
+                src_path: Source file path to move.
+                prefix: Filename prefix (e.g., 'trajectory', 'image_metrics').
+            
+            Returns:
+                str: Final target file path after move operation.
+            """
+            target_name = f"{prefix}_{weights_str}.png"
+            target_path = os.path.join(model_dir, target_name)
+            if os.path.exists(target_path):
+                time_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                target_name = f"{prefix}_{weights_str}_{time_stamp}.png"
+                target_path = os.path.join(model_dir, target_name)
+            os.replace(src_path, target_path)
+            return target_path
+
+        # Prefer to return the trajectory image path if available.
+        trajectory_target = None
+
+        # If a canonical 'trajectory.png' or 'image_trajectory.png' exists, move it.
+        if 'trajectory.png' in found:
+            trajectory_target = _move_with_suffix(found['trajectory.png'], 'trajectory')
+        elif 'image_trajectory.png' in found:
+            trajectory_target = _move_with_suffix(found['image_trajectory.png'], 'image_trajectory')
+        elif 'image.png' in found:
+            # image.png may be a combined file; move as trajectory fallback
+            trajectory_target = _move_with_suffix(found['image.png'], 'trajectory')
+
+        # Also move metrics image if present
+        if 'image_metrics.png' in found:
+            _move_with_suffix(found['image_metrics.png'], 'image_metrics')
+
+        return trajectory_target
+
+
+    def export_evaluation_results(self, results: Dict[int, Dict[str, Any]], filepath: str) -> None:
+        """Export evaluation results to CSV for easy comparison.
+
+        Args:
+            results: Results dictionary from evaluate_reward.
+            filepath: Path to write CSV file.
+        """
+        if not results:
+            print("No results to export.")
+            return
+
+        try:
+            # Create models folder if it doesn't exist and prepare filepath with timestamp
+            models_dir = Path("models")
+            models_dir.mkdir(exist_ok=True)
+            
+            # Extract filename and add timestamp
+            base_path = Path(filepath)
+            stem = base_path.stem
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_filename = f"{stem}_{timestamp}.csv"
+            filepath = str(models_dir / new_filename)
+            
+            metric_fields = [
+                "Average reward",
+                "Best episode reward",
+                "Worst episode reward",
+                "Mean Surge Velocity (mu)",
+                "Maximum Surge Velocity (Mu)",
+                "Mean Track Error Integral (mTEI)",
+                "Maximum Track Error (MTE)",
+                "Mean Rudder Angle (mRA)",
+                "Maximum Rudder Angle (MRA)",
+                "Mean Rudder Angle Change (mRAC)",
+                "Mean Thrust (mT)",
+                "Maximum Thrust (MT)",
+                "Mean Thrust Change (mTC)",
+                "Mean LOS Guidance Heading Error (mHE)",
+            ]
+
+            # Preserve weight column order from configuration insertion order.
+            weight_keys = []
+            for idx in sorted(results.keys()):
+                weights = results[idx].get("reward_weights") or {}
+                for weight_key in weights.keys():
+                    if weight_key not in weight_keys:
+                        weight_keys.append(weight_key)
+
+            with open(filepath, 'w', newline='') as f:
+                writer = csv.writer(f)
+
+                # Header
+                writer.writerow([
+                    "Config Index",
+                    "Environment Type",
+                    "Reward Profile",
+                    "Status",
+                    *metric_fields,
+                    *[f"Weight: {key}" for key in weight_keys],
+                ])
+
+                # Rows
+                for idx in sorted(results.keys()):
+                    result = results[idx]
+
+                    # Extract final evaluation summary from train metrics.
+                    summary = {}
+                    metrics = result.get("metrics") or {}
+                    if isinstance(metrics, dict):
+                        for env_metrics in metrics.values():
+                            if isinstance(env_metrics, dict) and "evaluation_summary" in env_metrics:
+                                summary = env_metrics.get("evaluation_summary") or {}
+                                break
+
+                    row_metrics = [
+                        summary.get("average_reward"),
+                        summary.get("best_episode_reward"),
+                        summary.get("worst_episode_reward"),
+                        summary.get("mu"),
+                        summary.get("Mu"),
+                        summary.get("mTEI"),
+                        summary.get("MTE"),
+                        summary.get("mRA"),
+                        summary.get("MRA"),
+                        summary.get("mRAC"),
+                        summary.get("mT"),
+                        summary.get("MT"),
+                        summary.get("mTC"),
+                        summary.get("mHE"),
+                    ]
+
+                    weights = result.get("reward_weights") or {}
+                    row_weights = [weights.get(key) for key in weight_keys]
+
+                    writer.writerow([
+                        idx,
+                        result['env_type'],
+                        result['reward_name'],
+                        result['status'],
+                        *row_metrics,
+                        *row_weights,
+                    ])
+
+            print(f"Results exported to {filepath}")
+        except Exception as e:
+            print(f"Failed to export results: {e}")

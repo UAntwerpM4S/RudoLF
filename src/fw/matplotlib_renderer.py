@@ -44,8 +44,9 @@ class MatplotlibRenderer:
         ship_data: ShipData,
         metrics: dict[str, ShipMetrics],
         env,
-        save_path: str = "trajectory.png",
+        save_path: str = "image.png",
         fig_width_per_ship: int = 10,
+        show_plots: bool = True,
     ) -> None:
         """
         Generates and saves a multi-ship trajectory visualization.
@@ -56,6 +57,7 @@ class MatplotlibRenderer:
             env: Environment instance (single-ship or multi-ship).
             save_path: File path where the generated figure is saved.
             fig_width_per_ship: Width (in inches) allocated per ship column.
+            show_plots: Whether to display the figure window.
 
         Returns:
             None.
@@ -76,16 +78,17 @@ class MatplotlibRenderer:
 
         ship_ids = [sid for sid in ship_data if ship_data[sid]]
         n_ships = len(ship_ids)
-        n_rows = 4
-
+        # Metrics rows: cross-track error, rudder, UKC, velocity, thrust
+        n_rows = 5
         if n_ships == 0:
             print("[MatplotlibRenderer] No episode data to render — skipping.")
             return
 
         try:
-            fig, axes = plt.subplots(
-                n_rows, n_ships,
-                figsize=(fig_width_per_ship * n_ships, 16),
+            # --- Trajectory figure (one window) ---
+            fig_traj, axes_traj = plt.subplots(
+                1, n_ships,
+                figsize=(fig_width_per_ship * n_ships, 6),
                 squeeze=False,
             )
 
@@ -95,10 +98,7 @@ class MatplotlibRenderer:
                 colors = shade_color(ship_color, len(episodes))
                 m = metrics[ship_id]
 
-                ax_traj   = axes[0][col]
-                ax_error  = axes[1][col]
-                ax_rudder = axes[2][col]
-                ax_ukc    = axes[3][col]
+                ax_traj = axes_traj[0][col]
 
                 ship_env = cls._get_ship_env(env, ship_id)
 
@@ -124,6 +124,33 @@ class MatplotlibRenderer:
 
                 cls._plot_trajectory(ax_traj, episodes, colors, ship_env, ship_id, m)
 
+            plt.tight_layout()
+            # Save trajectory figure
+            base, ext = (save_path.rsplit('.', 1) + ["png"])[:2]
+            traj_path = f"{base}_trajectory.{ext}"
+            plt.savefig(traj_path, bbox_inches="tight", dpi=300)
+            print(f"Trajectory figure saved to '{traj_path}'")
+
+            # --- Metrics figure (separate window) ---
+            fig_metrics, axes = plt.subplots(
+                n_rows, n_ships,
+                figsize=(fig_width_per_ship * n_ships, 16),
+                squeeze=False,
+            )
+
+            for col, ship_id in enumerate(ship_ids):
+                episodes = ship_data[ship_id]
+                ship_color = SHIP_COLORS[col % len(SHIP_COLORS)]
+                colors = shade_color(ship_color, len(episodes))
+                m = metrics[ship_id]
+
+                ax_error  = axes[0][col]
+                ax_rudder = axes[1][col]
+                ax_ukc    = axes[2][col]
+                ax_vel    = axes[3][col]
+                ax_thrust = axes[4][col]
+
+                # Cross-track error
                 cls._plot_signal(
                     ax_error, episodes, colors,
                     signal_attr="cross_errors",
@@ -132,8 +159,10 @@ class MatplotlibRenderer:
                     ylim=(0, 45),
                 )
 
+                # Rudder
                 cls._plot_rudder(ax_rudder, episodes, colors, ship_id)
 
+                # UKC
                 cls._plot_signal(
                     ax_ukc, episodes, colors,
                     signal_attr="ukc_measurements",
@@ -142,12 +171,37 @@ class MatplotlibRenderer:
                     ylim=(0, 45),
                 )
 
+                # Velocity
+                cls._plot_signal(
+                    ax_vel, episodes, colors,
+                    signal_attr="velocities",
+                    title=f"Surge velocity – {ship_id}",
+                    ylabel="Velocity",
+                    ylim=None,
+                )
+
+                # Thrust
+                cls._plot_signal(
+                    ax_thrust, episodes, colors,
+                    signal_attr="thrust_actions",
+                    title=f"Thrust – {ship_id}",
+                    ylabel="Thrust",
+                    ylim=None,
+                )
+
             plt.tight_layout()
-            plt.savefig(save_path, bbox_inches="tight", dpi=300)
-            plt.show()
-            print(f"Trajectory figure saved to '{save_path}'")
+            metrics_path = f"{base}_metrics.{ext}"
+            plt.savefig(metrics_path, bbox_inches="tight", dpi=300)
+            print(f"Metrics figure saved to '{metrics_path}'")
+
+            # If interactive display requested, block here so both windows stay open
+            if show_plots:
+                plt.show()
         finally:
-            plt.close("all")
+            # If the user requested interactive display, leave windows open
+            # so both trajectory and metrics figures can be viewed simultaneously.
+            if not show_plots:
+                plt.close("all")
 
     @classmethod
     def _get_ship_env(cls, env, ship_id: str):
