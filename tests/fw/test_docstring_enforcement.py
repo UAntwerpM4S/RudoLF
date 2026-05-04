@@ -60,7 +60,8 @@ def _missing_docstrings(path: Path) -> list[str]:
 
 
 def test_all_functions_and_classes_have_docstrings():
-    """Ensure all in-scope classes and callables define docstrings."""
+    """Ensure all in-scope classes and callables define docstrings.
+    """
     root = Path(__file__).resolve().parents[2]
     offenders: list[str] = []
 

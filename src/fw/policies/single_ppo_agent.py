@@ -1,5 +1,6 @@
 import os
 import copy
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -7,12 +8,15 @@ import gymnasium as gym
 import numpy as np
 
 from typing import Optional, Tuple, Union
+from pathlib import Path
 from fw.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 from fw.common.tools.logging_utils import dump_metrics_to_csv
+from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 
 
 class SinglePPOAgent(BasePPOAgent):
@@ -34,6 +38,8 @@ class SinglePPOAgent(BasePPOAgent):
     """
 
     MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20
+    MINIMUM_TRAINABLE_TRAJECTORY_LENGTH = 2
+    MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES = 25
 
     def __init__(self, *args, **kwargs):
         """
@@ -68,6 +74,10 @@ class SinglePPOAgent(BasePPOAgent):
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4  # avoid division by zero
+
+    def _is_airsim_env(self) -> bool:
+        """Return whether the wrapped environment is the AirSim trainer env."""
+        return getattr(self.env, "type_name", "") == "AirSimEnv"
 
     def predict(
             self,
@@ -134,6 +144,15 @@ class SinglePPOAgent(BasePPOAgent):
             print(f"[Warning] Very short trajectory detected. Length: {all_advantages.numel()}")
             return float('nan')
 
+        for name, tensor in (
+            ("states", all_states),
+            ("advantages", all_advantages),
+            ("returns", all_returns),
+        ):
+            if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+                print(f"[Alert] NaN/Inf detected in {name} before PPO update — skipping batch.")
+                return float('nan')
+
         # Normalize advantages
         all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
 
@@ -181,16 +200,48 @@ class SinglePPOAgent(BasePPOAgent):
                 # Total loss
                 loss = policy_loss + (self.value_loss_coef * value_loss) - (self.entropy_coef * entropy_loss)
 
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"[Alert] NaN/Inf loss detected (policy={policy_loss.item():.4f}, "
+                          f"value={value_loss.item():.4f}) — skipping update step.")
+                    continue
+
                 # Optimize
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.policy.network.parameters(), self.max_grad_norm)
+                grad_norm = nn.utils.clip_grad_norm_(
+                    self.policy.network.parameters(), self.max_grad_norm
+                )
+                if float(grad_norm) > 1000.0:
+                    print(f"[Alert] Exploding gradient: norm={float(grad_norm):.2f} "
+                          f"(clip={self.max_grad_norm:.2f}). Clipping applied.")
                 self.optimizer.step()
 
                 loss_per_epoch.append(loss.item())
 
         # Return mean loss over all updates
         return np.mean(loss_per_epoch)
+
+    @classmethod
+    def filter_trainable_episodes(cls, batch_data):
+        """Return only trajectories long enough for a PPO update.
+
+        Episodes with fewer than two transitions cannot produce a meaningful
+        advantage normalization pass and previously poisoned training with NaN
+        losses. We skip them instead of counting them as real PPO updates.
+        """
+        valid_episodes = []
+        skipped_count = 0
+
+        for episode in batch_data:
+            rewards = np.asarray(episode.get("rewards", ()), dtype=np.float32)
+            advantages = np.asarray(episode.get("advantages", ()), dtype=np.float32)
+            trajectory_length = int(min(rewards.size, advantages.size))
+            if trajectory_length < cls.MINIMUM_TRAINABLE_TRAJECTORY_LENGTH:
+                skipped_count += 1
+                continue
+            valid_episodes.append(episode)
+
+        return valid_episodes, skipped_count
 
 
     def make_env(self):
@@ -248,6 +299,8 @@ class SinglePPOAgent(BasePPOAgent):
         # ------------------------------------------------------------------
         if hasattr(self._vec_env, "env_method"):
             self._vec_env.env_method("randomize")
+            if self._is_airsim_env():
+                self._vec_env.env_method("mark_explicit_reset_context", True)
 
         # Reset all environments
         return self._vec_env.reset()
@@ -326,6 +379,38 @@ class SinglePPOAgent(BasePPOAgent):
             return next_values.squeeze(0).item()
 
 
+    def _drain_env_run_events(self) -> list[dict]:
+        """Collect queued AirSim run events from vectorized envs."""
+        if getattr(self, "_vec_env", None) is not None and hasattr(self._vec_env, "env_method"):
+            drained = self._vec_env.env_method("drain_run_events")
+            events = []
+            for env_slot, env_events in enumerate(drained or []):
+                for event in env_events or []:
+                    normalized = dict(event)
+                    normalized.setdefault("env_slot", int(env_slot))
+                    events.append(normalized)
+            return events
+
+        if hasattr(self.env, "drain_run_events"):
+            return list(self.env.drain_run_events())
+
+        return []
+
+
+    def _get_training_export_snapshot(self):
+        """Return the first available AirSim export snapshot from the vec env."""
+        if getattr(self, "_vec_env", None) is not None and hasattr(self._vec_env, "env_method"):
+            snapshots = self._vec_env.env_method("get_training_export_snapshot")
+            for snapshot in snapshots or []:
+                if snapshot:
+                    return snapshot
+
+        if hasattr(self.env, "get_training_export_snapshot"):
+            return self.env.get_training_export_snapshot()
+
+        return None
+
+
     def learn(
         self,
         stop_condition: Optional[StopCondition] = None,
@@ -351,74 +436,213 @@ class SinglePPOAgent(BasePPOAgent):
         """
 
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
+        project_src_dir = Path(__file__).resolve().parents[2]
+        is_airsim_env = self._is_airsim_env()
+
+        training_session = (
+            AirSimTrainingSession(
+                env_name=self.env.type_name,
+                agent_type="PPO",
+                device=str(self.device),
+                src_dir=project_src_dir,
+                model_dir=self.model_dir,
+            )
+            if is_airsim_env
+            else None
+        )
+        iteration_logger = (
+            training_session.iteration_logger
+            if training_session is not None
+            else TrainingIterationLogger(
+                env_name=self.env.type_name,
+                agent_type="PPO",
+                device=str(self.device),
+                src_dir=project_src_dir,
+            )
+        )
+        print(f"Iteration log: {iteration_logger.path}")
+        if training_session is not None:
+            print(f"Run log: {training_session.run_log_path}")
+            print(f"Metadata: {training_session.metadata_path}")
 
         last_save_index = 0
         training_metrics = []
         best_mean_reward = float('-inf')
         best_policy_file = f"Best_{self.env.type_name}_PPO_policy"
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
+        learn_started = time.perf_counter()
 
-        for iteration in range(stopping_condition.max_time_steps):
-            self.set_policy_eval()
+        iteration = 0
+        last_completed_iteration = -1
+        skipped_short_rollouts = 0
+        consecutive_untrainable_airsim_batches = 0
+        interrupted = False
+        stop_reason = ""
+        cached_route_snapshot = None
+        keyboard_interrupt = None
+        completed_successfully = False
 
-            # Prepare batch for training
-            episode_data = []
-            total_reward = 0
-            total_advantage = 0
+        try:
+            while iteration < stopping_condition.max_time_steps:
+                self.set_policy_eval()
 
-            # Collect batch data from multiple parallel environments
-            batch_data = self.run_parallel_episodes(self.num_envs)
+                episode_data = []
+                total_reward = 0
+                total_advantage = 0
 
-            for episode_result in batch_data:
-                episode_data.append(episode_result)
-                total_reward += np.mean(episode_result['rewards'])
-                total_advantage += np.mean(episode_result['advantages'])
+                batch_data = self.run_parallel_episodes(self.num_envs)
 
-            # Update policy using all collected episodes
-            loss = self.train(episode_data)
+                if training_session is not None:
+                    training_session.log_run_events(self._drain_env_run_events())
+                    if cached_route_snapshot is None:
+                        cached_route_snapshot = self._get_training_export_snapshot()
+                        training_session.set_route_snapshot(cached_route_snapshot)
 
-            # Log results
-            mean_reward = total_reward / len(batch_data) if batch_data else 0
-            mean_advantage = total_advantage / len(batch_data) if batch_data else 0
+                if is_airsim_env:
+                    batch_data, skipped_count = self.filter_trainable_episodes(batch_data)
+                else:
+                    skipped_count = 0
 
-            training_metrics.append({'loss': loss, 'advantage': mean_advantage, 'reward': mean_reward})
+                if skipped_count > 0:
+                    skipped_short_rollouts += skipped_count
+                    print(
+                        "[Warning] Skipping "
+                        f"{skipped_count} too-short trajectory batch(es) before PPO update."
+                    )
 
-            # Save the best policy so far
-            if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:
-                best_mean_reward = mean_reward
-                self.save_policy(best_policy_file)
+                if not batch_data:
+                    if is_airsim_env:
+                        consecutive_untrainable_airsim_batches += 1
+                        if (
+                            consecutive_untrainable_airsim_batches == 1
+                            or consecutive_untrainable_airsim_batches % 5 == 0
+                        ):
+                            print(
+                                "[Warning] AirSim produced no trainable rollout batch. "
+                                "Consecutive empty batches: "
+                                f"{consecutive_untrainable_airsim_batches}/"
+                                f"{self.MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES}."
+                            )
+                        if (
+                            consecutive_untrainable_airsim_batches
+                            >= self.MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES
+                        ):
+                            raise RuntimeError(
+                                "AirSim training aborted after repeated untrainable rollout "
+                                "batches. Check reset stability, startup pose capture, or "
+                                "episode termination conditions before retrying."
+                            )
+                    continue
+                consecutive_untrainable_airsim_batches = 0
 
-            should_stop, reason = stopping_condition.should_stop(
-                current_step=iteration,
-                mean_reward=mean_reward,
-                mean_loss=loss
+                for episode_result in batch_data:
+                    episode_data.append(episode_result)
+                    total_reward += np.mean(episode_result['rewards'])
+                    total_advantage += np.mean(episode_result['advantages'])
+
+                loss = self.train(episode_data)
+
+                mean_reward = total_reward / len(batch_data) if batch_data else 0
+                mean_advantage = total_advantage / len(batch_data) if batch_data else 0
+
+                training_metrics.append({
+                    'loss': loss,
+                    'advantage': mean_advantage,
+                    'reward': mean_reward,
+                })
+                iteration_logger.log_iteration(
+                    iteration=iteration,
+                    mean_reward=mean_reward,
+                    mean_advantage=mean_advantage,
+                    loss=loss,
+                    num_episode_batches=len(batch_data),
+                    elapsed_seconds=time.perf_counter() - learn_started,
+                )
+
+                if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:
+                    best_mean_reward = mean_reward
+                    self.save_policy(best_policy_file)
+
+                should_stop, reason = stopping_condition.should_stop(
+                    current_step=iteration,
+                    mean_reward=mean_reward,
+                    mean_loss=loss
+                )
+
+                if should_stop:
+                    stop_reason = str(reason)
+                    print(f"Stopping: {reason}")
+                    last_save_index = iteration
+                    last_completed_iteration = iteration
+                    completed_successfully = True
+                    break
+
+                if iteration % self.eval_frequency == 0:
+                    print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
+
+                    if iteration > 0:
+                        self.save_policy(f"ppo_checkpoint_{iteration}")
+
+                last_completed_iteration = iteration
+                iteration += 1
+
+            if not interrupted:
+                completed_successfully = True
+        except KeyboardInterrupt as exc:
+            interrupted = True
+            stop_reason = "Interrupted by user"
+            keyboard_interrupt = exc
+            print("Training interrupted by user. Saving logs and plots...")
+        finally:
+            if training_session is not None:
+                training_session.log_run_events(self._drain_env_run_events())
+                latest_snapshot = self._get_training_export_snapshot()
+                if latest_snapshot is not None:
+                    cached_route_snapshot = latest_snapshot
+                training_session.set_route_snapshot(cached_route_snapshot)
+
+            if completed_successfully:
+                final_checkpoint_iteration = (
+                    last_save_index
+                    if last_save_index > 0
+                    else last_completed_iteration
+                )
+                if final_checkpoint_iteration < 0:
+                    final_checkpoint_iteration = 0
+                self.save_policy(f'ppo_checkpoint_{final_checkpoint_iteration}')
+                iteration_logger.save()
+                dump_metrics_to_csv(self.model_dir, "training_metrics.csv", training_metrics)
+
+            if training_session is not None:
+                training_session.finalize(
+                    training_metrics=training_metrics,
+                    interrupted=interrupted,
+                    skipped_short_rollouts=skipped_short_rollouts,
+                    last_completed_iteration=last_completed_iteration,
+                    best_mean_reward=best_mean_reward,
+                    stop_rule=str(stopping_condition) if not stop_reason else stop_reason,
+                )
+
+            if getattr(self, "_vec_env", None) is not None:
+                self._vec_env.close()
+                self._vec_env = None
+
+        if skipped_short_rollouts > 0:
+            print(
+                "[Training summary] Skipped "
+                f"{skipped_short_rollouts} too-short rollout batch(es)."
             )
 
-            # Check if the condition is met for early stopping
-            if should_stop:
-                print(f"Stopping: {reason}")
-                last_save_index = iteration
-                break
+        if training_session is not None:
+            print(f"Route plot: {training_session.route_plot_path}")
+            print(f"Training metrics plot: {training_session.training_metrics_plot_path}")
 
-            # Log evaluation results periodically
-            if iteration % self.eval_frequency == 0:
-                print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
-
-                # Save checkpoint every 'self.eval_frequency' iterations
-                if iteration > 0:
-                    self.save_policy(f"ppo_checkpoint_{iteration}")
-
-        # Save final checkpoint
-        self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
-
-        # Dump training metrics to CSV
-        dump_metrics_to_csv(self.model_dir, "training_metrics.csv", training_metrics)
-
-        if getattr(self, "_vec_env", None) is not None:
-            self._vec_env.close()
-            self._vec_env = None
-
-        print("Training completed!")
+        if interrupted:
+            print("Training interrupted; logs saved.")
+            if keyboard_interrupt is not None:
+                raise keyboard_interrupt
+        else:
+            print("Training completed!")
 
 
     def load_policy(self, policy_file_name: str) -> None:

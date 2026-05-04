@@ -1,9 +1,9 @@
 """AirSim connection configuration with validation.
 
 Provides a validated ``AirSimConfig`` dataclass that centralises all
-CosysAirSim connection parameters.  PID / control-loop gains are
-intentionally **not** stored here - they belong in the future
-Fossen-input-mapping layer.
+CosysAirSim connection parameters. PID / control-loop gains are
+intentionally **not** stored here because they belong in the
+input-mapping layer instead.
 
 Example::
 
@@ -29,6 +29,10 @@ _THIS_DIR = Path(__file__).resolve().parent
 _RUNTIME_SETTINGS_PATH = _THIS_DIR / "runtime_settings.json"
 DEFAULT_AIRSIM_SAVE_SLOT = "simulator_1"
 DEFAULT_AIRSIM_SIMULATION_SPEED = 8.0
+# Calibrated visual gain for UE5 replay throttle animation.
+# The current ship's throttle envelope is roughly 5.6, so 5.0 / 5.6 keeps the
+# visible throttle close to the framework speed range during replay.
+DEFAULT_THROTTLE_VISUAL_GAIN = 5.0 / 5.6
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -171,34 +175,40 @@ def get_default_runtime_settings() -> Dict[str, Any]:
             "animate_throttle_in_ue5": True,
             "render_interpolation_steps": 12,
             "steering_visual_gain": 1.0,
-            "throttle_visual_gain": 1.0,
+            "throttle_visual_gain": DEFAULT_THROTTLE_VISUAL_GAIN,
             "use_kinematics_in_ue5": False,
             "min_render_hz": 90.0,
             "max_translation_step": 0.15,
             "max_yaw_step_deg": 1.5,
             "vehicle_object_name": "",
-            "show_minimap": True,
-            "save_matplotlib_minimap": False,
             "lock_path_in_ue5": False,
             "episodes": 1,
             "max_steps": 14000,
-            "device": "cpu",
+            "device": "cuda",
             "log_every": 50,
             "min_log_interval_s": 0.25,
-            "minimap_update_hz": 20.0,
             "bridge_telemetry_hz": 12.0,
             "startup_settle_s": 0.4,
             "draw_calibration_reference": True,
         },
         "training": {
             "speed_profile": "custom",
-            "max_steps": 14000,
+            "max_steps": 120000,
             "simulation_speed": DEFAULT_AIRSIM_SIMULATION_SPEED,
+            "draw_calibration_reference": False,
+            "no_rendering_mode": True,
+            "load_world_on_start": True,
+            "capture_live_start_pose": True,
             "use_pause_stepping": True,
-            "frames_per_step": 10,
-            "time_step": 0.1,
-            "physics_update_timeout": 1.0,
-            "state_poll_interval": 0.005,
+            "use_sim_time_stepping": True,
+            "sim_time_per_action": 0.05,
+            "frames_per_step": 8,
+            "time_step": 0.05,
+            "physics_update_timeout": 1.2,
+            "state_poll_interval": 0.003,
+            "steering_dynamics_enabled": True,
+            "steering_smoothing_alpha": 0.65,
+            "max_steering_rate_per_second": 3.2,
         },
         "airsim": {
             **AirSimConfig().to_dict(),
@@ -233,8 +243,16 @@ def get_runtime_settings() -> Dict[str, Any]:
     if not _RUNTIME_SETTINGS_PATH.exists():
         return defaults
 
-    with open(_RUNTIME_SETTINGS_PATH, "r", encoding="utf-8") as fh:
-        loaded = json.load(fh)
+    try:
+        with open(_RUNTIME_SETTINGS_PATH, "r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "Could not load runtime settings from '%s'; using built-in defaults. %s",
+            _RUNTIME_SETTINGS_PATH,
+            exc,
+        )
+        return defaults
     return merge_runtime_settings(loaded)
 
 
