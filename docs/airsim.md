@@ -983,4 +983,4 @@ tests/
 | `inference/test_visualisation_model_adapters` | Adapter auto-detection from filename, family/env resolution |
 | `inference/test_run_inference_airsim_env` | Inference loop with mocked AirSimEnv |
 | `fw/test_main_fallback` | Graceful skip when AirSim step fails, ordered env continuation |
-| `fw/test_env_factory_config` | Environment registration and factory correctness |
+| `fw/test_env_factory_config` | Environment registration, factory correctness, and AirSim-vs-shared PPO hyperparameter selection |
