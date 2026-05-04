@@ -1,1 +1,0 @@
-step,sim_time,episode,episode_step,x,y,pos_x,pos_y,heading_deg,speed,reward,steering,throttle,brake,checkpoint_index,cross_track_error,physics_wait_s,step_latency_s,ue5_timestamp,outcome,model_origin,control_mode

@@ -141,6 +141,18 @@ class EpisodeCollector:
     """
 
     def __init__(self, agent, env, ship_ids: Optional[list[str]] = None):
+        """Initialize the collector and resolve the ship IDs to track.
+
+        Args:
+            agent: Trained agent used to produce actions during evaluation.
+            env: Environment to evaluate, either single-ship or multi-ship.
+            ship_ids: Optional explicit ship ID list. If omitted, the collector
+                uses ``env.sub_environments`` when available, otherwise
+                defaults to ``["ship_0"]``.
+
+        Raises:
+            ValueError: If the resolved ship ID list is empty.
+        """
         self._agent = agent
         self._env = env
 

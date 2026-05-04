@@ -525,6 +525,18 @@ class Trainer:
 
         # Helper to move a single file with suffix handling.
         def _move_with_suffix(src_path: str, prefix: str) -> str:
+            """Move a file to a new location with weights suffix and timestamp collision handling.
+            
+            Constructs target filename as prefix_weights_str.png. If target already exists,
+            appends timestamp to avoid overwriting. Uses os.replace to atomically move the file.
+            
+            Args:
+                src_path: Source file path to move.
+                prefix: Filename prefix (e.g., 'trajectory', 'image_metrics').
+            
+            Returns:
+                str: Final target file path after move operation.
+            """
             target_name = f"{prefix}_{weights_str}.png"
             target_path = os.path.join(model_dir, target_name)
             if os.path.exists(target_path):
