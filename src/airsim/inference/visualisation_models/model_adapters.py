@@ -21,6 +21,7 @@ from airsim.communication.control_mapping import (
     map_framework_steering_visual_state,
     map_framework_visual_actuator_state,
 )
+from airsim.config.airsim_config import DEFAULT_THROTTLE_VISUAL_GAIN
 from fw.common.airsim.tools.angles import interpolate_angle, wrapped_angle_delta
 from fw.common.airsim.tools.path_utils import resolve_model_path
 from fw.common.default_positions import (
@@ -376,7 +377,7 @@ def _animate_framework_state(
     animate_throttle_in_ue5: bool = False,
     previous_actuator_state: Optional[np.ndarray] = None,
     steering_visual_gain: float = 0.35,
-    throttle_visual_gain: float = 5.0 / 5.6,
+    throttle_visual_gain: float = DEFAULT_THROTTLE_VISUAL_GAIN,
     use_kinematics_in_ue5: bool = False,
     min_render_hz: float = 90.0,
     max_translation_step: float = 0.15,

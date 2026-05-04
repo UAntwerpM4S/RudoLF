@@ -21,6 +21,7 @@ from airsim.config.airsim_config import (  # noqa: E402
     AirSimConfig,
     DEFAULT_AIRSIM_SAVE_SLOT,
     DEFAULT_AIRSIM_SIMULATION_SPEED,
+    DEFAULT_THROTTLE_VISUAL_GAIN,
 )
 from airsim.inference.visualisation_models import (  # noqa: E402
     ModelVisualisationAdapter,
@@ -46,7 +47,6 @@ _DEFAULT_MIN_LOG_INTERVAL_S = 0.25
 _DEFAULT_BRIDGE_TELEMETRY_HZ = 12.0
 _DEFAULT_STARTUP_SETTLE_S = 0.4
 _DEFAULT_TRAIL_MIN_SEGMENT_M = 1.5
-_DEFAULT_THROTTLE_VISUAL_GAIN = 5.0 / 5.6
 
 
 def _normalise_policy_observation(obs, expected_dim: int | None = None) -> np.ndarray:
@@ -215,7 +215,7 @@ class VisualiseModelsRunner:
         animate_throttle_in_ue5: bool = True,
         render_interpolation_steps: int = 4,
         steering_visual_gain: float = 0.35,
-        throttle_visual_gain: float = _DEFAULT_THROTTLE_VISUAL_GAIN,
+        throttle_visual_gain: float = DEFAULT_THROTTLE_VISUAL_GAIN,
         use_kinematics_in_ue5: bool = False,
         min_render_hz: float = 90.0,
         max_translation_step: float = 0.15,

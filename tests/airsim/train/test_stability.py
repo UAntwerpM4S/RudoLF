@@ -10,7 +10,6 @@ Covers four areas:
 from __future__ import annotations
 
 import csv
-import io
 import textwrap
 from types import SimpleNamespace
 

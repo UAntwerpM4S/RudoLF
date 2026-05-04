@@ -29,6 +29,9 @@ _THIS_DIR = Path(__file__).resolve().parent
 _RUNTIME_SETTINGS_PATH = _THIS_DIR / "runtime_settings.json"
 DEFAULT_AIRSIM_SAVE_SLOT = "simulator_1"
 DEFAULT_AIRSIM_SIMULATION_SPEED = 8.0
+# Calibrated visual gain for UE5 replay throttle animation.
+# The current ship's throttle envelope is roughly 5.6, so 5.0 / 5.6 keeps the
+# visible throttle close to the framework speed range during replay.
 DEFAULT_THROTTLE_VISUAL_GAIN = 5.0 / 5.6
 
 
