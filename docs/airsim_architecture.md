@@ -32,16 +32,18 @@ flowchart TD
     A["fw.main"] --> B["fw.main_with_airsim"]
     B --> C["runtime_settings.json"]
 
-    B --> D["AirSimEnv (train)"]
-    B --> E["run_inference.py"]
+    B --> RT["train_airsim.run_training"]
+    B --> E["run_inference.py → AirSimEnv"]
     B --> F["run_visualise_models.py"]
 
+    RT -->|standard path| D["Trainer → SinglePPOAgent → AirSimEnv"]
+    RT -->|transfer enabled| TL["transfer_learning.build_transfer_policy → SinglePPOAgent → AirSimEnv"]
+
     D --> G["AirSimBridge"]
-    E --> D
-    F --> H["visualisation_models/model_adapters.py"]
-    H --> I["PySimEnv / FhSimEnv"]
+    TL --> G
+    E --> G
+    F --> H["visualisation_models/model_adapters.py → PySimEnv / FhSimEnv"]
     F --> G
-    D --> G
 
     G --> J["CosysAirSim RPC"]
     J --> K["UE5 runtime session"]
@@ -99,7 +101,7 @@ flowchart LR
     F["AirSimEnv"] --> G["Observation builder (18 fields)"]
     F --> H["Reward + checkpoint logic"]
     F --> I["Episode lifecycle + steering dynamics"]
-    F --> J["Curriculum learning (soft)"]
+    F --> J["Curriculum learning (checkpoint window/frontier + offtrack decay)"]
     F --> A
 
     K["run_inference.py"] --> F
@@ -113,7 +115,10 @@ flowchart LR
     R["coord_transform.py"] --> A
     R --> F
 
-    S["StrictSuccessStoppingCallback"] -.->|monitors SB3 training| F
+    TA["train_airsim.run_training"] --> TL2["transfer_learning.build_transfer_policy"]
+    TL2 -.->|injects policy| SA["SinglePPOAgent"]
+    SA --> F
+
     U["logs/ episode CSV"] -.->|read by| T["TrainingLogSummary"]
     F -.->|writes| U
 ```
@@ -339,22 +344,63 @@ Configured via `training.speed_profile` in `runtime_settings.json`.
 
 ## Curriculum Learning
 
-Curriculum learning is partially implemented via a soft offtrack-limit decay mechanism inside `AirSimEnv`.
+`AirSimEnv` implements two complementary curriculum mechanisms.
 
-When `curriculum_enabled=true`:
+### Soft offtrack-limit decay (always active)
 
-- The offtrack limit starts permissive and decays over approximately 450 episodes
-- This lets the policy first learn to follow the route and then refine tight tracking
+The off-track termination threshold starts permissive and tightens progressively over early episodes, easing initial route exploration regardless of `curriculum_enabled`.
+
+### Checkpoint-based window/frontier curriculum (`curriculum_enabled=true`)
+
+When enabled, each episode start is drawn from a sliding window `[frontier - window + 1, frontier]`. After `curriculum_success_patience` consecutive clean successes (no collision, no offtrack, episode completed within step budget), the frontier advances by `curriculum_frontier_increment` and the window expands by `curriculum_window_increment`. This progressively exposes the full route as the agent matures.
+
+| Config key | Default | Effect |
+|-----------|---------|--------|
+| `curriculum_enabled` | `false` | Activates checkpoint-based episode start randomization |
+| `curriculum_window_size` | `8` | Initial checkpoint window size |
+| `curriculum_frontier_increment` | `4` | Frontier growth per advancement |
+| `curriculum_window_increment` | `6` | Window growth per advancement |
+| `curriculum_success_patience` | `2` | Required consecutive successes |
+| `curriculum_randomization_scale` | `0.0` | Gaussian start-position noise (m) |
 
 `TrainingLogSummary` (in `train/training_log_analysis.py`) reads episode CSV logs and recommends a curriculum frontier based on median/modal checkpoint statistics and high-speed offtrack ratios.
 
-**Full curriculum scheduling and optional transfer learning are planned as the final implementation stage and are not yet active.**
+## Transfer Learning
+
+Transfer learning from a pretrained 2D policy (any `PySimEnv` or `FhSimEnv` checkpoint) to `AirSimEnv` is implemented in `train/transfer_learning.py`.
+
+### Architecture
+
+The 2D and 3D policies share the same `ActorCriticNetwork` topology, but the first linear layer `shared_network[0]: Linear(input_dim → 256)` differs in shape because the 3D observation space has more features. The transfer strategy:
+
+- `shared_network[0]` is **not** transferred — it stays randomly initialised as the **mapping layer** that learns to project the extra AirSim dimensions into the shared feature space.
+- `shared_network[2]`, actor head, and critic head have identical shapes in 2D and 3D and are **transferred + optionally frozen**.
+
+### Pipeline (`build_transfer_policy`)
+
+1. Load 2D source policy on CPU (device-agnostic weight extraction).
+2. Compare topology and validate compatibility (`TransferIncompatibilityError` on mismatch).
+3. Initialise a fresh 3D `PPOPolicy` on the target device.
+4. Copy matching layers; move tensors to target device automatically.
+5. Optionally freeze transferred parameters so only the mapping layer trains.
+
+### Configuration (`runtime_settings.json` → `transfer_learning`)
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `enabled` | `false` | Route training through the transfer path |
+| `source_policy_path` | `models/PySimEnv_PPO_policy.zip` | Source `.zip` (any compatible 2D policy) |
+| `freeze_shared_layers` | `true` | Freeze transferred layers; mapping layer stays trainable |
+
+When `enabled=true`, `run_training()` in `train_airsim.py` bypasses the standard Trainer and drives a `SinglePPOAgent` directly, injecting the transferred policy before `learn()` starts. The optimizer is rebuilt over trainable parameters only.
 
 ## Early Stopping
 
-`StrictSuccessStoppingCallback` (in `train/strict_success_callback.py`) halts training once the policy achieves a configurable number of consecutive strict-success episodes.
+The current AirSim training flow stops via `StopCondition(Criterion.NBR_POLICY_UPDATES)` driven by `training.max_policy_updates` in `runtime_settings.json`.
 
-Success criteria per episode:
+`StrictSuccessStoppingCallback` (in `train/strict_success_callback.py`) is an available SB3-compatible callback that can halt training after N consecutive strict-success episodes. It is **not wired into the default AirSim training path** — it must be explicitly passed to the Trainer if needed.
+
+Success criteria defined by `StrictSuccessStoppingCallback`:
 
 1. All route checkpoints passed
 2. Maximum CTE during the episode ≤ `strict_cte_limit_m` (default 10 m)
@@ -401,7 +447,8 @@ src/airsim/
 |-- train/
 |   |-- strict_success_callback.py
 |   |-- train_airsim.py
-|   `-- training_log_analysis.py
+|   |-- training_log_analysis.py
+|   `-- transfer_learning.py
 `-- verantwoording_workflow.md
 
 src/fw/common/airsim/
@@ -570,6 +617,8 @@ AirSim-specific tests:
 - `tests/airsim/inference/test_run_inference_airsim_env.py`
 - `tests/airsim/inference/test_visualisation_model_adapters.py`
 - `tests/airsim/train/test_train_airsim.py`
+- `tests/airsim/train/test_stability.py` — long-run observation stability and reward bounds
+- `tests/airsim/train/test_transfer_learning.py` — topology comparison, compatibility validation, weight loading and freeze logic (T-054 – T-056)
 
 Framework-routing tests:
 

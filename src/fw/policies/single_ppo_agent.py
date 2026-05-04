@@ -211,9 +211,9 @@ class SinglePPOAgent(BasePPOAgent):
                 grad_norm = nn.utils.clip_grad_norm_(
                     self.policy.network.parameters(), self.max_grad_norm
                 )
-                if float(grad_norm) > 10.0 * self.max_grad_norm:
+                if float(grad_norm) > 1000.0:
                     print(f"[Alert] Exploding gradient: norm={float(grad_norm):.2f} "
-                          f"(threshold={self.max_grad_norm:.2f}). Clipping applied.")
+                          f"(clip={self.max_grad_norm:.2f}). Clipping applied.")
                 self.optimizer.step()
 
                 loss_per_epoch.append(loss.item())

@@ -305,16 +305,95 @@ def _build_visualize_env_config(runtime_settings: dict[str, Any] | None = None) 
     }
 
 
+def _run_training_with_transfer(
+    env,
+    tl_cfg: dict[str, Any],
+    stop_condition: Any,
+    repo_root: Path,
+) -> dict[str, Any]:
+    """Create a SinglePPOAgent directly, inject a transfer policy, and run learn().
+
+    Bypasses Trainer/Scheduler so the policy can be replaced before training
+    starts — the Trainer creates the agent inside train() which is too late for
+    weight injection.  This path is AirSim-only and has no effect on 2D envs.
+    """
+    import torch.optim as optim
+
+    from fw.config import PPO_POLICY_NAME, get_hyperparameters
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+    from airsim.train.transfer_learning import (
+        TransferIncompatibilityError,
+        build_transfer_policy,
+    )
+
+    hyperparams = get_hyperparameters(PPO_POLICY_NAME)
+    agent = SinglePPOAgent(environment=env.gym_env, **hyperparams)
+
+    source_path_raw = str(tl_cfg.get("source_policy_path", "")).strip()
+    source_path = Path(source_path_raw)
+    if not source_path.is_absolute():
+        source_path = (repo_root / source_path).resolve()
+
+    obs_dim = int(env.gym_env.observation_space.shape[0])
+    act_dim = int(env.gym_env.action_space.shape[0])
+    freeze = bool(tl_cfg.get("freeze_shared_layers", True))
+
+    print("\n" + "=" * 60)
+    print("  TRANSFER LEARNING — loading 2D policy weights")
+    print("=" * 60)
+    print(f"  Source : {source_path}")
+    print(f"  Target : AirSimEnv  obs={obs_dim}  act={act_dim}  device={agent.device}")
+    print(f"  Freeze : {freeze}")
+    print("=" * 60 + "\n")
+
+    try:
+        transfer_policy = build_transfer_policy(
+            source_zip_path=source_path,
+            target_input_dim=obs_dim,
+            target_output_dim=act_dim,
+            target_device=agent.device,
+            freeze_shared=freeze,
+        )
+        agent.policy = transfer_policy
+        agent.optimizer = optim.Adam(
+            filter(lambda p: p.requires_grad, transfer_policy.network.parameters()),
+            lr=agent.learning_rate,
+        )
+    except (TransferIncompatibilityError, RuntimeError) as exc:
+        print(f"[TransferLearning] Failed — training from scratch.\n  {exc}")
+
+    agent.learn(stop_condition=stop_condition)
+    return {}
+
+
 def run_training(runtime_settings: dict[str, Any] | None = None):
     """Run AirSim PPO training from runtime settings and return trainer metrics."""
     from fw.config import PPO_POLICY_NAME
     from fw.env_factory import airsim_env_name, get as get_environment
     from fw.trainer import Trainer
 
+    repo_root = Path(__file__).resolve().parents[2]
     env_config = _build_training_env_config(runtime_settings)
     stop_condition = _build_training_stop_condition(runtime_settings)
 
     env = get_environment(airsim_env_name, configuration=env_config)
+
+    # Transfer learning: bypass Trainer and drive agent directly so the
+    # transferred policy can be injected before learn() starts.
+    runtime = merge_runtime_settings(
+        runtime_settings if runtime_settings is not None else get_runtime_settings()
+    )
+    tl_cfg = dict(runtime.get("transfer_learning", {}))
+    if bool(tl_cfg.get("enabled", False)):
+        try:
+            return _run_training_with_transfer(env, tl_cfg, stop_condition, repo_root)
+        finally:
+            try:
+                env.gym_env.close()
+            except Exception:
+                pass
+
+    # Standard path (no transfer learning)
     envs = [env]
     trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
 
