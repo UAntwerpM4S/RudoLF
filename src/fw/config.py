@@ -52,20 +52,20 @@ In the long term this should be moved to a config-file which will then be read.
 
 DEFAULT_HYPERPARAMETERS = {
     PPO_POLICY_NAME: {
-        'learning_rate': 3e-4,
-        'gamma': 0.99,
+        'learning_rate': 1e-4,
+        'gamma': 0.95,
         'gae_lambda': 0.95,
         'entropy_coef': 0.01,
         'value_loss_coef': 0.5,
         'max_grad_norm': 0.5,
-        'clip_range': 0.2,
+        'clip_range': 0.05,
         'eval_frequency': 100,
         'num_envs': 1,
         'num_epochs': 10,
         'normalize': False,
         'max_nbr_iterations': 200000,
         'batch_size': 64,
-        'device': "cpu", # Consider using "cuda" for airsim training if you have a compatible GPU and the necessary setup.
+        'device': "cpu",
         'model_dir': "models"
     },
     PPO2_POLICY_NAME: {
@@ -109,6 +109,15 @@ DEFAULT_HYPERPARAMETERS = {
     },
 }
 
+AIRSIM_HYPERPARAMETER_OVERRIDES = {
+    PPO_POLICY_NAME: {
+        'learning_rate': 3e-4,
+        'gamma': 0.99,
+        'clip_range': 0.2,
+        'device': 'cuda', # AirSim training benefits from GPU acceleration, can be switched to 'cpu' if CUDA is not available or not applicable.
+    },
+}
+
 CONFIG_PARAMETERS = {
     # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander"
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
@@ -129,10 +138,18 @@ CONFIG_PARAMETERS = {
 }
 
 
-def get_hyperparameters(agent_name):
-    """Get validated hyperparameters"""
+def get_hyperparameters(agent_name, env_name=None):
+    """Get validated hyperparameters.
+
+    AirSim uses the base PPO tuning set. Other environments get the legacy
+    PPO settings through the override map so their training behavior stays
+    separate from the AirSim tuning.
+    """
     try:
-        return DEFAULT_HYPERPARAMETERS[agent_name].copy()
+        params = DEFAULT_HYPERPARAMETERS[agent_name].copy()
+        if env_name == "AirSimEnv":
+            params.update(AIRSIM_HYPERPARAMETER_OVERRIDES.get(agent_name, {}))
+        return params
     except KeyError:
         raise ValueError(f"Unknown agent type: {agent_name}")
 

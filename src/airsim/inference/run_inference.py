@@ -232,8 +232,8 @@ def run_inference(
 
     Args:
         model_path: Path to the AirSimEnv-trained checkpoint.
-            ship_pos: Optional start position override in framework coordinates.
-            target_pos: Optional target position override in framework coordinates.
+        ship_pos: Optional start position override in framework coordinates.
+        target_pos: Optional target position override in framework coordinates.
         ip: AirSim RPC host.
         port: AirSim RPC port.
         max_steps: Maximum steps per episode.

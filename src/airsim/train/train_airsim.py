@@ -326,7 +326,7 @@ def _run_training_with_transfer(
         build_transfer_policy,
     )
 
-    hyperparams = get_hyperparameters(PPO_POLICY_NAME)
+    hyperparams = get_hyperparameters(PPO_POLICY_NAME, env_name="AirSimEnv")
     agent = SinglePPOAgent(environment=env.gym_env, **hyperparams)
 
     source_path_raw = str(tl_cfg.get("source_policy_path", "")).strip()
