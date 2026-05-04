@@ -245,5 +245,4 @@ def test_build_parser_removes_legacy_mode_flags():
     parser = run_inference_module._build_parser()
 
     assert "--ue5" not in parser._option_string_actions
-    assert "--fossen" not in parser._option_string_actions
     assert "--model" in parser._option_string_actions

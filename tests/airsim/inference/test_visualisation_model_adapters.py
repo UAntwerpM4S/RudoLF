@@ -20,7 +20,7 @@ from airsim.inference.visualisation_models.model_adapters import (
 class _FakeCoordTransform:
     """Small coordinate-transform stub for adapter motion-state tests."""
 
-    def fossen_to_airsim(self, x: float, y: float, z: float):
+    def framework_to_airsim(self, x: float, y: float, z: float):
         """Convert framework coordinates into fake AirSim coordinates.
 
         Args:
@@ -33,7 +33,7 @@ class _FakeCoordTransform:
         """
         return x + 100.0, y - 50.0, z
 
-    def fossen_heading_to_airsim_yaw(self, heading: float) -> float:
+    def framework_heading_to_airsim_yaw(self, heading: float) -> float:
         """Convert framework heading into fake AirSim yaw.
 
         Args:
@@ -44,7 +44,7 @@ class _FakeCoordTransform:
         """
         return heading + 0.25
 
-    def fossen_velocity_to_airsim(self, vx: float, vy: float):
+    def framework_velocity_to_airsim(self, vx: float, vy: float):
         """Convert framework velocity into fake AirSim velocity.
 
         Args:
@@ -56,7 +56,7 @@ class _FakeCoordTransform:
         """
         return vx + 1.0, vy - 2.0
 
-    def fossen_yaw_rate_to_airsim(self, yaw_rate: float) -> float:
+    def framework_yaw_rate_to_airsim(self, yaw_rate: float) -> float:
         """Convert framework yaw rate into fake AirSim yaw rate.
 
         Args:
@@ -82,7 +82,16 @@ def _framework_env(
         ship_pos=np.array([12.0, 34.0], dtype=np.float32) if ship_pos is None else ship_pos,
         phys_sims=[SimpleNamespace(state=SimpleNamespace(heading=heading, u=u, v=v, r=r))],
         performed_action=performed_action,
-        ships=[SimpleNamespace(specifications=SimpleNamespace(max_rudder_angle=1.0, min_thrust=-1.0, max_thrust=1.0))],
+        ships=[
+            SimpleNamespace(
+                specifications=SimpleNamespace(
+                    max_rudder_angle=1.0,
+                    min_thrust=-1.0,
+                    max_thrust=1.0,
+                    surge_limits=(0.0, 5.0),
+                )
+            )
+        ],
     )
 
 
@@ -217,7 +226,14 @@ def test_motion_state_from_env_supports_single_ship_attribute_layout():
         ship_pos=np.array([12.0, 34.0], dtype=np.float32),
         phys_sim=SimpleNamespace(state=SimpleNamespace(heading=0.3, u=4.0, v=1.5, r=0.2)),
         performed_action=np.array([0.2, 0.6], dtype=np.float32),
-        ship=SimpleNamespace(specifications=SimpleNamespace(max_rudder_angle=1.0, min_thrust=-1.0, max_thrust=1.0)),
+        ship=SimpleNamespace(
+            specifications=SimpleNamespace(
+                max_rudder_angle=1.0,
+                min_thrust=-1.0,
+                max_thrust=1.0,
+                surge_limits=(0.0, 5.0),
+            )
+        ),
     )
 
     motion_state = adapter.motion_state_from_env(env, _bridge())
@@ -273,3 +289,78 @@ def test_animate_state_returns_flat_action_vector_when_bridge_disconnects():
 
     np.testing.assert_allclose(motion_state, target_motion_state)
     np.testing.assert_allclose(actuator_state, np.array([0.25, 0.75], dtype=np.float32))
+
+
+def test_visual_update_interval_adapts_to_short_fast_replay_segments():
+    """Fast replay should tighten pose-update cadence instead of snapping to 90 Hz."""
+    interval = module._resolve_visual_update_interval(
+        total_duration=0.02,
+        interpolation_steps=20,
+        min_render_hz=90.0,
+    )
+
+    assert interval == pytest.approx(1.0 / 240.0, abs=1e-9)
+
+
+@pytest.mark.parametrize(
+    (
+        "mirror_controls_in_ue5",
+        "animate_steering_in_ue5",
+        "animate_throttle_in_ue5",
+        "expected_throttle",
+        "expected_brake",
+    ),
+    [
+        (True, False, False, 0.8, 0.0),
+        (False, True, False, 0.0, 1.0),
+        (False, False, True, 0.8, 0.0),
+    ],
+)
+def test_visual_replay_controls_hold_brake_during_pose_mirroring(
+    mirror_controls_in_ue5: bool,
+    animate_steering_in_ue5: bool,
+    animate_throttle_in_ue5: bool,
+    expected_throttle: float,
+    expected_brake: float,
+):
+    """Replay throttle visuals should follow the framework speed envelope."""
+    adapter = PySimVisualisationAdapter()
+    env = _framework_env()
+
+    controls = module._build_visual_controls(
+        adapter=adapter,
+        env=env,
+        bridge=_bridge(),
+        actuator_state=np.array([0.25, 0.5], dtype=np.float32),
+        mirror_controls_in_ue5=mirror_controls_in_ue5,
+        animate_steering_in_ue5=animate_steering_in_ue5,
+        animate_throttle_in_ue5=animate_throttle_in_ue5,
+        steering_visual_gain=0.35,
+        throttle_visual_gain=1.0,
+    )
+
+    assert controls is not None
+    assert controls.brake == pytest.approx(expected_brake)
+    assert controls.throttle == pytest.approx(expected_throttle)
+
+
+def test_visual_replay_controls_apply_throttle_gain_to_mirrored_controls():
+    """Mirrored replay throttle should scale from framework speed, not raw thrust."""
+    adapter = PySimVisualisationAdapter()
+    env = _framework_env()
+
+    controls = module._build_visual_controls(
+        adapter=adapter,
+        env=env,
+        bridge=_bridge(),
+        actuator_state=np.array([0.25, 0.5], dtype=np.float32),
+        mirror_controls_in_ue5=True,
+        animate_steering_in_ue5=False,
+        animate_throttle_in_ue5=False,
+        steering_visual_gain=0.35,
+        throttle_visual_gain=0.5,
+    )
+
+    assert controls is not None
+    assert controls.brake == pytest.approx(0.0)
+    assert controls.throttle == pytest.approx(0.4)

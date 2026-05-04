@@ -9,13 +9,13 @@ inside Unreal Engine 5.  It provides:
 * **Pass-through control** - ``set_controls()`` forwards pre-mapped
   ``CarControls`` to AirSim without any PID processing.
 
-Input mapping (Fossen model -> UE5 controls) is handled by
+Input mapping (framework/local model -> UE5 controls) is handled by
 :class:`~airsim.environments.airsim_env.AirSimEnv` and the
 :mod:`airsim.inference.run_inference` module.  **PID control is not
 used anywhere in this bridge.**
 
 Coordinate frames:
-    * **Ship (Fossen):** x = east, y = north, heading from east (CCW+).
+    * **Framework:** x = east, y = north, heading from east (CCW+).
     * **AirSim (NED):** x = north, y = east, yaw from north (CW+).
     * **Transform:** ``AirSim_yaw = pi/2 - ship_heading``.
 
@@ -38,6 +38,8 @@ import time
 import logging
 import csv
 import os
+import io
+from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime, timezone
 from collections import deque
 from typing import Any, Dict, Optional
@@ -53,6 +55,24 @@ from airsim.config.airsim_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _silence_library_output(callback) -> Any:
+    """Run a library callback while suppressing direct terminal output.
+
+    Some Cosys-AirSim builds print version banners and compatibility warnings
+    directly to stdout/stderr from native code. We suppress that noisy output
+    here so the framework logs stay readable.
+
+    Args:
+        callback: Zero-argument callable to execute.
+
+    Returns:
+        Any: The callback return value.
+    """
+    sink = io.StringIO()
+    with redirect_stdout(sink), redirect_stderr(sink):
+        return callback()
 
 
 def _roll_pitch_from_quaternion(q) -> tuple[float, float]:
@@ -167,6 +187,7 @@ class AirSimBridge:
         self._step_count: int = 0
         self._sensor_buffer: deque = deque(maxlen=1000)
         self._simulation_speed: float = 1.0
+        self._rendering_enabled: Optional[bool] = None
         self.coord_transform = None
         self.render_z: float = 0.0
 
@@ -217,7 +238,7 @@ class AirSimBridge:
                     ip=self.config.ip, port=self.config.port,
                     timeout_value=self.config.timeout,
                 )
-                self._client.confirmConnection()
+                _silence_library_output(self._client.confirmConnection)
                 self._client.enableApiControl(True)
                 self._controls = airsim.CarControls()
                 self._connected = True
@@ -329,6 +350,7 @@ class AirSimBridge:
             # T-005: State cleanup and resource release
             self._client = None
             self._controls = None
+            self._rendering_enabled = None
             self._flush_csv()
             
             # T-005: Reconnect
@@ -442,6 +464,16 @@ class AirSimBridge:
             return
         self._client.simContinueForFrames(frames)
 
+    def continue_for_time(self, seconds: float) -> None:
+        """Advance the simulation by a fixed amount of simulation time.
+
+        Args:
+            seconds: Number of simulation seconds to advance while paused.
+        """
+        if not self._ensure_connected():
+            return
+        self._client.simContinueForTime(float(seconds))
+
     def is_paused(self) -> bool:
         """Return whether the UE5 simulation is currently paused.
 
@@ -462,6 +494,63 @@ class AirSimBridge:
             return
         self._simulation_speed = float(simulation_speed)
         self._client.simSetSimulationSpeed(simulation_speed)
+
+    def set_rendering_enabled(self, is_enabled: bool, force: bool = False) -> bool:
+        """Toggle full UE5 scene rendering through the Unreal console.
+
+        AirSim itself does not expose a dedicated high-level rendering toggle,
+        but it does provide ``simRunConsoleCommand``. We use Unreal's
+        ``ShowFlag.Rendering`` console flag so training mode can turn scene
+        rendering off while keeping physics active.
+
+        Args:
+            is_enabled: ``True`` to show rendering, ``False`` to hide it.
+            force: When ``True``, always issue the UE5 console command even if
+                the bridge already believes the rendering state matches.
+
+        Returns:
+            bool: ``True`` when the command was accepted or when rendering was
+            already in the requested state, otherwise ``False``.
+        """
+        if not self._ensure_connected():
+            return False
+
+        desired_state = bool(is_enabled)
+        if not force and self._rendering_enabled is desired_state:
+            return True
+
+        if not hasattr(self._client, "simRunConsoleCommand"):
+            logger.warning(
+                "AirSim client does not support simRunConsoleCommand; cannot toggle rendering."
+            )
+            return False
+
+        command = f"ShowFlag.Rendering {1 if desired_state else 0}"
+        try:
+            result = self._client.simRunConsoleCommand(command)
+        except Exception as exc:
+            logger.warning(
+                "Failed to %s UE5 rendering via console command '%s': %s",
+                "enable" if desired_state else "disable",
+                command,
+                exc,
+            )
+            return False
+
+        if result is False:
+            logger.warning(
+                "UE5 rejected console command '%s' while toggling rendering.",
+                command,
+            )
+            return False
+
+        self._rendering_enabled = desired_state
+        logger.info(
+            "UE5 rendering %s via console command '%s'.",
+            "enabled" if desired_state else "disabled",
+            command,
+        )
+        return True
 
     def flush_persistent_markers(self) -> None:
         """Clear all persistent debug markers from UE5."""
@@ -617,7 +706,7 @@ class AirSimBridge:
     ) -> None:
         """Forcibly set the vehicle's position and orientation in UE5.
         
-        Useful for visualization where another physics engine (e.g. Fossen)
+        Useful for visualization where another physics engine
         computes the trajectory and we only use UE5 for rendering.
         
         Args:
@@ -673,7 +762,8 @@ class AirSimBridge:
         Static/Skeletal Mesh Actor) that has no Chaos physics body. The water
         plugin never sees a physics body move, so there are no buoyancy reactions
         or water ripple artefacts. This is the recommended transport for the
-        fully-external-physics visualisation mode: Fossen runs in Python, UE5
+        fully-external-physics visualisation mode: the local framework runs in
+        Python, UE5
         is used purely as a renderer.
 
         Args:
@@ -839,7 +929,12 @@ class AirSimBridge:
             return state_dict
         except Exception as exc:
             logger.warning("AirSim get_state failed: %s", exc)
-            return {}
+            return {
+                "state_read_failed": True,
+                "error": str(exc),
+                "step": self._step_count,
+                "wall_time_utc": datetime.now(timezone.utc).isoformat(),
+            }
 
     def _flush_csv(self) -> None:
         """Dump buffered sensor data to the configured CSV file.
@@ -919,6 +1014,7 @@ class AirSimBridge:
         self._client = None
         self._controls = None
         self._simulation_speed = 1.0
+        self._rendering_enabled = None
         if self._airsim is None:
             raise ConnectionError("Cannot reconnect: cosysairsim module not available.")
         self._connect_with_retry(self._airsim)
@@ -1063,6 +1159,7 @@ class AirSimBridge:
         from fw.common.airsim.tools.calibrate_coords import load_saved_calibration_reference
 
         self.load_world_save(save_slot=save_slot)
+        self.set_rendering_enabled(True)
         self.set_simulation_speed(simulation_speed)
         spawn_pose = self._client.simGetVehiclePose()
         self.render_z = float(spawn_pose.position.z_val)
@@ -1123,6 +1220,7 @@ class AirSimBridge:
             
             self._client.setCarControls(stop_controls)
             time.sleep(0.3)
+            self.set_rendering_enabled(True)
             self._client.enableApiControl(False)
             self._connected = False
             

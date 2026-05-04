@@ -269,7 +269,6 @@ class AgentManager:
 
         self.agent.set_policy_eval()
         env = self.get_env()
-
         with self.smoothing(env):
             raw_env = self.get_env()
             if hasattr(raw_env, "envs"):    # VecEnv wrapping
@@ -279,7 +278,7 @@ class AgentManager:
 
             is_lunar_lander = isinstance(raw_env, LunarLander)
 
-            collector = EpisodeCollector(self._agent, raw_env)
+            collector = EpisodeCollector(self._agent, raw_env, airsim_bridge=airsim_bridge)
             run_data = collector.collect(num_episodes=num_episodes, live_animation=live_animation if not is_lunar_lander else True)
 
             if not is_lunar_lander:
