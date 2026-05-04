@@ -104,15 +104,11 @@ python -m fw.common.airsim.tools.calibrate_coords
 python -m fw.common.airsim.tools.analyze_telemetry
 ```
 
-## AirSim Docs Hub
+## AirSim Documentation
 
-For full AirSim technical documentation, use:
+For full AirSim technical documentation — installation, configuration, training, visualization, inference, architecture, and testing — see:
 
-- [AirSim Step-By-Step Setup Guide](docs/airsim_setup_step_by_step.md)
-- [AirSim Package Reference](src/airsim/README.md)
-- [AirSim Inference and Visualisation Runbook](src/airsim/inference/README.md)
-- [AirSim Workflow Rationale](src/airsim/verantwoording_workflow.md)
-- [AirSim Architecture](docs/airsim_architecture.md)
+- [AirSim Integration Manual](docs/airsim.md)
 
 ## Testing
 
