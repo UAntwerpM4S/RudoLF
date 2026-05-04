@@ -33,7 +33,11 @@ class CollisionEvent:
     is_collision: bool  # True if distance < hard collision threshold
 
     def __post_init__(self) -> None:
-        """Validate that timestep and distance are non-negative."""
+        """Validate that the collision event fields are non-negative.
+
+        Raises:
+            ValueError: If timestep or distance is negative.
+        """
         if self.timestep < 0:
             raise ValueError(f"timestep must be non-negative, got {self.timestep}.")
         if self.distance < 0.0:
@@ -57,6 +61,8 @@ class ShipEpisodeData:
         cross_errors: Cross-track error per timestep.
         rudder_actions: Rudder angle at each timestep.
         rudder_changes: Absolute change in rudder angle per timestep.
+        thrust_actions: Thrust command at each timestep.
+        thrust_changes: Absolute change in thrust command per timestep.
         heading_errors: Heading error (radians) per timestep.
         velocities: Surge velocity per timestep.
         ukc_measurements: Under-keel clearance per timestep.
@@ -70,6 +76,8 @@ class ShipEpisodeData:
     cross_errors: np.ndarray = field(default_factory=lambda: np.array([]))
     rudder_actions: np.ndarray = field(default_factory=lambda: np.array([]))
     rudder_changes: np.ndarray = field(default_factory=lambda: np.array([]))
+    thrust_actions: np.ndarray = field(default_factory=lambda: np.array([]))
+    thrust_changes: np.ndarray = field(default_factory=lambda: np.array([]))
     heading_errors: np.ndarray = field(default_factory=lambda: np.array([]))
     velocities: np.ndarray = field(default_factory=lambda: np.array([]))
     ukc_measurements: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -77,7 +85,15 @@ class ShipEpisodeData:
     collision_events: list[CollisionEvent] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        """Validate fields and normalize path shape to (T, 2)."""
+        """Validate episode metadata and normalize the path array shape.
+
+        Ensures the ship identifier and episode index are valid, and coerces an
+        empty path into a consistent shape of ``(0, 2)``.
+
+        Raises:
+            ValueError: If ship_id is empty, episode is negative, or path has an
+                invalid shape.
+        """
         if not self.ship_id:
             raise ValueError("ship_id must be a non-empty string.")
         if self.episode < 0:
@@ -113,7 +129,11 @@ class RunData:
     num_episodes: int
 
     def __post_init__(self) -> None:
-        """Validate that num_episodes is non-negative and ships is not None."""
+        """Validate run metadata and ensure the ship collection is present.
+
+        Raises:
+            ValueError: If num_episodes is negative or ships is None.
+        """
         if self.num_episodes < 0:
             raise ValueError(f"num_episodes must be non-negative, got {self.num_episodes}.")
         if self.ships is None:

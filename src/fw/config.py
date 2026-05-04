@@ -123,7 +123,7 @@ CONFIG_PARAMETERS = {
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["PySimEnv","AirSimEnv"],
-    'action': "train",  # Valid action values: "train", "visualize"
+    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'wind': False,
     'current': False,
     'numerical_damping': False,
@@ -135,6 +135,58 @@ CONFIG_PARAMETERS = {
     'live_animation': False,
     # AirSim settings are now in airsim.config.airsim_config
     # Use get_airsim_config() to access them.
+    
+    # Evaluate reward configurations
+    'reward_configs': [
+        {
+            "type": "PySimEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -0.25,
+                "heading_alignment": -0.5,
+                "cross_track": -0.05,
+                "rudder_change": -0.4,
+                "rudder_angle": -0.05,
+                "thrust_change": -0.1,
+            },
+        },
+        {
+            "type": "PySimEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -0.25,
+                "heading_alignment": -0.5,
+                "cross_track": -0.05,
+                "rudder_change": -0.4,
+                "rudder_angle": -0.05,
+                "thrust_change": -0.2,
+            },
+        },
+        {
+            "type": "PySimEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -0.25,
+                "heading_alignment": -0.5,
+                "cross_track": -0.05,
+                "rudder_change": -0.4,
+                "rudder_angle": -0.05,
+                "thrust_change": -0.4,
+            },
+        },
+        {
+            "type": "PySimEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -0.25,
+                "heading_alignment": -0.5,
+                "cross_track": -0.05,
+                "rudder_change": -0.4,
+                "rudder_angle": -0.05,
+                "thrust_change": -0.6,
+            },
+        },
+    ],
 }
 
 

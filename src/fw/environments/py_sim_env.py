@@ -17,6 +17,7 @@ except ImportError:
 from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
 from fw.environments.tools import create_checkpoints_from_simple_path
+from fw.reward.reward import Reward
 from fw.ships.ship_factory import create_ship, ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
@@ -122,6 +123,9 @@ class PySimEnv(BaseEnv):
             wind: bool = False,
             current: bool = False,
             numerical_damping: bool = False,
+            #Reward configuration
+            reward_name: str = "default",
+            reward_weights: Optional[Dict[str, float]] = None,
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -138,6 +142,8 @@ class PySimEnv(BaseEnv):
             wind: enable wind effects.
             current: enable current effects.
             numerical_damping: enable numerical damping.
+            reward_name: name of reward profile (combination of components).
+            reward_weights: optional per-component reward weights.
         """
 
         super().__init__(render_mode)
@@ -158,10 +164,19 @@ class PySimEnv(BaseEnv):
         self.previous_action = None
         self.background = None
         self.dynamics = None
+        
         self.ship_pos = None
 
         self._agent_state = None
         self.other_agent_states = {}
+
+        #Reward configuration
+        self.reward_name = str(reward_name)
+        self.reward_weights = dict(reward_weights) if reward_weights is not None else None
+        self.reward_calculator = Reward(
+            reward_name=self.reward_name,
+            reward_weights=self.reward_weights,
+        )
 
         # RNG: environment-local RNG for reproducibility when seeded via reset()
         self._rng: np.random.Generator = np.random.default_rng()
@@ -923,26 +938,24 @@ class PySimEnv(BaseEnv):
         distance_traveled = abs(np.linalg.norm(self.ship_pos - self.previous_ship_pos))
         velocity = distance_traveled / self.time_step
         target_velocity = 4
+        thrust_change = abs(self.performed_action[1] - self.previous_action[1])
+        max_thrust_change = self.ship.specifications.max_thrust_rate * self.time_step / self.ship.specifications.max_thrust 
 
-        # Reward components
-        r_forward = - 0.25 * abs(target_velocity - velocity) / target_velocity
-        r_heading_alignment = - 0.5 * abs(heading_error)
-        r_cte = - 0.05 * cross_track_error
-        r_rudder_angle_change = - 0.4 * (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -1
-        r_rudder_angle = - 0.05 * (abs(self.performed_action[0]) / 0.2) ** (2 if abs(self.performed_action[0]) < 0.2 else 4)
-        r_thrust_change = 0  # - 0.5 * thrust_change
-
-        # Combine weighted rewards and penalties
-        reward = (
-                r_forward +
-                r_heading_alignment +
-                r_cte +
-                r_rudder_angle_change +
-                r_rudder_angle +
-                r_thrust_change
+        reward = self.reward_calculator.calculate_reward(
+            velocity=velocity,
+            target_velocity=target_velocity,
+            heading_error=heading_error,
+            cross_track_error=cross_track_error,
+            rudder_change=rudder_change,
+            max_rudder_change=max_rudder_change,
+            rudder_angle=float(self.performed_action[0]),
+            thrust_change=thrust_change,
+            max_thrust_change=max_thrust_change,
         )
-        reward = 1.0 + reward / 5.0     # reward = 0.9 + reward
-
+        
+        num_non_zero = sum(1 for w in self.reward_calculator.reward_weights.values() if w != 0)
+        reward = 1.0 + reward / num_non_zero    
+        
         # Checkpoint handling (may increment checkpoint_index)
         checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint["pos"])
 

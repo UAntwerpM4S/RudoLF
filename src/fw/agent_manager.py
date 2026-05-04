@@ -242,15 +242,19 @@ class AgentManager:
             live_animation: bool = False,
             env_color_index: int = 0,
             airsim_bridge: AirSimBridge = None,
-    ) -> None:
+            return_summary: bool = False,
+            show_plots: bool = True
+        ) -> dict | None:
+
         """
         Evaluates and visualizes the trained agent over multiple episodes.
 
         Args:
-            num_episodes: Number of evaluation episodes to run.
-            live_animation: If True, renders each episode live.
-            env_color_index: Unused; reserved for future color-coding by env.
-            airsim_bridge: Optional AirSim bridge for 3-D visualization.
+            num_episodes (int, optional): Number of episodes to visualize (default is 5).
+            live_animation (bool, optional): Enable live animation of the agent in the environment.
+            env_color_index (int, optional): Index of the environment color.
+            airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
+            return_summary (bool, optional): Return evaluation summary metrics when available.
 
         Raises:
             RuntimeError: If no agent has been created or if the collector
@@ -278,6 +282,7 @@ class AgentManager:
             run_data = collector.collect(num_episodes=num_episodes, live_animation=live_animation if not is_lunar_lander else True)
 
             if not is_lunar_lander:
+                summaries = {}
                 # Diagnose empty collection early
                 total_steps = sum(
                     sum(len(ep.path) for ep in episodes)
@@ -296,6 +301,22 @@ class AgentManager:
                 for sid, m in metrics.items():
                     ship_env = self._get_ship_env(raw_env, sid)
                     env_name = getattr(ship_env, "env_name", sid)
+                    summaries[env_name] = {
+                        "average_reward": m.avg_reward,
+                        "best_episode_reward": m.best_reward,
+                        "worst_episode_reward": m.worst_reward,
+                        "mu": m.mu,
+                        "Mu": m.Mu,
+                        "mTEI": m.mTEI,
+                        "MTE": m.MTE,
+                        "mRA": m.mRA,
+                        "MRA": m.MRA,
+                        "mRAC": m.mRAC,
+                        "mT": m.mT,
+                        "MT": m.MT,
+                        "mTC": m.mTC,
+                        "mHE": m.mHE,
+                    }
                     print(f"\n{env_name} evaluation completed!")
                     print(f"Average reward: {m.avg_reward:.2f}")
                     print(f"Best episode reward: {m.best_reward:.2f}")
@@ -307,17 +328,30 @@ class AgentManager:
                     print(f"Mean Rudder Angle (mRA): {m.mRA:.3f}")
                     print(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
                     print(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
+                    print(f"Mean Thrust (mT): {m.mT:.3f}")
+                    print(f"Maximum Thrust (MT): {m.MT:.3f}")
+                    print(f"Mean Thrust Change (mTC): {m.mTC:.4f}")
                     print(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
 
                 save_dir = self.agent.model_dir or "."
+                if not save_dir:
+                    save_dir = "models"
+                os.makedirs(save_dir, exist_ok=True)
+
                 MatplotlibRenderer.render(
                     run_data.ships, metrics, raw_env,
-                    save_path=f"{save_dir}/trajectory.png",
+                    save_path=f"{save_dir}/image.png",
+                    show_plots=show_plots,
                 )
 
-                # PlotlyRenderer.render(
-                #     run_data.ships, metrics,
-                # )
+                    # PlotlyRenderer.render(
+                    #     run_data.ships, metrics,
+                    # )
+
+                if return_summary:
+                    return summaries
+
+        return None
 
     def get_env(self):
         """

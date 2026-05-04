@@ -22,6 +22,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
     from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, get_config_parameters
     from fw.env_factory import (
         build_default_environment,
+        resolve_environment_name,
         py_sim_env_name,
         fh_sim_env_name,
         airsim_env_name,
@@ -33,11 +34,12 @@ if __name__ == "__main__" or __name__ == "fw.main":
     )
 
     framework_config = get_config_parameters()
+    reward_configs = framework_config.get("reward_configs", [])
     configured_env_names = resolve_environment_names(
         framework_config.get("env_type", py_sim_env_name)
     )
     action = str(framework_config.get("action", "train")).strip().lower()
-    if action not in {"train", "visualize"}:
+    if action not in {"train", "visualize", "evaluate_reward"}:
         print(f"[main] Unknown action '{action}'. Falling back to 'train'.")
         action = "train"
 
@@ -47,7 +49,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         Args:
             selected_action: Framework action to forward to the AirSim
-                entrypoint ("train" or "visualize").
+                entrypoint ("train" or "visualize" or "evaluate_reward").
 
         Returns:
             True when the AirSim step completed successfully. False when the
@@ -79,9 +81,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
     configuration = {
         py_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
-            target_reward=1.75,
+            target_reward=0.99,
             patience=4,
-            max_time_steps=1300,
+            max_time_steps=5,
         ),
         multi_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
@@ -112,7 +114,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         ),
     }
 
-    if not configured_env_names:
+    if action != "evaluate_reward" and not configured_env_names:
         print(f"[main] No environments configured for {action}. Exiting.")
         raise SystemExit(1)
 
@@ -139,12 +141,37 @@ if __name__ == "__main__" or __name__ == "fw.main":
             trainer.visualize(envs, airsim_bridge=None)
         else:
             metrics = trainer.train(configuration)
-            print(f"Training metrics (grouped): {metrics}")
+            if action == "evaluate_reward":
+                print(f"Training metrics (grouped): {metrics}")
         return True
 
     # Both visualize and train now follow env_type order exactly (for airsim),
     # but standard environments are batched to preserve Trainer functionality.
     executed_any_step = False
+
+    if action == "evaluate_reward":
+        if not reward_configs:
+            print("[main] action='evaluate_reward' requires 'reward_configs' in configuration.")
+            raise SystemExit(1)
+
+        try:
+            first_env_type = reward_configs[0].get("type", py_sim_env_name)
+            dummy_env = build_default_environment(resolve_environment_name(first_env_type))
+            trainer = Trainer(PPO_POLICY_NAME, [dummy_env], "SimpleScheduler")
+
+            print(f"[main] Starting reward evaluation for {len(reward_configs)} configurations...")
+            results = trainer.evaluate_reward(reward_configs, configuration, verbose=True)
+
+            results_file = str(framework_config.get("reward_results_file", "reward_evaluation_results.csv"))
+            trainer.export_evaluation_results(results, results_file)
+            print(f"[main] Reward evaluation complete. Results exported to '{results_file}'.")
+            executed_any_step = True
+            # evaluate_reward is a standalone mode; avoid running standard train/visualize afterwards.
+            raise SystemExit(0)
+        except Exception as exc:
+            print(f"[main] Reward evaluation failed: {exc}")
+            raise SystemExit(1)
+
     standard_envs = []
 
     for env_name in configured_env_names:
