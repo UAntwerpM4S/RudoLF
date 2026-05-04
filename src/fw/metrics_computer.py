@@ -65,6 +65,12 @@ class ShipMetrics:
     num_encounters: int = 0
     encounter_misclassification_count: int = 0
     encounter_confusion: dict = field(default_factory=dict)   # {(gt, pred): count}
+    # Per-policy (gt scenario) collision counts and encounter denominators.
+    # Outside-encounter collisions (e.g. bank groundings while path-following)
+    # are tracked separately since they have no encounter denominator.
+    encounters_per_policy: dict = field(default_factory=dict)         # {gt: encounter_count}
+    collisions_per_policy: dict = field(default_factory=dict)         # {gt: collided_encounter_count}
+    collisions_outside_encounters: int = 0
 
 
 class MetricsComputer:
@@ -187,20 +193,30 @@ class MetricsComputer:
         # Classification diagnostics — one record per encounter.
         # num_encounters counts all encounter starts (including those without
         # a gt label); classification accuracy metrics only use labelled ones.
-        # collision_count is encounter-level: number of encounters that ended
-        # with the OS in a collision (matches the "collided" flag the
-        # min-distance plot uses).
+        # collision_count is the total: collided encounters + episode-terminating
+        # collisions that happened outside any encounter (e.g. bank groundings
+        # while path-following). Per-policy counts use only encounter-level
+        # collisions since outside-encounter collisions have no gt scenario.
         confusion: dict[tuple[str, str], int] = {}
         mismatches = 0
         total = 0
         classified = 0
         collided_encounters = 0
+        encounters_per_policy: dict[str, int] = {}
+        collisions_per_policy: dict[str, int] = {}
+        collisions_outside_encounters = 0
         for ep in episodes:
+            encounter_collision_in_ep = False
             for enc in ep.scenario_encounters:
                 total += 1
+                gt = enc.get("gt")
+                if gt is not None:
+                    encounters_per_policy[gt] = encounters_per_policy.get(gt, 0) + 1
                 if enc.get("collided", False):
                     collided_encounters += 1
-                gt = enc.get("gt")
+                    encounter_collision_in_ep = True
+                    if gt is not None:
+                        collisions_per_policy[gt] = collisions_per_policy.get(gt, 0) + 1
                 pred = enc.get("pred")
                 if gt is None or pred is None:
                     continue
@@ -209,9 +225,17 @@ class MetricsComputer:
                 confusion[key] = confusion.get(key, 0) + 1
                 if gt != pred:
                     mismatches += 1
+            # Episode-terminating collisions that didn't occur in any encounter
+            # (e.g. bank groundings while path-following) are counted separately
+            # so total collisions aren't underreported.
+            if ep.collision and not encounter_collision_in_ep:
+                collisions_outside_encounters += 1
 
         m.num_encounters = total
-        m.collision_count = collided_encounters
+        m.collision_count = collided_encounters + collisions_outside_encounters
+        m.encounters_per_policy = encounters_per_policy
+        m.collisions_per_policy = collisions_per_policy
+        m.collisions_outside_encounters = collisions_outside_encounters
         m.encounter_misclassification_count = mismatches
         m.encounter_confusion = confusion
 

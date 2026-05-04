@@ -116,7 +116,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.05, 0.0, 0.0, 0.475, 0.475, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.00, 0.0, 0.33, 0.33, 0.34, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -151,7 +151,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.reward_weights = {
             "polar_distance_colreg": 0.65,
             "polar_distance_pf": 0.15,
-            "colreg_bearing": 2.5,
+            "colreg_bearing": 1.5,
             "crossing_right": 2.0,
         }
 

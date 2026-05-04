@@ -377,8 +377,23 @@ class AgentManager:
                     print(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
                     print(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
                     print(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
-                    cr_pct = (m.collision_count / m.num_encounters * 100) if m.num_encounters else 0.0
-                    print(f"Collision rate (CR): {cr_pct:.2f}% ({m.collision_count}/{m.num_encounters} encounters)")
+                    print("Collision rate per policy:")
+                    for policy in sorted(m.encounters_per_policy):
+                        enc_n = m.encounters_per_policy[policy]
+                        col_n = m.collisions_per_policy.get(policy, 0)
+                        rate = (col_n / enc_n * 100) if enc_n else 0.0
+                        print(f"  {policy:<16s} {rate:6.2f}% ({col_n}/{enc_n} encounters)")
+                    n_ep = m.num_episodes
+                    out_rate = (m.collisions_outside_encounters / n_ep * 100) if n_ep else 0.0
+                    print(f"  outside-encounter {out_rate:6.2f}% ({m.collisions_outside_encounters}/{n_ep} episodes)")
+                    in_enc = m.collision_count - m.collisions_outside_encounters
+                    total_denom = m.num_encounters + n_ep
+                    cr_pct = (m.collision_count / total_denom * 100) if total_denom else 0.0
+                    print(
+                        f"Total collision rate (CR): {cr_pct:.2f}% "
+                        f"({m.collision_count} = {in_enc} in {m.num_encounters} encounters "
+                        f"+ {m.collisions_outside_encounters} outside / {n_ep} episodes)"
+                    )
                     print(f"Collision per type: {m.collision_type_count}")
                     print(f"Collision per side: {m.collision_side_count}")
                     print(f"COLREG violation count: {m.colreg_violation_count}")
