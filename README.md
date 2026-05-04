@@ -48,7 +48,9 @@ Training speed is configured via `training.speed_profile` in `runtime_settings.j
 
 `StrictSuccessStoppingCallback` halts training automatically once a configurable number of consecutive strict-success episodes is reached.
 
-A soft curriculum via offtrack-limit decay is available (`curriculum_enabled=true`). Full curriculum scheduling and optional transfer learning are planned as the final implementation stage.
+A checkpoint-based curriculum is available via `curriculum_enabled=true`. When active, each episode starts from a randomly chosen sub-route window that expands automatically as the agent achieves consecutive successes, progressively exposing the full route. A soft offtrack-limit decay also runs in parallel to ease early exploration.
+
+Transfer learning from a pretrained 2D policy (PySimEnv or FhSimEnv) is supported via the `transfer_learning` block in `runtime_settings.json`. The first linear layer acts as a trainable mapping layer for the extra AirSim observation dimensions; deeper layers are transferred and optionally frozen.
 
 ### AirSim Exports
 

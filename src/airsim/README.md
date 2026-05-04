@@ -43,21 +43,21 @@ flowchart LR
     A["fw.main"] --> B["fw.main_with_airsim"]
     B --> C{"runtime_settings.json"}
 
-    C -->|train| D["AirSimEnv via fw.env_factory"]
-    D --> E["Trainer + StrictSuccessStoppingCallback"]
-    E --> F["AirSimBridge"]
+    C -->|train — standard| D["train_airsim.run_training → Trainer → SinglePPOAgent → AirSimEnv"]
+    C -->|train — transfer enabled| TL["transfer_learning.build_transfer_policy → SinglePPOAgent → AirSimEnv"]
+    D --> F["AirSimBridge"]
+    TL --> F
     F --> G["UE5 + CosysAirSim"]
 
-    C -->|inference_visualise| H["airsim.inference.run_inference"]
-    H --> I["AirSimEnv"]
-    I --> F
+    C -->|inference_visualise| H["airsim.inference.run_inference → AirSimEnv"]
+    H --> F
 
     C -->|model_visualise| J["airsim.inference.run_visualise_models"]
-    J --> K["Model adapter registry"]
-    K --> L["PySimEnv or FhSimEnv"]
-    L --> F
+    J --> K["Model adapter registry → PySimEnv or FhSimEnv"]
+    K --> F
 
     D --> M["logs/ (episode CSV)"]
+    TL --> M
     H --> N["AirSimSessionExporter"]
     J --> N
     N --> O["exports/&lt;session&gt;/"]
@@ -78,7 +78,13 @@ flowchart TD
     F --> H["episode reset / close"]
     F --> I["telemetry snapshot fields"]
     F --> J["steering dynamics"]
-    F --> K["curriculum (soft, via offtrack decay)"]
+    F --> K["curriculum (checkpoint window/frontier + offtrack decay)"]
+
+    TA["train_airsim.run_training"] --> TL["transfer_learning.build_transfer_policy"]
+    TL -.->|injects policy into| SA["SinglePPOAgent"]
+    TA --> TR["Trainer → SinglePPOAgent"]
+    SA --> F
+    TR --> F
 
     L["run_inference.py"] --> F
     M["run_visualise_models.py"] --> N["visualisation_models/model_adapters.py"]
@@ -91,7 +97,6 @@ flowchart TD
     Q --> R["exports/&lt;session&gt;/"]
 
     F -.->|writes episode CSV| T["logs/"]
-    S["StrictSuccessStoppingCallback"] -.->|monitors SB3 training| F
     T -.->|read by| U["TrainingLogSummary"]
 ```
 
@@ -133,13 +138,14 @@ The execution decision is made in this order:
 Current checked-in defaults in the source are not neutral:
 
 - `src/fw/config.py`
-  - `env_type = ["PySimEnv", "AirSimEnv"]`
+  - `env_type = ["AirSimEnv"]`
   - `action = "train"`
 - `src/airsim/config/runtime_settings.json`
   - `visualization.model_visualise = true`
   - `visualization.inference_visualise = false`
+  - `transfer_learning.enabled = false`
 
-So the repository currently defaults to a sequential PySimEnv → AirSimEnv training run. If `action` is switched to `"visualize"`, the AirSim step will execute `run_visualise_models.py` because `model_visualise` is true.
+So the repository currently defaults to a standalone AirSimEnv training run. If `action` is switched to `"visualize"`, the AirSim step will execute `run_visualise_models.py` because `model_visualise` is true.
 
 ## Package Layout
 
@@ -169,7 +175,8 @@ src/airsim/
 |-- train/
 |   |-- strict_success_callback.py
 |   |-- train_airsim.py
-|   `-- training_log_analysis.py
+|   |-- training_log_analysis.py
+|   `-- transfer_learning.py
 `-- verantwoording_workflow.md
 ```
 
@@ -238,9 +245,11 @@ Set via `training.speed_profile` in `runtime_settings.json`.
 
 #### Early stopping
 
-`StrictSuccessStoppingCallback` halts training automatically once the policy achieves N consecutive strict-success episodes.
+The current AirSim training flow (`train_airsim.run_training`) stops via `StopCondition(Criterion.NBR_POLICY_UPDATES)` configured by `training.max_policy_updates` in `runtime_settings.json`.
 
-Success criteria per episode:
+`StrictSuccessStoppingCallback` is an available SB3-compatible callback in `train/strict_success_callback.py` that can halt training after N consecutive strict-success episodes, but it is **not wired into the default AirSim training path**. It can be integrated by passing it to the Trainer when needed.
+
+Success criteria defined by `StrictSuccessStoppingCallback`:
 
 1. All route checkpoints passed
 2. Max CTE ≤ `strict_cte_limit_m` (default 10 m)
@@ -248,11 +257,40 @@ Success criteria per episode:
 
 #### Curriculum learning
 
-When `curriculum_enabled=true`, `AirSimEnv` applies a soft curriculum via offtrack-limit decay over approximately 450 episodes, allowing the policy to first learn coarse route following before fine tracking is enforced.
+`AirSimEnv` implements two complementary curriculum mechanisms:
+
+**Soft offtrack-limit decay** (always active): the off-track termination threshold starts permissive and tightens over early episodes, easing initial route exploration.
+
+**Checkpoint-based window/frontier curriculum** (activated by `curriculum_enabled=true`): each episode start is drawn from a sliding window of checkpoints `[frontier - window + 1, frontier]`. After `curriculum_success_patience` consecutive clean successes (no collision, no offtrack, not truncated), the frontier advances by `curriculum_frontier_increment` and the window expands by `curriculum_window_increment`, progressively exposing the full route.
+
+Key config keys in `runtime_settings.json` under `training`:
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `curriculum_enabled` | `false` | Activates checkpoint-based episode start randomization |
+| `curriculum_window_size` | `8` | Initial number of checkpoints in the start window |
+| `curriculum_frontier_increment` | `4` | Checkpoints added to frontier on each advancement |
+| `curriculum_window_increment` | `6` | Window size growth per advancement |
+| `curriculum_success_patience` | `2` | Consecutive successes required before frontier advances |
+| `curriculum_randomization_scale` | `0.0` | Optional Gaussian start-position noise (m) |
 
 `TrainingLogSummary` reads episode CSV logs and recommends a curriculum frontier checkpoint based on median/modal checkpoint progress and high-speed offtrack ratios.
 
-**Full curriculum scheduling and optional transfer learning are the final planned implementation stage and are not yet active.**
+#### Transfer learning
+
+Transfer learning from a pretrained 2D policy to `AirSimEnv` is controlled by the `transfer_learning` block in `runtime_settings.json`:
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `enabled` | `false` | Initialise AirSimEnv policy from a 2D checkpoint |
+| `source_policy_path` | `models/PySimEnv_PPO_policy.zip` | Path to source `.zip` policy (any 2D env) |
+| `freeze_shared_layers` | `true` | Freeze transferred layers; only the mapping layer trains |
+
+When enabled, `run_training()` bypasses the standard Trainer and drives a `SinglePPOAgent` directly so the transferred policy can be injected before `learn()` starts. The source policy is always loaded on CPU regardless of training device; weight tensors are moved to the target device automatically during transfer.
+
+**Mapping layer strategy**: `shared_network[0]: Linear(input_dim → 256)` differs in shape between 2D and 3D policies and is intentionally left randomly initialised as the trainable mapping layer. All deeper shared layers, the actor head, and the critic head have identical shapes and are transferred + optionally frozen.
+
+Transfer works with any compatible `.zip` policy — not limited to PySimEnv. The only requirements are matching action dimensions and `target_input_dim ≥ source_input_dim`. A `TransferIncompatibilityError` is raised with a clear message if either condition fails.
 
 ### 2. Live inference against UE5
 
@@ -366,6 +404,7 @@ In `src/airsim/config/runtime_settings.json`:
 - `airsim` — connection (IP, port, save slot, simulation speed)
 - `training` — speed profile, pause stepping, frames per step, time step, curriculum, steering dynamics, reward normalization
 - `visualization` — replay mode selection, minimap options, interpolation, camera settings, control animation
+- `transfer_learning` — `enabled`, `source_policy_path`, `freeze_shared_layers`
 
 Important keys:
 
@@ -499,6 +538,8 @@ Important test modules:
 - `tests/airsim/inference/test_visualise_models_minimap_save.py`
 - `tests/airsim/inference/test_run_inference_airsim_env.py`
 - `tests/airsim/train/test_train_airsim.py`
+- `tests/airsim/train/test_stability.py`
+- `tests/airsim/train/test_transfer_learning.py`
 - `tests/fw/test_main_fallback.py`
 - `tests/fw/test_env_factory_config.py`
 
@@ -507,4 +548,5 @@ Important test modules:
 - `poc/` is historical and not the current reference implementation.
 - `run_visualise_models.py` is the preferred replay path for framework-trained policies.
 - `run_inference.py` is the preferred path for live UE5-native inference and validation.
-- Full curriculum scheduling and optional transfer learning are pending (final implementation stage).
+- Transfer learning is fully implemented in `train/transfer_learning.py` (T-054 – T-057). Enable it via `transfer_learning.enabled` in `runtime_settings.json`.
+- Curriculum learning is implemented as optional infrastructure in `AirSimEnv`. Enable via `training.curriculum_enabled` in `runtime_settings.json`.

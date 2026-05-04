@@ -163,22 +163,21 @@ De trainingssnelheid wordt bepaald door `training.speed_profile` in `runtime_set
 
 ## Curriculumleren
 
-Curriculumleren wordt gedeeltelijk ondersteund via een zachte offtrack-limietdaling in `AirSimEnv`.
+Curriculumleren is volledig beschikbaar in `AirSimEnv` via twee mechanismen.
 
-Wanneer `curriculum_enabled=true`:
+**Zachte offtrack-limietdaling** (altijd actief): de terminatiedrempel voor offtracks start ruim en vernauwt geleidelijk in de vroege episodes, ongeacht de waarde van `curriculum_enabled`.
 
-- de offtrack-limiet start ruim en daalt geleidelijk over ca. 450 episodes;
-- dit laat de policy eerst globale routenavigatie leren, waarna strakker sporen vereist is.
+**Checkpoint-gebaseerde window/frontier-curriculum** (actief bij `curriculum_enabled=true`): elke episode start op een willekeurig gekozen checkpoint binnen het venster `[frontier - window + 1, frontier]`. Na `curriculum_success_patience` opeenvolgende schone successen verschuift de frontier met `curriculum_frontier_increment` en groeit het venster met `curriculum_window_increment`, waardoor geleidelijk de volledige route wordt blootgesteld.
 
 `TrainingLogSummary` in `train/training_log_analysis.py` analyseert episode-CSV-logs en stelt een curriculumfrontier voor op basis van mediaan/modusvoortgang per checkpoint en het aandeel high-speed offtrack-runs.
 
-**Volledig curriculumschema en optioneel transfer learning zijn nog niet actief. Dit is het laatste geplande implementatiestadium.**
-
 ## Vroegtijdig stoppen
 
-`StrictSuccessStoppingCallback` stopt training automatisch wanneer de policy een configureerbaar aantal opeenvolgende strict-success-episodes bereikt.
+De huidige AirSim-trainingflow stopt via `StopCondition(Criterion.NBR_POLICY_UPDATES)`, bepaald door `training.max_policy_updates` in `runtime_settings.json`.
 
-Succescriteria per episode:
+`StrictSuccessStoppingCallback` (in `train/strict_success_callback.py`) is een beschikbare SB3-compatibele callback die training kan stoppen na N opeenvolgende strict-success-episodes. Deze callback is **niet standaard gekoppeld aan de AirSim-trainingflow** — hij moet expliciet worden doorgegeven aan de Trainer indien gewenst.
+
+Succescriteria die `StrictSuccessStoppingCallback` controleert:
 
 1. Alle routecheckpoints gepasseerd.
 2. Maximale CTE ≤ `strict_cte_limit_m` (standaard 10 m).
@@ -255,14 +254,23 @@ python -m fw.main_with_airsim
 
 wordt gebruikt wanneer expliciet een pure AirSim-run gewenst is, zonder fallback naar de generieke frameworkflow.
 
-## Geplande uitbreidingen
+## Transfer learning
 
-Het volgende is gepland als laatste implementatiestadium:
+Transfer learning van een getrainde 2D-policy naar `AirSimEnv` is volledig geïmplementeerd in `train/transfer_learning.py` (T-054 t/m T-057).
 
-- **Volledig curriculumschema** — gestructureerde multi-fase curriculumprogressie op basis van `TrainingLogSummary`-aanbevelingen.
-- **Optioneel transfer learning** — hergebruik van policy-gewichten getraind in `PySimEnv` of `FhSimEnv` als startpunt voor `AirSimEnv`-training, om initieel leren te versnellen.
+Activeer via `runtime_settings.json`:
 
-Deze functies zijn bewust uitgesteld totdat de basistraining in `AirSimEnv` stabiel en reproduceerbaar is.
+```json
+"transfer_learning": {
+  "enabled": true,
+  "source_policy_path": "models/PySimEnv_PPO_policy.zip",
+  "freeze_shared_layers": true
+}
+```
+
+De eerste lineaire laag (`shared_network[0]`) wordt niet overgedragen wanneer de inputdimensies verschillen — deze blijft willekeurig geïnitialiseerd en trainbaar als **mappinglaag**. Alle diepere gedeelde lagen, de actor-head en de critic-head worden overgedragen en optioneel bevroren.
+
+De bronpolicy hoeft geen PySimEnv-policy te zijn: elke compatibele `.zip`-policy werkt, mits de actiedimensies overeenkomen en de doelwaarneming niet kleiner is dan de bronwaarneming.
 
 ## Samenvatting
 
@@ -274,7 +282,8 @@ Belangrijkste redenen:
 - duidelijke scheiding van verantwoordelijkheden;
 - gescheiden framework- en AirSim-configuratie;
 - meerdere trainingssnelheidsprofielen met deterministische stepping;
-- zachte curriculumondersteuning;
+- checkpoint-gebaseerde curriculumondersteuning met zachte offtrack-anneal;
+- transfer learning van 2D-policies naar AirSimEnv via mappinglaagstrategie;
 - graceful fallback wanneer UE5 niet beschikbaar is.
 
 Daardoor is de huidige integratie robuuster, beter uitlegbaar en praktischer in gebruik tijdens ontwikkeling en testen.

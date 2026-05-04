@@ -42,17 +42,15 @@ So:
 At the time this document was updated, the checked-in source defaults are:
 
 - in `src/fw/config.py`
-  - `env_type = ["PySimEnv", "AirSimEnv"]`
+  - `env_type = ["AirSimEnv"]`
   - `action = "train"`
 - in `src/airsim/config/runtime_settings.json`
   - `visualization.model_visualise = true`
   - `visualization.inference_visualise = false`
-  - `training.speed_profile = "turbo"`
+  - `training.speed_profile = "safe"`
+  - `transfer_learning.enabled = false`
 
-That means the repository, as currently checked in, is biased toward framework
-training with an ordered `PySimEnv -> AirSimEnv` flow. If you switch the
-framework action to `visualize`, the AirSim runtime defaults are biased toward
-model visualisation (`model_visualise = true`).
+That means the repository, as currently checked in, defaults to a standalone AirSimEnv training run. If you switch the framework action to `visualize`, the AirSim runtime defaults are biased toward model visualisation (`model_visualise = true`). Transfer learning is off by default; set `transfer_learning.enabled = true` and point `source_policy_path` at a trained 2D checkpoint to activate it.
 
 ## How Train vs Visualize Is Actually Resolved
 
@@ -119,6 +117,20 @@ UE5 mirrors the motion:
   - choose `visualization.model_path`
   - choose `visualization.model_family`
   - choose `visualization.environment_name`
+
+### AirSimEnv training with transfer learning
+
+Use this when you want to initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights:
+
+- set `src/fw/config.py`
+  - `env_type = ["AirSimEnv"]`
+  - `action = "train"`
+- set `src/airsim/config/runtime_settings.json`
+  - `transfer_learning.enabled = true`
+  - `transfer_learning.source_policy_path` to the `.zip` of the pretrained 2D policy
+  - `transfer_learning.freeze_shared_layers` to `true` (only mapping layer trains) or `false` (full fine-tune)
+
+The source policy can be any compatible checkpoint — PySimEnv, FhSimEnv, or a prior AirSimEnv run — as long as the action dimensions match and the source observation space is not larger than the target.
 
 ### AirSimEnv inference in UE5
 

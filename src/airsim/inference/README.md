@@ -74,7 +74,7 @@ Each run creates a timestamped session folder in `exports/`.
 | `metadata.json` | model path, runtime config, `performance_summary` block |
 | `airsim_telemetry.csv` | UE5-side position, velocity, controls, timestamps (from bridge) |
 | `inference_session.csv` | per-step: episode, x, y, heading, speed, reward, steering, throttle, checkpoint index, CTE, outcome |
-| `trajectory_2d_vs_3d.png` | side-by-side 2D (framework) vs 3D (UE5) trajectory comparison |
+| `trajectory_2d_vs_3d.png` | side-by-side 2D (framework) vs 3D (UE5) trajectory comparison, annotated with shape RMSE and DTW distance |
 
 `performance_summary` in `metadata.json` includes:
 
