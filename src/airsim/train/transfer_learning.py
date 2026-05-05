@@ -86,7 +86,7 @@ class TopologyReport:
             "  Transferable hidden layers (shared_network[2], actor, critic):",
         ]
         for i, (in_f, out_f) in enumerate(self.shared_layer_shapes):
-            lines.append(f"    [{i}] Linear({in_f} → {out_f})  [ReLU activation]")
+            lines.append(f"    [{i}] Linear({in_f} → {out_f})")
         lines += [
             "  Mapping layer      : shared_network[0] kept as random-init,",
             f"                       Linear({self.target_input_dim} → 256) — trainable",
@@ -173,7 +173,7 @@ def validate_transfer_compatibility(report: TopologyReport) -> None:
 # ---------------------------------------------------------------------------
 
 _TRANSFERABLE_KEYS = (
-    "shared_network.0.weight",  # transferred only when input_dim matches; skipped when shapes differ
+    "shared_network.0.weight",
     "shared_network.0.bias",
     "shared_network.2.weight",
     "shared_network.2.bias",
@@ -183,6 +183,10 @@ _TRANSFERABLE_KEYS = (
     "critic.weight",
     "critic.bias",
 )
+
+# Mapping-layer keys are transferred when dims match but must never be frozen —
+# they are always the trainable adapter regardless of freeze_shared.
+_MAPPING_LAYER_KEYS = frozenset({"shared_network.0.weight", "shared_network.0.bias"})
 
 
 def apply_transfer_weights(
@@ -194,8 +198,8 @@ def apply_transfer_weights(
 
     Only layers whose parameter tensors have identical shapes in source and
     target are transferred (``shared_network[2]``, actor head, critic head).
-    The first layer ``shared_network[0]`` is intentionally skipped because its
-    input dimension differs — it becomes the trainable mapping layer (T-057).
+    The first layer ``shared_network[0]`` is always skipped — it is the
+    mapping layer and must remain trainable regardless of dimension match.
 
     Args:
         source_policy: Pretrained 2D policy.
@@ -213,6 +217,10 @@ def apply_transfer_weights(
     for key in _TRANSFERABLE_KEYS:
         if key not in src_sd or key not in tgt_sd:
             continue
+        # Treat mapping-layer weight+bias as a unit: skip bias if weight was not
+        # transferred (e.g. different input dims), so the layer is never partially applied.
+        if key == "shared_network.0.bias" and "shared_network.0.weight" not in transferred:
+            continue
         if src_sd[key].shape != tgt_sd[key].shape:
             continue
         # Move to target device before copying so CPU→CUDA transfers work correctly.
@@ -224,7 +232,7 @@ def apply_transfer_weights(
     if freeze_shared:
         transferred_set = set(transferred)
         for name, param in target_policy.network.named_parameters():
-            if name in transferred_set:
+            if name in transferred_set and name not in _MAPPING_LAYER_KEYS:
                 param.requires_grad_(False)
 
     return transferred

@@ -191,14 +191,15 @@ def normalize_navigation_state(
     route_progress_m = float(state.get("route_progress_m", 0.0))
     checkpoint_index = int(state.get("checkpoint_index", 0))
 
-    heading_norm = (heading_deg / 180.0) - 1.0
+    heading_rad = math.radians(heading_deg)
     checkpoint_ratio = checkpoint_index / safe_checkpoint_count
 
     return np.array(
         [
             np.clip((ship_x - float(xy_center[0])) / safe_half_span, -1.0, 1.0),
             np.clip((ship_y - float(xy_center[1])) / safe_half_span, -1.0, 1.0),
-            np.clip(heading_norm, -1.0, 1.0),
+            math.sin(heading_rad),
+            math.cos(heading_rad),
             np.clip(speed / safe_speed_scale, -1.0, 1.0),
             np.clip(cross_track_error / _CROSS_TRACK_LIMIT_M, -1.0, 1.0),
             np.clip(route_progress_m / safe_progress_scale, -1.0, 1.0),
@@ -772,9 +773,10 @@ class AirSimEnv(BaseEnv):
         )
         terminated = bool(success or collision or offtrack or not self.bridge.is_connected)
         truncated = bool(
-            self.step_count >= self.max_steps
+            (self.step_count >= self.max_steps
             or self._last_pause_timeout
-            or collision_read_failed
+            or collision_read_failed)
+            and not terminated
         )
 
         if success:
@@ -874,6 +876,7 @@ class AirSimEnv(BaseEnv):
 
         if self.load_world_on_start and self.save_slot:
             try:
+                logger.info("Loading AirSim save slot '%s' — this may take up to 90 s ...", self.save_slot)
                 load_started_at = time.perf_counter()
                 self.bridge.load_world_save(save_slot=self.save_slot)
                 settled_pose = self._settle_after_world_load()
@@ -1511,30 +1514,26 @@ class AirSimEnv(BaseEnv):
     def _update_checkpoint_progress(self) -> float:
         """Advance the current checkpoint index from route progress."""
         reward = 0.0
-        while self.checkpoint_index < len(self.checkpoints) - 1:
-            if abs(self.cross_error) > _CHECKPOINT_PASS_MAX_CROSS_TRACK_M:
-                break
-            if abs(self.heading_error) > _CHECKPOINT_PASS_MAX_HEADING_RAD:
-                break
-
+        if (
+            self.checkpoint_index < len(self.checkpoints) - 1
+            and abs(self.cross_error) <= _CHECKPOINT_PASS_MAX_CROSS_TRACK_M
+            and abs(self.heading_error) <= _CHECKPOINT_PASS_MAX_HEADING_RAD
+        ):
             checkpoint = self.checkpoints[self.checkpoint_index]
             threshold = checkpoint["distance_m"] - checkpoint["radius"]
-            if self._route_progress_m < threshold:
-                break
-            passed_checkpoint_index = int(self.checkpoint_index)
-            self.checkpoint_index += 1
-            checkpoint_reward = float(checkpoint.get("reward", _CHECKPOINT_REWARD))
-            reward += checkpoint_reward
-            self._record_run_event(
-                "checkpoint_passed",
-                checkpoint_index=passed_checkpoint_index,
-                reward=checkpoint_reward,
-                ship_x=float(self.ship_pos[0]),
-                ship_y=float(self.ship_pos[1]),
-                heading_deg=float(math.degrees(self.ship_heading)),
-            )
-            # Avoid reward bursts when progress jumps across many checkpoints in one RL step.
-            break
+            if self._route_progress_m >= threshold:
+                passed_checkpoint_index = int(self.checkpoint_index)
+                self.checkpoint_index += 1
+                checkpoint_reward = float(checkpoint.get("reward", _CHECKPOINT_REWARD))
+                reward += checkpoint_reward
+                self._record_run_event(
+                    "checkpoint_passed",
+                    checkpoint_index=passed_checkpoint_index,
+                    reward=checkpoint_reward,
+                    ship_x=float(self.ship_pos[0]),
+                    ship_y=float(self.ship_pos[1]),
+                    heading_deg=float(math.degrees(self.ship_heading)),
+                )
         return reward
 
     def _has_reached_target(self) -> bool:

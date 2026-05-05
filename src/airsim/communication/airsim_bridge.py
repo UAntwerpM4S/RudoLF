@@ -351,6 +351,11 @@ class AirSimBridge:
             self._client = None
             self._controls = None
             self._rendering_enabled = None
+            logger.warning(
+                "Flushing CSV telemetry buffer before reconnect at %s — "
+                "a gap will exist in the output file from this point.",
+                datetime.now(timezone.utc).isoformat(),
+            )
             self._flush_csv()
             
             # T-005: Reconnect
@@ -727,7 +732,7 @@ class AirSimBridge:
             
         try:
             target_z = z
-            quat_x, quat_y, quat_z, quat_w = 0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)
+            quat_x, quat_y, quat_z, quat_w = _quaternion_from_euler(0.0, 0.0, yaw)
             current_pose = _current_pose
             if preserve_current_z and current_pose is None:
                 current_pose = self._client.simGetVehiclePose()
@@ -776,9 +781,7 @@ class AirSimBridge:
         if not self._ensure_connected():
             return
         try:
-            quat_x, quat_y, quat_z, quat_w = (
-                0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)
-            )
+            quat_x, quat_y, quat_z, quat_w = _quaternion_from_euler(0.0, 0.0, yaw)
             pose = self._airsim.Pose(
                 self._airsim.Vector3r(x, y, z),
                 self._airsim.Quaternionr(quat_x, quat_y, quat_z, quat_w),
@@ -823,7 +826,7 @@ class AirSimBridge:
 
         try:
             target_z = z
-            quat_x, quat_y, quat_z, quat_w = 0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)
+            quat_x, quat_y, quat_z, quat_w = _quaternion_from_euler(0.0, 0.0, yaw)
             current_pose = None
             if preserve_current_z:
                 current_pose = self._client.simGetVehiclePose()
@@ -955,7 +958,7 @@ class AirSimBridge:
                 if not file_exists:
                     writer.writeheader()
                 writer.writerows(list(self._sensor_buffer))
-            self._sensor_buffer.clear()
+                self._sensor_buffer.clear()
         except Exception as exc:
             logger.warning("Failed to dump sensor buffer to CSV: %s", exc)
 
