@@ -198,15 +198,15 @@ class Trainer:
                     print("Skipping automatic post-training visualization for AirSimEnv.")
                 else:
                     summaries = self.visualize(
-                        [last_env],
-                        collect_evaluation_summary=True,
-                        show_plots=show_plots,
+                    [last_env],
+                    collect_evaluation_summary=True,
+                    show_plots=show_plots,
+                )
+                if summaries:
+                    env_metrics["evaluation_summary"] = (
+                        summaries.get(env_type)
+                        or next(iter(summaries.values()))
                     )
-                    if summaries:
-                        env_metrics["evaluation_summary"] = (
-                            summaries.get(env_type)
-                            or next(iter(summaries.values()))
-                        )
             except AttributeError as e:
                 print(e)
         else:
@@ -626,6 +626,8 @@ class Trainer:
                 "Mean Rudder Angle (mRA)",
                 "Maximum Rudder Angle (MRA)",
                 "Mean Rudder Angle Change (mRAC)",
+                "Steering Variance (vRA)",
+                "Steering Sign-Change Frequency (sCF)",
                 "Mean Thrust (mT)",
                 "Maximum Thrust (MT)",
                 "Mean Thrust Change (mTC)",
@@ -677,6 +679,8 @@ class Trainer:
                         summary.get("mRA"),
                         summary.get("MRA"),
                         summary.get("mRAC"),
+                        summary.get("vRA"),
+                        summary.get("sCF"),
                         summary.get("mT"),
                         summary.get("MT"),
                         summary.get("mTC"),

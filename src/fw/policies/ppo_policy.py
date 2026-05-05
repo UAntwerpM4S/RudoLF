@@ -1,5 +1,4 @@
 import os
-import re
 import torch
 import zipfile
 import tempfile
@@ -263,14 +262,20 @@ class PPOPolicy:
         # Create a normal distribution with the mean and std
         dist = torch.distributions.Normal(action_mean, action_std)
 
+        if deterministic:
+            # Use the mean as the raw (pre-squash) action
+            raw_action = action_mean
+        else:
+            # Sample in R
+            raw_action = dist.rsample()
+
         # Sample raw action and squash it using tanh
-        raw_action = dist.rsample()
         action = torch.tanh(raw_action)
 
         # Compute log probability of the squashed action
         log_prob = self.calc_log_probs(dist, raw_action, action)
 
-        return action_mean if deterministic else action, log_prob, value.squeeze(-1)  # Return action, log_prob, and value (squeezed)
+        return action, log_prob, value.squeeze(-1)  # Return action, log_prob, and value (squeezed)
 
 
     from typing import Union

@@ -312,6 +312,8 @@ class AgentManager:
                         "mRA": m.mRA,
                         "MRA": m.MRA,
                         "mRAC": m.mRAC,
+                        "vRA": m.vRA,
+                        "sCF": m.sCF,
                         "mT": m.mT,
                         "MT": m.MT,
                         "mTC": m.mTC,
@@ -328,10 +330,13 @@ class AgentManager:
                     print(f"Mean Rudder Angle (mRA): {m.mRA:.3f}")
                     print(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
                     print(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
+                    print(f"Variance of Rudder Angle (vRA): {m.vRA:.4f}")
+                    print(f"Steering Sign-Change Frequency (sCF): {m.sCF:.4f}")
                     print(f"Mean Thrust (mT): {m.mT:.3f}")
                     print(f"Maximum Thrust (MT): {m.MT:.3f}")
                     print(f"Mean Thrust Change (mTC): {m.mTC:.4f}")
                     print(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
+
 
                 save_dir = self.agent.model_dir or "."
                 if not save_dir:
