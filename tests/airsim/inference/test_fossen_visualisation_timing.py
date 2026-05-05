@@ -6,16 +6,16 @@ from airsim.inference.visualisation_models.model_adapters import _should_snap_vi
 def test_should_snap_visual_update_when_duration_is_shorter_than_render_interval():
     """Test behavior for should snap visual update when duration is shorter than render interval.
     """
-    assert _should_snap_visual_update(total_duration=0.005, min_render_hz=90.0) is True
+    assert _should_snap_visual_update(total_duration=0.005, update_interval_s=1.0/90.0, interpolation_steps=1) is True
 
 
 def test_should_not_snap_visual_update_when_duration_exceeds_render_interval():
     """Test behavior for should not snap visual update when duration exceeds render interval.
     """
-    assert _should_snap_visual_update(total_duration=0.030, min_render_hz=90.0) is False
+    assert _should_snap_visual_update(total_duration=0.030, update_interval_s=1.0/90.0, interpolation_steps=3) is False
 
 
 def test_should_snap_visual_update_for_near_zero_duration_even_without_render_limit():
     """Test behavior for should snap visual update for near zero duration even without render limit.
     """
-    assert _should_snap_visual_update(total_duration=0.0005, min_render_hz=0.0) is True
+    assert _should_snap_visual_update(total_duration=0.0005, update_interval_s=0.001, interpolation_steps=1) is True

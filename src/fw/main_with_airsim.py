@@ -17,6 +17,27 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     from pathlib import Path
     import os
 
+    class _AsyncioWin995Filter(logging.Filter):
+        """Suppress the noisy Windows asyncio self-pipe shutdown traceback."""
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            """Return False for the known benign WinError 995 shutdown record."""
+            exc = record.exc_info[1] if record.exc_info else None
+            message = record.getMessage().lower()
+            if (
+                "event loop self pipe" in message
+                and (
+                    (
+                        isinstance(exc, ConnectionResetError)
+                        and getattr(exc, "winerror", None) == 995
+                    )
+                    or "winerror 995" in message
+                    or "connectionreseterror" in message
+                )
+            ):
+                return False
+            return True
+
     _verbose_airsim = str(os.environ.get("FW_AIRSIM_VERBOSE", "0")).strip().lower() in {
         "1",
         "true",
@@ -33,11 +54,14 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # Keep AirSim and simulator logs concise by default.
     logging.getLogger("airsim").setLevel(_airsim_log_level)
     logging.getLogger("sim").setLevel(_sim_log_level)
+    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+    logging.getLogger("asyncio").addFilter(_AsyncioWin995Filter())
 
 
     multiprocessing.set_start_method("spawn", force=True)
 
     from airsim.config.airsim_config import (
+        DEFAULT_THROTTLE_VISUAL_GAIN,
         get_default_runtime_settings,
         get_runtime_settings,
         merge_runtime_settings,
@@ -82,14 +106,18 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         "safe": {
             "simulation_speed": 20.0,
             "use_pause_stepping": True,
+            "use_sim_time_stepping": True,
+            "sim_time_per_action": 0.05,
             "frames_per_step": 8,
-            "time_step": 0.1,
-            "physics_update_timeout": 1.0,
-            "state_poll_interval": 0.005,
+            "time_step": 0.05,
+            "physics_update_timeout": 1.2,
+            "state_poll_interval": 0.003,
         },
         "fast": {
             "simulation_speed": 40.0,
             "use_pause_stepping": True,
+            "use_sim_time_stepping": True,
+            "sim_time_per_action": 0.1,
             "frames_per_step": 10,
             "time_step": 0.1,
             "physics_update_timeout": 1.0,
@@ -98,6 +126,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         "turbo": {
             "simulation_speed": 80.0,
             "use_pause_stepping": True,
+            "use_sim_time_stepping": True,
+            "sim_time_per_action": 0.1,
             "frames_per_step": 12,
             "time_step": 0.1,
             "physics_update_timeout": 1.2,
@@ -114,6 +144,31 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             f"[main_with_airsim] Unknown training.speed_profile '{profile_name}'. "
             "Using explicit training settings."
         )
+    if bool(effective_training_cfg.get("use_pause_stepping", False)) and bool(
+        effective_training_cfg.get("use_sim_time_stepping", False)
+    ):
+        effective_training_cfg["time_step"] = float(
+            effective_training_cfg.get(
+                "sim_time_per_action",
+                effective_training_cfg.get("time_step", 0.1),
+            )
+        )
+        print(
+            "[main_with_airsim] MDP step: "
+            f"{float(effective_training_cfg['time_step']):.3f}s simulated time per RL action"
+        )
+
+    if bool(effective_training_cfg.get("use_pause_stepping", False)):
+        if bool(effective_training_cfg.get("use_sim_time_stepping", False)):
+            print(
+                "[main_with_airsim] Step mode: simContinueForTime("
+                f"{float(effective_training_cfg.get('sim_time_per_action', effective_training_cfg.get('time_step', 0.1))):.3f}s)"
+            )
+        else:
+            print(
+                "[main_with_airsim] Step mode: simContinueForFrames("
+                f"{int(effective_training_cfg.get('frames_per_step', 1))})"
+            )
     # Runtime visualization flags may promote the AirSim entrypoint into
     # visualize mode only when fw.main did not pass an explicit action override.
     # This keeps ordered framework execution honest: a delegated AirSim train
@@ -181,23 +236,16 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 animate_throttle_in_ue5=bool(visualization_cfg.get("animate_throttle_in_ue5", True)),
                 render_interpolation_steps=int(visualization_cfg.get("render_interpolation_steps", 8)),
                 steering_visual_gain=float(visualization_cfg.get("steering_visual_gain", 0.35)),
-                throttle_visual_gain=float(visualization_cfg.get("throttle_visual_gain", 1.0)),
+                throttle_visual_gain=float(
+                    visualization_cfg.get("throttle_visual_gain", DEFAULT_THROTTLE_VISUAL_GAIN)
+                ),
                 use_kinematics_in_ue5=bool(visualization_cfg.get("use_kinematics_in_ue5", False)),
                 min_render_hz=float(visualization_cfg.get("min_render_hz", 90.0)),
                 max_translation_step=float(visualization_cfg.get("max_translation_step", 0.15)),
                 max_yaw_step_deg=float(visualization_cfg.get("max_yaw_step_deg", 1.5)),
                 lock_path_in_ue5=bool(visualization_cfg.get("lock_path_in_ue5", False)),
                 vehicle_object_name=str(visualization_cfg.get("vehicle_object_name", "")),
-                show_minimap=bool(visualization_cfg.get("show_minimap", True)),
-                save_matplotlib_minimap=bool(visualization_cfg.get("save_matplotlib_minimap", False)),
-                use_ue5_camera_minimap=bool(visualization_cfg.get("use_ue5_camera_minimap", False)),
-                ue5_camera_name=str(visualization_cfg.get("ue5_camera_name", "TopDownCam")),
-                ue5_camera_fov_deg=float(visualization_cfg.get("ue5_camera_fov_deg", 38.0)),
-                ue5_camera_height_m=float(visualization_cfg.get("ue5_camera_height_m", 120.0)),
-                ue5_camera_follow_heading=bool(visualization_cfg.get("ue5_camera_follow_heading", False)),
-                ue5_preview_window=bool(visualization_cfg.get("ue5_preview_window", True)),
                 min_log_interval_s=float(visualization_cfg.get("min_log_interval_s", 0.25)),
-                minimap_update_hz=float(visualization_cfg.get("minimap_update_hz", 20.0)),
                 bridge_telemetry_hz=float(visualization_cfg.get("bridge_telemetry_hz", 12.0)),
                 startup_settle_s=float(visualization_cfg.get("startup_settle_s", 0.4)),
                 verbose=bool(visualization_cfg.get("verbose", _verbose_airsim)),
@@ -215,6 +263,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 max_steps=max_steps,
                 num_episodes=episodes,
                 device=device,
+                draw_calibration_reference=draw_ref,
                 verbose=bool(visualization_cfg.get("verbose", _verbose_airsim)),
             )
             return True
@@ -249,9 +298,15 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             )
             raise SystemExit(1)
 
+    if action == "train":
+        from airsim.train.train_airsim import run_training
+
+        metrics = run_training(runtime_settings)
+        print(f"Training metrics: {metrics}")
+        raise SystemExit(0)
+
     # Ensure all environments are registered once
     from fw.trainer import Trainer
-    from fw.stop_condition import StopCondition, Criterion
     from fw.config import PPO_POLICY_NAME
     from fw.env_factory import (
         get as get_environment,
@@ -275,13 +330,43 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     )
     airsim_env_cfg.update({
         "training_mode": is_training,
+        "draw_calibration_reference": bool(
+            effective_training_cfg.get(
+                "draw_calibration_reference",
+                visualization_cfg.get("draw_calibration_reference", True),
+            )
+        ),
+        "no_rendering_mode": bool(effective_training_cfg.get("no_rendering_mode", False)),
+        "load_world_on_start": effective_training_cfg.get("load_world_on_start", None),
+        "capture_live_start_pose": effective_training_cfg.get("capture_live_start_pose", None),
+        "episode_log_path": str(effective_training_cfg.get("episode_log_path", "")),
+        "normalize_reward": bool(effective_training_cfg.get("normalize_reward", True)),
+        "reward_normalization_scale": float(
+            effective_training_cfg.get("reward_normalization_scale", 5.0)
+        ),
+        "reset_mode": str(effective_training_cfg.get("reset_mode", "rewind_pose")),
+        "progress_log_interval_steps": int(effective_training_cfg.get("progress_log_interval_steps", 0)),
+        "log_pause_watchdog_warnings": bool(effective_training_cfg.get("log_pause_watchdog_warnings", False)),
+        "use_sim_time_stepping": bool(effective_training_cfg.get("use_sim_time_stepping", False)),
+        "sim_time_per_action": float(effective_training_cfg.get("sim_time_per_action", effective_training_cfg.get("time_step", 0.1))),
         "use_pause_stepping": bool(effective_training_cfg.get("use_pause_stepping", is_training)),
         "simulation_speed": effective_simulation_speed,
         "max_steps": effective_max_steps,
-        "frames_per_step": int(effective_training_cfg.get("frames_per_step", 10)),
+        "frames_per_step": int(effective_training_cfg.get("frames_per_step", 8)),
         "time_step": float(effective_training_cfg.get("time_step", 0.1)),
         "physics_update_timeout": float(effective_training_cfg.get("physics_update_timeout", 1.0)),
         "state_poll_interval": float(effective_training_cfg.get("state_poll_interval", 0.005)),
+        "guidance_assist_enabled": bool(effective_training_cfg.get("guidance_assist_enabled", False)),
+        "guidance_residual_steering_scale": float(
+            effective_training_cfg.get("guidance_residual_steering_scale", 0.45)
+        ),
+        "guidance_residual_throttle_scale": float(
+            effective_training_cfg.get("guidance_residual_throttle_scale", 0.55)
+        ),
+        "control_interface": str(effective_training_cfg.get("control_interface", "car_physics")),
+        "observation_profile": str(
+            effective_training_cfg.get("observation_profile", "ppo_route_relative_car")
+        ),
     })
     if "latency_warning_threshold" in effective_training_cfg:
         airsim_env_cfg["latency_warning_threshold"] = float(effective_training_cfg["latency_warning_threshold"])
@@ -301,36 +386,22 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # Create a Trainer and pass on a list of agents that you want to train
     trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
 
-    if "train" == action:
-        # Re-enable airsim logging only when the airsim environment is selected
-        if _is_airsim_selected(envs):
+    # Optionally create AirSim bridge for simultaneous vehicle control
+    from airsim.config.airsim_config import get_airsim_config, AirSimConfig
+    airsim_cfg = get_airsim_config()
+    airsim_bridge = None
+    if airsim_cfg.get("use_airsim", False) and not _is_airsim_selected(envs):
+        from airsim.communication.airsim_bridge import AirSimBridge
+        bridge_cfg = AirSimConfig(
+            ip=airsim_cfg.get("ip", ""),
+            port=airsim_cfg.get("port", 41451)
+        )
+        temp_bridge = AirSimBridge(bridge_cfg)
+        if temp_bridge.is_connected:
+            airsim_bridge = temp_bridge
             logging.getLogger("airsim").setLevel(_airsim_log_level)
-
-        configuration = {py_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
-                         airsim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=1.75, patience=4, max_time_steps=1300),
-                         fh_sim_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD, target_reward=3.80, patience=4, max_time_steps=1300),
-                         lunar_env_name: StopCondition(stop_criterion=Criterion.TARGET_REWARD_AND_LOSS, target_reward=0.20, target_loss=0.8, patience=1, max_time_steps=300),
-                         py_sim_polar_env_name: StopCondition(stop_criterion=Criterion.NBR_POLICY_UPDATES, max_time_steps=600)}
-        metrics = trainer.train(configuration)
-
-        print(f"Training metrics: {metrics}")
-    else:
-        # Optionally create AirSim bridge for simultaneous vehicle control
-        from airsim.config.airsim_config import get_airsim_config, AirSimConfig
-        airsim_cfg = get_airsim_config()
-        airsim_bridge = None
-        if airsim_cfg.get("use_airsim", False) and not _is_airsim_selected(envs):
-            from airsim.communication.airsim_bridge import AirSimBridge
-            bridge_cfg = AirSimConfig(
-                ip=airsim_cfg.get("ip", ""),
-                port=airsim_cfg.get("port", 41451)
-            )
-            temp_bridge = AirSimBridge(bridge_cfg)
-            if temp_bridge.is_connected:
-                airsim_bridge = temp_bridge
-                logging.getLogger("airsim").setLevel(_airsim_log_level)
-            else:
-                print("[main] AirSim bridge not connected - running without.")
-        elif _is_airsim_selected(envs):
-            logging.getLogger("airsim").setLevel(_airsim_log_level)
-        trainer.visualize(envs, airsim_bridge=airsim_bridge)
+        else:
+            print("[main] AirSim bridge not connected - running without.")
+    elif _is_airsim_selected(envs):
+        logging.getLogger("airsim").setLevel(_airsim_log_level)
+    trainer.visualize(envs, airsim_bridge=airsim_bridge)

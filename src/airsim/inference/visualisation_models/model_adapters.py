@@ -17,10 +17,11 @@ import numpy as np
 
 from airsim.communication.airsim_bridge import AirSimBridge
 from airsim.communication.control_mapping import (
-    map_fossen_actuator_state,
-    map_fossen_steering_visual_state,
-    map_fossen_visual_actuator_state,
+    map_framework_actuator_state,
+    map_framework_steering_visual_state,
+    map_framework_visual_actuator_state,
 )
+from airsim.config.airsim_config import DEFAULT_THROTTLE_VISUAL_GAIN
 from fw.common.airsim.tools.angles import interpolate_angle, wrapped_angle_delta
 from fw.common.airsim.tools.path_utils import resolve_model_path
 from fw.common.default_positions import (
@@ -34,6 +35,7 @@ from fw.policies.ppo_policy import PPOPolicy
 _DEFAULT_SHIP_POS = list(DEFAULT_FRAMEWORK_SHIP_POS)
 _DEFAULT_TARGET_POS = list(DEFAULT_FRAMEWORK_TARGET_POS)
 _SRC_DIR = Path(__file__).resolve().parents[3]
+_MAX_VISUAL_UPDATE_HZ = 240.0
 
 
 def _interpolate_actuator_state(
@@ -159,17 +161,17 @@ def _build_framework_motion_state(
     framework_x, framework_y, framework_heading = adapter.extract_pose(env, ship_index=ship_index)
     surge, sway, yaw_rate = adapter.extract_velocity(env, ship_index=ship_index)
 
-    airsim_x, airsim_y, _ = coord.fossen_to_airsim(
+    airsim_x, airsim_y, _ = coord.framework_to_airsim(
         framework_x,
         framework_y,
         bridge.render_z,
     )
-    airsim_yaw = coord.fossen_heading_to_airsim_yaw(framework_heading)
+    airsim_yaw = coord.framework_heading_to_airsim_yaw(framework_heading)
 
-    fossen_vx = surge * np.cos(framework_heading) - sway * np.sin(framework_heading)
-    fossen_vy = surge * np.sin(framework_heading) + sway * np.cos(framework_heading)
-    airsim_vx, airsim_vy = coord.fossen_velocity_to_airsim(fossen_vx, fossen_vy)
-    airsim_yaw_rate = coord.fossen_yaw_rate_to_airsim(yaw_rate)
+    framework_vx = surge * np.cos(framework_heading) - sway * np.sin(framework_heading)
+    framework_vy = surge * np.sin(framework_heading) + sway * np.cos(framework_heading)
+    airsim_vx, airsim_vy = coord.framework_velocity_to_airsim(framework_vx, framework_vy)
+    airsim_yaw_rate = coord.framework_yaw_rate_to_airsim(yaw_rate)
 
     return np.array([airsim_x, airsim_y, airsim_yaw, airsim_vx, airsim_vy, airsim_yaw_rate], dtype=np.float64)
 
@@ -209,21 +211,66 @@ def _resolve_interpolation_steps(
     return max(1, steps)
 
 
-def _should_snap_visual_update(total_duration: float, min_render_hz: float) -> bool:
+def _resolve_visual_update_interval(
+    total_duration: float,
+    interpolation_steps: int,
+    min_render_hz: float,
+    max_update_hz: float = _MAX_VISUAL_UPDATE_HZ,
+) -> float:
+    """Resolve the UE5 pose-update interval for one replay segment.
+
+    Args:
+        total_duration: Planned total interpolation duration in seconds.
+        interpolation_steps: Requested interpolation step count for the motion.
+        min_render_hz: Minimum desired render frequency in Hertz.
+        max_update_hz: Hard cap on pose pushes to UE5 in Hertz.
+
+    Returns:
+        float: Update interval in seconds used for pose pushes.
+    """
+    total_duration = max(float(total_duration), 0.0)
+    interpolation_steps = max(1, int(interpolation_steps))
+
+    render_interval = 1.0 / float(min_render_hz) if min_render_hz > 0.0 else 0.0
+    interpolation_interval = (
+        total_duration / float(interpolation_steps) if total_duration > 0.0 else 0.0
+    )
+
+    if render_interval > 0.0 and interpolation_interval > 0.0:
+        update_interval = min(render_interval, interpolation_interval)
+    else:
+        update_interval = max(render_interval, interpolation_interval)
+
+    if update_interval <= 0.0:
+        update_interval = 1e-3
+
+    if max_update_hz > 0.0:
+        update_interval = max(update_interval, 1.0 / float(max_update_hz))
+
+    return float(update_interval)
+
+
+def _should_snap_visual_update(
+    total_duration: float,
+    update_interval_s: float,
+    interpolation_steps: int,
+) -> bool:
     """Return whether a visual update should skip time-based interpolation.
 
     Args:
         total_duration: Planned total interpolation duration in seconds.
-        min_render_hz: Minimum desired render frequency in Hertz.
+        update_interval_s: Effective pose-update interval for the segment.
+        interpolation_steps: Requested interpolation step count.
 
     Returns:
         bool: ``True`` when interpolation should snap directly to the final
         visual state.
     """
     total_duration = max(float(total_duration), 0.0)
-    min_step_interval = 1.0 / float(min_render_hz) if min_render_hz > 0.0 else 0.0
-    snap_threshold = max(1e-3, min_step_interval)
-    return total_duration <= snap_threshold
+    update_interval_s = max(float(update_interval_s), 1e-3)
+    if total_duration <= 1e-9:
+        return True
+    return total_duration <= update_interval_s and int(interpolation_steps) <= 1
 
 
 def _build_visual_controls(
@@ -261,28 +308,57 @@ def _build_visual_controls(
 
     airsim_module = bridge.airsim
     specs = adapter.extract_ship_specifications(env, ship_index=ship_index)
-    if mirror_controls_in_ue5:
-        return map_fossen_actuator_state(
-            airsim_module,
-            specs,
-            rudder_angle=float(actuator_state[0]),
-            thrust=float(actuator_state[1]),
-            steering_gain=steering_visual_gain,
+    replay_brake = 1.0
+    speed_ratio = None
+    try:
+        surge_speed, _, _ = adapter.extract_velocity(env, ship_index=ship_index)
+        surge_limits = getattr(specs, "surge_limits", None)
+        if surge_limits is not None and len(surge_limits) >= 2:
+            max_speed = max(abs(float(surge_limits[0])), abs(float(surge_limits[1])))
+            if max_speed > 1e-6:
+                speed_ratio = float(np.clip(abs(float(surge_speed)) / max_speed, 0.0, 1.0))
+    except Exception:
+        speed_ratio = None
+
+    def _apply_visual_speed_matching(controls: Any):
+        """Align the replay throttle visual with the framework speed envelope."""
+        if controls is None or speed_ratio is None:
+            return controls
+        controls.throttle = float(
+            np.clip(float(speed_ratio) * max(float(throttle_visual_gain), 0.0), 0.0, 1.0)
         )
-    if animate_throttle_in_ue5:
-        return map_fossen_visual_actuator_state(
+        return controls
+
+    if mirror_controls_in_ue5:
+        controls = map_framework_actuator_state(
             airsim_module,
             specs,
             rudder_angle=float(actuator_state[0]),
             thrust=float(actuator_state[1]),
+            brake=replay_brake,
             steering_gain=steering_visual_gain,
             throttle_gain=throttle_visual_gain,
         )
-    if animate_steering_in_ue5:
-        return map_fossen_steering_visual_state(
+        controls.brake = 0.0
+        return _apply_visual_speed_matching(controls)
+    if animate_throttle_in_ue5:
+        controls = map_framework_visual_actuator_state(
             airsim_module,
             specs,
             rudder_angle=float(actuator_state[0]),
+            thrust=float(actuator_state[1]),
+            brake=replay_brake,
+            steering_gain=steering_visual_gain,
+            throttle_gain=throttle_visual_gain,
+        )
+        controls.brake = 0.0
+        return _apply_visual_speed_matching(controls)
+    if animate_steering_in_ue5:
+        return map_framework_steering_visual_state(
+            airsim_module,
+            specs,
+            rudder_angle=float(actuator_state[0]),
+            brake=replay_brake,
             steering_gain=steering_visual_gain,
         )
     return None
@@ -301,7 +377,7 @@ def _animate_framework_state(
     animate_throttle_in_ue5: bool = False,
     previous_actuator_state: Optional[np.ndarray] = None,
     steering_visual_gain: float = 0.35,
-    throttle_visual_gain: float = 1.0,
+    throttle_visual_gain: float = DEFAULT_THROTTLE_VISUAL_GAIN,
     use_kinematics_in_ue5: bool = False,
     min_render_hz: float = 90.0,
     max_translation_step: float = 0.15,
@@ -410,8 +486,12 @@ def _animate_framework_state(
     if lock_path_in_ue5 and min_render_hz > 0.0:
         total_duration = max(total_duration, interpolation_steps / float(min_render_hz))
 
-    min_step_interval = 1.0 / min_render_hz if min_render_hz > 0.0 else 0.0
-    if _should_snap_visual_update(total_duration, min_render_hz):
+    visual_update_interval = _resolve_visual_update_interval(
+        total_duration=total_duration,
+        interpolation_steps=interpolation_steps,
+        min_render_hz=min_render_hz,
+    )
+    if _should_snap_visual_update(total_duration, visual_update_interval, interpolation_steps):
         _send_pose(1.0)
         _send_controls(1.0)
         return target_motion_state, target_actuator_state
@@ -424,7 +504,7 @@ def _animate_framework_state(
 
     start_time = time.perf_counter()
     deadline = start_time + total_duration
-    _last_pose_time = start_time - min_step_interval
+    _last_pose_time = start_time - visual_update_interval
 
     while True:
         now = time.perf_counter()
@@ -434,7 +514,7 @@ def _animate_framework_state(
         if not bridge.is_connected:
             break
 
-        if is_final or (now - _last_pose_time >= min_step_interval):
+        if is_final or (now - _last_pose_time >= visual_update_interval):
             _send_pose(alpha)
             _last_pose_time = now
 
@@ -692,7 +772,7 @@ class PySimVisualisationAdapter(ModelVisualisationAdapter):
     family = "pysim"
     model_origin = "pysim"
     supported_environment_names = ("PySimEnv",)
-    filename_keywords = ("pysimenv", "py_sim", "fossen")
+    filename_keywords = ("pysimenv", "py_sim", "framework")
 
     def environment_builders(self) -> dict[str, Callable[[int], object]]:
         """Return the supported PySim environment factories.

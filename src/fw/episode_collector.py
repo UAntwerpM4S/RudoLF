@@ -140,7 +140,7 @@ class EpisodeCollector:
             to ["ship_0"].
     """
 
-    def __init__(self, agent, env, ship_ids: Optional[list[str]] = None):
+    def __init__(self, agent, env, ship_ids: Optional[list[str]] = None, airsim_bridge=None):
         """Initialize the collector and resolve the ship IDs to track.
 
         Args:
@@ -155,6 +155,13 @@ class EpisodeCollector:
         """
         self._agent = agent
         self._env = env
+        self._airsim_bridge = airsim_bridge
+
+        if self._airsim_bridge and self._airsim_bridge.is_connected:
+            from airsim.communication.coord_transform import CoordTransform
+            self._coord_transform = CoordTransform()
+        else:
+            self._coord_transform = None
 
         if ship_ids is not None:
             self._ship_ids = ship_ids
@@ -302,6 +309,15 @@ class EpisodeCollector:
 
                 steps += 1
                 self._record_step(accumulators, ship_envs, reward)
+
+                if self._coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
+                    ax, ay, _ = self._coord_transform.framework_to_airsim(
+                        float(env.ship_pos[0]), float(env.ship_pos[1])
+                    )
+                    ayaw = self._coord_transform.framework_heading_to_airsim_yaw(
+                        float(env.phys_sim.state.heading)
+                    )
+                    self._airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
 
                 if live_animation:
                     for ship_env in ship_envs.values():

@@ -125,11 +125,18 @@ class Trainer:
         self._agent_type = agent_type
         self._envs = envs
         self._config = get_config_parameters()
+        self._hyperparameter_env_name = self._resolve_hyperparameter_env_name()
 
         if self._config["viz_mode"] == VisualizationMode.SIMPLE:
-            self._agent_mgr = AgentManagerSimple(agent_type, get_hyperparameters(agent_type))
+            self._agent_mgr = AgentManagerSimple(
+                agent_type,
+                get_hyperparameters(agent_type, env_name=self._hyperparameter_env_name),
+            )
         else:
-            self._agent_mgr = AgentManager(agent_type, get_hyperparameters(agent_type))
+            self._agent_mgr = AgentManager(
+                agent_type,
+                get_hyperparameters(agent_type, env_name=self._hyperparameter_env_name),
+            )
 
         # Dynamically load the scheduler based on its name
         try:
@@ -147,6 +154,26 @@ class Trainer:
             raise TypeError("Scheduler must have an 'envs' attribute and an 'execute' method.")
 
         self._scheduler = scheduler
+
+    def _resolve_hyperparameter_env_name(self):
+        """Return a shared environment name when all selected envs match.
+
+        If the run mixes environment families, keep the shared PPO defaults so
+        one environment does not silently change the tuning of the others.
+        """
+
+        env_names = []
+        for env in self._envs:
+            type_name = getattr(env, "type_name", None)
+            if type_name is None:
+                type_name = getattr(getattr(env, "gym_env", None), "type_name", None)
+            if type_name:
+                env_names.append(type_name)
+
+        if env_names and len(set(env_names)) == 1:
+            return env_names[0]
+
+        return None
 
 
     def train(self, configuration: dict = None, show_plots: bool = True) -> dict:
@@ -180,6 +207,8 @@ class Trainer:
                         summaries.get(env_type)
                         or next(iter(summaries.values()))
                     )
+                if env_type == "AirSimEnv":
+                    print("Skipping automatic post-training visualization for AirSimEnv.")
             except AttributeError as e:
                 print(e)
         else:
@@ -599,6 +628,8 @@ class Trainer:
                 "Mean Rudder Angle (mRA)",
                 "Maximum Rudder Angle (MRA)",
                 "Mean Rudder Angle Change (mRAC)",
+                "Steering Variance (vRA)",
+                "Steering Sign-Change Frequency (sCF)",
                 "Mean Thrust (mT)",
                 "Maximum Thrust (MT)",
                 "Mean Thrust Change (mTC)",
@@ -650,6 +681,8 @@ class Trainer:
                         summary.get("mRA"),
                         summary.get("MRA"),
                         summary.get("mRAC"),
+                        summary.get("vRA"),
+                        summary.get("sCF"),
                         summary.get("mT"),
                         summary.get("MT"),
                         summary.get("mTC"),

@@ -225,19 +225,22 @@ def run_inference(
     max_steps: int = 14000,
     num_episodes: int = 3,
     device: str = "cpu",
+    draw_calibration_reference: bool = True,
     verbose: bool = False,
 ) -> None:
     """Run live inference in UE5 using the native ``AirSimEnv`` loop.
 
     Args:
         model_path: Path to the AirSimEnv-trained checkpoint.
-        ship_pos: Optional start position override in Fossen coordinates.
-        target_pos: Optional target position override in Fossen coordinates.
+        ship_pos: Optional start position override in framework coordinates.
+        target_pos: Optional target position override in framework coordinates.
         ip: AirSim RPC host.
         port: AirSim RPC port.
         max_steps: Maximum steps per episode.
         num_episodes: Number of episodes to run.
         device: Torch device selector used for inference.
+        draw_calibration_reference: Whether to draw the shared calibration
+            ridge and route overlay in UE5.
         verbose: Whether to emit detailed runtime logs.
     """
     logger.setLevel(logging.INFO if verbose else logging.WARNING)
@@ -273,6 +276,7 @@ def run_inference(
                 "num_episodes": num_episodes,
                 "device": device,
                 "simulation_speed": 1.0,
+                "draw_calibration_reference": bool(draw_calibration_reference),
                 "episode_loop": "AirSimEnv.reset -> policy -> AirSimEnv.step",
             },
         },
@@ -287,8 +291,10 @@ def run_inference(
             port=port,
             max_steps=max_steps,
             training_mode=False,
+            draw_calibration_reference=draw_calibration_reference,
             use_pause_stepping=False,
             simulation_speed=1.0,
+            capture_live_start_pose=True,
             csv_log_path=str(session_exporter.bridge_log_path),
         )
         session_exporter.update_metadata(
@@ -440,7 +446,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar=("X", "Y"),
         dest="ship_pos",
-        help="Start position in Fossen coords (east north).",
+        help="Start position in framework coords (east north).",
     )
     parser.add_argument(
         "--target-pos",
@@ -449,13 +455,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar=("X", "Y"),
         dest="target_pos",
-        help="Target position in Fossen coords (east north).",
+        help="Target position in framework coords (east north).",
     )
     parser.add_argument(
         "--device",
         default="cpu",
         choices=["cpu", "cuda"],
         help="PyTorch device for policy inference.",
+    )
+    parser.add_argument(
+        "--no-calibration-reference",
+        action="store_true",
+        default=False,
+        help="Disable the shared ridge/trajectory calibration overlay in UE5.",
     )
     parser.add_argument(
         "--verbose",
@@ -484,5 +496,6 @@ if __name__ == "__main__":
         max_steps=args.max_steps,
         num_episodes=args.episodes,
         device=args.device,
+        draw_calibration_reference=not args.no_calibration_reference,
         verbose=args.verbose,
     )

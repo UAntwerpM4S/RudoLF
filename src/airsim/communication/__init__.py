@@ -3,6 +3,6 @@
 Modules:
     airsim_bridge: Robust connection manager and pass-through control
         adapter with UE5 auto-detection, retry, and health-checks.
-    coord_transform: Bidirectional coordinate mapping between Fossen
-        (east, north) and AirSim (NED) frames.
+    coord_transform: Bidirectional coordinate mapping between framework-local
+        2D coordinates and AirSim (NED) frames.
 """

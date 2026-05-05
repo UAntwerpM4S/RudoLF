@@ -137,6 +137,24 @@ def _get_ship_item(value: Any, ship_index: int = 0, default: Any = None) -> Any:
     return value
 
 
+def _get_ship_sim_state(env, ship_index: int = 0) -> Any:
+    """Return one framework simulator state from common env layouts.
+
+    Args:
+        env: Active framework environment.
+        ship_index: Zero-based ship index to extract when the environment
+            stores per-ship simulator entries.
+
+    Returns:
+        Any: Simulator state object when available, otherwise ``None``.
+    """
+    for attr_name in ("phys_sims", "phys_sim"):
+        sim_entry = _get_ship_item(getattr(env, attr_name, None), ship_index=ship_index)
+        if sim_entry is not None:
+            return getattr(sim_entry, "state", sim_entry)
+    return None
+
+
 class AirSimSessionExporter:
     """Session-scoped export bundle for AirSim inference and visualisation runs.
 
@@ -318,10 +336,7 @@ def build_framework_visualisation_row(
     if ship_pos is None or (isinstance(ship_pos, (list, tuple, np.ndarray)) and len(ship_pos) == 0):
         ship_pos = (0.0, 0.0)
 
-    state = None
-    phys_sim = _get_ship_item(getattr(env, "phys_sims", None), ship_index=ship_index)
-    if phys_sim is not None and hasattr(phys_sim, "state"):
-        state = phys_sim.state
+    state = _get_ship_sim_state(env, ship_index=ship_index)
     if state is None:
         class _DefaultState:
             """Default motion state used when AirSim state is unavailable."""
