@@ -369,6 +369,10 @@ The file has four top-level sections:
 | `max_yaw_step_deg` | `1.5` | Maximum yaw rotation (degrees) per render frame during motion interpolation. |
 | `vehicle_object_name` | `""` | UE5 actor name of the vehicle to control. Empty string uses the AirSim default vehicle. |
 | `lock_path_in_ue5` | `false` | Freeze the drawn route path in place so it does not redraw during replay. |
+| `min_log_interval_s` | `0.25` | Minimum real-time interval (s) between step-log prints. Prevents log flooding at high simulation step rates. |
+| `bridge_telemetry_hz` | `12.0` | Rate (Hz) at which bridge telemetry is sampled and appended to the session exporter during replay. |
+| `startup_settle_s` | `0.4` | Seconds to wait after world-reload before starting replay — allows UE5 physics to stabilize before the first policy step. |
+| `verbose` | `false` | Enable verbose AirSim and simulator log output during visualization. Inherits from `FW_AIRSIM_VERBOSE` env var if not explicitly set. |
 
 ---
 
@@ -565,6 +569,10 @@ Control how the replay is rendered in UE5:
 | `episodes` | `1` | Number of replay episodes before exit. |
 | `max_steps` | `60000` | Step cap per episode. |
 | `draw_calibration_reference` | `true` | Draw calibration ridges, route line, start/end markers. |
+| `min_log_interval_s` | `0.25` | Minimum real-time interval (s) between step-log prints. |
+| `bridge_telemetry_hz` | `12.0` | Rate (Hz) at which bridge telemetry is sampled during replay. |
+| `startup_settle_s` | `0.4` | Seconds to wait after world-reload before the first policy step. |
+| `verbose` | `false` | Enable verbose AirSim log output. Inherits from `FW_AIRSIM_VERBOSE` env var. |
 
 ---
 
@@ -761,6 +769,7 @@ src/
         ├── run_inference.py         ← live AirSimEnv inference runner
         ├── run_visualise_models.py  ← framework-model replay runner
         ├── plot_airsim_path.py      ← standalone telemetry plotter
+        ├── verify_headless_plot.py  ← CI/headless verification of plot output
         └── visualisation_models/
             ├── __init__.py
             └── model_adapters.py    ← adapter registry (pysim, fhsim)
@@ -913,7 +922,7 @@ Both runners create a timestamped session folder via `AirSimSessionExporter`:
 
 ## 10. Testing
 
-Tests are located in `tests/airsim/` and related framework tests in `tests/fw/`. Tests are designed to run without a live UE5 connection using mocks and deterministic stubs.
+Tests are located in `tests/airsim/` and related framework tests in `tests/fw/`. All 201 automated tests are designed to run without a live UE5 connection using mocks and deterministic stubs. Six additional manual system tests require an active UE5 session.
 
 ### Running Tests
 
@@ -941,46 +950,67 @@ python -m pytest -v
 tests/
 ├── airsim/
 │   ├── communication/
-│   │   ├── test_bridge.py                        ← connection + TCP detection
+│   │   ├── test_bridge.py                        ← connection + TCP detection, retry logic
 │   │   ├── test_control_mapping.py               ← action validation + normalization
-│   │   └── test_airsim_bridge.py                 ← connection state, state readback
+│   │   └── test_airsim_bridge.py                 ← connection state, rendering, silence
+│   │
+│   ├── config/
+│   │   └── test_runtime_settings_validation.py   ← default keys, merge contract, error messages (R8, R10)
 │   │
 │   ├── enviroments/                              ← note: folder name typo in repo
-│   │   └── test_airsim_env.py                    ← observation/reward contracts
+│   │   └── test_airsim_env.py                    ← observation/reward contracts, reset, termination
 │   │
 │   ├── train/
-│   │   ├── test_train_airsim.py                  ← training orchestration
-│   │   ├── test_transfer_learning.py             ← compatibility + weight loading (T-054–T-057)
-│   │   ├── test_stability.py                     ← long-run observation/reward bounds
-│   │   ├── test_training_control.py
-│   │   ├── test_training_runner.py
-│   │   └── test_training_run_manager.py
+│   │   ├── test_train_airsim.py                  ← training orchestration + stop condition
+│   │   ├── test_transfer_learning.py             ← topology comparison + weight loading (T-054–T-056)
+│   │   ├── test_stability.py                     ← long-run observation/reward bounds (BI-3.3.2)
+│   │   └── test_model_load_errors.py             ← error type contract + message quality (R4, R10)
 │   │
 │   └── inference/
-│       ├── test_model_visualisation_dispatch.py  ← runner selection logic
-│       ├── test_visualisation_model_adapters.py  ← adapter registry + resolution
+│       ├── test_model_visualisation_dispatch.py  ← runner selection + UE5 unreachable exit
+│       ├── test_visualisation_model_adapters.py  ← adapter registry, auto-detection, family resolution
 │       ├── test_run_inference_airsim_env.py       ← inference loop
-│       └── test_fossen_visualisation_timing.py
+│       └── test_fossen_visualisation_timing.py   ← snap/interpolate timing logic
 │
 └── fw/
-    ├── test_main_fallback.py                     ← AirSim fallback + env routing
-    ├── test_env_factory_config.py                ← environment factory validation
-    └── common/airsim/tools/
-        └── test_airsim_training_session.py
+    ├── test_main_fallback.py                     ← AirSim fallback + ordered env continuation
+    ├── test_env_factory_config.py                ← environment factory, AirSim vs shared PPO hyperparams
+    ├── test_telemetry_exporter.py                ← AirSimSessionExporter CSV/metadata/plot output
+    ├── test_docstring_enforcement.py             ← AST-based docstring coverage gate (all src + tests)
+    ├── policies/
+    │   └── test_single_ppo_agent.py              ← PPO agent load/save/predict contract
+    └── common/
+        ├── tools/
+        │   ├── test_trajectory_analysis.py       ← route summary, performance metrics
+        │   ├── test_airsim_export.py             ← session row builders + exporter close
+        │   └── test_training_iteration_logger.py ← iteration log formatting
+        └── airsim/tools/
+            └── test_airsim_training_session.py   ← TrainingLogSummary CSV parsing
 ```
 
 ### What Each Test Group Covers
 
 | Group | Coverage |
 |-------|---------|
-| `communication/test_control_mapping` | Action clipping, NaN/Inf rejection, `CarControls` construction |
-| `communication/test_airsim_bridge` | RPC connection mock, state readback, health check |
-| `enviroments/test_airsim_env` | 18-field observation shape, reward event values, termination conditions |
-| `train/test_train_airsim` | Full training path with mocked bridge, stop condition, episode logging |
-| `train/test_transfer_learning` | Source/target topology compatibility, weight tensor mapping, freeze behavior |
-| `train/test_stability` | Observation values stay in expected bounds over many steps |
-| `inference/test_model_visualisation_dispatch` | `model_visualise` / `inference_visualise` flag routing |
-| `inference/test_visualisation_model_adapters` | Adapter auto-detection from filename, family/env resolution |
-| `inference/test_run_inference_airsim_env` | Inference loop with mocked AirSimEnv |
-| `fw/test_main_fallback` | Graceful skip when AirSim step fails, ordered env continuation |
-| `fw/test_env_factory_config` | Environment registration, factory correctness, and AirSim-vs-shared PPO hyperparameter selection |
+| `communication/test_control_mapping` | Action clipping, NaN/Inf rejection, `CarControls` construction, throttle gain (R3) |
+| `communication/test_airsim_bridge` | RPC connection mock, rendering toggle, library output suppression (R5) |
+| `communication/test_bridge` | TCP port detection, retry logic, health-check, stale-state guard (R1, R5) |
+| `config/test_runtime_settings_validation` | Default key contract, merge semantics, `AirSimConfig` error message quality (R8, R10) |
+| `enviroments/test_airsim_env` | 18-field observation shape, reward event values, termination conditions, 40-step stability (R13) |
+| `train/test_train_airsim` | Full training path with mocked bridge, stop condition, episode logging (R12) |
+| `train/test_transfer_learning` | Source/target topology compatibility, weight tensor mapping, freeze behavior (R4, R14) |
+| `train/test_stability` | Observation and reward values stay in expected bounds over many steps (BI-3.3.2, R13) |
+| `train/test_model_load_errors` | `TransferIncompatibilityError` type contract, dimension values in error messages (R4, R10) |
+| `inference/test_model_visualisation_dispatch` | `model_visualise` / `inference_visualise` flag routing, UE5 unreachable clean exit (R9) |
+| `inference/test_visualisation_model_adapters` | Adapter auto-detection from filename, family/env resolution (R2, R6) |
+| `inference/test_run_inference_airsim_env` | Inference loop with mocked AirSimEnv (R11) |
+| `inference/test_fossen_visualisation_timing` | Snap vs interpolate timing decision (R11) |
+| `fw/test_main_fallback` | Graceful skip when AirSim step fails, ordered env continuation (R9) |
+| `fw/test_env_factory_config` | Environment registration, factory correctness, AirSim-vs-shared PPO hyperparameter selection (R4) |
+| `fw/test_telemetry_exporter` | `AirSimSessionExporter` CSV output, metadata, trajectory plot generation (R10) |
+| `fw/test_docstring_enforcement` | AST-based docstring coverage gate across all `src/` and `tests/` Python files (R10, quality) |
+| `fw/policies/test_single_ppo_agent` | PPO agent load, save, predict contract with correct input/output dims (R4) |
+| `fw/common/tools/test_trajectory_analysis` | Route summary, performance metrics from session CSV (R10) |
+| `fw/common/tools/test_airsim_export` | Session row builders, exporter open/close, CSV structure (R10) |
+| `fw/common/tools/test_training_iteration_logger` | Iteration log formatting (R10) |
+| `fw/common/airsim/tools/test_airsim_training_session` | `TrainingLogSummary` CSV parsing and frontier recommendation (R10) |
