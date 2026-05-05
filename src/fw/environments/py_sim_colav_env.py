@@ -633,14 +633,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self,
         pdf_save_path: str = "min_distance_PDF.png",
         boxplot_save_path: str = "min_distance_boxplots.png",
-        paired_boxplot_save_path: str = "min_distance_paired_boxplots.png",
         include_banks: bool = True,
     ) -> None:
         from fw.collision_avoidance.colav_statistics import plot_min_distance_stats
         plot_min_distance_stats(
-            self, pdf_save_path, boxplot_save_path,
-            paired_boxplot_save_path=paired_boxplot_save_path,
-            include_banks=include_banks,
+            self, pdf_save_path, boxplot_save_path, include_banks=include_banks
         )
 
     def plot_scenario_confusion_matrix(

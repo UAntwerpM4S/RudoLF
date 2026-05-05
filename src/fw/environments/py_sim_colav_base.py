@@ -31,7 +31,7 @@ from typing import Optional, Tuple, Dict
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 import numpy as np
-from shapely.geometry import Point, LineString
+from shapely.geometry import Point
 
 
 # -----------------------
@@ -193,8 +193,6 @@ class PySimColavBaseEnv(PySimEnv):
         self._in_encounter: bool = False
         self._current_encounter_min_dist: float = float("inf")
         self._current_encounter_min_dist_bank: float = float("inf")
-        self._current_encounter_min_avail_right: float = float("inf")
-        self._current_encounter_min_avail_full: float = float("inf")
         self._current_encounter_collided: bool = False
 
         self._last_collision_info = {}
@@ -340,48 +338,6 @@ class PySimColavBaseEnv(PySimEnv):
         cri = self.cri_omega1 * cri_dcpa + self.cri_omega2 * cri_tcpa
         return cri, tcpa, dcpa
 
-    def _cast_to_bank(self, origin, direction, ray_len: float) -> float:
-        """Distance from origin to the first polygon-boundary intersection along
-        a unit direction vector. Returns ray_len when the ray exits without
-        crossing the boundary (open polygon edge cases)."""
-        end_x = float(origin[0]) + float(direction[0]) * ray_len
-        end_y = float(origin[1]) + float(direction[1]) * ray_len
-        ray = LineString([(float(origin[0]), float(origin[1])), (end_x, end_y)])
-        inter = self.polygon_shape.boundary.intersection(ray)
-        if inter.is_empty:
-            return float(ray_len)
-
-        origin_pt = Point(float(origin[0]), float(origin[1]))
-        gtype = inter.geom_type
-        if gtype == "Point":
-            return float(origin_pt.distance(inter))
-        if gtype == "MultiPoint":
-            return float(min(origin_pt.distance(p) for p in inter.geoms))
-        if gtype == "LineString":
-            return float(min(origin_pt.distance(Point(c)) for c in inter.coords))
-        if gtype == "MultiLineString":
-            best = float(ray_len)
-            for ls in inter.geoms:
-                for c in ls.coords:
-                    d = float(origin_pt.distance(Point(c)))
-                    if d < best:
-                        best = d
-            return best
-        if gtype == "GeometryCollection":
-            best = float(ray_len)
-            for g in inter.geoms:
-                if g.geom_type == "Point":
-                    d = float(origin_pt.distance(g))
-                    if d < best:
-                        best = d
-                elif g.geom_type == "MultiPoint":
-                    for p in g.geoms:
-                        d = float(origin_pt.distance(p))
-                        if d < best:
-                            best = d
-            return best
-        return float(ray_len)
-
     # -----------------------
     # Dynamics update & step
     # -----------------------
@@ -428,32 +384,6 @@ class PySimColavBaseEnv(PySimEnv):
             d_bank = float(self.polygon_shape.boundary.distance(Point(self.ship_pos)))
             if d_bank < self._current_encounter_min_dist_bank:
                 self._current_encounter_min_dist_bank = d_bank
-
-            # Track tightest corridor widths sampled at the OS's path-foot
-            # (perpendicular to the current path segment). Used to contextualize
-            # min_dist against the room actually available to the policy.
-            # Eval-only: shapely ray-casting is too costly to run every training step.
-            if not self.eval:
-                seg_vec = None
-            else:
-                seg_vec = self._collision_segment_end - self._collision_segment_start
-            seg_len_sq = float(np.dot(seg_vec, seg_vec)) if seg_vec is not None else 0.0
-            if seg_len_sq > 1e-9:
-                seg_len = math.sqrt(seg_len_sq)
-                tx = float(seg_vec[0]) / seg_len
-                ty = float(seg_vec[1]) / seg_len
-                t = float(np.dot(self.ship_pos - self._collision_segment_start, seg_vec)) / seg_len_sq
-                t = max(0.0, min(1.0, t))
-                foot = self._collision_segment_start + t * seg_vec
-                right_n = np.array([ty, -tx], dtype=np.float32)
-                ray_len = 5000.0
-                right_w = self._cast_to_bank(foot, right_n, ray_len)
-                left_w = self._cast_to_bank(foot, -right_n, ray_len)
-                if right_w < self._current_encounter_min_avail_right:
-                    self._current_encounter_min_avail_right = right_w
-                full_w = right_w + left_w
-                if full_w < self._current_encounter_min_avail_full:
-                    self._current_encounter_min_avail_full = full_w
 
         # Post-entity-step hook (subclass: e.g. rebuild polar geometries)
         self._on_entities_stepped()
@@ -627,8 +557,6 @@ class PySimColavBaseEnv(PySimEnv):
         self._in_encounter = True
         self._current_encounter_min_dist = float("inf")
         self._current_encounter_min_dist_bank = float("inf")
-        self._current_encounter_min_avail_right = float("inf")
-        self._current_encounter_min_avail_full = float("inf")
         self._current_encounter_collided = False
 
         # Always record the encounter start so n_encounters is correct.
@@ -641,8 +569,6 @@ class PySimColavBaseEnv(PySimEnv):
             "pred": pred_ext,
             "min_dist": float("inf"),
             "min_dist_bank": float("inf"),
-            "min_avail_right": float("inf"),
-            "min_avail_full": float("inf"),
             "collided": False,
         })
 
@@ -654,14 +580,10 @@ class PySimColavBaseEnv(PySimEnv):
         rec = self._episode_encounters[-1]
         rec["min_dist"] = float(self._current_encounter_min_dist)
         rec["min_dist_bank"] = float(self._current_encounter_min_dist_bank)
-        rec["min_avail_right"] = float(self._current_encounter_min_avail_right)
-        rec["min_avail_full"] = float(self._current_encounter_min_avail_full)
         rec["collided"] = bool(self._current_encounter_collided)
         self._in_encounter = False
         self._current_encounter_min_dist = float("inf")
         self._current_encounter_min_dist_bank = float("inf")
-        self._current_encounter_min_avail_right = float("inf")
-        self._current_encounter_min_avail_full = float("inf")
         self._current_encounter_collided = False
 
     # ---------------------------
