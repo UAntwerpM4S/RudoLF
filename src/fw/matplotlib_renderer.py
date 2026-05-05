@@ -142,7 +142,6 @@ class MatplotlibRenderer:
                 episodes = ship_data[ship_id]
                 ship_color = SHIP_COLORS[col % len(SHIP_COLORS)]
                 colors = shade_color(ship_color, len(episodes))
-                m = metrics[ship_id]
 
                 ax_error  = axes[0][col]
                 ax_rudder = axes[1][col]

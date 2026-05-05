@@ -28,7 +28,10 @@ class SimpleScheduler(BaseScheduler):
 
     @staticmethod
     def _format_reward_weight_suffix(reward_weights) -> str:
-        """Build a compact filename suffix from reward weights."""
+        """
+        Build a compact filename suffix from reward weights.
+        """
+
         if not reward_weights:
             return "default"
 
