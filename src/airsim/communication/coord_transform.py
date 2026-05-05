@@ -118,8 +118,8 @@ class CoordTransform:
         rx = airsim_x - self._airsim_origin[0]
         ry = airsim_y - self._airsim_origin[1]
 
-        cos_r = math.cos(-self._rotation)
-        sin_r = math.sin(-self._rotation)
+        cos_r = math.cos(self._rotation)   # cos(-θ) = cos(θ)
+        sin_r = -math.sin(self._rotation)  # sin(-θ) = -sin(θ)
 
         dx = (cos_r * rx - sin_r * ry) / self._scale
         dy = (sin_r * rx + cos_r * ry) / self._scale
