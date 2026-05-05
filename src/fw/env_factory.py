@@ -1,5 +1,16 @@
 import types
+
+from typing import Any
 from collections.abc import Mapping
+from fw.config import get_config_parameters
+from fw.environments.py_sim_env import PySimEnv
+from fw.environments.fh_sim_env import FhSimEnv
+from airsim.environments.airsim_env import AirSimEnv
+from fw.environments.lunar_lander import LunarLander
+from fw.environments.multi_sim_env import MultiSimEnv
+from fw.environments.py_sim_polar_env import PySimPolarEnv
+from fw.common.tools.config_utils import normalize_configuration
+from fw.environments.action_repeat_wrapper import ActionRepeatWrapper
 
 from airsim.config.airsim_config import (
     DEFAULT_AIRSIM_SAVE_SLOT,
@@ -10,15 +21,6 @@ from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_TARGET_POS,
     DEFAULT_PYSIM_POLAR_SHIP_POS,
 )
-from fw.common.tools.config_utils import normalize_configuration
-from fw.config import get_config_parameters
-from fw.environments.action_repeat_wrapper import ActionRepeatWrapper
-from fw.environments.py_sim_env import PySimEnv
-from fw.environments.fh_sim_env import FhSimEnv
-from airsim.environments.airsim_env import AirSimEnv
-from fw.environments.lunar_lander import LunarLander
-from fw.environments.py_sim_polar_env import PySimPolarEnv
-from fw.environments.multi_sim_env import MultiSimEnv
 
 
 class EnvironmentRegistryError(Exception):
@@ -202,7 +204,7 @@ class BaseEnvironment:
 
 
     @property
-    def configuration(self):
+    def configuration(self) -> Mapping[str, Any]:
         """Returns a read-only view of the environment's configuration.
 
         Returns:

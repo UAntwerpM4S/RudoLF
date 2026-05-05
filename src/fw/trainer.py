@@ -2,12 +2,11 @@ import os
 import re
 import csv
 import importlib
-from datetime import datetime
 
 from enum import Enum
 from pathlib import Path
+from datetime import datetime
 from typing import Dict, List, Any
-from fw.agent_manager import AgentManager
 from fw.env_factory import (
     resolve_environment_name,
     py_sim_env_name,
@@ -21,6 +20,7 @@ from fw.env_factory import (
     LunarEnvironment,
     PySimPolarEnvironment,
 )
+from fw.agent_manager import AgentManager
 from fw.agent_manager_simple import AgentManagerSimple
 from fw.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
 
@@ -119,6 +119,7 @@ class Trainer:
             RuntimeError: If the scheduler class cannot be found or initialized.
             TypeError: If the scheduler does not have required attributes.
         """
+
         self._agent_type = agent_type
         self._envs = envs
         self._config = get_config_parameters()
@@ -153,7 +154,8 @@ class Trainer:
         self._scheduler = scheduler
 
     def _resolve_hyperparameter_env_name(self):
-        """Return a shared environment name when all selected envs match.
+        """
+        Return a shared environment name when all selected envs match.
 
         If the run mixes environment families, keep the shared PPO defaults so
         one environment does not silently change the tuning of the others.
@@ -174,7 +176,8 @@ class Trainer:
 
 
     def train(self, configuration: dict = None, show_plots: bool = True) -> dict:
-        """Starts the training process.
+        """
+        Starts the training process.
 
         Args:
             configuration (dict, optional): Additional configuration parameters
@@ -193,6 +196,7 @@ class Trainer:
         env_metrics = metrics.get(env_type) if env_type else None
 
         if env_metrics and env_metrics.get("status") == "success":
+            summaries = None
             try:
                 if env_type == "AirSimEnv":
                     print("Skipping automatic post-training visualization for AirSimEnv.")
@@ -222,7 +226,8 @@ class Trainer:
         collect_evaluation_summary: bool = False,
         show_plots: bool = True,
     ):
-        """Visualize.
+        """
+        Visualize.
 
         Args:
             envs: Description.
@@ -230,6 +235,7 @@ class Trainer:
             collect_evaluation_summary: Whether to return final evaluation metrics.
             show_plots: Whether to show interactive matplotlib windows.
         """
+
         summaries = {} if collect_evaluation_summary else None
 
         if envs is not None:
@@ -287,11 +293,13 @@ class Trainer:
 
     @staticmethod
     def _build_eval_environment(canonical_name: str, config: Dict[str, Any]):
-        """Build a fresh environment wrapper for reward evaluation.
+        """
+        Build a fresh environment wrapper for reward evaluation.
 
         This bypasses the factory cache so each reward configuration gets
         its own independent environment instance.
         """
+
         # Avoid factory-level caching so each reward config is isolated.
         if canonical_name == py_sim_env_name:
             return PySimEnvironment(canonical_name, config)
@@ -312,37 +320,37 @@ class Trainer:
         training_configuration: Dict[str, Any] = None,
         verbose: bool = True,
     ) -> Dict[int, Dict[str, Any]]:
-        """Evaluate and compare different reward configurations.
+        """
+        Evaluate and compare different reward configurations.
 
         Trains a separate, independent policy for each reward configuration.
         Stores and displays metrics for comparison.
 
         Args:
-            reward_configs: List of environment configuration dicts. Each dict should have:
-                - "type": Environment type (e.g., "PySimEnvironment")
-                - "reward_name": Reward profile name (e.g., "default", "heading_only")
-                - "reward_weights": Dict of component weights (optional)
-
-            training_configuration: Dict of Stop Conditions keyed by environment type.
-                Example:
-                {
-                    "PySimEnvironment": StopCondition(...),
-                }
-
-            verbose: Print progress information.
-            max_workers: Kept for API compatibility. Evaluation now runs sequentially.
+            reward_configs (List[Dict[str, Any]]): List of environment configuration dicts.
+                Each dict should have:
+                    - "type": Environment type (e.g., "PySimEnvironment")
+                    - "reward_name": Reward profile name (e.g., "default", "heading_only")
+                    - "reward_weights": Dict of component weights (optional)
+            training_configuration (Dict[str, Any], optional): Dict of stop conditions
+                keyed by environment type. Example:
+                    {
+                        "PySimEnvironment": StopCondition(...),
+                    }
+            verbose (bool, optional): If True, prints progress information.
 
         Returns:
-            Dict mapping config index to:
-            {
-                "config": original configuration,
-                "env_type": environment type,
-                "reward_name": reward profile name,
-                "reward_weights": weights used,
-                "metrics": training metrics dict,
-                "status": success/failure status
-            }
+            Dict[int, Dict[str, Any]]: Mapping of config index to results:
+                {
+                    "config": original configuration,
+                    "env_type": environment type,
+                    "reward_name": reward profile name,
+                    "reward_weights": weights used,
+                    "metrics": training metrics dict,
+                    "status": success/failure status
+                }
         """
+
         # Enforce explicit configs to avoid silent no-op evaluations.
         if not reward_configs:
             raise ValueError("reward_configs must not be empty")
@@ -363,7 +371,10 @@ class Trainer:
         evaluation_order = []
 
         def _evaluate_single_config(config_idx: int, config: Dict[str, Any]) -> tuple[int, Dict[str, Any], bool]:
-            """Train one reward configuration in an isolated trainer instance."""
+            """
+            Train one reward configuration in an isolated trainer instance.
+            """
+
             try:
                 # Extract environment type (required for building the env).
                 if "type" not in config:
@@ -409,7 +420,6 @@ class Trainer:
                     "trajectory_file": trajectory_file,
                     "status": "success"
                 }, True
-
             except Exception as e:
                 if verbose:
                     print(f"    Training failed: {e}")
@@ -427,8 +437,8 @@ class Trainer:
 
         # Run reward configurations sequentially to preserve a single environment execution flow.
         job_results = []
-        for config_idx, config in enumerate(reward_configs):
-            job_results.append(_evaluate_single_config(config_idx, config))
+        for conf_idx, conf in enumerate(reward_configs):
+            job_results.append(_evaluate_single_config(conf_idx, conf))
 
         # Collect results from parallel execution.
         for idx, result, is_success in job_results:
@@ -446,12 +456,14 @@ class Trainer:
 
 
     def _print_comparison_summary(self, results: Dict[int, Dict[str, Any]], evaluation_order: List[int]) -> None:
-        """Print a summary comparing all evaluated configurations.
+        """
+        Print a summary comparing all evaluated configurations.
 
         Args:
             results: Results dictionary from evaluate_reward.
             evaluation_order: Order in which configs were evaluated.
         """
+
         # Human-friendly summary header.
         print(f"\n{'='*80}")
         print("REWARD CONFIGURATION COMPARISON SUMMARY")
@@ -481,12 +493,15 @@ class Trainer:
             print("-" * 80)
 
 
-    def _print_metrics(self, metrics: Dict[str, Any]) -> None:
-        """Pretty-print training metrics.
+    @staticmethod
+    def _print_metrics(metrics: Dict[str, Any]) -> None:
+        """
+        Pretty-print training metrics.
 
         Args:
             metrics: Metrics dictionary from training.
         """
+
         # Guard against empty metrics so the summary doesn't crash.
         if not metrics:
             print("  Metrics: None")
@@ -505,7 +520,8 @@ class Trainer:
 
     @staticmethod
     def _save_evaluation_trajectory_snapshot(eval_trainer: "Trainer", reward_weights: dict | None) -> str | None:
-        """Save evaluate_reward trajectory output as trajectory_{weights}.png.
+        """
+        Save evaluate_reward trajectory output as trajectory_{weights}.png.
 
         Args:
             eval_trainer: Trainer instance that just completed one evaluation run.
@@ -514,6 +530,7 @@ class Trainer:
         Returns:
             Saved file path or None when no trajectory file exists.
         """
+
         # Access the agent model directory to locate the latest trajectory output.
         agent = getattr(eval_trainer._agent_mgr, "agent", None)
         model_dir = getattr(agent, "model_dir", None) if agent is not None else None
@@ -552,7 +569,8 @@ class Trainer:
 
         # Helper to move a single file with suffix handling.
         def _move_with_suffix(src_path: str, prefix: str) -> str:
-            """Move a file to a new location with weights suffix and timestamp collision handling.
+            """
+            Move a file to a new location with weights suffix and timestamp collision handling.
             
             Constructs target filename as prefix_weights_str.png. If target already exists,
             appends timestamp to avoid overwriting. Uses os.replace to atomically move the file.
@@ -564,6 +582,7 @@ class Trainer:
             Returns:
                 str: Final target file path after move operation.
             """
+
             target_name = f"{prefix}_{weights_str}.png"
             target_path = os.path.join(model_dir, target_name)
             if os.path.exists(target_path):
@@ -592,13 +611,16 @@ class Trainer:
         return trajectory_target
 
 
-    def export_evaluation_results(self, results: Dict[int, Dict[str, Any]], filepath: str) -> None:
-        """Export evaluation results to CSV for easy comparison.
+    @staticmethod
+    def export_evaluation_results(results: Dict[int, Dict[str, Any]], filepath: str) -> None:
+        """
+        Export evaluation results to CSV for easy comparison.
 
         Args:
             results: Results dictionary from evaluate_reward.
             filepath: Path to write CSV file.
         """
+
         if not results:
             print("No results to export.")
             return

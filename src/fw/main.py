@@ -61,17 +61,17 @@ if __name__ == "__main__" or __name__ == "fw.main":
             os.environ["FW_MAIN_ACTION_OVERRIDE"] = selected_action
             runpy.run_module("fw.main_with_airsim", run_name="__main__")
             return True
-        except SystemExit as exc:
-            if exc.code in (None, 0):
+        except SystemExit as ex:
+            if ex.code in (None, 0):
                 return True
             print(
                 "[main] AirSim extension exited with an error; "
                 "falling back to the default framework entrypoint."
             )
             return False
-        except (ConnectionError, OSError) as exc:
+        except (ConnectionError, OSError) as ex:
             print(
-                f"[main] AirSim extension failed to connect to UE5 ({exc}); "
+                f"[main] AirSim extension failed to connect to UE5 ({ex}); "
                 "falling back to the default framework entrypoint."
             )
             return False
@@ -136,11 +136,11 @@ if __name__ == "__main__" or __name__ == "fw.main":
         if not envs:
             return False
 
-        trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+        std_trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
         if action == "visualize":
-            trainer.visualize(envs, airsim_bridge=None)
+            std_trainer.visualize(envs, airsim_bridge=None)
         else:
-            metrics = trainer.train(configuration)
+            metrics = std_trainer.train(configuration)
             if action == "evaluate_reward":
                 print(f"Training metrics (grouped): {metrics}")
         return True
