@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 from contextlib import contextmanager
 
-from fw.plotly_renderer import PlotlyRenderer
 from fw.metrics_computer import MetricsComputer
 from fw.episode_collector import EpisodeCollector
 from fw.ship_episode_data import CollisionAnnotator
@@ -255,6 +254,7 @@ class AgentManager:
             env_color_index (int, optional): Index of the environment color.
             airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
             return_summary (bool, optional): Return evaluation summary metrics when available.
+            show_plots (bool, optional): Show plot windows when visualization is generated.
 
         Raises:
             RuntimeError: If no agent has been created or if the collector

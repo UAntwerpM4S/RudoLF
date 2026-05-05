@@ -1,4 +1,5 @@
-"""AirSim-focused runtime entrypoint for training and visualization.
+"""
+AirSim-focused runtime entrypoint for training and visualization.
 
 This module centralizes AirSim orchestration from AirSim-specific runtime
 settings:
@@ -12,24 +13,26 @@ set to ``"AirSimEnv"``.
 """
 
 if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
+    import os
     import logging
     import multiprocessing
+
     from pathlib import Path
-    import os
+
 
     class _AsyncioWin995Filter(logging.Filter):
         """Suppress the noisy Windows asyncio self-pipe shutdown traceback."""
 
         def filter(self, record: logging.LogRecord) -> bool:
             """Return False for the known benign WinError 995 shutdown record."""
-            exc = record.exc_info[1] if record.exc_info else None
+            ex = record.exc_info[1] if record.exc_info else None
             message = record.getMessage().lower()
             if (
                 "event loop self pipe" in message
                 and (
                     (
-                        isinstance(exc, ConnectionResetError)
-                        and getattr(exc, "winerror", None) == 995
+                        isinstance(ex, ConnectionResetError)
+                        and getattr(ex, "winerror", None) == 995
                     )
                     or "winerror 995" in message
                     or "connectionreseterror" in message
@@ -69,10 +72,6 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     from fw.common.tools.path_utils import resolve_path_relative_to_src
     from fw.env_factory import (
         airsim_env_name,
-        fh_sim_env_name,
-        lunar_env_name,
-        py_sim_env_name,
-        py_sim_polar_env_name,
     )
 
     # AirSim runtime only controls AirSim-specific behavior.
