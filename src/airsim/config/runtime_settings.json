@@ -32,9 +32,9 @@
       "log_every": "Print a step log line every N steps during visualization.",
       "draw_calibration_reference": "true => draw calibration ridges, route line, and start/end markers during visualization."
     },
-    "model_visualise": false,
+    "model_visualise": true,
     "model_family": "auto",
-    "inference_visualise": true,
+    "inference_visualise": false,
     "model_path": "models/PySimEnv_PPO_policy.zip",
     "inference_model_path": "models/AirSimEnv_PPO_policy.zip",
     "environment_name": "auto",
