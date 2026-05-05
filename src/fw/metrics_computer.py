@@ -29,12 +29,13 @@ class ShipMetrics:
         MRA: Maximum Rudder Angle.
 
         mRAC: Mean Rudder Angle Change (control smoothness indicator).
-        vRA: Steering Variance (spread of rudder commands).
-        sCF: Steering Sign-Change Frequency (oscillation indicator).
 
         mT: Mean Thrust (average absolute thrust command).
         MT: Maximum Thrust.
         mTC: Mean Thrust Change (thrust smoothness indicator).
+
+        vRA: Steering Variance (spread of rudder commands).
+        sCF: Steering Sign-Change Frequency (oscillation indicator).
 
         mHE: Mean Heading Error (average absolute heading deviation).
 

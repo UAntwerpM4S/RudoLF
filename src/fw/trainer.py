@@ -3,13 +3,11 @@ import re
 import csv
 import importlib
 from datetime import datetime
-from datetime import datetime
 
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Any
 from fw.agent_manager import AgentManager
-from fw.agent_manager import PolicyStrategy
 from fw.env_factory import (
     resolve_environment_name,
     py_sim_env_name,
@@ -23,7 +21,6 @@ from fw.env_factory import (
     LunarEnvironment,
     PySimPolarEnvironment,
 )
-from contextlib import contextmanager, nullcontext
 from fw.agent_manager_simple import AgentManagerSimple
 from fw.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
 
@@ -399,7 +396,7 @@ class Trainer:
                 if verbose:
                     if trajectory_file is not None:
                         print(f"    Saved trajectory: {trajectory_file}")
-                    print("    ✓ Training completed")
+                    print("    Training completed")
 
                 # Return a normalized success payload for downstream summary/export.
                 return config_idx, {
@@ -414,7 +411,7 @@ class Trainer:
 
             except Exception as e:
                 if verbose:
-                    print(f"    ✗ Training failed: {e}")
+                    print(f"    Training failed: {e}")
 
                 # Keep a consistent shape on failure so downstream code can continue.
                 return config_idx, {
@@ -475,10 +472,10 @@ class Trainer:
                     print(f"    - {key}: {value}")
 
             if result['status'] == "success":
-                print("  Status: ✓ SUCCESS")
+                print("  Status: SUCCESS")
                 self._print_metrics(result['metrics'])
             else:
-                print(f"  Status: ✗ FAILED ({result['status']})")
+                print(f"  Status: FAILED ({result['status']})")
 
             print("-" * 80)
 
