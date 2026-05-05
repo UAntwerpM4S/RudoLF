@@ -205,3 +205,32 @@ def test_build_framework_visualisation_row_handles_flat_numpy_state() -> None:
     assert row["y"] == 20.0
     assert row["checkpoint_index"] == 4
     assert row["cross_track_error"] == 0.75
+
+
+def test_build_framework_visualisation_row_handles_single_phys_sim_layout() -> None:
+    """FHSim-style envs exposing ``phys_sim`` should export true surge speed."""
+    env = SimpleNamespace(
+        ship_pos=np.array([10.0, 20.0], dtype=np.float32),
+        phys_sim=SimpleNamespace(state=SimpleNamespace(u=4.25, heading=0.5)),
+        time_step=1.0,
+        checkpoint_index=2,
+        cross_error=0.2,
+    )
+    bridge = SimpleNamespace(current_controls=SimpleNamespace(brake=1.0))
+
+    row = build_framework_visualisation_row(
+        env=env,
+        bridge=bridge,
+        episode_index=1,
+        step_index=3,
+        reward=1.25,
+        action=[0.05, -0.4],
+        outcome="running",
+        model_origin="fhsim",
+    )
+
+    assert row["x"] == 10.0
+    assert row["y"] == 20.0
+    assert row["speed"] == 4.25
+    assert row["heading_deg"] == np.rad2deg(0.5)
+    assert row["brake"] == 1.0

@@ -8,6 +8,7 @@ dependencies = [
     "matplotlib",
     "tensorboard",
     "stable-baselines3",
+    "gymnasium",
 ]
 
 # [project.scripts]

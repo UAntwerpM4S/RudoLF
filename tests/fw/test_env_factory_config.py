@@ -1,5 +1,6 @@
 import pytest
 
+from fw.config import PPO_POLICY_NAME, get_hyperparameters
 from fw.env_factory import (
     _Factory,
     EnvironmentRegistryError,
@@ -58,6 +59,34 @@ def test_build_default_environment_accepts_legacy_empty_list_configurations():
 
     assert environment is get_environment(py_sim_env_name)
     assert dict(environment.configuration) == {}
+
+
+def test_get_hyperparameters_keeps_shared_defaults_for_non_airsim_envs():
+    """PySim/FhSim should keep the shared PPO defaults."""
+    params = get_hyperparameters(PPO_POLICY_NAME)
+
+    assert params["learning_rate"] == pytest.approx(1e-4)
+    assert params["gamma"] == pytest.approx(0.95)
+    assert params["clip_range"] == pytest.approx(0.05)
+
+
+def test_get_hyperparameters_uses_airsim_specific_overrides():
+    """AirSimEnv should get its own PPO tuning set."""
+    params = get_hyperparameters(PPO_POLICY_NAME, env_name=airsim_env_name)
+
+    assert params["learning_rate"] == pytest.approx(3e-4)
+    assert params["gamma"] == pytest.approx(0.99)
+    assert params["clip_range"] == pytest.approx(0.2)
+
+
+
+def test_get_hyperparameters_uses_override_for_non_airsim_env_names():
+    """Default PPO settings should be applied outside AirSim."""
+    params = get_hyperparameters(PPO_POLICY_NAME, env_name=py_sim_env_name)
+
+    assert params["learning_rate"] == pytest.approx(1e-4)
+    assert params["gamma"] == pytest.approx(0.95)
+    assert params["clip_range"] == pytest.approx(0.05)
 
 
 def test_airsim_environment_is_not_singleton_cached(monkeypatch):
@@ -133,8 +162,13 @@ def test_airsim_environment_receives_full_runtime_configuration(monkeypatch):
         "health_check_interval": 12.0,
         "csv_log_path": "bridge.csv",
         "save_slot": "slot_two",
+        "load_world_on_start": False,
+        "capture_live_start_pose": True,
         "simulation_speed": 3.0,
         "max_steps": 321,
+        "normalize_reward": False,
+        "reward_normalization_scale": 90.0,
+        "reset_mode": "bridge_reset",
     }
 
     get_environment(airsim_env_name, configuration=config)
@@ -147,6 +181,11 @@ def test_airsim_environment_receives_full_runtime_configuration(monkeypatch):
     assert captured["health_check_interval"] == 12.0
     assert captured["csv_log_path"] == "bridge.csv"
     assert captured["save_slot"] == "slot_two"
+    assert captured["load_world_on_start"] is False
+    assert captured["capture_live_start_pose"] is True
     assert captured["simulation_speed"] == 3.0
     assert captured["max_steps"] == 321
+    assert captured["normalize_reward"] is False
+    assert captured["reward_normalization_scale"] == 90.0
+    assert captured["reset_mode"] == "bridge_reset"
 
