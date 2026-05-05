@@ -74,7 +74,7 @@ class ActorCriticNetwork(nn.Module):
         shared_features = self.shared_network(state)
 
         # Compute the mean of the action distribution
-        action_mean = torch.tanh(self.actor_mean(shared_features))
+        action_mean = self.actor_mean(shared_features)
 
         # Compute the standard deviation of the action distribution
         # Clamp log_std to reasonable range before exponentiation to avoid instability
