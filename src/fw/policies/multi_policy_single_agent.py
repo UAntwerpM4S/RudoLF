@@ -31,6 +31,7 @@ import numpy as np
 import zipfile
 import tempfile
 
+from collections import deque
 from typing import Optional, Tuple, Union, List, Dict
 from fw.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
@@ -38,6 +39,151 @@ from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.common.tools.logging_utils import dump_metrics_to_csv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+
+
+class CollapseWatchdog:
+    """
+    Tracks a rolling mean of per-iteration reward for each policy.  Whenever
+    the rolling mean reaches a new peak, the policy's network ``state_dict``
+    is snapshotted in memory (deep-cloned tensors).  After a warmup period,
+    the current rolling mean is compared against the peak rolling mean.  The
+    watchdog triggers when ``smoothed / peak < ratio_threshold``, where
+    ``ratio_threshold`` is typically negative (e.g. ``-1.75`` means "current
+    is at -175% of peak").
+
+    On trigger, the watchdog returns the snapshotted ``state_dict``; the
+    caller is responsible for applying it via ``network.load_state_dict``
+    and (recommended) for re-initializing the corresponding optimizer so
+    that Adam's ``m``/``v`` moment buffers to avoid pushing the rolled-back
+    weights back along the failure trajectory. Without an optimizer reset,
+    weights-only rollback can produce a rollback ping-pong on policies with
+    high reward variance.
+
+    Safeguards:
+      * ``warmup_iterations``: no rollback before this many iterations have
+        elapsed.
+      * ``min_gap_between_rollbacks``: enforce a cooldown for each policy.
+      * ``max_rollbacks``: cap the total rollbacks per policy.
+      * ``min_peak_for_trigger``: require the peak rolling mean to be above
+        this floor before the ratio test is meaningful (the formulation is
+        ill-defined for non-positive peaks).
+    """
+
+    def __init__(
+        self,
+        num_policies: int,
+        policy_labels: List[str],
+        window_size: int = 6,
+        ratio_threshold: float = -1.0,
+        warmup_iterations: int = 50,
+        min_gap_between_rollbacks: int = 5,
+        max_rollbacks: int = 100,
+        min_peak_for_trigger: float = 0.1,
+    ):
+        self.num_policies = num_policies
+        self.policy_labels = policy_labels
+        self.window_size = int(window_size)
+        self.ratio_threshold = float(ratio_threshold)
+        self.warmup_iterations = int(warmup_iterations)
+        self.min_gap_between_rollbacks = int(min_gap_between_rollbacks)
+        self.max_rollbacks = int(max_rollbacks)
+        self.min_peak_for_trigger = float(min_peak_for_trigger)
+
+        self._reward_history: Dict[int, deque] = {
+            pid: deque(maxlen=self.window_size) for pid in range(num_policies)
+        }
+        self._best_smoothed: Dict[int, float] = {
+            pid: float("-inf") for pid in range(num_policies)
+        }
+        self._best_state_dict: Dict[int, Optional[dict]] = {
+            pid: None for pid in range(num_policies)
+        }
+        self._last_rollback_iter: Dict[int, int] = {
+            pid: -10 ** 9 for pid in range(num_policies)
+        }
+        self._rollback_count: Dict[int, int] = {
+            pid: 0 for pid in range(num_policies)
+        }
+
+    def observe(
+        self,
+        pid: int,
+        iteration: int,
+        reward: float,
+        network: nn.Module,
+    ) -> Optional[dict]:
+        """
+        Record this iteration's reward for ``pid`` and, if appropriate,
+        either snapshot a new best or return a rollback ``state_dict``.
+
+        Args:
+            pid (int): Policy index.
+            iteration (int): Current training iteration.
+            reward (float): Mean reward for ``pid`` this iteration (NaN if
+                the policy collected no segments — will be ignored).
+            network (nn.Module): The policy's live network; snapshotted
+                (cloned) when a new peak rolling mean is observed.
+
+        Returns:
+            Optional[dict]: A cloned ``state_dict`` to load if a collapse
+                is detected; ``None`` otherwise.
+        """
+        if reward is None or np.isnan(reward):
+            return None
+
+        self._reward_history[pid].append(float(reward))
+
+        # Need a full window before the rolling mean is meaningful
+        if len(self._reward_history[pid]) < self.window_size:
+            return None
+
+        smoothed = float(np.mean(self._reward_history[pid]))
+
+        # New best — snapshot the current network state
+        if smoothed > self._best_smoothed[pid]:
+            self._best_smoothed[pid] = smoothed
+            self._best_state_dict[pid] = {
+                k: v.detach().clone() for k, v in network.state_dict().items()
+            }
+
+        # Watchdog disabled until warmup elapses
+        if iteration < self.warmup_iterations:
+            return None
+
+        # Out of rollback budget
+        if self._rollback_count[pid] >= self.max_rollbacks:
+            return None
+
+        # No usable peak yet (peak too small / negative — ratio test
+        # would be meaningless or trigger-happy)
+        peak = self._best_smoothed[pid]
+        if peak <= self.min_peak_for_trigger or self._best_state_dict[pid] is None:
+            return None
+
+        # Cooldown after a previous rollback for this policy
+        if iteration - self._last_rollback_iter[pid] < self.min_gap_between_rollbacks:
+            return None
+
+        # Trigger condition: current rolling mean is far below the peak.
+        # E.g. ratio_threshold = -1.75 means "smoothed must be below -175%
+        # of peak" (so for peak=0.7, smoothed < -1.225 triggers).
+        if smoothed / peak < self.ratio_threshold:
+            return self._best_state_dict[pid]
+
+        return None
+
+    def record_rollback(self, pid: int, iteration: int) -> None:
+        """
+        Mark a rollback as having occurred for ``pid`` at ``iteration``.
+
+        Clears the rolling reward history so that the post-rollback
+        rolling mean is not dragged down by the collapsed iterations
+        still sitting in the window.  The best snapshot itself is
+        retained: subsequent improvements may still surpass it.
+        """
+        self._rollback_count[pid] += 1
+        self._last_rollback_iter[pid] = iteration
+        self._reward_history[pid].clear()
 
 
 class MultiPolicySingleAgent(BasePPOAgent):
@@ -65,6 +211,10 @@ class MultiPolicySingleAgent(BasePPOAgent):
         *args,
         num_policies: int,
         policy_labels: Optional[List[str]] = None,
+        steps_per_policy_update: int = 4096,
+        watchdog_enabled: bool = True,
+        watchdog_kwargs: Optional[dict] = None,
+        log_std_bounds: Optional[Dict[int, Tuple[float, float]]] = None,
         **kwargs,
     ):
         """
@@ -76,6 +226,36 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 the length of the one-hot suffix appended by the environment.
             policy_labels (list[str], optional): Human-readable names for
                 each policy.  Defaults to ``["policy_0", ...]``.
+            steps_per_policy_update (int): Minimum number of segment steps a
+                slot must have accumulated (across one or more iterations)
+                before its PPO update fires. Iterations where a slot is
+                below threshold append the new segments to a per-slot
+                pending buffer and skip the optimizer step. When the
+                threshold is reached, the buffered segments are flushed
+                through one PPO update and the buffer is cleared.
+                Because a slot's policy/value networks do not change
+                between updates, accumulating across iterations does not
+                introduce off-policy bias for that slot.
+            watchdog_enabled (bool): If True, instantiate a
+                ``CollapseWatchdog`` that monitors per-policy rolling-mean
+                reward and rolls back to the best snapshot when a collapse
+                is detected.  Per-policy and weights-only.
+            watchdog_kwargs (Optional[dict]): Override defaults for the
+                ``CollapseWatchdog`` (``window_size``, ``ratio_threshold``,
+                ``warmup_iterations``, ``min_gap_between_rollbacks``,
+                ``max_rollbacks``, ``min_peak_for_trigger``).  Ignored if
+                ``watchdog_enabled`` is False.
+            log_std_bounds (Optional[Dict[int, Tuple[float, float]]]):
+                Per-policy ``(log_std_min, log_std_max)`` clamp passed to
+                each slot's ``ActorCriticNetwork``. Keyed by policy id
+                (``0..num_policies-1``). Slots not present in the dict
+                use the ``ActorCriticNetwork`` defaults ``(-20, 2)``,
+                preserving the historical (effectively-unclamped)
+                behavior. The pid → label mapping is owned by the caller;
+                this implementation makes no assumption about which pid
+                corresponds to which scenario. Use this to floor
+                exploration noise on a specific policy without touching
+                the network architecture.
             **kwargs: Keyword arguments forwarded to ``BasePPOAgent``.
 
         Raises:
@@ -93,7 +273,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         self.num_policies = num_policies
         self.policy_labels = policy_labels or [f"policy_{i}" for i in range(num_policies)]
-        self.pretrained_pid = None
+        self.frozen_pids: set = set()
 
         if len(self.policy_labels) != num_policies:
             raise ValueError(
@@ -120,10 +300,33 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         self.action_space = action_space
 
+        # Resolve per-policy log_std bounds. Stored on the agent so that
+        # subsequent re-initializations (e.g. after a watchdog rollback that
+        # rebuilds the optimizer, or after loading a pretrained slot) can
+        # re-apply the configured bounds to the slot's network. Keys are
+        # policy ids — this class is agnostic to what each pid means.
+        self.log_std_bounds: Dict[int, Tuple[float, float]] = {}
+        if log_std_bounds:
+            for key, bounds in log_std_bounds.items():
+                pid = int(key)
+                if not 0 <= pid < num_policies:
+                    raise ValueError(
+                        f"log_std_bounds key {key!r} (pid={pid}) is out of "
+                        f"range [0, {num_policies})."
+                    )
+                lo, hi = bounds
+                self.log_std_bounds[pid] = (float(lo), float(hi))
+
         # Create N independent policies and optimizers
         self.policies: List[PPOPolicy] = [
-            PPOPolicy(self.policy_obs_dim, self.output_dim, str(self.device))
-            for _ in range(num_policies)
+            PPOPolicy(
+                self.policy_obs_dim,
+                self.output_dim,
+                str(self.device),
+                log_std_min=self.log_std_bounds.get(pid, (-20.0, 2.0))[0],
+                log_std_max=self.log_std_bounds.get(pid, (-20.0, 2.0))[1],
+            )
+            for pid in range(num_policies)
         ]
 
         self.optimizers: List[optim.Adam] = [
@@ -138,6 +341,28 @@ class MultiPolicySingleAgent(BasePPOAgent):
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4
+
+        # Per-policy update gating: accumulate segments across iterations
+        # until the slot's pending step count crosses
+        # ``steps_per_policy_update``, then flush through one PPO update.
+        self.steps_per_policy_update = int(steps_per_policy_update)
+        self._pending_segments: Dict[int, List[dict]] = {
+            k: [] for k in range(num_policies)
+        }
+        self._pending_steps: Dict[int, int] = {
+            k: 0 for k in range(num_policies)
+        }
+
+        # Collapse watchdog (per-policy, weights-only rollback)
+        if watchdog_enabled:
+            wd_kwargs = dict(watchdog_kwargs or {})
+            self.watchdog: Optional[CollapseWatchdog] = CollapseWatchdog(
+                num_policies=num_policies,
+                policy_labels=self.policy_labels,
+                **wd_kwargs,
+            )
+        else:
+            self.watchdog = None
 
     # ------------------------------------------------------------------
     # One-hot extraction & validation
@@ -461,7 +686,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 mean entropy) across all minibatches/epochs.  All NaN if no
                 usable data.
         """
-        if policy_id == self.pretrained_pid:
+        if policy_id in self.frozen_pids:
             return float("nan"), float("nan"), float("nan"), float("nan")
 
         if not segments:
@@ -627,12 +852,33 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
             for pid in range(self.num_policies):
                 segs = accumulated_segments[pid]
-                loss, policy_loss, value_loss, entropy_bonus = self._train_policy(pid, segs)
+
+                # Push this iteration's segments into the per-slot pending
+                # buffer; the update only fires once the buffer crosses
+                # ``steps_per_policy_update``.
+                self._pending_segments[pid].extend(segs)
+                self._pending_steps[pid] += sum(len(s["rewards"]) for s in segs)
+
+                if self._pending_steps[pid] >= self.steps_per_policy_update:
+                    update_segs = self._pending_segments[pid]
+                    loss, policy_loss, value_loss, entropy_bonus = self._train_policy(
+                        pid, update_segs,
+                    )
+                    flushed_steps = self._pending_steps[pid]
+                    self._pending_segments[pid] = []
+                    self._pending_steps[pid] = 0
+                else:
+                    loss = policy_loss = value_loss = entropy_bonus = float("nan")
+                    flushed_steps = 0
+
                 iter_losses[pid] = loss
                 iter_policy_losses[pid] = policy_loss
                 iter_value_losses[pid] = value_loss
                 iter_entropy_bonuses[pid] = entropy_bonus
 
+                # Reward reflects only this iteration's freshly collected
+                # segments (not the pending buffer), so the per-iteration
+                # reward curve isn't smeared by stale data.
                 if segs:
                     all_seg_rewards = np.concatenate([s["rewards"] for s in segs])
                     iter_rewards[pid] = float(np.mean(all_seg_rewards))
@@ -647,16 +893,69 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     "entropy_bonus": entropy_bonus,
                     "reward": iter_rewards[pid],
                     "n_steps": sum(len(s["rewards"]) for s in segs),
+                    "pending_steps": self._pending_steps[pid],
+                    "flushed_steps": flushed_steps,
                 })
 
-                # Save best policy per scenario
+                # Save best policy per scenario (only on iterations where
+                # an update actually fired, so we don't snapshot a stale
+                # policy against a noisy single-iteration reward).
                 if (
-                    iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE
+                    flushed_steps > 0
+                    and iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE
                     and not np.isnan(iter_rewards[pid])
                     and iter_rewards[pid] > best_rewards[pid]
                 ):
                     best_rewards[pid] = iter_rewards[pid]
                     self._save_single_policy(pid, best_policy_files[pid])
+
+                # Collapse watchdog: track rolling-mean reward, snapshot
+                # the network at new peaks, and roll back on collapse.
+                # Skipped for frozen slots (which don't update anyway).
+                rollback_triggered = False
+                if self.watchdog is not None and pid not in self.frozen_pids:
+                    rollback_state = self.watchdog.observe(
+                        pid=pid,
+                        iteration=iteration,
+                        reward=iter_rewards[pid],
+                        network=self.policies[pid].network,
+                    )
+                    if rollback_state is not None:
+                        self.policies[pid].network.load_state_dict(rollback_state)
+                        # Reset this policy's Adam optimizer state. The
+                        # exponential moving averages of past gradients
+                        # (Adam's ``m`` and ``v`` buffers) were accumulated
+                        # during the collapse phase and, if reused after
+                        # rolling weights back, would push the network
+                        # right along the failure trajectory — producing
+                        # a rapid second collapse and a rollback ping-pong.
+                        # A fresh optimizer ensures the next gradient steps
+                        # are computed cleanly from the rolled-back weights.
+                        self.optimizers[pid] = optim.Adam(
+                            self.policies[pid].network.parameters(),
+                            lr=self.learning_rate,
+                        )
+                        # Discard pending segments — they were collected
+                        # under the now-discarded post-collapse weights and
+                        # would be off-policy w.r.t. the rolled-back net.
+                        self._pending_segments[pid] = []
+                        self._pending_steps[pid] = 0
+                        self.watchdog.record_rollback(pid, iteration)
+                        rollback_triggered = True
+                        print(
+                            f"[watchdog] iter {iteration}: collapse detected for "
+                            f"'{self.policy_labels[pid]}' "
+                            f"(peak smoothed={self.watchdog._best_smoothed[pid]:.3f}, "
+                            f"rollback {self.watchdog._rollback_count[pid]}/"
+                            f"{self.watchdog.max_rollbacks}). "
+                            f"Rolled back to best rolling-mean snapshot."
+                        )
+
+                # Annotate the most recent metrics record with watchdog state
+                if training_metrics[self.policy_labels[pid]]:
+                    training_metrics[self.policy_labels[pid]][-1][
+                        "rollback_triggered"
+                    ] = rollback_triggered
 
             # --- 4. Logging ---
             valid_rewards = [r for r in iter_rewards.values() if not np.isnan(r)]
@@ -673,8 +972,11 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     vl = iter_value_losses[pid]
                     eb = iter_entropy_bonuses[pid]
                     n = sum(len(s["rewards"]) for s in accumulated_segments[pid])
+                    pending = self._pending_steps[pid]
+                    upd = "" if np.isnan(pl) else " [upd]"
                     parts.append(
-                        f"{label}: r={r:.3f}, loss: p={pl:.3f}, v={vl:.3f}, e={eb:.3f}, steps={n}"
+                        f"{label}: r={r:.3f}, loss: p={pl:.3f}, v={vl:.3f}, e={eb:.3f}, "
+                        f"steps={n}, pending={pending}{upd}"
                     )
                 print(f"[Iter {iteration}] " + " | ".join(parts))
 
@@ -789,6 +1091,15 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     saved = torch.load(agent_path, map_location=self.device, weights_only=False)
                     self.policies[i] = PPOPolicy.build_policy_from_state(saved, self.device)
 
+                    # Override saved bounds with the agent's configured ones
+                    # (config is the source of truth for log_std clamps).
+                    if i in self.log_std_bounds:
+                        lo, hi = self.log_std_bounds[i]
+                        self.policies[i].log_std_min = lo
+                        self.policies[i].log_std_max = hi
+                        self.policies[i].network.log_std_min = lo
+                        self.policies[i].network.log_std_max = hi
+
                 # Rebuild optimizers for the loaded networks
                 self.optimizers = [
                     optim.Adam(p.network.parameters(), lr=self.learning_rate)
@@ -800,7 +1111,12 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     f"Failed to load multi-policy archive: {e}"
                 ) from e
 
-    def load_individual_policy(self, policy_id: int, policy_file_name: str) -> None:
+    def load_individual_policy(
+        self,
+        policy_id: int,
+        policy_file_name: str,
+        frozen: bool = False,
+    ) -> None:
         """
         Load a single pre-trained policy (e.g. from a ``SinglePPOAgent``
         checkpoint) into one of the N policy slots.
@@ -812,6 +1128,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
             policy_id (int): Which slot to load into (0..N-1).
             policy_file_name (str): Path to a ``SinglePPOAgent``-style
                 ``.zip`` policy file.
+            frozen (bool): If True, the slot is excluded from PPO updates
+                (kept fixed during training).
 
         Raises:
             IndexError: If ``policy_id`` is out of range.
@@ -824,10 +1142,61 @@ class MultiPolicySingleAgent(BasePPOAgent):
             )
 
         loaded = PPOPolicy.load(policy_file_name, str(self.device))
+
+        # Re-apply this slot's configured log_std bounds (the loaded
+        # checkpoint may have been saved with different bounds, but the
+        # agent's config is the source of truth).
+        if policy_id in self.log_std_bounds:
+            lo, hi = self.log_std_bounds[policy_id]
+            loaded.log_std_min = lo
+            loaded.log_std_max = hi
+            loaded.network.log_std_min = lo
+            loaded.network.log_std_max = hi
+
         self.policies[policy_id] = loaded
         self.optimizers[policy_id] = optim.Adam(
             loaded.network.parameters(), lr=self.learning_rate,
         )
+
+        if frozen:
+            self.frozen_pids.add(policy_id)
+        else:
+            self.frozen_pids.discard(policy_id)
+
+    def load_pretrained_policies(
+        self,
+        directory: str,
+        specs: Dict[int, dict],
+    ) -> None:
+        """
+        Load multiple pre-trained policies from a single directory.
+
+        Args:
+            directory (str): Directory containing the pre-trained ``.zip``
+                policy files.
+            specs (dict[int, dict]): Mapping ``policy_id -> {"file": str,
+                "frozen": bool}``.  ``file`` is the file name (without
+                ``.zip``) inside ``directory``.  ``frozen`` defaults to
+                False.
+
+        Slots whose file is missing are left untouched and a warning is
+        printed.
+        """
+
+        for pid, spec in specs.items():
+            file_stem = spec["file"]
+            frozen = bool(spec.get("frozen", False))
+            full_path = os.path.join(directory, file_stem)
+            zip_path = full_path if full_path.endswith(".zip") else full_path + ".zip"
+
+            if not os.path.exists(zip_path):
+                print(f"[pretrained] No file at {zip_path}, slot {pid} left unchanged.")
+                continue
+
+            self.load_individual_policy(pid, full_path, frozen=frozen)
+            label = self.policy_labels[pid]
+            state = "frozen" if frozen else "trainable"
+            print(f"[pretrained] Loaded '{file_stem}' into slot {pid} ({label}) [{state}]")
 
     def _save_single_policy(self, policy_id: int, policy_file_name: str) -> None:
         """

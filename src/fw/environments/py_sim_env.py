@@ -255,6 +255,14 @@ class PySimEnv(BaseEnv):
         self.previous_action = np.zeros(2, dtype=np.float32)
         self.checkpoint_index = 1
 
+        # Focused-encounter training: optionally start at a random mid-path
+        # checkpoint instead of the route start.  This rewrites
+        # ``self.ship_pos``, ``self.previous_ship_pos`` and
+        # ``self.checkpoint_index`` in-place so the rest of this method
+        # picks up the new starting state.
+        if getattr(self, "random_segment_start", False):
+            self._apply_random_starting_checkpoint()
+
         self.heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
         self.velocities = self.phys_sim.state.u
         self.previous_heading = 0.0
@@ -272,12 +280,35 @@ class PySimEnv(BaseEnv):
         self.phys_sim.reset(VesselState(
             terminated=False,
             truncated=False,
-            x=self.initial_ship_pos[0],
-            y=self.initial_ship_pos[1],
+            x=self.ship_pos[0],
+            y=self.ship_pos[1],
             heading=self.ship_heading,
             u=0.0, v=0.0, r=0.0))
         self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
+
+    def _apply_random_starting_checkpoint(self) -> None:
+        """Pick a uniformly random starting segment along the path,
+        excluding the last ``skip_tail_segments`` segments.
+
+        Mutates ``self.ship_pos``, ``self.previous_ship_pos`` and
+        ``self.checkpoint_index`` to start at the chosen segment's
+        beginning checkpoint, heading toward its end checkpoint.
+        """
+        n_skip = int(getattr(self, "skip_tail_segments", 7))
+        n_segments = len(self.checkpoints) - 1
+        max_seg = n_segments - n_skip
+        if max_seg <= 0:
+            return  # safeguard: not enough path to randomize
+
+        # Segment K: ship at checkpoints[K] heading toward checkpoints[K+1].
+        # Eligible K range: [0, max_seg - 1].
+        chosen_seg = int(self._rng.integers(low=0, high=max_seg))
+        self.ship_pos = np.asarray(
+            self.checkpoints[chosen_seg]["pos"], dtype=np.float32,
+        ).copy()
+        self.previous_ship_pos = self.ship_pos.copy()
+        self.checkpoint_index = chosen_seg + 1
 
     def create_simulator(self):
         """
@@ -928,7 +959,7 @@ class PySimEnv(BaseEnv):
         # Reward components
         r_forward = - 0.25 * abs(target_velocity - velocity) / target_velocity
         r_heading_alignment = - 0.5 * abs(heading_error)
-        r_cte = - 0.00 * cross_track_error # TODO: 0.05
+        r_cte = - 0.0 * cross_track_error # TODO: 0.05
         r_rudder_angle_change = - 0.4 * (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -1
         r_rudder_angle = - 0.05 * (abs(self.performed_action[0]) / 0.2) ** (2 if abs(self.performed_action[0]) < 0.2 else 4)
         r_thrust_change = 0  # - 0.5 * thrust_change

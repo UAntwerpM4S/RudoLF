@@ -368,7 +368,7 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             numerical_damping=config["numerical_damping"],
             enable_obstacles=True,
             use_polar_scan=True,
-            eval=True,
+            eval=False,
             eval_scenario="crossing-right",
             eval_obstacle_count=1,
             include_scenario_one_hot=True,

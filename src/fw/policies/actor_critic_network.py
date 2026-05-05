@@ -19,14 +19,31 @@ class ActorCriticNetwork(nn.Module):
         critic (nn.Linear): Linear layer producing the value estimate of the input state.
     """
 
-    def __init__(self, input_dim: int, output_dim: int):
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        log_std_min: float = -20.0,
+        log_std_max: float = 2.0,
+    ):
         """Initializes the ActorCriticNetwork.
 
         Args:
             input_dim (int): Dimension of the input state space.
             output_dim (int): Dimension of the output action space.
+            log_std_min (float): Lower clamp on the learnable log-std before
+                exponentiation. The default of ``-20`` matches the historical
+                "effectively unbounded" behavior. Raise it (e.g. ``-1.0``) to
+                floor the policy's exploration noise and prevent the Gaussian
+                from collapsing toward a deterministic policy on tasks where
+                rare-event coverage matters.
+            log_std_max (float): Upper clamp on the learnable log-std before
+                exponentiation. Default ``2.0`` (std ≈ 7.4); rarely needs
+                changing.
         """
         super().__init__()
+        self.log_std_min = float(log_std_min)
+        self.log_std_max = float(log_std_max)
 
         # Helper to initialize layers orthogonally
         def init_layer(layer, gain=np.sqrt(2)):
@@ -76,9 +93,7 @@ class ActorCriticNetwork(nn.Module):
         # Compute the mean of the action distribution
         action_mean = torch.tanh(self.actor_mean(shared_features))
 
-        # Compute the standard deviation of the action distribution
-        # Clamp log_std to reasonable range before exponentiation to avoid instability
-        log_std = torch.clamp(self.actor_log_std, -20, 2)
+        log_std = torch.clamp(self.actor_log_std, self.log_std_min, self.log_std_max)
         action_std = torch.exp(log_std)
 
         # Compute the value estimate for the input state

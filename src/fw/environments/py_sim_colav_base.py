@@ -93,7 +93,7 @@ class PySimColavBaseEnv(PySimEnv):
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
             encounter_range: float = 500.0,
-            eval: bool = True,
+            eval: bool = False,
             # Scenario type configuration
             scenario_types: Optional[list] = None,
             scenario_probs: Optional[list] = None,
@@ -101,7 +101,18 @@ class PySimColavBaseEnv(PySimEnv):
             # Obstacle population configuration
             obstacle_population: Optional[list] = None,
             obstacle_weights: Optional[list] = None,
+            # Classifier behavior:
+            #   True  → classifier is locked to the builder's ground-truth
+            #           scenario label (at episode-level and on each step-level
+            #           spawn). Geometric classification is still computed for
+            #           metrics but is not used for reward/one-hot.
+            #   False → classifier runs pure geometric classification at both
+            #           levels (so its misclassification rate can be measured
+            #           against the builder's ground truth).
+            ground_truth_classification: bool = True,
     ) -> None:
+
+        self.ground_truth_classification = bool(ground_truth_classification)
 
         # Generic detection range that drives scenario activation, dodge triggers,
         # and classification. Subclasses set this to their sensor range
@@ -153,15 +164,55 @@ class PySimColavBaseEnv(PySimEnv):
         self.eval = bool(eval)
         self.min_distance = float("inf")
 
+        # Evaluation-mode realism overrides (all default to OFF/no-op so training
+        # is unaffected; flipped on by PySimColavPolarEnv.set_evaluation_parameters
+        # which is called from agent_manager.visualize_trained_agent).
+        self.headon_lateral_mean = 0.0          # mean lateral shift for head-on TS [m]
+        self.headon_lateral_jitter = 0.0        # uniform +/- jitter around the mean [m]
+        self.overtaking_lateral_jitter = 0.0    # uniform +/- jitter for overtaking TS [m]
+        self.enable_path_offset_ou = False      # OU wander applied to entity.path_offset
+        self.ou_theta = 0.1                     # OU mean-reversion rate
+        self.ou_sigma = 1.0                     # OU noise scale [m / sqrt(s)]
+        self.ou_clip = 8.0                      # max deviation from mean [m]
+        self.enable_headon_dodge = False        # late dodge for head-on TS at encounter_range/2
+
         # Per-episode minimum distance tracking
         self._episode_min_distances: list[float] = []
         self._current_episode_min_dist: float = float("inf")
         self._current_episode_collided: bool = False
 
+        # Per-encounter minimum distance tracking. Each completed encounter
+        # contributes a {"gt", "pred", "min_dist", "collided"} record stored
+        # on the same _episode_encounters / _all_encounters lists used by the
+        # confusion matrix; "min_dist" is the closest center-to-center
+        # distance to any collision entity observed *while the encounter was
+        # active*. Records are finalized on encounter end (tracked → None)
+        # or on episode reset / terminal step if mid-encounter.
+        self._in_encounter: bool = False
+        self._current_encounter_min_dist: float = float("inf")
+        self._current_encounter_collided: bool = False
+
         self._last_collision_info = {}
         self._colreg_violations = 0
         self._colreg_correct = 0
         self.ts_passed = None
+        self._prev_passing_signal = None
+        self._prev_passing_ts_idx = None
+        self._prev_os_pos = None
+        self._prev_ts_pos = None
+
+        # Classification metrics (GT vs geometric). One record per encounter,
+        # where an encounter is the interval from "a TS becomes tracked" to
+        # "tracked_ts returns to None" (TS leaves forget range, classifier is
+        # reset by step-level cleanup, or episode ends).
+        #
+        # The (gt, pred) pair is captured once at encounter entry and never
+        # re-evaluated during the encounter — this matches the
+        # locking-during-encounter behavior applied to the 4-way classifier
+        # label used for reward shaping.
+        self._episode_encounters: list[dict] = []    # encounters in the current episode
+        self._all_encounters: list[dict] = []        # accumulated across episodes
+        self._prev_tracked_ts: Optional[int] = None  # for None→tracked transition detection
 
         # Passing snapshot: list of dicts with OS/TS positions at the moment of passing
         self._passing_snapshots: list[dict] = []
@@ -201,6 +252,11 @@ class PySimColavBaseEnv(PySimEnv):
             classify_range=self.encounter_range,
             forget_range=self.forget_range,
         )
+        # Hand the classifier a read-only view of the path segments so
+        # classify_path_projected() can project OS onto the correct segment.
+        self.scenario_classifier.set_path_segments(
+            self._seg_starts, self._seg_tangents, self._seg_lengths,
+        )
         self.ts_passed = None
 
         # Cache base geometry for episode resets
@@ -221,9 +277,12 @@ class PySimColavBaseEnv(PySimEnv):
             for cp in self.checkpoints
         ]
 
-        # Initial scenario sampling
-        if self.scenario_obstacle_level == "episode":
-            self.scenario_builder.on_reset()
+        # Initial scenario sampling. Call on_reset() for both episode-
+        # and step-level modes so the builder's per-episode state
+        # (e.g. step_counter) is initialized consistently. on_reset()
+        # internally branches on scenario_obstacle_level and only
+        # builds entities at episode level.
+        self.scenario_builder.on_reset()
         self._on_entities_stepped()
 
         # Re-initialize after scenario sampling
@@ -236,8 +295,13 @@ class PySimColavBaseEnv(PySimEnv):
     # -------------------------
     # Utility & Math
     # -------------------------
-    def _compute_cri(self, os_pos, os_heading, os_u, os_v, ts) -> float:
-        """Compute Collision Risk Index (CRI) for a target ship."""
+    def _compute_cri(self, os_pos, os_heading, os_u, os_v, ts) -> Tuple[float, float, float]:
+        """Compute (CRI, TCPA, DCPA) for a target ship.
+
+        TCPA in seconds (positive = approaching, negative = receding).
+        DCPA in metres. Falls back to (0, 0, current_range) when relative
+        velocity is effectively zero.
+        """
         ts_pos = ts.get_position()
         ts_vel = ts.get_velocity()
 
@@ -253,7 +317,7 @@ class PySimColavBaseEnv(PySimEnv):
 
         vr_sq = dvx * dvx + dvy * dvy
         if vr_sq < 1e-12:
-            return 0.0
+            return 0.0, 0.0, math.sqrt(dx * dx + dy * dy)
 
         tcpa = -(dx * dvx + dy * dvy) / vr_sq
         dcpa_x = dx + dvx * tcpa
@@ -267,7 +331,8 @@ class PySimColavBaseEnv(PySimEnv):
         else:
             cri_tcpa = self.cri_k2 * math.exp(self.cri_alpha2 * tcpa / self.cri_T)
 
-        return self.cri_omega1 * cri_dcpa + self.cri_omega2 * cri_tcpa
+        cri = self.cri_omega1 * cri_dcpa + self.cri_omega2 * cri_tcpa
+        return cri, tcpa, dcpa
 
     # -----------------------
     # Dynamics update & step
@@ -307,6 +372,8 @@ class PySimColavBaseEnv(PySimEnv):
                 dist = entity.distance_to_point(self.ship_pos)
                 if dist < self._current_episode_min_dist:
                     self._current_episode_min_dist = dist
+                if self._in_encounter and dist < self._current_encounter_min_dist:
+                    self._current_encounter_min_dist = dist
 
         # Post-entity-step hook (subclass: e.g. rebuild polar geometries)
         self._on_entities_stepped()
@@ -316,6 +383,11 @@ class PySimColavBaseEnv(PySimEnv):
         terminated = False
         truncated = False
 
+        if self.phys_sim.state.terminated and self.phys_sim.state.truncated:
+            print("condition triggered")
+
+        # Bank-collision diagnostic: fires whenever the ship is out of open
+        # water, regardless of which side (env vs phys_sim) terminated first.
         if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
             reward, terminated = self._calculate_colav_reward()
 
@@ -327,6 +399,8 @@ class PySimColavBaseEnv(PySimEnv):
                     terminated = True
 
             bank_collision = not self._ship_in_open_water(self.ship_pos)
+            if bank_collision:
+                terminated = True
 
             # Build collision info
             self._last_collision_info = {}
@@ -350,11 +424,20 @@ class PySimColavBaseEnv(PySimEnv):
             # Failure penalty
             success = self.checkpoint_index >= len(self.checkpoints)
             if terminated and not success:
-                reward = -20.0
-                pass
+                reward = -250.0
 
             if self.step_count >= self.max_steps and not terminated:
                 # reward = -250
+                truncated = True
+
+            # Focused-encounter training: scenario builder requests clean
+            # truncation when the post-encounter countdown elapses.  Treated
+            # exactly like a max-steps truncation (no failure penalty).
+            if (
+                not terminated
+                and not truncated
+                and getattr(self.scenario_builder, "_truncate_requested", False)
+            ):
                 truncated = True
 
             self.phys_sim.state.terminated = terminated
@@ -363,6 +446,14 @@ class PySimColavBaseEnv(PySimEnv):
         # Track collision for min-distance exclusion
         if self._last_collision_info.get("collision"):
             self._current_episode_collided = True
+            if self._in_encounter:
+                self._current_encounter_collided = True
+
+        obs = self._get_obs()
+
+        # Classification metrics — update after _get_obs() has re-run the
+        # scenario classifier for this step.
+        self._update_classification_metrics()
 
         info = {
             "rewards": reward,
@@ -372,9 +463,12 @@ class PySimColavBaseEnv(PySimEnv):
             "colreg_violations": self._colreg_violations,
             "colreg_correct": self._colreg_correct,
             "min_distance": self._current_episode_min_dist,
+            "classification": {
+                "encounters": list(self._episode_encounters),
+            },
         }
 
-        return self._get_obs(), reward, terminated | truncated, False, info
+        return obs, reward, terminated | truncated, False, info
 
     # --------------------------------
     # Reward (override in subclass)
@@ -400,6 +494,83 @@ class PySimColavBaseEnv(PySimEnv):
         """Called at the end of env_specific_reset(), after scenario sampling.
         Override in subclass for additional per-episode setup."""
         pass
+
+    # ---------------------------
+    # Classification metrics
+    # ---------------------------
+    def _update_classification_metrics(self) -> None:
+        """Detect encounter start and record a single (gt, pred) pair.
+
+        Called from `step()` after `_get_obs()` has triggered
+        `scenario_classifier.classify(...)`. An encounter is the interval
+        from "a TS first becomes tracked" to "tracked_ts returns to None".
+        We capture one (gt_extended, pred_extended) record at the start
+        of each encounter and never re-evaluate during the encounter —
+        this mirrors the locking behavior used for the 4-way reward label
+        and means the metric answers "at first sight, did the geometric
+        classifier agree with the builder's ground truth?"
+
+        In step-level generation multiple encounters may occur per episode
+        (classifier is reset between them by `scenario_builder.on_step`);
+        each one contributes an independent record.
+        """
+        # _get_obs() skips re-running the classifier on terminal steps,
+        # so the classifier state is stale — do not sample it. Still
+        # finalize an in-progress encounter so its min_dist/collided flags
+        # are written into the record before the episode ends.
+        if self.phys_sim.state.terminated or self.phys_sim.state.truncated:
+            self._finalize_active_encounter()
+            return
+
+        clf = self.scenario_classifier
+        curr = clf.tracked_ts
+        prev = self._prev_tracked_ts
+        self._prev_tracked_ts = curr
+
+        # Encounter end: tracked → None. Finalize the per-encounter
+        # min_dist / collided fields on the most recent record.
+        if prev is not None and curr is None:
+            self._finalize_active_encounter()
+            return
+
+        # Only act on the transition None → tracked (start of encounter).
+        if curr is None or prev is not None:
+            return
+
+        gt_ext = clf.ground_truth_extended_label
+        pred_ext = clf.geometric_extended_label if gt_ext is not None else None
+
+        # Reset per-encounter min-dist state. The distance loop in step()
+        # for this very step has already updated _current_episode_min_dist
+        # but not the encounter-scoped tracker (since _in_encounter was
+        # still False); we begin accumulating from the next step.
+        self._in_encounter = True
+        self._current_encounter_min_dist = float("inf")
+        self._current_encounter_collided = False
+
+        # Always record the encounter start so n_encounters is correct.
+        # gt_ext may be None when the tracked entity was not tagged by the
+        # builder (should not happen in normal operation, but handled
+        # defensively). Such records are excluded from classification
+        # accuracy metrics but still count toward the encounter total.
+        self._episode_encounters.append({
+            "gt": gt_ext,
+            "pred": pred_ext,
+            "min_dist": float("inf"),
+            "collided": False,
+        })
+
+    def _finalize_active_encounter(self) -> None:
+        """Write per-encounter min_dist / collided into the latest record."""
+        if not self._in_encounter or not self._episode_encounters:
+            self._in_encounter = False
+            return
+        rec = self._episode_encounters[-1]
+        rec["min_dist"] = float(self._current_encounter_min_dist)
+        rec["collided"] = bool(self._current_encounter_collided)
+        self._in_encounter = False
+        self._current_encounter_min_dist = float("inf")
+        self._current_encounter_collided = False
 
     # ---------------------------
     # Collision-entity helpers
@@ -444,12 +615,12 @@ class PySimColavBaseEnv(PySimEnv):
                          float(np.linalg.norm(entity_pos - os_pos))
                          for os_pos in active_ship_positions
                      )
-                     #if min_dist <= self.encounter_range / 2:
-                     #    entity.dodged = True
-                     #    dodge_angle = math.radians(20)
-                     #    entity.set_heading(entity.get_heading() - dodge_angle)
-                     #    entity.set_lateral_speed(0.0)
-                     #    entity.route_mode = None
+                     if self.enable_headon_dodge and min_dist <= self.encounter_range / 2:
+                         entity.dodged = True
+                         dodge_angle = math.radians(20)
+                         entity.set_heading(entity.get_heading() - dodge_angle)
+                         entity.set_lateral_speed(0.0)
+                         entity.route_mode = None
 
             if getattr(entity, "entity_type", "") in ("crossing-right", "crossing-left"):
                 if not getattr(entity, "crossing_activated", False) and active_ship_positions:
@@ -498,6 +669,20 @@ class PySimColavBaseEnv(PySimEnv):
                             entity.set_speed(v_ts)
 
             route_mode = getattr(entity, "route_mode", None)
+
+            # OU wander on path_offset for path-following TS (head-on / overtaking).
+            # Mean-reverting noise around the entity's spawn-time lateral lane.
+            if (self.enable_path_offset_ou
+                    and route_mode == "follow_checkpoints"
+                    and hasattr(entity, "path_offset_mean")):
+                x = float(getattr(entity, "path_offset", 0.0))
+                mu = float(entity.path_offset_mean)
+                dt = float(self.time_step)
+                dx = self.ou_theta * (mu - x) * dt + self.ou_sigma * math.sqrt(dt) * float(self._rng.standard_normal())
+                x_new = x + dx
+                lo = mu - self.ou_clip
+                hi = mu + self.ou_clip
+                entity.path_offset = float(np.clip(x_new, lo, hi))
 
             if route_mode == "follow_checkpoints":
                 self._advance_entity_along_checkpoints(entity, self.time_step)
@@ -596,6 +781,11 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_episode_min_dist = float("inf")
         self._current_episode_collided = False
 
+        # Finalize any encounter still active at reset (defensive — terminal
+        # steps already finalize via _update_classification_metrics).
+        if hasattr(self, "_finalize_active_encounter"):
+            self._finalize_active_encounter()
+
         self.collision_entities = []
         self.obstacle_count = 0
         self.obstacle_pos = None
@@ -608,6 +798,16 @@ class PySimColavBaseEnv(PySimEnv):
         self.ts_passed = None
         self._colreg_violations = 0
         self._colreg_correct = 0
+        self._prev_passing_signal = None
+        self._prev_passing_ts_idx = None
+
+        # Flush any encounters from the previous episode into the global
+        # accumulator (used by plot_scenario_confusion_matrix), then reset
+        # per-episode state.
+        if self._episode_encounters:
+            self._all_encounters.extend(self._episode_encounters)
+        self._episode_encounters = []
+        self._prev_tracked_ts = None
 
         # Remove passing snapshot artists from the plot and reset
         for artists in getattr(self, "_passing_snapshot_artists", []):
@@ -616,9 +816,12 @@ class PySimColavBaseEnv(PySimEnv):
         self._passing_snapshot_artists = []
         self._passing_snapshots = []
 
-        # Build scenario for this episode (or initialize adaptive state)
-        if self.scenario_obstacle_level == "episode":
-            self.scenario_builder.on_reset()
+        # Build scenario for this episode (or initialize adaptive state).
+        # Call on_reset() unconditionally so per-episode builder state
+        # (notably step_counter) is reset on every episode reset, including
+        # after early terminations such as collisions in step-level mode.
+        # on_reset() branches internally on scenario_obstacle_level.
+        self.scenario_builder.on_reset()
 
         # Clear trail histories
         self.os_trail_history = []

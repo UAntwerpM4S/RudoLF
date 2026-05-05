@@ -164,14 +164,23 @@ class AgentManager:
             **self._hyperparameters,
         )
 
-        pretrained_path = os.path.join(agent.model_dir, "pretrained_pf")
-        if os.path.exists(pretrained_path + ".zip"):
-            pid = 0
-            agent.load_individual_policy(pid, pretrained_path)
-            agent.pretrained_pid = pid
-            print("Loaded pretrained policy into slot 0")
-        else:
-            print(f"No pre-trained policy found at {pretrained_path}, starting from scratch.")
+        # Directory holding the pre-trained per-scenario policies and the
+        # spec describing which slots to populate and whether to freeze them.
+        # File names are given without the ``.zip`` extension.
+        # Slot mapping (from SCENARIO_LABELS):
+        #   0 = path-following   ← pretrained_pf
+        #   1 = head-on          ← pretrained_ho
+        #   2 = overtaking       (no pretrained file, slot stays randomly initialized)
+        #   3 = crossing-right   ← pretrained_cr
+        # All loaded slots are unfrozen (frozen=False) so they continue to
+        # train from the pretrained weights as a warm start.
+        pretrained_dir = agent.model_dir
+        pretrained_specs = {
+            #0: {"file": "pretrained_pf", "frozen": False},
+            #1: {"file": "pretrained_ho", "frozen": False},
+            #3: {"file": "pretrained_cr", "frozen": False},
+        }
+        agent.load_pretrained_policies(pretrained_dir, pretrained_specs)
 
         return agent
 
@@ -323,6 +332,15 @@ class AgentManager:
             elif hasattr(raw_env, "env"):   # gym Wrapper
                 raw_env = raw_env.env
 
+            # Flip on eval-time realism overrides (variable TS radii, lateral
+            # lane spawn, OU wander, late head-on dodge). All overrides are
+            # opt-in via env attributes that default to no-op in training.
+            if hasattr(raw_env, "set_evaluation_parameters"):
+                raw_env.set_evaluation_parameters()
+            for sub in getattr(raw_env, "sub_environments", {}).values():
+                if hasattr(sub, "set_evaluation_parameters"):
+                    sub.set_evaluation_parameters()
+
             is_lunar_lander = isinstance(raw_env, LunarLander)
 
             collector = EpisodeCollector(self._agent, raw_env)
@@ -359,13 +377,59 @@ class AgentManager:
                     print(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
                     print(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
                     print(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
-                    cr_pct = (m.collision_count / m.num_episodes * 100) if m.num_episodes else 0.0
-                    print(f"Collision rate (CR): {cr_pct:.2f}%")
+                    print("Collision rate per policy:")
+                    for policy in sorted(m.encounters_per_policy):
+                        enc_n = m.encounters_per_policy[policy]
+                        col_n = m.collisions_per_policy.get(policy, 0)
+                        rate = (col_n / enc_n * 100) if enc_n else 0.0
+                        print(f"  {policy:<16s} {rate:6.2f}% ({col_n}/{enc_n} encounters)")
+                    n_ep = m.num_episodes
+                    out_rate = (m.collisions_outside_encounters / n_ep * 100) if n_ep else 0.0
+                    print(f"  outside-encounter {out_rate:6.2f}% ({m.collisions_outside_encounters}/{n_ep} episodes)")
+                    in_enc = m.collision_count - m.collisions_outside_encounters
+                    total_denom = m.num_encounters + n_ep
+                    cr_pct = (m.collision_count / total_denom * 100) if total_denom else 0.0
+                    print(
+                        f"Total collision rate (CR): {cr_pct:.2f}% "
+                        f"({m.collision_count} = {in_enc} in {m.num_encounters} encounters "
+                        f"+ {m.collisions_outside_encounters} outside / {n_ep} episodes)"
+                    )
                     print(f"Collision per type: {m.collision_type_count}")
                     print(f"Collision per side: {m.collision_side_count}")
                     print(f"COLREG violation count: {m.colreg_violation_count}")
 
+                    # Scenario classification diagnostics — per encounter
+                    # (one record captured at encounter entry).
+                    enc_rate = (
+                        m.encounter_misclassification_count / m.num_encounters * 100
+                        if m.num_encounters else 0.0
+                    )
+                    print(
+                        f"Scenario misclassification — "
+                        f"{m.encounter_misclassification_count}/{m.num_encounters} encounters "
+                        f"({enc_rate:.2f}%)"
+                    )
+                    if m.encounter_confusion:
+                        print("Encounter confusion (gt → pred: count):")
+                        for (gt, pred), cnt in sorted(m.encounter_confusion.items()):
+                            tag = "" if gt == pred else "  [MISMATCH]"
+                            print(f"  {gt} → {pred}: {cnt}{tag}")
+
                 save_dir = self.agent.model_dir or "."
+
+                for sid in metrics.keys():
+                    ship_env = self._get_ship_env(raw_env, sid)
+                    env_name = getattr(ship_env, "env_name", sid)
+                    if hasattr(ship_env, "plot_min_distance_stats"):
+                        ship_env.plot_min_distance_stats(
+                            pdf_save_path=f"{save_dir}/{env_name}_min_distance_PDF.png",
+                            boxplot_save_path=f"{save_dir}/{env_name}_min_distance_boxplots.png",
+                        )
+                    if hasattr(ship_env, "plot_scenario_confusion_matrix"):
+                        ship_env.plot_scenario_confusion_matrix(
+                            save_path=f"{save_dir}/{env_name}_scenario_confusion_matrix.png",
+                        )
+
                 MatplotlibRenderer.render(
                     run_data.ships, metrics, raw_env,
                     save_path=f"{save_dir}/trajectory.png",

@@ -35,6 +35,16 @@ if __name__ == "__main__" or __name__ == "fw.main":
         initialize_all_environments
     )
 
+    # MultiPolicySingleAgent (MPSA) policy-id (pid) layout used in this app:
+    #   pid 0 = path-following
+    #   pid 1 = head-on
+    #   pid 2 = overtaking
+    #   pid 3 = crossing-right
+    # The pid → label mapping comes from SCENARIO_LABELS in
+    # collision_avoidance.scenario_classifier and is passed into the agent
+    # via ``policy_labels`` from agent_manager._build_multi_policy_single_agent.
+    # Per-pid hyperparameters in DEFAULT_HYPERPARAMETERS[MPSA] (e.g.
+    # ``log_std_bounds``) are keyed by pid and reference this mapping.
     framework_config = get_config_parameters()
     configured_env_names = resolve_environment_names(
         framework_config.get("env_type", py_sim_env_name)
@@ -122,10 +132,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
         ),
         multi_policy_colav_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
-            target_reward=0.75,
+            target_reward=5.0,
             patience=4,
-            max_time_steps=200
-
+            max_time_steps=1500
         ),
         py_sim_colav_replanner_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
@@ -155,6 +164,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
         Returns:
             The agent type string (e.g. "PPO", "MPPO", or "MPSA").
         """
+
+
         from fw.environments.multi_sim_env import MultiSimEnv
         for env in envs:
             if getattr(env.gym_env, "include_scenario_one_hot", False):
@@ -189,7 +200,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
         return True
 
     # Both visualize and train now follow env_type order exactly (for airsim),
-    # but standard environments are batched to preserve Trainer functionality.
+    # but standard environments are batched to preserve Trainer
+    # functionality.
     executed_any_step = False
     standard_envs = []
 
@@ -199,10 +211,12 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 executed_any_step = True
             standard_envs = []
             if action == "train":
+
                 logging.getLogger("airsim").setLevel(logging.INFO)
             if _run_airsim_extension(action):
                 executed_any_step = True
             continue
+
 
         env = build_default_environment(env_name)
         standard_envs.append(env)

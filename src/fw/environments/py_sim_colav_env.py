@@ -4,11 +4,8 @@ Extends PySimColavBaseEnv with a polar rangefinder observation and
 COLREG-aware reward shaping for the polar/rangefinder approach.
 """
 import matplotlib
-import matplotlib.patches as patches
-import matplotlib.pyplot as plt
 import gymnasium as gym
 from fw.collision_avoidance.scenario_classifier import NUM_SCENARIOS
-from scipy.stats import gaussian_kde
 
 import math
 
@@ -51,7 +48,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             enable_obstacles: bool = True,
             use_polar_scan: bool = True,
             enable_variable_ship_size: bool = False,
-            eval: bool = True,
+            eval: bool = False,
             include_scenario_one_hot: bool = False,
             # Scenario configuration (passed to base)
             scenario_types: Optional[list] = None,
@@ -59,23 +56,53 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             obstacle_population: Optional[list] = None,
             obstacle_weights: Optional[list] = None,
             scenario_obstacle_level: Optional[str] = None,
+            ground_truth_classification: bool = True,
+            # Focused-encounter training configuration
+            focused_encounter_mode: bool = True,
+            train_encounter_prob: float = 1.0,
+            train_encounter_cooldown: int = 150,
+            eval_encounter_prob: float = 0.004,
+            eval_encounter_cooldown: int = 500,
+            post_encounter_steps: int = 75,
+            pathfollowing_encounter_steps: int = 75,
+            skip_tail_segments: int = 10,
+            random_segment_start: bool = True,
             **kwargs,
     ) -> None:
-
         # Polar scan configuration
         self.use_polar_scan = bool(use_polar_scan)
         self.polar_scan_cached = None
         self.polar_n_sectors = 54
         self.polar_fov = np.radians(270)
-        self.polar_max_range = 500.0
+        self.polar_max_range = 750.0
         self.polar_obs_max = 0.1 * self.polar_max_range / 250
+        self.distance_penalty_start = 100 # TODO: 100
 
         self.include_scenario_one_hot = bool(include_scenario_one_hot)
 
-        # Polar-specific reward state
-        self._colreg_initial_heading = None
-        self._crossing_left_initial_speed = None
-        self._crossing_right_grav_point = None
+        # focused encounter (path following -> encounter -> path following --> terminate)
+        # to produce shorter episodes with more equal step distribution across encounter/path-following
+        self.focused_encounter_mode = bool(focused_encounter_mode)
+        self.train_encounter_prob = float(train_encounter_prob)
+        self.train_encounter_cooldown = int(train_encounter_cooldown)
+        self.eval_encounter_prob = float(eval_encounter_prob)
+        self.eval_encounter_cooldown = int(eval_encounter_cooldown)
+        self.post_encounter_steps = int(post_encounter_steps)
+        # Length of a "path-following encounter" — the focused-encounter
+        # variant where the sampled scenario is "path-following" (no TS
+        # spawned). The episode structure becomes:
+        #   train_encounter_cooldown PF steps (preroll)
+        #   -> pathfollowing_encounter_steps PF-only steps (the "encounter")
+        #   -> post_encounter_steps PF steps (postroll)
+        #   -> clean truncation
+        # Useful when "path-following" appears in scenario_probs with a
+        # nonzero weight: it gives the PF policy more focused training on
+        # path stretches that would otherwise only be visited in passing
+        # during longer combined episodes (e.g. the final stretch where
+        # bank collisions tend to occur).
+        self.pathfollowing_encounter_steps = int(pathfollowing_encounter_steps)
+        self.skip_tail_segments = int(skip_tail_segments)
+        self.random_segment_start = bool(random_segment_start)
 
         # Pre-compute polar ray directions
         bin_width = float(self.polar_fov) / float(self.polar_n_sectors)
@@ -87,9 +114,9 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         ).astype(np.float32)
 
         # Scenario parameters
-        scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "episode"
+        scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.0, 0.0, 0.0, 1.0, 0.0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.00, 0.0, 0.33, 0.33, 0.34, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -114,19 +141,57 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             obstacle_population=obstacle_population,
             obstacle_weights=obstacle_weights,
             scenario_obstacle_level=scenario_obstacle_level,
+            ground_truth_classification=ground_truth_classification,
         )
 
         self.polar_scan_cached = None
+        self.enable_reward_diag = False
 
         # Reward weights for polar COLAV shaping
         self.reward_weights = {
-            "polar_distance": 0.7,
-            "colreg_bearing": 5.0,
-            "crossing_right": 0.5,
-            "crossing_right_grav_side": 1.5,
-            "crossing_right_grav_proximity": 2.0,
-            "crossing_right_grav_proximity_scale": 100.0,
+            "polar_distance_colreg": 0.65,
+            "polar_distance_pf": 0.15,
+            "colreg_bearing": 1.5,
+            "crossing_right": 2.0,
         }
+
+    # -------------------------
+    # Evaluation-mode overrides
+    # -------------------------
+    def set_evaluation_parameters(self) -> None:
+        """Flip on the eval-only realism overrides for trained-model evaluation.
+
+        Called by AgentManager.visualize_trained_agent before running episodes.
+        Overrides set here take effect on the next reset/spawn — they are read
+        by the scenario builder (lateral spawn) and the base env step loop
+        (OU wander, head-on dodge). Training runs leave these at their safe
+        defaults (set in PySimColavBaseEnv.__init__) and are unaffected.
+        """
+        self.eval = True
+
+        # Variable TS radii
+        #self.enable_variable_ship_size = True
+        #self.static_ship_radius_min = 20.0
+        #self.static_ship_radius_max = 40.0
+
+        # Lateral lane spawn (parallel-to-path)
+        # Head-on: 30 m to OS-port +/- 10 m (a "left lane")
+        #self.headon_lateral_mean = 30.0
+        #self.headon_lateral_jitter = 10.0
+        # Overtaking: same lane as OS, +/- 10 m jitter only
+        #self.overtaking_lateral_jitter = 10.0
+
+        # Ornstein-Uhlenbeck wander on entity.path_offset
+        #self.enable_path_offset_ou = True
+        #self.ou_theta = 0.1
+        #self.ou_sigma = 1.0
+        #self.ou_clip = 8.0
+
+        # Late dodge for head-on TS at encounter_range/2
+        #self.enable_headon_dodge = True
+
+        # Let OS always start from the original position
+        self.random_segment_start = False
 
     # -------------------------
     # Polar scan geometry
@@ -231,9 +296,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         if getattr(self, "use_polar_scan", False):
             self.polar_scan_cached = None
 
-        self._colreg_initial_heading = None
         self._crossing_left_initial_speed = None
-        self._crossing_right_grav_point = None
 
         if getattr(self, "use_polar_scan", False):
             self._rebuild_polar_scan_geometries()
@@ -245,20 +308,18 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # Observation
     # -----------------------
     def _initialize_observation_space(self) -> gym.spaces.Box:
-        """Extend observation space with polar scan sectors + CRI."""
+        """Extend observation space with polar scan sectors + tanh-TCPA scalar."""
         base_space = super()._initialize_observation_space()
-
-        if not getattr(self, "use_polar_scan", False):
-            return base_space
 
         polar_low = np.zeros(self.polar_n_sectors, dtype=np.float32)
         polar_high = np.full(self.polar_n_sectors, self.polar_obs_max, dtype=np.float32)
 
-        cri_low = np.zeros(1, dtype=np.float32)
-        cri_high = np.ones(1, dtype=np.float32)
+        # tanh(TCPA / cri_T) is bounded in (-1, +1).
+        tcpa_low = -np.ones(1, dtype=np.float32)
+        tcpa_high = np.ones(1, dtype=np.float32)
 
-        extended_low = np.hstack([base_space.low, polar_low, cri_low])
-        extended_high = np.hstack([base_space.high, polar_high, cri_high])
+        extended_low = np.hstack([base_space.low, polar_low, tcpa_low])
+        extended_high = np.hstack([base_space.high, polar_high, tcpa_high])
 
         if getattr(self, "include_scenario_one_hot", False):
             one_hot_low = np.zeros(NUM_SCENARIOS, dtype=np.float32)
@@ -269,35 +330,53 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         return gym.spaces.Box(low=extended_low, high=extended_high, dtype=np.float32)
 
     def _get_obs(self) -> np.ndarray:
-        """Extend observation with polar scan data and CRI scalar."""
+        """Extend observation with polar scan data and a TCPA phase scalar."""
         base_obs = super()._get_obs()
 
+        clf = self.scenario_classifier
+
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            clf.classify_path_projected(
+                self.ship_pos,
+                self.phys_sim.state.heading,
+                self.collision_entities,
+            )
+
         if not getattr(self, "use_polar_scan", False):
-            return base_obs
+            zeros_polar = np.zeros(self.polar_n_sectors, dtype=np.float32)
+            zeros_tcpa = np.zeros(1, dtype=np.float32)
+            obs = np.hstack([base_obs, zeros_polar, zeros_tcpa]).astype(np.float32)
+            if getattr(self, "include_scenario_one_hot", False):
+                obs = np.hstack([obs, clf.get_one_hot()]).astype(np.float32)
+            return obs
 
         scan = self.polar_scan_cached
         if scan is None:
             scan = self._get_polar_scan()
             self.polar_scan_cached = scan
 
-        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
-            self.scenario_classifier.classify(
-                self.ship_pos,
-                self.phys_sim.state.heading,
-                self.collision_entities,
-            )
-
-        cri_value = 0.0
-        clf = self.scenario_classifier
+        # Encounter phase as a single scalar: tanh(TCPA / cri_T) in [-1, +1].
+        #   ~+1 -> TS still far in the future (approaching),
+        #    0  -> at CPA,
+        #   ~-1 -> TS already past CPA (receding).
+        # Replaces the CRI feature: gives the policy an explicit, signed
+        # representation of "approach vs recovery" without conflating it
+        # with bearing-derived risk magnitude.
+        tcpa_norm = 0.0
         if clf.tracked_ts is not None:
             ts = self.collision_entities[clf.tracked_ts]
             os_pos = self.ship_pos
             os_heading = self.phys_sim.state.heading
             os_u = float(self.phys_sim.state.u)
             os_v = float(self.phys_sim.state.v)
-            cri_value = float(np.clip(self._compute_cri(os_pos, os_heading, os_u, os_v, ts), 0.0, 1.0))
+            _, tcpa, _ = self._compute_cri(os_pos, os_heading, os_u, os_v, ts)
+            tcpa_norm = float(math.tanh(tcpa / max(self.cri_T, 1e-6)))
 
-        obs = np.hstack([base_obs, scan, np.array([cri_value], dtype=np.float32)]).astype(np.float32)
+        obs = np.hstack([
+            base_obs,
+            scan.astype(np.float32),
+            np.array([tcpa_norm], dtype=np.float32),
+        ]).astype(np.float32)
 
         if getattr(self, "include_scenario_one_hot", False):
             obs = np.hstack([obs, self.scenario_classifier.get_one_hot()]).astype(np.float32)
@@ -312,35 +391,47 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         base_reward, done = super()._calculate_colav_reward()
         reward = base_reward
 
-        # Polar distance penalty
+        clf = self.scenario_classifier
+        self.ts_idx = clf.tracked_ts
+
+        g_tcpa = 1.0
+        if (
+            self.ts_idx is not None
+            and self.ts_idx < len(self.collision_entities)
+            and clf.label in ("crossing-right", "head-on", "overtaking")
+        ):
+            ts = self.collision_entities[self.ts_idx]
+            os_u = float(self.phys_sim.state.u)
+            os_v = float(self.phys_sim.state.v)
+            _, tcpa, _ = self._compute_cri(
+                self.ship_pos, self.phys_sim.state.heading, os_u, os_v, ts,
+            )
+            k_tcpa = 0.15
+            g_tcpa = 0.5 * (1.0 + math.tanh(k_tcpa * tcpa))
+
+
         _step_polar = 0.0
         if getattr(self, "use_polar_scan", False) and self.polar_scan_cached is not None:
             max_close = float(np.max(self.polar_scan_cached))
             min_dist_n = 1.0 - (max_close / max(float(self.polar_obs_max), 1e-6))
 
-            d_ramp_start = 100
+            d_ramp_start = self.distance_penalty_start
             ramp_max_penalty = 5.0
             min_dist = min_dist_n * self.polar_max_range
 
             if min_dist < d_ramp_start:
-                collision_boundary = 0.0
-                ramp_t = (min_dist - collision_boundary) / max(d_ramp_start - collision_boundary, EPSILON)
+                distance_penalty_peak = 40.0
+                a = -2.6 # -2.6
+                ramp_t = (min_dist - distance_penalty_peak) / max(d_ramp_start - distance_penalty_peak, EPSILON)
                 ramp_t = float(np.clip(ramp_t, 0.0, 1.0))
-                exp_t = (np.exp(ramp_t) - 1.0) / (np.e - 1.0)
+                exp_t = (np.exp(a * ramp_t) - 1.0) / (np.exp(a) - 1.0)
                 ramp_penalty = ramp_max_penalty * (1.0 - exp_t)
-                _step_polar = self.reward_weights['polar_distance'] * ramp_penalty
+                polar_weight = float(self.reward_weights["polar_distance_colreg"])
+                _step_polar = polar_weight * ramp_penalty
                 reward -= _step_polar
 
-        clf = self.scenario_classifier
-        self.ts_idx = clf.tracked_ts
-
-        if clf.label != "crossing-left":
-            self._crossing_left_initial_speed = None
-        if clf.label != "crossing-right":
-            self._crossing_right_grav_point = None
-
         _headon_term = 0.0
-        _step_grav = 0.0
+        crossing_right_signal = 0.0
         if self.ts_idx is not None and self.ts_idx < len(self.collision_entities):
             ts_idx = self.ts_idx
             ts = self.collision_entities[ts_idx]
@@ -352,102 +443,115 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 ts_pos = ts.get_position()
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
-                os_u = float(self.phys_sim.state.u)
-                os_v = float(self.phys_sim.state.v)
                 rel_bearing = (
                                       math.atan2(dy, dx) - os_heading + math.pi
                               ) % (2.0 * math.pi) - math.pi
 
-                dist = ts.distance_to_point(os_pos)
-                proximity = max(0.0, 1.0 - dist / self.polar_max_range)
-                cri = self._compute_cri(os_pos, os_heading, os_u, os_v, ts)
                 _sin_b = math.sin(rel_bearing)
-                _headon_term = self.reward_weights["colreg_bearing"] * _sin_b * (1-cri)
+
+                _headon_term = self.reward_weights["colreg_bearing"] * _sin_b * g_tcpa
                 reward += _headon_term
-
-                if scenario == "head-on":
-                    side = ts.ts_side_from_os_perspective(os_pos, os_heading)
-                    if ts.passed_by_os(os_pos, os_heading) and self.ts_passed != ts_idx:
-                        self.ts_passed = ts_idx
-                        if side == "port":
-                            self._colreg_correct += 1
-                        elif side == "starboard":
-                            self._colreg_violations += 1
-
-                        self._passing_snapshots.append({
-                            "os_pos": np.copy(os_pos),
-                            "ts_pos": ts_pos.copy(),
-                            "dist": dist,
-                            "scenario": scenario,
-                        })
 
             elif scenario == "crossing-right":
                 ts_pos = ts.get_position()
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
-                rel_bearing = (
-                                      math.atan2(dy, dx) - os_heading + math.pi
-                              ) % (2.0 * math.pi) - math.pi
+                beta = (
+                    math.atan2(dy, dx) - os_heading + math.pi
+                ) % (2.0 * math.pi) - math.pi
 
-                os_u = float(self.phys_sim.state.u)
-                os_v = float(self.phys_sim.state.v)
-                cri = self._compute_cri(os_pos, os_heading, os_u, os_v, ts)
+                # R(x) = A * tanh(k * (x - beta_start)).
+                # Zero crossing (and max gradient) at x = beta_start, set to the
+                # "most positive" end of the encounter range so the unlearned
+                # agent enters at the steepest part of the curve.
+                k = 1
+                beta_start = -0.34906585 # -20deg
 
-                polar_crossing_keep = 0.1 + 0.9 * cri
-                reward += (1.0 - polar_crossing_keep) * _step_polar
+                crossing_right_signal = (
+                    self.reward_weights["crossing_right"]
+                    * math.tanh(k * (beta - beta_start))
+                    * g_tcpa
+                )
+                reward += crossing_right_signal
 
-                #if -math.pi / 2 <= rel_bearing <= math.pi / 2:
-                #    crossing_signal = math.sin(rel_bearing)
-                #elif rel_bearing < -math.pi / 2:
-                #    crossing_signal = (-0.005 * (math.degrees(rel_bearing) + 90) ** 2) + math.sin(math.radians(-90))
-                #else:
-                #    crossing_signal = (-0.005 * (math.degrees(rel_bearing) - 90) ** 2) + math.sin(math.radians(90))
-                #crossing_reward = crossing_signal * (1.0 - cri)
-                #_step_crossing = self.reward_weights["crossing_right"] * crossing_reward
-                #reward += _step_crossing
+        # Passing detection: TS-frame sign-flip on lateral (crossing-right) or
+        # longitudinal (head-on) offset. Linearly interpolate the sub-step
+        # crossing point so the dotted snapshot line lies on the TS track.
+        if (
+            self.ts_idx is not None
+            and self.ts_idx < len(self.collision_entities)
+            and clf.label in ("head-on", "crossing-right")
+        ):
+            ts = self.collision_entities[self.ts_idx]
+            os_pos_now = self.ship_pos
+            ts_pos_now = ts.get_position()
+            signal = ts.passing_signal(os_pos_now, clf.label)
+            prev = self._prev_passing_signal
+            if (
+                prev is not None
+                and self._prev_passing_ts_idx == self.ts_idx
+                and prev * signal < 0.0
+                and self.ts_passed != self.ts_idx
+            ):
+                t = prev / (prev - signal)
+                os_at = self._prev_os_pos + t * (os_pos_now - self._prev_os_pos)
+                ts_at = self._prev_ts_pos + t * (ts_pos_now - self._prev_ts_pos)
+                self.ts_passed = self.ts_idx
+                side = ts.ts_side_from_os_perspective(os_pos_now, self.phys_sim.state.heading)
+                if side == "port":
+                    self._colreg_correct += 1
+                elif side == "starboard":
+                    self._colreg_violations += 1
+                self._passing_snapshots.append({
+                    "os_pos": np.asarray(os_at, dtype=np.float32),
+                    "ts_pos": np.asarray(ts_at, dtype=np.float32),
+                    "dist": float(np.linalg.norm(os_at - ts_at)),
+                    "scenario": clf.label,
+                })
+            self._prev_passing_signal = signal
+            self._prev_passing_ts_idx = self.ts_idx
+            self._prev_os_pos = np.copy(os_pos_now)
+            self._prev_ts_pos = np.copy(ts_pos_now)
+        else:
+            self._prev_passing_signal = None
+            self._prev_passing_ts_idx = None
 
-                # Gravitation point
-                # Two shaping terms:
-                #   side      : -sin(bearing) -> peaks at bearing = -pi/2 (grav on starboard)
-                #   proximity : exp(-d/scale) -> peaks when OS is close to the grav point
-                # Together they incentivize "pass close to, and leave on the right"
-                # which is the COLREG-compliant pass-astern for crossing-right.
-                if self._crossing_right_grav_point is None:
-                    self._crossing_right_grav_point = ts.get_position().copy()
-                grav = self._crossing_right_grav_point
-                grav_dx = float(grav[0] - os_pos[0])
-                grav_dy = float(grav[1] - os_pos[1])
-                grav_dist = math.sqrt(grav_dx * grav_dx + grav_dy * grav_dy)
-                grav_bearing = (math.atan2(grav_dy, grav_dx) - os_heading + math.pi) % (2.0 * math.pi) - math.pi
+        # ----------------------------------------------------------
+        # Per-step reward diagnostics. Toggle via env.enable_reward_diag.
+        # ----------------------------------------------------------
+        if (
+            getattr(self, "enable_reward_diag", False)
+            and self.ts_idx is not None
+            and self.ts_idx < len(self.collision_entities)
+        ):
+            ts = self.collision_entities[self.ts_idx]
+            os_pos = self.ship_pos
+            os_heading = self.phys_sim.state.heading
+            os_u = float(self.phys_sim.state.u)
+            os_v = float(self.phys_sim.state.v)
+            ts_pos = ts.get_position()
+            dx = float(ts_pos[0] - os_pos[0])
+            dy = float(ts_pos[1] - os_pos[1])
+            beta = (
+                math.atan2(dy, dx) - os_heading + math.pi
+            ) % (2.0 * math.pi) - math.pi
+            cri, tcpa, dcpa = self._compute_cri(
+                os_pos, os_heading, os_u, os_v, ts,
+            )
+            dist = ts.distance_to_point(os_pos)
+            side = ts.ts_side_from_os_perspective(os_pos, os_heading)
+            print(
+                f"[REW] step={getattr(self, 'step_count', -1):4d} "
+                f"scen={clf.label:14s} side={side:9s} "
+                f"beta={math.degrees(beta):+6.1f}deg "
+                f"dist={dist:6.1f} "
+                f"tcpa={tcpa:+7.1f}s dcpa={dcpa:6.1f}m cri={cri:.3f} "
+                f"g_tcpa={g_tcpa:.3f} "
+                f"cr_sig={crossing_right_signal:+7.3f} "
+                f"polar={_step_polar:+7.3f} "
+                f"base={base_reward:+7.3f} total={reward:+7.3f}"
+            )
 
-                side_signal = -math.sin(grav_bearing)
-                proximity_scale = self.reward_weights["crossing_right_grav_proximity_scale"]
-                proximity_signal = math.exp(-grav_dist / proximity_scale)
-
-                _step_grav_side = self.reward_weights["crossing_right_grav_side"] * side_signal
-                _step_grav_prox = self.reward_weights["crossing_right_grav_proximity"] * proximity_signal
-                _step_grav = _step_grav_side + _step_grav_prox
-                reward += _step_grav
-
-                #print(f"[step: {self.step_count} grav_bearing: {grav_bearing}] reward: {reward} = base_reward ({base_reward}) r_grav ({_step_grav}) - _step_polar ({_step_polar}) + cri ({cri}")
-
-                # COLREG violation tracking
-                ts_pos = ts.get_position()
-                side = ts.ts_side_from_os_perspective(os_pos, os_heading)
-                if ts.passed_by_os(os_pos, os_heading) and self.ts_passed != ts_idx:
-                    self.ts_passed = ts_idx
-                    if side == "port":
-                        self._colreg_correct += 1
-                    elif side == "starboard":
-                        self._colreg_violations += 1
-
-                    dist = ts.distance_to_point(os_pos)
-                    self._passing_snapshots.append({
-                        "os_pos": np.copy(os_pos),
-                        "ts_pos": ts_pos.copy(),
-                        "dist": dist,
-                        "scenario": scenario,
-                    })
         return reward, done
 
     # -----------------------
@@ -493,92 +597,20 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # -----------------------
     # Evaluation
     # -----------------------
-    def plot_min_distance_PDF(self, save_path: str = "min_distance_PDF.png") -> None:
-        """Plot probability density of minimum center-to-center distance
-        to collision entities across non-collision evaluation episodes."""
-        if not self._current_episode_collided and self._current_episode_min_dist < float("inf"):
-            self._episode_min_distances.append(self._current_episode_min_dist)
+    def plot_min_distance_stats(
+        self,
+        pdf_save_path: str = "min_distance_PDF.png",
+        boxplot_save_path: str = "min_distance_boxplots.png",
+    ) -> None:
+        from fw.collision_avoidance.colav_statistics import plot_min_distance_stats
+        plot_min_distance_stats(self, pdf_save_path, boxplot_save_path)
 
-        distances = np.array(self._episode_min_distances)
-        if len(distances) == 0:
-            print("No non-collision episodes to plot min-distance png for.")
-            return
-
-        fig, ax = plt.subplots(figsize=(10, 6))
-
-        n_bins = max(10, len(distances) // 3)
-        ax.hist(distances, bins=n_bins, density=True, alpha=0.6, color="steelblue",
-                edgecolor="white", label="Histogram (density)")
-
-        kde = gaussian_kde(distances)
-        x_grid = np.linspace(max(0, distances.min() - 5), distances.max() + 10, 300)
-        ax.plot(x_grid, kde(x_grid), color="darkblue", linewidth=2, label="KDE")
-
-        arrow_coords = ("data", "axes fraction")
-        arrow_kwargs = dict(arrowstyle="<->", lw=1.5)
-        text_kwargs = dict(ha="center", va="top", fontsize=8, fontweight="bold")
-
-        os_r = float(self.own_ship_radius)
-        ts_r_min = float(self.static_ship_radius_min)
-        ts_r_max = float(self.static_ship_radius_max)
-        variable_ts = ts_r_min != ts_r_max
-
-        row1_y = -0.06
-        if os_r > 0:
-            ax.annotate("", xy=(os_r, row1_y), xytext=(0, row1_y),
-                         arrowprops=dict(**arrow_kwargs, color="red"),
-                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
-            ax.text(os_r / 2, row1_y - 0.02, f"OS radius = {os_r:.0f}m",
-                    transform=ax.get_xaxis_transform(), color="red",
-                    clip_on=False, **text_kwargs)
-
-        row2_y = row1_y - 0.08
-        if variable_ts:
-            ax.annotate("", xy=(os_r + ts_r_min, row2_y), xytext=(os_r, row2_y),
-                         arrowprops=dict(**arrow_kwargs, color="orange"),
-                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
-            ax.text(os_r + ts_r_min / 2, row2_y - 0.02,
-                    f"min TS radius = {ts_r_min:.0f}m",
-                    transform=ax.get_xaxis_transform(), color="orange",
-                    clip_on=False, **text_kwargs)
-            row3_y = row2_y - 0.08
-            ax.annotate("", xy=(os_r + ts_r_max, row3_y), xytext=(os_r, row3_y),
-                         arrowprops=dict(**arrow_kwargs, color="darkorange"),
-                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
-            ax.text(os_r + ts_r_max / 2, row3_y - 0.02,
-                    f"max TS radius = {ts_r_max:.0f}m",
-                    transform=ax.get_xaxis_transform(), color="darkorange",
-                    clip_on=False, **text_kwargs)
-        else:
-            ax.annotate("", xy=(os_r + ts_r_min, row2_y), xytext=(os_r, row2_y),
-                         arrowprops=dict(**arrow_kwargs, color="orange"),
-                         xycoords=arrow_coords, textcoords=arrow_coords, clip_on=False)
-            ax.text(os_r + ts_r_min / 2, row2_y - 0.02,
-                    f"TS radius = {ts_r_min:.0f}m",
-                    transform=ax.get_xaxis_transform(), color="orange",
-                    clip_on=False, **text_kwargs)
-
-        collision_dist_min = os_r + ts_r_min
-        collision_dist_max = os_r + ts_r_max
-        ax.axvline(collision_dist_min, color="red", linestyle="--", alpha=0.6,
-                   label=f"Collision boundary (min) = {collision_dist_min:.0f}m")
-        if variable_ts:
-            ax.axvline(collision_dist_max, color="darkorange", linestyle="--", alpha=0.6,
-                       label=f"Collision boundary (max) = {collision_dist_max:.0f}m")
-
-        ax.set_ylim(bottom=0)
-        ax.set_xlim(left=0)
-
-        ax.set_xlabel("Minimum center-to-center distance to collision entity [m]")
-        ax.set_ylabel("Probability density")
-        ax.set_title(f"Min-distance PDF ({len(distances)} non-collision episodes)")
-        ax.legend(loc="upper right")
-        ax.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        print(f"Min-distance PDF saved as '{save_path}'")
-        plt.close(fig)
+    def plot_scenario_confusion_matrix(
+        self,
+        save_path: str = "scenario_confusion_matrix.png",
+    ) -> None:
+        from fw.collision_avoidance.colav_statistics import plot_scenario_confusion_matrix
+        plot_scenario_confusion_matrix(self, save_path)
 
 
 # Backwards-compatible alias
