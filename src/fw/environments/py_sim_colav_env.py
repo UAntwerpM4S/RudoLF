@@ -77,7 +77,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.polar_fov = np.radians(270)
         self.polar_max_range = 750.0
         self.polar_obs_max = 0.1 * self.polar_max_range / 250
-        self.distance_penalty_start = 100 # TODO: 100
+        self.distance_penalty_start = 100
+
+        # overtaking TS, very low speed during encounters to keep episodes short
+        self.overtaking_ts_v_min = 0.1
+        self.overtaking_ts_v_max = 0.2
 
         self.include_scenario_one_hot = bool(include_scenario_one_hot)
 
@@ -89,21 +93,10 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.eval_encounter_prob = float(eval_encounter_prob)
         self.eval_encounter_cooldown = int(eval_encounter_cooldown)
         self.post_encounter_steps = int(post_encounter_steps)
-        # Length of a "path-following encounter" — the focused-encounter
-        # variant where the sampled scenario is "path-following" (no TS
-        # spawned). The episode structure becomes:
-        #   train_encounter_cooldown PF steps (preroll)
-        #   -> pathfollowing_encounter_steps PF-only steps (the "encounter")
-        #   -> post_encounter_steps PF steps (postroll)
-        #   -> clean truncation
-        # Useful when "path-following" appears in scenario_probs with a
-        # nonzero weight: it gives the PF policy more focused training on
-        # path stretches that would otherwise only be visited in passing
-        # during longer combined episodes (e.g. the final stretch where
-        # bank collisions tend to occur).
         self.pathfollowing_encounter_steps = int(pathfollowing_encounter_steps)
         self.skip_tail_segments = int(skip_tail_segments)
         self.random_segment_start = bool(random_segment_start)
+
 
         # Pre-compute polar ray directions
         bin_width = float(self.polar_fov) / float(self.polar_n_sectors)
@@ -191,6 +184,10 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
         # Late dodge for head-on TS at encounter_range/2
         #self.enable_headon_dodge = True
+
+        # overtaking TS speed:
+        self.overtaking_ts_v_min = 1.0
+        self.overtaking_ts_v_max = self.os_nominal_speed - 0.3
 
         # Let OS always start from the original position
         self.random_segment_start = False
@@ -441,7 +438,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             os_heading = self.phys_sim.state.heading
             scenario = clf.label
 
-            if scenario == "head-on" or scenario == "overtaking":
+            if scenario == "overtaking":
+                # only base reward and polar distance penalty
+                pass
+
+            if scenario == "head-on":
                 ts_pos = ts.get_position()
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
@@ -632,11 +633,14 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self,
         pdf_save_path: str = "min_distance_PDF.png",
         boxplot_save_path: str = "min_distance_boxplots.png",
+        paired_boxplot_save_path: str = "min_distance_paired_boxplots.png",
         include_banks: bool = True,
     ) -> None:
         from fw.collision_avoidance.colav_statistics import plot_min_distance_stats
         plot_min_distance_stats(
-            self, pdf_save_path, boxplot_save_path, include_banks=include_banks
+            self, pdf_save_path, boxplot_save_path,
+            paired_boxplot_save_path=paired_boxplot_save_path,
+            include_banks=include_banks,
         )
 
     def plot_scenario_confusion_matrix(

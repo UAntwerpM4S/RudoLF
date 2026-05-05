@@ -424,6 +424,7 @@ class AgentManager:
                         ship_env.plot_min_distance_stats(
                             pdf_save_path=f"{save_dir}/{env_name}_min_distance_PDF.png",
                             boxplot_save_path=f"{save_dir}/{env_name}_min_distance_boxplots.png",
+                            paired_boxplot_save_path=f"{save_dir}/{env_name}_min_distance_paired_boxplots.png",
                         )
                     if hasattr(ship_env, "plot_scenario_confusion_matrix"):
                         ship_env.plot_scenario_confusion_matrix(
