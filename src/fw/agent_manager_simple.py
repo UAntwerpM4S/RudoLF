@@ -43,6 +43,7 @@ class AgentManagerSimple:
             start_pos (np.ndarray): Starting position of the agent.
             all_paths (list): List of paths taken over multiple episodes.
             total_rewards (list): List of total rewards corresponding to each episode.
+            show_plots (bool): Whether to show plots or not.
         """
 
         try:
@@ -460,6 +461,10 @@ class AgentManagerSimple:
                     show_plots=show_plots,
                 )
 
+                # Cleanup the environment
+                if hasattr(env, "fh_sim"):
+                    env.fh_sim.dispose()
+
                 if return_summary:
                     env_name = getattr(env, "type_name", "environment")
                     return {
@@ -469,10 +474,6 @@ class AgentManagerSimple:
                             "worst_episode_reward": float(min(total_rewards)),
                         }
                     }
-
-                # Cleanup the environment
-                if hasattr(env, "fh_sim"):
-                    env.fh_sim.dispose()
             else:
                 # Reset the environment
                 obs, _ = env.reset()
@@ -492,7 +493,7 @@ class AgentManagerSimple:
                     # Render the environment each step to visualize the agent's action
                     env.render()
 
-                return None
+            return None
 
 
     def get_env(self):
