@@ -17,6 +17,7 @@ def plot_min_distance_stats(
     env,
     pdf_save_path: str = "min_distance_PDF.png",
     boxplot_save_path: str = "min_distance_boxplots.png",
+    include_banks: bool = False,
 ) -> None:
     """Plot encounter-level min-distance statistics.
 
@@ -25,6 +26,11 @@ def plot_min_distance_stats(
         aggregated across all non-collision encounters (no per-policy split).
       * ``boxplot_save_path`` — per-policy/scenario boxplots of the same
         min-distance values, bucketed by the encounter's ground-truth label.
+
+    When ``include_banks`` is True, the per-encounter distance is the minimum
+    of the closest target-ship distance and the closest distance to the bank
+    (polygon boundary) observed during the encounter; otherwise only
+    target-ship distance is used.
 
     Only encounters that did not end in collision are included.
     """
@@ -39,6 +45,8 @@ def plot_min_distance_stats(
     all_distances: list[float] = []
     for enc in encounters:
         md = enc.get("min_dist", float("inf"))
+        if include_banks:
+            md = min(md, enc.get("min_dist_bank", float("inf")))
         if enc.get("collided", False) or md is None or md == float("inf"):
             continue
         gt = enc.get("gt") or "unknown"
@@ -61,6 +69,7 @@ def plot_min_distance_stats(
         os_r, ts_r_min, ts_r_max, variable_ts,
         collision_dist_min, collision_dist_max,
         pdf_save_path,
+        include_banks=include_banks,
     )
     _plot_min_distance_boxplots(
         per_policy,
@@ -78,6 +87,7 @@ def _plot_min_distance_pdf(
     collision_dist_min: float,
     collision_dist_max: float,
     save_path: str,
+    include_banks: bool = False,
 ) -> None:
     fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -137,9 +147,14 @@ def _plot_min_distance_pdf(
     ax.set_ylim(bottom=0)
     ax.set_xlim(left=0)
 
-    ax.set_xlabel("Minimum center-to-center distance to collision entity [m]")
+    xlabel_target = "ship or bank" if include_banks else "collision entity"
+    ax.set_xlabel(f"Minimum center-to-center distance to {xlabel_target} [m]")
     ax.set_ylabel("Probability density")
-    ax.set_title(f"Min-distance PDF ({len(distances)} non-collision encounters)")
+    title_suffix = " incl. banks" if include_banks else ""
+    ax.set_title(
+        f"Min-distance PDF{title_suffix} "
+        f"({len(distances)} non-collision encounters)"
+    )
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
 

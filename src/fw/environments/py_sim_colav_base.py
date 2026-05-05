@@ -31,6 +31,7 @@ from typing import Optional, Tuple, Dict
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 import numpy as np
+from shapely.geometry import Point
 
 
 # -----------------------
@@ -89,6 +90,7 @@ class PySimColavBaseEnv(PySimEnv):
             wind: bool = False,
             current: bool = False,
             numerical_damping: bool = False,
+            minimal_path_render: bool = False,
             # COLAV configuration
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
@@ -190,6 +192,7 @@ class PySimColavBaseEnv(PySimEnv):
         # or on episode reset / terminal step if mid-encounter.
         self._in_encounter: bool = False
         self._current_encounter_min_dist: float = float("inf")
+        self._current_encounter_min_dist_bank: float = float("inf")
         self._current_encounter_collided: bool = False
 
         self._last_collision_info = {}
@@ -240,6 +243,7 @@ class PySimColavBaseEnv(PySimEnv):
             wind=wind,
             current=current,
             numerical_damping=numerical_damping,
+            minimal_path_render=minimal_path_render,
         )
 
         # Scenario builder
@@ -374,6 +378,12 @@ class PySimColavBaseEnv(PySimEnv):
                     self._current_episode_min_dist = dist
                 if self._in_encounter and dist < self._current_encounter_min_dist:
                     self._current_encounter_min_dist = dist
+
+        # Track minimum distance to bank (polygon boundary) within an encounter.
+        if self._in_encounter and getattr(self, "polygon_shape", None) is not None:
+            d_bank = float(self.polygon_shape.boundary.distance(Point(self.ship_pos)))
+            if d_bank < self._current_encounter_min_dist_bank:
+                self._current_encounter_min_dist_bank = d_bank
 
         # Post-entity-step hook (subclass: e.g. rebuild polar geometries)
         self._on_entities_stepped()
@@ -546,6 +556,7 @@ class PySimColavBaseEnv(PySimEnv):
         # still False); we begin accumulating from the next step.
         self._in_encounter = True
         self._current_encounter_min_dist = float("inf")
+        self._current_encounter_min_dist_bank = float("inf")
         self._current_encounter_collided = False
 
         # Always record the encounter start so n_encounters is correct.
@@ -557,6 +568,7 @@ class PySimColavBaseEnv(PySimEnv):
             "gt": gt_ext,
             "pred": pred_ext,
             "min_dist": float("inf"),
+            "min_dist_bank": float("inf"),
             "collided": False,
         })
 
@@ -567,9 +579,11 @@ class PySimColavBaseEnv(PySimEnv):
             return
         rec = self._episode_encounters[-1]
         rec["min_dist"] = float(self._current_encounter_min_dist)
+        rec["min_dist_bank"] = float(self._current_encounter_min_dist_bank)
         rec["collided"] = bool(self._current_encounter_collided)
         self._in_encounter = False
         self._current_encounter_min_dist = float("inf")
+        self._current_encounter_min_dist_bank = float("inf")
         self._current_encounter_collided = False
 
     # ---------------------------
@@ -991,16 +1005,25 @@ class PySimColavBaseEnv(PySimEnv):
             mid_x = (os_p[0] + ts_p[0]) / 2.0
             mid_y = (os_p[1] + ts_p[1]) / 2.0
             dist_text = self.ax.text(
-                mid_x, mid_y, f"{dist:.0f}m", fontsize=7, color='gray',
+                mid_x, mid_y, f"{dist:.0f}m", fontsize=12, color='gray',
                 fontweight='bold', ha='center', va='bottom', zorder=6,
             )
-            os_label = self.ax.text(
-                os_p[0] + 2, os_p[1] + 2, "OS", fontsize=7, color='blue',
-                fontweight='bold', ha='center', va='top', zorder=6,
+            kind = snap.get("kind", "passed")
+            tag = "Start" if kind == "start" else "Passed"
+            # Place labels fully below the marker circles (markersize=12 ->
+            # ~6pt radius; offset in points via xytext keeps it consistent
+            # regardless of axis scale).
+            os_label = self.ax.annotate(
+                f"{tag}", xy=(os_p[0], os_p[1]),
+                xytext=(0, -10), textcoords='offset points',
+                fontsize=12, color='blue',
+                ha='center', va='top', zorder=6,
             )
-            ts_label = self.ax.text(
-                ts_p[0] + 2, ts_p[1] + 2, "TS", fontsize=7, color='red',
-                fontweight='bold', ha='center', va='top', zorder=6,
+            ts_label = self.ax.annotate(
+                f"{tag}", xy=(ts_p[0], ts_p[1]),
+                xytext=(0, -10), textcoords='offset points',
+                fontsize=12, color='red',
+                ha='center', va='top', zorder=6,
             )
             self._passing_snapshot_artists.append(
                 (os_marker, ts_marker, dist_line, dist_text, os_label, ts_label)

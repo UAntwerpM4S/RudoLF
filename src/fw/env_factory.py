@@ -371,6 +371,7 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             eval_scenario="crossing-right",
             eval_obstacle_count=1,
             include_scenario_one_hot=True,
+            minimal_path_render=True
         )
 
 

@@ -123,6 +123,7 @@ class PySimEnv(BaseEnv):
             wind: bool = False,
             current: bool = False,
             numerical_damping: bool = False,
+            minimal_path_render: bool = False,
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -146,6 +147,7 @@ class PySimEnv(BaseEnv):
         # Core parameters
         self.wind = bool(wind)
         self.current = bool(current)
+        self.minimal_path_render = bool(minimal_path_render)
         self.start_pos = start_pos
         self.ship_model = ship_model
         self.max_steps = int(max_steps)
@@ -1299,21 +1301,30 @@ class PySimEnv(BaseEnv):
         # Path: start with ship_pos followed by checkpoints and target
         path_points = [self.ship_pos] + [cp['pos'] for cp in self.checkpoints] + [self.target_pos]
 
-        for i in range(len(path_points) - 1):
-            start_point = path_points[i]
-            end_point = path_points[i + 1]
-            # label only the first segment to avoid duplicate legend entries
-            self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
-                         'g-', label='Path' if i == 0 else "")
+        if getattr(self, "minimal_path_render", False):
+            print("minimal path render")
+            # Faint single-line path only — no checkpoint circles, no perp lines.
+            xs = [p[0] for p in path_points]
+            ys = [p[1] for p in path_points]
+            self.ax.plot(xs, ys, color='green', alpha=0.2,
+                         linewidth=1.0, label='Path')
+        else:
+            print("no minimal path render")
+            for i in range(len(path_points) - 1):
+                start_point = path_points[i]
+                end_point = path_points[i + 1]
+                # label only the first segment to avoid duplicate legend entries
+                self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
+                             'g-', label='Path' if i == 0 else "")
 
-        # Draw checkpoint patches and perpendicular lines
-        for i, checkpoint in enumerate(self.checkpoints):
-            circle = patches.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
-                                    10.0, color='black', alpha=0.3)
-            self.ax.add_patch(circle)
-            start_point, end_point = checkpoint['perpendicular_line']
-            self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
-                         'g-', label='PerpLine' if i == 0 else "")
+            # Draw checkpoint patches and perpendicular lines
+            for i, checkpoint in enumerate(self.checkpoints):
+                circle = patches.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
+                                        10.0, color='black', alpha=0.3)
+                self.ax.add_patch(circle)
+                start_point, end_point = checkpoint['perpendicular_line']
+                self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
+                             'g-', label='PerpLine' if i == 0 else "")
 
         # Draw polygons for environment outlines
         polygon_patch = patches.Polygon(self.obstacles, closed=True, edgecolor='r',

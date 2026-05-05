@@ -130,8 +130,8 @@ class CollisionEntity:
 
         crossing-right: lateral offset (cross with TS heading); flips when OS
             crosses the TS heading axis (stern/bow crossing).
-        head-on: longitudinal offset (dot with TS heading); flips when OS
-            passes TS abeam (relative bearing TS->OS = +/-90 deg).
+        head-on / overtaking: longitudinal offset (dot with TS heading); flips
+            when OS passes TS abeam (relative bearing TS->OS = +/-90 deg).
         """
         dx = float(os_pos[0]) - self.x
         dy = float(os_pos[1]) - self.y

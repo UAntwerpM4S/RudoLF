@@ -67,6 +67,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             pathfollowing_encounter_steps: int = 75,
             skip_tail_segments: int = 10,
             random_segment_start: bool = True,
+            minimal_path_render: bool = False,
             **kwargs,
     ) -> None:
         # Polar scan configuration
@@ -142,6 +143,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             obstacle_weights=obstacle_weights,
             scenario_obstacle_level=scenario_obstacle_level,
             ground_truth_classification=ground_truth_classification,
+            minimal_path_render=minimal_path_render,
         )
 
         self.polar_scan_cached = None
@@ -480,12 +482,24 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         if (
             self.ts_idx is not None
             and self.ts_idx < len(self.collision_entities)
-            and clf.label in ("head-on", "crossing-right")
+            and clf.label in ("head-on", "crossing-right", "overtaking")
         ):
             ts = self.collision_entities[self.ts_idx]
             os_pos_now = self.ship_pos
             ts_pos_now = ts.get_position()
             signal = ts.passing_signal(os_pos_now, clf.label)
+
+            # Encounter-start snapshot (first step we observe this TS in a
+            # tracked encounter scenario).
+            if self._prev_passing_ts_idx != self.ts_idx:
+                self._passing_snapshots.append({
+                    "os_pos": np.asarray(os_pos_now, dtype=np.float32),
+                    "ts_pos": np.asarray(ts_pos_now, dtype=np.float32),
+                    "dist": float(np.linalg.norm(os_pos_now - ts_pos_now)),
+                    "scenario": clf.label,
+                    "kind": "start",
+                })
+
             prev = self._prev_passing_signal
             if (
                 prev is not None
@@ -507,6 +521,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                     "ts_pos": np.asarray(ts_at, dtype=np.float32),
                     "dist": float(np.linalg.norm(os_at - ts_at)),
                     "scenario": clf.label,
+                    "kind": "passed",
                 })
             self._prev_passing_signal = signal
             self._prev_passing_ts_idx = self.ts_idx
@@ -568,6 +583,22 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 )
                 self.polar_beams.append(beam_line)
 
+        # Override the legend with a curated, fixed set of entries (proxy
+        # artists, so they don't depend on which artists got auto-labeled).
+        from matplotlib.lines import Line2D
+        legend_handles = [
+            Line2D([0], [0], marker='o', color='none', markerfacecolor='blue',
+                   markersize=8, label='Own ship'),
+            Line2D([0], [0], marker='o', color='none', markerfacecolor='red',
+                   markersize=8, label='Target ship'),
+            Line2D([0], [0], color='green', alpha=0.2, linewidth=1.0,
+                   label='Path'),
+            Line2D([0], [0], color='blue', linewidth=1.5, label='OS trajectory'),
+            Line2D([0], [0], color='red', linewidth=1.5, linestyle='--',
+                   label='TS trajectory'),
+        ]
+        self.ax.legend(handles=legend_handles, loc='best')
+
     def _render_subclass(self, heading: float) -> None:
         """Update polar beam rendering."""
         if self.use_polar_scan and getattr(self, "polar_beams", None):
@@ -601,9 +632,12 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self,
         pdf_save_path: str = "min_distance_PDF.png",
         boxplot_save_path: str = "min_distance_boxplots.png",
+        include_banks: bool = True,
     ) -> None:
         from fw.collision_avoidance.colav_statistics import plot_min_distance_stats
-        plot_min_distance_stats(self, pdf_save_path, boxplot_save_path)
+        plot_min_distance_stats(
+            self, pdf_save_path, boxplot_save_path, include_banks=include_banks
+        )
 
     def plot_scenario_confusion_matrix(
         self,
