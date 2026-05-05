@@ -261,13 +261,13 @@ class PPOPolicy:
 
         # Create a normal distribution with the mean and std
         dist = torch.distributions.Normal(action_mean, action_std)
+        raw_action = dist.rsample()
 
         if deterministic:
             # Squash the mean for bounded output
             action = torch.tanh(action_mean)
         else:
-			# Sample raw action and squash it using tanh
-            raw_action = dist.rsample()
+            # Sample raw action and squash it using tanh
             action = torch.tanh(raw_action)
 
         # Compute log probability of the squashed action
