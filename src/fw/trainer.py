@@ -196,21 +196,20 @@ class Trainer:
         env_metrics = metrics.get(env_type) if env_type else None
 
         if env_metrics and env_metrics.get("status") == "success":
-            summaries = None
             try:
                 if env_type == "AirSimEnv":
                     print("Skipping automatic post-training visualization for AirSimEnv.")
                 else:
                     summaries = self.visualize(
-                    [last_env],
-                    collect_evaluation_summary=True,
-                    show_plots=show_plots,
-                )
-                if summaries:
-                    env_metrics["evaluation_summary"] = (
-                        summaries.get(env_type)
-                        or next(iter(summaries.values()))
+                        [last_env],
+                        collect_evaluation_summary=True,
+                        show_plots=show_plots,
                     )
+                    if summaries:
+                        env_metrics["evaluation_summary"] = (
+                            summaries.get(env_type)
+                            or next(iter(summaries.values()))
+                        )
             except AttributeError as e:
                 print(e)
         else:
@@ -272,15 +271,17 @@ class Trainer:
                         show_plots=show_plots,
                     )
                     if collect_evaluation_summary and env_summary is not None:
-                        summaries[gym_env.type_name] = (
-                            env_summary.get(gym_env.type_name)
-                            if isinstance(env_summary, dict)
-                            else None
-                        ) or (
-                            next(iter(env_summary.values()))
-                            if isinstance(env_summary, dict) and env_summary
-                            else env_summary
-                        )
+                        if isinstance(env_summary, dict):
+                            if gym_env.type_name in env_summary:
+                                summaries[gym_env.type_name] = env_summary[gym_env.type_name]
+                            else:
+                                logging.warning(
+                                    f"visualize(): env_summary dict has no key for "
+                                    f"'{gym_env.type_name}'. Available keys: "
+                                    f"{list(env_summary.keys())}. Skipping summary for this env."
+                                )
+                        else:
+                            summaries[gym_env.type_name] = env_summary
                 except RuntimeError as e:
                     print(f"Could not visualize {gym_env.type_name}. {e}")
         else:

@@ -76,6 +76,9 @@ class Reward:
         Returns:
             float: Normalized speed deviation penalty (non-negative).
         """
+        if target_velocity == 0:
+            return 0.0
+
         return abs(target_velocity - velocity) / target_velocity
 
     @staticmethod
@@ -125,7 +128,7 @@ class Reward:
         weight = self.reward_weights.get("rudder_change", 1.0)
         if weight == 0.0:
             return 0.0  # No penalty if the component is disabled, even if the function is called.
-        return (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else (-1/weight)
+        return (rudder_change / max_rudder_change) if rudder_change < max_rudder_change else (-1/weight)
     
     @staticmethod
     def r_rudder_angle(rudder_angle: float, **_: float) -> float:
@@ -159,7 +162,7 @@ class Reward:
         weight = self.reward_weights.get("thrust_change", 1.0)
         if weight == 0.0:
             return 0.0
-        return (thrust_change / max_thrust_change) ** 1 if thrust_change < max_thrust_change else (-1/weight)
+        return (thrust_change / max_thrust_change) if thrust_change < max_thrust_change else (-1/weight)
 
     def r_thrust_change_quadratic(self, thrust_change: float, max_thrust_change: float, **_: float) -> float:
         """Calculate smooth quadratic penalty for thrust changes.
