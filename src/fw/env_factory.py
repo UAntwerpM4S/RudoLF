@@ -1,3 +1,4 @@
+import sys
 import types
 
 from typing import Any
@@ -345,13 +346,17 @@ class AirSimEnvironment(BaseEnvironment):
 
         Args:
             name: Registered environment name.
-            configuration: Optional runtime configuration. When AirSim is
-                unavailable, fallback behavior is resolved by this wrapper.
+            configuration: Optional runtime configuration forwarded by the
+                environment factory.
+
+        Raises:
+            ImportError: If the airsim package is not installed.
+            ConnectionError: If UE5 / CosysAirSim is not reachable.
         """
         super().__init__(name, configuration)
-        
+
         # Factory calls __init__("", []) to extract the type name during class registration.
-        # We return a dummy object to avoid connecting to UE5 unnecessarily.
+        # Return a dummy object to avoid connecting to UE5 unnecessarily.
         # The dummy's class name must be "AirSimEnv" so the factory registers the correct key.
         if name == "":
             self._env = type("AirSimEnv", (), {})()
@@ -406,107 +411,64 @@ class AirSimEnvironment(BaseEnvironment):
         control_interface = str(cfg.get("control_interface", "car_physics"))
         observation_profile = str(cfg.get("observation_profile", "ppo_route_relative_car"))
 
-        try:
-            self._env = AirSimEnv(
-                ship_pos=ship_pos,
-                target_pos=target_pos,
-                max_steps=max_steps,
-                ip=ip,
-                port=port,
-                use_airsim=use_airsim,
-                timeout=timeout,
-                max_retries=max_retries,
-                health_check_interval=health_check_interval,
-                csv_log_path=csv_log_path,
-                save_slot=save_slot,
-                load_world_on_start=load_world_on_start,
-                capture_live_start_pose=capture_live_start_pose,
-                simulation_speed=simulation_speed,
-                draw_calibration_reference=draw_calibration_reference,
-                episode_log_path=episode_log_path,
-                normalize_reward=normalize_reward,
-                reward_normalization_scale=reward_normalization_scale,
-                reset_mode=reset_mode,
-                progress_log_interval_steps=progress_log_interval_steps,
-                log_pause_watchdog_warnings=log_pause_watchdog_warnings,
-                use_sim_time_stepping=use_sim_time_stepping,
-                sim_time_per_action=sim_time_per_action,
-                no_rendering_mode=no_rendering_mode,
-                training_mode=training_mode,
-                use_pause_stepping=use_pause,
-                frames_per_step=frames_per_step,
-                time_step=time_step,
-                physics_update_timeout=physics_update_timeout,
-                state_poll_interval=state_poll_interval,
-                curriculum_enabled=curriculum_enabled,
-                curriculum_window_size=curriculum_window_size,
-                curriculum_target_checkpoint=(
-                    int(curriculum_target_checkpoint)
-                    if curriculum_target_checkpoint is not None
-                    else None
-                ),
-                curriculum_frontier_increment=curriculum_frontier_increment,
-                curriculum_window_increment=curriculum_window_increment,
-                curriculum_success_patience=curriculum_success_patience,
-                curriculum_randomization_scale=curriculum_randomization_scale,
-                guidance_assist_enabled=guidance_assist_enabled,
-                guidance_residual_steering_scale=guidance_residual_steering_scale,
-                guidance_residual_throttle_scale=guidance_residual_throttle_scale,
-                control_interface=control_interface,
-                observation_profile=observation_profile,
-                latency_warning_threshold=(
-                    float(latency_warning_threshold)
-                    if latency_warning_threshold is not None
-                    else None
-                ),
-            )
-            
-            # Action repeat wrapper can be set dynamically or statically (e.g., repeat=4)
-            repeat_steps = int(cfg.get("action_repeat", 1))
-            if repeat_steps > 1:
-                self._env = ActionRepeatWrapper(self._env, repeat=repeat_steps)
-                
-        except (ImportError, ConnectionError) as exc:
-            # Graceful fallback: if AirSim is unavailable (missing package or no UE5 connection),
-            print(
-                "[env_factory] AirSim environment unavailable (reason: %s)." % exc
-            )
-            config = get_config_parameters()
-            env_types = config.get("env_type", [])
-            if isinstance(env_types, str):
-                env_types = [env_types]
+        self._env = AirSimEnv(
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            max_steps=max_steps,
+            ip=ip,
+            port=port,
+            use_airsim=use_airsim,
+            timeout=timeout,
+            max_retries=max_retries,
+            health_check_interval=health_check_interval,
+            csv_log_path=csv_log_path,
+            save_slot=save_slot,
+            load_world_on_start=load_world_on_start,
+            capture_live_start_pose=capture_live_start_pose,
+            simulation_speed=simulation_speed,
+            draw_calibration_reference=draw_calibration_reference,
+            episode_log_path=episode_log_path,
+            normalize_reward=normalize_reward,
+            reward_normalization_scale=reward_normalization_scale,
+            reset_mode=reset_mode,
+            progress_log_interval_steps=progress_log_interval_steps,
+            log_pause_watchdog_warnings=log_pause_watchdog_warnings,
+            use_sim_time_stepping=use_sim_time_stepping,
+            sim_time_per_action=sim_time_per_action,
+            no_rendering_mode=no_rendering_mode,
+            training_mode=training_mode,
+            use_pause_stepping=use_pause,
+            frames_per_step=frames_per_step,
+            time_step=time_step,
+            physics_update_timeout=physics_update_timeout,
+            state_poll_interval=state_poll_interval,
+            curriculum_enabled=curriculum_enabled,
+            curriculum_window_size=curriculum_window_size,
+            curriculum_target_checkpoint=(
+                int(curriculum_target_checkpoint)
+                if curriculum_target_checkpoint is not None
+                else None
+            ),
+            curriculum_frontier_increment=curriculum_frontier_increment,
+            curriculum_window_increment=curriculum_window_increment,
+            curriculum_success_patience=curriculum_success_patience,
+            curriculum_randomization_scale=curriculum_randomization_scale,
+            guidance_assist_enabled=guidance_assist_enabled,
+            guidance_residual_steering_scale=guidance_residual_steering_scale,
+            guidance_residual_throttle_scale=guidance_residual_throttle_scale,
+            control_interface=control_interface,
+            observation_profile=observation_profile,
+            latency_warning_threshold=(
+                float(latency_warning_threshold)
+                if latency_warning_threshold is not None
+                else None
+            ),
+        )
 
-            # Find fallback environments in the configuration
-            other_envs = []
-            for e in env_types:
-                # Use loose checking since resolve_environment_name might not be cleanly available if refactored
-                e_lower = str(e).strip().lower()
-                if e_lower not in ("airsimenv", "airsim"):
-                    other_envs.append(e)
-
-            if not other_envs:
-                print("[env_factory] Only AirSimEnv was selected in config.py. Exiting.")
-                import sys
-                sys.exit(1)
-            else:
-                fallback_name = other_envs[0]
-                print(f"[env_factory] Falling back to {fallback_name}.")
-
-                # Ensure the environment name reflects what is actually being used.
-                # This affects logging output (e.g. "Switched to environment: ...").
-                self._name = fallback_name
-                fallback_name_lower = str(fallback_name).strip().lower()
-
-                if fallback_name_lower in ("fhsimenv", "fhsim"):
-                    self._env = FhSimEnvironment(fallback_name, configuration)._env
-                elif fallback_name_lower in ("lunarlander", "lunar"):
-                    self._env = LunarEnvironment(fallback_name, configuration)._env
-                elif fallback_name_lower in ("pysimpolarenv", "pysimpolar", "polar"):
-                    self._env = PySimPolarEnvironment(fallback_name, configuration)._env
-                elif fallback_name_lower in ("multisimenv", "multipysim"):
-                    self._env = MultiPySimEnvironment(fallback_name, configuration)._env
-                else:
-                    self._env = PySimEnvironment(fallback_name, configuration)._env
+        # Action repeat wrapper can be set dynamically or statically (e.g., repeat=4)
+        repeat_steps = int(cfg.get("action_repeat", 1))
+        if repeat_steps > 1:
+            self._env = ActionRepeatWrapper(self._env, repeat=repeat_steps)
 
 
 class LunarEnvironment(BaseEnvironment):
@@ -555,8 +517,74 @@ class PySimPolarEnvironment(BaseEnvironment):
         self._env = PySimPolarEnv(ship_pos=ship_pos, target_pos=target_pos, max_steps=2000, verbose=False)
 
 
-# Our external API.
-get = _Factory.get
+def _pick_airsim_fallback(configuration) -> str:
+    """Return the canonical name of the first non-AirSim environment in config.
+
+    Args:
+        configuration: The raw configuration passed to the failed AirSim call.
+            Used only to retrieve ``env_type``; may be ``None``.
+
+    Returns:
+        Canonical environment name to use as a fallback.
+
+    Side-effects:
+        Calls ``sys.exit(1)`` if AirSimEnv is the *only* configured environment
+        and no fallback is available.
+    """
+    config = get_config_parameters()
+    env_types = config.get("env_type", [])
+    if isinstance(env_types, str):
+        env_types = [env_types]
+
+    other_envs = [
+        e for e in env_types
+        if str(e).strip().lower() not in ("airsimenv", "airsim")
+    ]
+
+    if not other_envs:
+        print("[env_factory] Only AirSimEnv was selected in config.py. Exiting.")
+        sys.exit(1)
+
+    fallback_raw = other_envs[0]
+    fallback_name = resolve_environment_name(fallback_raw)
+    print(f"[env_factory] Falling back to {fallback_name}.")
+    return fallback_name
+
+
+def get(environment_name: str, configuration=None):
+    """Retrieve (or create) an environment instance by name.
+
+    This is the single public entry-point for obtaining environments.  For
+    every environment other than AirSim it delegates directly to
+    ``_Factory.get``.  For AirSim it additionally intercepts
+    ``ImportError`` and ``ConnectionError`` and transparently re-routes the
+    call to the configured fallback environment so that callers always
+    receive an instance whose Python type exactly matches the environment
+    that is actually running.
+
+    Args:
+        environment_name (str): Canonical or alias environment name.
+        configuration (dict, optional): Configuration forwarded to the
+            environment on first instantiation.
+
+    Returns:
+        BaseEnvironment: A fully constructed environment instance.
+
+    Raises:
+        EnvironmentRegistryError: Propagated from ``_Factory.get`` for any
+            non-AirSim environment, or for AirSim when the resolved fallback
+            is also unavailable.
+    """
+    if environment_name != airsim_env_name:
+        return _Factory.get(environment_name, configuration)
+
+    try:
+        return _Factory.get(environment_name, configuration)
+    except (ImportError, ConnectionError) as exc:
+        print(f"[env_factory] AirSim environment unavailable (reason: {exc}).")
+        fallback_name = _pick_airsim_fallback(configuration)
+        return get(fallback_name, configuration=None)
+
 
 py_sim_env_name = "PySimEnv"
 fh_sim_env_name = "FhSimEnv"
@@ -647,6 +675,7 @@ def build_default_environment(environment_name):
     if environment_name == airsim_env_name:
         return get(environment_name, configuration={"training_mode": True})
     return get(environment_name, configuration={})
+
 
 def initialize_all_environments():
     """Register and warm up all supported environments.

@@ -101,6 +101,10 @@ class SimpleScheduler(BaseScheduler):
 
         Returns:
             dict: Metrics for each environment, including training status and duration.
+
+        Raises:
+            ValueError: If no environment stop condition can be found in the configuration
+                or if the configuration is empty.
         """
 
         metrics = {}
@@ -113,8 +117,32 @@ class SimpleScheduler(BaseScheduler):
 
                 logging.info(f"Training agent '{getattr(self.agent_mgr, 'agent', 'Unknown')}' in environment '{self.current_env}'.")
 
-                # Look up how many steps to train in this environment
-                stop_condition = configuration[str(self.current_env)]
+                env_key = str(self.current_env)
+                if env_key in configuration:
+                    # Look up how many steps to train in this environment
+                    stop_condition = configuration[env_key]
+                elif len(configuration) == 1:
+                    # Single-entry dict whose key no longer matches the active env.
+                    original_key = next(iter(configuration))
+                    stop_condition = configuration[original_key]
+                    print(
+                        f"[Scheduler] No stop condition for '{env_key}'; "
+                        f"reusing the one configured for '{original_key}'."
+                    )
+                elif configuration:
+                    # Multiple entries but no exact match — pick the first and warn.
+                    original_key = next(iter(configuration))
+                    stop_condition = configuration[original_key]
+                    logging.warning(
+                        f"No stop condition found for '{env_key}' "
+                        f"(keys: {list(configuration.keys())}). "
+                        f"Falling back to stop condition for '{original_key}'."
+                    )
+                else:
+                    raise ValueError(
+                        f"No stop condition for '{env_key}' and configuration is empty."
+                    )
+
                 print(f"[Scheduler] Training to reach {stop_condition} in {self.current_env}.")
 
                 # Indicate if starting from scratch
