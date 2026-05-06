@@ -301,7 +301,9 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         from airsim.train.train_airsim import run_training
 
         metrics = run_training(runtime_settings)
-        print(f"Training metrics: {metrics}")
+        if metrics:
+            print(f"Training metrics: {metrics}")
+
         raise SystemExit(0)
 
     # Ensure all environments are registered once
