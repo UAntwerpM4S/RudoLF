@@ -275,7 +275,7 @@ class Trainer:
                             if gym_env.type_name in env_summary:
                                 summaries[gym_env.type_name] = env_summary[gym_env.type_name]
                             else:
-                                logging.warning(
+                                print(
                                     f"visualize(): env_summary dict has no key for "
                                     f"'{gym_env.type_name}'. Available keys: "
                                     f"{list(env_summary.keys())}. Skipping summary for this env."
