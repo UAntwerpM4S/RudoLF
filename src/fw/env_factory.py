@@ -1,3 +1,4 @@
+import sys
 import types
 
 from typing import Any
@@ -542,7 +543,6 @@ def _pick_airsim_fallback(configuration) -> str:
 
     if not other_envs:
         print("[env_factory] Only AirSimEnv was selected in config.py. Exiting.")
-        import sys
         sys.exit(1)
 
     fallback_raw = other_envs[0]
