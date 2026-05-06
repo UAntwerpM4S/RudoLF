@@ -436,6 +436,7 @@ class SinglePPOAgent(BasePPOAgent):
         """
 
         print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
+
         project_src_dir = Path(__file__).resolve().parents[2]
         is_airsim_env = self._is_airsim_env()
 
@@ -593,6 +594,13 @@ class SinglePPOAgent(BasePPOAgent):
             stop_reason = "Interrupted by user"
             keyboard_interrupt = exc
             print("Training interrupted by user. Saving logs and plots...")
+
+            try:
+                _interrupt_checkpoint = f"ppo_interrupt_{max(last_completed_iteration, 0)}"
+                self.save_policy(_interrupt_checkpoint)
+                print(f"Interrupt checkpoint saved: {_interrupt_checkpoint}")
+            except Exception as _save_err:
+                print(f"Warning: could not save interrupt checkpoint: {_save_err}")
         finally:
             if training_session is not None:
                 training_session.log_run_events(self._drain_env_run_events())

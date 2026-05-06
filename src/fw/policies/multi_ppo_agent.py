@@ -201,8 +201,14 @@ class MultiPPOAgent(BasePPOAgent):
             float: Estimated value.
 
         Raises:
-            ValueError: If `env_id` is not provided.
+            TypeError: If `env_id` is None (subscripting a list with None raises TypeError).
         """
+
+        if env_id is None:
+            raise TypeError(
+                "_get_bootstrap_value() requires an integer env_id; got None. "
+                "Pass the index of the agent whose value function should be queried."
+            )
 
         with torch.no_grad():
             last_state = torch.FloatTensor(next_state).unsqueeze(0).to(self.device)
