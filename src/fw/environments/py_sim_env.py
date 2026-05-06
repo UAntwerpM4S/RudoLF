@@ -954,7 +954,7 @@ class PySimEnv(BaseEnv):
         )
         
         num_non_zero = sum(1 for w in self.reward_calculator.reward_weights.values() if w != 0)
-        reward = 1.0 + reward / num_non_zero    
+        reward = 1.0 + (reward / num_non_zero if num_non_zero > 0 else 0.0)
         
         # Checkpoint handling (may increment checkpoint_index)
         checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint["pos"])
