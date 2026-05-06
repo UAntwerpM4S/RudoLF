@@ -101,6 +101,10 @@ class SimpleScheduler(BaseScheduler):
 
         Returns:
             dict: Metrics for each environment, including training status and duration.
+
+        Raises:
+            ValueError: If no environment stop condition can be found in the configuration
+                or if the configuration is empty.
         """
 
         metrics = {}
@@ -135,7 +139,7 @@ class SimpleScheduler(BaseScheduler):
                         f"Falling back to stop condition for '{original_key}'."
                     )
                 else:
-                    raise KeyError(
+                    raise ValueError(
                         f"No stop condition for '{env_key}' and configuration is empty."
                     )
 

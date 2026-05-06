@@ -379,14 +379,13 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
     env = get_environment(airsim_env_name, configuration=env_config)
 
     # Guard: if AirSim was unavailable and env_factory silently returned a
-    # fallback environment (e.g. PySimEnv), abort here.  The fallback env
+    # fallback environment (e.g. PySimEnv), abort here. The fallback env
     # has already been (or will be) trained by fw.main's standard batch; we
     # must not run it a second time with an AirSim-only stop-condition dict.
-    actual_env_name = type(env.gym_env).__name__
-    if actual_env_name != airsim_env_name:
+    if not hasattr(env, "airsim_client"):
         print(
             f"[train_airsim] AirSimEnv requested but env_factory returned "
-            f"'{actual_env_name}' (UE5 unavailable). Skipping AirSim training."
+            f"'{env.gym_env.type_name}' (UE5 unavailable). Skipping AirSim training."
         )
         return {}
 
