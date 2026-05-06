@@ -958,7 +958,7 @@ class AirSimBridge:
                 if not file_exists:
                     writer.writeheader()
                 writer.writerows(list(self._sensor_buffer))
-                self._sensor_buffer.clear()
+            self._sensor_buffer.clear()
         except Exception as exc:
             logger.warning("Failed to dump sensor buffer to CSV: %s", exc)
 
