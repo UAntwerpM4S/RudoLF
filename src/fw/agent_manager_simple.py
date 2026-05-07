@@ -13,6 +13,8 @@ from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
+from fw.profile_applier import apply_profile
+from fw.config_profile import VesselProfile
 from fw.stop_condition import StopCondition
 
 MIN_GRID_POS = -11700
@@ -135,16 +137,18 @@ class AgentManagerSimple:
             plt.close('all')
 
 
-    def __init__(self, agent_type: str, hyperparameters: dict):
+    def __init__(self, agent_type: str, profile: VesselProfile, hyperparameters: dict):
         """
         Initialize AgentManagerSimple.
 
         Args:
             agent_type (str): Type of agent to use (e.g., 'PPO').
+            profile (VesselProfile): Profile that will be used for training or visualization.
             hyperparameters (dict): Hyperparameters for configuring the agent.
         """
 
         self._agent = None
+        self._profile = profile
         self._agent_type = agent_type
         self._hyperparameters = hyperparameters
         self.prev_smoothing_setting = None
@@ -161,6 +165,18 @@ class AgentManagerSimple:
         """
 
         return self._agent_type
+
+
+    @property
+    def profile(self) -> "VesselProfile":
+        """
+        Get the active VesselProfile held by this manager.
+
+        Returns:
+            VesselProfile: The profile used for training or visualization.
+        """
+
+        return self._profile
 
 
     @property
@@ -202,7 +218,7 @@ class AgentManagerSimple:
         else:
             raise RuntimeError("SinglePPOAgent requires exactly one sub-environment.")
 
-        return SinglePPOAgent(environment=target_env, **self._hyperparameters)
+        return SinglePPOAgent(self._profile, environment=target_env, **self._hyperparameters)
 
 
     def _build_multi_agent(self, env):
@@ -231,7 +247,7 @@ class AgentManagerSimple:
             raise ValueError("MultiSimEnv must contain at least one sub-environment.")
 
         agents = [
-            SinglePPOAgent(environment=sub_env, **self._hyperparameters)
+            SinglePPOAgent(self._profile, environment=sub_env, **self._hyperparameters)
             for sub_env in env.sub_environments.values()
         ]
 
@@ -332,10 +348,13 @@ class AgentManagerSimple:
     @contextmanager
     def smoothing(self, env):
         """
-        Smoothing.
+        Context manager that temporarily disables environment smoothing.
 
         Args:
-            env: Description.
+            env: Environment that may expose an `enable_smoothing` attribute.
+
+        Yields:
+            None.
         """
 
         if hasattr(env, "enable_smoothing"):
@@ -346,6 +365,8 @@ class AgentManagerSimple:
             finally:
                 env.enable_smoothing = self.prev_smoothing_setting
                 self.prev_smoothing_setting = None
+        else:
+            yield
 
     def visualize_trained_agent(
             self,
@@ -410,6 +431,9 @@ class AgentManagerSimple:
                         while not done:
                             # Select action
                             action, _, _ = self._agent.predict(state=state, deterministic=True)
+
+                            sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                            action = apply_profile(self._profile, action=action, simulator=sim)
 
                             # Take step in environment
                             state, reward, terminated, truncated, _ = env.step(action)
