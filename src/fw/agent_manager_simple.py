@@ -251,7 +251,7 @@ class AgentManagerSimple:
             for sub_env in env.sub_environments.values()
         ]
 
-        return MultiPPOAgent(environment=env, agents=agents, **self._hyperparameters)
+        return MultiPPOAgent(self.profile, environment=env, agents=agents, **self._hyperparameters)
 
 
     def set_environment(self, env: BaseEnv, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
