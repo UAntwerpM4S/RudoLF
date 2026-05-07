@@ -37,7 +37,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     framework_config = get_config_parameters()
 
-    profile_name = framework_config.get("profile", "train_pysim_default")
+    profile_name = framework_config.get("profile", "default_pysim_profile")
     profile = ProfileRegistry.get(profile_name)
     profile.validate()
     # Apply profile to config BEFORE reading env_type so the profile's
