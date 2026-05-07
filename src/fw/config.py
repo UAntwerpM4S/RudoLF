@@ -124,7 +124,7 @@ CONFIG_PARAMETERS = {
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["PySimEnv", "AirSimEnv"],
     'profile': "train_pysim_default",
-    'action': "visualize",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'wind': False,
     'current': False,
     'numerical_damping': False,

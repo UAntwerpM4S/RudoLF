@@ -7,6 +7,7 @@ from typing import Optional
 from contextlib import contextmanager
 from fw.config_profile import VesselProfile
 from fw.profile_applier import apply_profile
+from fw.profile_applier import SimulatorApplier
 from fw.output_helpers import compute_heading_error
 from fw.ship_episode_data import RunData, ShipData, ShipEpisodeData
 
@@ -301,7 +302,6 @@ class EpisodeCollector:
         # override takes effect for this episode.
         _sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
         if _sim is not None and self._profile.scenario.initial_state is not None:
-            from fw.profile_applier import SimulatorApplier
             SimulatorApplier.apply(self._profile, _sim)
 
         done = np.zeros(len(ship_ids), dtype=bool)

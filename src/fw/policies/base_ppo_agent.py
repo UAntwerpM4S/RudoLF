@@ -4,6 +4,7 @@ from typing import Optional
 from abc import abstractmethod
 from fw.policies.base_agent import BaseAgent
 from fw.environments.base_env import BaseEnv
+from fw.profile_applier import SimulatorApplier
 from fw.profile_applier import apply_profile
 from fw.config_profile import VesselProfile
 
@@ -300,7 +301,6 @@ class BasePPOAgent(BaseAgent):
                 or getattr(self.env, "_phys_sim", None)
             )
             if _rollout_sim is not None:
-                from fw.profile_applier import SimulatorApplier
                 SimulatorApplier.apply(self._profile, _rollout_sim)
         envs_done = np.zeros(num_envs, dtype=bool)
 
