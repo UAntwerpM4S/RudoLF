@@ -389,7 +389,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     # Create a Trainer and pass on a list of agents that you want to train
     _airsim_fw_config = get_config_parameters()
-    _airsim_profile_name = _airsim_fw_config.get("profile", "train_pysim_default")
+    _airsim_profile_name = _airsim_fw_config.get("profile", "default_airsim_profile")
     _airsim_profile = ProfileRegistry.get(_airsim_profile_name)
     _airsim_profile.validate()
     apply_profile(_airsim_profile, config=_airsim_fw_config)

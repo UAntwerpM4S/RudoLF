@@ -151,7 +151,6 @@ class AgentManagerSimple:
         self._profile = profile
         self._agent_type = agent_type
         self._hyperparameters = hyperparameters
-        self.prev_smoothing_setting = None
         self.prev_render_mode = None
 
 
@@ -345,29 +344,6 @@ class AgentManagerSimple:
             self.get_env().fh_sim.dispose()
 
 
-    @contextmanager
-    def smoothing(self, env):
-        """
-        Context manager that temporarily disables environment smoothing.
-
-        Args:
-            env: Environment that may expose an `enable_smoothing` attribute.
-
-        Yields:
-            None.
-        """
-
-        if hasattr(env, "enable_smoothing"):
-            try:
-                self.prev_smoothing_setting = env.enable_smoothing
-                env.enable_smoothing = False
-                yield
-            finally:
-                env.enable_smoothing = self.prev_smoothing_setting
-                self.prev_smoothing_setting = None
-        else:
-            yield
-
     def visualize_trained_agent(
             self,
             num_episodes: int = 5,
@@ -409,7 +385,7 @@ class AgentManagerSimple:
             from airsim.communication.coord_transform import CoordTransform
             coord_transform = CoordTransform()
 
-        with self.smoothing(env), self.rendering(env):
+        with self.rendering(env):
             if hasattr(env, "ship_pos"):
                 # Store results for each episode
                 all_paths = []

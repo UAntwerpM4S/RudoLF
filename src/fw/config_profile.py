@@ -69,6 +69,7 @@ class EnvType(Enum):
 
     PYSIM = "PySimEnv"
     FHSIM = "FhSimEnv"
+    AIRSIM = "AirSimEnv"
     MULTISIM = "MultiSimEnv"
 
 
@@ -623,15 +624,28 @@ class ProfileRegistry:
 # ---------------------------------------------------------------------------
 
 ProfileRegistry.register(VesselProfile(
-    name="train_pysim_default",
-    description="Standard PySim training profile with Fossen dynamics.",
+    name="default_pysim_profile",
+    description="Standard PySim profile with Fossen dynamics.",
     run_mode=RunMode.TRAIN,
-    # environment=EnvironmentConfig(env_types=[EnvType.PYSIM]),
+    environment=EnvironmentConfig(env_types=[EnvType.PYSIM]),
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_DEFAULT,
         dynamics_model=Model.FOSSEN,
     ),
-    actuator=ActuatorConfig(enable_smoothing=True),
+    actuator=ActuatorConfig(enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
+))
+
+ProfileRegistry.register(VesselProfile(
+    name="default_airsim_profile",
+    description="Standard AirSim profile.",
+    run_mode=RunMode.TRAIN,
+    environment=EnvironmentConfig(env_types=[EnvType.AIRSIM]),
+    model=ModelConfig(
+        ship_model=ShipModel.MYZAKO_DEFAULT,
+        dynamics_model=Model.FOSSEN,
+    ),
+    actuator=ActuatorConfig(enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))
 

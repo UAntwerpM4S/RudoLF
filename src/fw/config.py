@@ -122,8 +122,8 @@ CONFIG_PARAMETERS = {
     # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander"
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
-    'env_type': ["PySimEnv", "AirSimEnv"],
-    'profile': "train_pysim_default",
+    'env_type': ["PySimEnv"],
+    'profile': "default_pysim_profile",
     'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'wind': False,
     'current': False,
