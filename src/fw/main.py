@@ -143,6 +143,16 @@ if __name__ == "__main__" or __name__ == "fw.main":
             metrics = std_trainer.train(configuration)
             if action == "evaluate_reward":
                 print(f"Training metrics (grouped): {metrics}")
+            else:
+                filtered_metrics = {
+                    fields: {
+                        "status": env_metrics.get("status"),
+                        "duration": env_metrics.get("duration"),
+                    }
+                    for fields, env_metrics in metrics.items()
+                }
+
+                print(f"Training metrics (grouped): {filtered_metrics}")
         return True
 
     # Both visualize and train now follow env_type order exactly (for airsim),
