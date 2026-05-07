@@ -5,6 +5,7 @@ import tempfile
 import numpy as np
 
 from typing import Optional, Tuple, Union
+from fw.config_profile import VesselProfile
 from fw.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
@@ -38,6 +39,7 @@ class MultiPPOAgent(BasePPOAgent):
 
     def __init__(
         self,
+        profile: VesselProfile,
         *args,
         agents: list[SinglePPOAgent],
         **kwargs
@@ -46,6 +48,7 @@ class MultiPPOAgent(BasePPOAgent):
         Initialize the multi-agent PPO trainer.
 
         Args:
+            profile: Profile that will be used for training or visualization.
             *args: Positional arguments forwarded to `BasePPOAgent`.
             agents (list[SinglePPOAgent]): List of initialized agents, one per sub-environment.
             **kwargs: Keyword arguments forwarded to `BasePPOAgent`.
@@ -59,7 +62,7 @@ class MultiPPOAgent(BasePPOAgent):
             - The number of agents must match `env.sub_environments`.
         """
 
-        super().__init__(*args, **kwargs)
+        super().__init__(profile, *args, **kwargs)
 
         self.agents = agents
         self.num_envs = len(self.env.sub_environments)

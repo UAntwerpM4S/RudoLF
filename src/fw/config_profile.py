@@ -69,6 +69,7 @@ class EnvType(Enum):
 
     PYSIM = "PySimEnv"
     FHSIM = "FhSimEnv"
+    MULTISIM = "MultiSimEnv"
 
 
 class ThrustMode(Enum):
@@ -279,7 +280,7 @@ class VesselProfile:
     thrust: ThrustConfig = field(default_factory=ThrustConfig)
     transfer: TransferConfig = field(default_factory=TransferConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
-    environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
+    environment: Optional[EnvironmentConfig] = None
 
     # ------------------------------------------------------------------
     # Derived convenience
@@ -345,8 +346,8 @@ class VesselProfile:
         """
         errors: List[str] = []
 
-        if not self.environment.env_types:
-            errors.append("environment.env_types must contain at least one entry.")
+        # if not self.environment.env_types:
+        #     errors.append("environment.env_types must contain at least one entry.")
 
         if self.thrust.mode == ThrustMode.FIXED:
             if not (0.1 <= self.thrust.fixed_value <= 1.0):
@@ -625,7 +626,7 @@ ProfileRegistry.register(VesselProfile(
     name="train_pysim_default",
     description="Standard PySim training profile with Fossen dynamics.",
     run_mode=RunMode.TRAIN,
-    environment=EnvironmentConfig(env_types=[EnvType.PYSIM]),
+    # environment=EnvironmentConfig(env_types=[EnvType.PYSIM]),
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_DEFAULT,
         dynamics_model=Model.FOSSEN,
