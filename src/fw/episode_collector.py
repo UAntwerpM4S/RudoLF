@@ -5,6 +5,8 @@ import numpy as np
 
 from typing import Optional
 from contextlib import contextmanager
+from fw.config_profile import VesselProfile
+from fw.profile_applier import apply_profile
 from fw.output_helpers import compute_heading_error
 from fw.ship_episode_data import RunData, ShipData, ShipEpisodeData
 
@@ -140,12 +142,13 @@ class EpisodeCollector:
             to ["ship_0"].
     """
 
-    def __init__(self, agent, env, ship_ids: Optional[list[str]] = None, airsim_bridge=None):
+    def __init__(self, agent, env, profile: VesselProfile, ship_ids: Optional[list[str]] = None, airsim_bridge=None):
         """Initialize the collector and resolve the ship IDs to track.
 
         Args:
             agent: Trained agent used to produce actions during evaluation.
             env: Environment to evaluate, either single-ship or multi-ship.
+            profile: Profile that will be used for training or visualization.
             ship_ids: Optional explicit ship ID list. If omitted, the collector
                 uses ``env.sub_environments`` when available, otherwise
                 defaults to ``["ship_0"]``.
@@ -155,6 +158,7 @@ class EpisodeCollector:
         """
         self._agent = agent
         self._env = env
+        self._profile = profile
         self._airsim_bridge = airsim_bridge
 
         if self._airsim_bridge and self._airsim_bridge.is_connected:
@@ -291,6 +295,15 @@ class EpisodeCollector:
 
         # Reset environment
         state, _ = env.reset()
+
+        # If the profile specifies an initial vessel state, push it to the
+        # simulator immediately after the environment's own reset so the
+        # override takes effect for this episode.
+        _sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+        if _sim is not None and self._profile.scenario.initial_state is not None:
+            from fw.profile_applier import SimulatorApplier
+            SimulatorApplier.apply(self._profile, _sim)
+
         done = np.zeros(len(ship_ids), dtype=bool)
         steps = 0
 
@@ -302,6 +315,10 @@ class EpisodeCollector:
         with self._render_mode(ship_envs, live_animation):
             while not np.all(done):
                 action, _, _ = self._agent.predict(state=state, deterministic=True)
+
+                sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                action = apply_profile(self._profile, action=action, simulator=sim)
+
                 state, reward, terminated, truncated, _ = env.step(action)
 
                 env_done = np.logical_or(terminated, truncated)

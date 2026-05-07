@@ -7,16 +7,17 @@ import torch.optim as optim
 import gymnasium as gym
 import numpy as np
 
-from typing import Optional, Tuple, Union
 from pathlib import Path
+from typing import Optional, Tuple, Union
 from fw.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
-from fw.common.tools.logging_utils import dump_metrics_to_csv
 from fw.common.tools.training_iteration_logger import TrainingIterationLogger
+from fw.common.tools.logging_utils import dump_metrics_to_csv
+from fw.config_profile import VesselProfile
 
 
 class SinglePPOAgent(BasePPOAgent):
@@ -41,11 +42,12 @@ class SinglePPOAgent(BasePPOAgent):
     MINIMUM_TRAINABLE_TRAJECTORY_LENGTH = 2
     MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES = 25
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, profile: VesselProfile, *args, **kwargs):
         """
         Initialize the PPO agent.
 
         Args:
+            profile: Profile that will be used for training or visualization.
             *args: Positional arguments forwarded to `BasePPOAgent`.
             **kwargs: Keyword arguments forwarded to `BasePPOAgent`.
 
@@ -55,7 +57,7 @@ class SinglePPOAgent(BasePPOAgent):
             - Sets up running statistics for optional reward normalization.
         """
 
-        super().__init__(*args, **kwargs)
+        super().__init__(profile, *args, **kwargs)
 
         self.observation_space = self.env.observation_space
         self.action_space = self.env.action_space
