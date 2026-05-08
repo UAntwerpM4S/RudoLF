@@ -368,9 +368,11 @@ def _run_training_with_transfer(
 
 def run_training(runtime_settings: dict[str, Any] | None = None):
     """Run AirSim PPO training from runtime settings and return trainer metrics."""
-    from fw.config import PPO_POLICY_NAME
+    from fw.config import PPO_POLICY_NAME, get_config_parameters
     from fw.env_factory import airsim_env_name, get as get_environment
     from fw.trainer import Trainer
+    from fw.config_profile import ProfileRegistry
+    from fw.profile_applier import apply_profile
 
     repo_root = Path(__file__).resolve().parents[2]
     env_config = _build_training_env_config(runtime_settings)
@@ -382,7 +384,7 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
     # fallback environment (e.g. PySimEnv), abort here. The fallback env
     # has already been (or will be) trained by fw.main's standard batch; we
     # must not run it a second time with an AirSim-only stop-condition dict.
-    if not hasattr(env, "airsim_client"):
+    if getattr(env.gym_env, "type_name", "") != airsim_env_name:
         print(
             f"[train_airsim] AirSimEnv requested but env_factory returned "
             f"'{env.gym_env.type_name}' (UE5 unavailable). Skipping AirSim training."
@@ -406,7 +408,12 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
 
     # Standard path (no transfer learning)
     envs = [env]
-    trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+    _fw_config = get_config_parameters()
+    _profile_name = _fw_config.get("profile", "default_airsim_profile")
+    _profile = ProfileRegistry.get(_profile_name)
+    _profile.validate()
+    apply_profile(_profile, config=_fw_config)
+    trainer = Trainer(PPO_POLICY_NAME, envs, _profile, "SimpleScheduler")
 
     print("\n" + "=" * 60)
     print("  STARTING AIRSIM RL TRAINING")
@@ -428,14 +435,21 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
 
 def run_visualization(runtime_settings: dict[str, Any] | None = None):
     """Run AirSim visualization from runtime settings and return trainer instance."""
-    from fw.config import PPO_POLICY_NAME
+    from fw.config import PPO_POLICY_NAME, get_config_parameters
     from fw.env_factory import airsim_env_name, get as get_environment
     from fw.trainer import Trainer
+    from fw.config_profile import ProfileRegistry
+    from fw.profile_applier import apply_profile
 
     env_config = _build_visualize_env_config(runtime_settings)
     env = get_environment(airsim_env_name, configuration=env_config)
     envs = [env]
-    trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+    _fw_config = get_config_parameters()
+    _profile_name = _fw_config.get("profile", "default_airsim_profile")
+    _profile = ProfileRegistry.get(_profile_name)
+    _profile.validate()
+    apply_profile(_profile, config=_fw_config)
+    trainer = Trainer(PPO_POLICY_NAME, envs, _profile, "SimpleScheduler")
 
     print("\n" + "=" * 60)
     print("  VISUALIZING TRAINED POLICY IN AIRSIM")
