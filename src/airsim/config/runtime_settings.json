@@ -123,7 +123,7 @@
       "freeze_shared_layers": "true => freeze all transferred layers so only the mapping-layer first linear adapts. false => fine-tune the full network.",
       "mapping_layer_init_gain": "Orthogonal init gain for the mapping layer after transfer. 0.1 dampens initial activation mismatch with pre-trained deep layers without killing the gradient signal. 0.01 is too small (near-zero learning); sqrt(2)~1.414 is too large (gradient explosion)."
     },
-    "enabled": true,
+    "enabled": false,
     "source_policy_path": "models/PySimEnv_PPO_policy.zip",
     "freeze_shared_layers": false,
     "mapping_layer_init_gain": 0.05
