@@ -13,13 +13,6 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 
-class _FakeEnv:
-    """Minimal environment stub with a gym_env attribute for main.py compatibility."""
-
-    gym_env = None
-    _phys_sim = None
-
-
 def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
     """Verify fw.main exits cleanly when the AirSim extension fails and no
     other environments are configured.
@@ -35,10 +28,7 @@ def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
     import fw.env_factory as env_factory
     import fw.trainer as trainer_module
 
-    import fw.profile_applier as profile_applier_module
-
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
-    monkeypatch.setattr(profile_applier_module, "apply_profile", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         fw_config,
         "get_config_parameters",
@@ -55,7 +45,7 @@ def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
 
     monkeypatch.setattr(stdlib_runpy, "run_module", _failing_run_module)
     monkeypatch.setattr(env_factory, "initialize_all_environments", lambda: None)
-    monkeypatch.setattr(env_factory, "get", lambda *args, **kwargs: _FakeEnv())
+    monkeypatch.setattr(env_factory, "get", lambda *args, **kwargs: object())
     monkeypatch.setattr(trainer_module, "Trainer", lambda *a, **kw: None)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -73,18 +63,16 @@ def test_main_uses_framework_visualize_action(monkeypatch):
 
     import fw.config as fw_config
     import fw.env_factory as env_factory
-    import fw.profile_applier as profile_applier_module
     import fw.trainer as trainer_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
-    monkeypatch.setattr(profile_applier_module, "apply_profile", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         fw_config,
         "get_config_parameters",
         lambda: {"env_type": env_factory.py_sim_env_name, "action": "visualize"},
     )
     monkeypatch.setattr(env_factory, "initialize_all_environments", lambda: None)
-    monkeypatch.setattr(env_factory, "build_default_environment", lambda *args, **kwargs: _FakeEnv())
+    monkeypatch.setattr(env_factory, "build_default_environment", lambda *args, **kwargs: object())
 
     trainer_calls = {}
 
@@ -122,10 +110,8 @@ def test_main_passes_action_override_to_airsim_extension(monkeypatch):
 
     import fw.config as fw_config
     import fw.env_factory as env_factory
-    import fw.profile_applier as profile_applier_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
-    monkeypatch.setattr(profile_applier_module, "apply_profile", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         fw_config,
         "get_config_parameters",
@@ -159,11 +145,9 @@ def test_main_visualize_respects_environment_order(monkeypatch):
 
     import fw.config as fw_config
     import fw.env_factory as env_factory
-    import fw.profile_applier as profile_applier_module
     import fw.trainer as trainer_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
-    monkeypatch.setattr(profile_applier_module, "apply_profile", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         fw_config,
         "get_config_parameters",
@@ -179,7 +163,7 @@ def test_main_visualize_respects_environment_order(monkeypatch):
     def _build_env(name):
         """Track framework environment construction order."""
         call_order.append(f"build:{name}")
-        return _FakeEnv()
+        return object()
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -223,11 +207,9 @@ def test_main_train_respects_environment_order(monkeypatch):
 
     import fw.config as fw_config
     import fw.env_factory as env_factory
-    import fw.profile_applier as profile_applier_module
     import fw.trainer as trainer_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
-    monkeypatch.setattr(profile_applier_module, "apply_profile", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         fw_config,
         "get_config_parameters",
@@ -243,7 +225,7 @@ def test_main_train_respects_environment_order(monkeypatch):
     def _build_env(name):
         """Track framework train environment construction order."""
         call_order.append(f"build:{name}")
-        return _FakeEnv()
+        return object()
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -257,7 +239,7 @@ def test_main_train_respects_environment_order(monkeypatch):
         def train(self, configuration):
             """Record framework train call in ordered execution."""
             call_order.append("train:framework")
-            return {}
+            return {"ok": True}
 
     monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
 
@@ -292,11 +274,9 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
 
     import fw.config as fw_config
     import fw.env_factory as env_factory
-    import fw.profile_applier as profile_applier_module
     import fw.trainer as trainer_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
-    monkeypatch.setattr(profile_applier_module, "apply_profile", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         fw_config,
         "get_config_parameters",
@@ -312,7 +292,7 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
     def _build_env(name):
         """Track framework train setup for mixed-list fallback scenario."""
         call_order.append(f"build:{name}")
-        return _FakeEnv()
+        return object()
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -326,7 +306,7 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
         def train(self, configuration):
             """Record framework train call before AirSim step failure."""
             call_order.append("train:framework")
-            return {}
+            return {"ok": True}
 
     monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
 
@@ -365,10 +345,7 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
     import fw.env_factory as env_factory
     import fw.trainer as trainer_module
 
-    import fw.profile_applier as profile_applier_module
-
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
-    monkeypatch.setattr(profile_applier_module, "apply_profile", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         fw_config,
         "get_config_parameters",
@@ -392,7 +369,7 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
             name: Canonical environment name.
         """
         call_order.append(f"build:{name}")
-        return _FakeEnv()
+        return object()
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -414,7 +391,7 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
                 configuration: Scheduler configuration payload.
             """
             call_order.append("train:framework")
-            return {}
+            return {"ok": True}
 
     monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
 
