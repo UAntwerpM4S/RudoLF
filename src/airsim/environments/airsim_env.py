@@ -821,13 +821,7 @@ class AirSimEnv(BaseEnv):
             )
 
         if terminated or truncated:
-            # Curriculum advances when the agent reaches the frontier checkpoint,
-            # not when it completes the full route — the original full-route criterion
-            # was never achievable early in curriculum training.
-            curriculum_success = (
-                self.checkpoint_index > self._curriculum_frontier_index
-                and not collision
-            )
+            curriculum_success = bool(success and not collision and not offtrack and not truncated)
             self._episode_success = curriculum_success
             self._update_curriculum_after_episode(success=curriculum_success)
 
@@ -2055,8 +2049,6 @@ class AirSimEnv(BaseEnv):
         if self._curriculum_success_streak < self.curriculum_success_patience:
             return
 
-        prev_frontier = self._curriculum_frontier_index
-        prev_window = self.curriculum_window_size
         self._curriculum_success_streak = 0
         self._curriculum_frontier_index = min(
             len(self.checkpoints) - 2,
@@ -2065,12 +2057,6 @@ class AirSimEnv(BaseEnv):
         self.curriculum_window_size = min(
             len(self.checkpoints) - 1,
             self.curriculum_window_size + self.curriculum_window_increment,
-        )
-        print(
-            f"[Curriculum] Episode {self._episode_index}: frontier "
-            f"{prev_frontier} → {self._curriculum_frontier_index}  "
-            f"window {prev_window} → {self.curriculum_window_size}  "
-            f"(total checkpoints: {len(self.checkpoints) - 1})"
         )
 
     def _airsim_yaw_rate_to_framework(self, yaw_rate: float) -> float:

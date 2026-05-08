@@ -9,9 +9,6 @@ from types import SimpleNamespace
 
 from fw.stop_condition import StopCondition
 from fw.policies.single_ppo_agent import SinglePPOAgent
-from fw.config_profile import ProfileRegistry
-
-_DEFAULT_PROFILE = ProfileRegistry.get("default_pysim_profile")
 
 
 def test_filter_trainable_episodes_skips_one_step_rollouts():
@@ -61,7 +58,7 @@ def test_learn_reraises_keyboard_interrupt_and_skips_final_checkpoint(tmp_path, 
     """Interrupted training should not look like a successful completed run."""
     import fw.policies.single_ppo_agent as single_ppo_agent_module
 
-    agent = SinglePPOAgent(profile=_DEFAULT_PROFILE, environment=_DummyEnv(), model_dir=str(tmp_path))
+    agent = SinglePPOAgent(environment=_DummyEnv(), model_dir=str(tmp_path))
     save_calls = []
     metrics_dumped = []
 
@@ -80,9 +77,7 @@ def test_learn_reraises_keyboard_interrupt_and_skips_final_checkpoint(tmp_path, 
     with pytest.raises(KeyboardInterrupt):
         agent.learn(stop_condition=StopCondition(max_time_steps=3))
 
-    # Interrupt checkpoints (ppo_interrupt_*) are expected; final/success saves are not.
-    non_interrupt_saves = [n for n in save_calls if "interrupt" not in n]
-    assert non_interrupt_saves == []
+    assert save_calls == []
     assert metrics_dumped == []
     assert not list(tmp_path.glob("*iterations*.csv"))
 
@@ -91,7 +86,7 @@ def test_learn_raises_after_repeated_untrainable_airsim_batches(tmp_path, monkey
     """AirSim training should fail fast instead of looping forever on empty batches."""
     import fw.policies.single_ppo_agent as single_ppo_agent_module
 
-    agent = SinglePPOAgent(profile=_DEFAULT_PROFILE, environment=_DummyAirSimEnv(), model_dir=str(tmp_path))
+    agent = SinglePPOAgent(environment=_DummyAirSimEnv(), model_dir=str(tmp_path))
     fake_logger = SimpleNamespace(
         path=tmp_path / "iterations.csv",
         log_iteration=lambda **kwargs: None,

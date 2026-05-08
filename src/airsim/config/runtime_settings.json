@@ -52,7 +52,7 @@
     "lock_path_in_ue5": false,
     "episodes": 1,
     "max_steps": 60000,
-    "device": "cpu",
+    "device": "cuda",
     "log_every": 50,
     "draw_calibration_reference": true
   },
@@ -120,13 +120,11 @@
     "_remarks": {
       "enabled": "true => initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights.",
       "source_policy_path": "Path to the 2D .zip policy file (relative to repo root or absolute).",
-      "freeze_shared_layers": "true => freeze all transferred layers so only the mapping-layer first linear adapts. false => fine-tune the full network.",
-      "mapping_layer_init_gain": "Orthogonal init gain for the mapping layer after transfer. 0.1 dampens initial activation mismatch with pre-trained deep layers without killing the gradient signal. 0.01 is too small (near-zero learning); sqrt(2)~1.414 is too large (gradient explosion)."
+      "freeze_shared_layers": "true => freeze all transferred layers so only the mapping-layer first linear adapts. false => fine-tune the full network."
     },
     "enabled": false,
     "source_policy_path": "models/PySimEnv_PPO_policy.zip",
-    "freeze_shared_layers": false,
-    "mapping_layer_init_gain": 0.05
+    "freeze_shared_layers": true
   },
   "airsim": {
     "_remarks": {
