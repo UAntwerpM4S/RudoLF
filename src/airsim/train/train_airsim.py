@@ -337,6 +337,7 @@ def _run_training_with_transfer(
     obs_dim = int(env.gym_env.observation_space.shape[0])
     act_dim = int(env.gym_env.action_space.shape[0])
     freeze = bool(tl_cfg.get("freeze_shared_layers", True))
+    mapping_init_gain = float(tl_cfg.get("mapping_layer_init_gain", 0.1))
 
     print("\n" + "=" * 60)
     print("  TRANSFER LEARNING — loading 2D policy weights")
@@ -344,6 +345,7 @@ def _run_training_with_transfer(
     print(f"  Source : {source_path}")
     print(f"  Target : AirSimEnv  obs={obs_dim}  act={act_dim}  device={agent.device}")
     print(f"  Freeze : {freeze}")
+    print(f"  LR     : {agent.learning_rate:.2e}")
     print("=" * 60 + "\n")
 
     try:

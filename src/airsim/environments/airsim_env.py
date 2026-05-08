@@ -821,7 +821,13 @@ class AirSimEnv(BaseEnv):
             )
 
         if terminated or truncated:
-            curriculum_success = bool(success and not collision and not offtrack and not truncated)
+            # Curriculum advances when the agent reaches the frontier checkpoint,
+            # not when it completes the full route — the original full-route criterion
+            # was never achievable early in curriculum training.
+            curriculum_success = (
+                self.checkpoint_index > self._curriculum_frontier_index
+                and not collision
+            )
             self._episode_success = curriculum_success
             self._update_curriculum_after_episode(success=curriculum_success)
 
