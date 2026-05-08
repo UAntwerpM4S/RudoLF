@@ -301,12 +301,9 @@ class EpisodeCollector:
         # override takes effect for this episode.
         if self._profile.scenario.initial_state is not None:
             _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-
             if _rollout_sim is None and hasattr(env, "sub_environments") and env.sub_environments:
-                # MultiSimEnv: push initial state into every sub-environment's simulator.
                 for sub in env.sub_environments.values():
                     _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
-
                     if _sub_sim is not None:
                         SimulatorApplier.apply(self._profile, _sub_sim)
             elif _rollout_sim is not None:
@@ -326,18 +323,11 @@ class EpisodeCollector:
 
                 sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
                 if sim is None and hasattr(env, "sub_environments") and env.sub_environments:
-                    # MultiSimEnv: pull the simulator from the first sub-environment
-                    # so ActionAdapter can apply the correct thrust limits.
                     first_sub = next(iter(env.sub_environments.values()), None)
                     if first_sub is not None:
                         sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
 
-                # NOTE: ActionAdapter.transform() is called directly (not apply_profile)
-                # so that SimulatorApplier is NOT triggered here — calling apply_profile
-                # with simulator= would reset the ship state on every step whenever
-                # profile.scenario.initial_state is set.
                 action = ActionAdapter.transform(self._profile, action, simulator=sim)
-
                 state, reward, terminated, truncated, _ = env.step(action)
 
                 env_done = np.logical_or(terminated, truncated)

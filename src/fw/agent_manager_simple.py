@@ -413,10 +413,6 @@ class AgentManagerSimple:
                             action, _, _ = self._agent.predict(state=state, deterministic=True)
 
                             sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-                            # NOTE: ActionAdapter.transform() is called directly (not apply_profile)
-                            # so that SimulatorApplier is NOT triggered here — calling apply_profile
-                            # with simulator= would reset the ship state on every step whenever
-                            # profile.scenario.initial_state is set.
                             action = ActionAdapter.transform(self._profile, action, simulator=sim)
 
                             # Take step in environment
