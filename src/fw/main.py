@@ -18,6 +18,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
     import runpy
 
     from fw.trainer import Trainer
+    from fw.profile_applier import apply_profile
+    from fw.config_profile import ProfileRegistry
     from fw.stop_condition import StopCondition, Criterion
     from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, get_config_parameters
     from fw.env_factory import (
@@ -34,6 +36,12 @@ if __name__ == "__main__" or __name__ == "fw.main":
     )
 
     framework_config = get_config_parameters()
+
+    profile_name = framework_config.get("profile", "default_pysim_profile")
+    profile = ProfileRegistry.get(profile_name)
+    profile.validate()
+    apply_profile(profile, config=framework_config)
+
     reward_configs = framework_config.get("reward_configs", [])
     configured_env_names = resolve_environment_names(
         framework_config.get("env_type", py_sim_env_name)
@@ -136,7 +144,13 @@ if __name__ == "__main__" or __name__ == "fw.main":
         if not envs:
             return False
 
-        std_trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+        for sim_env in envs:
+            apply_profile(profile, env=sim_env.gym_env)
+            sim = getattr(sim_env.gym_env, "phys_sim", None) or getattr(sim_env.gym_env, "_phys_sim", None)
+            if sim is not None:
+                apply_profile(profile, simulator=sim)
+
+        std_trainer = Trainer(PPO_POLICY_NAME, envs, profile, "SimpleScheduler")
         if action == "visualize":
             std_trainer.visualize(envs, airsim_bridge=None)
         else:
@@ -166,8 +180,10 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         try:
             first_env_type = reward_configs[0].get("type", py_sim_env_name)
-            dummy_env = build_default_environment(resolve_environment_name(first_env_type))
-            trainer = Trainer(PPO_POLICY_NAME, [dummy_env], "SimpleScheduler")
+            first_env_name = resolve_environment_name(first_env_type)
+            dummy_env = build_default_environment(first_env_name)
+            eval_policy_name = MULTI_PPO_POLICY_NAME if first_env_name == multi_sim_env_name else PPO_POLICY_NAME
+            trainer = Trainer(eval_policy_name, [dummy_env], profile, "SimpleScheduler")
 
             print(f"[main] Starting reward evaluation for {len(reward_configs)} configurations...")
             results = trainer.evaluate_reward(reward_configs, configuration, verbose=True)
@@ -176,7 +192,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             trainer.export_evaluation_results(results, results_file)
             print(f"[main] Reward evaluation complete. Results exported to '{results_file}'.")
             executed_any_step = True
-            # evaluate_reward is a standalone mode; avoid running standard train/visualize afterwards.
+            # evaluate_reward is a standalone mode; avoid running standard train/visualize afterward.
             raise SystemExit(0)
         except Exception as exc:
             print(f"[main] Reward evaluation failed: {exc}")

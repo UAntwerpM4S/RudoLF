@@ -5,9 +5,11 @@ import matplotlib.patches as patches
 
 from pathlib import Path
 from contextlib import contextmanager
+from fw.config_profile import VesselProfile
 from fw.environments.base_env import BaseEnv
 from fw.environments.multi_sim_env import MultiSimEnv
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
+from fw.profile_applier import apply_profile, ActionAdapter, SimulatorApplier
 from airsim.communication.airsim_bridge import AirSimBridge
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
@@ -135,19 +137,20 @@ class AgentManagerSimple:
             plt.close('all')
 
 
-    def __init__(self, agent_type: str, hyperparameters: dict):
+    def __init__(self, agent_type: str, profile: VesselProfile, hyperparameters: dict):
         """
         Initialize AgentManagerSimple.
 
         Args:
             agent_type (str): Type of agent to use (e.g., 'PPO').
+            profile (VesselProfile): Profile that will be used for training or visualization.
             hyperparameters (dict): Hyperparameters for configuring the agent.
         """
 
         self._agent = None
+        self._profile = profile
         self._agent_type = agent_type
         self._hyperparameters = hyperparameters
-        self.prev_smoothing_setting = None
         self.prev_render_mode = None
 
 
@@ -161,6 +164,18 @@ class AgentManagerSimple:
         """
 
         return self._agent_type
+
+
+    @property
+    def profile(self) -> "VesselProfile":
+        """
+        Get the active VesselProfile held by this manager.
+
+        Returns:
+            VesselProfile: The profile used for training or visualization.
+        """
+
+        return self._profile
 
 
     @property
@@ -202,7 +217,7 @@ class AgentManagerSimple:
         else:
             raise RuntimeError("SinglePPOAgent requires exactly one sub-environment.")
 
-        return SinglePPOAgent(environment=target_env, **self._hyperparameters)
+        return SinglePPOAgent(self._profile, environment=target_env, **self._hyperparameters)
 
 
     def _build_multi_agent(self, env):
@@ -231,11 +246,11 @@ class AgentManagerSimple:
             raise ValueError("MultiSimEnv must contain at least one sub-environment.")
 
         agents = [
-            SinglePPOAgent(environment=sub_env, **self._hyperparameters)
+            SinglePPOAgent(self._profile, environment=sub_env, **self._hyperparameters)
             for sub_env in env.sub_environments.values()
         ]
 
-        return MultiPPOAgent(environment=env, agents=agents, **self._hyperparameters)
+        return MultiPPOAgent(self.profile, environment=env, agents=agents, **self._hyperparameters)
 
 
     def set_environment(self, env: BaseEnv, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
@@ -268,6 +283,10 @@ class AgentManagerSimple:
             self._agent = self._build_multi_agent(env)
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
+
+        # Always propagate profile env settings (e.g. enable_smoothing) to the
+        # environment, regardless of which entry point called set_environment.
+        apply_profile(self._profile, env=env)
 
         if policy_file_name:
             full_policy_file_name = f"{policy_file_name}.zip"
@@ -329,24 +348,6 @@ class AgentManagerSimple:
             self.get_env().fh_sim.dispose()
 
 
-    @contextmanager
-    def smoothing(self, env):
-        """
-        Smoothing.
-
-        Args:
-            env: Description.
-        """
-
-        if hasattr(env, "enable_smoothing"):
-            try:
-                self.prev_smoothing_setting = env.enable_smoothing
-                env.enable_smoothing = False
-                yield
-            finally:
-                env.enable_smoothing = self.prev_smoothing_setting
-                self.prev_smoothing_setting = None
-
     def visualize_trained_agent(
             self,
             num_episodes: int = 5,
@@ -388,7 +389,7 @@ class AgentManagerSimple:
             from airsim.communication.coord_transform import CoordTransform
             coord_transform = CoordTransform()
 
-        with self.smoothing(env), self.rendering(env):
+        with self.rendering(env):
             if hasattr(env, "ship_pos"):
                 # Store results for each episode
                 all_paths = []
@@ -398,6 +399,14 @@ class AgentManagerSimple:
                 try:
                     for episode in range(num_episodes):
                         state, _ = env.reset()
+
+                        # If the profile specifies an initial vessel state, push it to the
+                        # simulator immediately after the environment's own reset so the
+                        # override takes effect for this episode.
+                        if self._profile.scenario.initial_state is not None:
+                            _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                            SimulatorApplier.apply(self._profile, _rollout_sim)
+
                         episode_reward = 0
                         done = False
                         steps = 0
@@ -410,6 +419,9 @@ class AgentManagerSimple:
                         while not done:
                             # Select action
                             action, _, _ = self._agent.predict(state=state, deterministic=True)
+
+                            sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                            action = ActionAdapter.transform(self._profile, action, simulator=sim)
 
                             # Take step in environment
                             state, reward, terminated, truncated, _ = env.step(action)

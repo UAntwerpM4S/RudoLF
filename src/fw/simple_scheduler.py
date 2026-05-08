@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 import traceback
@@ -174,6 +175,24 @@ class SimpleScheduler(BaseScheduler):
                             self.agent_mgr.agent.save_policy(save_name)
                         else:
                             self.agent_mgr.agent.save_policy(f"{save_name}_{weight_suffix}")
+
+                        # Persist the active profile alongside the checkpoint so
+                        # inference / transfer runs can always reconstruct the
+                        # exact training configuration without guessing.
+                        profile = getattr(self.agent_mgr, "profile", None)
+                        if profile is not None:
+                            model_dir = getattr(self.agent_mgr.agent, "model_dir", None) or "models"
+                            profile_path = os.path.join(model_dir, f"{env_name}_profile.json")
+                            try:
+                                with open(profile_path, "w", encoding="utf-8") as _fp:
+                                    _fp.write(profile.to_json())
+                                logging.debug(
+                                    "[Scheduler] Profile written to '%s'.", profile_path
+                                )
+                            except OSError as _pe:
+                                logging.warning(
+                                    "[Scheduler] Could not save profile JSON (%s).", _pe
+                                )
                     except Exception as e:
                         self._previous_env_name = None
                         raise RuntimeError("Failed to save the policy.") from e
