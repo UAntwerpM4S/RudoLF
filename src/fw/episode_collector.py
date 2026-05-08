@@ -5,8 +5,10 @@ import numpy as np
 
 from typing import Optional
 from contextlib import contextmanager
-from fw.output_helpers import compute_heading_error
+from fw.config_profile import VesselProfile
+from fw.profile_applier import SimulatorApplier, ActionAdapter
 from fw.ship_episode_data import RunData, ShipData, ShipEpisodeData
+from fw.output_helpers import compute_heading_error
 
 
 class ShipDataExtractor:
@@ -140,12 +142,13 @@ class EpisodeCollector:
             to ["ship_0"].
     """
 
-    def __init__(self, agent, env, ship_ids: Optional[list[str]] = None, airsim_bridge=None):
+    def __init__(self, agent, env, profile: VesselProfile, ship_ids: Optional[list[str]] = None, airsim_bridge=None):
         """Initialize the collector and resolve the ship IDs to track.
 
         Args:
             agent: Trained agent used to produce actions during evaluation.
             env: Environment to evaluate, either single-ship or multi-ship.
+            profile: Profile that will be used for training or visualization.
             ship_ids: Optional explicit ship ID list. If omitted, the collector
                 uses ``env.sub_environments`` when available, otherwise
                 defaults to ``["ship_0"]``.
@@ -155,6 +158,7 @@ class EpisodeCollector:
         """
         self._agent = agent
         self._env = env
+        self._profile = profile
         self._airsim_bridge = airsim_bridge
 
         if self._airsim_bridge and self._airsim_bridge.is_connected:
@@ -291,6 +295,20 @@ class EpisodeCollector:
 
         # Reset environment
         state, _ = env.reset()
+
+        # If the profile specifies an initial vessel state, push it to the
+        # simulator immediately after the environment's own reset so the
+        # override takes effect for this episode.
+        if self._profile.scenario.initial_state is not None:
+            _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+            if _rollout_sim is None and hasattr(env, "sub_environments") and env.sub_environments:
+                for sub in env.sub_environments.values():
+                    _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
+                    if _sub_sim is not None:
+                        SimulatorApplier.apply(self._profile, _sub_sim)
+            elif _rollout_sim is not None:
+                SimulatorApplier.apply(self._profile, _rollout_sim)
+
         done = np.zeros(len(ship_ids), dtype=bool)
         steps = 0
 
@@ -302,6 +320,27 @@ class EpisodeCollector:
         with self._render_mode(ship_envs, live_animation):
             while not np.all(done):
                 action, _, _ = self._agent.predict(state=state, deterministic=True)
+
+                sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                if sim is None and hasattr(env, "sub_environments") and env.sub_environments:
+                    first_sub = next(iter(env.sub_environments.values()), None)
+                    if first_sub is not None:
+                        sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
+
+                if isinstance(action, np.ndarray) and action.ndim == 2:
+                    transformed = np.stack([
+                        ActionAdapter.transform(self._profile, action[i], simulator=sim)
+                        for i in range(action.shape[0])
+                    ])
+                    action = transformed
+                elif isinstance(action, tuple):
+                    action = tuple(
+                        ActionAdapter.transform(self._profile, a, simulator=sim)
+                        for a in action
+                    )
+                else:
+                    action = ActionAdapter.transform(self._profile, action, simulator=sim)
+
                 state, reward, terminated, truncated, _ = env.step(action)
 
                 env_done = np.logical_or(terminated, truncated)

@@ -4,6 +4,8 @@ from typing import Optional
 from abc import abstractmethod
 from fw.policies.base_agent import BaseAgent
 from fw.environments.base_env import BaseEnv
+from fw.profile_applier import SimulatorApplier, ActionAdapter
+from fw.config_profile import VesselProfile
 
 
 class BasePPOAgent(BaseAgent):
@@ -81,6 +83,7 @@ class BasePPOAgent(BaseAgent):
 
     def __init__(
         self,
+        profile: VesselProfile,
         environment: BaseEnv,
         num_envs: int = 1,
         eval_frequency: int = 1000,
@@ -102,6 +105,7 @@ class BasePPOAgent(BaseAgent):
         Initialize the PPO agent with environment and training hyperparameters.
 
         Args:
+            profile: Profile that will be used for training or visualization.
             environment (BaseEnv): Training environment instance.
             num_envs (int): Number of parallel environments.
             eval_frequency (int): Training iterations between evaluations.
@@ -141,6 +145,7 @@ class BasePPOAgent(BaseAgent):
             model_dir=model_dir,
         )
 
+        self._profile = profile
         self.max_nbr_iterations = max_nbr_iterations
         self.normalize = normalize
 
@@ -285,6 +290,20 @@ class BasePPOAgent(BaseAgent):
 
         # Reset all environments
         states = self._reset_envs(num_envs)
+
+        # If the profile mandates a specific start state, push it to the
+        # simulator right after the vectorized reset so every training
+        # episode begins from the configured position/heading.
+        if self._profile.scenario.initial_state is not None:
+            _rollout_sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
+            if _rollout_sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
+                for sub in self.env.sub_environments.values():
+                    _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
+                    if _sub_sim is not None:
+                        SimulatorApplier.apply(self._profile, _sub_sim)
+            elif _rollout_sim is not None:
+                SimulatorApplier.apply(self._profile, _rollout_sim)
+
         envs_done = np.zeros(num_envs, dtype=bool)
 
         # Storage for episode data
@@ -325,6 +344,26 @@ class BasePPOAgent(BaseAgent):
                 effective_actions = np.stack(effective_actions)
             else:
                 effective_actions = tuple(effective_actions)
+
+            sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
+            if sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
+                first_sub = next(iter(self.env.sub_environments.values()), None)
+                if first_sub is not None:
+                    sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
+
+            if isinstance(effective_actions, np.ndarray) and effective_actions.ndim == 2:
+                transformed = np.stack([
+                    ActionAdapter.transform(self._profile, effective_actions[i], simulator=sim)
+                    for i in range(effective_actions.shape[0])
+                ])
+                effective_actions = transformed
+            elif isinstance(effective_actions, tuple):
+                effective_actions = tuple(
+                    ActionAdapter.transform(self._profile, a, simulator=sim)
+                    for a in effective_actions
+                )
+            else:
+                effective_actions = ActionAdapter.transform(self._profile, effective_actions, simulator=sim)
 
             next_states, rewards, terminations, truncations = self._step_envs(effective_actions)
 

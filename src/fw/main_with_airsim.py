@@ -73,6 +73,9 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     from fw.env_factory import (
         airsim_env_name,
     )
+    from fw.config import get_config_parameters
+    from fw.profile_applier import apply_profile
+    from fw.config_profile import ProfileRegistry
 
     # AirSim runtime only controls AirSim-specific behavior.
     # The selected framework environment is handled by fw.main / fw.config.
@@ -385,7 +388,22 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         raise SystemExit(1)
 
     # Create a Trainer and pass on a list of agents that you want to train
-    trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+    _airsim_fw_config = get_config_parameters()
+    _airsim_profile_name = _airsim_fw_config.get("profile", "default_airsim_profile")
+    _airsim_profile = ProfileRegistry.get(_airsim_profile_name)
+    _airsim_profile.validate()
+    apply_profile(_airsim_profile, config=_airsim_fw_config)
+
+    for _airsim_env_wrapper in envs:
+        apply_profile(_airsim_profile, env=_airsim_env_wrapper.gym_env)
+        _airsim_sim = (
+            getattr(_airsim_env_wrapper.gym_env, "phys_sim", None)
+            or getattr(_airsim_env_wrapper.gym_env, "_phys_sim", None)
+        )
+        if _airsim_sim is not None:
+            apply_profile(_airsim_profile, simulator=_airsim_sim)
+
+    trainer = Trainer(PPO_POLICY_NAME, envs, _airsim_profile, "SimpleScheduler")
 
     # Optionally create AirSim bridge for simultaneous vehicle control
     from airsim.config.airsim_config import get_airsim_config, AirSimConfig

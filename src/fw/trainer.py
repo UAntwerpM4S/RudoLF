@@ -23,6 +23,8 @@ from fw.env_factory import (
 from fw.agent_manager import AgentManager
 from fw.agent_manager_simple import AgentManagerSimple
 from fw.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
+from fw.config_profile import VesselProfile
+
 
 # logging.basicConfig(level=logging.INFO)  # Configure logging once, possibly in main script.
 
@@ -106,13 +108,14 @@ class Trainer:
     Responsible for creating the agent manager, initializing the scheduler, and managing the training loop.
     """
 
-    def __init__(self, agent_type: str, envs, scheduler_type: str):
+    def __init__(self, agent_type: str, envs, profile: VesselProfile, scheduler_type: str):
         """
         Initializes the Trainer.
 
         Args:
             agent_type (str): The type of agent to create (e.g., 'PPO', 'DQN').
             envs (Gym.Env): List of environments for the agent to train in.
+            profile (VesselProfile): Profile that will be used for training or visualization.
             scheduler_type (str): The name of the scheduler class to use.
 
         Raises:
@@ -122,17 +125,20 @@ class Trainer:
 
         self._agent_type = agent_type
         self._envs = envs
+        self._profile = profile
         self._config = get_config_parameters()
         self._hyperparameter_env_name = self._resolve_hyperparameter_env_name()
 
         if self._config["viz_mode"] == VisualizationMode.SIMPLE:
             self._agent_mgr = AgentManagerSimple(
                 agent_type,
+                profile,
                 get_hyperparameters(agent_type, env_name=self._hyperparameter_env_name),
             )
         else:
             self._agent_mgr = AgentManager(
                 agent_type,
+                profile,
                 get_hyperparameters(agent_type, env_name=self._hyperparameter_env_name),
             )
 
@@ -399,7 +405,7 @@ class Trainer:
                 env = self._build_eval_environment(canonical_name, config)
 
                 # Create an independent trainer to avoid shared state.
-                trainer = Trainer(self._agent_type, [env], "SimpleScheduler")
+                trainer = Trainer(self._agent_type, [env], self._profile, "SimpleScheduler")
 
                 # Train once and keep plots off to avoid multi-threaded UI issues.
                 metrics = trainer.train(training_configuration, show_plots=False)
