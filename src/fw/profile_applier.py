@@ -109,6 +109,7 @@ class ConfigApplier:
 
     @staticmethod
     def apply(profile: VesselProfile, config: Dict[str, Any]) -> None:
+        """Patch ship_model and dynamics_model into *config* from *profile*."""
         config["ship_model"] = profile.model.ship_model
         config["dynamics_model"] = profile.model.dynamics_model
         logger.debug(

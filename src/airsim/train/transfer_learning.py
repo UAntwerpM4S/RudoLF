@@ -251,7 +251,7 @@ def build_transfer_policy(
     target_output_dim: int,
     target_device: torch.device | None = None,
     freeze_shared: bool = True,
-    mapping_layer_init_gain: float = 0.01,
+    mapping_layer_init_gain: float = 0.1,
 ) -> PPOPolicy:
     """Build an AirSimEnv policy initialised from a pretrained 2D checkpoint.
 
@@ -261,10 +261,10 @@ def build_transfer_policy(
         3. Initialise a fresh target ``PPOPolicy`` on *target_device*.
         4. Transfer all matching hidden layers, moving tensors to *target_device* automatically.
         5. The first linear layer ``shared_network[0]: Linear(target_input_dim → 256)``
-           is the mapping layer. It is reinitialised with a small orthogonal gain
-           (default 0.01) so its initial outputs are near-zero, preventing the
-           gradient explosion that occurs when random-init activations propagate
-           through the pre-trained downstream layers.
+           is the mapping layer. It is reinitialised with a reduced orthogonal gain
+           (default 0.1) so its initial outputs are smaller, dampening the activation
+           distribution mismatch with the pre-trained deep layers without killing
+           the gradient signal the way gain=0.01 does.
 
     The source checkpoint is always loaded on CPU regardless of *target_device*, so any
     checkpoint (CPU or CUDA) can be transferred to any training device without manual
@@ -279,9 +279,9 @@ def build_transfer_policy(
             auto-detection via :func:`~fw.policies.ppo_policy.get_device`.
         freeze_shared: Freeze transferred layers so only the mapping layer trains.
         mapping_layer_init_gain: Orthogonal init gain for the mapping layer.
-            Small values (default 0.01) produce near-zero initial activations,
-            keeping the pre-trained downstream layers in a stable regime at the
-            start of fine-tuning.
+            0.1 (default) reduces activation mismatch with pre-trained deep layers.
+            Use smaller values to further suppress initial gradient explosion at the
+            cost of slower early learning.
 
     Returns:
         ``PPOPolicy`` on *target_device*, configured for AirSimEnv fine-tuning.
@@ -300,10 +300,6 @@ def build_transfer_policy(
     target_policy = PPOPolicy(target_input_dim, target_output_dim, device=resolved_device.type)
     transferred = apply_transfer_weights(source_policy, target_policy, freeze_shared=freeze_shared)
 
-    # Reinitialise the mapping layer with a small gain so its initial outputs stay
-    # near-zero. The default orthogonal init (gain=sqrt(2)) produces large random
-    # activations that flow into the frozen pre-trained layers, causing gradient
-    # explosion at the start of fine-tuning.
     mapping_layer = target_policy.network.shared_network[0]
     nn.init.orthogonal_(mapping_layer.weight, gain=mapping_layer_init_gain)
     nn.init.constant_(mapping_layer.bias, 0.0)
@@ -316,7 +312,7 @@ def build_transfer_policy(
         f"\n[TransferLearning] Target device : {resolved_device}"
         f"\n[TransferLearning] Transferred {len(transferred)} layer(s): {transferred}"
         f"\n[TransferLearning] Trainable: {n_trainable:,} / {n_total:,} params ({frozen_note})"
-        f"\n[TransferLearning] Mapping layer reinit gain: {mapping_layer_init_gain}"
+        f"\n[TransferLearning] Mapping layer init gain: {mapping_layer_init_gain}"
     )
 
     return target_policy
