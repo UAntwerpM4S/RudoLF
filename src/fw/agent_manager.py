@@ -344,6 +344,10 @@ class AgentManager:
                 #     run_data.ships, metrics,
                 # )
 
+            # Cleanup the environment
+            if hasattr(self.get_env(), "fh_sim"):
+                self.get_env().fh_sim.dispose()
+
             if return_summary:
                 return summaries
 
