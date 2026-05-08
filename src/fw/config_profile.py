@@ -10,7 +10,6 @@ training or inference run:
 * thrust mode (free-range or fixed value)
 * rudder-angle conversion scale  (sim-to-sim transfer)
 * ship model and dynamics model selection
-* target environment type(s)
 
 All profile objects and their sub-configs are **frozen dataclasses**, meaning
 they are immutable after construction.  Use :meth:`VesselProfile.with_overrides`
@@ -23,13 +22,12 @@ Typical usage
 -------------
 >>> from fw.config_profile import (
 ...     VesselProfile, ActuatorConfig, ThrustConfig, ThrustMode,
-...     ModelConfig, EnvironmentConfig, EnvType, RunMode, ProfileRegistry,
+...     ModelConfig, RunMode, ProfileRegistry,
 ... )
 
 # Build a custom profile
 >>> p = VesselProfile(
 ...     name="my_run",
-...     environment=EnvironmentConfig(env_types=[EnvType.PYSIM]),
 ... )
 >>> p.validate()
 
@@ -41,7 +39,7 @@ Typical usage
 ... )
 
 # Load a built-in preset
->>> p = ProfileRegistry.get("train_pysim_default")
+>>> p = ProfileRegistry.get("default_pysim_profile")
 """
 
 from __future__ import annotations
@@ -58,19 +56,6 @@ from typing import Any, Dict, List, Optional
 
 from fw.dynamics.dynamics_model import Model
 from fw.ships.ship_factory import ShipModel
-
-
-# ---------------------------------------------------------------------------
-# Enums
-# ---------------------------------------------------------------------------
-
-class EnvType(Enum):
-    """Supported simulation environment backends."""
-
-    PYSIM = "PySimEnv"
-    FHSIM = "FhSimEnv"
-    AIRSIM = "AirSimEnv"
-    MULTISIM = "MultiSimEnv"
 
 
 class ThrustMode(Enum):
@@ -235,18 +220,6 @@ class ModelConfig:
     dynamics_model: Model = Model.FOSSEN
 
 
-@dataclass(frozen=True)
-class EnvironmentConfig:
-    """
-    Environment selection.
-
-    Attributes:
-        env_types: Ordered list of environment backends to use.
-    """
-
-    env_types: List[EnvType] = field(default_factory=lambda: [EnvType.PYSIM])
-
-
 # ---------------------------------------------------------------------------
 # Main profile
 # ---------------------------------------------------------------------------
@@ -269,7 +242,6 @@ class VesselProfile:
         thrust: Thrust control strategy.
         transfer: Sim-to-sim rudder rescaling.
         model: Ship and dynamics model selection.
-        environment: Target environment backend(s).
     """
 
     name: str = "default"
@@ -283,7 +255,6 @@ class VesselProfile:
     thrust: ThrustConfig = field(default_factory=ThrustConfig)
     transfer: TransferConfig = field(default_factory=TransferConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
-    environment: Optional[EnvironmentConfig] = None
 
     # ------------------------------------------------------------------
     # Derived convenience
@@ -348,9 +319,6 @@ class VesselProfile:
         a :mod:`warnings` warning instead of raising.
         """
         errors: List[str] = []
-
-        # if not self.environment.env_types:
-        #     errors.append("environment.env_types must contain at least one entry.")
 
         if self.thrust.mode == ThrustMode.FIXED:
             if not (0.1 <= self.thrust.fixed_value <= 1.0):
@@ -432,9 +400,6 @@ class VesselProfile:
                 "ship_model": self.model.ship_model.name,
                 "dynamics_model": self.model.dynamics_model.name,
             },
-            "environment": {
-                "env_types": [e.value for e in self.environment.env_types]
-            },
         }
 
     @classmethod
@@ -471,9 +436,6 @@ class VesselProfile:
                 ship_model=ShipModel[d["model"]["ship_model"]],
                 dynamics_model=Model[d["model"]["dynamics_model"]],
             ),
-            environment=EnvironmentConfig(
-                env_types=[EnvType(e) for e in d["environment"]["env_types"]]
-            ),
         )
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -507,7 +469,6 @@ class VesselProfile:
         lines = [f"VesselProfile '{self.name}' [{self.run_mode.name}]"]
         if self.description:
             lines.append(f"  description  : {self.description}")
-        lines.append(f"  env_types    : {[e.value for e in self.environment.env_types]}")
         lines.append(f"  ship_model   : {self.model.ship_model.name}")
         lines.append(f"  dynamics     : {self.model.dynamics_model.name}")
 
@@ -630,7 +591,6 @@ ProfileRegistry.register(VesselProfile(
     name="default_pysim_profile",
     description="Standard PySim profile with Fossen dynamics.",
     run_mode=RunMode.TRAIN,
-    environment=EnvironmentConfig(env_types=[EnvType.PYSIM]),
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_DEFAULT,
         dynamics_model=Model.FOSSEN,
@@ -643,7 +603,6 @@ ProfileRegistry.register(VesselProfile(
     name="default_airsim_profile",
     description="Standard AirSim profile.",
     run_mode=RunMode.TRAIN,
-    environment=EnvironmentConfig(env_types=[EnvType.AIRSIM]),
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_DEFAULT,
         dynamics_model=Model.FOSSEN,
@@ -656,7 +615,6 @@ ProfileRegistry.register(VesselProfile(
     name="train_fhsim_default",
     description="Standard FhSim training profile with Fossen dynamics.",
     run_mode=RunMode.TRAIN,
-    environment=EnvironmentConfig(env_types=[EnvType.FHSIM]),
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_DEFAULT,
         dynamics_model=Model.FOSSEN,
@@ -669,7 +627,6 @@ ProfileRegistry.register(VesselProfile(
     name="inference_pysim",
     description="PySim inference: smoothing off, thrust fixed at 0.8.",
     run_mode=RunMode.INFERENCE,
-    environment=EnvironmentConfig(env_types=[EnvType.PYSIM]),
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_DEFAULT,
         dynamics_model=Model.FOSSEN,
@@ -685,7 +642,6 @@ ProfileRegistry.register(VesselProfile(
         "rudder_scale=0.75 is a starting point — tune empirically."
     ),
     run_mode=RunMode.TRANSFER,
-    environment=EnvironmentConfig(env_types=[EnvType.FHSIM]),
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_DEFAULT,
         dynamics_model=Model.FOSSEN,
@@ -693,4 +649,43 @@ ProfileRegistry.register(VesselProfile(
     actuator=ActuatorConfig(enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
     transfer=TransferConfig(rudder_scale=0.75),
+))
+
+ProfileRegistry.register(VesselProfile(
+    name="train_multisim_default",
+    description="Standard MultiSim training profile (two PySim sub-environments).",
+    run_mode=RunMode.TRAIN,
+    model=ModelConfig(
+        ship_model=ShipModel.MYZAKO_DEFAULT,
+        dynamics_model=Model.FOSSEN,
+    ),
+    actuator=ActuatorConfig(enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
+))
+
+ProfileRegistry.register(VesselProfile(
+    name="train_lunar_default",
+    description=(
+        "LunarLander training profile. Ship-model and dynamics fields are "
+        "unused by the Lunar environment but kept for schema consistency."
+    ),
+    run_mode=RunMode.TRAIN,
+    model=ModelConfig(
+        ship_model=ShipModel.MYZAKO_DEFAULT,
+        dynamics_model=Model.FOSSEN,
+    ),
+    actuator=ActuatorConfig(enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
+))
+
+ProfileRegistry.register(VesselProfile(
+    name="train_pysim_polar_default",
+    description="PySimPolarEnv training profile with Fossen dynamics.",
+    run_mode=RunMode.TRAIN,
+    model=ModelConfig(
+        ship_model=ShipModel.MYZAKO_DEFAULT,
+        dynamics_model=Model.FOSSEN,
+    ),
+    actuator=ActuatorConfig(enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))
