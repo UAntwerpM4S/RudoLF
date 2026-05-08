@@ -109,8 +109,6 @@ class ConfigApplier:
 
     @staticmethod
     def apply(profile: VesselProfile, config: Dict[str, Any]) -> None:
-        if profile.environment:
-            config["env_type"] = [e.value for e in profile.environment.env_types]
         config["ship_model"] = profile.model.ship_model
         config["dynamics_model"] = profile.model.dynamics_model
         logger.debug(

@@ -13,7 +13,7 @@ from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
-from fw.profile_applier import apply_profile
+from fw.profile_applier import apply_profile, ActionAdapter
 from fw.config_profile import VesselProfile
 from fw.stop_condition import StopCondition
 
@@ -284,6 +284,10 @@ class AgentManagerSimple:
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 
+        # Always propagate profile env settings (e.g. enable_smoothing) to the
+        # environment, regardless of which entry point called set_environment.
+        apply_profile(self._profile, env=env)
+
         if policy_file_name:
             full_policy_file_name = f"{policy_file_name}.zip"
             if self.agent.model_dir:
@@ -409,7 +413,11 @@ class AgentManagerSimple:
                             action, _, _ = self._agent.predict(state=state, deterministic=True)
 
                             sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-                            action = apply_profile(self._profile, action=action, simulator=sim)
+                            # NOTE: ActionAdapter.transform() is called directly (not apply_profile)
+                            # so that SimulatorApplier is NOT triggered here — calling apply_profile
+                            # with simulator= would reset the ship state on every step whenever
+                            # profile.scenario.initial_state is set.
+                            action = ActionAdapter.transform(self._profile, action, simulator=sim)
 
                             # Take step in environment
                             state, reward, terminated, truncated, _ = env.step(action)
