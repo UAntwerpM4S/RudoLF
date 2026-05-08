@@ -109,6 +109,7 @@ class ConfigApplier:
 
     @staticmethod
     def apply(profile: VesselProfile, config: Dict[str, Any]) -> None:
+        """Write profile env/model settings into *config* in-place."""
         if profile.environment:
             config["env_type"] = [e.value for e in profile.environment.env_types]
         config["ship_model"] = profile.model.ship_model
@@ -130,6 +131,7 @@ class EnvApplier:
 
     @staticmethod
     def apply(profile: VesselProfile, env) -> None:
+        """Apply actuator smoothing from *profile* to *env* and all its sub-environments."""
         EnvApplier._set_smoothing(env, profile.actuator.enable_smoothing)
 
         sub_envs = getattr(env, "sub_environments", None)
@@ -142,6 +144,7 @@ class EnvApplier:
 
     @staticmethod
     def _set_smoothing(env, value: bool) -> None:
+        """Set ``enable_smoothing`` on *env* if the attribute exists."""
         if hasattr(env, "enable_smoothing"):
             env.enable_smoothing = value
             logger.debug(
@@ -159,6 +162,7 @@ class SimulatorApplier:
 
     @staticmethod
     def apply(profile: VesselProfile, simulator) -> None:
+        """Reset *simulator* state and patch actuator limits from *profile*."""
         if profile.scenario.initial_state is not None:
             SimulatorApplier._reset_state(profile, simulator)
 
@@ -167,6 +171,7 @@ class SimulatorApplier:
 
     @staticmethod
     def _reset_state(profile: VesselProfile, simulator) -> None:
+        """Call ``simulator.reset`` with the initial state defined in *profile*."""
         from fw.ships.vessel_state import VesselState  # deferred: avoids circular import
 
         s = profile.scenario.initial_state
