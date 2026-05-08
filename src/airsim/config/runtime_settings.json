@@ -121,14 +121,12 @@
       "enabled": "true => initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights.",
       "source_policy_path": "Path to the 2D .zip policy file (relative to repo root or absolute).",
       "freeze_shared_layers": "true => freeze all transferred layers so only the mapping-layer first linear adapts. false => fine-tune the full network.",
-      "lr_scale": "Multiplier applied to the base AirSim learning rate for the transfer optimizer. Default 0.1 (e.g. 3e-4 * 0.1 = 3e-5). Lower values stabilise early fine-tuning when only the mapping layer is trainable.",
-      "mapping_layer_init_gain": "Orthogonal init gain for the mapping layer after transfer. Default 0.01 produces near-zero initial activations, preventing gradient explosion from random features entering the frozen pre-trained layers."
+      "mapping_layer_init_gain": "Orthogonal init gain for the mapping layer after transfer. 0.1 dampens initial activation mismatch with pre-trained deep layers without killing the gradient signal. 0.01 is too small (near-zero learning); sqrt(2)~1.414 is too large (gradient explosion)."
     },
-    "enabled": false,
+    "enabled": true,
     "source_policy_path": "models/PySimEnv_PPO_policy.zip",
-    "freeze_shared_layers": true,
-    "lr_scale": 0.1,
-    "mapping_layer_init_gain": 0.01
+    "freeze_shared_layers": false,
+    "mapping_layer_init_gain": 0.05
   },
   "airsim": {
     "_remarks": {
