@@ -4,8 +4,7 @@ from typing import Optional
 from abc import abstractmethod
 from fw.policies.base_agent import BaseAgent
 from fw.environments.base_env import BaseEnv
-from fw.profile_applier import SimulatorApplier
-from fw.profile_applier import apply_profile
+from fw.profile_applier import SimulatorApplier, ActionAdapter
 from fw.config_profile import VesselProfile
 
 
@@ -293,15 +292,21 @@ class BasePPOAgent(BaseAgent):
         states = self._reset_envs(num_envs)
 
         # If the profile mandates a specific start state, push it to the
-        # simulator right after the vectorised reset so every training
+        # simulator right after the vectorized reset so every training
         # episode begins from the configured position/heading.
         if self._profile.scenario.initial_state is not None:
-            _rollout_sim = (
-                getattr(self.env, "phys_sim", None)
-                or getattr(self.env, "_phys_sim", None)
-            )
-            if _rollout_sim is not None:
+            _rollout_sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
+
+            if _rollout_sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
+                # MultiSimEnv: push initial state into every sub-environment's simulator.
+                for sub in self.env.sub_environments.values():
+                    _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
+
+                    if _sub_sim is not None:
+                        SimulatorApplier.apply(self._profile, _sub_sim)
+            elif _rollout_sim is not None:
                 SimulatorApplier.apply(self._profile, _rollout_sim)
+
         envs_done = np.zeros(num_envs, dtype=bool)
 
         # Storage for episode data
@@ -344,26 +349,36 @@ class BasePPOAgent(BaseAgent):
                 effective_actions = tuple(effective_actions)
 
             sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
+            if sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
+                # MultiSimEnv: borrow simulator from first sub-environment so
+                # ActionAdapter reads real thrust limits rather than the fallback.
+                first_sub = next(iter(self.env.sub_environments.values()), None)
+                if first_sub is not None:
+                    sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
 
             # apply_profile expects a 1-D [rudder, thrust] vector.
             # When num_envs > 1 effective_actions is a (N, 2) ndarray or an
             # N-tuple; we must transform each row independently so that rudder
             # scaling and fixed-thrust apply to every environment slot, not only
             # the first two.
+            # NOTE: ActionAdapter.transform() is called directly (not apply_profile)
+            # so that SimulatorApplier is NOT triggered here — calling apply_profile
+            # with simulator= would reset the ship state on every rollout step
+            # whenever profile.scenario.initial_state is set.
             if isinstance(effective_actions, np.ndarray) and effective_actions.ndim == 2:
                 transformed = np.stack([
-                    apply_profile(self._profile, action=effective_actions[i], simulator=sim)
+                    ActionAdapter.transform(self._profile, effective_actions[i], simulator=sim)
                     for i in range(effective_actions.shape[0])
                 ])
                 effective_actions = transformed
             elif isinstance(effective_actions, tuple):
                 effective_actions = tuple(
-                    apply_profile(self._profile, action=a, simulator=sim)
+                    ActionAdapter.transform(self._profile, a, simulator=sim)
                     for a in effective_actions
                 )
             else:
                 # 1-D single-env array – original path
-                effective_actions = apply_profile(self._profile, action=effective_actions, simulator=sim)
+                effective_actions = ActionAdapter.transform(self._profile, effective_actions, simulator=sim)
 
             next_states, rewards, terminations, truncations = self._step_envs(effective_actions)
 

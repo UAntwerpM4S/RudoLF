@@ -40,9 +40,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
     profile_name = framework_config.get("profile", "default_pysim_profile")
     profile = ProfileRegistry.get(profile_name)
     profile.validate()
-    # Apply profile to config BEFORE reading env_type so the profile's
-    # env list (written into framework_config["env_type"] by ConfigApplier)
-    # is the one used to build configured_env_names.
     apply_profile(profile, config=framework_config)
 
     reward_configs = framework_config.get("reward_configs", [])
@@ -149,7 +146,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         for sim_env in envs:
             apply_profile(profile, env=sim_env.gym_env)
-
             sim = getattr(sim_env.gym_env, "phys_sim", None) or getattr(sim_env.gym_env, "_phys_sim", None)
             if sim is not None:
                 apply_profile(profile, simulator=sim)
