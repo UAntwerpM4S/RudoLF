@@ -192,7 +192,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             trainer.export_evaluation_results(results, results_file)
             print(f"[main] Reward evaluation complete. Results exported to '{results_file}'.")
             executed_any_step = True
-            # evaluate_reward is a standalone mode; avoid running standard train/visualize afterwards.
+            # evaluate_reward is a standalone mode; avoid running standard train/visualize afterward.
             raise SystemExit(0)
         except Exception as exc:
             print(f"[main] Reward evaluation failed: {exc}")

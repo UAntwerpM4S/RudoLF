@@ -5,16 +5,16 @@ import matplotlib.patches as patches
 
 from pathlib import Path
 from contextlib import contextmanager
+from fw.config_profile import VesselProfile
 from fw.environments.base_env import BaseEnv
 from fw.environments.multi_sim_env import MultiSimEnv
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
+from fw.profile_applier import apply_profile, ActionAdapter, SimulatorApplier
 from airsim.communication.airsim_bridge import AirSimBridge
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
-from fw.profile_applier import apply_profile, ActionAdapter
-from fw.config_profile import VesselProfile
 from fw.stop_condition import StopCondition
 
 MIN_GRID_POS = -11700
@@ -399,6 +399,20 @@ class AgentManagerSimple:
                 try:
                     for episode in range(num_episodes):
                         state, _ = env.reset()
+
+                        # If the profile specifies an initial vessel state, push it to the
+                        # simulator immediately after the environment's own reset so the
+                        # override takes effect for this episode.
+                        if self._profile.scenario.initial_state is not None:
+                            _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                            if _rollout_sim is None and hasattr(env, "sub_environments") and env.sub_environments:
+                                for sub in env.sub_environments.values():
+                                    _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
+                                    if _sub_sim is not None:
+                                        SimulatorApplier.apply(self._profile, _sub_sim)
+                            elif _rollout_sim is not None:
+                                SimulatorApplier.apply(self._profile, _rollout_sim)
+
                         episode_reward = 0
                         done = False
                         steps = 0
@@ -413,6 +427,11 @@ class AgentManagerSimple:
                             action, _, _ = self._agent.predict(state=state, deterministic=True)
 
                             sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                            if sim is None and hasattr(env, "sub_environments") and env.sub_environments:
+                                first_sub = next(iter(env.sub_environments.values()), None)
+                                if first_sub is not None:
+                                    sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
+
                             action = ActionAdapter.transform(self._profile, action, simulator=sim)
 
                             # Take step in environment
