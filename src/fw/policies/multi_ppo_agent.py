@@ -278,7 +278,7 @@ class MultiPPOAgent(BasePPOAgent):
             }
 
             # Fallback: if env_id tags are absent (e.g. running old base code),
-            # reconstruct by position — same behaviour as before.
+            # reconstruct by position — same behavior as before.
             if not episode_by_env:
                 episode_by_env = {i: ep for i, ep in enumerate(batch_data)}
 
