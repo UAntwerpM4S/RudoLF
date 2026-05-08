@@ -327,7 +327,20 @@ class EpisodeCollector:
                     if first_sub is not None:
                         sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
 
-                action = ActionAdapter.transform(self._profile, action, simulator=sim)
+                if isinstance(action, np.ndarray) and action.ndim == 2:
+                    transformed = np.stack([
+                        ActionAdapter.transform(self._profile, action[i], simulator=sim)
+                        for i in range(action.shape[0])
+                    ])
+                    action = transformed
+                elif isinstance(action, tuple):
+                    action = tuple(
+                        ActionAdapter.transform(self._profile, a, simulator=sim)
+                        for a in action
+                    )
+                else:
+                    action = ActionAdapter.transform(self._profile, action, simulator=sim)
+
                 state, reward, terminated, truncated, _ = env.step(action)
 
                 env_done = np.logical_or(terminated, truncated)
