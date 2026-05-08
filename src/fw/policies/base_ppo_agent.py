@@ -296,12 +296,9 @@ class BasePPOAgent(BaseAgent):
         # episode begins from the configured position/heading.
         if self._profile.scenario.initial_state is not None:
             _rollout_sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
-
             if _rollout_sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
-                # MultiSimEnv: push initial state into every sub-environment's simulator.
                 for sub in self.env.sub_environments.values():
                     _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
-
                     if _sub_sim is not None:
                         SimulatorApplier.apply(self._profile, _sub_sim)
             elif _rollout_sim is not None:
@@ -350,21 +347,10 @@ class BasePPOAgent(BaseAgent):
 
             sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
             if sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
-                # MultiSimEnv: borrow simulator from first sub-environment so
-                # ActionAdapter reads real thrust limits rather than the fallback.
                 first_sub = next(iter(self.env.sub_environments.values()), None)
                 if first_sub is not None:
                     sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
 
-            # apply_profile expects a 1-D [rudder, thrust] vector.
-            # When num_envs > 1 effective_actions is a (N, 2) ndarray or an
-            # N-tuple; we must transform each row independently so that rudder
-            # scaling and fixed-thrust apply to every environment slot, not only
-            # the first two.
-            # NOTE: ActionAdapter.transform() is called directly (not apply_profile)
-            # so that SimulatorApplier is NOT triggered here — calling apply_profile
-            # with simulator= would reset the ship state on every rollout step
-            # whenever profile.scenario.initial_state is set.
             if isinstance(effective_actions, np.ndarray) and effective_actions.ndim == 2:
                 transformed = np.stack([
                     ActionAdapter.transform(self._profile, effective_actions[i], simulator=sim)
@@ -377,7 +363,6 @@ class BasePPOAgent(BaseAgent):
                     for a in effective_actions
                 )
             else:
-                # 1-D single-env array – original path
                 effective_actions = ActionAdapter.transform(self._profile, effective_actions, simulator=sim)
 
             next_states, rewards, terminations, truncations = self._step_envs(effective_actions)
