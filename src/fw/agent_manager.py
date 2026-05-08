@@ -18,6 +18,7 @@ from fw.policies.ppo2_agent import PPO2Agent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
+from fw.profile_applier import apply_profile
 
 
 class AgentManager:
@@ -174,6 +175,10 @@ class AgentManager:
             self._agent = self._build_multi_agent(env)
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
+
+        # Always propagate profile env settings (e.g. enable_smoothing) to the
+        # environment, regardless of which entry point called set_environment.
+        apply_profile(self._profile, env=env)
 
         if policy_file_name:
             full_policy_file_name = f"{policy_file_name}.zip"
