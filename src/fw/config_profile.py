@@ -116,10 +116,12 @@ class InitialVesselState:
     r: float = 0.0
 
     def to_dict(self) -> Dict[str, float]:
+        """Return the state fields as a plain ``float``-valued dictionary."""
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "InitialVesselState":
+        """Construct an :class:`InitialVesselState` from a raw dictionary, ignoring unknown keys."""
         known = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: float(v) for k, v in d.items() if k in known})
 
@@ -463,6 +465,7 @@ class VesselProfile:
     # ------------------------------------------------------------------
 
     def __str__(self) -> str:
+        """Return a human-readable summary of the profile's key settings."""
         lines = [f"VesselProfile '{self.name}' [{self.run_mode.name}]"]
         if self.description:
             lines.append(f"  description  : {self.description}")
