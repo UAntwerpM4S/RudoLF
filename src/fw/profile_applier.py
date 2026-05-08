@@ -4,7 +4,7 @@ profile_applier.py – Apply a :class:`~fw.profile.VesselProfile` to the framewo
 Translates a :class:`VesselProfile` into side effects on existing framework
 objects so that no call-sites outside this module need to be rewritten:
 
-* ``CONFIG_PARAMETERS`` dict  – env_type, ship_model, dynamics_model
+* ``CONFIG_PARAMETERS`` dict  – ship_model, dynamics_model
 * :class:`~fw.environments.base_env.BaseEnv`  – smoothing flag (+ sub-envs)
 * :class:`~fw.simulators.base_simulator.BaseSimulator`  – initial vessel
   state, actuator-limit overrides
@@ -112,10 +112,8 @@ class ConfigApplier:
         config["ship_model"] = profile.model.ship_model
         config["dynamics_model"] = profile.model.dynamics_model
         logger.debug(
-            "ConfigApplier: set env_type=%s, ship_model=%s, dynamics_model=%s",
-            config["env_type"],
-            config["ship_model"],
-            config["dynamics_model"],
+            "ConfigApplier: set ship_model=%s, dynamics_model=%s",
+            config["ship_model"], config["dynamics_model"],
         )
 
 

@@ -180,8 +180,10 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         try:
             first_env_type = reward_configs[0].get("type", py_sim_env_name)
-            dummy_env = build_default_environment(resolve_environment_name(first_env_type))
-            trainer = Trainer(PPO_POLICY_NAME, [dummy_env], profile, "SimpleScheduler")
+            first_env_name = resolve_environment_name(first_env_type)
+            dummy_env = build_default_environment(first_env_name)
+            eval_policy_name = MULTI_PPO_POLICY_NAME if first_env_name == multi_sim_env_name else PPO_POLICY_NAME
+            trainer = Trainer(eval_policy_name, [dummy_env], profile, "SimpleScheduler")
 
             print(f"[main] Starting reward evaluation for {len(reward_configs)} configurations...")
             results = trainer.evaluate_reward(reward_configs, configuration, verbose=True)
