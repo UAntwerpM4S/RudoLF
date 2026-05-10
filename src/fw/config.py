@@ -139,7 +139,7 @@ DEFAULT_HYPERPARAMETERS = {
         # the path has committed. Other pids are unfloored (default
         # (-20, 2)).
         'log_std_bounds': {
-            0: (-1.5, 2.0),
+            #0: (-1.5, 2.0),
         },
     },
 }
@@ -151,7 +151,7 @@ CONFIG_PARAMETERS = {
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["MultiPolicyColavEnv"],
-    'action': "visualize",  # Valid action values: "train", "visualize"
+    'action': "train",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
     'numerical_damping': False,

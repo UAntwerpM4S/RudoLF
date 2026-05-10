@@ -23,7 +23,7 @@ class ScenarioBuilder:
         self.step_counter: int = 0
         # Legacy default; effective values are read from the env per call
         # (see ``_active_cooldown`` / ``_active_encounter_prob``).
-        self.n_recovery_steps: int = 500
+        self.n_recovery_steps: int = 150
         self.env = env
         self.chosen_scenario: Optional[str] = None
 
@@ -243,13 +243,21 @@ class ScenarioBuilder:
                             self._encounters_this_episode += 1
 
         # ----------------------------------------------------------
-        # 4. Clean up TS that has left forget range
+        # 4. Clean up TS that has left forget range OR has finished its
+        #    route. The route_finished check covers the case where a
+        #    path-following TS (e.g. an overtaking TS that the OS never
+        #    catches up to) reaches the end of the trajectory: the
+        #    advance loop in _advance_entity_along_checkpoints stops
+        #    progressing it and zeroes its speed, but without explicit
+        #    despawn the entity stays parked on the path and the OS
+        #    runs straight into it on its way to the goal.
         # ----------------------------------------------------------
         if env.collision_entities and len(env.collision_entities) == 1:
             if getattr(env, "ts_idx", None) is not None:
                 ts = env.collision_entities[env.ts_idx]
                 dist = env.collision_entities[0].distance_to_point(env.ship_pos)
-                if dist > env.forget_range:
+                route_finished = bool(getattr(ts, "route_finished", False))
+                if dist > env.forget_range or route_finished:
                     env.collision_entities = []
                     env.ts_idx = None
                     env._sync_collision_entity_views()
@@ -312,7 +320,7 @@ class ScenarioBuilder:
 
         # Match static/overtaking convention of skipping the first few and last few
         if n > 5:
-            env._eligible_dynamic_seg_indices = np.arange(5, n - 2, dtype=np.int32)
+            env._eligible_dynamic_seg_indices = np.arange(0, n - 1, dtype=np.int32)
         else:
             env._eligible_dynamic_seg_indices = env._all_seg_indices.copy()
 

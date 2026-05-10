@@ -297,7 +297,7 @@ class PySimEnv(BaseEnv):
         ``self.checkpoint_index`` to start at the chosen segment's
         beginning checkpoint, heading toward its end checkpoint.
         """
-        n_skip = int(getattr(self, "skip_tail_segments", 7))
+        n_skip = int(getattr(self, "skip_tail_segments", 1))
         n_segments = len(self.checkpoints) - 1
         max_seg = n_segments - n_skip
         if max_seg <= 0:
