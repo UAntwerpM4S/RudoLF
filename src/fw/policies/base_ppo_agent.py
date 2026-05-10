@@ -83,8 +83,8 @@ class BasePPOAgent(BaseAgent):
 
     def __init__(
         self,
-        profile: VesselProfile,
-        environment: BaseEnv,
+        profile: Optional[VesselProfile] = None,
+        environment: BaseEnv = None,
         num_envs: int = 1,
         eval_frequency: int = 1000,
         learning_rate: float = 3e-4,

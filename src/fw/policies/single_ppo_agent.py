@@ -42,7 +42,7 @@ class SinglePPOAgent(BasePPOAgent):
     MINIMUM_TRAINABLE_TRAJECTORY_LENGTH = 2
     MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES = 25
 
-    def __init__(self, profile: VesselProfile, *args, **kwargs):
+    def __init__(self, profile: Optional[VesselProfile] = None, *args, **kwargs):
         """
         Initialize the PPO agent.
 

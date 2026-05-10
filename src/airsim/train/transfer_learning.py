@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 import torch
+import torch.nn as nn
 
 from fw.policies.ppo_policy import PPOPolicy, get_device
 
@@ -87,9 +88,15 @@ class TopologyReport:
         ]
         for i, (in_f, out_f) in enumerate(self.shared_layer_shapes):
             lines.append(f"    [{i}] Linear({in_f} → {out_f})")
+        if self.extra_input_dims > 0:
+            mapping_desc = "shared_network[0] kept as random-init,"
+            mapping_detail = f"Linear({self.target_input_dim} → 256) — trainable"
+        else:
+            mapping_desc = "shared_network[0] transferred from source,"
+            mapping_detail = f"Linear({self.target_input_dim} → 256) — trainable"
         lines += [
-            "  Mapping layer      : shared_network[0] kept as random-init,",
-            f"                       Linear({self.target_input_dim} → 256) — trainable",
+            f"  Mapping layer      : {mapping_desc}",
+            f"                       {mapping_detail}",
             "=" * 58,
         ]
         return "\n".join(lines)
@@ -298,19 +305,24 @@ def build_transfer_policy(
     target_policy = PPOPolicy(target_input_dim, target_output_dim, device=resolved_device.type)
     transferred = apply_transfer_weights(source_policy, target_policy, freeze_shared=freeze_shared)
 
-    mapping_layer = target_policy.network.shared_network[0]
-    nn.init.orthogonal_(mapping_layer.weight, gain=mapping_layer_init_gain)
-    nn.init.constant_(mapping_layer.bias, 0.0)
+    mapping_layer_transferred = "shared_network.0.weight" in transferred
+    if not mapping_layer_transferred:
+        # Dims differ (e.g. 12→18): mapping layer was not transferred, apply
+        # controlled orthogonal init to dampen activation mismatch on first forward pass.
+        mapping_layer = target_policy.network.shared_network[0]
+        nn.init.orthogonal_(mapping_layer.weight, gain=mapping_layer_init_gain)
+        nn.init.constant_(mapping_layer.bias, 0.0)
 
     n_trainable = sum(p.numel() for p in target_policy.network.parameters() if p.requires_grad)
     n_total = sum(p.numel() for p in target_policy.network.parameters())
     frozen_note = "mapping layer only" if freeze_shared else "full network"
+    mapping_note = "transferred from source" if mapping_layer_transferred else f"random-init (gain={mapping_layer_init_gain})"
     print(
         f"[TransferLearning] Source device : cpu (weight extraction)"
         f"\n[TransferLearning] Target device : {resolved_device}"
         f"\n[TransferLearning] Transferred {len(transferred)} layer(s): {transferred}"
         f"\n[TransferLearning] Trainable: {n_trainable:,} / {n_total:,} params ({frozen_note})"
-        f"\n[TransferLearning] Mapping layer init gain: {mapping_layer_init_gain}"
+        f"\n[TransferLearning] Mapping layer: {mapping_note}"
     )
 
     return target_policy
