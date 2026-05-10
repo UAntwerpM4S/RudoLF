@@ -77,7 +77,7 @@ def test_learn_reraises_keyboard_interrupt_and_skips_final_checkpoint(tmp_path, 
     with pytest.raises(KeyboardInterrupt):
         agent.learn(stop_condition=StopCondition(max_time_steps=3))
 
-    assert save_calls == []
+    assert save_calls == ["ppo_interrupt_0"]
     assert metrics_dumped == []
     assert not list(tmp_path.glob("*iterations*.csv"))
 

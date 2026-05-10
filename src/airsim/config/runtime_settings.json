@@ -52,7 +52,7 @@
     "lock_path_in_ue5": false,
     "episodes": 1,
     "max_steps": 60000,
-    "device": "cuda",
+    "device": "cpu",
     "log_every": 50,
     "draw_calibration_reference": true
   },
@@ -88,7 +88,7 @@
       "max_steering_rate_per_second": "Maximum absolute steering change per simulated second in normalized [-1, 1] steering space."
     },
     "speed_profile": "safe",
-    "max_policy_updates": 200,
+    "max_policy_updates": 400,
     "max_steps": 120000,
     "simulation_speed": 20.0,
     "draw_calibration_reference": false,
