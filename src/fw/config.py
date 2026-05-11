@@ -1,6 +1,8 @@
 from enum import Enum, auto
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
+from fw.profile_applier import apply_profile
+from fw.config_profile import ProfileRegistry
 from airsim.config.airsim_config import get_airsim_config  # re-export
 
 
@@ -123,7 +125,7 @@ CONFIG_PARAMETERS = {
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["PySimEnv"],
-    'profile': "default_pysim_profile",
+    'profile': "default_profile",
     'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'wind': False,
     'current': False,
@@ -209,4 +211,11 @@ def get_hyperparameters(agent_name, env_name=None):
 
 def get_config_parameters():
     """Get  the configuration parameters"""
-    return CONFIG_PARAMETERS.copy()
+    framework_config = CONFIG_PARAMETERS.copy()
+
+    profile_name = framework_config.get("profile", "default_profile")
+    profile = ProfileRegistry.get(profile_name)
+    profile.validate()
+    apply_profile(profile, config=framework_config)
+
+    return framework_config

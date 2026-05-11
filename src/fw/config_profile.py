@@ -39,7 +39,7 @@ Typical usage
 ... )
 
 # Load a built-in preset
->>> p = ProfileRegistry.get("default_pysim_profile")
+>>> p = ProfileRegistry.get("default_profile")
 """
 
 from __future__ import annotations
@@ -108,8 +108,8 @@ class InitialVesselState:
         r: Yaw rate [rad/s].
     """
 
-    x: float = 5.0
-    y: float = 5.0
+    x: float = 0.0
+    y: float = 0.0
     heading: float = 0.0
     u: float = 0.0
     v: float = 0.0
@@ -195,13 +195,11 @@ class TransferConfig:
     Sim-to-sim transfer settings.
 
     Attributes:
-        rudder_scale: Multiplicative scale applied to the raw rudder action
-            before it reaches the simulator.  Use this to compensate for
-            different rudder-angle conventions between training and inference
-            simulators.  ``1.0`` means no rescaling.
+        enable_rudder_angle_scaling: Whether rudder angle scaling should be
+            applied during simulation steps.
     """
 
-    rudder_scale: float = 1.0
+    enable_rudder_angle_scaling: bool = False
 
 
 @dataclass(frozen=True)
@@ -327,12 +325,6 @@ class VesselProfile:
                     f"got {self.thrust.fixed_value}."
                 )
 
-        if self.transfer.rudder_scale <= 0:
-            errors.append(
-                f"transfer.rudder_scale must be positive, "
-                f"got {self.transfer.rudder_scale}."
-            )
-
         if (self.actuator.max_rudder_angle_deg is not None
                 and self.actuator.max_rudder_angle_deg <= 0):
             errors.append(
@@ -354,10 +346,10 @@ class VesselProfile:
             )
 
         # Suspicious-but-legal → warnings, not errors
-        if self.run_mode == RunMode.TRANSFER and self.transfer.rudder_scale == 1.0:
+        if self.run_mode == RunMode.TRANSFER and not self.transfer.enable_rudder_angle_scaling:
             warnings.warn(
                 f"Profile '{self.name}': run_mode is TRANSFER but "
-                "transfer.rudder_scale == 1.0. Did you forget to set it?",
+                "transfer.enable_rudder_angle_scaling == False. Did you forget to set it?",
                 UserWarning,
                 stacklevel=2,
             )
@@ -394,7 +386,7 @@ class VesselProfile:
                 "fixed_value": self.thrust.fixed_value,
             },
             "transfer": {
-                "rudder_scale": self.transfer.rudder_scale,
+                "enable_rudder_angle_scaling": self.transfer.enable_rudder_angle_scaling,
             },
             "model": {
                 "ship_model": self.model.ship_model.name,
@@ -491,8 +483,7 @@ class VesselProfile:
         lines.append(f"  thrust_mode  : {self.thrust.mode.name}")
         if self.thrust.mode == ThrustMode.FIXED:
             lines.append(f"  fixed_thrust : {self.thrust.fixed_value}")
-        if self.transfer.rudder_scale != 1.0:
-            lines.append(f"  rudder_scale : {self.transfer.rudder_scale}")
+        lines.append(f"  rudder angle scaling    : {self.transfer.enable_rudder_angle_scaling}")
 
         return "\n".join(lines)
 
@@ -588,8 +579,8 @@ class ProfileRegistry:
 # ---------------------------------------------------------------------------
 
 ProfileRegistry.register(VesselProfile(
-    name="default_pysim_profile",
-    description="Standard PySim profile with Fossen dynamics.",
+    name="default_profile",
+    description="Standard profile with Fossen dynamics.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_DEFAULT,
@@ -600,46 +591,9 @@ ProfileRegistry.register(VesselProfile(
 ))
 
 ProfileRegistry.register(VesselProfile(
-    name="default_airsim_profile",
-    description="Standard AirSim profile.",
-    run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="train_fhsim_default",
-    description="Standard FhSim training profile with Fossen dynamics.",
-    run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=True),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="inference_pysim",
-    description="PySim inference: smoothing off, thrust fixed at 0.8.",
-    run_mode=RunMode.INFERENCE,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="transfer_pysim_to_fhsim",
+    name="pysim_to_fhsim_transfer_profile",
     description=(
-        "Run a PySim-trained policy inside FhSim. "
-        "rudder_scale=0.75 is a starting point — tune empirically."
+        "Run a PySim-trained policy inside FhSim with rudder angle scaling."
     ),
     run_mode=RunMode.TRANSFER,
     model=ModelConfig(
@@ -648,19 +602,26 @@ ProfileRegistry.register(VesselProfile(
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
-    transfer=TransferConfig(rudder_scale=0.75),
+    transfer=TransferConfig(enable_rudder_angle_scaling=True),
 ))
 
 ProfileRegistry.register(VesselProfile(
-    name="train_multisim_default",
-    description="Standard MultiSim training profile (two PySim sub-environments).",
+    name="ugent_surrogate_training_profile",
+    description="Training profile for UGent's surrogate model.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
-        dynamics_model=Model.FOSSEN,
+        ship_model=ShipModel.TRIPOLI,
+        dynamics_model=Model.UGENT_SURROGATE,
     ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
+    scenario=ScenarioConfig(initial_state=InitialVesselState(
+        x= 0.0,
+        y= 0.0,
+        heading= 0.0,
+        u= 4.8,
+        v= 0.0,
+        r= 0.0)),
+    actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
+    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
 ))
 
 ProfileRegistry.register(VesselProfile(

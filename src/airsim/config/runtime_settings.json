@@ -52,7 +52,7 @@
     "lock_path_in_ue5": false,
     "episodes": 1,
     "max_steps": 60000,
-    "device": "cuda",
+    "device": "cpu",
     "log_every": 50,
     "draw_calibration_reference": true
   },
