@@ -283,14 +283,12 @@ class PPOModel(BaseModel):
         return true_indices[0] if true_indices.size > 0 else -1
 
 
-    def run_parallel_episodes(self, num_envs, fixed_horizon) -> list:
+    def run_parallel_episodes(self, num_envs) -> list:
         """
         Run multiple episodes in parallel using Gym vectorized environments.
 
         Args:
             num_envs (int): Number of parallel environments to run.
-            fixed_horizon (bool): If true, runs a fixed number of iterations per env
-                                  as opposed to waiting for all envs to finish
 
         Returns:
             list: A list of dictionaries containing episode data for each environment.
@@ -324,49 +322,25 @@ class PPOModel(BaseModel):
         collected_data = {k: [] for k in ["states", "actions", "rewards", "dones", "values", "log_probs"]}
         safeguard = 0
 
-        if fixed_horizon:
-            # follows the definition of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/ppo/ppo.html
-            n_steps = max(1, self.steps_per_update // self.num_envs)
+        while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
+            # Select actions and get value predictions
+            actions, log_probs, values = self.policy.predict(states)
 
-            for _ in range(min(n_steps, self.max_nbr_iterations)):
-                # Select actions and get value predictions
-                actions, log_probs, values = self.policy.predict(states)
+            # Step all environments
+            next_states, rewards, terminations, _ = self._vec_env.step(actions)
+            envs_done = np.logical_or(envs_done, terminations)
 
-                # Step all environments
-                next_states, rewards, terminations, _ = self._vec_env.step(actions)
-                envs_done = np.logical_or(envs_done, terminations)
+            # Store episode data
+            collected_data["states"].append(states)
+            collected_data["actions"].append(actions)
+            collected_data["rewards"].append(rewards)
+            collected_data["dones"].append(terminations)
+            collected_data["values"].append(values)
+            collected_data["log_probs"].append(log_probs)
 
-                # Store episode data
-                collected_data["states"].append(states)
-                collected_data["actions"].append(actions)
-                collected_data["rewards"].append(rewards)
-                collected_data["dones"].append(terminations)
-                collected_data["values"].append(values)
-                collected_data["log_probs"].append(log_probs)
-
-                # Update states for the next step
-                states = next_states
-                safeguard += 1
-        else:
-            while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
-                # Select actions and get value predictions
-                actions, log_probs, values = self.policy.predict(states)
-
-                # Step all environments
-                next_states, rewards, terminations, _ = self._vec_env.step(actions)
-                envs_done = np.logical_or(envs_done, terminations)
-
-                # Store episode data
-                collected_data["states"].append(states)
-                collected_data["actions"].append(actions)
-                collected_data["rewards"].append(rewards)
-                collected_data["dones"].append(terminations)
-                collected_data["values"].append(values)
-                collected_data["log_probs"].append(log_probs)
-
-                # Update states for the next step
-                states = next_states
-                safeguard += 1
+            # Update states for the next step
+            states = next_states
+            safeguard += 1
 
         if safeguard >= 135000:
             print(f"Safeguard surpassed the 135000 boundary: {safeguard}.")
@@ -384,20 +358,16 @@ class PPOModel(BaseModel):
         # Process episode data
         episode_data = []
         for i in range(num_envs):
-            if fixed_horizon:
-                # Keep full rollout when in fixed-horizon mode, no padding needed
-                first_true = len(collected_data["dones"]) - 1
-            else:
-                # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
-                # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
+            # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
+            # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
 
-                # Find the first True in dones for this environment
-                episode_dones = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in collected_data["dones"]])
-                first_true = self.find_first_true(episode_dones)
+            # Find the first True in dones for this environment
+            episode_dones = np.concatenate([np.array([step[i]]) if np.isscalar(step[i]) else step[i] for step in collected_data["dones"]])
+            first_true = self.find_first_true(episode_dones)
 
-                # Handle cases where no True is found (episode did not terminate)
-                if first_true == -1:
-                    first_true = len(episode_dones) - 1  # Use the entire episode
+            # Handle cases where no True is found (episode did not terminate)
+            if first_true == -1:
+                first_true = len(episode_dones) - 1  # Use the entire episode
 
             episode = {}
             for key in collected_data:
@@ -461,7 +431,7 @@ class PPOModel(BaseModel):
             total_advantage = 0
 
             # Collect batch data from multiple parallel environments
-            batch_data = self.run_parallel_episodes(self.num_envs, self.fixed_horizon)
+            batch_data = self.run_parallel_episodes(self.num_envs)
 
             for episode_result in batch_data:
                 episode_data.append(episode_result)

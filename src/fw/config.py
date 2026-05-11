@@ -69,8 +69,6 @@ DEFAULT_HYPERPARAMETERS = {
         'batch_size': 1024,
         'device': "cpu",
         'model_dir': "models",
-        'fixed_horizon': True,
-        'steps_per_update': 8192,
     },
     PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,
@@ -127,20 +125,7 @@ DEFAULT_HYPERPARAMETERS = {
         'batch_size': 2048,
         'device': "cpu",
         'model_dir': "models",
-        'fixed_horizon': False,
-        'steps_per_update': 8192,
         'steps_per_policy_update': 8192,
-        # Per-pid log_std clamp. Path-following (pid 0) is floored just
-        # below the natural commitment point (log_std ≈ -1.42 for
-        # entropy_coef=0.025, action_dim=2). The floor is inactive until
-        # the policy naturally collapses past that point, then holds
-        # σ at ≈ 0.22 indefinitely so under-sampled path segments retain
-        # enough exploration noise to be learned even after the rest of
-        # the path has committed. Other pids are unfloored (default
-        # (-20, 2)).
-        'log_std_bounds': {
-            #0: (-1.5, 2.0),
-        },
     },
 }
 

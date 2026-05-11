@@ -77,11 +77,13 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.polar_fov = np.radians(270)
         self.polar_max_range = 750.0
         self.polar_obs_max = 0.1 * self.polar_max_range / 250
-        self.distance_penalty_start = 100
+        self.distance_penalty_start = 150
+        self.distance_penalty_peak = 50
+        self.distance_penalty_max = 5.0
 
         # overtaking TS speed
         self.overtaking_ts_v_min = 1.0
-        self.overtaking_ts_v_max = self.os_nominal_speed - 0.3
+        self.overtaking_ts_v_max = 1.7
 
         self.include_scenario_one_hot = bool(include_scenario_one_hot)
 
@@ -110,7 +112,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.05, 0.0, 0.95, 0, 0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.05, 0.0, 0.0, 0.95, 0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -146,8 +148,9 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.reward_weights = {
             "polar_distance_colreg": 0.65,
             "colreg_bearing": 1.5,
-            "crossing_right": 0.53125,
+            "crossing-right": 0.53125,
             "overtaking": 0.53125,
+            "head-on": 0.53125,
         }
 
         # Estimated peak of base_reward (the 0.9 baseline at zero penalty in
@@ -364,20 +367,14 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             scan = self._get_polar_scan()
             self.polar_scan_cached = scan
 
-        # Path-following: present the policy with a clean, obstacle-free polar
-        # scan so it learns pure path-following without reacting to range-finder
-        # signals. Pairs with the path-following gate on the polar distance
-        # reward in _calculate_colav_reward.
+        # Base path-following without radial distances
         if clf.label == "path-following":
             scan = np.zeros(self.polar_n_sectors, dtype=np.float32)
 
-        # Encounter phase as a single scalar: tanh(TCPA / cri_T) in [-1, +1].
-        #   ~+1 -> TS still far in the future (approaching),
-        #    0  -> at CPA,
-        #   ~-1 -> TS already past CPA (receding).
-        # Replaces the CRI feature: gives the policy an explicit, signed
-        # representation of "approach vs recovery" without conflating it
-        # with bearing-derived risk magnitude.
+        # Encounter phase as a single scalar
+        #   ~+1  TS before CPA,
+        #    0   at CPA,
+        #   ~-1  TS already past CPA
         tcpa_norm = 0.0
         if clf.tracked_ts is not None:
             ts = self.collision_entities[clf.tracked_ts]
@@ -437,12 +434,12 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             min_dist_n = 1.0 - (max_close / max(float(self.polar_obs_max), 1e-6))
 
             d_ramp_start = self.distance_penalty_start
-            ramp_max_penalty = 5.0
+            ramp_max_penalty = self.distance_penalty_max
             min_dist = min_dist_n * self.polar_max_range
 
             if min_dist < d_ramp_start:
-                distance_penalty_peak = 40.0
-                a = -2.6 # -2.6
+                distance_penalty_peak = self.distance_penalty_peak
+                a = -2.6
                 ramp_t = (min_dist - distance_penalty_peak) / max(d_ramp_start - distance_penalty_peak, EPSILON)
                 ramp_t = float(np.clip(ramp_t, 0.0, 1.0))
                 exp_t = (np.exp(a * ramp_t) - 1.0) / (np.exp(a) - 1.0)
@@ -472,14 +469,14 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 # earlier turning is rewarded more than late turning.
                 k = 1
                 _headon_term = (
-                    self.reward_weights["crossing_right"]
+                    self.reward_weights["head-on"]
                     * math.tanh(k * beta)
                     * (1 + (1 - cri))
                     * g_tcpa
                 )
                 reward += _headon_term
 
-            elif scenario in ("crossing-right", "overtaking"):
+            elif scenario == "crossing-right":
                 ts_pos = ts.get_position()
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
@@ -488,39 +485,23 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 ) % (2.0 * math.pi) - math.pi
 
                 # R(x) = A * tanh(k * (x - beta_start)).
-                # Zero crossing (and max gradient) at x = beta_start, set to the
-                # "most positive" end of the encounter range so the unlearned
-                # agent enters at the steepest part of the curve.
+                # Zero crossing (and max gradient) at encounter relative bearing
                 k = 1
                 beta_start = -0.34906585 # -20deg
 
-                weight_key = "overtaking" if scenario == "overtaking" else "crossing_right"
                 crossing_right_signal = (
-                    self.reward_weights[weight_key]
+                    self.reward_weights["crossing-right"]
                     * math.tanh(k * (beta - beta_start))
                     * g_tcpa
                 )
                 reward += crossing_right_signal
 
-        # Phase-2 base-reward boost (post-CPA merge incentive).
-        #
-        # Phase 1 (TCPA >> 0) is dominated by the gated cr_sig signal so the
-        # base path-following reward gets little leverage. Phase 2 (TCPA << 0)
-        # has cr_sig ≈ 0, leaving only base + saturated polar penalty -- which
-        # makes merging back to the path slow to learn.
-        #
-        # Mirror the phase-1 attenuation gate g_tcpa with its inverse so the
-        # boost is 0 in phase 1 and grows to its full multiplier in phase 2:
-        #     g_tcpa_inv = 1 - g_tcpa = 0.5 * (1 - tanh(k_tcpa * tcpa))
-        #
-        # Multiplier M sized so peak phase-2 (M * base) matches peak phase-1
-        # (base + cr_sig) at saturation:
-        #     M = 1 + crossing_right / base_peak  (≈ 3.22 with cr=2.0, peak=0.9)
-        # so the additive contribution is (M - 1) * g_tcpa_inv * base_reward.
+        # post-encounter phase base-reward boost (post-CPA merge incentive).
+        # to match reward magnitude of pre-encounter phase.
         phase2_base_boost = 0.0
-        if clf.label in ("crossing-right", "overtaking"):
+        if clf.label in ("crossing-right", "overtaking", "head-on"):
             g_tcpa_inv = 1.0 - g_tcpa
-            weight_key = "overtaking" if clf.label == "overtaking" else "crossing_right"
+            weight_key = clf.label
             cr_w = float(self.reward_weights[weight_key])
             base_peak = float(self._base_reward_peak_est)
             phase2_multiplier = 1.0 + cr_w / max(base_peak, 1e-6)

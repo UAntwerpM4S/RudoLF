@@ -280,7 +280,7 @@ class PPOAgent(BaseAgent):
         # Return the first index if it exists, otherwise return -1
         return true_indices[0] if true_indices.size > 0 else -1
 
-    def run_parallel_episodes(self, num_envs, fixed_horizon=False) -> list:
+    def run_parallel_episodes(self, num_envs) -> list:
         """
         Run multiple episodes in parallel using Gym vectorized environments.
         Collect trajectories per (env_id, agent_id) and compute GAE.
@@ -348,19 +348,7 @@ class PPOAgent(BaseAgent):
         ]
 
         safeguard = 0
-
-        if fixed_horizon:
-            # follows the definition of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/ppo/ppo.html
-            n_steps = min(max(1, self.steps_per_update // num_envs), self.max_nbr_iterations)
-        else:
-            # Base implementation: run all environments until they terminate
-            n_steps = self.max_nbr_iterations
-
-        safeguard = 0
-        for _ in range(n_steps):
-            # In non-fixed-horizon mode, stop once all environments are done
-            if not fixed_horizon and np.all(envs_done):
-                break
+        while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
             actions, log_probs, values = self.predict(states, deterministic=False)
 
             if len(self.observation_space.shape) == 1 and actions.ndim == 3 and actions.shape[1] == 1:
@@ -539,7 +527,7 @@ class PPOAgent(BaseAgent):
             total_advantage = 0
 
             # Collect batch data from multiple parallel environments
-            batch_data = self.run_parallel_episodes(self.num_envs, self.fixed_horizon)
+            batch_data = self.run_parallel_episodes(self.num_envs)
 
             for episode_result in batch_data:
                 episode_data.append(episode_result)

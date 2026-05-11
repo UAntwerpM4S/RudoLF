@@ -33,8 +33,6 @@ class BaseModel(ABC):
         batch_size: int = 64,
         device: str = "cpu",
         model_dir: str = "models",
-        fixed_horizon: bool = False,
-        steps_per_update: int = 8192
     ):
         """
         Initialize the base model with environment and hyperparameters.
@@ -63,8 +61,6 @@ class BaseModel(ABC):
 
         self.env = environment
         self.num_envs = num_envs
-        self.fixed_horizon = fixed_horizon
-        self.steps_per_update = steps_per_update
         self.observation_space = environment.observation_space
         self.action_space = environment.action_space
 

@@ -34,16 +34,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
         initialize_all_environments
     )
 
-    # MultiPolicySingleAgent (MPSA) policy-id (pid) layout used in this app:
-    #   pid 0 = path-following
-    #   pid 1 = head-on
-    #   pid 2 = overtaking
-    #   pid 3 = crossing-right
-    # The pid → label mapping comes from SCENARIO_LABELS in
-    # collision_avoidance.scenario_classifier and is passed into the agent
-    # via ``policy_labels`` from agent_manager._build_multi_policy_single_agent.
-    # Per-pid hyperparameters in DEFAULT_HYPERPARAMETERS[MPSA] (e.g.
-    # ``log_std_bounds``) are keyed by pid and reference this mapping.
     framework_config = get_config_parameters()
     configured_env_names = resolve_environment_names(
         framework_config.get("env_type", py_sim_env_name)

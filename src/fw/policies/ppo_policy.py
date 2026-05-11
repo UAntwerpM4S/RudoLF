@@ -52,14 +52,7 @@ class PPOPolicy:
         network (ActorCriticNetwork): The neural network model used for the Actor-Critic method.
     """
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        device: str = "cpu",
-        log_std_min: float = -20.0,
-        log_std_max: float = 2.0,
-    ):
+    def __init__(self, input_dim: int, output_dim: int, device: str = "cpu"):
         """
         Initialize the PPOPolicy with the given dimensions and device.
 
@@ -67,24 +60,12 @@ class PPOPolicy:
             input_dim (int): The dimensionality of the state space.
             output_dim (int): The dimensionality of the action space.
             device (str, optional): The device to run computations on. Default is 'cpu'.
-            log_std_min (float): Lower clamp on the network's learnable
-                log-std parameter. Default ``-20`` (effectively unbounded).
-                Raise to floor exploration noise.
-            log_std_max (float): Upper clamp on the network's learnable
-                log-std. Default ``2``.
         """
 
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.device = get_device(device)  # Set the device
-        self.log_std_min = float(log_std_min)
-        self.log_std_max = float(log_std_max)
-        self.network = ActorCriticNetwork(
-            input_dim,
-            output_dim,
-            log_std_min=self.log_std_min,
-            log_std_max=self.log_std_max,
-        ).to(self.device)
+        self.network = ActorCriticNetwork(input_dim, output_dim).to(self.device)  # Initialize the network
 
 
     def _get_constructor_parameters(self) -> dict:
@@ -99,8 +80,6 @@ class PPOPolicy:
             "input_dim": self.input_dim,
             "output_dim": self.output_dim,
             "device": self.device.type,
-            "log_std_min": self.log_std_min,
-            "log_std_max": self.log_std_max,
         }
 
 
@@ -158,16 +137,9 @@ class PPOPolicy:
                 "output_dim": model_state_dict["actor_mean.weight"].shape[0],
                 "device": device.type,
             }
-        # Filter to only the keys accepted by the current constructor.
-        # Older checkpoints may carry extra metadata fields (e.g. from a
-        # short-lived experimental run) which would otherwise cause
-        # ``cls(**data)`` to raise TypeError on load. Older checkpoints
-        # without ``log_std_min``/``log_std_max`` simply fall through to
-        # the constructor defaults (which match the historical clamp).
-        allowed_keys = {
-            "input_dim", "output_dim", "device",
-            "log_std_min", "log_std_max",
-        }
+        # Filter to only the keys accepted by the current constructor, so
+        # checkpoints saved with extra metadata fields don't break loading.
+        allowed_keys = {"input_dim", "output_dim", "device"}
         data = {k: v for k, v in data.items() if k in allowed_keys}
         return data
 

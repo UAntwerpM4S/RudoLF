@@ -97,8 +97,6 @@ class BasePPOAgent(BaseAgent):
         model_dir: str = "models",
         max_nbr_iterations: int = 200000,
         normalize: bool = False,
-        fixed_horizon: bool = False,
-        steps_per_update: int = 4096,
     ):
         """
         Initialize the PPO agent with environment and training hyperparameters.
@@ -120,20 +118,10 @@ class BasePPOAgent(BaseAgent):
             model_dir (str): Directory for saving models.
             max_nbr_iterations (int): Maximum steps per rollout.
             normalize (bool): Whether to normalize rewards.
-            fixed_horizon (bool): If True, collect exactly ``steps_per_update //
-                num_envs`` steps per rollout instead of waiting for every
-                episode to finish. Mirrors the SB3 on-policy collection style
-                and avoids being bottlenecked by the slowest episode.
-            steps_per_update (int): Total environment steps to collect per
-                training iteration when ``fixed_horizon=True``. Divided evenly
-                across ``num_envs`` workers (e.g. 4096 steps / 16 envs = 256
-                steps per worker per update).
 
         Attributes:
             max_nbr_iterations: Safeguard value to avoid infinite stepping through environments.
             normalize: Flag that indicates whether reward values should be normalized.
-            fixed_horizon: Whether to use fixed-horizon rollout collection.
-            steps_per_update: Total steps collected per update in fixed-horizon mode.
         """
 
         super().__init__(
@@ -155,8 +143,6 @@ class BasePPOAgent(BaseAgent):
 
         self.max_nbr_iterations = max_nbr_iterations
         self.normalize = normalize
-        self.fixed_horizon = fixed_horizon
-        self.steps_per_update = steps_per_update
 
 
     # -------------------------
@@ -263,27 +249,18 @@ class BasePPOAgent(BaseAgent):
         return (rewards - old_mean) / (np.sqrt(old_var) + 1e-8)
 
 
-    def run_parallel_episodes(self, num_envs: int, fixed_horizon: bool = False) -> list:
+    def run_parallel_episodes(self, num_envs: int) -> list:
         """
-        Collect trajectories from parallel environments.
+        Collect one trajectory per environment in parallel.
 
-        Two collection modes are supported:
+        Environments are stepped synchronously until each one reaches a terminal
+        or truncated state, or until `max_nbr_iterations` is reached.
 
-        * **Episode-based** (``fixed_horizon=False``, default): step all
-          environments until every one reaches a terminal/truncated state or
-          ``max_nbr_iterations`` is hit.  Training is bottlenecked by the
-          slowest episode.
-
-        * **Fixed-horizon** (``fixed_horizon=True``): collect exactly
-          ``steps_per_update // num_envs`` steps per worker regardless of
-          episode boundaries (mirrors SB3 on-policy collection).  Any
-          trajectory that does not end naturally is bootstrapped with the
-          value estimate of the last observed state.  This removes the
-          slow-episode bottleneck and keeps batch size constant.
+        Actions for agents that have already finished are replaced with zeros
+        so the joint simulator is not perturbed after an agent's episode ends.
 
         Args:
             num_envs (int): Number of environments to simulate.
-            fixed_horizon (bool): Whether to use fixed-horizon collection.
 
         Returns:
             list[dict]: List of trajectory dictionaries (one per environment), each containing:
@@ -306,14 +283,6 @@ class BasePPOAgent(BaseAgent):
         if num_envs <= 0:
             raise ValueError("num_envs must be greater than 0.")
 
-        # Determine number of steps to collect.
-        # Fixed-horizon: divide the total budget evenly across workers.
-        # Episode-based: use max_nbr_iterations as a safeguard ceiling.
-        if fixed_horizon:
-            n_steps = min(max(1, self.steps_per_update // num_envs), self.max_nbr_iterations)
-        else:
-            n_steps = self.max_nbr_iterations
-
         # Reset all environments
         states = self._reset_envs(num_envs)
         envs_done = np.zeros(num_envs, dtype=bool)
@@ -334,10 +303,7 @@ class BasePPOAgent(BaseAgent):
         ]
 
         safeguard = 0
-        for _ in range(n_steps):
-            # Episode-based mode: stop once every env has finished.
-            if not fixed_horizon and np.all(envs_done):
-                break
+        while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
 
             # Policy predicts actions for all agents from live states
             actions, log_probs, values = self._predict(states, deterministic=False)
