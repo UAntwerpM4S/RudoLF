@@ -125,11 +125,11 @@ class ConfigApplier:
 # ---------------------------------------------------------------------------
 
 class EnvApplier:
-    """Sets the smoothing flag on an environment and all its sub-environments."""
+    """Sets env-level flags on an environment and all its sub-environments."""
 
     @staticmethod
     def apply(profile: VesselProfile, env) -> None:
-        """Apply actuator smoothing from *profile* to *env* and all its sub-environments."""
+        """Apply env-level flags from *profile* to *env* and all its sub-environments."""
         EnvApplier._set_smoothing(env, profile.actuator.enable_smoothing)
         EnvApplier._set_rudder_angle_scaling(env, profile.transfer.enable_rudder_angle_scaling)
 

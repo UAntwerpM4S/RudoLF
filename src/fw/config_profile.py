@@ -79,7 +79,7 @@ class RunMode(Enum):
         TRAIN: Standard reinforcement-learning training.
         INFERENCE: Running a trained policy (no weight updates).
         TRANSFER: Inference in a *different* simulator than the one used for
-            training; typically combined with a non-unity ``rudder_scale``.
+            training; typically combined with ``enable_rudder_angle_scaling=True``.
     """
 
     TRAIN = auto()
@@ -195,8 +195,12 @@ class TransferConfig:
     Sim-to-sim transfer settings.
 
     Attributes:
-        enable_rudder_angle_scaling: Whether rudder angle scaling should be
-            applied during simulation steps.
+        enable_rudder_angle_scaling: Whether to rescale the rudder action at
+            every step to compensate for differing maximum rudder angles between
+            the original (training) and target (inference) simulators.  The
+            scale is computed internally by the simulator at runtime — no manual
+            angle configuration is required.  *False* means the raw policy
+            output is forwarded without rescaling.
     """
 
     enable_rudder_angle_scaling: bool = False
@@ -345,11 +349,11 @@ class VesselProfile:
                 + "\n".join(f"  • {e}" for e in errors)
             )
 
-        # Suspicious-but-legal → warnings, not errors
         if self.run_mode == RunMode.TRANSFER and not self.transfer.enable_rudder_angle_scaling:
             warnings.warn(
                 f"Profile '{self.name}': run_mode is TRANSFER but "
-                "transfer.enable_rudder_angle_scaling == False. Did you forget to set it?",
+                "transfer.enable_rudder_angle_scaling is False. "
+                "Did you forget to enable rudder angle scaling?",
                 UserWarning,
                 stacklevel=2,
             )
@@ -483,7 +487,7 @@ class VesselProfile:
         lines.append(f"  thrust_mode  : {self.thrust.mode.name}")
         if self.thrust.mode == ThrustMode.FIXED:
             lines.append(f"  fixed_thrust : {self.thrust.fixed_value}")
-        lines.append(f"  rudder angle scaling    : {self.transfer.enable_rudder_angle_scaling}")
+        lines.append(f"  rudder_angle_scaling: {self.transfer.enable_rudder_angle_scaling}")
 
         return "\n".join(lines)
 
