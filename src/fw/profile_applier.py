@@ -36,14 +36,16 @@ Typical usage
 
 from __future__ import annotations
 
+import math
 import logging
 import warnings
-from typing import Any, Dict, Optional
-
 import numpy as np
 
+from typing import Any, Dict, Optional
+from fw.ships.vessel_state import VesselState
 from fw.config_profile import ThrustMode, VesselProfile
 
+EPS = 1e-6
 logger = logging.getLogger(__name__)
 
 
@@ -129,6 +131,7 @@ class EnvApplier:
     def apply(profile: VesselProfile, env) -> None:
         """Apply actuator smoothing from *profile* to *env* and all its sub-environments."""
         EnvApplier._set_smoothing(env, profile.actuator.enable_smoothing)
+        EnvApplier._set_rudder_angle_scaling(env, profile.transfer.enable_rudder_angle_scaling)
 
         sub_envs = getattr(env, "sub_environments", None)
         if sub_envs is None or not sub_envs:
@@ -137,6 +140,7 @@ class EnvApplier:
         iterable = sub_envs.values() if isinstance(sub_envs, dict) else sub_envs
         for sub in iterable:
             EnvApplier._set_smoothing(sub, profile.actuator.enable_smoothing)
+            EnvApplier._set_rudder_angle_scaling(sub, profile.transfer.enable_rudder_angle_scaling)
 
     @staticmethod
     def _set_smoothing(env, value: bool) -> None:
@@ -145,6 +149,16 @@ class EnvApplier:
             env.enable_smoothing = value
             logger.debug(
                 "EnvApplier: set enable_smoothing=%s on %s",
+                value, type(env).__name__,
+            )
+
+    @staticmethod
+    def _set_rudder_angle_scaling(env, value: bool) -> None:
+        """Set ``enable_rudder_angle_scaling`` on *env* if the attribute exists."""
+        if hasattr(env, "enable_rudder_angle_scaling"):
+            env.enable_rudder_angle_scaling = value
+            logger.debug(
+                "EnvApplier: set enable_rudder_angle_scaling=%s on %s",
                 value, type(env).__name__,
             )
 
@@ -168,18 +182,20 @@ class SimulatorApplier:
     @staticmethod
     def _reset_state(profile: VesselProfile, simulator) -> None:
         """Call ``simulator.reset`` with the initial state defined in *profile*."""
-        from fw.ships.vessel_state import VesselState  # deferred: avoids circular import
+        def nz(value, fallback):
+            return fallback if math.isclose(value, 0.0, rel_tol=0.0, abs_tol=EPS) else value
 
+        orig = simulator.state
         s = profile.scenario.initial_state
         simulator.reset(VesselState(
             terminated=False,
             truncated=False,
-            x=s.x,
-            y=s.y,
-            heading=s.heading,
-            u=s.u,
-            v=s.v,
-            r=s.r,
+            x=nz(s.x, orig.x),
+            y=nz(s.y, orig.y),
+            heading=nz(s.heading, orig.heading),
+            u=nz(s.u, orig.u),
+            v=nz(s.v, orig.v),
+            r=nz(s.r, orig.r),
         ))
         logger.debug(
             "SimulatorApplier: reset to x=%.1f y=%.1f heading=%.3f rad",
@@ -273,20 +289,9 @@ class ActionAdapter:
                 f"elements [rudder, thrust], got shape {action.shape}."
             )
 
-        # --- Rudder scaling (sim-to-sim transfer) ----------------------------
-        if profile.transfer.rudder_scale != 1.0:
-            action[0] = float(
-                np.clip(action[0] * profile.transfer.rudder_scale, -1.0, 1.0)
-            )
-
         # --- Fixed thrust -----------------------------------------------------
         if profile.thrust.mode == ThrustMode.FIXED:
-            t_min, t_max = ActionAdapter._thrust_limits(simulator)
-            t = profile.thrust.fixed_value
-            # Linear map: fixed physical value → normalized [-1, 1]
-            action[1] = float(
-                np.clip(2.0 * (t - t_min) / (t_max - t_min) - 1.0, -1.0, 1.0)
-            )
+            action[1] = profile.thrust.fixed_value
 
         return action
 

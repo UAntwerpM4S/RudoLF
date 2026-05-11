@@ -123,7 +123,7 @@ class ShipSimulator(BaseSimulator):
             r=r,
         )
 
-    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> None:
+    def step(self, action: np.ndarray, enable_smoothing: bool = False, enable_rudder_angle_scaling: bool = False) -> None:
         """
         Advance the ship simulator by one environment time step.
 
@@ -135,6 +135,11 @@ class ShipSimulator(BaseSimulator):
         Args:
             action: Normalized action array [rudder, thrust] in [-1, 1].
             enable_smoothing: Enable actuator rate limiting and smoothing.
+            enable_rudder_angle_scaling: Accepted for API consistency with
+                :class:`~fw.simulators.fh_sim_wrapper.FhSimWrapper` but has
+                no effect here. ShipSimulator uses its own
+                :class:`~fw.ships.ship_specs.ShipSpecifications` directly, so
+                there is no angle gap to compensate for.
 
         Raises:
             ValueError: If `action` does not have shape (2,).
