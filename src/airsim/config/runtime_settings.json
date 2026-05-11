@@ -120,15 +120,11 @@
     "_remarks": {
       "enabled": "true => initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights.",
       "source_policy_path": "Path to the 2D .zip policy file (relative to repo root or absolute).",
-      "freeze_shared_layers": "true => freeze only the backbone (shared_network[2]: 256→128) so the pre-trained feature extractor is preserved; actor/critic heads and mapping layer remain trainable to adapt to the new environment. MUST stay true for AirSim transfer learning to converge — with the backbone trainable, the first long episode produces a gradient spike (~norm 2000+) that corrupts the pretrained features irrecoverably even with grad-norm clipping. Confirmed by the 140931 regression run vs. the 130933 working run.",
-      "mapping_layer_init_gain": "Orthogonal init gain for the mapping layer shared_network[0] when input dims differ (e.g. 2D 12 → 3D 18). 0.1 dampens the mapping layer's initial outputs by ~10x so the frozen pretrained backbone receives activations in roughly the range it was trained on. MUST stay around 0.1 — the natural ActorCriticNetwork init gain sqrt(2) produced gradient norms of ~18 000 and immediate policy collapse in session 145027 because the AirSim observation distribution does not match the FhSim distribution the backbone was trained on. 0.01 effectively kills the gradient signal; values >= 0.5 risk the explosion regime. The ~80-episode slow phase observed at gain=0.1 is the mapping layer learning a fresh projection between fundamentally different feature semantics (ship -> car, raw radian -> cos/sin, scalar distance -> forward/lateral pairs) and cannot be short-circuited by initialisation alone.",
-      "learning_rate": "Adam LR used only during transfer-learning training. Overrides the general AirSim LR (3e-4) with a gentler value so a single large episode cannot collapse the freshly-adapted heads. Absent key falls back to the agent's configured LR."
+      "freeze_shared_layers": "true => freeze only the backbone hidden layer (shared_network[2]: 256→128) so the pretrained feature representation is preserved. The mapping layer (shared_network[0]) and actor/critic heads remain trainable to adapt to AirSim's 3D physics and reward structure."
     },
-    "enabled": true,
-    "source_policy_path": "models/FhSimEnv_PPO_policy.zip",
-    "freeze_shared_layers": true,
-    "mapping_layer_init_gain": 0.1,
-    "learning_rate": 0.0001
+    "enabled": false,
+    "source_policy_path": "models/PySimEnv_PPO_policy.zip",
+    "freeze_shared_layers": true
   },
   "airsim": {
     "_remarks": {

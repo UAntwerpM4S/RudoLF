@@ -427,12 +427,11 @@ The file has four top-level sections:
 
 | Key | JSON default | Description |
 |-----|-------------|-------------|
-| `enabled` | `false` | Initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights. |
-| `source_policy_path` | `"models/PySimEnv_PPO_policy.zip"` | Path to the 2D `.zip` policy (relative to repo root or absolute). |
-| `freeze_shared_layers` | `false` | Freeze all transferred layers so only the mapping-layer first linear adapts. `false` enables full fine-tuning. |
-| `mapping_layer_init_gain` | `0.05` | Orthogonal init gain for the mapping layer when input dims differ (2D→3D case). Smaller values dampen initial activation mismatch at the cost of slower early learning. |
+| `enabled` | `true` | Initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights. |
+| `source_policy_path` | `"models/FhSimEnv_PPO_policy.zip"` | Path to the 2D `.zip` policy (relative to repo root or absolute). Either `FhSimEnv_PPO_policy.zip` or `PySimEnv_PPO_policy.zip` — both are 12-dim observation, 2-dim action. |
+| `freeze_shared_layers` | `true` | When `true`, freeze **only** `shared_network[2]` (the 256→128 backbone hidden layer). The mapping layer (`shared_network[0]`) and the actor/critic heads remain trainable so the policy distribution can adapt to AirSim's 3D physics and reward structure. When `false`, no parameters are frozen and the full network fine-tunes. |
 
-> **Note:** The code-level default for `mapping_layer_init_gain` inside `build_transfer_policy()` is `0.1`, but the JSON file sets it to `0.05`. The JSON value takes precedence at runtime. Phase 1 of the recommended workflow freezes shared layers (`freeze_shared_layers: true`) even though the JSON default is `false` — set it explicitly per phase.
+> **Important behavior change (sprint 11–12 fix):** Earlier revisions froze every transferred layer — including the actor and critic heads — when `freeze_shared_layers = true`. That locked the policy distribution and prevented the agent from getting past the first significant route bend (~checkpoint 33). The current implementation freezes only the backbone hidden layer; the actor head, critic head, and mapping layer all keep `requires_grad = True`. This matches the long-standing docstring intent in `transfer_learning.py` and is what makes Phase 1 (freeze ON) usable as a learning phase rather than a hard ceiling.
 
 ---
 
@@ -592,18 +591,25 @@ Enable curriculum:
 
 Transfer learning initialises the AirSimEnv policy from a pretrained 2D checkpoint (PySimEnv or FhSimEnv) instead of random weights. It is implemented in `src/airsim/train/transfer_learning.py`.
 
+Both supported 2D checkpoints (`PySimEnv_PPO_policy.zip`, `FhSimEnv_PPO_policy.zip`) have:
+
+- **input_dim = 12** (2D observation space)
+- **output_dim = 2** (steering, throttle)
+
+AirSimEnv has **input_dim = 18** and **output_dim = 2**. Action dimensions match (transfer allowed) and the target input space is strictly larger than the source (`extra_input_dims = 6`).
+
 #### Recommended 3-Phase Training Strategy
 
-The recommended workflow for producing a robust AirSimEnv policy is a sequential three-phase process:
+The recommended workflow for producing a robust AirSimEnv policy is a sequential three-phase process. Each phase loads the previous phase's saved AirSimEnv checkpoint as its source.
 
-**Phase 1 — Mapping-layer adaptation (freeze ON, curriculum OFF)**
+**Phase 1 — Backbone-preserving warm start (freeze ON, curriculum OFF)**
 
-Transfer the 2D weights and freeze all transferred layers. Only the first linear layer `shared_network[0]: Linear(input_dim → 256)` — the mapping layer — trains. This phase lets the mapping layer learn to project the 18-dimensional AirSim observation into the feature space already understood by the pretrained deeper layers.
+Transfer the 2D weights and freeze only the backbone hidden layer (`shared_network[2]: 256→128`). The mapping layer (`shared_network[0]: 18→256`, random-init) and the actor + critic heads (transferred from the 2D source) all remain trainable. The frozen backbone preserves the pretrained mid-level feature representation while the rest of the network adapts to the 18-dim AirSim observation and the UE5 reward structure.
 
 ```json
 "transfer_learning": {
     "enabled": true,
-    "source_policy_path": "models/PySimEnv_PPO_policy.zip",
+    "source_policy_path": "models/FhSimEnv_PPO_policy.zip",
     "freeze_shared_layers": true
 },
 "training": {
@@ -614,7 +620,7 @@ Transfer the 2D weights and freeze all transferred layers. Only the first linear
 
 **Phase 2 — Full fine-tuning (freeze OFF, curriculum OFF)**
 
-Load the Phase 1 checkpoint as the new source. With identical 18-dimensional input/output spaces the mapping layer is transferred as-is (not re-initialized). All layers are unfrozen, allowing the full network to adapt to UE5 physics.
+Load the Phase 1 checkpoint as the new source. With both source and target being AirSimEnv policies (identical 18-dim input, 2-dim output), every transferable layer including `shared_network[0]` matches in shape and is copied directly. All layers are then unfrozen for full fine-tuning.
 
 ```json
 "transfer_learning": {
@@ -651,34 +657,44 @@ Load the Phase 2 checkpoint. Enable curriculum learning to progressively expose 
 
 The `ActorCriticNetwork` first layer `shared_network[0]: Linear(input_dim → 256)` is the mapping layer. Its behavior during transfer depends on whether the source and target input dimensions match:
 
-| Source → Target | Mapping layer behavior |
-|-----------------|----------------------|
-| 12-dim → 18-dim | Shape mismatch: layer is **not** transferred. Re-initialized with orthogonal init at `mapping_layer_init_gain` (JSON default `0.05`). Kept trainable regardless of `freeze_shared_layers`. |
-| 18-dim → 18-dim | Shape matches: layer **is** transferred from source. Never frozen even when `freeze_shared_layers = true`. In Phase 2/3 this preserves the learned mapping from Phase 1. |
+| Source → Target | `shared_network[0]` behavior |
+|-----------------|------------------------------|
+| 12-dim → 18-dim (PySim/FhSim → AirSim) | Shape mismatch (`12×256` vs `18×256`). Layer is **not** transferred. It remains randomly initialised by `PPOPolicy.__init__()` and is always trainable. This is the implicit mapping layer that learns to project the extra 6 AirSim observation dimensions into the feature space that the deeper layers already understand. |
+| 18-dim → 18-dim (AirSim Phase 1 → AirSim Phase 2/3) | Shapes match. The layer **is** transferred from source. Whether it stays trainable depends on `freeze_shared_layers`: when `false` (typical for Phase 2/3) it is trainable; when `true` it is still trainable because only the backbone is frozen. |
 
-The conditional re-initialization only applies when the weight tensor shapes differ. When shapes match, the source weights are copied directly and the existing learned mapping is preserved.
+There is **no** orthogonal re-init step for the mapping layer — earlier revisions had a `mapping_layer_init_gain` parameter, but that has been removed in favor of relying on `PPOPolicy`'s own initialisation. If a future regression reintroduces gradient explosion at training start, dampening the mapping layer init is the first place to look.
 
 #### Transferable Layers
 
 The following layers are candidates for transfer (in order). Each is transferred only if both source and target have identical tensor shapes:
 
-| Key | Transfer condition |
-|-----|--------------------|
-| `shared_network.0.weight` + `.bias` | Transferred as a unit when input_dim matches; skipped together otherwise |
-| `shared_network.2.weight` + `.bias` | Always transferred (256→128 shape never changes) |
-| `actor_mean.weight` + `.bias` | Transferred when action dims match |
-| `actor_log_std` | Transferred when action dims match |
-| `critic.weight` + `.bias` | Transferred when action dims match |
+| Key | Transfer condition (12→18 case) | Transfer condition (18→18 case) |
+|-----|----------------------------------|----------------------------------|
+| `shared_network.0.weight` | Skipped (shape mismatch `12×256` vs `18×256`) | Transferred |
+| `shared_network.0.bias` | Skipped (paired with weight) | Transferred |
+| `shared_network.2.weight` | Transferred (256→128 shape is invariant) | Transferred |
+| `shared_network.2.bias` | Transferred | Transferred |
+| `actor_mean.weight` | Transferred (action dims match) | Transferred |
+| `actor_mean.bias` | Transferred | Transferred |
+| `actor_log_std` | Transferred | Transferred |
+| `critic.weight` | Transferred | Transferred |
+| `critic.bias` | Transferred | Transferred |
 
 #### Compatibility Requirements
 
-- Action dimensions must match between source and target.
-- `target_input_dim >= source_input_dim`.
-- A `TransferIncompatibilityError` is raised with a descriptive message if either condition fails.
+- Action dimensions must match between source and target. PySim, FhSim, and AirSim all use a 2-dim action space (steering, throttle).
+- `target_input_dim >= source_input_dim`. PySim/FhSim (12) → AirSim (18) satisfies this.
+- A `TransferIncompatibilityError` (subclass of `ValueError`) is raised with a descriptive message — including the actual source and target dimensions — if either condition fails.
 
 #### Freezing Behavior
 
-With `freeze_shared_layers = true`, all transferred layers except the mapping layer are frozen (`requires_grad = False`). The mapping layer is always kept trainable, even when it was successfully transferred — it is the designated adapter regardless of freeze mode.
+With `freeze_shared_layers = true`, only the backbone hidden layer is frozen:
+
+```python
+_BACKBONE_KEYS = frozenset({"shared_network.2.weight", "shared_network.2.bias"})
+```
+
+All other parameters — `shared_network[0]` (mapping layer), `actor_mean.weight`, `actor_mean.bias`, `actor_log_std`, `critic.weight`, `critic.bias` — retain `requires_grad = True`. This is essential for convergence: freezing the actor head locks the policy's action distribution to its 2D form and the agent cannot learn AirSim-specific steering responses.
 
 With `freeze_shared_layers = false`, no parameters are frozen after transfer. The full network fine-tunes.
 
@@ -688,42 +704,44 @@ The source policy is always loaded on CPU for weight extraction, regardless of t
 
 #### Trainer Bypass
 
-The transfer learning path does **not** use the generic `Trainer`. It calls `_run_training_with_transfer()` which:
+The transfer learning path does **not** use the generic `Trainer`. It calls `_run_training_with_transfer()` (in `train_airsim.py`) which:
 
-1. Creates `SinglePPOAgent(profile, environment, **hyperparams)` directly from AirSim-specific hyperparameters.
-2. Calls `build_transfer_policy()` to produce the initialized `PPOPolicy`.
-3. Replaces `agent.policy` with the transfer policy in-place.
-4. Reinitializes `agent.optimizer` as `Adam(filter(requires_grad, params), lr=learning_rate)` — so only trainable parameters (mapping layer, or all params when `freeze_shared_layers=False`) receive gradient updates.
-5. Calls `agent.learn(stop_condition)` directly.
+1. Builds AirSim-specific hyperparameters via `get_hyperparameters(PPO_POLICY_NAME, env_name="AirSimEnv")`.
+2. Constructs `SinglePPOAgent(profile, environment, **hyperparams)` directly.
+3. Calls `build_transfer_policy()` to produce the initialised `PPOPolicy` with weights transferred and freeze applied.
+4. Replaces `agent.policy` with the transfer policy in-place.
+5. Reinitialises `agent.optimizer` as `Adam(filter(lambda p: p.requires_grad, params), lr=learning_rate)` — the `filter` guarantees that frozen parameters (just the backbone, when `freeze_shared_layers=true`) receive no gradient updates.
+6. Calls `agent.learn(stop_condition)` directly.
 
-This bypass is necessary because `Trainer.train()` creates a fresh agent internally, which is too late to inject the transferred weights before training starts.
+This bypass is necessary because `Trainer.train()` creates a fresh agent internally, which is too late to inject the transferred weights before training starts. If `build_transfer_policy()` fails (`TransferIncompatibilityError` or `RuntimeError`), training falls back to random-weight training with a clear printed message.
 
 #### Terminal Output
 
-Transfer learning prints a topology report and a transfer summary on startup:
+Transfer learning prints a topology report and a transfer summary on startup. Example for the typical Phase 1 case (12→18, freeze ON):
 
 ```
 ==========================================================
   Transfer Learning — Network Topology Comparison
 ==========================================================
-  Source input dim   : 18  (2D policy)
+  Source input dim   : 12  (2D policy)
   Target input dim   : 18  (AirSimEnv)
-  Extra input dims   : 0  (handled by mapping layer)
+  Extra input dims   : 6  (handled by mapping layer)
   Source output dim  : 2
   Target output dim  : 2
   Output compatible  : True
   Transferable hidden layers (shared_network[2], actor, critic):
     [0] Linear(256 → 128)
-  Mapping layer      : shared_network[0] transferred from source,
-                       Linear(18 → 256) — trainable
+  Mapping layer      : shared_network[0] — random-init, trainable
+                       Linear(18 → 256)
 ==========================================================
 
 [TransferLearning] Source device : cpu (weight extraction)
 [TransferLearning] Target device : cuda:0
-[TransferLearning] Transferred 9 layer(s): [...]
-[TransferLearning] Trainable: 33,154 / 230,402 params (mapping layer only)
-[TransferLearning] Mapping layer: transferred from source
+[TransferLearning] Transferred 7 layer(s): ['shared_network.2.weight', 'shared_network.2.bias', 'actor_mean.weight', 'actor_mean.bias', 'actor_log_std', 'critic.weight', 'critic.bias']
+[TransferLearning] Trainable: 197,248 / 230,402 params (backbone frozen, mapping+heads trainable)
 ```
+
+In the 18→18 case (Phase 2/3), `Transferred 9 layer(s)` instead of 7 — `shared_network.0.weight` and `shared_network.0.bias` are also copied.
 
 ### 5.5 Training Session Exports
 
@@ -743,10 +761,10 @@ The directory is created at the start of training and all files are finalized (f
 |------|---------|
 | `run_log.csv` | Per-episode structured events emitted by the environment during training (see fields below) |
 | `training_metrics.csv` | Per-PPO-iteration: reward, loss, advantage — same data used for the metrics plot |
-| `training_metrics_plot.png` | Multi-panel training curve: normalized reward, loss, and advantage over iterations; plus per-episode max checkpoint progress |
+| `training_metrics.png` | Multi-panel training curve: normalized reward, loss, and advantage over iterations; plus per-episode max checkpoint progress |
 | `route_plot.png` | Overhead route overview with respawn scatter, checkpoint hit scatter, obstacle/waterway polygons, and target marker |
 | `metadata.json` | Session metadata: paths, config, interrupted flag, skipped short rollouts, best mean reward, stop rule, route summary |
-| `iterations.csv` | Per-iteration log from `TrainingIterationLogger` (reward, loss, advantage, policy updates) |
+| `<env>_<agent>_iterations_<timestamp>.csv` | Per-iteration log from `TrainingIterationLogger` (reward, loss, advantage, elapsed time). The exact filename is built by `TrainingIterationLogger` from env name, agent type, and timestamp. |
 
 #### `run_log.csv` Fields
 
@@ -772,7 +790,7 @@ Each row is one environment-emitted event (e.g. `episode_finished`, `respawn`, `
 
 #### Training Metrics Plot
 
-`training_metrics_plot.png` contains 3 or 4 panels depending on whether run-log data is available:
+`training_metrics.png` contains 3 or 4 panels depending on whether run-log data is available:
 
 1. **Reward** — normalized mean episode reward per iteration (raw + 5-iteration rolling average).
 2. **Loss** — normalized PPO loss per iteration.
@@ -1353,10 +1371,10 @@ Created per training run by `AirSimTrainingSession`. Full schema documented in [
 |------|---------|
 | `run_log.csv` | Per-episode structured events (position, speed, reward, outcome, start point) |
 | `training_metrics.csv` | Per-PPO-iteration: reward, loss, advantage |
-| `training_metrics_plot.png` | Normalized reward/loss/advantage curves + max checkpoint per episode |
+| `training_metrics.png` | Normalized reward/loss/advantage curves + max checkpoint per episode |
 | `route_plot.png` | Overhead route overview: route, obstacles, respawn scatter, checkpoint hits, target |
 | `metadata.json` | Config, interrupted flag, best reward, stop rule, route geometry summary |
-| `iterations.csv` | Per-iteration log from `TrainingIterationLogger` |
+| `<env>_<agent>_iterations_<timestamp>.csv` | Per-iteration log from `TrainingIterationLogger` |
 
 **Inference and visualization — `exports/<session>/`**
 
