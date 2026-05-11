@@ -339,14 +339,16 @@ def _run_training_with_transfer(
     act_dim = int(env.gym_env.action_space.shape[0])
     freeze = bool(tl_cfg.get("freeze_shared_layers", True))
     mapping_init_gain = float(tl_cfg.get("mapping_layer_init_gain", 0.1))
+    tl_lr = float(tl_cfg.get("learning_rate", agent.learning_rate))
 
+    lr_note = "TL override" if "learning_rate" in tl_cfg else "from config"
     print("\n" + "=" * 60)
     print("  TRANSFER LEARNING — loading 2D policy weights")
     print("=" * 60)
     print(f"  Source : {source_path}")
     print(f"  Target : AirSimEnv  obs={obs_dim}  act={act_dim}  device={agent.device}")
     print(f"  Freeze : {freeze}")
-    print(f"  LR     : {agent.learning_rate:.2e}")
+    print(f"  LR     : {tl_lr:.2e}  ({lr_note})")
     print("=" * 60 + "\n")
 
     try:
@@ -356,14 +358,22 @@ def _run_training_with_transfer(
             target_output_dim=act_dim,
             target_device=agent.device,
             freeze_shared=freeze,
+            mapping_layer_init_gain=mapping_init_gain,
         )
         agent.policy = transfer_policy
+        agent.learning_rate = tl_lr
         agent.optimizer = optim.Adam(
             filter(lambda p: p.requires_grad, transfer_policy.network.parameters()),
-            lr=agent.learning_rate,
+            lr=tl_lr,
         )
     except (TransferIncompatibilityError, RuntimeError) as exc:
-        print(f"[TransferLearning] Failed — training from scratch.\n  {exc}")
+        print(
+            f"\n{'!'*60}\n"
+            f"[TransferLearning] FAILED — falling back to random-weight training.\n"
+            f"  Reason: {exc}\n"
+            f"  Check that source_policy_path exists and action dims match.\n"
+            f"{'!'*60}\n"
+        )
 
     agent.learn(stop_condition=stop_condition)
     return {}
@@ -437,14 +447,21 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
 
 def run_visualization(runtime_settings: dict[str, Any] | None = None):
     """Run AirSim visualization from runtime settings and return trainer instance."""
-    from fw.config import PPO_POLICY_NAME
+    from fw.config import PPO_POLICY_NAME, get_config_parameters
+    from fw.config_profile import ProfileRegistry
     from fw.env_factory import airsim_env_name, get as get_environment
     from fw.trainer import Trainer
 
     env_config = _build_visualize_env_config(runtime_settings)
     env = get_environment(airsim_env_name, configuration=env_config)
     envs = [env]
-    trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+
+    fw_config = get_config_parameters()
+    profile_name = fw_config.get("profile", "default_airsim_profile")
+    profile = ProfileRegistry.get(profile_name)
+    profile.validate()
+
+    trainer = Trainer(PPO_POLICY_NAME, envs, profile, "SimpleScheduler")
 
     print("\n" + "=" * 60)
     print("  VISUALIZING TRAINED POLICY IN AIRSIM")
