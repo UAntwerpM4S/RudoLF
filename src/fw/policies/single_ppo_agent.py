@@ -47,7 +47,8 @@ class SinglePPOAgent(BasePPOAgent):
         Initialize the PPO agent.
 
         Args:
-            profile: Profile that will be used for training or visualization.
+            profile: Profile that will be used for training or visualization. When None,
+                scenario-specific initialization and action transformation are skipped.
             *args: Positional arguments forwarded to `BasePPOAgent`.
             **kwargs: Keyword arguments forwarded to `BasePPOAgent`.
 
@@ -55,6 +56,7 @@ class SinglePPOAgent(BasePPOAgent):
             - Automatically infers input and output dimensions from the environment.
             - Initializes the PPO policy network and optimizer.
             - Sets up running statistics for optional reward normalization.
+            - Profile-dependent operations (initial state setup, action adaptation) only run when profile is not None.
         """
 
         super().__init__(profile, *args, **kwargs)
@@ -671,6 +673,10 @@ class SinglePPOAgent(BasePPOAgent):
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
             self.policy = self.policy.load(policy_file_name, self.device)
+            # PPOPolicy.load() returns a NEW object, so the optimizer must be
+            # rebound to the new network's parameters — otherwise step() silently
+            # updates the old (unreferenced) network and the loaded policy never trains.
+            self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         except Exception as e:
             raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
 

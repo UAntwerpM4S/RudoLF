@@ -294,7 +294,7 @@ class BasePPOAgent(BaseAgent):
         # If the profile mandates a specific start state, push it to the
         # simulator right after the vectorized reset so every training
         # episode begins from the configured position/heading.
-        if self._profile.scenario.initial_state is not None:
+        if self._profile is not None and self._profile.scenario.initial_state is not None:
             _rollout_sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
             if _rollout_sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
                 for sub in self.env.sub_environments.values():
@@ -351,19 +351,20 @@ class BasePPOAgent(BaseAgent):
                 if first_sub is not None:
                     sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
 
-            if isinstance(effective_actions, np.ndarray) and effective_actions.ndim == 2:
-                transformed = np.stack([
-                    ActionAdapter.transform(self._profile, effective_actions[i], simulator=sim)
-                    for i in range(effective_actions.shape[0])
-                ])
-                effective_actions = transformed
-            elif isinstance(effective_actions, tuple):
-                effective_actions = tuple(
-                    ActionAdapter.transform(self._profile, a, simulator=sim)
-                    for a in effective_actions
-                )
-            else:
-                effective_actions = ActionAdapter.transform(self._profile, effective_actions, simulator=sim)
+            if self._profile is not None:
+                if isinstance(effective_actions, np.ndarray) and effective_actions.ndim == 2:
+                    transformed = np.stack([
+                        ActionAdapter.transform(self._profile, effective_actions[i], simulator=sim)
+                        for i in range(effective_actions.shape[0])
+                    ])
+                    effective_actions = transformed
+                elif isinstance(effective_actions, tuple):
+                    effective_actions = tuple(
+                        ActionAdapter.transform(self._profile, a, simulator=sim)
+                        for a in effective_actions
+                    )
+                else:
+                    effective_actions = ActionAdapter.transform(self._profile, effective_actions, simulator=sim)
 
             next_states, rewards, terminations, truncations = self._step_envs(effective_actions)
 
