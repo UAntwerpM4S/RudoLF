@@ -93,15 +93,9 @@ class TopologyReport:
         ]
         for i, (in_f, out_f) in enumerate(self.shared_layer_shapes):
             lines.append(f"    [{i}] Linear({in_f} → {out_f})")
-        if self.extra_input_dims > 0:
-            mapping_desc = "shared_network[0] kept as random-init,"
-            mapping_detail = f"Linear({self.target_input_dim} → 256) — trainable"
-        else:
-            mapping_desc = "shared_network[0] transferred from source,"
-            mapping_detail = f"Linear({self.target_input_dim} → 256) — trainable"
         lines += [
-            f"  Mapping layer      : {mapping_desc}",
-            f"                       {mapping_detail}",
+            "  Mapping layer      : shared_network[0] — random-init, trainable",
+            f"                       Linear({self.target_input_dim} → 256)",
             "=" * 58,
         ]
         return "\n".join(lines)
@@ -196,13 +190,9 @@ _TRANSFERABLE_KEYS = (
     "critic.bias",
 )
 
-# Mapping-layer keys are transferred when dims match but must never be frozen —
-# they are always the trainable adapter regardless of freeze_shared.
-_MAPPING_LAYER_KEYS = frozenset({"shared_network.0.weight", "shared_network.0.bias"})
-
-# Only the backbone (256→128 feature extractor) is frozen when freeze_shared=True.
-# Actor and critic heads must remain trainable so the policy can adapt to the new
-# environment's reward structure and dynamics.
+# Only the backbone hidden layer is frozen when freeze_shared=True.
+# The actor and critic heads must stay trainable so the policy distribution
+# can adapt to AirSim's reward structure and 3D physics.
 _BACKBONE_KEYS = frozenset({"shared_network.2.weight", "shared_network.2.bias"})
 
 
@@ -214,18 +204,18 @@ def apply_transfer_weights(
     """Copy matching weights from *source_policy* to *target_policy*.
 
     Only layers whose parameter tensors have identical shapes in source and
-    target are transferred (``shared_network[2]``, actor head, critic head).
-    The first layer ``shared_network[0]`` is always skipped — it is the
-    mapping layer and must remain trainable regardless of dimension match.
+    target are transferred. The first layer ``shared_network[0]`` (the mapping
+    layer) is intentionally skipped because it differs in input dimension —
+    it remains randomly initialised and trainable to adapt the extra 3D inputs.
 
     Args:
         source_policy: Pretrained 2D policy.
         target_policy: Freshly initialised 3D AirSimEnv policy.
-        freeze_shared: If ``True``, freeze only the backbone layer
-            ``shared_network[2]`` (256→128) to preserve the pre-trained feature
-            representation.  The actor/critic heads remain trainable so they can
-            adapt to the new environment.  Freezing the heads would prevent the
-            policy distribution from changing and cause convergence failure.
+        freeze_shared: If ``True``, freeze only ``shared_network[2]`` (the
+            backbone hidden layer) so the pretrained feature representation is
+            preserved. The actor and critic heads remain trainable so the policy
+            distribution can adapt to AirSim's reward structure and 3D physics.
+            If ``False``, all layers remain trainable for full fine-tuning.
 
     Returns:
         List of state-dict keys that were successfully transferred.
@@ -236,10 +226,6 @@ def apply_transfer_weights(
     transferred: List[str] = []
     for key in _TRANSFERABLE_KEYS:
         if key not in src_sd or key not in tgt_sd:
-            continue
-        # Treat mapping-layer weight+bias as a unit: skip bias if weight was not
-        # transferred (e.g. different input dims), so the layer is never partially applied.
-        if key == "shared_network.0.bias" and "shared_network.0.weight" not in transferred:
             continue
         if src_sd[key].shape != tgt_sd[key].shape:
             continue
@@ -268,7 +254,6 @@ def build_transfer_policy(
     target_output_dim: int,
     target_device: torch.device | None = None,
     freeze_shared: bool = True,
-    mapping_layer_init_gain: float = 0.1,
 ) -> PPOPolicy:
     """Build an AirSimEnv policy initialised from a pretrained 2D checkpoint.
 
@@ -277,12 +262,10 @@ def build_transfer_policy(
         2. Compare topology and validate compatibility (raises on mismatch).
         3. Initialise a fresh target ``PPOPolicy`` on *target_device*.
         4. Transfer all matching hidden layers, moving tensors to *target_device* automatically.
-        5. When input dims differ the first linear layer ``shared_network[0]: Linear(target_input_dim → 256)``
-           is reinitialised with orthogonal init at *mapping_layer_init_gain* (default 0.1)
-           so its initial outputs are dampened ~10× relative to the natural ``sqrt(2)`` PPO init.
-           This keeps activations into the frozen backbone in the range it was trained on; using
-           the natural gain instead caused gradient norms of ~18 000 and immediate policy collapse
-           (see ``runtime_settings.json`` ``transfer_learning._remarks.mapping_layer_init_gain``).
+        5. The first linear layer ``shared_network[0]: Linear(target_input_dim → 256)``
+           remains randomly initialised and trainable — this is the mapping layer
+           that learns to project the extra 3D observation dimensions into the feature
+           space that the pretrained deeper layers understand.
 
     The source checkpoint is always loaded on CPU regardless of *target_device*, so any
     checkpoint (CPU or CUDA) can be transferred to any training device without manual
@@ -296,8 +279,6 @@ def build_transfer_policy(
         target_device: PyTorch device for the target policy.  ``None`` triggers
             auto-detection via :func:`~fw.policies.ppo_policy.get_device`.
         freeze_shared: Freeze transferred layers so only the mapping layer trains.
-        mapping_layer_init_gain: Orthogonal init gain for the mapping layer when input
-            dims differ. Keep at 0.1; see module docstring and config _remarks.
 
     Returns:
         ``PPOPolicy`` on *target_device*, configured for AirSimEnv fine-tuning.
@@ -316,25 +297,14 @@ def build_transfer_policy(
     target_policy = PPOPolicy(target_input_dim, target_output_dim, device=resolved_device.type)
     transferred = apply_transfer_weights(source_policy, target_policy, freeze_shared=freeze_shared)
 
-    mapping_layer_transferred = "shared_network.0.weight" in transferred
-    if not mapping_layer_transferred:
-        # Dims differ: mapping layer was not transferred. Re-init at the dampened gain
-        # so initial activations into the frozen backbone are small (see runtime_settings.json
-        # transfer_learning._remarks.mapping_layer_init_gain for the full rationale).
-        mapping_layer = target_policy.network.shared_network[0]
-        nn.init.orthogonal_(mapping_layer.weight, gain=mapping_layer_init_gain)
-        nn.init.constant_(mapping_layer.bias, 0.0)
-
     n_trainable = sum(p.numel() for p in target_policy.network.parameters() if p.requires_grad)
     n_total = sum(p.numel() for p in target_policy.network.parameters())
-    trainable_note = "mapping layer + heads (backbone frozen)" if freeze_shared else "full network"
-    mapping_note = "transferred from source" if mapping_layer_transferred else f"random-init (gain={mapping_layer_init_gain})"
+    frozen_note = "backbone frozen, mapping+heads trainable" if freeze_shared else "full network"
     print(
         f"[TransferLearning] Source device : cpu (weight extraction)"
         f"\n[TransferLearning] Target device : {resolved_device}"
         f"\n[TransferLearning] Transferred {len(transferred)} layer(s): {transferred}"
-        f"\n[TransferLearning] Trainable: {n_trainable:,} / {n_total:,} params ({trainable_note})"
-        f"\n[TransferLearning] Mapping layer: {mapping_note}"
+        f"\n[TransferLearning] Trainable: {n_trainable:,} / {n_total:,} params ({frozen_note})"
     )
 
     return target_policy

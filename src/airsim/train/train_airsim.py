@@ -338,17 +338,12 @@ def _run_training_with_transfer(
     obs_dim = int(env.gym_env.observation_space.shape[0])
     act_dim = int(env.gym_env.action_space.shape[0])
     freeze = bool(tl_cfg.get("freeze_shared_layers", True))
-    mapping_init_gain = float(tl_cfg.get("mapping_layer_init_gain", 0.1))
-    tl_lr = float(tl_cfg.get("learning_rate", agent.learning_rate))
-
-    lr_note = "TL override" if "learning_rate" in tl_cfg else "from config"
     print("\n" + "=" * 60)
     print("  TRANSFER LEARNING — loading 2D policy weights")
     print("=" * 60)
     print(f"  Source : {source_path}")
     print(f"  Target : AirSimEnv  obs={obs_dim}  act={act_dim}  device={agent.device}")
     print(f"  Freeze : {freeze}")
-    print(f"  LR     : {tl_lr:.2e}  ({lr_note})")
     print("=" * 60 + "\n")
 
     try:
@@ -358,13 +353,11 @@ def _run_training_with_transfer(
             target_output_dim=act_dim,
             target_device=agent.device,
             freeze_shared=freeze,
-            mapping_layer_init_gain=mapping_init_gain,
         )
         agent.policy = transfer_policy
-        agent.learning_rate = tl_lr
         agent.optimizer = optim.Adam(
             filter(lambda p: p.requires_grad, transfer_policy.network.parameters()),
-            lr=tl_lr,
+            lr=agent.learning_rate,
         )
     except (TransferIncompatibilityError, RuntimeError) as exc:
         print(
