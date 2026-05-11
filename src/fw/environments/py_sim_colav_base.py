@@ -184,16 +184,28 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_episode_collided: bool = False
 
         # Per-encounter minimum distance tracking. Each completed encounter
-        # contributes a {"gt", "pred", "min_dist", "collided"} record stored
-        # on the same _episode_encounters / _all_encounters lists used by the
-        # confusion matrix; "min_dist" is the closest center-to-center
-        # distance to any collision entity observed *while the encounter was
-        # active*. Records are finalized on encounter end (tracked → None)
-        # or on episode reset / terminal step if mid-encounter.
+        # contributes a record stored on the same _episode_encounters /
+        # _all_encounters lists used by the confusion matrix; "min_dist" is
+        # the closest center-to-center distance to any collision entity
+        # observed *while the encounter was active*. Records are finalized
+        # on encounter end (tracked → None) or on episode reset / terminal
+        # step if mid-encounter.
+        #
+        # "resolved" is True only when the encounter ended via the normal
+        # classifier-driven tracked → None transition (TS left the forget
+        # range / was despawned by step-level cleanup) *and* the OS had
+        # passed the TS during the encounter. Encounters cut off by episode
+        # termination/truncation/reset are not resolved. Distributional
+        # metrics (min_dist, CRI) restrict to "valid" encounters defined
+        # as resolved AND not collided.
         self._in_encounter: bool = False
         self._current_encounter_min_dist: float = float("inf")
         self._current_encounter_min_dist_bank: float = float("inf")
         self._current_encounter_collided: bool = False
+        self._current_encounter_passed: bool = False
+        self._current_encounter_max_cri: float = 0.0
+        self._current_encounter_cri_sum: float = 0.0
+        self._current_encounter_cri_count: int = 0
 
         self._last_collision_info = {}
         self._colreg_violations = 0
@@ -385,6 +397,23 @@ class PySimColavBaseEnv(PySimEnv):
             if d_bank < self._current_encounter_min_dist_bank:
                 self._current_encounter_min_dist_bank = d_bank
 
+        # Sample CRI for the tracked TS during an active encounter.
+        if self._in_encounter:
+            ts_idx = self.scenario_classifier.tracked_ts
+            if ts_idx is not None and ts_idx < len(self.collision_entities):
+                ts = self.collision_entities[ts_idx]
+                cri_val, _, _ = self._compute_cri(
+                    self.ship_pos,
+                    self.phys_sim.state.heading,
+                    float(self.phys_sim.state.u),
+                    float(self.phys_sim.state.v),
+                    ts,
+                )
+                if cri_val > self._current_encounter_max_cri:
+                    self._current_encounter_max_cri = cri_val
+                self._current_encounter_cri_sum += cri_val
+                self._current_encounter_cri_count += 1
+
         # Post-entity-step hook (subclass: e.g. rebuild polar geometries)
         self._on_entities_stepped()
 
@@ -529,7 +558,9 @@ class PySimColavBaseEnv(PySimEnv):
         # finalize an in-progress encounter so its min_dist/collided flags
         # are written into the record before the episode ends.
         if self.phys_sim.state.terminated or self.phys_sim.state.truncated:
-            self._finalize_active_encounter()
+            # Episode is ending mid-encounter — TS has not left the forget
+            # range, so the encounter is *not* resolved.
+            self._finalize_active_encounter(resolved_normally=False)
             return
 
         clf = self.scenario_classifier
@@ -537,10 +568,12 @@ class PySimColavBaseEnv(PySimEnv):
         prev = self._prev_tracked_ts
         self._prev_tracked_ts = curr
 
-        # Encounter end: tracked → None. Finalize the per-encounter
-        # min_dist / collided fields on the most recent record.
+        # Encounter end: tracked → None (TS left forget range or was
+        # despawned by step-level cleanup). This is the "resolved" side of
+        # the criterion; the encounter is fully resolved only if OS also
+        # passed the TS during it.
         if prev is not None and curr is None:
-            self._finalize_active_encounter()
+            self._finalize_active_encounter(resolved_normally=True)
             return
 
         # Only act on the transition None → tracked (start of encounter).
@@ -558,6 +591,10 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_encounter_min_dist = float("inf")
         self._current_encounter_min_dist_bank = float("inf")
         self._current_encounter_collided = False
+        self._current_encounter_passed = False
+        self._current_encounter_max_cri = 0.0
+        self._current_encounter_cri_sum = 0.0
+        self._current_encounter_cri_count = 0
 
         # Always record the encounter start so n_encounters is correct.
         # gt_ext may be None when the tracked entity was not tagged by the
@@ -570,10 +607,23 @@ class PySimColavBaseEnv(PySimEnv):
             "min_dist": float("inf"),
             "min_dist_bank": float("inf"),
             "collided": False,
+            "passed": False,
+            "resolved": False,
+            "max_cri": 0.0,
+            "mean_cri": 0.0,
         })
 
-    def _finalize_active_encounter(self) -> None:
-        """Write per-encounter min_dist / collided into the latest record."""
+    def _finalize_active_encounter(self, resolved_normally: bool = False) -> None:
+        """Write per-encounter aggregates into the latest record.
+
+        Args:
+            resolved_normally: True if finalize was triggered by the normal
+                classifier-driven tracked → None transition (TS left forget
+                range or was despawned by step-level cleanup). False when
+                the encounter was cut off by episode termination, truncation,
+                or reset. The record's ``resolved`` flag is set only when
+                this is True *and* ``_current_encounter_passed`` is True.
+        """
         if not self._in_encounter or not self._episode_encounters:
             self._in_encounter = False
             return
@@ -581,10 +631,21 @@ class PySimColavBaseEnv(PySimEnv):
         rec["min_dist"] = float(self._current_encounter_min_dist)
         rec["min_dist_bank"] = float(self._current_encounter_min_dist_bank)
         rec["collided"] = bool(self._current_encounter_collided)
+        rec["passed"] = bool(self._current_encounter_passed)
+        rec["resolved"] = bool(resolved_normally and self._current_encounter_passed)
+        rec["max_cri"] = float(self._current_encounter_max_cri)
+        rec["mean_cri"] = (
+            float(self._current_encounter_cri_sum / self._current_encounter_cri_count)
+            if self._current_encounter_cri_count > 0 else 0.0
+        )
         self._in_encounter = False
         self._current_encounter_min_dist = float("inf")
         self._current_encounter_min_dist_bank = float("inf")
         self._current_encounter_collided = False
+        self._current_encounter_passed = False
+        self._current_encounter_max_cri = 0.0
+        self._current_encounter_cri_sum = 0.0
+        self._current_encounter_cri_count = 0
 
     # ---------------------------
     # Collision-entity helpers
@@ -797,8 +858,10 @@ class PySimColavBaseEnv(PySimEnv):
 
         # Finalize any encounter still active at reset (defensive — terminal
         # steps already finalize via _update_classification_metrics).
+        # Reaching here mid-encounter means it was cut off by the episode
+        # ending without the TS leaving forget range → not resolved.
         if hasattr(self, "_finalize_active_encounter"):
-            self._finalize_active_encounter()
+            self._finalize_active_encounter(resolved_normally=False)
 
         self.collision_entities = []
         self.obstacle_count = 0

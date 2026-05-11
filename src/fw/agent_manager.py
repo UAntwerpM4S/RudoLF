@@ -383,6 +383,17 @@ class AgentManager:
                         col_n = m.collisions_per_policy.get(policy, 0)
                         rate = (col_n / enc_n * 100) if enc_n else 0.0
                         print(f"  {policy:<16s} {rate:6.2f}% ({col_n}/{enc_n} encounters)")
+                    print("CRI per policy (mean / median / max over valid encounters):")
+                    for policy in sorted(m.encounters_per_policy):
+                        n_valid = m.valid_encounters_per_policy.get(policy, 0)
+                        mean_cri = m.mean_cri_per_policy.get(policy, 0.0)
+                        median_cri = m.median_cri_per_policy.get(policy, 0.0)
+                        max_cri = m.max_cri_per_policy.get(policy, 0.0)
+                        print(
+                            f"  {policy:<16s} mean={mean_cri:.3f}  "
+                            f"median={median_cri:.3f}  max={max_cri:.3f}  "
+                            f"(n={n_valid})"
+                        )
                     n_ep = m.num_episodes
                     out_rate = (m.collisions_outside_encounters / n_ep * 100) if n_ep else 0.0
                     print(f"  outside-encounter {out_rate:6.2f}% ({m.collisions_outside_encounters}/{n_ep} episodes)")

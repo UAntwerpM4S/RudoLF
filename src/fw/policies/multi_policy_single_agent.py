@@ -397,10 +397,13 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
     def _predict(self, states, deterministic=False):
         """
-        Batched prediction across parallel environments.
+        Batched prediction across parallel environments, grouped by scenario.
 
-        Each environment may be in a different scenario, so predictions
-        are routed per-environment.
+        Each environment may be in a different scenario, but envs that share
+        a scenario are forwarded through their policy in a single batched
+        call. With N policies and K envs, this is at most N forward passes
+        per step (rather than K), removing the per-env PyTorch dispatch
+        overhead that otherwise scales linearly with ``num_envs``.
 
         Args:
             states (np.ndarray): Shape ``(num_envs, obs_dim)``.
@@ -408,28 +411,45 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         Returns:
             Tuple[np.ndarray, np.ndarray, np.ndarray]:
-                actions, log_probs, values (all shape ``(num_envs, ...)``).
+                actions, log_probs, values (shapes
+                ``(num_envs, action_dim)``, ``(num_envs,)``, ``(num_envs,)``).
         """
 
-        num_envs = len(states)
-        all_actions = []
-        all_log_probs = []
-        all_values = []
+        states_arr = np.asarray(states)
+        num_envs = states_arr.shape[0]
 
-        for i in range(num_envs):
-            base_obs, scenario_id = self._extract_scenario(states[i])
-            actions, log_probs, values = self.policies[scenario_id].predict(
-                base_obs, deterministic=deterministic,
+        base_obs_all = states_arr[:, :-self.num_policies]
+        one_hot = states_arr[:, -self.num_policies:]
+
+        # Vectorized equivalent of _extract_scenario's validation
+        if not np.all((one_hot == 0.0) | (one_hot == 1.0)):
+            raise ValueError(
+                f"Expected binary (0/1) one-hot encoding in the last "
+                f"{self.num_policies} observation dims of every env."
             )
-            all_actions.append(actions[0])
-            all_log_probs.append(log_probs.item())
-            all_values.append(values.item())
+        active_counts = one_hot.sum(axis=1)
+        if not np.all(active_counts == 1):
+            raise ValueError(
+                f"One-hot suffix must have exactly 1 active bit per env; "
+                f"got per-env active counts {active_counts.tolist()}."
+            )
 
-        return (
-            np.stack(all_actions),
-            np.array(all_log_probs, dtype=np.float32),
-            np.array(all_values, dtype=np.float32),
-        )
+        scenario_ids = np.argmax(one_hot, axis=1)
+
+        actions = np.empty((num_envs, self.output_dim), dtype=np.float32)
+        log_probs = np.empty(num_envs, dtype=np.float32)
+        values = np.empty(num_envs, dtype=np.float32)
+
+        for pid in np.unique(scenario_ids):
+            mask = scenario_ids == pid
+            a, lp, v = self.policies[int(pid)].predict(
+                base_obs_all[mask], deterministic=deterministic,
+            )
+            actions[mask] = a
+            log_probs[mask] = lp
+            values[mask] = v
+
+        return actions, log_probs, values
 
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):
         """

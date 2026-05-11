@@ -71,6 +71,17 @@ class ShipMetrics:
     encounters_per_policy: dict = field(default_factory=dict)         # {gt: encounter_count}
     collisions_per_policy: dict = field(default_factory=dict)         # {gt: collided_encounter_count}
     collisions_outside_encounters: int = 0
+    # Per-policy CRI aggregates over *valid* encounters only. An encounter
+    # is "valid" when it resolved normally (OS passed the TS and the TS
+    # subsequently left the forget range) and did not end in collision.
+    # mean_cri_per_policy is the average of per-encounter mean-CRI samples,
+    # median_cri_per_policy the median of those same samples, and
+    # max_cri_per_policy the maximum of per-encounter max-CRI samples.
+    # valid_encounters_per_policy gives the sample count behind each entry.
+    mean_cri_per_policy: dict = field(default_factory=dict)           # {gt: mean of per-encounter mean CRI}
+    median_cri_per_policy: dict = field(default_factory=dict)         # {gt: median of per-encounter mean CRI}
+    max_cri_per_policy: dict = field(default_factory=dict)            # {gt: max of per-encounter max CRI}
+    valid_encounters_per_policy: dict = field(default_factory=dict)   # {gt: valid encounter count}
 
 
 class MetricsComputer:
@@ -205,6 +216,8 @@ class MetricsComputer:
         encounters_per_policy: dict[str, int] = {}
         collisions_per_policy: dict[str, int] = {}
         collisions_outside_encounters = 0
+        mean_cri_samples_per_policy: dict[str, list[float]] = {}
+        max_cri_per_policy: dict[str, float] = {}
         for ep in episodes:
             encounter_collision_in_ep = False
             for enc in ep.scenario_encounters:
@@ -217,6 +230,20 @@ class MetricsComputer:
                     encounter_collision_in_ep = True
                     if gt is not None:
                         collisions_per_policy[gt] = collisions_per_policy.get(gt, 0) + 1
+                # CRI samples are restricted to *valid* encounters: those
+                # that resolved (OS passed and TS left forget range) and
+                # did not end in collision. Unresolved encounters give a
+                # truncated view of CRI and would skew the aggregate.
+                if (
+                    gt is not None
+                    and enc.get("resolved", False)
+                    and not enc.get("collided", False)
+                ):
+                    enc_mean_cri = float(enc.get("mean_cri", 0.0))
+                    enc_max_cri = float(enc.get("max_cri", 0.0))
+                    mean_cri_samples_per_policy.setdefault(gt, []).append(enc_mean_cri)
+                    if enc_max_cri > max_cri_per_policy.get(gt, 0.0):
+                        max_cri_per_policy[gt] = enc_max_cri
                 pred = enc.get("pred")
                 if gt is None or pred is None:
                     continue
@@ -238,5 +265,15 @@ class MetricsComputer:
         m.collisions_outside_encounters = collisions_outside_encounters
         m.encounter_misclassification_count = mismatches
         m.encounter_confusion = confusion
+        m.mean_cri_per_policy = {
+            gt: float(np.mean(samples)) for gt, samples in mean_cri_samples_per_policy.items()
+        }
+        m.median_cri_per_policy = {
+            gt: float(np.median(samples)) for gt, samples in mean_cri_samples_per_policy.items()
+        }
+        m.max_cri_per_policy = max_cri_per_policy
+        m.valid_encounters_per_policy = {
+            gt: len(samples) for gt, samples in mean_cri_samples_per_policy.items()
+        }
 
         return m

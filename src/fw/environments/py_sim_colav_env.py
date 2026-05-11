@@ -112,7 +112,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.05, 0.0, 0.0, 0.95, 0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.05, 0.0, 0.95, 0.0, 0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -151,6 +151,10 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             "crossing-right": 0.53125,
             "overtaking": 0.53125,
             "head-on": 0.53125,
+            # Overtaking has no phase-1 directional reward to compensate for,
+            # so its phase-2 boost is decoupled from "overtaking" and tuned
+            # independently (smaller value -> less aggressive post-encounter).
+            "overtaking_phase2": 0.20,
         }
 
         # Estimated peak of base_reward (the 0.9 baseline at zero penalty in
@@ -171,7 +175,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         (OU wander, head-on dodge). Training runs leave these at their safe
         defaults (set in PySimColavBaseEnv.__init__) and are unaffected.
         """
-        self.eval = False
+        self.eval = True
 
         # Variable TS radii
         #self.enable_variable_ship_size = True
@@ -203,7 +207,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.headon_ts_v_max = self.os_nominal_speed
 
         # Let OS always start from the original position
-        self.random_segment_start = True
+        self.random_segment_start = False
 
     # -------------------------
     # Polar scan geometry
@@ -408,6 +412,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.ts_idx = clf.tracked_ts
 
         g_tcpa = 1.0
+        g_tcpa_overtaking = 1.0
         cri = 0.0
         if (
             self.ts_idx is not None
@@ -422,6 +427,9 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             )
             k_tcpa = 0.15
             g_tcpa = 0.5 * (1.0 + math.tanh(k_tcpa * tcpa))
+
+            k_tcpa_overtaking = 0.10
+            g_tcpa_overtaking = 0.5 * (1.0 + math.tanh(k_tcpa_overtaking * tcpa))
 
 
         _step_polar = 0.0
@@ -496,17 +504,35 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 )
                 reward += crossing_right_signal
 
-        # post-encounter phase base-reward boost (post-CPA merge incentive).
-        # to match reward magnitude of pre-encounter phase.
+        # Post-encounter base-reward boost. Sized per scenario so that the
+        # phase-2 base reward reaches parity with the phase-1 reward
+        # (base + scenario-specific directional signal) at saturation.
+        base_peak = float(self._base_reward_peak_est)
         phase2_base_boost = 0.0
-        if clf.label in ("crossing-right", "overtaking", "head-on"):
-            g_tcpa_inv = 1.0 - g_tcpa
-            weight_key = clf.label
-            cr_w = float(self.reward_weights[weight_key])
-            base_peak = float(self._base_reward_peak_est)
+
+        if clf.label == "crossing-right":
+            # Matches the phase 1 crossing-right bearing signal.
+            cr_w = float(self.reward_weights["crossing-right"])
             phase2_multiplier = 1.0 + cr_w / max(base_peak, 1e-6)
-            phase2_base_boost = (phase2_multiplier - 1.0) * g_tcpa_inv * base_reward
-            reward += phase2_base_boost
+            phase2_base_boost = (phase2_multiplier - 1.0) * (1.0 - g_tcpa) * base_reward
+
+        elif clf.label == "head-on":
+            # Phase-1 head-on signal is boosted by (1 + (1 - cri)); mirror
+            # that here using an average CRI of 0.3 so the phase 2 budget
+            # matches phase 1 magnitude in this scenario.
+            cr_w = float(self.reward_weights["head-on"]) * (1.0 + (1.0 - 0.3))
+            phase2_multiplier = 1.0 + cr_w / max(base_peak, 1e-6)
+            phase2_base_boost = (phase2_multiplier - 1.0) * (1.0 - g_tcpa) * base_reward
+
+        elif clf.label == "overtaking":
+            # Overtaking has no phase-1 directional reward to compensate for,
+            # so the boost uses its own (smaller) weight. The gate is also
+            # gentler (g_tcpa_overtaking) because OS/TS range varies slowly.
+            cr_w = float(self.reward_weights["overtaking_phase2"])
+            phase2_multiplier = 1.0 + cr_w / max(base_peak, 1e-6)
+            phase2_base_boost = (phase2_multiplier - 1.0) * (1.0 - g_tcpa_overtaking) * base_reward
+
+        reward += phase2_base_boost
 
         # Passing detection: TS-frame sign-flip on lateral (crossing-right) or
         # longitudinal (head-on) offset. Linearly interpolate the sub-step
@@ -543,6 +569,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 os_at = self._prev_os_pos + t * (os_pos_now - self._prev_os_pos)
                 ts_at = self._prev_ts_pos + t * (ts_pos_now - self._prev_ts_pos)
                 self.ts_passed = self.ts_idx
+                self._current_encounter_passed = True
                 side = ts.ts_side_from_os_perspective(os_pos_now, self.phys_sim.state.heading)
                 if side == "port":
                     self._colreg_correct += 1

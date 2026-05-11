@@ -136,7 +136,7 @@ CONFIG_PARAMETERS = {
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["MultiPolicyColavEnv"],
-    'action': "train",  # Valid action values: "train", "visualize"
+    'action': "visualize",  # Valid action values: "train", "visualize"
     'wind': False,
     'current': False,
     'numerical_damping': False,
@@ -145,7 +145,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ship_model': ShipModel.MYZAKO_DEFAULT,
     'dynamics_model': Model.FOSSEN,
-    'live_animation': False,
+    'live_animation': True,
     # AirSim settings are now in airsim.config.airsim_config
     # Use get_airsim_config() to access them.
 }

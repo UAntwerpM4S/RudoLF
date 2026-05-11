@@ -32,10 +32,16 @@ def plot_min_distance_stats(
     (polygon boundary) observed during the encounter; otherwise only
     target-ship distance is used.
 
-    Only encounters that did not end in collision are included.
+    Only "valid" encounters are included: those that resolved normally
+    (OS passed the TS and the TS subsequently left the forget range) and
+    did not end in collision. Unresolved encounters (e.g. episode timed
+    out / terminated mid-encounter) are excluded to avoid skewing the
+    distribution with partial samples.
     """
     # Make sure any encounter still active at call time is finalized.
-    env._finalize_active_encounter()
+    # Calling here means we're outside the env's normal step/reset loop,
+    # so the encounter was not resolved by TS leaving forget range.
+    env._finalize_active_encounter(resolved_normally=False)
 
     encounters = list(env._all_encounters)
     if env._episode_encounters:
@@ -44,17 +50,19 @@ def plot_min_distance_stats(
     per_policy: dict[str, list[float]] = {}
     all_distances: list[float] = []
     for enc in encounters:
+        if not enc.get("resolved", False) or enc.get("collided", False):
+            continue
         md = enc.get("min_dist", float("inf"))
         if include_banks:
             md = min(md, enc.get("min_dist_bank", float("inf")))
-        if enc.get("collided", False) or md is None or md == float("inf"):
+        if md is None or md == float("inf"):
             continue
         gt = enc.get("gt") or "unknown"
         per_policy.setdefault(gt, []).append(float(md))
         all_distances.append(float(md))
 
     if not all_distances:
-        print("No non-collision encounters to plot min-distance stats for.")
+        print("No valid encounters to plot min-distance stats for.")
         return
 
     os_r = float(env.own_ship_radius)
@@ -153,7 +161,7 @@ def _plot_min_distance_pdf(
     title_suffix = " incl. banks" if include_banks else ""
     ax.set_title(
         f"Min-distance PDF{title_suffix} "
-        f"({len(distances)} non-collision encounters)"
+        f"({len(distances)} valid encounters)"
     )
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
@@ -177,7 +185,7 @@ def _plot_min_distance_boxplots(
     ordered += [lbl for lbl in per_policy.keys()
                 if lbl not in EXTENDED_SCENARIO_LABELS and per_policy[lbl]]
     if not ordered:
-        print("No non-collision encounters with a scenario tag for boxplots.")
+        print("No valid encounters with a scenario tag for boxplots.")
         return
 
     data = [per_policy[lbl] for lbl in ordered]
@@ -205,7 +213,7 @@ def _plot_min_distance_boxplots(
     ax.set_ylabel("Minimum center-to-center distance to collision entity [m]")
     ax.set_xlabel("Scenario / policy")
     ax.set_title(
-        f"Min-distance per policy ({int(np.sum(counts))} non-collision encounters)"
+        f"Min-distance per policy ({int(np.sum(counts))} valid encounters)"
     )
     ax.grid(True, axis="y", alpha=0.3)
     ax.legend(loc="upper right")
