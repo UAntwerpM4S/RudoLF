@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import List, Tuple
 
 import torch
-import torch.nn as nn
 
 from fw.policies.ppo_policy import PPOPolicy, get_device
 
