@@ -310,6 +310,7 @@ def _run_training_with_transfer(
     tl_cfg: dict[str, Any],
     stop_condition: Any,
     repo_root: Path,
+    profile=None,
 ) -> dict[str, Any]:
     """Create a SinglePPOAgent directly, inject a transfer policy, and run learn().
 
@@ -327,7 +328,7 @@ def _run_training_with_transfer(
     )
 
     hyperparams = get_hyperparameters(PPO_POLICY_NAME, env_name="AirSimEnv")
-    agent = SinglePPOAgent(environment=env.gym_env, **hyperparams)
+    agent = SinglePPOAgent(profile=profile, environment=env.gym_env, **hyperparams)
 
     source_path_raw = str(tl_cfg.get("source_policy_path", "")).strip()
     source_path = Path(source_path_raw)
@@ -337,7 +338,6 @@ def _run_training_with_transfer(
     obs_dim = int(env.gym_env.observation_space.shape[0])
     act_dim = int(env.gym_env.action_space.shape[0])
     freeze = bool(tl_cfg.get("freeze_shared_layers", True))
-
     print("\n" + "=" * 60)
     print("  TRANSFER LEARNING — loading 2D policy weights")
     print("=" * 60)
@@ -360,7 +360,13 @@ def _run_training_with_transfer(
             lr=agent.learning_rate,
         )
     except (TransferIncompatibilityError, RuntimeError) as exc:
-        print(f"[TransferLearning] Failed — training from scratch.\n  {exc}")
+        print(
+            f"\n{'!'*60}\n"
+            f"[TransferLearning] FAILED — falling back to random-weight training.\n"
+            f"  Reason: {exc}\n"
+            f"  Check that source_policy_path exists and action dims match.\n"
+            f"{'!'*60}\n"
+        )
 
     agent.learn(stop_condition=stop_condition)
     return {}
@@ -368,7 +374,8 @@ def _run_training_with_transfer(
 
 def run_training(runtime_settings: dict[str, Any] | None = None):
     """Run AirSim PPO training from runtime settings and return trainer metrics."""
-    from fw.config import PPO_POLICY_NAME
+    from fw.config import PPO_POLICY_NAME, get_config_parameters
+    from fw.config_profile import ProfileRegistry
     from fw.env_factory import airsim_env_name, get as get_environment
     from fw.trainer import Trainer
 
@@ -376,13 +383,18 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
     env_config = _build_training_env_config(runtime_settings)
     stop_condition = _build_training_stop_condition(runtime_settings)
 
+    fw_config = get_config_parameters()
+    profile_name = fw_config.get("profile", "default_airsim_profile")
+    profile = ProfileRegistry.get(profile_name)
+    profile.validate()
+
     env = get_environment(airsim_env_name, configuration=env_config)
 
     # Guard: if AirSim was unavailable and env_factory silently returned a
     # fallback environment (e.g. PySimEnv), abort here. The fallback env
     # has already been (or will be) trained by fw.main's standard batch; we
     # must not run it a second time with an AirSim-only stop-condition dict.
-    if not hasattr(env, "airsim_client"):
+    if env.gym_env.type_name != airsim_env_name:
         print(
             f"[train_airsim] AirSimEnv requested but env_factory returned "
             f"'{env.gym_env.type_name}' (UE5 unavailable). Skipping AirSim training."
@@ -397,7 +409,7 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
     tl_cfg = dict(runtime.get("transfer_learning", {}))
     if bool(tl_cfg.get("enabled", False)):
         try:
-            return _run_training_with_transfer(env, tl_cfg, stop_condition, repo_root)
+            return _run_training_with_transfer(env, tl_cfg, stop_condition, repo_root, profile)
         finally:
             try:
                 env.gym_env.close()
@@ -406,7 +418,7 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
 
     # Standard path (no transfer learning)
     envs = [env]
-    trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+    trainer = Trainer(PPO_POLICY_NAME, envs, profile, "SimpleScheduler")
 
     print("\n" + "=" * 60)
     print("  STARTING AIRSIM RL TRAINING")
@@ -428,14 +440,21 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
 
 def run_visualization(runtime_settings: dict[str, Any] | None = None):
     """Run AirSim visualization from runtime settings and return trainer instance."""
-    from fw.config import PPO_POLICY_NAME
+    from fw.config import PPO_POLICY_NAME, get_config_parameters
+    from fw.config_profile import ProfileRegistry
     from fw.env_factory import airsim_env_name, get as get_environment
     from fw.trainer import Trainer
 
     env_config = _build_visualize_env_config(runtime_settings)
     env = get_environment(airsim_env_name, configuration=env_config)
     envs = [env]
-    trainer = Trainer(PPO_POLICY_NAME, envs, "SimpleScheduler")
+
+    fw_config = get_config_parameters()
+    profile_name = fw_config.get("profile", "default_airsim_profile")
+    profile = ProfileRegistry.get(profile_name)
+    profile.validate()
+
+    trainer = Trainer(PPO_POLICY_NAME, envs, profile, "SimpleScheduler")
 
     print("\n" + "=" * 60)
     print("  VISUALIZING TRAINED POLICY IN AIRSIM")

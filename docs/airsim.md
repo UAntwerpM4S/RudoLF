@@ -17,10 +17,12 @@ This document is the single technical reference for the AirSim integration in Ru
    - [Speed Profiles](#52-speed-profiles)
    - [Curriculum Learning](#53-curriculum-learning)
    - [Transfer Learning](#54-transfer-learning)
+   - [Training Session Exports](#55-training-session-exports)
+   - [AirSim Training Safeguards](#56-airsim-training-safeguards)
+   - [StrictSuccessStoppingCallback](#57-strictsuccessstoppingcallback)
 6. [Visualization of Trained Models in AirSim](#6-visualization-of-trained-models-in-airsim)
    - [Model Selection](#61-model-selection)
    - [Visualization Settings](#62-visualization-settings)
-
 7. [Inference of AirSim-Trained Models](#7-inference-of-airsim-trained-models)
 8. [Adding Support for New Model Families](#8-adding-support-for-new-model-families)
 9. [Architecture](#9-architecture)
@@ -200,8 +202,9 @@ The execution decision is made in three layers:
 **Layer 2 — `src/fw/main.py`** executes environments in the configured order:
 
 - Non-AirSim environments (PySimEnv, FhSimEnv, etc.) are batched and run through the generic Trainer.
-- Whenever `AirSimEnv` appears in the ordered list, that step is delegated to `fw.main_with_airsim`.
-- If a delegated AirSim step fails (UE5 unreachable), that step is skipped and execution continues with remaining environments.
+- Whenever `AirSimEnv` appears in the ordered list, that step is delegated to `fw.main_with_airsim` via `runpy.run_module("fw.main_with_airsim")`.
+- The active action is forwarded via the `FW_MAIN_ACTION_OVERRIDE` environment variable; `main_with_airsim` reads it at startup and falls back to `runtime_settings.json` if absent.
+- If a delegated AirSim step fails (UE5 unreachable, non-zero exit), that step is skipped and execution continues with remaining environments.
 
 **Layer 3 — `src/fw/main_with_airsim.py`** reads `src/airsim/config/runtime_settings.json` and decides:
 
@@ -217,14 +220,17 @@ The execution decision is made in three layers:
 ```
 fw.main (config.py env_type/action)
     │
-    ├── non-AirSim env → generic Trainer
+    ├── non-AirSim env → generic Trainer (profile loaded from config.py)
     │
-    └── AirSimEnv entry → fw.main_with_airsim
+    └── AirSimEnv entry → fw.main_with_airsim (FW_MAIN_ACTION_OVERRIDE env var)
             │
             ├── action = "train"
             │       └── train_airsim.run_training()
-            │               ├── transfer_learning.enabled = true  → inject transferred policy
-            │               └── standard → Trainer → SinglePPOAgent → AirSimEnv → UE5
+            │               │   (loads VesselProfile from config.py profile key)
+            ├── transfer_learning.enabled = true
+            │               │       └── build_transfer_policy → SinglePPOAgent(profile) → AirSimEnv → UE5
+            │               └── standard
+            │                       └── Trainer(profile) → SinglePPOAgent → AirSimEnv → UE5
             │
             └── action = "visualize"
                     ├── model_visualise = true  → run_visualise_models.py (framework replay)
@@ -250,12 +256,15 @@ python -m fw.main
 
 File: `src/fw/config.py`
 
-This file controls framework-level behavior. For AirSim, only two keys matter:
+This file controls framework-level behavior. For AirSim, three things matter:
+
+#### Environment and Action Keys
 
 | Key | Type | Example | Description |
 |-----|------|---------|-------------|
 | `env_type` | `str` or `list[str]` | `"AirSimEnv"` or `["PySimEnv", "AirSimEnv"]` | Which environment(s) to run, in order. Include `"AirSimEnv"` to activate the AirSim step. |
 | `action` | `str` | `"train"` or `"visualize"` | High-level mode for all environments. |
+| `profile` | `str` | `"default_airsim_profile"` | VesselProfile key loaded from `ProfileRegistry`. Controls speed envelope and scenario parameters threaded into `SinglePPOAgent`. |
 
 Valid `env_type` values: `"PySimEnv"`, `"FhSimEnv"`, `"AirSimEnv"`, `"PySimPolarEnv"`, `"LunarLander"`.
 
@@ -265,6 +274,7 @@ Example — AirSim training only:
 CONFIG_PARAMETERS = {
     'env_type': ["AirSimEnv"],
     'action': "train",
+    'profile': "default_airsim_profile",
     ...
 }
 ```
@@ -277,6 +287,34 @@ CONFIG_PARAMETERS = {
     'action': "train",
     ...
 }
+```
+
+#### AirSim PPO Hyperparameter Overrides
+
+`config.py` defines `AIRSIM_HYPERPARAMETER_OVERRIDES`, which is applied on top of `DEFAULT_HYPERPARAMETERS` whenever `env_name == "AirSimEnv"` is passed to `get_hyperparameters()`. This gives AirSim training its own PPO tuning separate from 2D environments:
+
+| Hyperparameter | Default (2D) | AirSim override |
+|----------------|-------------|-----------------|
+| `learning_rate` | `1e-4` | `3e-4` |
+| `gamma` | `0.95` | `0.99` |
+| `clip_range` | `0.05` | `0.2` |
+| `device` | `"cpu"` | `"cuda"` (GPU strongly recommended) |
+
+All other hyperparameters (`gae_lambda`, `entropy_coef`, `value_loss_coef`, `max_grad_norm`, `batch_size`, `num_epochs`, etc.) inherit their 2D defaults.
+
+The `get_hyperparameters(agent_name, env_name=None)` function applies the override:
+
+```python
+params = DEFAULT_HYPERPARAMETERS[agent_name].copy()
+if env_name == "AirSimEnv":
+    params.update(AIRSIM_HYPERPARAMETER_OVERRIDES.get(agent_name, {}))
+return params
+```
+
+This is called inside `run_training()` → `_run_training_with_transfer()` as:
+
+```python
+hyperparams = get_hyperparameters(PPO_POLICY_NAME, env_name="AirSimEnv")
 ```
 
 All AirSim-specific parameters (speed, curriculum, transfer learning, connection, visualization mode) are configured in `runtime_settings.json`, not in `config.py`.
@@ -312,7 +350,7 @@ The file has four top-level sections:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `speed_profile` | `"safe"` | Named timing preset. See [Speed Profiles](#52-speed-profiles). |
-| `max_policy_updates` | `200` | PPO policy update count before the stop condition triggers. |
+| `max_policy_updates` | `400` | PPO policy update count before the stop condition triggers. |
 | `max_steps` | `120000` | Episode step cap during training. |
 | `simulation_speed` | `20.0` | UE5 speed multiplier (overridden by the active speed profile). |
 | `use_pause_stepping` | `true` | Deterministic pause-step mode. Recommended for all non-debug runs. |
@@ -338,7 +376,16 @@ The file has four top-level sections:
 | `steering_dynamics_enabled` | `true` | Apply vessel-like steering dynamics before controls are sent to UE5. |
 | `steering_smoothing_alpha` | `0.65` | Low-pass blend factor for steering dynamics. Higher = tracks policy faster. |
 | `max_steering_rate_per_second` | `3.2` | Maximum steering change per simulated second in normalized `[-1, 1]` space. |
+| `guidance_residual_steering_scale` | `0.50` | Guidance residual steering blend scale. Only applies when `guidance_assist_enabled = true`. |
+| `guidance_residual_throttle_scale` | `0.60` | Guidance residual throttle blend scale. Only applies when `guidance_assist_enabled = true`. |
+| `latency_warning_threshold` | *(not set)* | Optional float (seconds). If a UE5 step round-trip exceeds this value, a latency warning is logged. Absent by default — add the key to enable. |
 | `curriculum_enabled` | `false` | Activate checkpoint-based episode start randomization. See [Curriculum Learning](#53-curriculum-learning). |
+| `curriculum_window_size` | `8` | Initial number of checkpoints in the start window. |
+| `curriculum_target_checkpoint` | *(not set)* | Optional integer. If set, overrides the computed initial frontier checkpoint position. When absent the frontier is derived from `curriculum_window_size`. |
+| `curriculum_frontier_increment` | `4` | Checkpoints added to frontier per advancement. |
+| `curriculum_window_increment` | `6` | Window size growth per advancement. |
+| `curriculum_success_patience` | `2` | Consecutive clean successes required before frontier advances. |
+| `curriculum_randomization_scale` | `0.0` | Optional Gaussian start-position noise in metres. |
 
 ---
 
@@ -378,11 +425,13 @@ The file has four top-level sections:
 
 #### `transfer_learning` — Transfer from 2D to AirSimEnv
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `enabled` | `false` | Initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights. |
-| `source_policy_path` | `"models/PySimEnv_PPO_policy.zip"` | Path to the 2D `.zip` policy (relative to repo root or absolute). |
-| `freeze_shared_layers` | `true` | Freeze all transferred layers so only the mapping-layer first linear adapts. `false` enables full fine-tuning. |
+| Key | JSON default | Description |
+|-----|-------------|-------------|
+| `enabled` | `true` | Initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights. |
+| `source_policy_path` | `"models/FhSimEnv_PPO_policy.zip"` | Path to the 2D `.zip` policy (relative to repo root or absolute). Either `FhSimEnv_PPO_policy.zip` or `PySimEnv_PPO_policy.zip` — both are 12-dim observation, 2-dim action. |
+| `freeze_shared_layers` | `true` | When `true`, freeze **only** `shared_network[2]` (the 256→128 backbone hidden layer). The mapping layer (`shared_network[0]`) and the actor/critic heads remain trainable so the policy distribution can adapt to AirSim's 3D physics and reward structure. When `false`, no parameters are frozen and the full network fine-tunes. |
+
+> **Important behavior change (sprint 11–12 fix):** Earlier revisions froze every transferred layer — including the actor and critic heads — when `freeze_shared_layers = true`. That locked the policy distribution and prevented the agent from getting past the first significant route bend (~checkpoint 33). The current implementation freezes only the backbone hidden layer; the actor head, critic head, and mapping layer all keep `requires_grad = True`. This matches the long-standing docstring intent in `transfer_learning.py` and is what makes Phase 1 (freeze ON) usable as a learning phase rather than a hard ceiling.
 
 ---
 
@@ -408,21 +457,44 @@ python -m fw.main
 
 AirSim training behavior is controlled by the `training` section of `runtime_settings.json`. The default settings use the `safe` speed profile, pause stepping with sim-time stepping, reward normalization, and no curriculum or transfer learning.
 
-Training stops when the number of PPO policy updates reaches `training.max_policy_updates`.
+Training stops when the number of PPO policy updates reaches `training.max_policy_updates` (default: `400`).
 
 Training telemetry is written per-step to `logs/airsim_training_episode_log.csv` (path configurable via `training.episode_log_path`).
 
+The vessel speed profile is loaded from `config.py` (`profile` key, e.g. `"default_airsim_profile"`) and threaded through to `SinglePPOAgent`. The profile must be registered in `ProfileRegistry`.
+
+#### Startup Log Analysis
+
+If `training.episode_log_path` points to an existing CSV from a previous run, `train_airsim` reads and analyzes it at startup before training begins, printing a summary like:
+
+```
+============================================================
+  AIRSIM TRAINING LOG ANALYSIS
+============================================================
+  Rows analysed:             18423
+  Episodes analysed:         312
+  Median max checkpoint:     9
+  Modal max checkpoint:      7
+  Best max checkpoint:       22
+  High-speed off-track rate: 14.2%
+============================================================
+```
+
+This summary is informational only — it does not automatically configure curriculum settings. Use the values to decide appropriate `curriculum_target_checkpoint` and `curriculum_window_size` before the next run. The recommendation logic (see [Training Log Analysis in Section 5.7](#57-strictsuccessstoppingcallback)) derives a suggested frontier as `max(window, median+2, modal+1)` and a window in the range `[6, 10]`.
+
 ### 5.2 Speed Profiles
 
-`training.speed_profile` selects a named timing preset that overwrites `simulation_speed`, `use_pause_stepping`, `frames_per_step`, `time_step`, `physics_update_timeout`, and `state_poll_interval`.
+`training.speed_profile` selects a named timing preset that overwrites `simulation_speed`, `use_pause_stepping`, `use_sim_time_stepping`, `sim_time_per_action`, `frames_per_step`, `time_step`, `physics_update_timeout`, and `state_poll_interval`.
 
-| Profile | Sim speed | Pause stepping | time_step | Recommended use |
-|---------|-----------|----------------|-----------|----------------|
-| `safe` | 20× | yes | 0.05 s | New training (default) |
-| `fast` | 40× | yes | 0.10 s | Faster iteration |
-| `turbo` | 80× | yes | 0.10 s | Maximum throughput |
-| `normal` | 1× | no | 0.10 s | Debug / real-time |
-| `custom` | configurable | configurable | configurable | Manual override (uses explicit training values) |
+| Profile | Sim speed | Pause stepping | Sim-time stepping | sim_time_per_action | frames_per_step | Recommended use |
+|---------|-----------|----------------|-------------------|---------------------|-----------------|----------------|
+| `safe` | 20× | yes | yes | 0.05 s | 8 | New training (default) |
+| `fast` | 40× | yes | yes | 0.10 s | 10 | Faster iteration |
+| `turbo` | 80× | yes | yes | 0.10 s | 12 | Maximum throughput |
+| `normal` | 1× | no | no | — | 1 | Debug / real-time |
+| `custom` | configurable | configurable | configurable | configurable | configurable | Manual override (uses explicit training values) |
+
+When `use_pause_stepping = true` and `use_sim_time_stepping = true`, the effective `time_step` is set to `sim_time_per_action` at runtime regardless of the `time_step` JSON value.
 
 Set in `runtime_settings.json`:
 
@@ -440,7 +512,54 @@ Two complementary mechanisms are available:
 
 **Soft offtrack-limit decay** (always active regardless of `curriculum_enabled`): the off-track termination threshold starts permissive and tightens over early episodes, easing initial exploration.
 
+The decay constants are:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `_SOFT_OFFTRACK_CTE_LIMIT_M` | `90 m` | Starting (permissive) cross-track limit |
+| `_HARD_OFFTRACK_CTE_LIMIT_M` | `150 m` | Maximum (fully lax) limit at episode 0 |
+| `_OFFTRACK_LIMIT_DECAY_EPISODES` | `450` | Episodes over which the limit decays from hard to soft |
+| `_EARLY_FAILURE_GRACE_STEPS` | `4` | Steps at episode start exempt from offtrack detection |
+
+The effective limit starts at `_HARD_OFFTRACK_CTE_LIMIT_M` and decays toward `_SOFT_OFFTRACK_CTE_LIMIT_M` over the first 450 episodes. Episode starts are also exempt from offtrack checking for the first 4 steps to allow the pose to settle.
+
 **Checkpoint-based window/frontier curriculum** (activated by `curriculum_enabled = true`): episode start positions are drawn from a sliding window of checkpoints. After a configurable number of consecutive clean successes, the frontier advances and the window expands, progressively exposing the full route.
+
+#### Success Criterion
+
+An episode counts as a curriculum success only when **all three conditions** are met:
+
+1. `checkpoint_index > curriculum_frontier_index` — the agent passed the current frontier checkpoint.
+2. `not collision` — no physical collision occurred.
+3. `not offtrack` — the vessel did not exit the cross-track limit at any point.
+
+This means drifting past the frontier out-of-bounds is explicitly **not** a success. The agent must navigate cleanly through the frontier checkpoint; any collision or offtrack event resets the streak to zero regardless of how many checkpoints were passed.
+
+#### Window and Frontier Mechanics
+
+- The initial frontier is set to `min(curriculum_window_size, len(checkpoints) - 2)` at env construction.
+- The start window spans from `max(0, frontier - window_size + 1)` to `frontier` (inclusive).
+- Each episode, a start checkpoint is drawn uniformly at random from this window.
+- After `curriculum_success_patience` consecutive clean successes, the frontier advances by `curriculum_frontier_increment` checkpoints and the window grows by `curriculum_window_increment`.
+- Frontier and window are clamped so they never exceed the route length.
+
+#### Terminal Output
+
+Curriculum learning prints one line per episode and one additional line on frontier advancement:
+
+```
+[Curriculum] Episode PASS | checkpoints passed: 14/22 | frontier: 12 | streak: 1/2
+[Curriculum] Episode FAIL | checkpoints passed: 6/22  | frontier: 12 | streak: 0/2
+[Curriculum] Frontier advanced: 12 → 16 | window: 8 → 14 checkpoints | start range: [2–16]
+```
+
+- `PASS` / `FAIL` reflects whether the episode met all three success conditions.
+- `checkpoints passed` shows `checkpoint_index / total_checkpoints`.
+- `frontier` is the current frontier checkpoint index.
+- `streak` is `current_streak / patience` (shown before the internal counter updates).
+- On advancement, old and new frontier, window size, and the resulting start range are printed.
+
+#### Configuration
 
 Curriculum keys in `runtime_settings.json` under `training`:
 
@@ -451,6 +570,7 @@ Curriculum keys in `runtime_settings.json` under `training`:
 | `curriculum_frontier_increment` | `4` | Checkpoints added to frontier on each advancement. |
 | `curriculum_window_increment` | `6` | Window size growth per advancement. |
 | `curriculum_success_patience` | `2` | Consecutive clean successes required before frontier advances. |
+| `curriculum_target_checkpoint` | *(not set)* | Optional. If set, overrides the derived initial frontier. Useful to seed CL from a known good checkpoint number rather than the window-size default. |
 | `curriculum_randomization_scale` | `0.0` | Optional Gaussian start-position noise in metres. |
 
 Enable curriculum:
@@ -460,6 +580,7 @@ Enable curriculum:
     "curriculum_enabled": true,
     "curriculum_window_size": 8,
     "curriculum_frontier_increment": 4,
+    "curriculum_window_increment": 6,
     "curriculum_success_patience": 2
 }
 ```
@@ -468,26 +589,301 @@ Enable curriculum:
 
 ### 5.4 Transfer Learning
 
-Transfer learning initialises the AirSimEnv policy from a pretrained 2D checkpoint (PySimEnv or FhSimEnv) instead of random weights.
+Transfer learning initialises the AirSimEnv policy from a pretrained 2D checkpoint (PySimEnv or FhSimEnv) instead of random weights. It is implemented in `src/airsim/train/transfer_learning.py`.
 
-Enable in `runtime_settings.json`:
+Both supported 2D checkpoints (`PySimEnv_PPO_policy.zip`, `FhSimEnv_PPO_policy.zip`) have:
+
+- **input_dim = 12** (2D observation space)
+- **output_dim = 2** (steering, throttle)
+
+AirSimEnv has **input_dim = 18** and **output_dim = 2**. Action dimensions match (transfer allowed) and the target input space is strictly larger than the source (`extra_input_dims = 6`).
+
+#### Recommended 3-Phase Training Strategy
+
+The recommended workflow for producing a robust AirSimEnv policy is a sequential three-phase process. Each phase loads the previous phase's saved AirSimEnv checkpoint as its source.
+
+**Phase 1 — Backbone-preserving warm start (freeze ON, curriculum OFF)**
+
+Transfer the 2D weights and freeze only the backbone hidden layer (`shared_network[2]: 256→128`). The mapping layer (`shared_network[0]: 18→256`, random-init) and the actor + critic heads (transferred from the 2D source) all remain trainable. The frozen backbone preserves the pretrained mid-level feature representation while the rest of the network adapts to the 18-dim AirSim observation and the UE5 reward structure.
 
 ```json
 "transfer_learning": {
     "enabled": true,
-    "source_policy_path": "models/PySimEnv_PPO_policy.zip",
+    "source_policy_path": "models/FhSimEnv_PPO_policy.zip",
     "freeze_shared_layers": true
+},
+"training": {
+    "curriculum_enabled": false,
+    "max_policy_updates": 150
 }
 ```
 
-**Mapping layer strategy**: the first linear layer `shared_network[0]: Linear(input_dim → 256)` differs in shape between 2D and 3D policies. It is intentionally left randomly initialised as the trainable mapping layer. All deeper shared layers and the actor/critic heads have identical shapes and are transferred. With `freeze_shared_layers = true`, only the mapping layer trains; with `false`, the entire network fine-tunes.
+**Phase 2 — Full fine-tuning (freeze OFF, curriculum OFF)**
 
-**Requirements for a valid transfer**:
-- Action dimensions must match between source and target.
-- `target_input_dim >= source_input_dim`.
-- A `TransferIncompatibilityError` is raised if either condition fails.
+Load the Phase 1 checkpoint as the new source. With both source and target being AirSimEnv policies (identical 18-dim input, 2-dim output), every transferable layer including `shared_network[0]` matches in shape and is copied directly. All layers are then unfrozen for full fine-tuning.
 
-The source policy is always loaded on CPU; weight tensors are moved to the target device automatically. Any compatible 2D `.zip` policy can serve as the source — not limited to PySimEnv.
+```json
+"transfer_learning": {
+    "enabled": true,
+    "source_policy_path": "models/AirSimEnv_Phase1_policy.zip",
+    "freeze_shared_layers": false
+},
+"training": {
+    "curriculum_enabled": false,
+    "max_policy_updates": 200
+}
+```
+
+**Phase 3 — Curriculum optimization (freeze OFF, curriculum ON)**
+
+Load the Phase 2 checkpoint. Enable curriculum learning to progressively expose harder start positions as the agent demonstrates competence. All layers remain trainable.
+
+```json
+"transfer_learning": {
+    "enabled": true,
+    "source_policy_path": "models/AirSimEnv_Phase2_policy.zip",
+    "freeze_shared_layers": false
+},
+"training": {
+    "curriculum_enabled": true,
+    "curriculum_window_size": 8,
+    "curriculum_frontier_increment": 4,
+    "curriculum_success_patience": 2,
+    "max_policy_updates": 300
+}
+```
+
+#### Mapping Layer Strategy
+
+The `ActorCriticNetwork` first layer `shared_network[0]: Linear(input_dim → 256)` is the mapping layer. Its behavior during transfer depends on whether the source and target input dimensions match:
+
+| Source → Target | `shared_network[0]` behavior |
+|-----------------|------------------------------|
+| 12-dim → 18-dim (PySim/FhSim → AirSim) | Shape mismatch (`12×256` vs `18×256`). Layer is **not** transferred. It remains randomly initialised by `PPOPolicy.__init__()` and is always trainable. This is the implicit mapping layer that learns to project the extra 6 AirSim observation dimensions into the feature space that the deeper layers already understand. |
+| 18-dim → 18-dim (AirSim Phase 1 → AirSim Phase 2/3) | Shapes match. The layer **is** transferred from source. Whether it stays trainable depends on `freeze_shared_layers`: when `false` (typical for Phase 2/3) it is trainable; when `true` it is still trainable because only the backbone is frozen. |
+
+There is **no** orthogonal re-init step for the mapping layer — earlier revisions had a `mapping_layer_init_gain` parameter, but that has been removed in favor of relying on `PPOPolicy`'s own initialisation. If a future regression reintroduces gradient explosion at training start, dampening the mapping layer init is the first place to look.
+
+#### Transferable Layers
+
+The following layers are candidates for transfer (in order). Each is transferred only if both source and target have identical tensor shapes:
+
+| Key | Transfer condition (12→18 case) | Transfer condition (18→18 case) |
+|-----|----------------------------------|----------------------------------|
+| `shared_network.0.weight` | Skipped (shape mismatch `12×256` vs `18×256`) | Transferred |
+| `shared_network.0.bias` | Skipped (paired with weight) | Transferred |
+| `shared_network.2.weight` | Transferred (256→128 shape is invariant) | Transferred |
+| `shared_network.2.bias` | Transferred | Transferred |
+| `actor_mean.weight` | Transferred (action dims match) | Transferred |
+| `actor_mean.bias` | Transferred | Transferred |
+| `actor_log_std` | Transferred | Transferred |
+| `critic.weight` | Transferred | Transferred |
+| `critic.bias` | Transferred | Transferred |
+
+#### Compatibility Requirements
+
+- Action dimensions must match between source and target. PySim, FhSim, and AirSim all use a 2-dim action space (steering, throttle).
+- `target_input_dim >= source_input_dim`. PySim/FhSim (12) → AirSim (18) satisfies this.
+- A `TransferIncompatibilityError` (subclass of `ValueError`) is raised with a descriptive message — including the actual source and target dimensions — if either condition fails.
+
+#### Freezing Behavior
+
+With `freeze_shared_layers = true`, only the backbone hidden layer is frozen:
+
+```python
+_BACKBONE_KEYS = frozenset({"shared_network.2.weight", "shared_network.2.bias"})
+```
+
+All other parameters — `shared_network[0]` (mapping layer), `actor_mean.weight`, `actor_mean.bias`, `actor_log_std`, `critic.weight`, `critic.bias` — retain `requires_grad = True`. This is essential for convergence: freezing the actor head locks the policy's action distribution to its 2D form and the agent cannot learn AirSim-specific steering responses.
+
+With `freeze_shared_layers = false`, no parameters are frozen after transfer. The full network fine-tunes.
+
+#### Source Loading
+
+The source policy is always loaded on CPU for weight extraction, regardless of the target device. This means any checkpoint saved on CPU or CUDA can serve as source for any training device. Weight tensors are moved to the target device automatically during copy.
+
+#### Trainer Bypass
+
+The transfer learning path does **not** use the generic `Trainer`. It calls `_run_training_with_transfer()` (in `train_airsim.py`) which:
+
+1. Builds AirSim-specific hyperparameters via `get_hyperparameters(PPO_POLICY_NAME, env_name="AirSimEnv")`.
+2. Constructs `SinglePPOAgent(profile, environment, **hyperparams)` directly.
+3. Calls `build_transfer_policy()` to produce the initialised `PPOPolicy` with weights transferred and freeze applied.
+4. Replaces `agent.policy` with the transfer policy in-place.
+5. Reinitialises `agent.optimizer` as `Adam(filter(lambda p: p.requires_grad, params), lr=learning_rate)` — the `filter` guarantees that frozen parameters (just the backbone, when `freeze_shared_layers=true`) receive no gradient updates.
+6. Calls `agent.learn(stop_condition)` directly.
+
+This bypass is necessary because `Trainer.train()` creates a fresh agent internally, which is too late to inject the transferred weights before training starts. If `build_transfer_policy()` fails (`TransferIncompatibilityError` or `RuntimeError`), training falls back to random-weight training with a clear printed message.
+
+#### Terminal Output
+
+Transfer learning prints a topology report and a transfer summary on startup. Example for the typical Phase 1 case (12→18, freeze ON):
+
+```
+==========================================================
+  Transfer Learning — Network Topology Comparison
+==========================================================
+  Source input dim   : 12  (2D policy)
+  Target input dim   : 18  (AirSimEnv)
+  Extra input dims   : 6  (handled by mapping layer)
+  Source output dim  : 2
+  Target output dim  : 2
+  Output compatible  : True
+  Transferable hidden layers (shared_network[2], actor, critic):
+    [0] Linear(256 → 128)
+  Mapping layer      : shared_network[0] — random-init, trainable
+                       Linear(18 → 256)
+==========================================================
+
+[TransferLearning] Source device : cpu (weight extraction)
+[TransferLearning] Target device : cuda:0
+[TransferLearning] Transferred 7 layer(s): ['shared_network.2.weight', 'shared_network.2.bias', 'actor_mean.weight', 'actor_mean.bias', 'actor_log_std', 'critic.weight', 'critic.bias']
+[TransferLearning] Trainable: 197,248 / 230,402 params (backbone frozen, mapping+heads trainable)
+```
+
+In the 18→18 case (Phase 2/3), `Transferred 9 layer(s)` instead of 7 — `shared_network.0.weight` and `shared_network.0.bias` are also copied.
+
+### 5.5 Training Session Exports
+
+Every AirSim training run (both standard and transfer learning) creates a timestamped session directory managed by `AirSimTrainingSession` (`src/fw/common/airsim/tools/airsim_training_session.py`).
+
+#### Session Directory
+
+```text
+logs/airsim_training_sessions/AirSimEnv_SinglePPO_{YYYYMMDD_HHMMSS}/
+```
+
+The directory is created at the start of training and all files are finalized (flushed and closed) when training ends — either normally or after a `KeyboardInterrupt`.
+
+#### Session Files
+
+| File | Contents |
+|------|---------|
+| `run_log.csv` | Per-episode structured events emitted by the environment during training (see fields below) |
+| `training_metrics.csv` | Per-PPO-iteration: reward, loss, advantage — same data used for the metrics plot |
+| `training_metrics.png` | Multi-panel training curve: normalized reward, loss, and advantage over iterations; plus per-episode max checkpoint progress |
+| `route_plot.png` | Overhead route overview with respawn scatter, checkpoint hit scatter, obstacle/waterway polygons, and target marker |
+| `metadata.json` | Session metadata: paths, config, interrupted flag, skipped short rollouts, best mean reward, stop rule, route summary |
+| `<env>_<agent>_iterations_<timestamp>.csv` | Per-iteration log from `TrainingIterationLogger` (reward, loss, advantage, elapsed time). The exact filename is built by `TrainingIterationLogger` from env name, agent type, and timestamp. |
+
+#### `run_log.csv` Fields
+
+Each row is one environment-emitted event (e.g. `episode_finished`, `respawn`, `checkpoint_passed`):
+
+| Field | Description |
+|-------|-------------|
+| `timestamp_utc` | UTC wall-clock time of the event |
+| `event_type` | Event kind: `episode_finished`, `respawn`, `checkpoint_passed`, etc. |
+| `env_slot` / `env_pid` | Vectorized environment slot index and subprocess PID |
+| `episode` / `episode_step` | Episode number and step within that episode |
+| `outcome` | `success`, `collision`, `offtrack`, `timeout`, `truncated`, `disconnected` |
+| `start_checkpoint_index` | Curriculum start checkpoint used for this episode |
+| `checkpoint_index` | Furthest checkpoint reached |
+| `route_progress_m` / `route_progress_ratio` | Distance and fraction of route completed |
+| `cross_track_error` | Final cross-track error (m) |
+| `ship_x` / `ship_y` / `heading_deg` / `speed` | Framework-frame position and velocity at episode end |
+| `reward` / `raw_reward` | Normalized and unnormalized episode reward |
+| `terminated` / `truncated` | Terminal flags |
+| `start_x` / `start_y` / `start_heading_deg` | Episode spawn position |
+| `airsim_x` / `airsim_y` / `airsim_z` / `airsim_yaw_deg` | UE5-frame position at event time |
+| `details_json` | Any extra fields that don't map to a column, serialized as JSON |
+
+#### Training Metrics Plot
+
+`training_metrics.png` contains 3 or 4 panels depending on whether run-log data is available:
+
+1. **Reward** — normalized mean episode reward per iteration (raw + 5-iteration rolling average).
+2. **Loss** — normalized PPO loss per iteration.
+3. **Advantage** — normalized mean advantage per iteration.
+4. **Max Checkpoint per Episode** *(only if `run_log.csv` exists)* — furthest checkpoint index per training episode, with rolling average. Shows curriculum progression visually.
+
+All series are auto-normalized to `[-1, 1]` with raw range annotated on each panel.
+
+#### Route Plot
+
+`route_plot.png` renders:
+
+- **Overall area** (brown polygon) — from `env_Sche_no_scale.csv`.
+- **Waterway / obstacles** (red polygon) — from `env_Sche_250cm_no_scale.csv`.
+- **Route** (green dashed) — the densified route centerline.
+- **Checkpoint circles** (grey) — each checkpoint's acceptance radius.
+- **Respawn scatter** (blue) — every episode start position logged during training.
+- **Checkpoint hits** (orange) — every checkpoint passage logged during training.
+- **Target** (red ×) — the final route target.
+
+This plot is saved headlessly (Matplotlib `Agg` backend) and requires no display.
+
+### 5.6 AirSim Training Safeguards
+
+`SinglePPOAgent` (`src/fw/policies/single_ppo_agent.py`) applies three AirSim-specific safeguards during `learn()`:
+
+#### 1. Untrainable Episode Filtering
+
+Episodes with fewer than `MINIMUM_TRAINABLE_TRAJECTORY_LENGTH = 2` steps are discarded before PPO optimization via `filter_trainable_episodes()`. A count of skipped episodes is tracked and included in `metadata.json` as `skipped_short_rollouts`. One-step episodes produce degenerate advantage estimates and are always excluded.
+
+#### 2. Best Policy Save Threshold
+
+The best policy (by mean reward) is only saved after `MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20` iterations. This prevents saving a policy that happened to score well on a warm-up batch before the agent has had meaningful training.
+
+#### 3. Consecutive Untrainable Batch Abort
+
+If every episode in a batch is too short to train on, the batch is untrainable. After `MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES = 25` consecutive untrainable batches, `learn()` raises `RuntimeError("untrainable rollout batches")` to abort training. This prevents the agent from looping forever when UE5 returns only trivially short episodes (e.g. immediate collision on every reset).
+
+```text
+25 consecutive untrainable batches → RuntimeError
+```
+
+#### 4. Interrupt Checkpoint
+
+When `KeyboardInterrupt` is raised during training (e.g. Ctrl+C), `learn()` immediately saves the current policy before re-raising:
+
+```python
+_interrupt_checkpoint = f"ppo_interrupt_{max(last_completed_iteration, 0)}"
+self.save_policy(_interrupt_checkpoint)
+```
+
+The checkpoint is written to `{model_dir}/ppo_interrupt_{N}.zip` where `N` is the index of the last completed PPO iteration (0 if interrupted before iteration 1 completes). No final metrics CSV or plots are written on interrupt — only the raw policy weights are preserved. Training sessions where this happens have `interrupted: true` in `metadata.json`.
+
+### 5.7 StrictSuccessStoppingCallback
+
+`StrictSuccessStoppingCallback` (`src/airsim/train/strict_success_callback.py`) is an optional SB3-compatible callback that stops training early once the agent achieves a configurable number of consecutive *strict success* episodes.
+
+**This callback is not wired into the default `run_training()` path.** It is available as a standalone component for use in custom training scripts or future integration.
+
+#### Strict Success Definition
+
+An episode qualifies as a strict success when **all three** conditions hold across the full episode:
+
+1. All checkpoints were passed (`checkpoint_index >= route_total_checkpoints` or `all_checkpoints_passed == True` in the step info).
+2. Maximum absolute CTE never exceeded `strict_cte_limit_m` (default: `10.0 m`).
+3. Average per-step reward ≥ `min_average_episode_reward` (default: `0.95`, near the normalized maximum of `1.0`).
+
+#### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `required_consecutive_episodes` | `5` | How many consecutive strict-success episodes trigger early stopping. |
+| `min_average_episode_reward` | `0.95` | Minimum average per-step reward (normalized). With reward in `[-1, 1]`, `0.95` means near-perfect behavior. |
+| `strict_cte_limit_m` | `10.0` | Maximum tolerated absolute CTE (metres) throughout the episode. |
+| `verbose` | `0` | SB3 verbosity. Set to `1` to print per-episode success/fail details. |
+
+#### Verbose Output (when `verbose=1`)
+
+```
+[StrictSuccessStoppingCallback] env=0 strict_success=True cte_max=7.234m avg_reward=0.9612 consecutive=3/5
+[StrictSuccessStoppingCallback] Stopping training after 5 consecutive strict-success episodes.
+```
+
+#### Training Log Analysis — `analyze_training_log()`
+
+`src/airsim/train/training_log_analysis.py` provides `analyze_training_log(path, route_total_checkpoints)` which reads the episode CSV and returns a `TrainingLogSummary` with:
+
+- `median_max_checkpoint`, `modal_max_checkpoint`, `best_max_checkpoint` — derived from per-episode maximum checkpoint index.
+- `high_speed_offtrack_ratio` — fraction of steps where `speed ≥ 0.95 × 5.0 m/s` AND `cross_track_error ≥ 60 m`. High values indicate the agent is overspeeding while off-track.
+- `recommended_curriculum_target_checkpoint` = `max(window, median+2, modal+1)`, clamped to route length.
+- `recommended_curriculum_window_size` = `clamp(6, 10, median+1)`.
+
+This is printed at startup if an existing episode log is found (see [Section 5.1](#51-standard-training)).
 
 ---
 
@@ -726,8 +1122,8 @@ The `ModelVisualisationAdapter` interface methods that may need overriding:
 ```text
 src/
 ├── fw/
-│   ├── config.py                    ← framework config (env_type, action)
-│   ├── main.py                      ← primary entry point
+│   ├── config.py                    ← framework config (env_type, action, profile, AIRSIM_HYPERPARAMETER_OVERRIDES)
+│   ├── main.py                      ← primary entry point; routes AirSim via runpy
 │   ├── main_with_airsim.py          ← AirSim-specialized entry point
 │   └── common/
 │       └── airsim/
@@ -760,8 +1156,8 @@ src/
     │   └── airsim_env.py            ← Gymnasium-compatible AirSim environment
     │
     ├── train/
-    │   ├── train_airsim.py          ← training orchestration
-    │   ├── transfer_learning.py     ← 2D→3D policy transfer
+    │   ├── train_airsim.py          ← training orchestration + profile threading
+    │   ├── transfer_learning.py     ← 2D→3D policy transfer (T-054–T-057)
     │   ├── strict_success_callback.py
     │   └── training_log_analysis.py
     │
@@ -779,11 +1175,11 @@ src/
 
 ```mermaid
 flowchart LR
-    A["fw.main"] --> B["fw.main_with_airsim"]
+    A["fw.main"] --> B["fw.main_with_airsim\n(via runpy + FW_MAIN_ACTION_OVERRIDE)"]
     B --> C{"runtime_settings.json"}
 
-    C -->|train — standard| D["train_airsim.run_training → Trainer → SinglePPOAgent → AirSimEnv"]
-    C -->|train — transfer enabled| TL["transfer_learning.build_transfer_policy → SinglePPOAgent → AirSimEnv"]
+    C -->|train — standard| D["train_airsim.run_training\n(loads VesselProfile)\n→ Trainer(profile) → SinglePPOAgent → AirSimEnv"]
+    C -->|train — transfer enabled| TL["build_transfer_policy\n→ SinglePPOAgent(profile) → AirSimEnv"]
     D --> F["AirSimBridge"]
     TL --> F
     F --> G["UE5 + CosysAirSim"]
@@ -802,6 +1198,13 @@ flowchart LR
     N --> O["exports/<session>/"]
 ```
 
+**Key routing details:**
+
+- `fw.main` detects `AirSimEnv` in `env_type` and delegates to `fw.main_with_airsim` via `runpy.run_module("fw.main_with_airsim")`.
+- The framework action is forwarded via `FW_MAIN_ACTION_OVERRIDE` and cleaned up from the environment after the delegated process reads it.
+- Whether UE5 is available is detected by checking `env.gym_env.type_name == "AirSimEnv"` after `env_factory.get()` resolves (which falls back to PySimEnv when AirSim is unreachable). A fallback to PySimEnv means the AirSim step is skipped.
+- When the AirSim delegated process exits non-zero, `fw.main` prints a warning and continues with remaining environments in the ordered list.
+
 ### 9.3 AirSimEnv
 
 `AirSimEnv` is a Gymnasium-compatible environment backed by UE5 physics.
@@ -817,23 +1220,24 @@ File: `src/airsim/environments/airsim_env.py`
 5. UE5 advances physics (pause-stepping or sim-time-stepping).
 6. AirSim state is read back.
 7. Observation, reward, checkpoint progress, and termination are computed.
+8. On episode end: curriculum success is evaluated and curriculum state is updated.
 
 **Observation space — `ppo_route_relative_car` (18-dimensional, vehicle-fixed frame):**
 
 | Index | Field | Description |
 |-------|-------|-------------|
-| 0 | `current_checkpoint_forward` | Forward distance to current checkpoint |
-| 1 | `current_checkpoint_lateral` | Lateral offset to current checkpoint |
-| 2 | `next_checkpoint_forward` | Forward distance to next checkpoint |
-| 3 | `next_checkpoint_lateral` | Lateral offset to next checkpoint |
-| 4 | `target_forward` | Forward distance to final route target |
-| 5 | `target_lateral` | Lateral offset to final target |
+| 0 | `current_checkpoint_forward` | Forward distance to current checkpoint (log-scaled to `[-1, 1]`) |
+| 1 | `current_checkpoint_lateral` | Lateral offset to current checkpoint (log-scaled to `[-1, 1]`) |
+| 2 | `next_checkpoint_forward` | Forward distance to next checkpoint (log-scaled to `[-1, 1]`) |
+| 3 | `next_checkpoint_lateral` | Lateral offset to next checkpoint (log-scaled to `[-1, 1]`) |
+| 4 | `target_forward` | Forward distance to final route target (log-scaled to `[-1, 1]`) |
+| 5 | `target_lateral` | Lateral offset to final target (log-scaled to `[-1, 1]`) |
 | 6 | `heading_error_cos` | Cosine of heading alignment error |
 | 7 | `heading_error_sin` | Sine of heading alignment error |
-| 8 | `cross_track_error` | Signed lateral deviation from route |
-| 9 | `cross_track_error_delta` | Rate of change of cross-track error |
-| 10 | `forward_speed` | Surge velocity (m/s) |
-| 11 | `yaw_rate` | Angular velocity (rad/s) |
+| 8 | `cross_track_error` | Signed lateral deviation from route, clipped to `[-1, 1]` relative to offtrack limit |
+| 9 | `cross_track_error_delta` | Rate of change of cross-track error, scaled by `_CROSS_TRACK_DELTA_SCALE_M = 20.0` |
+| 10 | `forward_speed` | Surge velocity normalized by `_SPEED_SCALE_MPS = 15.0` |
+| 11 | `yaw_rate` | Angular velocity normalized by `_YAW_RATE_SCALE_RADPS = 45°/s` |
 | 12 | `executed_action_steering` | Last applied steering command |
 | 13 | `executed_action_throttle` | Last applied throttle command |
 | 14 | `route_progress_ratio` | Fraction of total route completed |
@@ -841,21 +1245,77 @@ File: `src/airsim/environments/airsim_env.py`
 | 16 | `previous_action_steering` | Prior steering action (one-step history) |
 | 17 | `los_heading_error` | Line-of-sight heading error to next waypoint |
 
-Checkpoints are spaced every 80 m along the route.
+Distance fields (indices 0–5) use logarithmic compression via `_log_scale_signed(value, scale)`: values near zero receive finer resolution; the input magnitude equal to `scale` maps to exactly ±1; and the input equal to `0.3 × scale` maps to approximately ±0.5, giving the policy more precision when close to a checkpoint.
+
+Checkpoints are spaced every `80 m` along the route (`_ROUTE_POINT_SPACING_M`). Each checkpoint has an acceptance radius of `60 m` (`_CHECKPOINT_RADIUS_M`). The final target has a radius of `80 m` (`_TARGET_RADIUS_M`).
+
+**Checkpoint pass gate conditions:**
+
+A checkpoint is only credited when the vessel reaches the route distance threshold **and** both of the following hold:
+
+| Condition | Threshold |
+|-----------|-----------|
+| `|cross_track_error|` | ≤ `120 m` (`_CHECKPOINT_PASS_MAX_CROSS_TRACK_M`) |
+| `|heading_error|` | ≤ `75°` (`_CHECKPOINT_PASS_MAX_HEADING_RAD`) |
+
+This prevents the agent from earning checkpoint rewards by drifting through a checkpoint zone far off-course or backwards.
 
 **Reward structure:**
 
-| Event | Value |
-|-------|-------|
-| Checkpoint passed | +1.0 |
-| Precision bonus (pass within 8 m lateral) | +0.35 |
-| Route success (final target) | +5.0 |
-| Collision | -5.0 |
-| Off-track | -4.0 |
-| Disconnect | -5.0 |
-| Timeout | -2.5 |
+`AirSimEnv` uses a **dense per-step reward** with terminal event bonuses/penalties stacked on top. All values are computed at every step and accumulated into `raw_reward`, which is then normalized by `_normalize_reward()`.
 
-When `normalize_reward = true`, all shaped rewards are divided by `reward_normalization_scale` (default `5.0`) then clipped to `[-1, 1]`.
+**Per-step dense reward formula (`calculate_reward()`):**
+
+| Component | Formula | Typical range |
+|-----------|---------|--------------|
+| Baseline | `+0.30` | constant |
+| Track reward | `+0.75 × exp(−CTE / 45.0)` | `[0, 0.75]` |
+| Progress reward | `+0.70 × clip(Δprogress / 20.0, −0.25, 1.0)` | `[−0.175, 0.70]` |
+| Checkpoint bonus | `+0.90 × clip(checkpoint_reward, 0, 1)` | `[0, 0.90]` |
+| Heading×speed bonus | `+0.35 × cos(heading_error) × (speed / 15.0)` | `[0, 0.35]` |
+| Precision bonus | `+0.35 × cos(heading_error)` when `CTE < 8 m`, else `0` | `[0, 0.35]` |
+| CTE penalty | `−0.25 × (CTE / offtrack_limit)` | `[−0.375, 0]` |
+| CTE growth penalty | `−0.20 × max(0, CTE_ratio − prev_CTE_ratio)` | `[−0.30, 0]` |
+| Heading penalty | `−0.20 × (|heading_error| / π)` | `[−0.20, 0]` |
+| Steering magnitude | `−0.04 × |steering|` | `[−0.04, 0]` |
+| Steering rate | `−0.06 × |Δsteering|` | `[−0.12, 0]` |
+| Yaw rate penalty | `−0.05 × clip(|yaw_rate| / 45°/s, 0, 1)` | `[−0.05, 0]` |
+
+**Terminal event bonuses/penalties (added on top of dense reward):**
+
+| Event | Added value | Clamping |
+|-------|------------|---------|
+| Route success (target reached, no collision/offtrack/disconnect) | `+5.0` | — |
+| Collision | `+(-5.0)`, then `raw_reward = min(raw_reward, -5.0)` | floor at -5.0 |
+| Offtrack | already added `_OFFTRACK_PENALTY = -4.0` in dense; `raw_reward = min(raw_reward, -4.0)` | floor at -4.0 |
+| Disconnected from bridge | `+(-5.0)` | — |
+| Collision read failed | `raw_reward = min(raw_reward, -0.5)` | — |
+| Pause timeout truncation | `+(-2.5)` | — |
+
+**Normalization:** when `normalize_reward = true`, `raw_reward` is divided by `reward_normalization_scale` (default `5.0`) and clipped to `[-1, 1]`.
+
+**Off-track termination:**
+
+The effective CTE limit decays from the hard limit to the soft limit over the first 450 episodes:
+
+| Constant | Value |
+|----------|-------|
+| `_HARD_OFFTRACK_CTE_LIMIT_M` | `150 m` (permissive, episode 0) |
+| `_SOFT_OFFTRACK_CTE_LIMIT_M` | `90 m` (final limit after decay) |
+| `_OFFTRACK_LIMIT_DECAY_EPISODES` | `450` episodes |
+| `_EARLY_FAILURE_GRACE_STEPS` | first `4` steps exempt from offtrack check |
+
+**Curriculum success criterion (internal logic):**
+
+```python
+curriculum_success = (
+    self.checkpoint_index > self._curriculum_frontier_index
+    and not collision
+    and not offtrack
+)
+```
+
+Both collision and offtrack unconditionally reset the streak to zero, even if the frontier checkpoint was passed before the terminal event.
 
 ### 9.4 Communication Layer
 
@@ -897,13 +1357,28 @@ Both stages are configurable in `runtime_settings.json` under `training`. Disabl
 
 ### 9.7 Exports
 
-**Training — `logs/`**
+There are three distinct export systems, each serving a different runtime path.
 
-Training telemetry is written per-step to the path set by `training.episode_log_path` (default: `logs/airsim_training_episode_log.csv`). Columns: checkpoint progress, speed, CTE, outcome per episode.
+**Training — `logs/airsim_training_episode_log.csv`**
+
+Written per environment step during training via `AirSimEnv` internal logging. Path is set by `training.episode_log_path`. Columns include checkpoint progress, speed, CTE, reward, and episode outcome. This is the file read by `analyze_training_log()` at startup.
+
+**Training — `logs/airsim_training_sessions/<session>/`**
+
+Created per training run by `AirSimTrainingSession`. Full schema documented in [Section 5.5](#55-training-session-exports). Summary:
+
+| File | Contents |
+|------|---------|
+| `run_log.csv` | Per-episode structured events (position, speed, reward, outcome, start point) |
+| `training_metrics.csv` | Per-PPO-iteration: reward, loss, advantage |
+| `training_metrics.png` | Normalized reward/loss/advantage curves + max checkpoint per episode |
+| `route_plot.png` | Overhead route overview: route, obstacles, respawn scatter, checkpoint hits, target |
+| `metadata.json` | Config, interrupted flag, best reward, stop rule, route geometry summary |
+| `<env>_<agent>_iterations_<timestamp>.csv` | Per-iteration log from `TrainingIterationLogger` |
 
 **Inference and visualization — `exports/<session>/`**
 
-Both runners create a timestamped session folder via `AirSimSessionExporter`:
+Both inference and visualization runners create a timestamped session folder via `AirSimSessionExporter`:
 
 - Inference: `exports/inference_{model_stem}_{timestamp}/`
 - Visualization: `exports/visualisation_{family}_{model_stem}_{timestamp}/`
@@ -978,7 +1453,7 @@ tests/
     ├── test_telemetry_exporter.py                ← AirSimSessionExporter CSV/metadata/plot output
     ├── test_docstring_enforcement.py             ← AST-based docstring coverage gate (all src + tests)
     ├── policies/
-    │   └── test_single_ppo_agent.py              ← PPO agent load/save/predict contract
+    │   └── test_single_ppo_agent.py              ← PPO agent interrupt checkpoint + untrainable batch safeguard
     └── common/
         ├── tools/
         │   ├── test_trajectory_analysis.py       ← route summary, performance metrics
@@ -998,18 +1473,18 @@ tests/
 | `config/test_runtime_settings_validation` | Default key contract, merge semantics, `AirSimConfig` error message quality (R8, R10) |
 | `enviroments/test_airsim_env` | 18-field observation shape, reward event values, termination conditions, 40-step stability (R13) |
 | `train/test_train_airsim` | Full training path with mocked bridge, stop condition, episode logging (R12) |
-| `train/test_transfer_learning` | Source/target topology compatibility, weight tensor mapping, freeze behavior (R4, R14) |
+| `train/test_transfer_learning` | Source/target topology compatibility, weight tensor mapping, conditional mapping-layer re-init (18→18 preserved, 12→18 re-initialized), freeze behavior, Trainer bypass path (R4, R14, T-054–T-057) |
 | `train/test_stability` | Observation and reward values stay in expected bounds over many steps (BI-3.3.2, R13) |
 | `train/test_model_load_errors` | `TransferIncompatibilityError` type contract, dimension values in error messages (R4, R10) |
 | `inference/test_model_visualisation_dispatch` | `model_visualise` / `inference_visualise` flag routing, UE5 unreachable clean exit (R9) |
 | `inference/test_visualisation_model_adapters` | Adapter auto-detection from filename, family/env resolution (R2, R6) |
 | `inference/test_run_inference_airsim_env` | Inference loop with mocked AirSimEnv (R11) |
 | `inference/test_fossen_visualisation_timing` | Snap vs interpolate timing decision (R11) |
-| `fw/test_main_fallback` | Graceful skip when AirSim step fails, ordered env continuation (R9) |
-| `fw/test_env_factory_config` | Environment registration, factory correctness, AirSim-vs-shared PPO hyperparameter selection (R4) |
+| `fw/test_main_fallback` | Graceful skip when AirSim step fails (non-zero exit); ordered env continuation including repeated env types; action forwarding via `FW_MAIN_ACTION_OVERRIDE`; visualize/train ordering (R9) |
+| `fw/test_env_factory_config` | Environment registration, factory correctness, `gym_env` wrapper attribute, AirSim-vs-shared PPO hyperparameter selection (R4) |
 | `fw/test_telemetry_exporter` | `AirSimSessionExporter` CSV output, metadata, trajectory plot generation (R10) |
 | `fw/test_docstring_enforcement` | AST-based docstring coverage gate across all `src/` and `tests/` Python files (R10, quality) |
-| `fw/policies/test_single_ppo_agent` | PPO agent load, save, predict contract with correct input/output dims (R4) |
+| `fw/policies/test_single_ppo_agent` | `filter_trainable_episodes` skips one-step rollouts; `learn()` saves interrupt checkpoint (`ppo_interrupt_{N}`) on `KeyboardInterrupt`; raises `RuntimeError` after repeated untrainable AirSim batches (R4) |
 | `fw/common/tools/test_trajectory_analysis` | Route summary, performance metrics from session CSV (R10) |
 | `fw/common/tools/test_airsim_export` | Session row builders, exporter open/close, CSV structure (R10) |
 | `fw/common/tools/test_training_iteration_logger` | Iteration log formatting (R10) |
