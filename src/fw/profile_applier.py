@@ -87,6 +87,7 @@ def apply_profile(
     Raises:
         ValueError: If *action* does not have at least 2 elements.
     """
+
     if config is not None:
         ConfigApplier.apply(profile, config)
 
@@ -107,11 +108,16 @@ def apply_profile(
 # ---------------------------------------------------------------------------
 
 class ConfigApplier:
-    """Patches a ``CONFIG_PARAMETERS`` dict in-place."""
+    """
+    Patches a ``CONFIG_PARAMETERS`` dict in-place.
+    """
 
     @staticmethod
     def apply(profile: VesselProfile, config: Dict[str, Any]) -> None:
-        """Patch ship_model and dynamics_model into *config* from *profile*."""
+        """
+        Patch ship_model and dynamics_model into *config* from *profile*.
+        """
+
         config["ship_model"] = profile.model.ship_model
         config["dynamics_model"] = profile.model.dynamics_model
         logger.debug(
@@ -125,11 +131,16 @@ class ConfigApplier:
 # ---------------------------------------------------------------------------
 
 class EnvApplier:
-    """Sets env-level flags on an environment and all its sub-environments."""
+    """
+    Sets env-level flags on an environment and all its sub-environments.
+    """
 
     @staticmethod
     def apply(profile: VesselProfile, env) -> None:
-        """Apply env-level flags from *profile* to *env* and all its sub-environments."""
+        """
+        Apply env-level flags from *profile* to *env* and all its sub-environments.
+        """
+
         EnvApplier._set_smoothing(env, profile.actuator.enable_smoothing)
         EnvApplier._set_rudder_angle_scaling(env, profile.transfer.enable_rudder_angle_scaling)
 
@@ -144,7 +155,10 @@ class EnvApplier:
 
     @staticmethod
     def _set_smoothing(env, value: bool) -> None:
-        """Set ``enable_smoothing`` on *env* if the attribute exists."""
+        """
+        Set `enable_smoothing` on *env* if the attribute exists.
+        """
+
         if hasattr(env, "enable_smoothing"):
             env.enable_smoothing = value
             logger.debug(
@@ -154,7 +168,10 @@ class EnvApplier:
 
     @staticmethod
     def _set_rudder_angle_scaling(env, value: bool) -> None:
-        """Set ``enable_rudder_angle_scaling`` on *env* if the attribute exists."""
+        """
+        Set `enable_rudder_angle_scaling` on *env* if the attribute exists.
+        """
+
         if hasattr(env, "enable_rudder_angle_scaling"):
             env.enable_rudder_angle_scaling = value
             logger.debug(
@@ -168,11 +185,16 @@ class EnvApplier:
 # ---------------------------------------------------------------------------
 
 class SimulatorApplier:
-    """Resets the simulator to the profile's initial state and patches actuator limits."""
+    """
+    Resets the simulator to the profile's initial state and patches actuator limits.
+    """
 
     @staticmethod
     def apply(profile: VesselProfile, simulator) -> None:
-        """Reset *simulator* state and patch actuator limits from *profile*."""
+        """
+        Reset *simulator* state and patch actuator limits from *profile*.
+        """
+
         if profile.scenario.initial_state is not None:
             SimulatorApplier._reset_state(profile, simulator)
 
@@ -181,7 +203,10 @@ class SimulatorApplier:
 
     @staticmethod
     def _reset_state(profile: VesselProfile, simulator) -> None:
-        """Call ``simulator.reset`` with the initial state defined in *profile*."""
+        """
+        Call `simulator.reset` with the initial state defined in *profile*.
+        """
+
         def nz(value, fallback):
             return fallback if math.isclose(value, 0.0, rel_tol=0.0, abs_tol=EPS) else value
 
@@ -208,10 +233,11 @@ class SimulatorApplier:
         Override actuator limits on the simulator's :class:`ShipSpecifications`.
 
         :class:`~fw.ships.ship_specs.ShipSpecifications` is a frozen dataclass;
-        ``object.__setattr__`` is used to write the new values in-place.  The
+        `object.__setattr__` is used to write the new values in-place.  The
         updated specs object is then propagated to the actuator model so both
         stay in sync.
         """
+
         specs = (
             getattr(simulator, "specs", None)
             or getattr(simulator, "_specs", None)
@@ -248,7 +274,9 @@ class SimulatorApplier:
 # ---------------------------------------------------------------------------
 
 class ActionAdapter:
-    """Transforms a raw ``[rudder, thrust]`` action using profile settings."""
+    """
+    Transforms a raw ``[rudder, thrust]`` action using profile settings.
+    """
 
     @staticmethod
     def transform(
@@ -281,6 +309,7 @@ class ActionAdapter:
         Raises:
             ValueError: If *action* has fewer than 2 elements.
         """
+
         action = np.array(action, dtype=np.float32)
 
         if action.shape[0] < 2:
@@ -303,6 +332,7 @@ class ActionAdapter:
         Falls back to ``(0.1, 1.0)`` — the default Myzako ship range — and
         emits a debug log so the fallback is traceable.
         """
+
         if simulator is not None:
             specs = (
                 getattr(simulator, "specs", None)
