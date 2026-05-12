@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import pytest
+from types import SimpleNamespace
 
 
 _SRC_DIR = Path(__file__).resolve().parents[2] / "src"
@@ -72,7 +73,7 @@ def test_main_uses_framework_visualize_action(monkeypatch):
         lambda: {"env_type": env_factory.py_sim_env_name, "action": "visualize"},
     )
     monkeypatch.setattr(env_factory, "initialize_all_environments", lambda: None)
-    monkeypatch.setattr(env_factory, "build_default_environment", lambda *args, **kwargs: object())
+    monkeypatch.setattr(env_factory, "build_default_environment", lambda *args, **kwargs: SimpleNamespace(gym_env=SimpleNamespace()))
 
     trainer_calls = {}
 
@@ -163,7 +164,7 @@ def test_main_visualize_respects_environment_order(monkeypatch):
     def _build_env(name):
         """Track framework environment construction order."""
         call_order.append(f"build:{name}")
-        return object()
+        return SimpleNamespace(gym_env=SimpleNamespace())
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -225,7 +226,7 @@ def test_main_train_respects_environment_order(monkeypatch):
     def _build_env(name):
         """Track framework train environment construction order."""
         call_order.append(f"build:{name}")
-        return object()
+        return SimpleNamespace(gym_env=SimpleNamespace())
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -239,7 +240,7 @@ def test_main_train_respects_environment_order(monkeypatch):
         def train(self, configuration):
             """Record framework train call in ordered execution."""
             call_order.append("train:framework")
-            return {"ok": True}
+            return {}
 
     monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
 
@@ -292,7 +293,7 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
     def _build_env(name):
         """Track framework train setup for mixed-list fallback scenario."""
         call_order.append(f"build:{name}")
-        return object()
+        return SimpleNamespace(gym_env=SimpleNamespace())
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -306,7 +307,7 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
         def train(self, configuration):
             """Record framework train call before AirSim step failure."""
             call_order.append("train:framework")
-            return {"ok": True}
+            return {}
 
     monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
 
@@ -369,7 +370,7 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
             name: Canonical environment name.
         """
         call_order.append(f"build:{name}")
-        return object()
+        return SimpleNamespace(gym_env=SimpleNamespace())
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -391,7 +392,7 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
                 configuration: Scheduler configuration payload.
             """
             call_order.append("train:framework")
-            return {"ok": True}
+            return {}
 
     monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
 

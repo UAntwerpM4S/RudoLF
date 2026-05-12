@@ -821,8 +821,23 @@ class AirSimEnv(BaseEnv):
             )
 
         if terminated or truncated:
-            curriculum_success = bool(success and not collision and not offtrack and not truncated)
+            # Curriculum advances only when the agent passes the frontier cleanly —
+            # offtrack counts as failure so the frontier does not advance on drift-past.
+            curriculum_success = (
+                self.checkpoint_index > self._curriculum_frontier_index
+                and not collision
+                and not offtrack
+            )
             self._episode_success = curriculum_success
+            if self.curriculum_enabled:
+                result_tag = "PASS" if curriculum_success else "FAIL"
+                streak_after = self._curriculum_success_streak + (1 if curriculum_success else 0)
+                print(
+                    f"[Curriculum] Episode {result_tag} | "
+                    f"checkpoints passed: {self.checkpoint_index}/{len(self.checkpoints) - 1} | "
+                    f"frontier: {self._curriculum_frontier_index} | "
+                    f"streak: {streak_after}/{self.curriculum_success_patience}"
+                )
             self._update_curriculum_after_episode(success=curriculum_success)
 
         outcome = "running"
@@ -2049,6 +2064,9 @@ class AirSimEnv(BaseEnv):
         if self._curriculum_success_streak < self.curriculum_success_patience:
             return
 
+        old_frontier = self._curriculum_frontier_index
+        old_window_size = self.curriculum_window_size
+
         self._curriculum_success_streak = 0
         self._curriculum_frontier_index = min(
             len(self.checkpoints) - 2,
@@ -2057,6 +2075,16 @@ class AirSimEnv(BaseEnv):
         self.curriculum_window_size = min(
             len(self.checkpoints) - 1,
             self.curriculum_window_size + self.curriculum_window_increment,
+        )
+
+        new_frontier = self._curriculum_frontier_index
+        new_window_size = self.curriculum_window_size
+        new_window_end = min(new_frontier, len(self.checkpoints) - 2)
+        new_window_start = max(0, new_window_end - new_window_size + 1)
+        print(
+            f"[Curriculum] Frontier advanced: {old_frontier} → {new_frontier} | "
+            f"window: {old_window_size} → {new_window_size} checkpoints | "
+            f"start range: [{new_window_start}–{new_window_end}]"
         )
 
     def _airsim_yaw_rate_to_framework(self, yaw_rate: float) -> float:
