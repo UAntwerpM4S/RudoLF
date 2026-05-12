@@ -37,10 +37,11 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     framework_config = get_config_parameters()
 
+    # get_config_parameters() already applies the profile to framework_config;
+    # retrieve the profile object here only for the later apply_profile(env/sim) calls.
     profile_name = framework_config.get("profile", "default_profile")
     profile = ProfileRegistry.get(profile_name)
     profile.validate()
-    apply_profile(profile, config=framework_config)
 
     reward_configs = framework_config.get("reward_configs", [])
     configured_env_names = resolve_environment_names(
@@ -181,7 +182,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         try:
             first_env_type = reward_configs[0].get("type", py_sim_env_name)
             first_env_name = resolve_environment_name(first_env_type)
-            dummy_env = build_default_environment(first_env_name)
+            dummy_env = build_default_environment(first_env_name, framework_config)
             eval_policy_name = MULTI_PPO_POLICY_NAME if first_env_name == multi_sim_env_name else PPO_POLICY_NAME
             trainer = Trainer(eval_policy_name, [dummy_env], profile, "SimpleScheduler")
 
@@ -211,7 +212,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 executed_any_step = True
             continue
 
-        env = build_default_environment(env_name)
+        env = build_default_environment(env_name, framework_config)
         standard_envs.append(env)
 
     if _run_standard_batch(standard_envs):

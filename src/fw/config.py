@@ -138,7 +138,7 @@ CONFIG_PARAMETERS = {
     'live_animation': False,
     # AirSim settings are now in airsim.config.airsim_config
     # Use get_airsim_config() to access them.
-    
+
     # Evaluate reward configurations
     'reward_configs': [
         {
@@ -194,12 +194,14 @@ CONFIG_PARAMETERS = {
 
 
 def get_hyperparameters(agent_name, env_name=None):
-    """Get validated hyperparameters.
+    """
+    Get validated hyperparameters.
 
     AirSim uses the base PPO tuning set. Other environments get the legacy
     PPO settings through the override map so their training behavior stays
     separate from the AirSim tuning.
     """
+
     try:
         params = DEFAULT_HYPERPARAMETERS[agent_name].copy()
         if env_name == "AirSimEnv":
@@ -209,10 +211,32 @@ def get_hyperparameters(agent_name, env_name=None):
         raise ValueError(f"Unknown agent type: {agent_name}")
 
 
-def get_config_parameters():
-    """Get  the configuration parameters"""
-    framework_config = CONFIG_PARAMETERS.copy()
+def load_config_parameters() -> dict:
+    """
+    Return a raw copy of CONFIG_PARAMETERS without applying any profile.
 
+    Use this when you need the plain configuration data and will handle
+    profile application yourself (e.g. in get_config_parameters below, or
+    in tests that want to control the profile step explicitly).
+    """
+
+    return CONFIG_PARAMETERS.copy()
+
+
+def get_config_parameters() -> dict:
+    """
+    Return configuration parameters with the configured profile applied.
+
+    Resolves the profile name from the config, validates it, applies it to
+    the config dict, and returns the result. This is the single authoritative
+    place where profile application onto the config happens — callers should
+    not re-apply the profile to the config dict after calling this function.
+
+    Returns:
+        dict: A copy of CONFIG_PARAMETERS with the profile's overrides applied.
+    """
+
+    framework_config = load_config_parameters()
     profile_name = framework_config.get("profile", "default_profile")
     profile = ProfileRegistry.get(profile_name)
     profile.validate()

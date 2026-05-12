@@ -116,12 +116,18 @@ class InitialVesselState:
     r: float = 0.0
 
     def to_dict(self) -> Dict[str, float]:
-        """Return the state fields as a plain ``float``-valued dictionary."""
+        """
+        Return the state fields as a plain ``float``-valued dictionary.
+        """
+
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "InitialVesselState":
-        """Construct an :class:`InitialVesselState` from a raw dictionary, ignoring unknown keys."""
+        """
+        Construct an :class:`InitialVesselState` from a raw dictionary, ignoring unknown keys.
+        """
+
         known = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: float(v) for k, v in d.items() if k in known})
 
@@ -159,7 +165,10 @@ class ActuatorConfig:
 
     @property
     def angle_rad(self) -> Optional[float]:
-        """``max_rudder_angle_deg`` converted to radians, or *None*."""
+        """
+        `max_rudder_angle_deg` converted to radians, or *None*.
+        """
+
         return (
             None if self.max_rudder_angle_deg is None
             else math.radians(self.max_rudder_angle_deg)
@@ -167,7 +176,10 @@ class ActuatorConfig:
 
     @property
     def rate_rad(self) -> Optional[float]:
-        """``max_rudder_rate_deg_s`` converted to radians per second, or *None*."""
+        """
+        `max_rudder_rate_deg_s` converted to radians per second, or *None*.
+        """
+
         return (
             None if self.max_rudder_rate_deg_s is None
             else math.radians(self.max_rudder_rate_deg_s)
@@ -286,6 +298,7 @@ class VesselProfile:
                 thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
             )
         """
+
         field_map = {f.name: f for f in dataclasses.fields(self)}
 
         unknown = set(kwargs) - field_map.keys()
@@ -320,6 +333,7 @@ class VesselProfile:
         failing on the first one.  Suspicious-but-legal combinations emit
         a :mod:`warnings` warning instead of raising.
         """
+
         errors: List[str] = []
 
         if self.thrust.mode == ThrustMode.FIXED:
@@ -369,6 +383,7 @@ class VesselProfile:
         Enum fields are stored by name/value rather than as raw Enum objects
         so the output is safe for :func:`json.dumps` without a custom encoder.
         """
+
         return {
             "name": self.name,
             "description": self.description,
@@ -407,6 +422,7 @@ class VesselProfile:
         profiles serialized by a newer schema version remain loadable by
         older code.
         """
+
         return cls(
             name=d["name"],
             description=d.get("description", ""),
@@ -435,12 +451,18 @@ class VesselProfile:
         )
 
     def to_json(self, *, indent: int = 2) -> str:
-        """Serialize to a JSON string."""
+        """
+        Serialize to a JSON string.
+        """
+
         return json.dumps(self.to_dict(), indent=indent)
 
     @classmethod
     def from_json(cls, s: str) -> "VesselProfile":
-        """Deserialize from a JSON string."""
+        """
+        Deserialize from a JSON string.
+        """
+
         return cls.from_dict(json.loads(s))
 
     def fingerprint(self) -> str:
@@ -453,6 +475,7 @@ class VesselProfile:
 
         Note: MD5 is used purely as a fast, non-cryptographic content hash.
         """
+
         canonical = json.dumps(self.to_dict(), sort_keys=True)
         return hashlib.md5(canonical.encode(), usedforsecurity=False).hexdigest()
 
@@ -461,7 +484,10 @@ class VesselProfile:
     # ------------------------------------------------------------------
 
     def __str__(self) -> str:
-        """Return a human-readable summary of the profile's key settings."""
+        """
+        Return a human-readable summary of the profile's key settings.
+        """
+
         lines = [f"VesselProfile '{self.name}' [{self.run_mode.name}]"]
         if self.description:
             lines.append(f"  description  : {self.description}")
@@ -503,6 +529,7 @@ def _filter_fields(dc_type: type, d: Dict[str, Any]) -> Dict[str, Any]:
     This makes :meth:`VesselProfile.from_dict` tolerant of extra keys written
     by a newer schema version without silently dropping required ones.
     """
+
     known = {f.name for f in dataclasses.fields(dc_type)}
     return {k: v for k, v in d.items() if k in known}
 
@@ -533,6 +560,7 @@ class ProfileRegistry:
             overwrite: Replace an existing entry with the same name when
                 *True*.  Raises :exc:`KeyError` on collision when *False*.
         """
+
         if profile.name in cls._registry and not overwrite:
             raise KeyError(
                 f"Profile '{profile.name}' already exists. "
@@ -555,6 +583,7 @@ class ProfileRegistry:
         Raises:
             KeyError: If no profile with that name is registered.
         """
+
         if name not in cls._registry:
             available = ", ".join(cls._registry) or "(none)"
             raise KeyError(f"Unknown profile '{name}'. Available: {available}")
@@ -562,7 +591,10 @@ class ProfileRegistry:
 
     @classmethod
     def list_names(cls) -> List[str]:
-        """Return all registered profile names in insertion order."""
+        """
+        Return all registered profile names in insertion order.
+        """
+
         return list(cls._registry.keys())
 
     @classmethod
@@ -573,6 +605,7 @@ class ProfileRegistry:
         Raises:
             KeyError: If no profile with that name is registered.
         """
+
         if name not in cls._registry:
             raise KeyError(f"No profile named '{name}'.")
         del cls._registry[name]
