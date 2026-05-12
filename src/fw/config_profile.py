@@ -420,33 +420,41 @@ class VesselProfile:
 
         Unknown keys inside each sub-config are silently ignored so that
         profiles serialized by a newer schema version remain loadable by
-        older code.
+        older code.  Missing sub-config blocks (e.g. a ``"scenario"`` key
+        absent from an older serialization) fall back to their dataclass
+        defaults rather than raising :exc:`KeyError`.
         """
+
+        scenario_d = d.get("scenario", {})
+        initial_state_d = scenario_d.get("initial_state") if scenario_d else None
+
+        thrust_d = d.get("thrust", {})
+        model_d = d.get("model", {})
 
         return cls(
             name=d["name"],
             description=d.get("description", ""),
             version=d.get("version", "1.0"),
-            run_mode=RunMode[d["run_mode"]],
+            run_mode=RunMode[d.get("run_mode", RunMode.TRAIN.name)],
             scenario=ScenarioConfig(
                 initial_state=(
-                    InitialVesselState.from_dict(d["scenario"]["initial_state"])
-                    if d["scenario"]["initial_state"] else None
+                    InitialVesselState.from_dict(initial_state_d)
+                    if initial_state_d else None
                 )
             ),
             actuator=ActuatorConfig(
-                **_filter_fields(ActuatorConfig, d["actuator"])
+                **_filter_fields(ActuatorConfig, d.get("actuator", {}))
             ),
             thrust=ThrustConfig(
-                mode=ThrustMode[d["thrust"]["mode"]],
-                fixed_value=d["thrust"]["fixed_value"],
+                mode=ThrustMode[thrust_d.get("mode", ThrustMode.FREE.name)],
+                fixed_value=thrust_d.get("fixed_value", ThrustConfig().fixed_value),
             ),
             transfer=TransferConfig(
-                **_filter_fields(TransferConfig, d["transfer"])
+                **_filter_fields(TransferConfig, d.get("transfer", {}))
             ),
             model=ModelConfig(
-                ship_model=ShipModel[d["model"]["ship_model"]],
-                dynamics_model=Model[d["model"]["dynamics_model"]],
+                ship_model=ShipModel[model_d.get("ship_model", ModelConfig().ship_model.name)],
+                dynamics_model=Model[model_d.get("dynamics_model", ModelConfig().dynamics_model.name)],
             ),
         )
 

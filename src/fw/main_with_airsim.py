@@ -291,6 +291,9 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         try:
             if _run_airsim_visualization_from_runtime():
                 raise SystemExit(0)
+            # _run_airsim_visualization_from_runtime() returned False — neither
+            # model_visualise nor inference_visualise was set in runtime_settings.
+            # Fall through to the generic trainer.visualize path below.
         except ConnectionError as exc:
             print(f"[main_with_airsim] {exc}")
             print(
@@ -308,6 +311,14 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             print(f"Training metrics: {metrics}")
 
         raise SystemExit(0)
+
+    # -------------------------------------------------------------------------
+    # Generic trainer-based visualize path.
+    #
+    # Reached when action == "visualize" AND neither model_visualise nor
+    # inference_visualise was enabled in runtime_settings — i.e. the caller
+    # wants a live AirSim episode rendered through the standard Trainer API.
+    # -------------------------------------------------------------------------
 
     # Ensure all environments are registered once
     from fw.trainer import Trainer
@@ -392,7 +403,6 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     _airsim_profile_name = _airsim_fw_config.get("profile", "default_airsim_profile")
     _airsim_profile = ProfileRegistry.get(_airsim_profile_name)
     _airsim_profile.validate()
-    apply_profile(_airsim_profile, config=_airsim_fw_config)
 
     for _airsim_env_wrapper in envs:
         apply_profile(_airsim_profile, env=_airsim_env_wrapper.gym_env)

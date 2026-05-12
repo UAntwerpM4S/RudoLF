@@ -717,10 +717,16 @@ def get(environment_name: str, configuration=None):
         return _Factory.get(environment_name, configuration)
     except (ImportError, ConnectionError) as exc:
         print(f"[env_factory] AirSim environment unavailable (reason: {exc}).")
-        fallback_name = _pick_airsim_fallback(configuration)
-        # Re-use build_default_environment so the fallback also receives a
-        # properly scoped config rather than None / a raw framework dict.
-        return build_default_environment(fallback_name, framework_config=configuration)
+        # `configuration` here is an AirSim-scoped dict (from build_airsim_config),
+        # *not* the full framework config.  Passing it to build_default_environment
+        # for a PySim-family fallback would cause a KeyError on keys such as
+        # "wind", "current", and "numerical_damping" that the AirSim config does
+        # not carry.  Load the full framework config instead so the fallback
+        # environment receives the keys it actually needs.
+        from fw.config import get_config_parameters as _get_fw_config  # local to avoid circular import
+        fallback_framework_config = _get_fw_config()
+        fallback_name = _pick_airsim_fallback(fallback_framework_config)
+        return build_default_environment(fallback_name, framework_config=fallback_framework_config)
 
 
 py_sim_env_name = "PySimEnv"
