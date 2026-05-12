@@ -750,10 +750,16 @@ Every AirSim training run (both standard and transfer learning) creates a timest
 #### Session Directory
 
 ```text
-logs/airsim_training_sessions/AirSimEnv_SinglePPO_{YYYYMMDD_HHMMSS}/
+logs/airsim_training_sessions/AirSimEnv_PPO_{YYYYMMDD_HHMMSS}/
 ```
 
 The directory is created at the start of training and all files are finalized (flushed and closed) when training ends — either normally or after a `KeyboardInterrupt`.
+
+Example reference runs already committed in the repository (17 total between 2026-04-17 and 2026-05-12):
+
+- `AirSimEnv_PPO_20260512_073557` — 41/400 iterations, best mean reward 0.302, `simulation_speed=20.0`, `reset_mode=rewind_pose`, save slot `simulator_1`, not interrupted.
+- `AirSimEnv_PPO_20260511_201238` — 21/400 iterations, user-interrupted; demonstrates that `interrupted: true` is correctly set in `metadata.json` and that the `ppo_interrupt_{N}.zip` safeguard checkpoint is written before the process exits.
+- `AirSimEnv_PPO_20260511_145027` — earlier same-day run, used to validate that route plot and metrics plot regenerate correctly across consecutive sessions.
 
 #### Session Files
 
@@ -1030,6 +1036,18 @@ exports/inference_{model_stem}_{timestamp}/
 | `trajectory_2d_vs_3d.png` | Side-by-side 2D (framework) vs 3D (UE5) trajectory comparison |
 
 `performance_summary` in `metadata.json` includes total reward, total duration, cumulative 2D and 3D distance, mean and max cross-track error, and per-episode outcome.
+
+### Reference Sessions
+
+Three reference sessions are committed in the repository under `src/exports/` to demonstrate the full output schema for each of the three runtime paths:
+
+| Session | Path | Steps | Mean CTE | Notes |
+|---------|------|-------|---------|-------|
+| AirSim native inference (3D-trained policy) | `inference_AirSimEnv_PPO_policy_20260512T092208Z/` | 21,608 | 0.98 m | Device `cuda`, 1 episode, terminated at target |
+| PySim 2D-replay in UE5 | `visualisation_pysim_PySimEnv_PPO_policy_20260511T133515Z/` | 41,221 | 0.75 m | Device `cpu`, `mirror_controls_in_ue5=true`, `simulation_speed=20.0` |
+| FhSim 2D-replay in UE5 | `visualisation_fhsim_FhSimEnv_PPO_policy_20260510T164751Z/` | 776 | — | FhSim adapter validation, identical bridge/adapter layer as PySim |
+
+Each session folder contains the standard four files (`metadata.json`, the relevant `*_session.csv`, `airsim_telemetry.csv`, and `trajectory_2d_vs_3d.png`). These act as canonical examples for the output format and for sanity-checking new runs against known-good baselines.
 
 ---
 
@@ -1397,7 +1415,7 @@ Both inference and visualization runners create a timestamped session folder via
 
 ## 10. Testing
 
-Tests are located in `tests/airsim/` and related framework tests in `tests/fw/`. All 201 automated tests are designed to run without a live UE5 connection using mocks and deterministic stubs. Six additional manual system tests require an active UE5 session.
+Tests are located in `tests/airsim/` and related framework tests in `tests/fw/`. All 203 automated tests are designed to run without a live UE5 connection using mocks and deterministic stubs. Six additional manual system tests require an active UE5 session, plus three reference visualization/inference sessions and three trained-model exercise runs (normal PPO, transfer learning, curriculum learning).
 
 ### Running Tests
 
@@ -1484,8 +1502,12 @@ tests/
 | `fw/test_env_factory_config` | Environment registration, factory correctness, `gym_env` wrapper attribute, AirSim-vs-shared PPO hyperparameter selection (R4) |
 | `fw/test_telemetry_exporter` | `AirSimSessionExporter` CSV output, metadata, trajectory plot generation (R10) |
 | `fw/test_docstring_enforcement` | AST-based docstring coverage gate across all `src/` and `tests/` Python files (R10, quality) |
-| `fw/policies/test_single_ppo_agent` | `filter_trainable_episodes` skips one-step rollouts; `learn()` saves interrupt checkpoint (`ppo_interrupt_{N}`) on `KeyboardInterrupt`; raises `RuntimeError` after repeated untrainable AirSim batches (R4) |
+| `fw/policies/test_single_ppo_agent` | `filter_trainable_episodes` skips one-step rollouts; `learn()` saves interrupt checkpoint (`ppo_interrupt_{N}`) on `KeyboardInterrupt`; raises `RuntimeError` after repeated untrainable AirSim batches; agent can be instantiated without a profile (profile-optional construction path); `load_policy()` rebinds the Adam optimizer to the new policy parameter set so gradient updates actually reach the loaded weights (R4, R14) |
 | `fw/common/tools/test_trajectory_analysis` | Route summary, performance metrics from session CSV (R10) |
 | `fw/common/tools/test_airsim_export` | Session row builders, exporter open/close, CSV structure (R10) |
 | `fw/common/tools/test_training_iteration_logger` | Iteration log formatting (R10) |
 | `fw/common/airsim/tools/test_airsim_training_session` | `TrainingLogSummary` CSV parsing and frontier recommendation (R10) |
+
+### Known Test Gaps
+
+- **`coord_transform.py` has no dedicated unit test.** The `CoordTransform` class is currently validated only through the manual coordinate-calibration system test (TESTREPORT rubric 2.7.9), which observed a stable residual offset of approximately 0.3 m well inside the 1.0 m tolerance set in the test plan. Adding a unit test with fixed anchor/scale/rotation inputs and known expected outputs is the recommended next step to close this gap. The blind spot is also documented in TESTREPORT section 3.4 (aandachtspunt 10).
