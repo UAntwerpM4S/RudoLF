@@ -152,6 +152,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         from fw.environments.multi_sim_env import MultiSimEnv
         for env in envs:
+
             if getattr(env.gym_env, "include_scenario_one_hot", False):
                 return MULTI_POLICY_SINGLE_NAME
             if isinstance(env.gym_env, MultiSimEnv):

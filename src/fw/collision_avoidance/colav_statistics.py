@@ -19,6 +19,7 @@ def plot_min_distance_stats(
     boxplot_save_path: str = "min_distance_boxplots.png",
     include_banks: bool = False,
 ) -> None:
+    print(f"banks included: {include_banks}")
     """Plot encounter-level min-distance statistics.
 
     Generates two images:
@@ -83,6 +84,7 @@ def plot_min_distance_stats(
         per_policy,
         collision_dist_min, collision_dist_max, variable_ts,
         boxplot_save_path,
+        include_banks=include_banks,
     )
 
 
@@ -178,6 +180,7 @@ def _plot_min_distance_boxplots(
     collision_dist_max: float,
     variable_ts: bool,
     save_path: str,
+    include_banks: bool = False,
 ) -> None:
     # Order known labels first (canonical scenario order), then any
     # extras encountered (e.g. "unknown") tacked on at the end.
@@ -210,10 +213,13 @@ def _plot_min_distance_boxplots(
                    label=f"Collision boundary (max) = {collision_dist_max:.0f}m")
 
     ax.set_ylim(bottom=0)
-    ax.set_ylabel("Minimum center-to-center distance to collision entity [m]")
+    ylabel_target = "ship or bank" if include_banks else "collision entity"
+    ax.set_ylabel(f"Minimum center-to-center distance to {ylabel_target} [m]")
     ax.set_xlabel("Scenario / policy")
+    title_suffix = " incl. banks" if include_banks else ""
     ax.set_title(
-        f"Min-distance per policy ({int(np.sum(counts))} valid encounters)"
+        f"Min-distance per policy{title_suffix} "
+        f"({int(np.sum(counts))} valid encounters)"
     )
     ax.grid(True, axis="y", alpha=0.3)
     ax.legend(loc="upper right")

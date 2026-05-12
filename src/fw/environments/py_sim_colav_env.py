@@ -112,7 +112,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.05, 0.0, 0.95, 0.0, 0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.15, 0.0, 0.0, 0.0, 0.85, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -148,7 +148,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.reward_weights = {
             "polar_distance_colreg": 0.65,
             "colreg_bearing": 1.5,
-            "crossing-right": 0.53125,
+            "crossing-right": 1.5,
             "overtaking": 0.53125,
             "head-on": 0.53125,
             # Overtaking has no phase-1 directional reward to compensate for,
@@ -532,7 +532,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             phase2_multiplier = 1.0 + cr_w / max(base_peak, 1e-6)
             phase2_base_boost = (phase2_multiplier - 1.0) * (1.0 - g_tcpa_overtaking) * base_reward
 
-        reward += phase2_base_boost
+        #reward += phase2_base_boost
 
         # Passing detection: TS-frame sign-flip on lateral (crossing-right) or
         # longitudinal (head-on) offset. Linearly interpolate the sub-step

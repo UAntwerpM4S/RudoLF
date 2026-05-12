@@ -178,6 +178,7 @@ class AgentManager:
         pretrained_specs = {
             #0: {"file": "pretrained_pf", "frozen": False},
             #1: {"file": "pretrained_ho", "frozen": False},
+            #2: {"file": "pretrained_ot", "frozen": False},
             #3: {"file": "pretrained_cr", "frozen": False},
         }
         agent.load_pretrained_policies(pretrained_dir, pretrained_specs)
