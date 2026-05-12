@@ -88,7 +88,7 @@
       "max_steering_rate_per_second": "Maximum absolute steering change per simulated second in normalized [-1, 1] steering space."
     },
     "speed_profile": "safe",
-    "max_policy_updates": 200,
+    "max_policy_updates": 400,
     "max_steps": 120000,
     "simulation_speed": 20.0,
     "draw_calibration_reference": false,
@@ -120,7 +120,7 @@
     "_remarks": {
       "enabled": "true => initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights.",
       "source_policy_path": "Path to the 2D .zip policy file (relative to repo root or absolute).",
-      "freeze_shared_layers": "true => freeze all transferred layers so only the mapping-layer first linear adapts. false => fine-tune the full network."
+      "freeze_shared_layers": "true => freeze only the backbone hidden layer (shared_network[2]: 256→128) so the pretrained feature representation is preserved. The mapping layer (shared_network[0]) and actor/critic heads remain trainable to adapt to AirSim's 3D physics and reward structure."
     },
     "enabled": false,
     "source_policy_path": "models/PySimEnv_PPO_policy.zip",
