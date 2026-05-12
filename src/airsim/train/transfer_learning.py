@@ -5,7 +5,7 @@ Only used by AirSimEnv training — has no effect on 2D environment training.
 Tasks implemented:
     T-054: Network topology comparison (2D vs 3D input dims, layers, neurons, activations).
     T-055: Incompatibility reporting with clear error messages.
-    T-056: 2D weight loading with layer matching and shared-layer freezing.
+    T-056: 2D weight loading with layer matching and selective backbone freezing.
     T-057: Implicit mapping layer for extra 3D inputs via the untrained first linear
            layer, controlled by the ``transfer_learning`` config block.
 
@@ -18,9 +18,14 @@ acting as the implicit mapping layer that learns to project the extra AirSim
 observation dimensions into the feature space that the pretrained deeper layers
 already understand.
 
-All deeper shared layers (``shared_network[2]: 256→128``), the actor head, and the
-critic head have identical shapes in 2D and 3D networks and are transferred + frozen
-so that only the mapping-layer first layer adapts during fine-tuning.
+Freeze strategy
+---------------
+When ``freeze_shared=True``, only the backbone layer ``shared_network[2]: 256→128``
+is frozen so the pre-trained feature representation is preserved.  The actor and
+critic heads (``actor_mean``, ``actor_log_std``, ``critic``) remain **trainable**
+so they can fine-tune to the new environment's reward structure and 3D physics.
+Freezing the heads would prevent the policy distribution from adapting, causing
+convergence failure.
 """
 
 from __future__ import annotations
@@ -88,8 +93,8 @@ class TopologyReport:
         for i, (in_f, out_f) in enumerate(self.shared_layer_shapes):
             lines.append(f"    [{i}] Linear({in_f} → {out_f})")
         lines += [
-            "  Mapping layer      : shared_network[0] kept as random-init,",
-            f"                       Linear({self.target_input_dim} → 256) — trainable",
+            "  Mapping layer      : shared_network[0] — random-init, trainable",
+            f"                       Linear({self.target_input_dim} → 256)",
             "=" * 58,
         ]
         return "\n".join(lines)
@@ -184,9 +189,10 @@ _TRANSFERABLE_KEYS = (
     "critic.bias",
 )
 
-# Mapping-layer keys are transferred when dims match but must never be frozen —
-# they are always the trainable adapter regardless of freeze_shared.
-_MAPPING_LAYER_KEYS = frozenset({"shared_network.0.weight", "shared_network.0.bias"})
+# Only the backbone hidden layer is frozen when freeze_shared=True.
+# The actor and critic heads must stay trainable so the policy distribution
+# can adapt to AirSim's reward structure and 3D physics.
+_BACKBONE_KEYS = frozenset({"shared_network.2.weight", "shared_network.2.bias"})
 
 
 def apply_transfer_weights(
@@ -197,15 +203,18 @@ def apply_transfer_weights(
     """Copy matching weights from *source_policy* to *target_policy*.
 
     Only layers whose parameter tensors have identical shapes in source and
-    target are transferred (``shared_network[2]``, actor head, critic head).
-    The first layer ``shared_network[0]`` is always skipped — it is the
-    mapping layer and must remain trainable regardless of dimension match.
+    target are transferred. The first layer ``shared_network[0]`` (the mapping
+    layer) is intentionally skipped because it differs in input dimension —
+    it remains randomly initialised and trainable to adapt the extra 3D inputs.
 
     Args:
         source_policy: Pretrained 2D policy.
         target_policy: Freshly initialised 3D AirSimEnv policy.
-        freeze_shared: If ``True``, freeze all transferred parameters so only
-            the mapping-layer first linear trains during fine-tuning.
+        freeze_shared: If ``True``, freeze only ``shared_network[2]`` (the
+            backbone hidden layer) so the pretrained feature representation is
+            preserved. The actor and critic heads remain trainable so the policy
+            distribution can adapt to AirSim's reward structure and 3D physics.
+            If ``False``, all layers remain trainable for full fine-tuning.
 
     Returns:
         List of state-dict keys that were successfully transferred.
@@ -217,10 +226,6 @@ def apply_transfer_weights(
     for key in _TRANSFERABLE_KEYS:
         if key not in src_sd or key not in tgt_sd:
             continue
-        # Treat mapping-layer weight+bias as a unit: skip bias if weight was not
-        # transferred (e.g. different input dims), so the layer is never partially applied.
-        if key == "shared_network.0.bias" and "shared_network.0.weight" not in transferred:
-            continue
         if src_sd[key].shape != tgt_sd[key].shape:
             continue
         # Move to target device before copying so CPU→CUDA transfers work correctly.
@@ -230,9 +235,8 @@ def apply_transfer_weights(
     target_policy.network.load_state_dict(tgt_sd)
 
     if freeze_shared:
-        transferred_set = set(transferred)
         for name, param in target_policy.network.named_parameters():
-            if name in transferred_set and name not in _MAPPING_LAYER_KEYS:
+            if name in _BACKBONE_KEYS:
                 param.requires_grad_(False)
 
     return transferred
@@ -259,7 +263,8 @@ def build_transfer_policy(
         4. Transfer all matching hidden layers, moving tensors to *target_device* automatically.
         5. The first linear layer ``shared_network[0]: Linear(target_input_dim → 256)``
            remains randomly initialised and trainable — this is the mapping layer
-           that adapts the extra 3D observation features.
+           that learns to project the extra 3D observation dimensions into the feature
+           space that the pretrained deeper layers understand.
 
     The source checkpoint is always loaded on CPU regardless of *target_device*, so any
     checkpoint (CPU or CUDA) can be transferred to any training device without manual
@@ -293,7 +298,7 @@ def build_transfer_policy(
 
     n_trainable = sum(p.numel() for p in target_policy.network.parameters() if p.requires_grad)
     n_total = sum(p.numel() for p in target_policy.network.parameters())
-    frozen_note = "mapping layer only" if freeze_shared else "full network"
+    frozen_note = "backbone frozen, mapping+heads trainable" if freeze_shared else "full network"
     print(
         f"[TransferLearning] Source device : cpu (weight extraction)"
         f"\n[TransferLearning] Target device : {resolved_device}"

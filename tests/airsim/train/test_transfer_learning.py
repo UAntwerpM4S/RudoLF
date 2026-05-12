@@ -20,6 +20,7 @@ from airsim.train.transfer_learning import (
     compare_network_topology,
     validate_transfer_compatibility,
     _TRANSFERABLE_KEYS,
+    _BACKBONE_KEYS,
 )
 
 
@@ -212,16 +213,18 @@ class TestApplyTransferWeights:
             "First layer weights must not be overwritten when input dims differ"
         )
 
-    def test_freeze_disables_grad_for_transferred_params(self):
-        """Transferred parameters must have requires_grad=False when freeze_shared=True."""
+    def test_freeze_disables_grad_only_for_backbone(self):
+        """Only the backbone (shared_network.2) must be frozen; actor/critic heads stay trainable."""
         src = _make_policy(input_dim=10, output_dim=2)
         tgt = _make_policy(input_dim=18, output_dim=2)
 
-        transferred = apply_transfer_weights(src, tgt, freeze_shared=True)
+        apply_transfer_weights(src, tgt, freeze_shared=True)
 
         for name, param in tgt.network.named_parameters():
-            if name in transferred:
+            if name in _BACKBONE_KEYS:
                 assert not param.requires_grad, f"{name} should be frozen"
+            else:
+                assert param.requires_grad, f"{name} should remain trainable"
 
     def test_no_freeze_keeps_all_grads_enabled(self):
         """All parameters must remain trainable when freeze_shared=False."""
