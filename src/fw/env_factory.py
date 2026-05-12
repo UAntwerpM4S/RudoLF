@@ -398,8 +398,8 @@ class AirSimEnvironment(BaseEnvironment):
         target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
 
         # Allow callers to control training vs. inference mode via configuration dict.
-        # training_mode=True  → disables UE5 rendering + uses fast frame-stepping.
-        # training_mode=False → restores UE5 rendering + uses real-time stepping.
+        # training_mode=True  -> disables UE5 rendering + uses fast frame-stepping.
+        # training_mode=False -> restores UE5 rendering + uses real-time stepping.
         cfg = configuration if isinstance(configuration, dict) else {}
         training_mode = cfg.get("training_mode", True)
         no_rendering_mode = bool(cfg.get("no_rendering_mode", False))
