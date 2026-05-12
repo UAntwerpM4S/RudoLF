@@ -283,25 +283,20 @@ class ActionAdapter:
         profile: VesselProfile,
         action: np.ndarray,
         *,
-        simulator=None,
+        simulator=None,  # noqa: ARG004  kept for API compatibility
     ) -> np.ndarray:
         """
         Return a transformed copy of *action*.
 
-        Applies rudder scaling and, when ``thrust_mode == FIXED``, replaces
-        the thrust component with a normalized constant derived from
-        ``profile.thrust.fixed_value``.
-
-        The original array is never modified.
+        When ``thrust_mode == FIXED`` the thrust component (index 1) is
+        replaced with ``profile.thrust.fixed_value`` directly.  The original
+        array is never modified.
 
         Args:
-            profile: Profile whose transfer and thrust settings to use.
+            profile: Profile whose thrust settings to apply.
             action: Array of shape ``(N,)`` with ``N >= 2``.  Index 0 is
-                rudder, index 1 is thrust, both in ``[-1, 1]``.
-            simulator: Optional simulator whose ``ShipSpecifications`` are
-                used to read ``min_thrust`` / ``max_thrust`` for the thrust
-                normalization.  Falls back to ``(0.1, 1.0)`` when *None* or
-                when specs are unavailable.
+                rudder, index 1 is thrust, both nominally in ``[-1, 1]``.
+            simulator: Accepted for API compatibility; currently unused.
 
         Returns:
             New ``float32`` array with the same shape as *action*.
@@ -310,7 +305,7 @@ class ActionAdapter:
             ValueError: If *action* has fewer than 2 elements.
         """
 
-        action = np.array(action, dtype=np.float32)
+        action = np.array(action, dtype=np.float32, copy=True)
 
         if action.shape[0] < 2:
             raise ValueError(
@@ -323,26 +318,3 @@ class ActionAdapter:
             action[1] = profile.thrust.fixed_value
 
         return action
-
-    @staticmethod
-    def _thrust_limits(simulator) -> tuple[float, float]:
-        """
-        Read ``(min_thrust, max_thrust)`` from simulator specs if available.
-
-        Falls back to ``(0.1, 1.0)`` — the default Myzako ship range — and
-        emits a debug log so the fallback is traceable.
-        """
-
-        if simulator is not None:
-            specs = (
-                getattr(simulator, "specs", None)
-                or getattr(simulator, "_specs", None)
-            )
-            if specs is not None:
-                return float(specs.min_thrust), float(specs.max_thrust)
-
-        logger.debug(
-            "ActionAdapter: simulator specs unavailable; "
-            "using fallback thrust limits (0.1, 1.0)."
-        )
-        return 0.1, 1.0
