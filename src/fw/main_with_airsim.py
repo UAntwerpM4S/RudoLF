@@ -373,10 +373,10 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         "state_poll_interval": float(effective_training_cfg.get("state_poll_interval", 0.005)),
         "guidance_assist_enabled": bool(effective_training_cfg.get("guidance_assist_enabled", False)),
         "guidance_residual_steering_scale": float(
-            effective_training_cfg.get("guidance_residual_steering_scale", 0.45)
+            effective_training_cfg.get("guidance_residual_steering_scale", 0.50)
         ),
         "guidance_residual_throttle_scale": float(
-            effective_training_cfg.get("guidance_residual_throttle_scale", 0.55)
+            effective_training_cfg.get("guidance_residual_throttle_scale", 0.60)
         ),
         "control_interface": str(effective_training_cfg.get("control_interface", "car_physics")),
         "observation_profile": str(

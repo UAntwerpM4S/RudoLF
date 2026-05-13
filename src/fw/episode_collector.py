@@ -299,15 +299,20 @@ class EpisodeCollector:
         # If the profile specifies an initial vessel state, push it to the
         # simulator immediately after the environment's own reset so the
         # override takes effect for this episode.
-        if self._profile.scenario.initial_state is not None:
+        if self._profile is not None and self._profile.scenario.initial_state is not None:
             _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-            if _rollout_sim is None and hasattr(env, "sub_environments") and env.sub_environments:
-                for sub in env.sub_environments.values():
+            if _rollout_sim is not None:
+                SimulatorApplier.apply(self._profile, _rollout_sim)
+            elif hasattr(env, "sub_environments") and env.sub_environments:
+                iterable = (
+                    env.sub_environments.values()
+                    if isinstance(env.sub_environments, dict)
+                    else env.sub_environments
+                )
+                for sub in iterable:
                     _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
                     if _sub_sim is not None:
                         SimulatorApplier.apply(self._profile, _sub_sim)
-            elif _rollout_sim is not None:
-                SimulatorApplier.apply(self._profile, _rollout_sim)
 
         done = np.zeros(len(ship_ids), dtype=bool)
         steps = 0
@@ -321,25 +326,44 @@ class EpisodeCollector:
             while not np.all(done):
                 action, _, _ = self._agent.predict(state=state, deterministic=True)
 
-                sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-                if sim is None and hasattr(env, "sub_environments") and env.sub_environments:
-                    first_sub = next(iter(env.sub_environments.values()), None)
-                    if first_sub is not None:
-                        sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
-
-                if isinstance(action, np.ndarray) and action.ndim == 2:
-                    transformed = np.stack([
-                        ActionAdapter.transform(self._profile, action[i], simulator=sim)
-                        for i in range(action.shape[0])
-                    ])
-                    action = transformed
-                elif isinstance(action, tuple):
-                    action = tuple(
-                        ActionAdapter.transform(self._profile, a, simulator=sim)
-                        for a in action
-                    )
-                else:
-                    action = ActionAdapter.transform(self._profile, action, simulator=sim)
+                if self._profile is not None:
+                    if isinstance(action, np.ndarray) and action.ndim == 2:
+                        sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                        if sim is None and hasattr(env, "sub_environments") and env.sub_environments:
+                            first_sub = next(iter(
+                                env.sub_environments.values()
+                                if isinstance(env.sub_environments, dict)
+                                else env.sub_environments
+                            ), None)
+                            if first_sub is not None:
+                                sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
+                        transformed = np.stack([
+                            ActionAdapter.transform(self._profile, action[i], simulator=sim)
+                            for i in range(action.shape[0])
+                        ])
+                        action = transformed
+                    elif isinstance(action, tuple):
+                        sub_sims: list = []
+                        if hasattr(env, "sub_environments") and env.sub_environments:
+                            iterable = (
+                                env.sub_environments.values()
+                                if isinstance(env.sub_environments, dict)
+                                else env.sub_environments
+                            )
+                            for sub in iterable:
+                                sub_sims.append(
+                                    getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
+                                )
+                        action = tuple(
+                            ActionAdapter.transform(
+                                self._profile, a,
+                                simulator=sub_sims[i] if i < len(sub_sims) else None,
+                            )
+                            for i, a in enumerate(action)
+                        )
+                    else:
+                        sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                        action = ActionAdapter.transform(self._profile, action, simulator=sim)
 
                 state, reward, terminated, truncated, _ = env.step(action)
 

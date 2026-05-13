@@ -151,7 +151,11 @@ if __name__ == "__main__" or __name__ == "fw.main":
             if sim is not None:
                 apply_profile(profile, simulator=sim)
 
-        std_trainer = Trainer(PPO_POLICY_NAME, envs, profile, "SimpleScheduler")
+        # MultiSimEnv requires its own policy type; all other envs use PPO.
+        # repr(e) returns e._name which equals ENVIRONMENT_NAME (e.g. "MultiSimEnv").
+        batch_has_multi = any(repr(e) == multi_sim_env_name for e in envs)
+        batch_policy = MULTI_PPO_POLICY_NAME if batch_has_multi else PPO_POLICY_NAME
+        std_trainer = Trainer(batch_policy, envs, profile, "SimpleScheduler")
         if action == "visualize":
             std_trainer.visualize(envs, airsim_bridge=None)
         else:
