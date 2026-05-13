@@ -28,7 +28,7 @@ python -m fw.main
 ### Runtime Routing
 
 - Non-AirSim environments run through the generic framework trainer/visualizer flow.
-- AirSim-specific runtime behavior (visualisation mode, training speed profile, save slot, connection settings) is configured in `src/airsim/config/runtime_settings.json`.
+- AirSim-specific runtime behavior (visualization mode, training speed profile, save slot, connection settings) is configured in `src/airsim/config/runtime_settings.json`.
 - AirSim visualisation and inference exports are written to the workspace-level `exports/` folder.
 
 ### AirSim Training
@@ -39,12 +39,12 @@ The policy receives an 18-field route-relative observation vector in the vehicle
 
 Training speed is configured via `training.speed_profile` in `runtime_settings.json`:
 
-| Profile | sim speed | Pause stepping | Recommended use |
-|---------|-----------|----------------|----------------|
-| `safe` | 20× | yes | New training (default) |
-| `fast` | 40× | yes | Faster iteration |
-| `turbo` | 80× | yes | Maximum throughput |
-| `normal` | 1× | no | Debug / real-time |
+| Profile  | sim speed | Pause stepping | Recommended use        |
+|----------|-----------|----------------|------------------------|
+| `safe`   | 20×       | yes            | New training (default) |
+| `fast`   | 40×       | yes            | Faster iteration       |
+| `turbo`  | 80×       | yes            | Maximum throughput     |
+| `normal` | 1×        | no             | Debug / real-time      |
 
 `StrictSuccessStoppingCallback` halts training automatically once a configurable number of consecutive strict-success episodes is reached.
 
@@ -54,14 +54,14 @@ Transfer learning from a pretrained 2D policy (PySimEnv or FhSimEnv) is supporte
 
 ### AirSim Exports
 
-Each AirSim inference or visualisation session creates its own timestamped export folder under `exports/`.
+Each AirSim inference or visualization session creates its own timestamped export folder under `exports/`.
 
-| File | Contents |
-|------|---------|
-| `inference_session.csv` or `visualisation_session.csv` | session-level telemetry |
-| `airsim_telemetry.csv` | bridge-side AirSim state snapshots |
-| `metadata.json` | model, environment, runtime config, and `performance_summary` |
-| `trajectory_2d_vs_3d.png` | side-by-side 2D (framework) vs 3D (UE5) trajectory comparison |
+| File                                                   | Contents                                                      |
+|--------------------------------------------------------|---------------------------------------------------------------|
+| `inference_session.csv` or `visualisation_session.csv` | session-level telemetry                                       |
+| `airsim_telemetry.csv`                                 | bridge-side AirSim state snapshots                            |
+| `metadata.json`                                        | model, environment, runtime config, and `performance_summary` |
+| `trajectory_2d_vs_3d.png`                              | side-by-side 2D (framework) vs 3D (UE5) trajectory comparison |
 
 `metadata.json` includes a `performance_summary` section with total reward,
 duration, 2D/3D distance, and mean/max cross-track error.

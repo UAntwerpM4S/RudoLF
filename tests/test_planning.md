@@ -4,9 +4,9 @@
 
 This document describes the test planning for the current state of the RudoLF project at the end of sprint 2. The active implementation scope currently covers the first AirSim integration layer: connection startup, configuration validation, telemetry retrieval, observation transformation, action-to-control mapping, synchronous tick communication, the `AirSimEnv` Gymnasium wrapper, and its registration in the framework environment factory. In roadmap terms this corresponds mainly to BI-1.1.1 through BI-1.4.2 and the related test tasks BI-5.1.1, BI-6.1.1 and BI-6.1.2.
 
-The roadmap items that belong to later sprints, such as UE5 visualisation, 3D inference, reward engineering, PPO updates on 3D data, transfer learning and curriculum learning, are not treated as completed scope in this document. They are included only where they influence current test priorities, because decisions in sprint 2 can still introduce defects that would block those later milestones.
+The roadmap items that belong to later sprints, such as UE5 visualization, 3D inference, reward engineering, PPO updates on 3D data, transfer learning and curriculum learning, are not treated as completed scope in this document. They are included only where they influence current test priorities, because decisions in sprint 2 can still introduce defects that would block those later milestones.
 
-The current automated test baseline in the repository consists of focused unit and integration checks for the bridge, control mapping, `AirSimEnv`, AirSim visualisation dispatch, the environment factory and the `fw.main` fallback flow. Manual tests are still required for full UE5 behaviour because the Unreal Engine runtime is not started during automated test execution.
+The current automated test baseline in the repository consists of focused unit and integration checks for the bridge, control mapping, `AirSimEnv`, AirSim visualisation dispatch, the environment factory and the `fw.main` fallback flow. Manual tests are still required for full UE5 behavior because the Unreal Engine runtime is not started during automated test execution.
 
 ## Why Later Roadmap Tasks Are Not Yet Expanded Here
 
@@ -21,16 +21,16 @@ Even so, those later tasks should still be discussed at planning level, because 
 
 The later roadmap tasks can be grouped into the following future planning areas:
 
-- T-021 to T-037: visualisation quality, minimap ergonomics, telemetry export, and 2D versus 3D comparison. These should mainly expand manual system tests, visual regression checks, telemetry schema checks, and configuration coverage.
+- T-021 to T-037: visualization quality, minimap ergonomics, telemetry export, and 2D versus 3D comparison. These should mainly expand manual system tests, visual regression checks, telemetry schema checks, and configuration coverage.
 - T-038 to T-053: training instrumentation, deterministic reset, 2D and 3D reward alignment, PPO diagnostics, model persistence, warnings, and transfer-learning setup. These should mainly expand training-loop integration tests, long-run regression tests, metadata consistency tests, and reproducibility checks.
 - T-054 to T-065: transfer learning, curriculum logic, dynamic scheduling, and staged performance comparisons. These should mainly expand compatibility tests, checkpoint-loading tests, curriculum configuration tests, and controlled experiment reporting.
-- T-066 to T-089: test artefacts, reporting, end-to-end pipelines, demo validation, defect tracking, documentation, code review, and performance closure. These should mainly expand evidence management, E2E scenario suites, acceptance checklists, and release-readiness review gates.
+- T-066 to T-089: test artifacts, reporting, end-to-end pipelines, demo validation, defect tracking, documentation, code review, and performance closure. These should mainly expand evidence management, E2E scenario suites, acceptance checklists, and release-readiness review gates.
 
 If this document is extended into a master test plan later in the project, those roadmap groups should become their own section with per-sprint acceptance criteria, required evidence, and ownership. For the current sprint-2 version, keeping them as forward-planned categories avoids pretending that late-phase deliverables are already stable enough for detailed pass/fail thresholds.
 
 ## Risk Analysis
 
-The following risk analysis prioritises the most relevant application risks for the current sprint-2 state of the project. The objective is not to list project-management risks, but functional and technical risks that directly affect the normal behaviour of the software. The scope is deliberately broader than the code delivered in sprint 2 alone: it includes immediate forward risks that are already enabled or constrained by the current architecture, such as policy loading, live visualisation, telemetry diagnostics and UI stability. That makes the analysis more useful for planning than a narrow list that only restates what is already implemented.
+The following risk analysis prioritizes the most relevant application risks for the current sprint-2 state of the project. The objective is not to list project-management risks, but functional and technical risks that directly affect the normal behavior of the software. The scope is deliberately broader than the code delivered in sprint 2 alone: it includes immediate forward risks that are already enabled or constrained by the current architecture, such as policy loading, live visualization, telemetry diagnostics and UI stability. That makes the analysis more useful for planning than a narrow list that only restates what is already implemented.
 
 The risk value expresses the chance that the event occurs if no mitigation is applied.
 
@@ -76,15 +76,15 @@ Priority is calculated as `round((risk x impact) / 5)` and sorted from high to l
 | Positive opportunity: shared environment abstraction | The common framework API across `PySimEnv`, `FhSimEnv` and `AirSimEnv` can reduce future implementation cost for later sprints.                                                |    3 |      2 |        1 | Reuse the same scheduler, trainer and policy-loading path wherever possible and preserve that abstraction in tests.                                            | Exploit     | Divergence in public interfaces or duplicated environment-specific orchestration code.                                            | Interface, adapter comparison test            | The main environment types must keep compatible spaces and entry contracts so shared trainer logic remains reusable.                                |
 | Positive opportunity: simulation parity checks       | Keeping 2D and 3D execution paths comparable allows the project to detect integration drift earlier and reuse training assets more efficiently.                                |    2 |      2 |        1 | Add parity-oriented assertions and demo procedures that compare expected behaviour between framework and AirSim runs.                                          | Exploit     | 2D and 3D runs produce structurally different observations, action assumptions, or evaluation outcomes without explanation.       | Adapter comparison test, acceptance test      | Equivalent 2D and 3D runs must preserve the documented action and observation assumptions required for policy reuse.                                |
 
-This prioritisation means sprint-2 testing should focus first on lock-step stepping, bridge connectivity, observation correctness, runtime configuration validity, policy compatibility and backward compatibility. Risks belonging mainly to later epics, such as transfer learning or curriculum progression, are noted only where current implementation choices can already create blockers. That keeps the analysis broad enough to be strategically useful without pretending that future features are already complete.
+This prioritization means sprint-2 testing should focus first on lock-step stepping, bridge connectivity, observation correctness, runtime configuration validity, policy compatibility and backward compatibility. Risks belonging mainly to later epics, such as transfer learning or curriculum progression, are noted only where current implementation choices can already create blockers. That keeps the analysis broad enough to be strategically useful without pretending that future features are already complete.
 
 ## Test Strategy
 
 Testing is integrated continuously into the project approach rather than postponed to a final test phase. For the current sprint-2 scope, the dominant approach is: implement a small integration slice, add focused automated tests around the changed code, run a sanity subset locally, and only then perform a manual UE5 check if the feature depends on the live engine. This is appropriate because the highest current risks sit in the interaction between framework code, AirSim bridge logic and environment wrappers.
 
-In practical terms, each risky change in the current codebase is expected to end with at least one of the following: a unit test for a pure helper, an integration test for a runtime flow, or a regression test for a previously observed failure. The current repository already reflects that approach with tests for bridge behaviour, control mapping, `AirSimEnv`, environment-factory routing, AirSim dispatch and `fw.main` fallback behaviour. The test share is therefore not concentrated in one final sprint; it is distributed across implementation, with sprint 2 acting as the first real stabilisation phase for the AirSim integration.
+In practical terms, each risky change in the current codebase is expected to end with at least one of the following: a unit test for a pure helper, an integration test for a runtime flow, or a regression test for a previously observed failure. The current repository already reflects that approach with tests for bridge behavior, control mapping, `AirSimEnv`, environment-factory routing, AirSim dispatch and `fw.main` fallback behavior. The test share is therefore not concentrated in one final sprint; it is distributed across implementation, with sprint 2 acting as the first real stabilization phase for the AirSim integration.
 
-There is no separate external test team in this project. Testing is part of the engineering workflow itself: the same implementation work that introduces a feature is expected to produce the first relevant automated checks for that feature. Manual tests are reserved for cases that cannot be reproduced faithfully without UE5, such as actual engine connectivity, live visualisation and runtime movement in Play mode. This means automated tests are the default, while manual tests are used to validate end-to-end behaviour that depends on external software.
+There is no separate external test team in this project. Testing is part of the engineering workflow itself: the same implementation work that introduces a feature is expected to produce the first relevant automated checks for that feature. Manual tests are reserved for cases that cannot be reproduced faithfully without UE5, such as actual engine connectivity, live visualization and runtime movement in Play mode. This means automated tests are the default, while manual tests are used to validate end-to-end behavior that depends on external software.
 
 ### Test Types, Reach and Criteria
 
@@ -108,11 +108,11 @@ Coverage expectations are risk-based rather than purely percentage-based. Every 
 
 ## Current Automated Test Flow
 
-The current automated baseline in the repository is organised around the highest-risk integration points:
+The current automated baseline in the repository is organized around the highest-risk integration points:
 
-- `tests/airsim/communication/test_bridge.py` validates bridge-side behaviour and connection-related logic.
+- `tests/airsim/communication/test_bridge.py` validates bridge-side behavior and connection-related logic.
 - `tests/airsim/communication/test_control_mapping.py` validates policy action checks and control mapping.
-- `tests/airsim/enviroments/test_airsim_env.py` validates the Gymnasium wrapper, step/reset behaviour and telemetry fields.
+- `tests/airsim/enviroments/test_airsim_env.py` validates the Gymnasium wrapper, step/reset behavior and telemetry fields.
 - `tests/airsim/inference/test_model_visualisation_dispatch.py` validates dedicated AirSim visualisation dispatch logic.
 - `tests/fw/test_env_factory_config.py` validates environment-name resolution and default environment selection.
 - `tests/fw/test_main_fallback.py` validates the fallback flow from AirSim-specific runtime errors back to the default framework entrypoint.
@@ -137,4 +137,4 @@ The following software, services and execution context are used for the current 
 | Unreal Engine     | 5.x         | Epic Games                  | Runtime used for live AirSim execution and manual system checks.        | https://www.unrealengine.com/             |
 | Operating system  | Windows     | Microsoft                   | Current development and test host for the repository and UE5 workflow.  | https://www.microsoft.com/windows         |
 
-Automated results are captured from pytest output, Python exceptions and framework logs. Manual system-test evidence is captured from console output, AirSim bridge warnings, generated CSV telemetry and visible behaviour in UE5 Play mode. No standardised hardware lab is defined in the repository yet; current manual validation is performed on the same local Windows workstation used for development. If later sprints introduce benchmarking or stability targets, the hardware profile should be added here explicitly so those measurements become reproducible.
+Automated results are captured from pytest output, Python exceptions and framework logs. Manual system-test evidence is captured from console output, AirSim bridge warnings, generated CSV telemetry and visible behavior in UE5 Play mode. No standardized hardware lab is defined in the repository yet; current manual validation is performed on the same local Windows workstation used for development. If later sprints introduce benchmarking or stability targets, the hardware profile should be added here explicitly so those measurements become reproducible.

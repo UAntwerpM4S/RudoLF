@@ -25,7 +25,7 @@ class EpisodePerformance:
         outcome: Final step outcome label.
         total_reward: Sum of step rewards for the episode.
         duration_s: Simulated episode duration in seconds.
-        distance_2d_m: Cumulative travelled distance in the 2D frame.
+        distance_2d_m: Cumulative traveled distance in the 2D frame.
         mean_cross_track_error_m: Mean absolute cross-track error in meters.
         max_cross_track_error_m: Maximum absolute cross-track error in meters.
     """
@@ -396,7 +396,7 @@ def compute_trajectory_similarity(
     """Compute shape-based RMSE and DTW distance between 2D and 3D trajectories.
 
     Both trajectories are resampled to *n_samples* points by arc-length and
-    then shape-normalised (centroid subtracted, scaled to unit extent) before
+    then shape-normalized (centroid subtracted, scaled to unit extent) before
     comparison, making the metric coordinate-system agnostic.
 
     Args:

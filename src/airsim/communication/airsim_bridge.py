@@ -162,7 +162,7 @@ class AirSimBridge:
     """
 
     def __init__(self, config: Optional[AirSimConfig] = None) -> None:
-        """Initialise the AirSim bridge and connect to the simulator.
+        """Initialize the AirSim bridge and connect to the simulator.
 
         Connection flow:
             1. Probe the RPC port (``is_ue5_reachable``).
@@ -766,8 +766,8 @@ class AirSimBridge:
         Unlike ``simSetVehiclePose``, this moves any named scene object (e.g. a
         Static/Skeletal Mesh Actor) that has no Chaos physics body. The water
         plugin never sees a physics body move, so there are no buoyancy reactions
-        or water ripple artefacts. This is the recommended transport for the
-        fully-external-physics visualisation mode: the local framework runs in
+        or water ripple artifacts. This is the recommended transport for the
+        fully-external-physics visualization mode: the local framework runs in
         Python, UE5
         is used purely as a renderer.
 
@@ -1149,7 +1149,7 @@ class AirSimBridge:
         simulation_speed: float = DEFAULT_AIRSIM_SIMULATION_SPEED,
         draw_reference: bool = True,
     ):
-        """Prepare UE5 for framework-model visualisation.
+        """Prepare UE5 for framework-model visualization.
 
         Args:
             save_slot: UE5 save slot to load before playback.
