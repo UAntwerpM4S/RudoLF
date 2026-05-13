@@ -208,6 +208,7 @@ class SimulatorApplier:
         """
 
         def nz(value, fallback):
+            """Return *fallback* when *value* is numerically zero, otherwise *value*."""
             return fallback if math.isclose(value, 0.0, rel_tol=0.0, abs_tol=EPS) else value
 
         orig = simulator.state
