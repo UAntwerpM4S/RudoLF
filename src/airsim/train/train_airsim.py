@@ -374,10 +374,11 @@ def _run_training_with_transfer(
 
 def run_training(runtime_settings: dict[str, Any] | None = None):
     """Run AirSim PPO training from runtime settings and return trainer metrics."""
-    from fw.config import PPO_POLICY_NAME, get_config_parameters
-    from fw.config_profile import ProfileRegistry
-    from fw.env_factory import airsim_env_name, get as get_environment
     from fw.trainer import Trainer
+    from fw.profile_applier import apply_profile
+    from fw.config_profile import ProfileRegistry
+    from fw.config import PPO_POLICY_NAME, get_config_parameters
+    from fw.env_factory import airsim_env_name, get as get_environment
 
     repo_root = Path(__file__).resolve().parents[2]
     env_config = _build_training_env_config(runtime_settings)
@@ -400,6 +401,12 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
             f"'{env.gym_env.type_name}' (UE5 unavailable). Skipping AirSim training."
         )
         return {}
+
+    # Apply env-level profile flags (smoothing, rudder-angle scaling) so this
+    # path stays in sync with main_with_airsim.py. For AirSimEnv these
+    # attributes are no-ops today, but future profile fields that EnvApplier
+    # consumes would otherwise be silently skipped here.
+    apply_profile(profile, env=env.gym_env)
 
     # Transfer learning: bypass Trainer and drive agent directly so the
     # transferred policy can be injected before learn() starts.
@@ -440,10 +447,11 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
 
 def run_visualization(runtime_settings: dict[str, Any] | None = None):
     """Run AirSim visualization from runtime settings and return trainer instance."""
-    from fw.config import PPO_POLICY_NAME, get_config_parameters
-    from fw.config_profile import ProfileRegistry
-    from fw.env_factory import airsim_env_name, get as get_environment
     from fw.trainer import Trainer
+    from fw.profile_applier import apply_profile
+    from fw.config_profile import ProfileRegistry
+    from fw.config import PPO_POLICY_NAME, get_config_parameters
+    from fw.env_factory import airsim_env_name, get as get_environment
 
     env_config = _build_visualize_env_config(runtime_settings)
     env = get_environment(airsim_env_name, configuration=env_config)
@@ -453,6 +461,10 @@ def run_visualization(runtime_settings: dict[str, Any] | None = None):
     profile_name = fw_config.get("profile", "default_airsim_profile")
     profile = ProfileRegistry.get(profile_name)
     profile.validate()
+
+    # Apply env-level profile flags consistently with run_training and
+    # main_with_airsim.py so all three entrypoints behave identically.
+    apply_profile(profile, env=env.gym_env)
 
     trainer = Trainer(PPO_POLICY_NAME, envs, profile, "SimpleScheduler")
 
