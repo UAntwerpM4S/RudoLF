@@ -264,7 +264,7 @@ This file controls framework-level behavior. For AirSim, three things matter:
 | ---------- | -------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `env_type` | `str` or `list[str]` | `"AirSimEnv"` or `["PySimEnv", "AirSimEnv"]` | Which environment(s) to run, in order. Include `"AirSimEnv"` to activate the AirSim step.                                        |
 | `action`   | `str`                | `"train"` or `"visualize"`                   | High-level mode for all environments.                                                                                            |
-| `profile`  | `str`                | `"default_airsim_profile"`                   | VesselProfile key loaded from `ProfileRegistry`. Controls speed envelope and scenario parameters threaded into `SinglePPOAgent`. |
+| `profile`  | `str`                | `"default_profile"`                          | VesselProfile key loaded from `ProfileRegistry`. Controls speed envelope and scenario parameters threaded into `SinglePPOAgent`. |
 
 Valid `env_type` values: `"PySimEnv"`, `"FhSimEnv"`, `"AirSimEnv"`, `"PySimPolarEnv"`, `"LunarLander"`.
 
@@ -274,7 +274,7 @@ Example — AirSim training only:
 CONFIG_PARAMETERS = {
     'env_type': ["AirSimEnv"],
     'action': "train",
-    'profile': "default_airsim_profile",
+    'profile': "default_profile",
     ...
 }
 ```
@@ -461,7 +461,7 @@ Training stops when the number of PPO policy updates reaches `training.max_polic
 
 Training telemetry is written per-step to `logs/airsim_training_episode_log.csv` (path configurable via `training.episode_log_path`).
 
-The vessel speed profile is loaded from `config.py` (`profile` key, e.g. `"default_airsim_profile"`) and threaded through to `SinglePPOAgent`. The profile must be registered in `ProfileRegistry`.
+The vessel speed profile is loaded from `config.py` (`profile` key, e.g. `"default_profile"`) and threaded through to `SinglePPOAgent`. The profile must be registered in `ProfileRegistry`.
 
 #### Startup Log Analysis
 
