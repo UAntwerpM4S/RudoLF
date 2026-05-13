@@ -24,7 +24,7 @@ class CoordTransform:
     """
 
     def __init__(self, calibration: Optional[dict] = None) -> None:
-        """Initialise the coordinate transform.
+        """Initialize the coordinate transform.
 
         Args:
             calibration: Dictionary containing the calibration parameters.

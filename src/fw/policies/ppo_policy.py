@@ -6,7 +6,7 @@ import numpy as np
 
 from typing import Tuple, Dict, Any
 from fw.policies.actor_critic_network import ActorCriticNetwork
-from fw.common.tools.ppo_utils import _normalize_policy_zip_path
+from fw.common.tools.ppo_utils import normalize_policy_zip_path
 
 POLICY_FILE_NAME = 'policy.pth'
 
@@ -178,7 +178,7 @@ class PPOPolicy:
         Args:
             filename (str): The path to the file where the model should be saved.
         """
-        zip_path = _normalize_policy_zip_path(filename)
+        zip_path = normalize_policy_zip_path(filename)
         parent_dir = os.path.dirname(zip_path)
         if parent_dir:
             os.makedirs(parent_dir, exist_ok=True)
@@ -211,7 +211,7 @@ class PPOPolicy:
             RuntimeError: If the model file is corrupted or the device doesn't match.
         """
         device = get_device(device)
-        zip_path = _normalize_policy_zip_path(filename)
+        zip_path = normalize_policy_zip_path(filename)
 
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_file:

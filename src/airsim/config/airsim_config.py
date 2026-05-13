@@ -1,6 +1,6 @@
 """AirSim connection configuration with validation.
 
-Provides a validated ``AirSimConfig`` dataclass that centralises all
+Provides a validated ``AirSimConfig`` dataclass that centralizes all
 CosysAirSim connection parameters. PID / control-loop gains are
 intentionally **not** stored here because they belong in the
 input-mapping layer instead.
@@ -83,7 +83,7 @@ class AirSimConfig:
     csv_log_path: str = ""
 
     def __post_init__(self) -> None:
-        """Validate all fields after initialisation.
+        """Validate all fields after initialization.
 
         Raises:
             ValueError: If any configuration field is invalid.

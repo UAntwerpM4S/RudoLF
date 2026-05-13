@@ -1,6 +1,7 @@
 import os
 import re
 import csv
+import copy
 import importlib
 
 from enum import Enum
@@ -407,8 +408,12 @@ class Trainer:
                 # Create an independent trainer to avoid shared state.
                 trainer = Trainer(self._agent_type, [env], self._profile, "SimpleScheduler")
 
+                # Deep-copy the stop-condition dict so that StopCondition._counter
+                # mutations from this run never bleed into subsequent configurations.
+                isolated_configuration = copy.deepcopy(training_configuration)
+
                 # Train once and keep plots off to avoid multi-threaded UI issues.
-                metrics = trainer.train(training_configuration, show_plots=False)
+                metrics = trainer.train(isolated_configuration, show_plots=False)
                 # Snapshot the trajectory image with a unique name per config.
                 trajectory_file = self._save_evaluation_trajectory_snapshot(trainer, reward_weights)
 
@@ -498,6 +503,20 @@ class Trainer:
                 print(f"  Status: FAILED ({result['status']})")
 
             print("-" * 80)
+
+        # Print a clearly separated section for any failed configurations so
+        # they are never silently omitted from the report.
+        failed_ids = [i for i in sorted(results) if i not in evaluation_order]
+        if failed_ids:
+            print(f"\n{'='*80}")
+            print(f"FAILED CONFIGURATIONS ({len(failed_ids)})")
+            print(f"{'='*80}\n")
+            for idx in failed_ids:
+                result = results[idx]
+                print(f"Configuration {idx}: {result.get('env_type', 'Unknown')}")
+                print(f"  Reward Profile: {result.get('reward_name', 'unknown')}")
+                print(f"  Status: {result.get('status', 'failed')}")
+                print("-" * 80)
 
 
     @staticmethod
