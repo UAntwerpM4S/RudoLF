@@ -136,6 +136,7 @@ class FhSimWrapper(BaseSimulator):
             # During visualization (enable_smoothing=False) use full thrust so
             # the ship maintains steerage way at the correct speed.
             thrust_cmd = float(actuator.thrust) if enable_smoothing else 1.0
+            propeller.engage()
             propeller.setEngineLeverValue(thrust_cmd)
 
         # Step 3: advance FH physics
