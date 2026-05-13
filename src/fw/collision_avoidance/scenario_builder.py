@@ -320,7 +320,7 @@ class ScenarioBuilder:
 
         # Match static/overtaking convention of skipping the first few and last few
         if n > 5:
-            env._eligible_dynamic_seg_indices = np.arange(0, n - 1, dtype=np.int32)
+            env._eligible_dynamic_seg_indices = np.arange(2, n - 5, dtype=np.int32)
         else:
             env._eligible_dynamic_seg_indices = env._all_seg_indices.copy()
 

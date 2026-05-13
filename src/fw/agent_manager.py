@@ -378,14 +378,31 @@ class AgentManager:
                     print(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
                     print(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
                     print(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
-                    print("Collision rate per policy:")
-                    for policy in sorted(m.encounters_per_policy):
-                        enc_n = m.encounters_per_policy[policy]
+                    print("Collision rate per policy (over valid-outcome encounters: collided OR resolved):")
+                    for policy in sorted(m.total_encounters_per_policy):
+                        enc_n = m.encounters_per_policy.get(policy, 0)
+                        total_n = m.total_encounters_per_policy[policy]
                         col_n = m.collisions_per_policy.get(policy, 0)
                         rate = (col_n / enc_n * 100) if enc_n else 0.0
-                        print(f"  {policy:<16s} {rate:6.2f}% ({col_n}/{enc_n} encounters)")
+                        print(
+                            f"  {policy:<16s} {rate:6.2f}% "
+                            f"({col_n}/{enc_n} valid; {total_n} total starts)"
+                        )
+                    print("Encounter outcome breakdown per policy (all encounter starts):")
+                    cat_order = (
+                        "collided",
+                        "resolved",
+                        "passed_not_tracked_lost",
+                        "tracked_lost_not_passed",
+                        "neither",
+                    )
+                    for policy in sorted(m.total_encounters_per_policy):
+                        buckets = m.encounter_outcomes_per_policy.get(policy, {})
+                        total_n = m.total_encounters_per_policy[policy]
+                        parts = [f"{cat}={buckets.get(cat, 0)}" for cat in cat_order]
+                        print(f"  {policy:<16s} total={total_n}  " + "  ".join(parts))
                     print("CRI per policy (mean / median / max over valid encounters):")
-                    for policy in sorted(m.encounters_per_policy):
+                    for policy in sorted(m.total_encounters_per_policy):
                         n_valid = m.valid_encounters_per_policy.get(policy, 0)
                         mean_cri = m.mean_cri_per_policy.get(policy, 0.0)
                         median_cri = m.median_cri_per_policy.get(policy, 0.0)

@@ -608,6 +608,7 @@ class PySimColavBaseEnv(PySimEnv):
             "min_dist_bank": float("inf"),
             "collided": False,
             "passed": False,
+            "tracked_lost": False,
             "resolved": False,
             "max_cri": 0.0,
             "mean_cri": 0.0,
@@ -632,6 +633,7 @@ class PySimColavBaseEnv(PySimEnv):
         rec["min_dist_bank"] = float(self._current_encounter_min_dist_bank)
         rec["collided"] = bool(self._current_encounter_collided)
         rec["passed"] = bool(self._current_encounter_passed)
+        rec["tracked_lost"] = bool(resolved_normally)
         rec["resolved"] = bool(resolved_normally and self._current_encounter_passed)
         rec["max_cri"] = float(self._current_encounter_max_cri)
         rec["mean_cri"] = (
@@ -646,6 +648,12 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_encounter_max_cri = 0.0
         self._current_encounter_cri_sum = 0.0
         self._current_encounter_cri_count = 0
+        # Clear the per-TS pass-once guard so the next encounter starts
+        # fresh. In step-level mode collision_entities is rebuilt for each
+        # encounter and the new TS always lands at index 0, so without this
+        # reset the guard `ts_passed != ts_idx` rejects every sign-flip
+        # after the first encounter of the episode.
+        self.ts_passed = None
 
     # ---------------------------
     # Collision-entity helpers

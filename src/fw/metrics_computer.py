@@ -68,9 +68,19 @@ class ShipMetrics:
     # Per-policy (gt scenario) collision counts and encounter denominators.
     # Outside-encounter collisions (e.g. bank groundings while path-following)
     # are tracked separately since they have no encounter denominator.
-    encounters_per_policy: dict = field(default_factory=dict)         # {gt: encounter_count}
+    # encounters_per_policy is the *valid-outcome* denominator used by the
+    # collision rate: collided OR (passed AND tracked_lost). Encounters cut
+    # off by episode termination/truncation are excluded since they weren't
+    # exposed to the full range of dangers. total_encounters_per_policy
+    # retains the raw count of all encounter starts for diagnostics.
+    encounters_per_policy: dict = field(default_factory=dict)         # {gt: valid_outcome_count}
+    total_encounters_per_policy: dict = field(default_factory=dict)   # {gt: all_encounter_starts}
     collisions_per_policy: dict = field(default_factory=dict)         # {gt: collided_encounter_count}
     collisions_outside_encounters: int = 0
+    # Per-policy outcome breakdown over all encounter starts. Categories:
+    # "collided", "resolved", "passed_not_tracked_lost",
+    # "tracked_lost_not_passed", "neither". Sums to total_encounters_per_policy.
+    encounter_outcomes_per_policy: dict = field(default_factory=dict) # {gt: {category: count}}
     # Per-policy CRI aggregates over *valid* encounters only. An encounter
     # is "valid" when it resolved normally (OS passed the TS and the TS
     # subsequently left the forget range) and did not end in collision.
@@ -213,8 +223,10 @@ class MetricsComputer:
         total = 0
         classified = 0
         collided_encounters = 0
-        encounters_per_policy: dict[str, int] = {}
+        valid_encounters_per_policy: dict[str, int] = {}
+        total_encounters_per_policy: dict[str, int] = {}
         collisions_per_policy: dict[str, int] = {}
+        outcomes_per_policy: dict[str, dict[str, int]] = {}
         collisions_outside_encounters = 0
         mean_cri_samples_per_policy: dict[str, list[float]] = {}
         max_cri_per_policy: dict[str, float] = {}
@@ -223,9 +235,32 @@ class MetricsComputer:
             for enc in ep.scenario_encounters:
                 total += 1
                 gt = enc.get("gt")
+                collided = bool(enc.get("collided", False))
+                passed = bool(enc.get("passed", False))
+                tracked_lost = bool(enc.get("tracked_lost", False))
+                # An encounter has a fully determined outcome when it either
+                # ended in collision or fully resolved (OS passed and TS left
+                # forget range). Truncated / mid-encounter records are skipped
+                # since they weren't exposed to the full set of dangers.
+                valid_outcome = collided or (passed and tracked_lost)
                 if gt is not None:
-                    encounters_per_policy[gt] = encounters_per_policy.get(gt, 0) + 1
-                if enc.get("collided", False):
+                    total_encounters_per_policy[gt] = total_encounters_per_policy.get(gt, 0) + 1
+                    if valid_outcome:
+                        valid_encounters_per_policy[gt] = valid_encounters_per_policy.get(gt, 0) + 1
+                    # Outcome category for the diagnostic breakdown.
+                    if collided:
+                        cat = "collided"
+                    elif passed and tracked_lost:
+                        cat = "resolved"
+                    elif passed and not tracked_lost:
+                        cat = "passed_not_tracked_lost"
+                    elif tracked_lost and not passed:
+                        cat = "tracked_lost_not_passed"
+                    else:
+                        cat = "neither"
+                    bucket = outcomes_per_policy.setdefault(gt, {})
+                    bucket[cat] = bucket.get(cat, 0) + 1
+                if collided:
                     collided_encounters += 1
                     encounter_collision_in_ep = True
                     if gt is not None:
@@ -260,8 +295,10 @@ class MetricsComputer:
 
         m.num_encounters = total
         m.collision_count = collided_encounters + collisions_outside_encounters
-        m.encounters_per_policy = encounters_per_policy
+        m.encounters_per_policy = valid_encounters_per_policy
+        m.total_encounters_per_policy = total_encounters_per_policy
         m.collisions_per_policy = collisions_per_policy
+        m.encounter_outcomes_per_policy = outcomes_per_policy
         m.collisions_outside_encounters = collisions_outside_encounters
         m.encounter_misclassification_count = mismatches
         m.encounter_confusion = confusion

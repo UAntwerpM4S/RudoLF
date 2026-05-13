@@ -1,4 +1,14 @@
 if __name__ == "__main__" or __name__ == "fw.main":
+    # MUST run before any import that pulls in torch/numpy, since both
+    # BLAS thread pools read these once at library load time. With
+    # SubprocVecEnv (num_envs=12) each child process inherits the env
+    # and respects the same single-thread setting, eliminating the
+    # 12-subproc x N-thread oversubscription that destabilizes PPO on
+    # CPUs with high core counts
+    import os
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+
     import logging
     import multiprocessing
 
@@ -14,7 +24,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     multiprocessing.set_start_method("spawn", force=True)
 
-    import os
     import runpy
 
     from fw.trainer import Trainer
@@ -124,7 +133,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=5.0,
             patience=4,
-            max_time_steps=800
+            max_time_steps=1500
         ),
     }
 

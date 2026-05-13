@@ -65,7 +65,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             eval_encounter_cooldown: int = 500,
             post_encounter_steps: int = 150,
             pathfollowing_encounter_steps: int = 50,
-            skip_tail_segments: int = 1,
+            skip_tail_segments: int = 5,
             random_segment_start: bool = True,
             minimal_path_render: bool = False,
             **kwargs,
@@ -77,8 +77,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.polar_fov = np.radians(270)
         self.polar_max_range = 750.0
         self.polar_obs_max = 0.1 * self.polar_max_range / 250
-        self.distance_penalty_start = 150
-        self.distance_penalty_peak = 50
+        self.distance_penalty_start = 100
+        self.distance_penalty_peak = 40
         self.distance_penalty_max = 5.0
 
         # overtaking TS speed
@@ -112,7 +112,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.15, 0.0, 0.0, 0.0, 0.85, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.1, 0.0, 0, 0, 0.90, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -149,7 +149,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             "polar_distance_colreg": 0.65,
             "colreg_bearing": 1.5,
             "crossing-right": 1.5,
-            "overtaking": 0.53125,
             "head-on": 0.53125,
             # Overtaking has no phase-1 directional reward to compensate for,
             # so its phase-2 boost is decoupled from "overtaking" and tuned
@@ -532,7 +531,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             phase2_multiplier = 1.0 + cr_w / max(base_peak, 1e-6)
             phase2_base_boost = (phase2_multiplier - 1.0) * (1.0 - g_tcpa_overtaking) * base_reward
 
-        #reward += phase2_base_boost
+        reward += phase2_base_boost
 
         # Passing detection: TS-frame sign-flip on lateral (crossing-right) or
         # longitudinal (head-on) offset. Linearly interpolate the sub-step

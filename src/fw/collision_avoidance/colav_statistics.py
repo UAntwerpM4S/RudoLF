@@ -163,7 +163,7 @@ def _plot_min_distance_pdf(
     title_suffix = " incl. banks" if include_banks else ""
     ax.set_title(
         f"Min-distance PDF{title_suffix} "
-        f"({len(distances)} valid encounters)"
+        f"({len(distances)} encounters)"
     )
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
@@ -219,7 +219,7 @@ def _plot_min_distance_boxplots(
     title_suffix = " incl. banks" if include_banks else ""
     ax.set_title(
         f"Min-distance per policy{title_suffix} "
-        f"({int(np.sum(counts))} valid encounters)"
+        f"({int(np.sum(counts))} encounters)"
     )
     ax.grid(True, axis="y", alpha=0.3)
     ax.legend(loc="upper right")
