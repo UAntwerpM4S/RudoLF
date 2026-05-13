@@ -39,7 +39,7 @@ Typical usage
 ... )
 
 # Load a built-in preset
->>> p = ProfileRegistry.get("default_pysim_profile")
+>>> p = ProfileRegistry.get("default_profile")
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ class RunMode(Enum):
         TRAIN: Standard reinforcement-learning training.
         INFERENCE: Running a trained policy (no weight updates).
         TRANSFER: Inference in a *different* simulator than the one used for
-            training; typically combined with a non-unity ``rudder_scale``.
+            training; typically combined with ``enable_rudder_angle_scaling=True``.
     """
 
     TRAIN = auto()
@@ -108,20 +108,26 @@ class InitialVesselState:
         r: Yaw rate [rad/s].
     """
 
-    x: float = 5.0
-    y: float = 5.0
+    x: float = 0.0
+    y: float = 0.0
     heading: float = 0.0
     u: float = 0.0
     v: float = 0.0
     r: float = 0.0
 
     def to_dict(self) -> Dict[str, float]:
-        """Return the state fields as a plain ``float``-valued dictionary."""
+        """
+        Return the state fields as a plain ``float``-valued dictionary.
+        """
+
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "InitialVesselState":
-        """Construct an :class:`InitialVesselState` from a raw dictionary, ignoring unknown keys."""
+        """
+        Construct an :class:`InitialVesselState` from a raw dictionary, ignoring unknown keys.
+        """
+
         known = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: float(v) for k, v in d.items() if k in known})
 
@@ -159,7 +165,10 @@ class ActuatorConfig:
 
     @property
     def angle_rad(self) -> Optional[float]:
-        """``max_rudder_angle_deg`` converted to radians, or *None*."""
+        """
+        `max_rudder_angle_deg` converted to radians, or *None*.
+        """
+
         return (
             None if self.max_rudder_angle_deg is None
             else math.radians(self.max_rudder_angle_deg)
@@ -167,7 +176,10 @@ class ActuatorConfig:
 
     @property
     def rate_rad(self) -> Optional[float]:
-        """``max_rudder_rate_deg_s`` converted to radians per second, or *None*."""
+        """
+        `max_rudder_rate_deg_s` converted to radians per second, or *None*.
+        """
+
         return (
             None if self.max_rudder_rate_deg_s is None
             else math.radians(self.max_rudder_rate_deg_s)
@@ -195,13 +207,15 @@ class TransferConfig:
     Sim-to-sim transfer settings.
 
     Attributes:
-        rudder_scale: Multiplicative scale applied to the raw rudder action
-            before it reaches the simulator.  Use this to compensate for
-            different rudder-angle conventions between training and inference
-            simulators.  ``1.0`` means no rescaling.
+        enable_rudder_angle_scaling: Whether to rescale the rudder action at
+            every step to compensate for differing maximum rudder angles between
+            the original (training) and target (inference) simulators.  The
+            scale is computed internally by the simulator at runtime — no manual
+            angle configuration is required.  *False* means the raw policy
+            output is forwarded without rescaling.
     """
 
-    rudder_scale: float = 1.0
+    enable_rudder_angle_scaling: bool = False
 
 
 @dataclass(frozen=True)
@@ -216,7 +230,7 @@ class ModelConfig:
             family to use inside the simulator.
     """
 
-    ship_model: ShipModel = ShipModel.MYZAKO_DEFAULT
+    ship_model: ShipModel = ShipModel.MYZAKO_37
     dynamics_model: Model = Model.FOSSEN
 
 
@@ -284,6 +298,7 @@ class VesselProfile:
                 thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
             )
         """
+
         field_map = {f.name: f for f in dataclasses.fields(self)}
 
         unknown = set(kwargs) - field_map.keys()
@@ -318,6 +333,7 @@ class VesselProfile:
         failing on the first one.  Suspicious-but-legal combinations emit
         a :mod:`warnings` warning instead of raising.
         """
+
         errors: List[str] = []
 
         if self.thrust.mode == ThrustMode.FIXED:
@@ -326,12 +342,6 @@ class VesselProfile:
                     f"thrust.fixed_value must be in [0.1, 1.0], "
                     f"got {self.thrust.fixed_value}."
                 )
-
-        if self.transfer.rudder_scale <= 0:
-            errors.append(
-                f"transfer.rudder_scale must be positive, "
-                f"got {self.transfer.rudder_scale}."
-            )
 
         if (self.actuator.max_rudder_angle_deg is not None
                 and self.actuator.max_rudder_angle_deg <= 0):
@@ -353,11 +363,11 @@ class VesselProfile:
                 + "\n".join(f"  • {e}" for e in errors)
             )
 
-        # Suspicious-but-legal → warnings, not errors
-        if self.run_mode == RunMode.TRANSFER and self.transfer.rudder_scale == 1.0:
+        if self.run_mode == RunMode.TRANSFER and not self.transfer.enable_rudder_angle_scaling:
             warnings.warn(
                 f"Profile '{self.name}': run_mode is TRANSFER but "
-                "transfer.rudder_scale == 1.0. Did you forget to set it?",
+                "transfer.enable_rudder_angle_scaling is False. "
+                "Did you forget to enable rudder angle scaling?",
                 UserWarning,
                 stacklevel=2,
             )
@@ -373,6 +383,7 @@ class VesselProfile:
         Enum fields are stored by name/value rather than as raw Enum objects
         so the output is safe for :func:`json.dumps` without a custom encoder.
         """
+
         return {
             "name": self.name,
             "description": self.description,
@@ -394,7 +405,7 @@ class VesselProfile:
                 "fixed_value": self.thrust.fixed_value,
             },
             "transfer": {
-                "rudder_scale": self.transfer.rudder_scale,
+                "enable_rudder_angle_scaling": self.transfer.enable_rudder_angle_scaling,
             },
             "model": {
                 "ship_model": self.model.ship_model.name,
@@ -409,42 +420,57 @@ class VesselProfile:
 
         Unknown keys inside each sub-config are silently ignored so that
         profiles serialized by a newer schema version remain loadable by
-        older code.
+        older code.  Missing sub-config blocks (e.g. a ``"scenario"`` key
+        absent from an older serialization) fall back to their dataclass
+        defaults rather than raising :exc:`KeyError`.
         """
+
+        scenario_d = d.get("scenario", {})
+        initial_state_d = scenario_d.get("initial_state") if scenario_d else None
+
+        thrust_d = d.get("thrust", {})
+        model_d = d.get("model", {})
+
         return cls(
             name=d["name"],
             description=d.get("description", ""),
             version=d.get("version", "1.0"),
-            run_mode=RunMode[d["run_mode"]],
+            run_mode=RunMode[d.get("run_mode", RunMode.TRAIN.name)],
             scenario=ScenarioConfig(
                 initial_state=(
-                    InitialVesselState.from_dict(d["scenario"]["initial_state"])
-                    if d["scenario"]["initial_state"] else None
+                    InitialVesselState.from_dict(initial_state_d)
+                    if initial_state_d else None
                 )
             ),
             actuator=ActuatorConfig(
-                **_filter_fields(ActuatorConfig, d["actuator"])
+                **_filter_fields(ActuatorConfig, d.get("actuator", {}))
             ),
             thrust=ThrustConfig(
-                mode=ThrustMode[d["thrust"]["mode"]],
-                fixed_value=d["thrust"]["fixed_value"],
+                mode=ThrustMode[thrust_d.get("mode", ThrustMode.FREE.name)],
+                fixed_value=thrust_d.get("fixed_value", ThrustConfig().fixed_value),
             ),
             transfer=TransferConfig(
-                **_filter_fields(TransferConfig, d["transfer"])
+                **_filter_fields(TransferConfig, d.get("transfer", {}))
             ),
             model=ModelConfig(
-                ship_model=ShipModel[d["model"]["ship_model"]],
-                dynamics_model=Model[d["model"]["dynamics_model"]],
+                ship_model=ShipModel[model_d.get("ship_model", ModelConfig().ship_model.name)],
+                dynamics_model=Model[model_d.get("dynamics_model", ModelConfig().dynamics_model.name)],
             ),
         )
 
     def to_json(self, *, indent: int = 2) -> str:
-        """Serialize to a JSON string."""
+        """
+        Serialize to a JSON string.
+        """
+
         return json.dumps(self.to_dict(), indent=indent)
 
     @classmethod
     def from_json(cls, s: str) -> "VesselProfile":
-        """Deserialize from a JSON string."""
+        """
+        Deserialize from a JSON string.
+        """
+
         return cls.from_dict(json.loads(s))
 
     def fingerprint(self) -> str:
@@ -457,6 +483,7 @@ class VesselProfile:
 
         Note: MD5 is used purely as a fast, non-cryptographic content hash.
         """
+
         canonical = json.dumps(self.to_dict(), sort_keys=True)
         return hashlib.md5(canonical.encode(), usedforsecurity=False).hexdigest()
 
@@ -465,7 +492,10 @@ class VesselProfile:
     # ------------------------------------------------------------------
 
     def __str__(self) -> str:
-        """Return a human-readable summary of the profile's key settings."""
+        """
+        Return a human-readable summary of the profile's key settings.
+        """
+
         lines = [f"VesselProfile '{self.name}' [{self.run_mode.name}]"]
         if self.description:
             lines.append(f"  description  : {self.description}")
@@ -491,8 +521,7 @@ class VesselProfile:
         lines.append(f"  thrust_mode  : {self.thrust.mode.name}")
         if self.thrust.mode == ThrustMode.FIXED:
             lines.append(f"  fixed_thrust : {self.thrust.fixed_value}")
-        if self.transfer.rudder_scale != 1.0:
-            lines.append(f"  rudder_scale : {self.transfer.rudder_scale}")
+        lines.append(f"  rudder_angle_scaling: {self.transfer.enable_rudder_angle_scaling}")
 
         return "\n".join(lines)
 
@@ -508,6 +537,7 @@ def _filter_fields(dc_type: type, d: Dict[str, Any]) -> Dict[str, Any]:
     This makes :meth:`VesselProfile.from_dict` tolerant of extra keys written
     by a newer schema version without silently dropping required ones.
     """
+
     known = {f.name for f in dataclasses.fields(dc_type)}
     return {k: v for k, v in d.items() if k in known}
 
@@ -538,6 +568,7 @@ class ProfileRegistry:
             overwrite: Replace an existing entry with the same name when
                 *True*.  Raises :exc:`KeyError` on collision when *False*.
         """
+
         if profile.name in cls._registry and not overwrite:
             raise KeyError(
                 f"Profile '{profile.name}' already exists. "
@@ -560,6 +591,7 @@ class ProfileRegistry:
         Raises:
             KeyError: If no profile with that name is registered.
         """
+
         if name not in cls._registry:
             available = ", ".join(cls._registry) or "(none)"
             raise KeyError(f"Unknown profile '{name}'. Available: {available}")
@@ -567,7 +599,10 @@ class ProfileRegistry:
 
     @classmethod
     def list_names(cls) -> List[str]:
-        """Return all registered profile names in insertion order."""
+        """
+        Return all registered profile names in insertion order.
+        """
+
         return list(cls._registry.keys())
 
     @classmethod
@@ -578,6 +613,7 @@ class ProfileRegistry:
         Raises:
             KeyError: If no profile with that name is registered.
         """
+
         if name not in cls._registry:
             raise KeyError(f"No profile named '{name}'.")
         del cls._registry[name]
@@ -588,11 +624,11 @@ class ProfileRegistry:
 # ---------------------------------------------------------------------------
 
 ProfileRegistry.register(VesselProfile(
-    name="default_pysim_profile",
-    description="Standard PySim profile with Fossen dynamics.",
+    name="default_profile",
+    description="Standard profile with Fossen dynamics.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
+        ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.FOSSEN,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
@@ -600,67 +636,37 @@ ProfileRegistry.register(VesselProfile(
 ))
 
 ProfileRegistry.register(VesselProfile(
-    name="default_airsim_profile",
-    description="Standard AirSim profile.",
-    run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="train_fhsim_default",
-    description="Standard FhSim training profile with Fossen dynamics.",
-    run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=True),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="inference_pysim",
-    description="PySim inference: smoothing off, thrust fixed at 0.8.",
-    run_mode=RunMode.INFERENCE,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="transfer_pysim_to_fhsim",
+    name="pysim_to_fhsim_transfer_profile",
     description=(
-        "Run a PySim-trained policy inside FhSim. "
-        "rudder_scale=0.75 is a starting point — tune empirically."
+        "Run a PySim-trained policy inside FhSim with rudder angle scaling."
     ),
     run_mode=RunMode.TRANSFER,
     model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
+        ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.FOSSEN,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
-    transfer=TransferConfig(rudder_scale=0.75),
+    transfer=TransferConfig(enable_rudder_angle_scaling=True),
 ))
 
 ProfileRegistry.register(VesselProfile(
-    name="train_multisim_default",
-    description="Standard MultiSim training profile (two PySim sub-environments).",
+    name="ugent_surrogate_training_profile",
+    description="Training profile for UGent's surrogate model.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
-        dynamics_model=Model.FOSSEN,
+        ship_model=ShipModel.TRIPOLI,
+        dynamics_model=Model.UGENT_SURROGATE,
     ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
+    scenario=ScenarioConfig(initial_state=InitialVesselState(
+        x= 0.0,
+        y= 0.0,
+        heading= 0.0,
+        u= 4.8,
+        v= 0.0,
+        r= 0.0)),
+    actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
+    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
 ))
 
 ProfileRegistry.register(VesselProfile(
@@ -671,7 +677,7 @@ ProfileRegistry.register(VesselProfile(
     ),
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
+        ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.FOSSEN,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
@@ -683,7 +689,7 @@ ProfileRegistry.register(VesselProfile(
     description="PySimPolarEnv training profile with Fossen dynamics.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
+        ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.FOSSEN,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
