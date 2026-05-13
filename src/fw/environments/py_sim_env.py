@@ -871,7 +871,7 @@ class PySimEnv(BaseEnv):
             self.previous_heading = self.phys_sim.state.heading
 
             # Update state vector
-            self.phys_sim.step(action, self.enable_smoothing)
+            self.phys_sim.step(action, self.enable_smoothing, self.enable_rudder_angle_scaling)
             self._agent_state = self.phys_sim.state
             self.ship_pos = np.array([self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32)
             self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
