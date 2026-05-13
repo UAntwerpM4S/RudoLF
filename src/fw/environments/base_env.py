@@ -26,7 +26,8 @@ class BaseEnv(gym.Env):
         super().__init__()
 
         self._render_mode = render_mode
-        self._smoothing_enabled = True
+        self._smoothing_enabled = False
+        self._rudder_angle_scaling_enabled = False
         self._sub_environments = {}
         self._env_name = type(self).__name__
 
@@ -86,6 +87,36 @@ class BaseEnv(gym.Env):
             value: Description.
         """
         self._smoothing_enabled = value
+
+
+    @property
+    def enable_rudder_angle_scaling(self):
+        """
+        Enable rudder angle scaling for sim-to-sim transfer.
+
+        When *True*, the rudder action is rescaled at every step to compensate
+        for differing maximum rudder angles between the original (training)
+        simulator and the current (target) simulator.  The scale is computed
+        internally by the simulator as::
+
+            rudder_scale = framework_max_rudder_angle / target_sim_max_rudder_angle
+
+        Both values are read directly from the simulator at runtime, so no
+        manual angle configuration is required.  *False* means the raw policy
+        output is forwarded to the target simulator without rescaling.
+        """
+        return self._rudder_angle_scaling_enabled
+
+
+    @enable_rudder_angle_scaling.setter
+    def enable_rudder_angle_scaling(self, value):
+        """
+        Enable rudder angle scaling for sim-to-sim transfer.
+
+        Args:
+            value (bool): True to enable scaling, False to disable.
+        """
+        self._rudder_angle_scaling_enabled = value
 
 
     @property

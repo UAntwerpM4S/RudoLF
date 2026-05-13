@@ -161,7 +161,7 @@ def test_main_visualize_respects_environment_order(monkeypatch):
 
     call_order = []
 
-    def _build_env(name):
+    def _build_env(name, framework_config=None):
         """Track framework environment construction order."""
         call_order.append(f"build:{name}")
         return SimpleNamespace(gym_env=SimpleNamespace())
@@ -223,7 +223,7 @@ def test_main_train_respects_environment_order(monkeypatch):
 
     call_order = []
 
-    def _build_env(name):
+    def _build_env(name, framework_config=None):
         """Track framework train environment construction order."""
         call_order.append(f"build:{name}")
         return SimpleNamespace(gym_env=SimpleNamespace())
@@ -290,7 +290,7 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
 
     call_order = []
 
-    def _build_env(name):
+    def _build_env(name, framework_config=None):
         """Track framework train setup for mixed-list fallback scenario."""
         call_order.append(f"build:{name}")
         return SimpleNamespace(gym_env=SimpleNamespace())
@@ -363,11 +363,12 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
 
     call_order = []
 
-    def _build_env(name):
+    def _build_env(name, framework_config=None):
         """Build a fake environment and log creation order.
 
         Args:
             name: Canonical environment name.
+            framework_config: Framework configuration payload forwarded by main.
         """
         call_order.append(f"build:{name}")
         return SimpleNamespace(gym_env=SimpleNamespace())
