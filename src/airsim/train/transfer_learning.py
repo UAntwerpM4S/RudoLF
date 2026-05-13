@@ -22,10 +22,19 @@ Freeze strategy
 ---------------
 When ``freeze_shared=True``, only the backbone layer ``shared_network[2]: 256→128``
 is frozen so the pre-trained feature representation is preserved.  The actor and
-critic heads (``actor_mean``, ``actor_log_std``, ``critic``) remain **trainable**
-so they can fine-tune to the new environment's reward structure and 3D physics.
-Freezing the heads would prevent the policy distribution from adapting, causing
+critic heads (``actor_mean``, ``critic``) remain **trainable** so they can
+fine-tune to the new environment's reward structure and 3D physics. Freezing
+the heads would prevent the policy distribution from adapting, causing
 convergence failure.
+
+Exploration strategy
+--------------------
+``actor_log_std`` is **not** transferred. A converged 2D policy can collapse
+the log_std for some action dimensions (e.g. rudder) to highly negative values,
+producing near-deterministic actions. Loading that into AirSim freezes
+exploration on those dimensions and PPO's small clip_range cannot recover.
+The target policy keeps its freshly-initialised ``log_std = -0.5`` so it
+re-explores in the new environment.
 """
 
 from __future__ import annotations
@@ -177,6 +186,13 @@ def validate_transfer_compatibility(report: TopologyReport) -> None:
 # T-056 — weight loading with layer matching and freezing
 # ---------------------------------------------------------------------------
 
+# NOTE: ``actor_log_std`` is intentionally NOT transferred. A converged 2D
+# policy can collapse its log_std for some action dimensions to very negative
+# values (near-deterministic actions). Copying that into AirSim freezes
+# exploration on those dimensions, the agent then dies at the same pose every
+# episode, advantage estimates flatten to ~0, and PPO (with its small
+# clip_range) cannot recover. Keeping the target's freshly-initialised
+# ``log_std = -0.5`` restores exploration in the new environment.
 _TRANSFERABLE_KEYS = (
     "shared_network.0.weight",
     "shared_network.0.bias",
@@ -184,7 +200,6 @@ _TRANSFERABLE_KEYS = (
     "shared_network.2.bias",
     "actor_mean.weight",
     "actor_mean.bias",
-    "actor_log_std",
     "critic.weight",
     "critic.bias",
 )

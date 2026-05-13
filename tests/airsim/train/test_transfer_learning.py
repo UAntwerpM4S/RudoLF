@@ -293,6 +293,24 @@ class TestApplyTransferWeights:
         assert "actor_mean.weight" not in transferred
         assert "actor_mean.bias" not in transferred
 
+    def test_actor_log_std_is_not_transferred(self):
+        """``actor_log_std`` must keep the target's fresh init so exploration is preserved.
+
+        A converged 2D policy can collapse log_std to highly negative values for
+        some action dimensions, producing near-deterministic actions. Copying
+        that into the target freezes exploration and PPO cannot recover. The
+        target must retain its default ``log_std = -0.5``.
+        """
+        src = _make_policy(input_dim=18, output_dim=2)
+        src.network.actor_log_std.data.copy_(torch.tensor([-3.3, 0.06]))
+        tgt = _make_policy(input_dim=18, output_dim=2)
+        tgt_initial = tgt.network.actor_log_std.detach().clone()
+
+        transferred = apply_transfer_weights(src, tgt, freeze_shared=False)
+
+        assert "actor_log_std" not in transferred
+        assert torch.allclose(tgt.network.actor_log_std.detach(), tgt_initial)
+
     def test_cross_device_transfer_preserves_target_device(self):
         """Transferred weights must land on the target network device, not the source device."""
         src = _make_policy(input_dim=18, output_dim=2, device="cpu")
