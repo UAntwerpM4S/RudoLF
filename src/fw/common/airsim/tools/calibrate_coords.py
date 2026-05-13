@@ -287,7 +287,7 @@ def _draw_visualization(
             ux, uy = coord.framework_to_airsim_2d(p[0], p[1])
             ux += ridge_dx
             uy += ridge_dy
-            # Optional overlay-only Z-axis rotation for ridge fine tuning (top-down orientation).
+            # Optional overlay-only Z-axis rotation for ridge finetuning (top-down orientation).
             dx_rel = ux - ridge_pivot_x
             dy_rel = uy - ridge_pivot_y
             ux_rot = ridge_pivot_x + (cos_rz * dx_rel - sin_rz * dy_rel)

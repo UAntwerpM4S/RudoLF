@@ -135,7 +135,7 @@ The printed path must point inside `.venv\Lib\site-packages\cosysairsim\`.
 Default connection parameters expected by RudoLF:
 
 | Parameter | Default                 |
-| --------- | ----------------------- |
+|-----------|-------------------------|
 | IP        | `127.0.0.1` (localhost) |
 | Port      | `41451`                 |
 | Save slot | `simulator_1`           |
@@ -172,7 +172,7 @@ This creates or updates `src/airsim/config/calibration.json`, which stores the a
 ### Troubleshooting
 
 | Symptom                                  | Cause                              | Fix                                                                                              |
-| ---------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------ |
+|------------------------------------------|------------------------------------|--------------------------------------------------------------------------------------------------|
 | `cosysairsim` imports but RPC calls fail | Public pip version still installed | Re-copy the bespoke folder from `package_airsim/cosysairsim.zip` into `.venv\Lib\site-packages\` |
 | UE5 starts but RudoLF does not connect   | Port mismatch or firewall          | Verify port matches `runtime_settings.json`, check firewall                                      |
 | Visualisation starts in wrong state      | Save slot reload incomplete        | Verify the save slot exists and UE5 had enough time to reload                                    |
@@ -261,7 +261,7 @@ This file controls framework-level behavior. For AirSim, three things matter:
 #### Environment and Action Keys
 
 | Key        | Type                 | Example                                      | Description                                                                                                                      |
-| ---------- | -------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+|------------|----------------------|----------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
 | `env_type` | `str` or `list[str]` | `"AirSimEnv"` or `["PySimEnv", "AirSimEnv"]` | Which environment(s) to run, in order. Include `"AirSimEnv"` to activate the AirSim step.                                        |
 | `action`   | `str`                | `"train"` or `"visualize"`                   | High-level mode for all environments.                                                                                            |
 | `profile`  | `str`                | `"default_profile"`                          | VesselProfile key loaded from `ProfileRegistry`. Controls speed envelope and scenario parameters threaded into `SinglePPOAgent`. |
@@ -294,7 +294,7 @@ CONFIG_PARAMETERS = {
 `config.py` defines `AIRSIM_HYPERPARAMETER_OVERRIDES`, which is applied on top of `DEFAULT_HYPERPARAMETERS` whenever `env_name == "AirSimEnv"` is passed to `get_hyperparameters()`. This gives AirSim training its own PPO tuning separate from 2D environments:
 
 | Hyperparameter  | Default (2D) | AirSim override                     |
-| --------------- | ------------ | ----------------------------------- |
+|-----------------|--------------|-------------------------------------|
 | `learning_rate` | `1e-4`       | `3e-4`                              |
 | `gamma`         | `0.95`       | `0.99`                              |
 | `clip_range`    | `0.05`       | `0.2`                               |
@@ -332,7 +332,7 @@ The file has four top-level sections:
 #### `airsim` — Connection and Bridge Settings
 
 | Key                     | Default         | Description                                                                                    |
-| ----------------------- | --------------- | ---------------------------------------------------------------------------------------------- |
+|-------------------------|-----------------|------------------------------------------------------------------------------------------------|
 | `use_airsim`            | `true`          | Master on/off switch for the AirSim bridge.                                                    |
 | `ip`                    | `""`            | AirSim RPC host IP. Empty string resolves to `127.0.0.1`.                                      |
 | `port`                  | `41451`         | AirSim RPC port.                                                                               |
@@ -348,7 +348,7 @@ The file has four top-level sections:
 #### `training` — Training Behavior
 
 | Key                                | Default                                  | Description                                                                                                                                               |
-| ---------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|------------------------------------|------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `speed_profile`                    | `"safe"`                                 | Named timing preset. See [Speed Profiles](#52-speed-profiles).                                                                                            |
 | `max_policy_updates`               | `400`                                    | PPO policy update count before the stop condition triggers.                                                                                               |
 | `max_steps`                        | `120000`                                 | Episode step cap during training.                                                                                                                         |
@@ -392,7 +392,7 @@ The file has four top-level sections:
 #### `visualization` — Visualization and Inference Behavior
 
 | Key                          | Default                             | Description                                                                                                                           |
-| ---------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+|------------------------------|-------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
 | `model_visualise`            | `true`                              | Run framework-model replay in UE5 via `run_visualise_models.py`.                                                                      |
 | `inference_visualise`        | `false`                             | Run AirSimEnv inference via `run_inference.py`.                                                                                       |
 | `model_family`               | `"auto"`                            | Adapter selector for replay: `auto`, `pysim`, or `fhsim`. `auto` infers from checkpoint filename.                                     |
@@ -426,7 +426,7 @@ The file has four top-level sections:
 #### `transfer_learning` — Transfer from 2D to AirSimEnv
 
 | Key                    | JSON default                       | Description                                                                                                                                                                                                                                                                                                                         |
-| ---------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|------------------------|------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `enabled`              | `true`                             | Initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights.                                                                                                                                                                                                                                          |
 | `source_policy_path`   | `"models/FhSimEnv_PPO_policy.zip"` | Path to the 2D `.zip` policy (relative to repo root or absolute). Either `FhSimEnv_PPO_policy.zip` or `PySimEnv_PPO_policy.zip` — both are 12-dim observation, 2-dim action.                                                                                                                                                        |
 | `freeze_shared_layers` | `true`                             | When `true`, freeze **only** `shared_network[2]` (the 256→128 backbone hidden layer). The mapping layer (`shared_network[0]`) and the actor/critic heads remain trainable so the policy distribution can adapt to AirSim's 3D physics and reward structure. When `false`, no parameters are frozen and the full network fine-tunes. |
@@ -489,7 +489,7 @@ The following workstation setup is recommended for any AirSim training run — n
 1. **Disconnect any secondary monitor**, or mark it as inactive via Windows display settings (`Win + P → PC screen only`, or "Show only on 1" in _Display settings_). A connected secondary monitor — even when idle — splits the GPU's rendering bandwidth between displays and adds frame-pacing overhead.
 2. **Launch the M4SAirsim - Trainingmode`.exe` build in full screen**. Use `Alt + Enter` or the in-app full-screen toggle. The packaged `.exe` strips editor overhead and gives the simulation the entire window.
 3. **Keep OS focus on the AirSim window**. Windows lowers the rendering and input priority of unfocused fullscreen processes. Do not Alt-Tab away during training; if you need to view logs, place the terminal on the _same_ monitor or run training from a separate keystroke-driven shell that does not steal focus.
-4. **Effect on resources**: the GPU rendering budget collapses to the physics pipeline only (`training.no_rendering_mode = true`), the CPU is no longer time-sliced between display compositing and AirSim physics, and the per-RL-step latency stabilises. Empirically this reduces step jitter and lowers the chance that the pause watchdog (`physics_update_timeout = 1.2 s`) trips.
+4. **Effect on resources**: the GPU rendering budget collapses to the physics pipeline only (`training.no_rendering_mode = true`), the CPU is no longer time-sliced between display compositing and AirSim physics, and the per-RL-step latency stabilizes. Empirically this reduces step jitter and lowers the chance that the pause watchdog (`physics_update_timeout = 1.2 s`) trips.
 5. **RPC link is unaffected**. The Cosys AirSim ↔ RudoLF communication runs over TCP `127.0.0.1:41451` independently of display state. Pause-stepping and sim-time stepping do not depend on whether AirSim is focused, full-screen, or even visible — but bringing AirSim into focus prevents the OS from throttling the underlying simulation process, which is what actually matters for throughput. Bridge telemetry and run-event logging continue to flush normally.
 
 This setup is documented as a manual operating-procedure step. It is not enforced in code; the framework will run with a second monitor connected or in windowed mode, just less efficiently.
@@ -499,7 +499,7 @@ This setup is documented as a manual operating-procedure step. It is not enforce
 `training.speed_profile` selects a named timing preset that overwrites `simulation_speed`, `use_pause_stepping`, `use_sim_time_stepping`, `sim_time_per_action`, `frames_per_step`, `time_step`, `physics_update_timeout`, and `state_poll_interval`.
 
 | Profile  | Sim speed    | Pause stepping | Sim-time stepping | sim_time_per_action | frames_per_step | Recommended use                                 |
-| -------- | ------------ | -------------- | ----------------- | ------------------- | --------------- | ----------------------------------------------- |
+|----------|--------------|----------------|-------------------|---------------------|-----------------|-------------------------------------------------|
 | `safe`   | 20×          | yes            | yes               | 0.05 s              | 8               | New training (default)                          |
 | `fast`   | 40×          | yes            | yes               | 0.10 s              | 10              | Faster iteration                                |
 | `turbo`  | 80×          | yes            | yes               | 0.10 s              | 12              | Maximum throughput                              |
@@ -527,7 +527,7 @@ Two complementary mechanisms are available:
 The decay constants are:
 
 | Constant                         | Value   | Description                                            |
-| -------------------------------- | ------- | ------------------------------------------------------ |
+|----------------------------------|---------|--------------------------------------------------------|
 | `_SOFT_OFFTRACK_CTE_LIMIT_M`     | `90 m`  | Starting (permissive) cross-track limit                |
 | `_HARD_OFFTRACK_CTE_LIMIT_M`     | `150 m` | Maximum (fully lax) limit at episode 0                 |
 | `_OFFTRACK_LIMIT_DECAY_EPISODES` | `450`   | Episodes over which the limit decays from hard to soft |
@@ -576,7 +576,7 @@ Curriculum learning prints one line per episode and one additional line on front
 Curriculum keys in `runtime_settings.json` under `training`:
 
 | Key                              | Default     | Description                                                                                                                                          |
-| -------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+|----------------------------------|-------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `curriculum_enabled`             | `false`     | Activates checkpoint-based episode start randomization.                                                                                              |
 | `curriculum_window_size`         | `8`         | Initial number of checkpoints in the start window.                                                                                                   |
 | `curriculum_frontier_increment`  | `4`         | Checkpoints added to frontier on each advancement.                                                                                                   |
@@ -601,7 +601,7 @@ Enable curriculum:
 
 ### 5.4 Transfer Learning
 
-Transfer learning initialises the AirSimEnv policy from a pretrained 2D checkpoint (PySimEnv or FhSimEnv) instead of random weights. It is implemented in `src/airsim/train/transfer_learning.py`.
+Transfer learning initializes the AirSimEnv policy from a pretrained 2D checkpoint (PySimEnv or FhSimEnv) instead of random weights. It is implemented in `src/airsim/train/transfer_learning.py`.
 
 Both supported 2D checkpoints (`PySimEnv_PPO_policy.zip`, `FhSimEnv_PPO_policy.zip`) have:
 
@@ -670,18 +670,18 @@ Load the Phase 2 checkpoint. Enable curriculum learning to progressively expose 
 The `ActorCriticNetwork` first layer `shared_network[0]: Linear(input_dim → 256)` is the mapping layer. Its behavior during transfer depends on whether the source and target input dimensions match:
 
 | Source → Target                                     | `shared_network[0]` behavior                                                                                                                                                                                                                                                                                                  |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|-----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 12-dim → 18-dim (PySim/FhSim → AirSim)              | Shape mismatch (`12×256` vs `18×256`). Layer is **not** transferred. It remains randomly initialised by `PPOPolicy.__init__()` and is always trainable. This is the implicit mapping layer that learns to project the extra 6 AirSim observation dimensions into the feature space that the deeper layers already understand. |
 | 18-dim → 18-dim (AirSim Phase 1 → AirSim Phase 2/3) | Shapes match. The layer **is** transferred from source. Whether it stays trainable depends on `freeze_shared_layers`: when `false` (typical for Phase 2/3) it is trainable; when `true` it is still trainable because only the backbone is frozen.                                                                            |
 
-There is **no** orthogonal re-init step for the mapping layer — earlier revisions had a `mapping_layer_init_gain` parameter, but that has been removed in favor of relying on `PPOPolicy`'s own initialisation. If a future regression reintroduces gradient explosion at training start, dampening the mapping layer init is the first place to look.
+There is **no** orthogonal re-init step for the mapping layer — earlier revisions had a `mapping_layer_init_gain` parameter, but that has been removed in favor of relying on `PPOPolicy`'s own initialization. If a future regression reintroduces gradient explosion at training start, dampening the mapping layer init is the first place to look.
 
 #### Transferable Layers
 
 The following layers are candidates for transfer (in order). Each is transferred only if both source and target have identical tensor shapes:
 
 | Key                       | Transfer condition (12→18 case)                                                      | Transfer condition (18→18 case)                                                      |
-| ------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+|---------------------------|--------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
 | `shared_network.0.weight` | Skipped (shape mismatch `12×256` vs `18×256`)                                        | Transferred                                                                          |
 | `shared_network.0.bias`   | Skipped (paired with weight)                                                         | Transferred                                                                          |
 | `shared_network.2.weight` | Transferred (256→128 shape is invariant)                                             | Transferred                                                                          |
@@ -784,7 +784,7 @@ Example reference runs already committed in the repository (17 total between 202
 #### Session Files
 
 | File                                       | Contents                                                                                                                                                                                     |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|--------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `run_log.csv`                              | Per-episode structured events emitted by the environment during training (see fields below)                                                                                                  |
 | `training_metrics.csv`                     | Per-PPO-iteration: reward, loss, advantage — same data used for the metrics plot                                                                                                             |
 | `training_metrics.png`                     | Multi-panel training curve: normalized reward, loss, and advantage over iterations; plus per-episode max checkpoint progress                                                                 |
@@ -797,7 +797,7 @@ Example reference runs already committed in the repository (17 total between 202
 Each row is one environment-emitted event (e.g. `episode_finished`, `respawn`, `checkpoint_passed`):
 
 | Field                                                   | Description                                                                |
-| ------------------------------------------------------- | -------------------------------------------------------------------------- |
+|---------------------------------------------------------|----------------------------------------------------------------------------|
 | `timestamp_utc`                                         | UTC wall-clock time of the event                                           |
 | `event_type`                                            | Event kind: `episode_finished`, `respawn`, `checkpoint_passed`, etc.       |
 | `env_slot` / `env_pid`                                  | Vectorized environment slot index and subprocess PID                       |
@@ -832,7 +832,7 @@ All series are auto-normalized to `[-1, 1]` with raw range annotated on each pan
 - **Overall area** (brown polygon) — from `env_Sche_no_scale.csv`.
 - **Waterway / obstacles** (red polygon) — from `env_Sche_250cm_no_scale.csv`.
 - **Route** (green dashed) — the densified route centerline.
-- **Checkpoint circles** (grey) — each checkpoint's acceptance radius.
+- **Checkpoint circles** (gray) — each checkpoint's acceptance radius.
 - **Respawn scatter** (blue) — every episode start position logged during training.
 - **Checkpoint hits** (orange) — every checkpoint passage logged during training.
 - **Target** (red ×) — the final route target.
@@ -887,7 +887,7 @@ An episode qualifies as a strict success when **all three** conditions hold acro
 #### Parameters
 
 | Parameter                       | Default | Description                                                                                                 |
-| ------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
+|---------------------------------|---------|-------------------------------------------------------------------------------------------------------------|
 | `required_consecutive_episodes` | `5`     | How many consecutive strict-success episodes trigger early stopping.                                        |
 | `min_average_episode_reward`    | `0.95`  | Minimum average per-step reward (normalized). With reward in `[-1, 1]`, `0.95` means near-perfect behavior. |
 | `strict_cte_limit_m`            | `10.0`  | Maximum tolerated absolute CTE (metres) throughout the episode.                                             |
@@ -957,7 +957,7 @@ The model to replay is selected by setting `visualization.model_path` in `runtim
 `model_family` controls which adapter handles physics:
 
 | Value   | Behavior                                                                               |
-| ------- | -------------------------------------------------------------------------------------- |
+|---------|----------------------------------------------------------------------------------------|
 | `auto`  | Inferred from the checkpoint filename (e.g. `PySimEnv` in the stem → `pysim` adapter). |
 | `pysim` | Forces the `PySimVisualisationAdapter`. Environment: `PySimEnv`.                       |
 | `fhsim` | Forces the `FhSimVisualisationAdapter`. Environment: `FhSimEnv`.                       |
@@ -965,7 +965,7 @@ The model to replay is selected by setting `visualization.model_path` in `runtim
 `environment_name` controls the framework environment used for replay:
 
 | Value      | Behavior                                                            |
-| ---------- | ------------------------------------------------------------------- |
+|------------|---------------------------------------------------------------------|
 | `auto`     | The selected adapter picks its canonical environment.               |
 | `PySimEnv` | Use the PySimEnv environment (only valid with the `pysim` adapter). |
 | `FhSimEnv` | Use the FhSimEnv environment (only valid with the `fhsim` adapter). |
@@ -975,7 +975,7 @@ The model to replay is selected by setting `visualization.model_path` in `runtim
 Control how the replay is rendered in UE5:
 
 | Key                          | Default | Description                                                                  |
-| ---------------------------- | ------- | ---------------------------------------------------------------------------- |
+|------------------------------|---------|------------------------------------------------------------------------------|
 | `render_interpolation_steps` | `8`     | Sub-steps between policy steps. Higher = smoother motion.                    |
 | `max_translation_step`       | `0.15`  | Maximum position delta (m) per sub-step (adaptive clamp).                    |
 | `max_yaw_step_deg`           | `1.5`   | Maximum yaw delta (degrees) per sub-step (adaptive clamp).                   |
@@ -1049,7 +1049,7 @@ exports/inference_{model_stem}_{timestamp}/
 ```
 
 | File                      | Contents                                                                                            |
-| ------------------------- | --------------------------------------------------------------------------------------------------- |
+|---------------------------|-----------------------------------------------------------------------------------------------------|
 | `inference_session.csv`   | Per-step: episode, x, y, heading, speed, reward, steering, throttle, checkpoint index, CTE, outcome |
 | `airsim_telemetry.csv`    | UE5-side position, velocity, controls, timestamps                                                   |
 | `metadata.json`           | Model path, runtime config, `performance_summary` block                                             |
@@ -1062,7 +1062,7 @@ exports/inference_{model_stem}_{timestamp}/
 Three reference sessions are committed in the repository under `src/exports/` to demonstrate the full output schema for each of the three runtime paths:
 
 | Session                                     | Path                                                        | Steps  | Mean CTE | Notes                                                                |
-| ------------------------------------------- | ----------------------------------------------------------- | ------ | -------- | -------------------------------------------------------------------- |
+|---------------------------------------------|-------------------------------------------------------------|--------|----------|----------------------------------------------------------------------|
 | AirSim native inference (3D-trained policy) | `inference_AirSimEnv_PPO_policy_20260512T092208Z/`          | 21,608 | 0.98 m   | Device `cuda`, 1 episode, terminated at target                       |
 | PySim 2D-replay in UE5                      | `visualisation_pysim_PySimEnv_PPO_policy_20260511T133515Z/` | 41,221 | 0.75 m   | Device `cpu`, `mirror_controls_in_ue5=true`, `simulation_speed=20.0` |
 | FhSim 2D-replay in UE5                      | `visualisation_fhsim_FhSimEnv_PPO_policy_20260510T164751Z/` | 776    | —        | FhSim adapter validation, identical bridge/adapter layer as PySim    |
@@ -1143,7 +1143,7 @@ _AUTO_DETECTION_ORDER = ("fhsim", "mysim", "pysim")
 The `ModelVisualisationAdapter` interface methods that may need overriding:
 
 | Method                             | Override when                                                   |
-| ---------------------------------- | --------------------------------------------------------------- |
+|------------------------------------|-----------------------------------------------------------------|
 | `environment_builders()`           | Always — defines which environments this family builds.         |
 | `extract_pose(env)`                | Environment stores pose in a non-standard attribute.            |
 | `extract_velocity(env)`            | Environment stores velocity (`u`, `v`, `r`) differently.        |
@@ -1263,7 +1263,7 @@ File: `src/airsim/environments/airsim_env.py`
 **Observation space — `ppo_route_relative_car` (18-dimensional, vehicle-fixed frame):**
 
 | Index | Field                        | Description                                                                          |
-| ----- | ---------------------------- | ------------------------------------------------------------------------------------ |
+|-------|------------------------------|--------------------------------------------------------------------------------------|
 | 0     | `current_checkpoint_forward` | Forward distance to current checkpoint (log-scaled to `[-1, 1]`)                     |
 | 1     | `current_checkpoint_lateral` | Lateral offset to current checkpoint (log-scaled to `[-1, 1]`)                       |
 | 2     | `next_checkpoint_forward`    | Forward distance to next checkpoint (log-scaled to `[-1, 1]`)                        |
@@ -1322,7 +1322,7 @@ This prevents the agent from earning checkpoint rewards by drifting through a ch
 **Terminal event bonuses/penalties (added on top of dense reward):**
 
 | Event                                                            | Added value                                                                             | Clamping      |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------- |
+|------------------------------------------------------------------|-----------------------------------------------------------------------------------------|---------------|
 | Route success (target reached, no collision/offtrack/disconnect) | `+5.0`                                                                                  | —             |
 | Collision                                                        | `+(-5.0)`, then `raw_reward = min(raw_reward, -5.0)`                                    | floor at -5.0 |
 | Offtrack                                                         | already added `_OFFTRACK_PENALTY = -4.0` in dense; `raw_reward = min(raw_reward, -4.0)` | floor at -4.0 |
@@ -1337,7 +1337,7 @@ This prevents the agent from earning checkpoint rewards by drifting through a ch
 The effective CTE limit decays from the hard limit to the soft limit over the first 450 episodes:
 
 | Constant                         | Value                                      |
-| -------------------------------- | ------------------------------------------ |
+|----------------------------------|--------------------------------------------|
 | `_HARD_OFFTRACK_CTE_LIMIT_M`     | `150 m` (permissive, episode 0)            |
 | `_SOFT_OFFTRACK_CTE_LIMIT_M`     | `90 m` (final limit after decay)           |
 | `_OFFTRACK_LIMIT_DECAY_EPISODES` | `450` episodes                             |
@@ -1378,7 +1378,7 @@ Both collision and offtrack unconditionally reset the streak to zero, even if th
 ### 9.5 Coordinate System
 
 | Frame        | X axis | Y axis | Heading/Yaw convention |
-| ------------ | ------ | ------ | ---------------------- |
+|--------------|--------|--------|------------------------|
 | Framework    | East   | North  | CCW+ from East         |
 | AirSim (NED) | North  | East   | CW+ from North         |
 
@@ -1406,7 +1406,7 @@ Written per environment step during training via `AirSimEnv` internal logging. P
 Created per training run by `AirSimTrainingSession`. Full schema documented in [Section 5.5](#55-training-session-exports). Summary:
 
 | File                                       | Contents                                                                            |
-| ------------------------------------------ | ----------------------------------------------------------------------------------- |
+|--------------------------------------------|-------------------------------------------------------------------------------------|
 | `run_log.csv`                              | Per-episode structured events (position, speed, reward, outcome, start point)       |
 | `training_metrics.csv`                     | Per-PPO-iteration: reward, loss, advantage                                          |
 | `training_metrics.png`                     | Normalized reward/loss/advantage curves + max checkpoint per episode                |
@@ -1422,7 +1422,7 @@ Both inference and visualization runners create a timestamped session folder via
 - Visualization: `exports/visualisation_{family}_{model_stem}_{timestamp}/`
 
 | File                        | Runner        | Contents                                          |
-| --------------------------- | ------------- | ------------------------------------------------- |
+|-----------------------------|---------------|---------------------------------------------------|
 | `inference_session.csv`     | Inference     | Per-step reward, obs, outcome                     |
 | `visualisation_session.csv` | Visualization | Per-step framework state, controls                |
 | `airsim_telemetry.csv`      | Both          | UE5-side position, velocity, controls, timestamps |
@@ -1504,7 +1504,7 @@ tests/
 ### What Each Test Group Covers
 
 | Group                                                 | Coverage                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|-------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `communication/test_control_mapping`                  | Action clipping, NaN/Inf rejection, `CarControls` construction, throttle gain (R3)                                                                                                                                                                                                                                                                                                                                                    |
 | `communication/test_airsim_bridge`                    | RPC connection mock, rendering toggle, library output suppression (R5)                                                                                                                                                                                                                                                                                                                                                                |
 | `communication/test_bridge`                           | TCP port detection, retry logic, health-check, stale-state guard (R1, R5)                                                                                                                                                                                                                                                                                                                                                             |
@@ -1532,7 +1532,7 @@ tests/
 
 The `CoordTransform` class (`src/airsim/communication/coord_transform.py`) is **deliberately verified through an interactive system test, not a pytest unit test.** This is a design choice, not an oversight.
 
-The reason is structural: `CoordTransform` converts between framework coordinates (east/north, calibrated against the real-world map) and UE5 world coordinates (north/east, with axis mirrors that depend on which UE5 level is loaded). The transform is parameterised by an anchor pair, a scale, a rotation, and optional axis mirrors — all of which can only be measured **from inside a live UE5 + Cosys AirSim session** where the operator physically drives the simulated vehicle to two known real-world reference points.
+The reason is structural: `CoordTransform` converts between framework coordinates (east/north, calibrated against the real-world map) and UE5 world coordinates (north/east, with axis mirrors that depend on which UE5 level is loaded). The transform is parameterized by an anchor pair, a scale, a rotation, and optional axis mirrors — all of which can only be measured **from inside a live UE5 + Cosys AirSim session** where the operator physically drives the simulated vehicle to two known real-world reference points.
 
 The script that performs this calibration is `src/fw/common/airsim/tools/calibrate_coords.py`. Its docstring states:
 
@@ -1543,6 +1543,6 @@ The script that performs this calibration is `src/fw/common/airsim/tools/calibra
 > 3. Save calibration as `calibration.json`
 > 4. Visually verify by drawing the Framework polygon in UE5
 
-Because the validation requires real UE5-world coordinate samples obtained interactively, an automated unit test would not validate anything meaningful — it would only verify the arithmetic of `CoordTransform` against synthetic numbers, which the code already does implicitly through its visualisation adapters (`tests/airsim/inference/test_visualisation_model_adapters.py`, `_FakeCoordTransform`).
+Because the validation requires real UE5-world coordinate samples obtained interactively, an automated unit test would not validate anything meaningful — it would only verify the arithmetic of `CoordTransform` against synthetic numbers, which the code already does implicitly through its visualization adapters (`tests/airsim/inference/test_visualisation_model_adapters.py`, `_FakeCoordTransform`).
 
 The manual coordinate-calibration system test confirmed a stable residual offset of approximately 0.3 m, well inside the 1.0 m tolerance set in the test plan. This residual originates from rounding inside the calibration profile and is consistent across all checked positions.

@@ -112,7 +112,7 @@ class MetricsComputer:
             - Cross-track error is averaged per episode (nanmean).
             - mTEI is a mean absolute cross-track error.
             - Reward metrics are normalized by number of steps per episode.
-            - Episodes with zero steps are excluded from reward normalisation.
+            - Episodes with zero steps are excluded from reward normalization.
         """
 
         m = ShipMetrics(ship_id=ship_id)

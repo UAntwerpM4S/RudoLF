@@ -1,4 +1,4 @@
-"""Adapter registry for framework-model visualisation in UE5.
+"""Adapter registry for framework-model visualization in UE5.
 
 The UE5 replay loop is intentionally model-family agnostic. Framework-specific
 details such as policy loading, environment construction, state extraction, and
@@ -530,7 +530,7 @@ def _animate_framework_state(
 
 
 class ModelVisualisationAdapter(ABC):
-    """Base adapter for one visualised model family.
+    """Base adapter for one visualized model family.
 
     Subclasses isolate family-specific policy loading, environment creation,
     and state extraction so the replay runner can remain framework-agnostic.
@@ -557,7 +557,7 @@ class ModelVisualisationAdapter(ABC):
         """Resolve the framework environment name used for playback.
 
         Args:
-            model_path: Model path being visualised. Included for adapter APIs
+            model_path: Model path being visualized. Included for adapter APIs
                 that may want filename-aware resolution.
             requested_env_name: User-requested environment name, or ``"auto"``.
 
@@ -848,7 +848,7 @@ def resolve_visualisation_adapter(
     model_path: str = "",
     env_name: str = "auto",
 ) -> ModelVisualisationAdapter:
-    """Resolve the adapter used for a visualised model replay.
+    """Resolve the adapter used for a visualized model replay.
 
     Args:
         model_family: Requested adapter family, or ``"auto"`` for detection.

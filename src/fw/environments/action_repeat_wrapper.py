@@ -12,8 +12,9 @@ class ActionRepeatWrapper(gym.Wrapper):
     def step(self, action):
         """Repeat the action for up to `repeat` steps and accumulate reward."""
         total_reward = 0.0
-        done = False
         truncated = False
+        done = False
+        obs = None
         info = {}
 
         for _ in range(self.repeat):

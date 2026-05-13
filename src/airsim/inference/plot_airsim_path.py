@@ -74,7 +74,7 @@ class LivePlotter:
     """
 
     def __init__(self):
-        """Initialise the figure, axes, line artists, and event handlers."""
+        """Initialize the figure, axes, line artists, and event handlers."""
         self.telemetry_file = find_telemetry_file()
         if not self.telemetry_file:
             print(f"Warning: airsim_telemetry.csv not found in {POSSIBLE_PATHS}. Waiting for file...")

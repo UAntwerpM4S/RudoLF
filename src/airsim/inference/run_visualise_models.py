@@ -98,7 +98,7 @@ def _normalise_policy_action(action, expected_dim: int | None = None) -> np.ndar
 
 
 class VisualiseModelsRunner:
-    """Framework-physics visualiser that mirrors model output into UE5.
+    """Framework-physics visualizer that mirrors model output into UE5.
 
     The runner stays model-family agnostic by delegating policy loading,
     environment construction, and state extraction to a
@@ -116,7 +116,7 @@ class VisualiseModelsRunner:
         self.env_name = env_name
 
     def _resolve_environment_name(self, model_path: str) -> str:
-        """Resolve which framework environment should back the visualisation.
+        """Resolve which framework environment should back the visualization.
 
         Args:
             model_path: Model checkpoint path used for replay.
@@ -237,7 +237,7 @@ class VisualiseModelsRunner:
             ip: AirSim server IP address.
             port: AirSim RPC port.
             max_steps: Maximum number of framework steps per episode.
-            num_episodes: Number of episodes to visualise.
+            num_episodes: Number of episodes to visualize.
             device: Inference device passed to the policy loader.
             draw_calibration_reference: Whether to draw the calibration overlay in UE5.
             log_every: Log every N steps when logging is enabled.
@@ -247,8 +247,8 @@ class VisualiseModelsRunner:
             animate_steering_in_ue5: Whether to animate steering while mirroring.
             animate_throttle_in_ue5: Whether to animate throttle while mirroring.
             render_interpolation_steps: Number of interpolation steps per UE5 update.
-            steering_visual_gain: Steering visualisation gain.
-            throttle_visual_gain: Throttle visualisation gain.
+            steering_visual_gain: Steering visualization gain.
+            throttle_visual_gain: Throttle visualization gain.
             use_kinematics_in_ue5: Whether to move the UE5 actor kinematically.
             min_render_hz: Minimum UE5 render update rate target.
             max_translation_step: Maximum translation distance per interpolation step.
