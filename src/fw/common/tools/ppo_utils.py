@@ -17,7 +17,7 @@ def _sanitize_file_component(name: str) -> str:
     return "".join("_" if ch in WINDOWS_INVALID_FILENAME_CHARS else ch for ch in cleaned)
 
 
-def _normalize_policy_zip_path(filename: str) -> str:
+def normalize_policy_zip_path(filename: str) -> str:
     """Normalize policy save/load path and ensure a .zip extension."""
     if filename is None:
         raise ValueError("Policy filename cannot be None.")

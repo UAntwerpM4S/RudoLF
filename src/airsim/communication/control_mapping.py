@@ -54,7 +54,7 @@ def _normalize_framework_thrust(specs: ShipSpecifications, thrust: float) -> flo
         thrust: Raw thrust value in the framework actuator space.
 
     Returns:
-        Throttle value normalised to the range ``[0, 1]``.
+        Throttle value normalized to the range ``[0, 1]``.
     """
     min_thrust = float(specs.min_thrust)
     max_thrust = float(specs.max_thrust)
@@ -105,7 +105,7 @@ def build_car_controls(
 
 
 def map_direct_policy_action(airsim_module: Any, action: np.ndarray):
-    """Map a normalised UE5-trained action to direct ``CarControls``.
+    """Map a normalized UE5-trained action to direct ``CarControls``.
 
     Expects an action produced by an RL policy trained directly in AirSim
     (not an external framework replay). The throttle dimension is rescaled from ``[-1, 1]`` to
@@ -186,7 +186,7 @@ def map_framework_actuator_state(
 ):
     """Map physical framework actuator outputs to UE5 ``CarControls``.
 
-    Normalises the rudder angle against the ship's ``max_rudder_angle`` and
+    Normalizes the rudder angle against the ship's ``max_rudder_angle`` and
     the thrust against ``min_thrust`` / ``max_thrust``, then engages forward
     gear (``manual_gear=1``) so UE5 produces visible propulsion animation.
 
@@ -196,11 +196,11 @@ def map_framework_actuator_state(
         rudder_angle: Physical rudder angle in radians.
         thrust: Physical thrust in the framework actuator space.
         brake: Brake command in ``[0, 1]``.  Defaults to ``0.0``.
-        steering_sign: Sign applied to the normalised steering (``+1`` or
+        steering_sign: Sign applied to the normalized steering (``+1`` or
             ``-1``).  Defaults to ``1.0``.
-        steering_gain: Additional multiplier on the normalised steering.
+        steering_gain: Additional multiplier on the normalized steering.
             Defaults to ``1.0``.
-        throttle_gain: Additional multiplier on the normalised throttle.
+        throttle_gain: Additional multiplier on the normalized throttle.
             Defaults to ``1.0``.
 
     Returns:
@@ -245,9 +245,9 @@ def map_framework_steering_visual_state(
         specs: Ship specifications supplying ``max_rudder_angle``.
         rudder_angle: Physical rudder angle in radians.
         brake: Brake command in ``[0, 1]``.  Defaults to ``0.0``.
-        steering_sign: Sign applied to the normalised steering.  Defaults
+        steering_sign: Sign applied to the normalized steering.  Defaults
             to ``1.0``.
-        steering_gain: Additional multiplier on the normalised steering.
+        steering_gain: Additional multiplier on the normalized steering.
             Defaults to ``0.35`` (visual-only, reduced to avoid fighting UE5
             physics).
 
@@ -292,11 +292,11 @@ def map_framework_visual_actuator_state(
         rudder_angle: Physical rudder angle in radians.
         thrust: Physical thrust in the framework actuator space.
         brake: Brake command in ``[0, 1]``.  Defaults to ``0.0``.
-        steering_sign: Sign applied to the normalised steering.  Defaults
+        steering_sign: Sign applied to the normalized steering.  Defaults
             to ``1.0``.
-        steering_gain: Additional multiplier on the normalised steering.
+        steering_gain: Additional multiplier on the normalized steering.
             Defaults to ``0.35``.
-        throttle_gain: Multiplier applied to the normalised throttle.
+        throttle_gain: Multiplier applied to the normalized throttle.
             Defaults to ``1.0``.
 
     Returns:

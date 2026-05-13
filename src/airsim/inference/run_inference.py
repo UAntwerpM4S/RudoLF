@@ -7,7 +7,7 @@ This runner is intentionally single-purpose:
 - it relies on ``AirSimEnv.reset()`` and ``AirSimEnv.close()`` for
   episode lifecycle handling
 
-Framework-driven replay for modular framework-model visualisation lives in
+Framework-driven replay for modular framework-model visualization lives in
 ``run_visualise_models.py`` and is kept separate on purpose.
 """
 

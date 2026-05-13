@@ -1,4 +1,4 @@
-"""AirSim-specific export helpers for inference, visualisation, and telemetry sessions."""
+"""AirSim-specific export helpers for inference, visualization, and telemetry sessions."""
 
 from __future__ import annotations
 
@@ -156,10 +156,10 @@ def _get_ship_sim_state(env, ship_index: int = 0) -> Any:
 
 
 class AirSimSessionExporter:
-    """Session-scoped export bundle for AirSim inference and visualisation runs.
+    """Session-scoped export bundle for AirSim inference and visualization runs.
 
     The exporter owns one timestamped session directory and keeps telemetry,
-    bridge logs, and metadata paths aligned for inference and visualisation
+    bridge logs, and metadata paths aligned for inference and visualization
     workflows.
     """
 
@@ -244,7 +244,7 @@ class AirSimSessionExporter:
         self.log_step(row)
 
     def log_visualisation_step(self, row: Dict[str, Any]) -> None:
-        """Queue one visualisation telemetry row.
+        """Queue one visualization telemetry row.
 
         Args:
             row: Visualisation-step telemetry payload to append to the session
@@ -308,7 +308,7 @@ def build_framework_visualisation_row(
     ship_index: int = 0,
     model_origin: str = "framework",
 ) -> Dict[str, Any]:
-    """Build one lightweight visualisation telemetry row from framework state.
+    """Build one lightweight visualization telemetry row from framework state.
 
     Args:
         env: Active framework environment containing ship pose and simulator
@@ -322,14 +322,14 @@ def build_framework_visualisation_row(
         outcome: Step outcome label such as ``"running"``, ``"terminated"``,
             or ``"truncated"``.
         control_mode: Export label describing how controls are being mirrored
-            during visualisation.
+            during visualization.
         ship_index: Zero-based ship index used when the environment stores
             per-ship state in lists or arrays.
         model_origin: High-level source label for the mirrored model, such as
             ``"pysim"`` or ``"fhsim"``.
 
     Returns:
-        A flat CSV-friendly dictionary describing the current visualisation
+        A flat CSV-friendly dictionary describing the current visualization
         step.
     """
     ship_pos = _get_ship_item(getattr(env, "ship_pos", None), ship_index=ship_index)

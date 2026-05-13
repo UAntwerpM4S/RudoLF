@@ -22,7 +22,7 @@ class AsyncTelemetryExporter:
         metadata: Optional[Dict[str, Any]] = None,
         export_dir: Optional[str | Path] = None,
     ) -> None:
-        """Initialise the async exporter.
+        """Initialize the async exporter.
 
         Args:
             filename: Output CSV filename.
