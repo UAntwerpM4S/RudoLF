@@ -133,7 +133,7 @@ CONFIG_PARAMETERS = {
     'visualize_best_trained': False,
     'viz_mode': VisualizationMode.COMPLEX,  # Either "simple" or "complex"
     'scenario': "DDShip_scenario1_nowindnocurrent",
-    'ship_model': ShipModel.MYZAKO_DEFAULT,
+    'ship_model': ShipModel.MYZAKO_37,
     'dynamics_model': Model.FOSSEN,
     'live_animation': False,
     # AirSim settings are now in airsim.config.airsim_config
