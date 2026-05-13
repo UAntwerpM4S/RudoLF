@@ -22,6 +22,7 @@ from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_TARGET_POS,
     DEFAULT_PYSIM_POLAR_SHIP_POS,
 )
+from fw.environments.fh_sim_sync_env import FhSimSyncEnv
 
 
 class EnvironmentRegistryError(Exception):
@@ -333,6 +334,55 @@ class FhSimEnvironment(BaseEnvironment):
                              ship_model=config["ship_model"], scenario=config["scenario"])
 
 
+class FhSimSyncEnvironment(BaseEnvironment):
+    """
+    Realtime sibling of FhSimEnvironment.
+
+    Connects to a running simSync instance over UDP instead of initialising
+    a local FH math model. Same framework-facing shape as FhSimEnvironment:
+    the framework gets the same env interface, the same observation/reward
+    pipeline, the same agent loop — only the underlying simulator changes.
+    """
+
+    def __init__(self, name, configuration):
+        """Create the realtime simSync environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Optional runtime configuration forwarded by the
+                environment factory.
+
+        Expected keys in get_config_parameters() (in addition to ship_model):
+            remote_ip, remote_port: simSync endpoint to connect to.
+            local_ip, local_port:   local UDP endpoint to bind.
+            connect_timeout:        seconds to wait for the first state event.
+            step_timeout_per_tick:  seconds to wait per sim tick during step().
+
+        All of these have sensible defaults if absent.
+        """
+        super().__init__(name, configuration)
+
+        # ship_pos and target_pos remain framework-side concerns (they feed
+        # observation construction and reward), even though the *actual*
+        # vessel state lives in the remote simSync.
+        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
+        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+        config = get_config_parameters()
+
+        self._env = FhSimSyncEnv(
+            time_step=2.0,
+            max_steps=135000,
+            start_pos=ship_pos,
+            target_pos=target_pos,
+            ship_model=config["ship_model"],
+            remote_ip=config.get("remote_ip", "127.0.0.1"),
+            remote_port=config.get("remote_port", 64999),
+            local_ip=config.get("local_ip", "127.0.0.1"),
+            local_port=config.get("local_port", 64998),
+            connect_timeout=config.get("connect_timeout", 10.0),
+            step_timeout_per_tick=config.get("step_timeout_per_tick", 1.0),
+        )
+
 class AirSimEnvironment(BaseEnvironment):
     """
     Class for the AirSim (UE5) environment.
@@ -588,6 +638,7 @@ def get(environment_name: str, configuration=None):
 
 py_sim_env_name = "PySimEnv"
 fh_sim_env_name = "FhSimEnv"
+sync_sim_env_name = "FhSimSyncEnv"
 airsim_env_name = "AirSimEnv"
 lunar_env_name = "LunarLander"
 py_sim_polar_env_name = "PySimPolarEnv"
@@ -598,6 +649,8 @@ _ENVIRONMENT_NAME_ALIASES = {
     "pysim": py_sim_env_name,
     fh_sim_env_name.lower(): fh_sim_env_name,
     "fhsim": fh_sim_env_name,
+    sync_sim_env_name.lower(): sync_sim_env_name,
+    "fhsimsync": sync_sim_env_name,
     airsim_env_name.lower(): airsim_env_name,
     "airsim": airsim_env_name,
     lunar_env_name.lower(): lunar_env_name,
@@ -685,6 +738,7 @@ def initialize_all_environments():
     """
     get(py_sim_env_name, configuration={})
     get(fh_sim_env_name, configuration={})
+    get(sync_sim_env_name, configuration={})
     get(lunar_env_name, configuration={})
     get(py_sim_polar_env_name, configuration={})
     get(multi_sim_env_name, configuration={})

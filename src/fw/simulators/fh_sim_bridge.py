@@ -18,6 +18,14 @@ except OSError:
     user_login = ""
 
 
+# Configure logging
+try:
+    logfile = os.path.join('C:/Users', user_login, 'Desktop', 'testExercise', 'results', 'math_model.log')
+    logging.basicConfig(filename=logfile, level=logging.INFO, format='%(levelname)s: %(message)s')
+except FileNotFoundError:
+    logfile = None
+
+
 class FhSimBridge:
     """
     Bridge to the FH Simulator math model and ship interface.
@@ -99,25 +107,29 @@ class FhSimBridge:
         self._ship_interface = None
         self._math_model = None
 
+        print(self.library_path)
+        print(self.config_path)
+        print(self.output_path)
+
         # Per-instance named logger instead of root logger.
         # Each instance gets a unique logger so output_path changes between
         # instances don't interfere, and the root logger is never touched.
         self._logger = logging.getLogger(f"FhSimBridge.{id(self)}")
         self._logger.setLevel(logging.INFO)
 
-        if not self._logger.handlers:
-            log_path = os.path.join(self.output_path, 'math_model.log')
-            try:
-                os.makedirs(self.output_path, exist_ok=True)
-                handler = logging.FileHandler(log_path)
-                handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
-                self._logger.addHandler(handler)
-            except (OSError, FileNotFoundError) as exc:
-                # Fallback to console if the log directory cannot be created.
-                self._logger.addHandler(logging.StreamHandler())
-                self._logger.warning(
-                    "Could not open log file '%s': %s — logging to console.", log_path, exc
-                )
+        # if not self._logger.handlers:
+        #     log_path = os.path.join(self.output_path, 'math_model.log')
+        #     try:
+        #         os.makedirs(self.output_path, exist_ok=True)
+        #         handler = logging.FileHandler(log_path)
+        #         handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+        #         self._logger.addHandler(handler)
+        #     except (OSError, FileNotFoundError) as exc:
+        #         # Fallback to console if the log directory cannot be created.
+        #         self._logger.addHandler(logging.StreamHandler())
+        #         self._logger.warning(
+        #             "Could not open log file '%s': %s — logging to console.", log_path, exc
+        #         )
 
 
     @property

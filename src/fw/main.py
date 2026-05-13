@@ -2,14 +2,14 @@ if __name__ == "__main__" or __name__ == "fw.main":
     import logging
     import multiprocessing
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    )
-    # Suppress all airsim loggers by default; they are re-enabled once a live
-    # connection is confirmed (see visualize / train blocks below).
-    logging.getLogger("airsim").setLevel(logging.CRITICAL)
-    logging.getLogger("sim").setLevel(logging.CRITICAL)
+    # logging.basicConfig(
+    #     level=logging.INFO,
+    #     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    # )
+    # # Suppress all airsim loggers by default; they are re-enabled once a live
+    # # connection is confirmed (see visualize / train blocks below).
+    # logging.getLogger("airsim").setLevel(logging.CRITICAL)
+    # logging.getLogger("sim").setLevel(logging.CRITICAL)
 
 
     multiprocessing.set_start_method("spawn", force=True)
