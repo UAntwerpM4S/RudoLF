@@ -230,7 +230,7 @@ class ModelConfig:
             family to use inside the simulator.
     """
 
-    ship_model: ShipModel = ShipModel.MYZAKO_DEFAULT
+    ship_model: ShipModel = ShipModel.MYZAKO_37
     dynamics_model: Model = Model.FOSSEN
 
 
@@ -628,7 +628,7 @@ ProfileRegistry.register(VesselProfile(
     description="Standard profile with Fossen dynamics.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
+        ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.FOSSEN,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
@@ -642,7 +642,7 @@ ProfileRegistry.register(VesselProfile(
     ),
     run_mode=RunMode.TRANSFER,
     model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
+        ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.FOSSEN,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
@@ -677,7 +677,7 @@ ProfileRegistry.register(VesselProfile(
     ),
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
+        ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.FOSSEN,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
@@ -689,7 +689,7 @@ ProfileRegistry.register(VesselProfile(
     description="PySimPolarEnv training profile with Fossen dynamics.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_DEFAULT,
+        ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.FOSSEN,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
