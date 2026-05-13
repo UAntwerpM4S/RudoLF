@@ -296,13 +296,18 @@ class BasePPOAgent(BaseAgent):
         # episode begins from the configured position/heading.
         if self._profile is not None and self._profile.scenario.initial_state is not None:
             _rollout_sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
-            if _rollout_sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
-                for sub in self.env.sub_environments.values():
+            if _rollout_sim is not None:
+                SimulatorApplier.apply(self._profile, _rollout_sim)
+            elif hasattr(self.env, "sub_environments") and self.env.sub_environments:
+                iterable = (
+                    self.env.sub_environments.values()
+                    if isinstance(self.env.sub_environments, dict)
+                    else self.env.sub_environments
+                )
+                for sub in iterable:
                     _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
                     if _sub_sim is not None:
                         SimulatorApplier.apply(self._profile, _sub_sim)
-            elif _rollout_sim is not None:
-                SimulatorApplier.apply(self._profile, _rollout_sim)
 
         envs_done = np.zeros(num_envs, dtype=bool)
 
@@ -345,25 +350,43 @@ class BasePPOAgent(BaseAgent):
             else:
                 effective_actions = tuple(effective_actions)
 
-            sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
-            if sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
-                first_sub = next(iter(self.env.sub_environments.values()), None)
-                if first_sub is not None:
-                    sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
-
             if self._profile is not None:
                 if isinstance(effective_actions, np.ndarray) and effective_actions.ndim == 2:
+                    sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
+                    if sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
+                        first_sub = next(iter(
+                            self.env.sub_environments.values()
+                            if isinstance(self.env.sub_environments, dict)
+                            else self.env.sub_environments
+                        ), None)
+                        if first_sub is not None:
+                            sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
                     transformed = np.stack([
                         ActionAdapter.transform(self._profile, effective_actions[i], simulator=sim)
                         for i in range(effective_actions.shape[0])
                     ])
                     effective_actions = transformed
                 elif isinstance(effective_actions, tuple):
+                    sub_sims: list = []
+                    if hasattr(self.env, "sub_environments") and self.env.sub_environments:
+                        iterable = (
+                            self.env.sub_environments.values()
+                            if isinstance(self.env.sub_environments, dict)
+                            else self.env.sub_environments
+                        )
+                        for sub in iterable:
+                            sub_sims.append(
+                                getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
+                            )
                     effective_actions = tuple(
-                        ActionAdapter.transform(self._profile, a, simulator=sim)
-                        for a in effective_actions
+                        ActionAdapter.transform(
+                            self._profile, a,
+                            simulator=sub_sims[i] if i < len(sub_sims) else None,
+                        )
+                        for i, a in enumerate(effective_actions)
                     )
                 else:
+                    sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
                     effective_actions = ActionAdapter.transform(self._profile, effective_actions, simulator=sim)
 
             next_states, rewards, terminations, truncations = self._step_envs(effective_actions)

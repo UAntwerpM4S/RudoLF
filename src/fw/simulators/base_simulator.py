@@ -82,7 +82,7 @@ class BaseSimulator(ABC):
         self._actuators.reset()
 
     @abstractmethod
-    def step(self, action: np.ndarray, enable_smoothing: bool = True) -> None:
+    def step(self, action: np.ndarray, enable_smoothing: bool = False, enable_rudder_angle_scaling: bool = False) -> None:
         """
         Advance the simulation by one time step using a normalized action.
 
@@ -95,5 +95,8 @@ class BaseSimulator(ABC):
                 range [-1, 1].
             enable_smoothing: Enable actuator rate limiting and smoothing
                 to prevent unrealistic instantaneous changes.
+            enable_rudder_angle_scaling: If True, rescale the rudder action
+                to compensate for the difference between the original simulator's
+                and the target simulator's maximum rudder angles.
         """
         pass
