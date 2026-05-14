@@ -14,7 +14,6 @@ import textwrap
 from types import SimpleNamespace
 
 import numpy as np
-import pytest
 
 from airsim.train.strict_success_callback import StrictSuccessStoppingCallback
 
@@ -80,7 +79,7 @@ def _failure_info() -> dict:
 
 
 class TestStrictSuccessStreakLogic:
-    """Tests for consecutive-success counter increment and reset behaviour."""
+    """Tests for consecutive-success counter increment and reset behavior."""
 
     def test_initial_consecutive_count_is_zero(self):
         """Counter starts at zero before any steps are taken."""
@@ -240,7 +239,7 @@ class TestStrictSuccessFailureModes:
 
 
 class TestStrictSuccessMultiEnv:
-    """Tests for callback behaviour when multiple parallel environments are active."""
+    """Tests for callback behavior when multiple parallel environments are active."""
 
     def _make_multi_callback(self, n_envs: int, **kwargs) -> StrictSuccessStoppingCallback:
         """Create a callback pre-initialised for n_envs parallel environments."""
@@ -314,7 +313,7 @@ class _FakeCarControls:
     """Minimal stand-in for airsim.CarControls used in fake bridge tests."""
 
     def __init__(self) -> None:
-        """Initialise all control fields to their neutral/default values."""
+        """Initialize all control fields to their neutral/default values."""
         self.steering = 0.0
         self.throttle = 0.0
         self.brake = 0.0
@@ -338,7 +337,7 @@ class _FakeBridge:
     """In-process stub replacing AirSimBridge for environment unit tests."""
 
     def __init__(self, config) -> None:
-        """Initialise the fake bridge with a config object and zero-state fields."""
+        """Initialize the fake bridge with a config object and zero-state fields."""
         self.config = config
         self.is_connected = True
         self.airsim = SimpleNamespace(CarControls=_FakeCarControls)

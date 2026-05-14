@@ -577,7 +577,7 @@ class PySimPolarEnv(BaseEnv):
 
         new_x = np.clip(self.state[0] + dx * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
         new_y = np.clip(self.state[1] + dy * self.time_step, self.MIN_GRID_POS, self.MAX_GRID_POS)
-        new_heading = self.state[2] + dpsi * self.time_step  # % (2 * np.pi)
+        new_heading = (self.state[2] + dpsi * self.time_step + np.pi) % (2.0 * np.pi) - np.pi
 
         # Update state
         self.state = np.array([new_x, new_y, new_heading, new_u, new_v, new_r], dtype=np.float32)
@@ -756,7 +756,19 @@ class PySimPolarEnv(BaseEnv):
         obs = self._get_obs()
         reward, terminated = self._calculate_reward()
 
-        return obs, reward, terminated, False, {}
+        # max-step timeout is a truncation, not a terminal failure.
+        # _calculate_reward already sets terminated=True on max_steps; undo that and
+        # set truncated instead so PPO bootstraps the value correctly.
+        truncated = False
+        if self.step_count >= self.max_steps and not terminated:
+            truncated = True
+        elif self.step_count >= self.max_steps and terminated:
+            # max_steps fired inside _calculate_reward — reclassify as truncation
+            # (timeout, not a genuine terminal event).
+            terminated = False
+            truncated = True
+
+        return obs, reward, terminated, truncated, {}
 
     def _get_obs(self) -> np.ndarray:
         """ get obs.

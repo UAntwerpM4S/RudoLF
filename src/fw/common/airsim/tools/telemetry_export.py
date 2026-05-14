@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import csv
-import logging
 import queue
 import signal
+import logging
 import threading
+
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 

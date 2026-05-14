@@ -288,6 +288,12 @@ class LunarLander(BaseEnv, EzPickle):
 
         self.prev_reward = None
 
+        # This env is used directly (not via gym.make + TimeLimit),
+        # so the TimeLimit wrapper is absent.  Track steps internally and emit
+        # truncated=True on timeout so PPO can bootstrap the value correctly.
+        self.max_episode_steps: int = 1000
+        self._step_count: int = 0
+
         self.continuous = continuous
 
         low = np.array(
@@ -363,6 +369,7 @@ class LunarLander(BaseEnv, EzPickle):
         """
         super().reset(seed=seed)
         self._destroy()
+        self._step_count = 0  # reset step counter on episode start
 
         # Bug's workaround for: https://github.com/Farama-Foundation/Gymnasium/issues/728
         # Not sure why the self._destroy() is not enough to clean(reset) the total world environment elements, need more investigation on the root cause,
@@ -715,10 +722,14 @@ class LunarLander(BaseEnv, EzPickle):
             terminated = True
             reward = +100
 
+        # Emit truncated=True when the step budget is exhausted so
+        # PPO bootstraps the value correctly instead of treating it as a failure.
+        self._step_count += 1
+        truncated = (not terminated) and (self._step_count >= self.max_episode_steps)
+
         if self.render_mode == "human":
             self.render()
-        # truncation=False as the time limit is handled by the `TimeLimit` wrapper added during `make`
-        return np.array(state, dtype=np.float32), reward, terminated, False, {}
+        return np.array(state, dtype=np.float32), reward, terminated, truncated, {}
 
     def render(self):
         """Render.

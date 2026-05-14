@@ -151,10 +151,11 @@ class TestTopologyReportDataclassContract:
 
         Verifies:
             - Attempting to set a field on a constructed TopologyReport raises
-              AttributeError or TypeError (frozen dataclass behaviour).
+              AttributeError or TypeError (frozen dataclass behavior).
         """
         report = _make_report()
         with pytest.raises((AttributeError, TypeError)):
+            # noinspection PyDataclass
             report.source_input_dim = 99  # type: ignore[misc]
 
     def test_topology_report_extra_input_dims_constructed_directly(self):
