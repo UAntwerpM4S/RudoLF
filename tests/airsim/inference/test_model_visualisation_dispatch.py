@@ -1,4 +1,4 @@
-"""Tests for modular model-visualisation dispatch through fw.main_with_airsim."""
+"""Tests for modular model-visualization dispatch through fw.main_with_airsim."""
 
 import runpy
 
@@ -57,7 +57,7 @@ def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
     import airsim.inference.run_visualise_models as run_visualise_models_module
 
     def _fake_run_visualise_models(**kwargs):
-        """ fake run visualise models.
+        """ fake run visualize models.
 
         Args:
             kwargs: Description.

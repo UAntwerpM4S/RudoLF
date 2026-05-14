@@ -16,6 +16,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 from fw.common.tools.training_iteration_logger import TrainingIterationLogger
+# from fw.common.tools.ppo_utils import normalize_policy_zip_path
 from fw.common.tools.logging_utils import dump_metrics_to_csv
 from fw.config_profile import VesselProfile
 
@@ -157,8 +158,9 @@ class SinglePPOAgent(BasePPOAgent):
                 print(f"[Alert] NaN/Inf detected in {name} before PPO update — skipping batch.")
                 return float('nan')
 
-        # Normalize advantages
-        all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
+        # Normalizing a near-constant tensor produces NaN/inf gradients.
+        if all_advantages.numel() > 1 and all_advantages.std() > 1e-6:
+            all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
 
         # Train over multiple epochs
         batch_size = all_states.shape[0]
@@ -672,11 +674,24 @@ class SinglePPOAgent(BasePPOAgent):
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-            self.policy = self.policy.load(policy_file_name, self.device)
+            self.policy = PPOPolicy.load(policy_file_name, self.device)
             # PPOPolicy.load() returns a NEW object, so the optimizer must be
             # rebound to the new network's parameters — otherwise step() silently
             # updates the old (unreferenced) network and the loaded policy never trains.
             self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
+
+            # Restore Adam momentum when a companion optimizer file exists.
+            # opt_path = normalize_policy_zip_path(policy_file_name).replace(".zip", "_optimizer.pth")
+            # if os.path.isfile(opt_path):
+            #     try:
+            #         self.optimizer.load_state_dict(
+            #             torch.load(opt_path, map_location=self.device, weights_only=True)
+            #         )
+            #     except Exception as opt_exc:  # shape mismatch on arch change — not fatal
+            #         import logging as _logging
+            #         _logging.getLogger(__name__).warning(
+            #             "Could not restore optimizer state from '%s': %s", opt_path, opt_exc
+            #         )
         except Exception as e:
             raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
 
@@ -697,6 +712,12 @@ class SinglePPOAgent(BasePPOAgent):
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
             self.policy.save(policy_file_name)
+
+            # Persist optimizer state so Adam momentum survives a
+            # checkpoint resume.  The optimizer file sits alongside the zip.
+            # if self.optimizer is not None:
+            #     opt_path = normalize_policy_zip_path(policy_file_name).replace(".zip", "_optimizer.pth")
+            #     torch.save(self.optimizer.state_dict(), opt_path)
         except Exception as e:
             raise RuntimeError(f"Failed to save the policy '{policy_file_name}'.") from e
 

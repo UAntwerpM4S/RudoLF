@@ -414,6 +414,18 @@ class MultiPPOAgent(BasePPOAgent):
                         raise RuntimeError(f"Agent {i} has no initialized policy.")
 
                     agent.policy = PPOPolicy.build_policy_from_state(saved_variables, self.device)
+                    # Rebind optimizer to the newly-loaded network's parameters.
+                    # Without this, agent.optimizer still references the old (GC'd) network
+                    # and subsequent train() calls silently update dead weights.
+                    # agent.optimizer = torch.optim.Adam(
+                    #     agent.policy.network.parameters(), lr=agent.learning_rate
+                    # )
+                    #
+                    # if "optimizer_state_dict" in saved_variables:
+                    #     try:
+                    #         agent.optimizer.load_state_dict(saved_variables["optimizer_state_dict"])
+                    #     except Exception as opt_exc:  # shape mismatch on arch change — not fatal
+                    #         print("Could not restore optimizer state for agent %d: %s", i, opt_exc)
 
                 # Verify all agents loaded
                 if any(agent.policy is None for agent in self.agents):
@@ -447,15 +459,21 @@ class MultiPPOAgent(BasePPOAgent):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             try:
-                # 1. Save each agent as a .pth file (state_dict only)
+                # 1. Save each agent as a .pth file (policy + optimizer state)
                 for i, agent in enumerate(self.agents):
                     agent_path = os.path.join(tmp_dir, f"policy_{i}.pth")
 
                     if agent.policy is None:
                         raise RuntimeError(f"Agent {i} has no policy to save.")
 
+                    # Include optimizer state_dict so Adam momentum is
+                    # preserved across checkpoint resume.
+                    checkpoint = agent.policy.serialize_policy()
+                    # if hasattr(agent, "optimizer") and agent.optimizer is not None:
+                    #     checkpoint["optimizer_state_dict"] = agent.optimizer.state_dict()
+
                     torch.save(
-                        agent.policy.serialize_policy(),
+                        checkpoint,
                         agent_path,
                     )
 

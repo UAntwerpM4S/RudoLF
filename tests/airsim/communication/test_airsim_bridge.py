@@ -14,7 +14,7 @@ from airsim.communication.airsim_bridge import AirSimBridge, _silence_library_ou
 
 
 def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypatch):
-    """Preparing model visualisation should update the cached bridge speed value."""
+    """Preparing model visualization should update the cached bridge speed value."""
     bridge = AirSimBridge.__new__(AirSimBridge)
     bridge._connected = True
     bridge._last_health_check = 0.0

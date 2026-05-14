@@ -158,8 +158,6 @@ def test_load_policy_rebinds_optimizer(tmp_path):
     must be recreated — otherwise step() silently updates the old unreferenced
     network and the transferred policy never receives gradient updates.
     """
-    import torch
-    import torch.nn as nn
 
     agent = SinglePPOAgent(environment=_DummyEnv(), model_dir=str(tmp_path))
 

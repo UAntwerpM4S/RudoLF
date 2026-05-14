@@ -73,6 +73,18 @@ class StopCondition:
             self.target_loss = None
 
 
+    def reset(self) -> None:
+        """Reset the patience counter.
+
+        The patience counter was never reset between environments in
+        SimpleScheduler.execute, so later envs could satisfy the stop condition
+        prematurely by inheriting a partially-filled counter from the previous env.
+        Call this at the start of each new environment's training run.
+        """
+
+        self._counter = 0
+
+
     def should_stop(
         self,
         current_step: int,
