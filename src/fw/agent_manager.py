@@ -1,3 +1,4 @@
+import math
 import os
 
 from pathlib import Path
@@ -412,6 +413,29 @@ class AgentManager:
                             f"median={median_cri:.3f}  max={max_cri:.3f}  "
                             f"(n={n_valid})"
                         )
+                    # Baseline CRI floor — single global value, useful for
+                    # reading the per-policy CRI numbers against. Theoretical
+                    # baseline uses the CRI formula at DCPA=encounter_range,
+                    # TCPA<=0 (parting); the TCPA term collapses to 0 so only
+                    # the DCPA half remains.
+                    enc_r = float(getattr(ship_env, "encounter_range", 0.0))
+                    cri_D = float(getattr(ship_env, "cri_D", 1.0))
+                    cri_alpha1 = float(getattr(ship_env, "cri_alpha1", -1.0))
+                    cri_omega1 = float(getattr(ship_env, "cri_omega1", 0.5))
+                    theoretical = cri_omega1 * math.exp(cri_alpha1 * enc_r / max(cri_D, 1e-12))
+                    m.baseline_cri_theoretical = theoretical
+                    n_baseline = m.baseline_cri_sample_count
+                    print(
+                        "Baseline CRI (lowest-achievable reference, across all policies):"
+                    )
+                    print(
+                        f"  empirical: mean(per-encounter min CRI)={m.baseline_cri_empirical_mean:.3f}  "
+                        f"min(observed)={m.baseline_cri_empirical_min:.3f}  (n={n_baseline})"
+                    )
+                    print(
+                        f"  theoretical: CRI at DCPA=encounter_range ({enc_r:.0f}m), "
+                        f"TCPA parting = {theoretical:.3f}"
+                    )
                     print("Cross-track error per policy [m] (mean / median / max over valid encounters):")
                     for policy in sorted(m.total_encounters_per_policy):
                         n_valid = m.valid_encounters_per_policy.get(policy, 0)

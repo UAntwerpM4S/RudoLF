@@ -204,6 +204,7 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_encounter_collided: bool = False
         self._current_encounter_passed: bool = False
         self._current_encounter_max_cri: float = 0.0
+        self._current_encounter_min_cri: float = float("inf")
         self._current_encounter_cri_sum: float = 0.0
         self._current_encounter_cri_count: int = 0
         # Encounter-scoped time-to-first-action / CTE trackers. Time-to-first-
@@ -423,6 +424,8 @@ class PySimColavBaseEnv(PySimEnv):
                 )
                 if cri_val > self._current_encounter_max_cri:
                     self._current_encounter_max_cri = cri_val
+                if cri_val < self._current_encounter_min_cri:
+                    self._current_encounter_min_cri = cri_val
                 self._current_encounter_cri_sum += cri_val
                 self._current_encounter_cri_count += 1
 
@@ -629,6 +632,7 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_encounter_collided = False
         self._current_encounter_passed = False
         self._current_encounter_max_cri = 0.0
+        self._current_encounter_min_cri = float("inf")
         self._current_encounter_cri_sum = 0.0
         self._current_encounter_cri_count = 0
         # Encounter-scoped CTE / time-to-first-action accumulators. start_step
@@ -655,6 +659,7 @@ class PySimColavBaseEnv(PySimEnv):
             "tracked_lost": False,
             "resolved": False,
             "max_cri": 0.0,
+            "min_cri": 0.0,
             "mean_cri": 0.0,
             "mean_cte": 0.0,
             "max_cte": 0.0,
@@ -683,6 +688,13 @@ class PySimColavBaseEnv(PySimEnv):
         rec["tracked_lost"] = bool(resolved_normally)
         rec["resolved"] = bool(resolved_normally and self._current_encounter_passed)
         rec["max_cri"] = float(self._current_encounter_max_cri)
+        # min_cri stays inf if no CRI samples were collected (single-step
+        # encounter cut off before the in-encounter loop ran); fall back
+        # to the max in that degenerate case rather than leaking inf.
+        if self._current_encounter_cri_count > 0:
+            rec["min_cri"] = float(self._current_encounter_min_cri)
+        else:
+            rec["min_cri"] = float(self._current_encounter_max_cri)
         rec["mean_cri"] = (
             float(self._current_encounter_cri_sum / self._current_encounter_cri_count)
             if self._current_encounter_cri_count > 0 else 0.0
@@ -711,6 +723,7 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_encounter_collided = False
         self._current_encounter_passed = False
         self._current_encounter_max_cri = 0.0
+        self._current_encounter_min_cri = float("inf")
         self._current_encounter_cri_sum = 0.0
         self._current_encounter_cri_count = 0
         self._current_encounter_start_step = None

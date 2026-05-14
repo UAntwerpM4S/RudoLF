@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from collections import Counter
@@ -109,6 +111,18 @@ class ShipMetrics:
     median_tfa_per_policy: dict = field(default_factory=dict)         # {gt: median time-to-first-action [s]}
     reactive_encounters_per_policy: dict = field(default_factory=dict)     # {gt: count with reaction}
     non_reactive_encounters_per_policy: dict = field(default_factory=dict) # {gt: count without reaction}
+    # Baseline CRI: a "floor" against which the per-policy CRI numbers can
+    # be read. Empirical baseline is the mean (and absolute min) of the
+    # per-encounter MIN-CRI samples across all valid encounters from every
+    # policy — i.e. "the lowest CRI value samples typically hit in any
+    # encounter, regardless of policy". Theoretical baseline is what the
+    # CRI formula yields when a TS sits exactly at encounter_range with
+    # TCPA ≤ 0 (parting). Together they bound where the policy mean CRI
+    # *could* possibly land if the OS perfectly disengaged.
+    baseline_cri_empirical_mean: float = 0.0
+    baseline_cri_empirical_min: float = 0.0
+    baseline_cri_theoretical: float = 0.0
+    baseline_cri_sample_count: int = 0
 
 
 class MetricsComputer:
@@ -251,6 +265,9 @@ class MetricsComputer:
         max_cte_per_policy: dict[str, float] = {}
         tfa_samples_per_policy: dict[str, list[float]] = {}
         non_reactive_per_policy: dict[str, int] = {}
+        # Pool of per-encounter min-CRI samples across *all* policies — used
+        # to compute the empirical baseline CRI floor reported globally.
+        min_cri_samples_all_policies: list[float] = []
         for ep in episodes:
             encounter_collision_in_ep = False
             for enc in ep.scenario_encounters:
@@ -300,6 +317,12 @@ class MetricsComputer:
                     mean_cri_samples_per_policy.setdefault(gt, []).append(enc_mean_cri)
                     if enc_max_cri > max_cri_per_policy.get(gt, 0.0):
                         max_cri_per_policy[gt] = enc_max_cri
+                    # Per-encounter min CRI contributes to the global baseline
+                    # (pooled across all policies — that's the user-requested
+                    # "lowest CRI value typically attainable" reference).
+                    enc_min_cri = float(enc.get("min_cri", 0.0))
+                    if math.isfinite(enc_min_cri):
+                        min_cri_samples_all_policies.append(enc_min_cri)
                     # Same valid-encounter gate for per-policy CTE samples.
                     enc_mean_cte = float(enc.get("mean_cte", 0.0))
                     enc_max_cte = float(enc.get("max_cte", 0.0))
@@ -364,5 +387,13 @@ class MetricsComputer:
             gt: len(samples) for gt, samples in tfa_samples_per_policy.items()
         }
         m.non_reactive_encounters_per_policy = non_reactive_per_policy
+        # Empirical baseline CRI — pooled across all policies.
+        if min_cri_samples_all_policies:
+            m.baseline_cri_empirical_mean = float(np.mean(min_cri_samples_all_policies))
+            m.baseline_cri_empirical_min = float(np.min(min_cri_samples_all_policies))
+            m.baseline_cri_sample_count = len(min_cri_samples_all_policies)
+        # Theoretical baseline is left at 0.0 here — it depends on env-side
+        # CRI/encounter-range constants the metric layer doesn't see. The
+        # caller (agent_manager) fills it in before printing.
 
         return m
