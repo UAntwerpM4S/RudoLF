@@ -92,6 +92,23 @@ class ShipMetrics:
     median_cri_per_policy: dict = field(default_factory=dict)         # {gt: median of per-encounter mean CRI}
     max_cri_per_policy: dict = field(default_factory=dict)            # {gt: max of per-encounter max CRI}
     valid_encounters_per_policy: dict = field(default_factory=dict)   # {gt: valid encounter count}
+    # Per-policy cross-track error aggregates over the same *valid*
+    # encounters as the CRI metrics. mean_cte_per_policy / median_cte_per_policy
+    # are computed from per-encounter mean-CTE samples; max_cte_per_policy
+    # takes the maximum of per-encounter max-CTE samples.
+    mean_cte_per_policy: dict = field(default_factory=dict)           # {gt: mean of per-encounter mean CTE [m]}
+    median_cte_per_policy: dict = field(default_factory=dict)         # {gt: median of per-encounter mean CTE [m]}
+    max_cte_per_policy: dict = field(default_factory=dict)            # {gt: max of per-encounter max CTE [m]}
+    # Per-policy time-to-first-action aggregates, in seconds. Restricted to
+    # valid encounters where the OS commanded a rudder above the configured
+    # threshold (default 10 deg). reactive_encounters_per_policy gives the
+    # sample count; non_reactive_encounters_per_policy counts valid encounters
+    # in which no rudder command crossed the threshold (excluded from the
+    # mean/median aggregates to avoid skewing them with a fall-back value).
+    mean_tfa_per_policy: dict = field(default_factory=dict)           # {gt: mean time-to-first-action [s]}
+    median_tfa_per_policy: dict = field(default_factory=dict)         # {gt: median time-to-first-action [s]}
+    reactive_encounters_per_policy: dict = field(default_factory=dict)     # {gt: count with reaction}
+    non_reactive_encounters_per_policy: dict = field(default_factory=dict) # {gt: count without reaction}
 
 
 class MetricsComputer:
@@ -230,6 +247,10 @@ class MetricsComputer:
         collisions_outside_encounters = 0
         mean_cri_samples_per_policy: dict[str, list[float]] = {}
         max_cri_per_policy: dict[str, float] = {}
+        mean_cte_samples_per_policy: dict[str, list[float]] = {}
+        max_cte_per_policy: dict[str, float] = {}
+        tfa_samples_per_policy: dict[str, list[float]] = {}
+        non_reactive_per_policy: dict[str, int] = {}
         for ep in episodes:
             encounter_collision_in_ep = False
             for enc in ep.scenario_encounters:
@@ -279,6 +300,20 @@ class MetricsComputer:
                     mean_cri_samples_per_policy.setdefault(gt, []).append(enc_mean_cri)
                     if enc_max_cri > max_cri_per_policy.get(gt, 0.0):
                         max_cri_per_policy[gt] = enc_max_cri
+                    # Same valid-encounter gate for per-policy CTE samples.
+                    enc_mean_cte = float(enc.get("mean_cte", 0.0))
+                    enc_max_cte = float(enc.get("max_cte", 0.0))
+                    mean_cte_samples_per_policy.setdefault(gt, []).append(enc_mean_cte)
+                    if enc_max_cte > max_cte_per_policy.get(gt, 0.0):
+                        max_cte_per_policy[gt] = enc_max_cte
+                    # Time-to-first-action: None means the OS never commanded
+                    # a rudder above threshold during the encounter — bucket
+                    # those separately so they don't skew the mean/median.
+                    tfa = enc.get("time_to_first_action", None)
+                    if tfa is None:
+                        non_reactive_per_policy[gt] = non_reactive_per_policy.get(gt, 0) + 1
+                    else:
+                        tfa_samples_per_policy.setdefault(gt, []).append(float(tfa))
                 pred = enc.get("pred")
                 if gt is None or pred is None:
                     continue
@@ -312,5 +347,22 @@ class MetricsComputer:
         m.valid_encounters_per_policy = {
             gt: len(samples) for gt, samples in mean_cri_samples_per_policy.items()
         }
+        m.mean_cte_per_policy = {
+            gt: float(np.mean(samples)) for gt, samples in mean_cte_samples_per_policy.items()
+        }
+        m.median_cte_per_policy = {
+            gt: float(np.median(samples)) for gt, samples in mean_cte_samples_per_policy.items()
+        }
+        m.max_cte_per_policy = max_cte_per_policy
+        m.mean_tfa_per_policy = {
+            gt: float(np.mean(samples)) for gt, samples in tfa_samples_per_policy.items()
+        }
+        m.median_tfa_per_policy = {
+            gt: float(np.median(samples)) for gt, samples in tfa_samples_per_policy.items()
+        }
+        m.reactive_encounters_per_policy = {
+            gt: len(samples) for gt, samples in tfa_samples_per_policy.items()
+        }
+        m.non_reactive_encounters_per_policy = non_reactive_per_policy
 
         return m

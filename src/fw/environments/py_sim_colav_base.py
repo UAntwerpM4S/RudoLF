@@ -206,6 +206,18 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_encounter_max_cri: float = 0.0
         self._current_encounter_cri_sum: float = 0.0
         self._current_encounter_cri_count: int = 0
+        # Encounter-scoped time-to-first-action / CTE trackers. Time-to-first-
+        # action measures how long after a TS enters encounter range the OS
+        # commands its first "significant" rudder, defined as |rudder| above
+        # the threshold below (default 10 deg). CTE samples are accumulated
+        # only while the encounter is active so the per-policy aggregate is
+        # not diluted by path-following segments.
+        self._first_action_rudder_threshold_rad: float = math.radians(10.0)
+        self._current_encounter_start_step: Optional[int] = None
+        self._current_encounter_first_action_step: Optional[int] = None
+        self._current_encounter_cte_sum: float = 0.0
+        self._current_encounter_cte_count: int = 0
+        self._current_encounter_max_cte: float = 0.0
 
         self._last_collision_info = {}
         self._colreg_violations = 0
@@ -414,6 +426,30 @@ class PySimColavBaseEnv(PySimEnv):
                 self._current_encounter_cri_sum += cri_val
                 self._current_encounter_cri_count += 1
 
+            # Cross-track error samples (one per step inside the encounter).
+            # cross_error was set by the *previous* step's reward call (since
+            # _calculate_colav_reward runs later in this step); a one-step lag
+            # is consistent with how min_dist and CRI are sampled here.
+            cte_val = float(getattr(self, "cross_error", 0.0))
+            if not (math.isnan(cte_val) or math.isinf(cte_val)):
+                abs_cte = abs(cte_val)
+                self._current_encounter_cte_sum += abs_cte
+                self._current_encounter_cte_count += 1
+                if abs_cte > self._current_encounter_max_cte:
+                    self._current_encounter_max_cte = abs_cte
+
+            # First significant rudder action since encounter start. The
+            # threshold compares against the *physical* rudder angle in radians
+            # so the value is robust to action-space normalization.
+            if (
+                self._current_encounter_first_action_step is None
+                and self.performed_action is not None
+            ):
+                max_rud = float(self.ship.specifications.max_rudder_angle)
+                abs_rudder_rad = abs(float(self.performed_action[0])) * max_rud
+                if abs_rudder_rad >= self._first_action_rudder_threshold_rad:
+                    self._current_encounter_first_action_step = self.step_count
+
         # Post-entity-step hook (subclass: e.g. rebuild polar geometries)
         self._on_entities_stepped()
 
@@ -595,6 +631,14 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_encounter_max_cri = 0.0
         self._current_encounter_cri_sum = 0.0
         self._current_encounter_cri_count = 0
+        # Encounter-scoped CTE / time-to-first-action accumulators. start_step
+        # is recorded once at encounter detection so time_to_first_action can
+        # be computed as (first_action_step - start_step) * time_step.
+        self._current_encounter_start_step = self.step_count
+        self._current_encounter_first_action_step = None
+        self._current_encounter_cte_sum = 0.0
+        self._current_encounter_cte_count = 0
+        self._current_encounter_max_cte = 0.0
 
         # Always record the encounter start so n_encounters is correct.
         # gt_ext may be None when the tracked entity was not tagged by the
@@ -612,6 +656,9 @@ class PySimColavBaseEnv(PySimEnv):
             "resolved": False,
             "max_cri": 0.0,
             "mean_cri": 0.0,
+            "mean_cte": 0.0,
+            "max_cte": 0.0,
+            "time_to_first_action": None,
         })
 
     def _finalize_active_encounter(self, resolved_normally: bool = False) -> None:
@@ -640,6 +687,24 @@ class PySimColavBaseEnv(PySimEnv):
             float(self._current_encounter_cri_sum / self._current_encounter_cri_count)
             if self._current_encounter_cri_count > 0 else 0.0
         )
+        rec["mean_cte"] = (
+            float(self._current_encounter_cte_sum / self._current_encounter_cte_count)
+            if self._current_encounter_cte_count > 0 else 0.0
+        )
+        rec["max_cte"] = float(self._current_encounter_max_cte)
+        # Time to first significant rudder action, in seconds. None if no
+        # rudder command crossed the threshold during this encounter.
+        if (
+            self._current_encounter_first_action_step is not None
+            and self._current_encounter_start_step is not None
+        ):
+            dt_steps = (
+                self._current_encounter_first_action_step
+                - self._current_encounter_start_step
+            )
+            rec["time_to_first_action"] = float(max(0, dt_steps) * self.time_step)
+        else:
+            rec["time_to_first_action"] = None
         self._in_encounter = False
         self._current_encounter_min_dist = float("inf")
         self._current_encounter_min_dist_bank = float("inf")
@@ -648,6 +713,11 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_encounter_max_cri = 0.0
         self._current_encounter_cri_sum = 0.0
         self._current_encounter_cri_count = 0
+        self._current_encounter_start_step = None
+        self._current_encounter_first_action_step = None
+        self._current_encounter_cte_sum = 0.0
+        self._current_encounter_cte_count = 0
+        self._current_encounter_max_cte = 0.0
         # Clear the per-TS pass-once guard so the next encounter starts
         # fresh. In step-level mode collision_entities is rebuilt for each
         # encounter and the new TS always lands at index 0, so without this

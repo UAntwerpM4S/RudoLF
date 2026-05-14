@@ -412,6 +412,28 @@ class AgentManager:
                             f"median={median_cri:.3f}  max={max_cri:.3f}  "
                             f"(n={n_valid})"
                         )
+                    print("Cross-track error per policy [m] (mean / median / max over valid encounters):")
+                    for policy in sorted(m.total_encounters_per_policy):
+                        n_valid = m.valid_encounters_per_policy.get(policy, 0)
+                        mean_cte = m.mean_cte_per_policy.get(policy, 0.0)
+                        median_cte = m.median_cte_per_policy.get(policy, 0.0)
+                        max_cte = m.max_cte_per_policy.get(policy, 0.0)
+                        print(
+                            f"  {policy:<16s} mean={mean_cte:.2f}m  "
+                            f"median={median_cte:.2f}m  max={max_cte:.2f}m  "
+                            f"(n={n_valid})"
+                        )
+                    print("Time to first action per policy [s] (|rudder| > 10 deg, over valid encounters):")
+                    for policy in sorted(m.total_encounters_per_policy):
+                        n_reactive = m.reactive_encounters_per_policy.get(policy, 0)
+                        n_non_reactive = m.non_reactive_encounters_per_policy.get(policy, 0)
+                        mean_tfa = m.mean_tfa_per_policy.get(policy, 0.0)
+                        median_tfa = m.median_tfa_per_policy.get(policy, 0.0)
+                        print(
+                            f"  {policy:<16s} mean={mean_tfa:.2f}s  "
+                            f"median={median_tfa:.2f}s  "
+                            f"(n_reactive={n_reactive}, n_non_reactive={n_non_reactive})"
+                        )
                     n_ep = m.num_episodes
                     out_rate = (m.collisions_outside_encounters / n_ep * 100) if n_ep else 0.0
                     print(f"  outside-encounter {out_rate:6.2f}% ({m.collisions_outside_encounters}/{n_ep} episodes)")
