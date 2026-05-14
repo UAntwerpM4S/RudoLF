@@ -254,20 +254,17 @@ class CollisionAnnotator:
             dist = float(dists[t])
             is_collision = dist < self.collision_threshold
 
-            event_a = CollisionEvent(
+            ep_a.collision_events.append(CollisionEvent(
                 timestep=int(t),
                 ship_a=ep_a.ship_id,
                 ship_b=ep_b.ship_id,
                 distance=dist,
                 is_collision=is_collision,
-            )
-            event_b = CollisionEvent(
+            ))
+            ep_b.collision_events.append(CollisionEvent(
                 timestep=int(t),
-                ship_a=ep_a.ship_id,
-                ship_b=ep_b.ship_id,
+                ship_a=ep_b.ship_id,
+                ship_b=ep_a.ship_id,
                 distance=dist,
                 is_collision=is_collision,
-            )
-
-            ep_a.collision_events.append(event_a)
-            ep_b.collision_events.append(event_b)
+            ))

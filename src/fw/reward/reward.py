@@ -128,6 +128,8 @@ class Reward:
         weight = self.reward_weights.get("rudder_change", 1.0)
         if weight == 0.0:
             return 0.0  # No penalty if the component is disabled, even if the function is called.
+        max_rudder_change = max(float(max_rudder_change), 1e-6)
+
         return (rudder_change / max_rudder_change) if rudder_change < max_rudder_change else (-1/weight)
     
     @staticmethod
@@ -162,6 +164,8 @@ class Reward:
         weight = self.reward_weights.get("thrust_change", 1.0)
         if weight == 0.0:
             return 0.0
+        max_thrust_change = max(float(max_thrust_change), 1e-6)
+
         return (thrust_change / max_thrust_change) if thrust_change < max_thrust_change else (-1/weight)
 
     def r_thrust_change_quadratic(self, thrust_change: float, max_thrust_change: float, **_: float) -> float:
@@ -181,7 +185,8 @@ class Reward:
         weight = self.reward_weights.get("thrust_change", 1.0)
         if weight == 0.0:
             return 0.0
-        
+
+        max_thrust_change = max(float(max_thrust_change), 1e-6)
         normalized_change = abs(thrust_change) / max_thrust_change
         
         # Smooth quadratic penalty that steepens near the limit

@@ -153,7 +153,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         # MultiSimEnv requires its own policy type; all other envs use PPO.
         # repr(e) returns e._name which equals ENVIRONMENT_NAME (e.g. "MultiSimEnv").
-        batch_has_multi = any(repr(e) == multi_sim_env_name for e in envs)
+        batch_has_multi = any(e.gym_env.type_name == multi_sim_env_name for e in envs)
         batch_policy = MULTI_PPO_POLICY_NAME if batch_has_multi else PPO_POLICY_NAME
         std_trainer = Trainer(batch_policy, envs, profile, "SimpleScheduler")
         if action == "visualize":

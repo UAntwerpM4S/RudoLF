@@ -146,6 +146,11 @@ class SimpleScheduler(BaseScheduler):
 
                 print(f"[Scheduler] Training to reach {stop_condition} in {self.current_env}.")
 
+                # Reset the patience counter so it doesn't carry over
+                # from the previous environment and trigger a premature stop.
+                if hasattr(stop_condition, "reset"):
+                    stop_condition.reset()
+
                 # Indicate if starting from scratch
                 if not self._previous_env_name:
                     print(f"Starting to train a new {self.agent_mgr.agent_type} policy.")

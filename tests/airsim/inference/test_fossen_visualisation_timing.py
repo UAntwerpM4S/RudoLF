@@ -1,4 +1,4 @@
-"""Pure timing helper tests for framework visualisation smoothing."""
+"""Pure timing helper tests for framework visualization smoothing."""
 
 from airsim.inference.visualisation_models.model_adapters import _should_snap_visual_update
 

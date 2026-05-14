@@ -2,12 +2,12 @@ from typing import Tuple
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass
 class ShipSpecifications:
     """
     Container for ship physical properties, actuator limits, and kinematic constraints.
 
-    This immutable dataclass defines the vessel parameters required for
+    This mutable dataclass defines the vessel parameters required for
     simulation, control, and actuator modeling. It provides:
 
         - Physical properties (length, mass)

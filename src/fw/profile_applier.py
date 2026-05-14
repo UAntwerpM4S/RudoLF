@@ -253,13 +253,13 @@ class SimulatorApplier:
             return
 
         if profile.actuator.angle_rad is not None:
-            object.__setattr__(specs, "max_rudder_angle", profile.actuator.angle_rad)
+            specs.max_rudder_angle = profile.actuator.angle_rad
             logger.debug(
                 "SimulatorApplier: set max_rudder_angle=%.4f rad", profile.actuator.angle_rad
             )
 
         if profile.actuator.rate_rad is not None:
-            object.__setattr__(specs, "max_rudder_rate", profile.actuator.rate_rad)
+            specs.max_rudder_rate = profile.actuator.rate_rad
             logger.debug(
                 "SimulatorApplier: set max_rudder_rate=%.4f rad/s", profile.actuator.rate_rad
             )
