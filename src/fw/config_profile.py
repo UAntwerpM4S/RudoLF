@@ -651,6 +651,20 @@ ProfileRegistry.register(VesselProfile(
 ))
 
 ProfileRegistry.register(VesselProfile(
+    name="fhsim_visualization_profile",
+    description=(
+        "Visualize an FhSim-trained policy."
+    ),
+    run_mode=RunMode.INFERENCE,
+    model=ModelConfig(
+        ship_model=ShipModel.MYZAKO_37,
+        dynamics_model=Model.FOSSEN,
+    ),
+    actuator=ActuatorConfig(enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
+))
+
+ProfileRegistry.register(VesselProfile(
     name="ugent_surrogate_training_profile",
     description="Training profile for UGent's surrogate model.",
     run_mode=RunMode.TRAIN,

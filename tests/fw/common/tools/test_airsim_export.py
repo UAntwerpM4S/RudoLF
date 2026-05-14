@@ -40,7 +40,7 @@ def test_airsim_session_exporter_writes_into_session_folder(tmp_path: Path) -> N
 
 
 def test_airsim_visualisation_exporter_uses_visualisation_file_name(tmp_path: Path) -> None:
-    """Visualisation sessions should write to a dedicated visualisation CSV."""
+    """Visualization sessions should write to a dedicated visualization CSV."""
     exporter = AirSimSessionExporter(
         session_name="visualise_run",
         metadata={"model_path": "models/TestModel.zip", "environment_name": "PySimEnv"},
@@ -58,7 +58,7 @@ def test_airsim_visualisation_exporter_uses_visualisation_file_name(tmp_path: Pa
 
 
 def test_airsim_session_exporter_context_manager(tmp_path: Path) -> None:
-    """AirSimSessionExporter should cleanup when used as a context manager."""
+    """AirSimSessionExporter should clean up when used as a context manager."""
     with AirSimSessionExporter(
         session_name="demo_run_context",
         metadata={"model_path": "models/TestModel.zip", "environment_name": "AirSimEnv"},

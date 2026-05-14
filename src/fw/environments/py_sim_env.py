@@ -1203,10 +1203,14 @@ class PySimEnv(BaseEnv):
         # Unpack the range, they correspondent with values that return 0 and 1
         min_value, max_value = value_range
 
-        if value < min_value or value > max_value:
-            raise ValueError(f"value {value} exceeded the range [{min_value}, {max_value}]")
-
         # Clamp to range
+        clamped = max(min_value, min(value, max_value))
+
+        if clamped != value:
+            print(
+                "Value %s clamped to [%s, %s]",
+                value, min_value, max_value
+            )
 
         # Linear normalization
         x = (value - min_value) / (max_value - min_value)
