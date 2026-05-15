@@ -73,7 +73,11 @@ def test_main_uses_framework_visualize_action(monkeypatch):
         lambda: {"env_type": env_factory.py_sim_env_name, "action": "visualize"},
     )
     monkeypatch.setattr(env_factory, "initialize_all_environments", lambda: None)
-    monkeypatch.setattr(env_factory, "build_default_environment", lambda *args, **kwargs: SimpleNamespace(gym_env=SimpleNamespace()))
+    monkeypatch.setattr(
+        env_factory,
+        "build_default_environment",
+        lambda name, *args, **kwargs: SimpleNamespace(gym_env=SimpleNamespace(type_name=name)),
+    )
 
     trainer_calls = {}
 
@@ -164,7 +168,7 @@ def test_main_visualize_respects_environment_order(monkeypatch):
     def _build_env(name, framework_config=None):
         """Track framework environment construction order."""
         call_order.append(f"build:{name}")
-        return SimpleNamespace(gym_env=SimpleNamespace())
+        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -226,7 +230,7 @@ def test_main_train_respects_environment_order(monkeypatch):
     def _build_env(name, framework_config=None):
         """Track framework train environment construction order."""
         call_order.append(f"build:{name}")
-        return SimpleNamespace(gym_env=SimpleNamespace())
+        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -293,7 +297,7 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
     def _build_env(name, framework_config=None):
         """Track framework train setup for mixed-list fallback scenario."""
         call_order.append(f"build:{name}")
-        return SimpleNamespace(gym_env=SimpleNamespace())
+        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -371,7 +375,7 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
             framework_config: Framework configuration payload forwarded by main.
         """
         call_order.append(f"build:{name}")
-        return SimpleNamespace(gym_env=SimpleNamespace())
+        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
