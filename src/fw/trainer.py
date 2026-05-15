@@ -282,11 +282,30 @@ class Trainer:
                             if gym_env.type_name in env_summary:
                                 summaries[gym_env.type_name] = env_summary[gym_env.type_name]
                             else:
-                                print(
-                                    f"visualize(): env_summary dict has no key for "
-                                    f"'{gym_env.type_name}'. Available keys: "
-                                    f"{list(env_summary.keys())}. Skipping summary for this env."
-                                )
+                                # For composite envs (e.g. MultiSimEnv), collect summaries for all
+                                # sub-environments whose keys appear in env_summary.
+                                sub_envs = getattr(gym_env, "sub_environments", None)
+                                if sub_envs is not None:
+                                    matched = {
+                                        name: env_summary[name]
+                                        for name in sub_envs
+                                        if name in env_summary
+                                    }
+                                    if matched:
+                                        summaries[gym_env.type_name] = matched
+                                    else:
+                                        print(
+                                            f"visualize(): env_summary dict has no key for "
+                                            f"'{gym_env.type_name}' or its sub-environments "
+                                            f"({list(sub_envs.keys())}). Available keys: "
+                                            f"{list(env_summary.keys())}. Skipping summary for this env."
+                                        )
+                                else:
+                                    print(
+                                        f"visualize(): env_summary dict has no key for "
+                                        f"'{gym_env.type_name}'. Available keys: "
+                                        f"{list(env_summary.keys())}. Skipping summary for this env."
+                                    )
                         else:
                             summaries[gym_env.type_name] = env_summary
                 except RuntimeError as e:
