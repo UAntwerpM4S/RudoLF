@@ -1212,6 +1212,8 @@ class PySimEnv(BaseEnv):
                 value, min_value, max_value
             )
 
+        value = clamped
+
         # Linear normalization
         x = (value - min_value) / (max_value - min_value)
 
