@@ -1040,11 +1040,11 @@ class PySimEnv(BaseEnv):
         o1 = _orientation(line_start, line_end, prev_point)
         o2 = _orientation(line_start, line_end, curr_point)
 
-        # If either point is on the line → intersection
+        # If either point is on the line -> intersection
         if abs(o1) <= EPSILON or abs(o2) <= EPSILON:
             return True
 
-        # If signs differ → segment crosses the line
+        # If signs differ -> segment crosses the line
         return (o1 > 0 > o2) or (o1 < 0 < o2)
 
     def _is_near_perpendicular_line(self, checkpoint: dict) -> bool:
@@ -1096,7 +1096,7 @@ class PySimEnv(BaseEnv):
             # Coincident checkpoints: fall back to pointing directly at p_k_plus_1
             return math.atan2(y_k_plus_1 - y, x_k_plus_1 - x)
 
-        # Orthogonal projection of ship onto segment p_k_min_1 → p_k
+        # Orthogonal projection of ship onto segment p_k_min_1 -> p_k
         proj_scalar = (
                           (x - x_k_min_1) * (x_k - x_k_min_1) +
                           (y - y_k_min_1) * (y_k - y_k_min_1)
@@ -1192,35 +1192,34 @@ class PySimEnv(BaseEnv):
     @staticmethod
     def _logarithmic_scaling(value: float, value_range: tuple, half_value: float = 10):
         """
-        Logarithmic scaling.
+        Maps a value to [0, 1] using a logarithmic curve.
+
+        The curve is parameterized by `half_value`, which controls the midpoint:
+        the input value that should map to 0.5 on the output scale. A lower
+        half_value produces a curve that rises quickly then flattens; a higher
+        half_value produces a more gradual rise.
 
         Args:
-            value: Description.
-            value_range: Description.
-            half_value: Description.
+            value: The input value to scale.
+            value_range: A (min, max) tuple. min maps to 0, max maps to 1.
+            half_value: The input value that should map to 0.5 on the output scale.
         """
-
-        # Unpack the range, they correspondent with values that return 0 and 1
+        # min_value -> 0, max_value -> 1 after scaling
         min_value, max_value = value_range
 
         # Clamp to range
         clamped = max(min_value, min(value, max_value))
-
         if clamped != value:
-            print(
-                "Value %s clamped to [%s, %s]",
-                value, min_value, max_value
-            )
+            print(f"Value {value} clamped to [{min_value}, {max_value}]")
 
-        # Linear normalization
+        # Normalize value and half_value to [0, 1]
         x = (clamped - min_value) / (max_value - min_value)
-
         m = (half_value - min_value) / (max_value - min_value)
 
-        # compute curvature parameter
+        # Compute k: curvature parameter derived from the desired midpoint
         k = (1 - 2 * m) / (m ** 2)
 
-        # Logarithmic scaling
+        # Apply log curve: log1p(k*x) / log1p(k) maps [0,1] -> [0,1] with f(m) = 0.5
         return math.log1p(k * x) / math.log1p(k)
 
     # -----------------------
