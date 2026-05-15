@@ -1204,6 +1204,7 @@ class PySimEnv(BaseEnv):
             value_range: A (min, max) tuple. min maps to 0, max maps to 1.
             half_value: The input value that should map to 0.5 on the output scale.
         """
+
         # min_value -> 0, max_value -> 1 after scaling
         min_value, max_value = value_range
 
