@@ -1,4 +1,6 @@
-"""Tests for the live PPO iteration CSV logger."""
+"""
+Tests for the live PPO iteration CSV logger.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +8,10 @@ import csv
 
 
 def test_training_iteration_logger_writes_one_row_per_iteration(tmp_path):
-    """The iteration logger should only materialize its CSV when saved."""
+    """
+    The iteration logger should only materialize its CSV when saved.
+    """
+
     from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 
     logger = TrainingIterationLogger(

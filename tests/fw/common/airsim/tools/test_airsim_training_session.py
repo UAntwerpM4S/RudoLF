@@ -1,4 +1,6 @@
-"""Regression tests for the AirSim training session exporter."""
+"""
+Regression tests for the AirSim training session exporter.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +13,10 @@ from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 
 
 def test_airsim_training_session_writes_logs_metadata_and_plots(tmp_path):
-    """Finalizing a training session should emit the expected bundle of files."""
+    """
+    Finalizing a training session should emit the expected bundle of files.
+    """
+
     src_dir = tmp_path / "src"
     src_dir.mkdir(parents=True, exist_ok=True)
 
@@ -109,7 +114,10 @@ def test_airsim_training_session_writes_logs_metadata_and_plots(tmp_path):
 
 
 def test_auto_normalize_series_maps_data_to_minus_one_plus_one():
-    """Metric series should be rescaled to the full ``[-1, 1]`` interval."""
+    """
+    Metric series should be rescaled to the full ``[-1, 1]`` interval.
+    """
+
     normalized, value_min, value_max = AirSimTrainingSession._auto_normalize_series(
         np.array([2.0, 4.0, 6.0], dtype=float)
     )
@@ -120,7 +128,10 @@ def test_auto_normalize_series_maps_data_to_minus_one_plus_one():
 
 
 def test_auto_normalize_series_keeps_constant_series_centered():
-    """Constant finite data should map to zero without crashing."""
+    """
+    Constant finite data should map to zero without crashing.
+    """
+
     normalized, value_min, value_max = AirSimTrainingSession._auto_normalize_series(
         np.array([np.nan, 5.0, 5.0, np.nan], dtype=float)
     )

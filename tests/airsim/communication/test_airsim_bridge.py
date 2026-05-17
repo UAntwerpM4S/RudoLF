@@ -1,4 +1,6 @@
-"""Tests for AirSimBridge simulation-speed bookkeeping."""
+"""
+Tests for AirSimBridge simulation-speed bookkeeping.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +16,10 @@ from airsim.communication.airsim_bridge import AirSimBridge, _silence_library_ou
 
 
 def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypatch):
-    """Preparing model visualization should update the cached bridge speed value."""
+    """
+    Preparing model visualization should update the cached bridge speed value.
+    """
+
     bridge = AirSimBridge.__new__(AirSimBridge)
     bridge._connected = True
     bridge._last_health_check = 0.0
@@ -40,7 +45,8 @@ def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypat
     monkeypatch.setattr(AirSimBridge, "_ensure_connected", lambda self: True)
 
     def _fake_load_saved_calibration_reference(client, draw_reference=True):
-        """Return a dummy coordinate transform and metadata payload.
+        """
+        Return a dummy coordinate transform and metadata payload.
 
         Args:
             client: Fake AirSim client instance.
@@ -49,6 +55,7 @@ def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypat
         Returns:
             A tuple matching the calibration-loader contract.
         """
+
         return object(), {"draw_reference": draw_reference}
 
     import sys as _sys
@@ -72,7 +79,10 @@ def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypat
 
 
 def test_set_rendering_enabled_uses_console_command(monkeypatch):
-    """Bridge should toggle UE5 rendering through simRunConsoleCommand."""
+    """
+    Bridge should toggle UE5 rendering through simRunConsoleCommand.
+    """
+
     bridge = AirSimBridge.__new__(AirSimBridge)
     bridge._connected = True
     bridge._last_health_check = 0.0
@@ -91,10 +101,15 @@ def test_set_rendering_enabled_uses_console_command(monkeypatch):
 
 
 def test_silence_library_output_suppresses_stdout_and_stderr(capsys):
-    """Bridge helper should suppress noisy library output written directly to the terminal."""
+    """
+    Bridge helper should suppress noisy library output written directly to the terminal.
+    """
 
     def _noisy_callback():
-        """Emit simulated native-library chatter to both stdout and stderr."""
+        """
+        Emit simulated native-library chatter to both stdout and stderr.
+        """
+
         print("Client Ver:4")
         print("Server Ver:3", file=sys.stderr)
         return "ok"

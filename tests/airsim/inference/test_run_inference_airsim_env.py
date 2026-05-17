@@ -1,4 +1,6 @@
-"""Tests for the AirSimEnv-only inference runner."""
+"""
+Tests for the AirSimEnv-only inference runner.
+"""
 
 from __future__ import annotations
 
@@ -11,28 +13,44 @@ import torch
 
 
 def _install_fake_matplotlib(monkeypatch) -> None:
-    """Install a tiny fake matplotlib module for inference tests."""
+    """
+    Install a tiny fake matplotlib module for inference tests.
+    """
 
     class _FakeAxes:
-        """Minimal matplotlib axes stub used by the inference tests."""
+        """
+        Minimal matplotlib axes stub used by the inference tests.
+        """
 
         def set_title(self, *args, **kwargs):
-            """No-op title setter."""
+            """
+            No-op title setter.
+            """
 
         def set_xlabel(self, *args, **kwargs):
-            """No-op x-label setter."""
+            """
+            No-op x-label setter.
+            """
 
         def set_ylabel(self, *args, **kwargs):
-            """No-op y-label setter."""
+            """
+            No-op y-label setter.
+            """
 
         def set_aspect(self, *args, **kwargs):
-            """No-op aspect setter."""
+            """
+            No-op aspect setter.
+            """
 
         def plot(self, *args, **kwargs):
-            """No-op line plot."""
+            """
+            No-op line plot.
+            """
 
         def legend(self, *args, **kwargs):
-            """No-op legend."""
+            """
+            No-op legend.
+            """
 
     matplotlib_module = types.ModuleType("matplotlib")
     pyplot_module = types.ModuleType("matplotlib.pyplot")
@@ -50,7 +68,10 @@ def _install_fake_matplotlib(monkeypatch) -> None:
 
 
 def test_run_inference_uses_native_airsim_episode_loop(monkeypatch):
-    """Verify inference uses AirSimEnv.reset/step/close for all episodes."""
+    """
+    Verify inference uses AirSimEnv.reset/step/close for all episodes.
+    """
+
     import airsim.inference.run_inference as run_inference_module
 
     _install_fake_matplotlib(monkeypatch)
@@ -63,12 +84,17 @@ def test_run_inference_uses_native_airsim_episode_loop(monkeypatch):
     )
 
     class _FakePolicy:
-        """Minimal policy stub returning a deterministic action."""
+        """
+        Minimal policy stub returning a deterministic action.
+        """
 
         device = "cpu"
 
         def _predict(self, state_t, deterministic=True):
-            """Return a constant action tensor."""
+            """
+            Return a constant action tensor.
+            """
+
             return torch.tensor([[0.25, -0.5]], dtype=torch.float32), None, None
 
     monkeypatch.setattr(
@@ -78,12 +104,17 @@ def test_run_inference_uses_native_airsim_episode_loop(monkeypatch):
     )
 
     class _FakeExporter:
-        """Capture logged rows and metadata for assertions."""
+        """
+        Capture logged rows and metadata for assertions.
+        """
 
         instance = None
 
         def __init__(self, *args, **kwargs):
-            """Store export state for the active test run."""
+            """
+            Store export state for the active test run.
+            """
+
             self.rows = []
             self.metadata_updates = []
             self.saved = False
@@ -93,41 +124,64 @@ def test_run_inference_uses_native_airsim_episode_loop(monkeypatch):
             _FakeExporter.instance = self
 
         def log_inference_step(self, row):
-            """Store one logged inference row."""
+            """
+            Store one logged inference row.
+            """
+
             self.rows.append(row)
 
         def update_metadata(self, metadata=None, **kwargs):
-            """Store metadata updates."""
+            """
+            Store metadata updates.
+            """
+
             merged = dict(metadata or {})
             merged.update(kwargs)
             self.metadata_updates.append(merged)
 
         def save(self):
-            """Record save invocation."""
+            """
+            Record save invocation.
+            """
+
             self.saved = True
 
         def close(self):
-            """Record close invocation."""
+            """
+            Record close invocation.
+            """
+
             self.closed = True
 
         def __enter__(self):
-            """Support context-manager usage like the real exporter."""
+            """
+            Support context-manager usage like the real exporter.
+            """
+
             return self
 
         def __exit__(self, exc_type, exc_value, traceback) -> None:
-            """Mirror exporter cleanup on context-manager exit."""
+            """
+            Mirror exporter cleanup on context-manager exit.
+            """
+
             self.save()
             self.close()
 
     monkeypatch.setattr(run_inference_module, "AirSimSessionExporter", _FakeExporter)
 
     class _FakeEnv:
-        """Minimal AirSimEnv double for episode-loop verification."""
+        """
+        Minimal AirSimEnv double for episode-loop verification.
+        """
 
         instance = None
 
         def __init__(self, **kwargs):
-            """Capture constructor args and initialize fake env state."""
+            """
+            Capture constructor args and initialize fake env state.
+            """
+
             self.constructor_kwargs = kwargs
             self.bridge = types.SimpleNamespace(is_connected=True)
             self.initial_ship_pos = np.array([2245.0, -47.0], dtype=np.float32)
@@ -148,7 +202,10 @@ def test_run_inference_uses_native_airsim_episode_loop(monkeypatch):
             _FakeEnv.instance = self
 
         def reset(self):
-            """Start a new fake episode at the initial ship position."""
+            """
+            Start a new fake episode at the initial ship position.
+            """
+
             self.reset_calls += 1
             self._episode_step = 0
             self.ship_pos = self.initial_ship_pos.copy()
@@ -159,7 +216,10 @@ def test_run_inference_uses_native_airsim_episode_loop(monkeypatch):
             return np.array([0.0, 1.0], dtype=np.float32), {}
 
         def step(self, action):
-            """Advance one fake step and end episodes deterministically."""
+            """
+            Advance one fake step and end episodes deterministically.
+            """
+
             self.step_calls += 1
             self._episode_step += 1
             self.ship_pos = self.ship_pos + np.array([10.0, 5.0], dtype=np.float32)
@@ -185,7 +245,10 @@ def test_run_inference_uses_native_airsim_episode_loop(monkeypatch):
             return obs, reward, terminated, truncated, info
 
         def close(self):
-            """Record shutdown."""
+            """
+            Record shutdown.
+            """
+
             self.close_calls += 1
 
     monkeypatch.setattr(run_inference_module, "AirSimEnv", _FakeEnv)
@@ -239,7 +302,10 @@ def test_run_inference_uses_native_airsim_episode_loop(monkeypatch):
 
 
 def test_build_parser_removes_legacy_mode_flags():
-    """Verify the AirSim-only CLI no longer exposes legacy mode switches."""
+    """
+    Verify the AirSim-only CLI no longer exposes legacy mode switches.
+    """
+
     import airsim.inference.run_inference as run_inference_module
 
     parser = run_inference_module._build_parser()
