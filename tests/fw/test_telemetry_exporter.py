@@ -1,4 +1,6 @@
-"""Unit tests for the common_tools TelemetryExporter."""
+"""
+Unit tests for the common_tools TelemetryExporter.
+"""
 
 from __future__ import annotations
 
@@ -17,17 +19,25 @@ from fw.common.airsim.tools.telemetry_exporter import TelemetryExporter
 
 @pytest.fixture
 def export_dir(tmp_path: Path) -> Path:
-    """Provide a clean temporary export directory."""
+    """
+    Provide a clean temporary export directory.
+    """
+
     path = tmp_path / "exports"
     path.mkdir()
     return path
 
 
 class TestTelemetryExporter:
-    """Tests for TelemetryExporter CSV and metadata output."""
+    """
+    Tests for TelemetryExporter CSV and metadata output.
+    """
 
     def test_csv_created_with_header_on_init(self, export_dir: Path) -> None:
-        """CSV file is created with a header row immediately on init."""
+        """
+        CSV file is created with a header row immediately on init.
+        """
+
         exporter = TelemetryExporter(
             session_type="inference",
             export_dir=export_dir,
@@ -40,7 +50,10 @@ class TestTelemetryExporter:
             exporter.close()
 
     def test_log_step_and_flush(self, export_dir: Path) -> None:
-        """Logged steps appear in the CSV after save()."""
+        """
+        Logged steps appear in the CSV after save().
+        """
+
         exporter = TelemetryExporter(
             session_type="visualise",
             export_dir=export_dir,
@@ -57,7 +70,10 @@ class TestTelemetryExporter:
             exporter.close()
 
     def test_metadata_json_created(self, export_dir: Path) -> None:
-        """Metadata JSON contains expected keys after save()."""
+        """
+        Metadata JSON contains expected keys after save().
+        """
+
         exporter = TelemetryExporter(
             session_type="train",
             model_path="models/TestModel.zip",
@@ -77,7 +93,10 @@ class TestTelemetryExporter:
             exporter.close()
 
     def test_save_is_idempotent(self, export_dir: Path) -> None:
-        """Repeated save() calls should not fail or duplicate rows."""
+        """
+        Repeated save() calls should not fail or duplicate rows.
+        """
+
         exporter = TelemetryExporter(session_type="inference", export_dir=export_dir)
         try:
             exporter.log_step(step=1, sim_time=0.1)
@@ -90,13 +109,19 @@ class TestTelemetryExporter:
             exporter.close()
 
     def test_close_is_idempotent(self, export_dir: Path) -> None:
-        """Repeated close() calls should not fail."""
+        """
+        Repeated close() calls should not fail.
+        """
+
         exporter = TelemetryExporter(session_type="inference", export_dir=export_dir)
         exporter.close()
         exporter.close()
 
     def test_csv_filename_matches_session_type(self, export_dir: Path) -> None:
-        """Default CSV filename includes the normalized session type."""
+        """
+        Default CSV filename includes the normalized session type.
+        """
+
         exporter = TelemetryExporter(session_type="Visualise", export_dir=export_dir)
         try:
             assert exporter.csv_path.name == "airsim_telemetry_visualise.csv"

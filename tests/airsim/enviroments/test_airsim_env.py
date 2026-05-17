@@ -1,4 +1,6 @@
-"""Tests for the rebuilt AirSimEnv."""
+"""
+Tests for the rebuilt AirSimEnv.
+"""
 
 from __future__ import annotations
 
@@ -11,10 +13,15 @@ from airsim.communication.coord_transform import CoordTransform
 
 
 class _FakeCarControls:
-    """Tiny stand-in for cosysairsim.CarControls."""
+    """
+    Tiny stand-in for cosysairsim.CarControls.
+    """
 
     def __init__(self) -> None:
-        """Initialize neutral control values."""
+        """
+        Initialize neutral control values.
+        """
+
         self.steering = 0.0
         self.throttle = 0.0
         self.brake = 0.0
@@ -24,10 +31,15 @@ class _FakeCarControls:
 
 
 class _FakeQuaternion:
-    """Small quaternion helper storing a planar yaw rotation."""
+    """
+    Small quaternion helper storing a planar yaw rotation.
+    """
 
     def __init__(self, yaw: float) -> None:
-        """Build a zero-roll, zero-pitch quaternion from yaw."""
+        """
+        Build a zero-roll, zero-pitch quaternion from yaw.
+        """
+
         self.w_val = float(np.cos(yaw / 2.0))
         self.x_val = 0.0
         self.y_val = 0.0
@@ -35,10 +47,15 @@ class _FakeQuaternion:
 
 
 class _FakeBridge:
-    """Small AirSim bridge double for deterministic env tests."""
+    """
+    Small AirSim bridge double for deterministic env tests.
+    """
 
     def __init__(self, config) -> None:
-        """Store a couple of runtime fields used by AirSimEnv."""
+        """
+        Store a couple of runtime fields used by AirSimEnv.
+        """
+
         self.config = config
         self.is_connected = True
         self.airsim = SimpleNamespace(CarControls=_FakeCarControls)
@@ -69,41 +86,65 @@ class _FakeBridge:
         self.load_world_save_calls = 0
 
     def load_world_save(self, save_slot: str) -> None:
-        """Record the active save slot."""
+        """
+        Record the active save slot.
+        """
+
         self.save_slot = save_slot
         self.load_world_save_calls += 1
 
     def set_simulation_speed(self, simulation_speed: float) -> None:
-        """Record the requested simulation speed."""
+        """
+        Record the requested simulation speed.
+        """
+
         self.simulation_speed = float(simulation_speed)
 
     def set_rendering_enabled(self, is_enabled: bool, force: bool = False) -> bool:
-        """Store the requested render state."""
+        """
+        Store the requested render state.
+        """
+
         self.rendering_enabled = bool(is_enabled)
         return True
 
     def set_pause(self, is_paused: bool) -> None:
-        """Toggle the fake paused state."""
+        """
+        Toggle the fake paused state.
+        """
+
         self.paused = bool(is_paused)
 
     def is_paused(self) -> bool:
-        """Return the fake paused state."""
+        """
+        Return the fake paused state.
+        """
+
         return self.paused
 
     def continue_for_time(self, seconds: float) -> None:
-        """Advance the fake vehicle for one sim-time step."""
+        """
+        Advance the fake vehicle for one sim-time step.
+        """
+
         self.last_continue_mode = "time"
         self.last_continue_value = float(seconds)
         self._advance()
 
     def continue_for_frames(self, frames: int) -> None:
-        """Advance the fake vehicle for one frame step."""
+        """
+        Advance the fake vehicle for one frame step.
+        """
+
         self.last_continue_mode = "frames"
         self.last_continue_value = int(frames)
         self._advance()
 
     def _advance(self) -> None:
-        """Move the fake vehicle forward based on throttle and steering."""
+        """
+        Move the fake vehicle forward based on throttle and steering.
+        """
+
         if self.freeze_progress:
             self.paused = bool(self.pause_after_advance)
             return
@@ -120,11 +161,17 @@ class _FakeBridge:
         self.paused = bool(self.pause_after_advance)
 
     def set_controls(self, controls) -> None:
-        """Store the latest control object."""
+        """
+        Store the latest control object.
+        """
+
         self.current_controls = controls
 
     def get_state(self) -> dict:
-        """Return a telemetry payload matching AirSimBridge.get_state()."""
+        """
+        Return a telemetry payload matching AirSimBridge.get_state().
+        """
+
         if self.fail_state_reads:
             return {
                 "state_read_failed": True,
@@ -140,13 +187,19 @@ class _FakeBridge:
         }
 
     def get_collision_info(self):
-        """Return a minimal collision-info payload."""
+        """
+        Return a minimal collision-info payload.
+        """
+
         if self.fail_collision_reads:
             raise RuntimeError("synthetic collision read failure")
         return SimpleNamespace(has_collided=self.collision)
 
     def get_vehicle_pose(self):
-        """Return a minimal pose object with position and orientation."""
+        """
+        Return a minimal pose object with position and orientation.
+        """
+
         if self.fail_pose_reads:
             raise RuntimeError("synthetic pose failure")
         return SimpleNamespace(
@@ -167,7 +220,10 @@ class _FakeBridge:
         preserve_current_z: bool = False,
         preserve_roll_pitch: bool = False,
     ) -> None:
-        """Teleport the fake vehicle."""
+        """
+        Teleport the fake vehicle.
+        """
+
         self.pose_x = float(x)
         self.pose_y = float(y)
         if self.pose_updates_state:
@@ -177,19 +233,28 @@ class _FakeBridge:
         self.yaw = float(yaw)
 
     def reset(self) -> None:
-        """Reset the fake vehicle timing state."""
+        """
+        Reset the fake vehicle timing state.
+        """
+
         self.reset_calls += 1
         self.speed = 0.0
         self.ang_vel_z = 0.0
         self.paused = True
 
     def disconnect(self) -> None:
-        """Mark the bridge as disconnected."""
+        """
+        Mark the bridge as disconnected.
+        """
+
         self.is_connected = False
 
 
 def _patch_env_dependencies(monkeypatch) -> None:
-    """Install the fake bridge and simple route assets for AirSimEnv tests."""
+    """
+    Install the fake bridge and simple route assets for AirSimEnv tests.
+    """
+
     import airsim.environments.airsim_env as airsim_env_module
 
     identity_transform = CoordTransform(
@@ -225,7 +290,10 @@ def _patch_env_dependencies(monkeypatch) -> None:
 
 
 def test_reset_returns_valid_ppo_observation(monkeypatch):
-    """AirSimEnv should expose a fixed PPO-friendly observation space."""
+    """
+    AirSimEnv should expose a fixed PPO-friendly observation space.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -252,7 +320,10 @@ def test_reset_returns_valid_ppo_observation(monkeypatch):
 
 
 def test_step_advances_route_with_pause_stepping(monkeypatch):
-    """A normal step should move the ship forward and keep PPO outputs usable."""
+    """
+    A normal step should move the ship forward and keep PPO outputs usable.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -289,7 +360,10 @@ def test_step_advances_route_with_pause_stepping(monkeypatch):
 
 
 def test_step_accepts_progress_when_pause_flag_does_not_return(monkeypatch):
-    """Paused sim-time stepping should still succeed when telemetry advances but simIsPause stays false."""
+    """
+    Paused sim-time stepping should still succeed when telemetry advances but simIsPause stays false.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -318,7 +392,10 @@ def test_step_accepts_progress_when_pause_flag_does_not_return(monkeypatch):
 
 
 def test_steering_dynamics_rate_limit_blocks_snap_reversal(monkeypatch):
-    """Steering dynamics should bound abrupt left-right rudder reversals."""
+    """
+    Steering dynamics should bound abrupt left-right rudder reversals.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -347,7 +424,10 @@ def test_steering_dynamics_rate_limit_blocks_snap_reversal(monkeypatch):
 
 
 def test_step_reaches_target_and_terminates(monkeypatch):
-    """AirSimEnv should terminate successfully when the route target is reached."""
+    """
+    AirSimEnv should terminate successfully when the route target is reached.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -375,7 +455,10 @@ def test_step_reaches_target_and_terminates(monkeypatch):
 
 
 def test_default_rewind_reset_does_not_call_bridge_reset(monkeypatch):
-    """The default reset mode should rewind by pose without the heavier bridge reset."""
+    """
+    The default reset mode should rewind by pose without the heavier bridge reset.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -395,7 +478,10 @@ def test_default_rewind_reset_does_not_call_bridge_reset(monkeypatch):
 
 
 def test_step_times_out_when_pause_mode_reports_no_progress(monkeypatch):
-    """Paused stepping should truncate when physics never advances."""
+    """
+    Paused stepping should truncate when physics never advances.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -424,7 +510,10 @@ def test_step_times_out_when_pause_mode_reports_no_progress(monkeypatch):
 
 
 def test_step_truncates_when_no_valid_state_snapshot_is_available(monkeypatch):
-    """A failed AirSim state read should truncate instead of using fake zero telemetry."""
+    """
+    A failed AirSim state read should truncate instead of using fake zero telemetry.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -453,7 +542,10 @@ def test_step_truncates_when_no_valid_state_snapshot_is_available(monkeypatch):
 
 
 def test_reset_raises_when_post_teleport_state_never_becomes_reliable(monkeypatch):
-    """Reset should fail fast when AirSim cannot provide a valid initial state."""
+    """
+    Reset should fail fast when AirSim cannot provide a valid initial state.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -473,7 +565,10 @@ def test_reset_raises_when_post_teleport_state_never_becomes_reliable(monkeypatc
 
 
 def test_step_truncates_when_collision_info_cannot_be_read(monkeypatch):
-    """Collision read failures should truncate instead of pretending there was no collision."""
+    """
+    Collision read failures should truncate instead of pretending there was no collision.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -499,7 +594,10 @@ def test_step_truncates_when_collision_info_cannot_be_read(monkeypatch):
 
 
 def test_training_mode_does_not_reload_world_on_start(monkeypatch):
-    """Training should default to in-session startup without simRequestLoad()."""
+    """
+    Training should default to in-session startup without simRequestLoad().
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -519,7 +617,10 @@ def test_training_mode_does_not_reload_world_on_start(monkeypatch):
 
 
 def test_visual_mode_still_loads_world_on_start(monkeypatch):
-    """Non-training AirSimEnv instances should still load the configured save slot."""
+    """
+    Non-training AirSimEnv instances should still load the configured save slot.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -539,7 +640,10 @@ def test_visual_mode_still_loads_world_on_start(monkeypatch):
 
 
 def test_training_mode_captures_live_startup_pose_without_world_reload(monkeypatch):
-    """Training should adopt the live simulator spawn pose as the reset anchor."""
+    """
+    Training should adopt the live simulator spawn pose as the reset anchor.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -572,7 +676,10 @@ def test_training_mode_captures_live_startup_pose_without_world_reload(monkeypat
 
 
 def test_training_mode_loads_world_once_then_respawns_from_captured_anchor(monkeypatch):
-    """Training can one-shot load a save slot, capture that pose, and reuse it on later resets."""
+    """
+    Training can one-shot load a save slot, capture that pose, and reuse it on later resets.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -613,7 +720,10 @@ def test_training_mode_loads_world_once_then_respawns_from_captured_anchor(monke
 
 
 def test_training_run_events_include_startup_and_respawn(monkeypatch):
-    """AirSimEnv should expose queued startup and respawn diagnostics for PPO logging."""
+    """
+    AirSimEnv should expose queued startup and respawn diagnostics for PPO logging.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -643,7 +753,10 @@ def test_training_run_events_include_startup_and_respawn(monkeypatch):
 
 
 def test_training_run_events_include_checkpoint_and_episode_end(monkeypatch):
-    """Checkpoint crossings and episode outcomes should be exposed in the run-event buffer."""
+    """
+    Checkpoint crossings and episode outcomes should be exposed in the run-event buffer.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -670,7 +783,10 @@ def test_training_run_events_include_checkpoint_and_episode_end(monkeypatch):
 
 
 def test_bridge_reset_mode_invokes_bridge_reset(monkeypatch):
-    """Optional bridge-reset mode should still be available for heavier rewinds."""
+    """
+    Optional bridge-reset mode should still be available for heavier rewinds.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -690,7 +806,10 @@ def test_bridge_reset_mode_invokes_bridge_reset(monkeypatch):
 
 
 def test_reward_normalization_can_be_disabled(monkeypatch):
-    """Callers should be able to inspect the raw shaped reward directly."""
+    """
+    Callers should be able to inspect the raw shaped reward directly.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -712,7 +831,10 @@ def test_reward_normalization_can_be_disabled(monkeypatch):
 
 
 def test_reward_penalizes_wide_fast_checkpoint_farming(monkeypatch):
-    """Wide, fast, worsening tracking should score worse than centered tracking."""
+    """
+    Wide, fast, worsening tracking should score worse than centered tracking.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -755,7 +877,10 @@ def test_reward_penalizes_wide_fast_checkpoint_farming(monkeypatch):
 
 
 def test_offtrack_limit_anneals_towards_stricter_tracking(monkeypatch):
-    """The off-track threshold should tighten over episodes near checkpoints."""
+    """
+    The off-track threshold should tighten over episodes near checkpoints.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -784,7 +909,10 @@ def test_offtrack_limit_anneals_towards_stricter_tracking(monkeypatch):
 
 
 def test_calculate_reward_offtrack_penalty_is_shaped(monkeypatch):
-    """Off-track reward should remain strongly negative without hard clipping to -1."""
+    """
+    Off-track reward should remain strongly negative without hard clipping to -1.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -816,7 +944,10 @@ def test_calculate_reward_offtrack_penalty_is_shaped(monkeypatch):
 
 
 def test_step_terminates_on_collision(monkeypatch):
-    """Collisions should terminate the episode with collision metadata."""
+    """
+    Collisions should terminate the episode with collision metadata.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -841,7 +972,10 @@ def test_step_terminates_on_collision(monkeypatch):
 
 
 def test_reset_prefers_vehicle_pose_when_car_state_lags(monkeypatch):
-    """Reset should succeed even when CarState still reports the old spawn pose."""
+    """
+    Reset should succeed even when CarState still reports the old spawn pose.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 
@@ -866,7 +1000,10 @@ def test_reset_prefers_vehicle_pose_when_car_state_lags(monkeypatch):
 
 
 def test_training_mode_rejects_pause_frame_stepping(monkeypatch):
-    """Training should use an explicit sim-time RL step, not ambiguous frame stepping."""
+    """
+    Training should use an explicit sim-time RL step, not ambiguous frame stepping.
+    """
+
     _patch_env_dependencies(monkeypatch)
     from airsim.environments.airsim_env import AirSimEnv
 

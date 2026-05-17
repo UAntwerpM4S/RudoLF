@@ -1,4 +1,6 @@
-"""Tests for modular model-visualization dispatch through fw.main_with_airsim."""
+"""
+Tests for modular model-visualization dispatch through fw.main_with_airsim.
+"""
 
 import runpy
 
@@ -6,7 +8,8 @@ import pytest
 
 
 def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
-    """Run fw.main_with_airsim and verify it routes to run_visualise_models.
+    """
+    Run fw.main_with_airsim and verify it routes to run_visualise_models.
 
     Args:
         monkeypatch: Pytest monkeypatch fixture.
@@ -17,6 +20,7 @@ def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
         - main_with_airsim exits early with code 0 after dispatch.
         - run_inference is not called in this mode.
     """
+
     runtime = {
         "visualization": {
             "model_visualise": True,
@@ -57,11 +61,13 @@ def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
     import airsim.inference.run_visualise_models as run_visualise_models_module
 
     def _fake_run_visualise_models(**kwargs):
-        """ fake run visualize models.
+        """
+        Fake run visualize models.
 
         Args:
             kwargs: Description.
         """
+
         called.update(kwargs)
 
     monkeypatch.setattr(run_visualise_models_module, "run_visualise_models", _fake_run_visualise_models)
@@ -69,11 +75,13 @@ def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
     import airsim.inference.run_inference as run_inference_module
 
     def _fail_run_inference(**kwargs):
-        """ fail run inference.
+        """
+        Fail run inference.
 
         Args:
             kwargs: Description.
         """
+
         raise AssertionError("run_inference should not be called when model_visualise=True")
 
     monkeypatch.setattr(run_inference_module, "run_inference", _fail_run_inference)
@@ -97,7 +105,8 @@ def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
 
 
 def test_main_with_airsim_model_visualisation_exits_cleanly_when_ue5_is_unreachable(monkeypatch, capsys):
-    """Run fw.main_with_airsim and verify UE5 connection failures exit cleanly.
+    """
+    Run fw.main_with_airsim and verify UE5 connection failures exit cleanly.
 
     Args:
         monkeypatch: Pytest monkeypatch fixture.
@@ -109,6 +118,7 @@ def test_main_with_airsim_model_visualisation_exits_cleanly_when_ue5_is_unreacha
           clean ``SystemExit(1)`` rather than an uncaught traceback.
         - the user-facing message explains the missing UE5 dependency.
     """
+
     runtime = {
         "visualization": {
             "model_visualise": True,
@@ -126,11 +136,13 @@ def test_main_with_airsim_model_visualisation_exits_cleanly_when_ue5_is_unreacha
     import airsim.inference.run_visualise_models as run_visualise_models_module
 
     def _raise_connection_error(**kwargs):
-        """ raise connection error.
+        """
+        Raise connection error.
 
         Args:
             kwargs: Description.
         """
+
         raise ConnectionError("AirSimBridge could not connect to UE5 at 127.0.0.1:41451.")
 
     monkeypatch.setattr(

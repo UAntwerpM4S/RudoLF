@@ -1,4 +1,6 @@
-"""Focused regression tests for SinglePPOAgent training safeguards."""
+"""
+Focused regression tests for SinglePPOAgent training safeguards.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +14,10 @@ from fw.policies.single_ppo_agent import SinglePPOAgent
 
 
 def test_filter_trainable_episodes_skips_one_step_rollouts():
-    """One-step rollouts should be discarded before PPO optimization."""
+    """
+    One-step rollouts should be discarded before PPO optimization.
+    """
+
     short_episode = {
         "rewards": np.array([-0.1], dtype=np.float32),
         "advantages": np.array([-0.1], dtype=np.float32),
@@ -31,7 +36,9 @@ def test_filter_trainable_episodes_skips_one_step_rollouts():
 
 
 class _DummyEnv:
-    """Minimal env stub for SinglePPOAgent unit tests."""
+    """
+    Minimal env stub for SinglePPOAgent unit tests.
+    """
 
     type_name = "PySimEnv"
     observation_space = gym.spaces.Box(
@@ -49,13 +56,18 @@ class _DummyEnv:
 
 
 class _DummyAirSimEnv(_DummyEnv):
-    """Minimal AirSim env stub for AirSim-specific PPO safeguards."""
+    """
+    Minimal AirSim env stub for AirSim-specific PPO safeguards.
+    """
 
     type_name = "AirSimEnv"
 
 
 def test_learn_reraises_keyboard_interrupt_and_skips_final_checkpoint(tmp_path, monkeypatch):
-    """Interrupted training should not look like a successful completed run."""
+    """
+    Interrupted training should not look like a successful completed run.
+    """
+
     import fw.policies.single_ppo_agent as single_ppo_agent_module
     from fw.profile_applier import SimulatorApplier, ActionAdapter
 
@@ -64,7 +76,10 @@ def test_learn_reraises_keyboard_interrupt_and_skips_final_checkpoint(tmp_path, 
     metrics_dumped = []
 
     def _raise_interrupt(_num_envs):
-        """Simulate the user aborting training with Ctrl+C."""
+        """
+        Simulate the user aborting training with Ctrl+C.
+        """
+
         raise KeyboardInterrupt()
 
     # Mock profile-dependent methods to prevent AttributeErrors
@@ -88,7 +103,10 @@ def test_learn_reraises_keyboard_interrupt_and_skips_final_checkpoint(tmp_path, 
 
 
 def test_learn_raises_after_repeated_untrainable_airsim_batches(tmp_path, monkeypatch):
-    """AirSim training should fail fast instead of looping forever on empty batches."""
+    """
+    AirSim training should fail fast instead of looping forever on empty batches.
+    """
+
     import fw.policies.single_ppo_agent as single_ppo_agent_module
     from fw.profile_applier import SimulatorApplier, ActionAdapter
 
@@ -138,11 +156,13 @@ def test_learn_raises_after_repeated_untrainable_airsim_batches(tmp_path, monkey
 
 
 def test_single_ppo_agent_can_be_instantiated_without_profile(tmp_path):
-    """Verify that SinglePPOAgent can be instantiated with profile=None.
+    """
+    Verify that SinglePPOAgent can be instantiated with profile=None.
 
     Profile-dependent operations (scenario initialization, action transformation)
     are skipped when profile is None, but the agent should initialize cleanly.
     """
+
     agent = SinglePPOAgent(environment=_DummyEnv(), model_dir=str(tmp_path))
 
     assert agent._profile is None
@@ -152,7 +172,8 @@ def test_single_ppo_agent_can_be_instantiated_without_profile(tmp_path):
 
 
 def test_load_policy_rebinds_optimizer(tmp_path):
-    """Optimizer must point at the loaded policy's parameters, not the original ones.
+    """
+    Optimizer must point at the loaded policy's parameters, not the original ones.
 
     PPOPolicy.load() returns a NEW object, so after load_policy() the optimizer
     must be recreated — otherwise step() silently updates the old unreferenced

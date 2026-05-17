@@ -1,4 +1,6 @@
-"""Enforce docstring coverage for source and test modules."""
+"""
+Enforce docstring coverage for source and test modules.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +9,8 @@ from pathlib import Path
 
 
 def _is_excluded(path: Path, root: Path) -> bool:
-    """Return True when the given file path is out of enforcement scope.
+    """
+    Return True when the given file path is out of enforcement scope.
 
     Args:
         path: Python file path to evaluate.
@@ -16,6 +19,7 @@ def _is_excluded(path: Path, root: Path) -> bool:
     Returns:
         True when the file should be skipped by enforcement.
     """
+
     rel = path.relative_to(root)
     rel_str = str(rel).replace("\\", "/")
     return (
@@ -27,7 +31,8 @@ def _is_excluded(path: Path, root: Path) -> bool:
 
 
 def _iter_target_files(root: Path) -> list[Path]:
-    """Collect all in-scope Python files in src/ and tests/.
+    """
+    Collect all in-scope Python files in src/ and tests/.
 
     Args:
         root: Repository root path.
@@ -35,12 +40,14 @@ def _iter_target_files(root: Path) -> list[Path]:
     Returns:
         Sorted list of in-scope Python file paths.
     """
+
     candidates = list((root / "src").rglob("*.py")) + list((root / "tests").rglob("*.py"))
     return sorted(path for path in candidates if not _is_excluded(path, root))
 
 
 def _missing_docstrings(path: Path) -> list[str]:
-    """Find classes/functions without docstrings in one file.
+    """
+    Find classes/functions without docstrings in one file.
 
     Args:
         path: Python module path.
@@ -48,6 +55,7 @@ def _missing_docstrings(path: Path) -> list[str]:
     Returns:
         List of formatted `name@line` strings for missing docstrings.
     """
+
     module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     missing: list[str] = []
 
@@ -60,8 +68,10 @@ def _missing_docstrings(path: Path) -> list[str]:
 
 
 def test_all_functions_and_classes_have_docstrings():
-    """Ensure all in-scope classes and callables define docstrings.
     """
+    Ensure all in-scope classes and callables define docstrings.
+    """
+
     root = Path(__file__).resolve().parents[2]
     offenders: list[str] = []
 
