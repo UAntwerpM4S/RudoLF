@@ -1,4 +1,5 @@
-"""Strict success early stopping callback for Stable Baselines3.
+"""
+Strict success early stopping callback for Stable Baselines3.
 
 The callback stops training once the agent achieves N consecutive episodes
 where all checkpoints are passed, the episode never violates the strict
@@ -14,7 +15,8 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 
 class StrictSuccessStoppingCallback(BaseCallback):
-    """Stop training after repeated strict-success episodes.
+    """
+    Stop training after repeated strict-success episodes.
 
     Args:
         required_consecutive_episodes: Number of strict-success episodes
@@ -34,7 +36,10 @@ class StrictSuccessStoppingCallback(BaseCallback):
         strict_cte_limit_m: float = 10.0,
         verbose: int = 0,
     ) -> None:
-        """Initialize strict stopping thresholds and episode trackers."""
+        """
+        Initialize strict stopping thresholds and episode trackers.
+        """
+
         super().__init__(verbose=verbose)
         self.required_consecutive_episodes = max(int(required_consecutive_episodes), 1)
         self.min_average_episode_reward = float(min_average_episode_reward)
@@ -48,13 +53,19 @@ class StrictSuccessStoppingCallback(BaseCallback):
         self._episode_all_checkpoints_passed: dict[int, bool] = {}
 
     def _on_training_start(self) -> None:
-        """Reset per-env episode trackers when SB3 training begins."""
+        """
+        Reset per-env episode trackers when SB3 training begins.
+        """
+
         n_envs = int(getattr(self.training_env, "num_envs", 1))
         for env_index in range(n_envs):
             self._reset_episode_trackers(env_index)
 
     def _reset_episode_trackers(self, env_index: int) -> None:
-        """Clear one vectorized environment's in-progress episode metrics."""
+        """
+        Clear one vectorized environment's in-progress episode metrics.
+        """
+
         self._episode_reward_sum[env_index] = 0.0
         self._episode_steps[env_index] = 0
         self._episode_max_abs_cte[env_index] = 0.0
@@ -62,7 +73,10 @@ class StrictSuccessStoppingCallback(BaseCallback):
         self._episode_all_checkpoints_passed[env_index] = False
 
     def _on_step(self) -> bool:
-        """Update episode metrics from SB3 rollout data and stop if qualified."""
+        """
+        Update episode metrics from SB3 rollout data and stop if qualified.
+        """
+
         infos: list[dict[str, Any]] = self.locals.get("infos", [])
         rewards = self.locals.get("rewards", [])
         dones = self.locals.get("dones", [])

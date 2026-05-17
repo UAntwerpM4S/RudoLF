@@ -1,4 +1,5 @@
-"""Gymnasium AirSim environment for UE5 vessel training and inference.
+"""
+Gymnasium AirSim environment for UE5 vessel training and inference.
 
 This environment is the missing bridge between the existing AirSim connection
 layer and the framework PPO stack. It exposes a standard Gymnasium interface,
@@ -25,7 +26,9 @@ try:
     from msgpackrpc.error import TransportError as _MsgpackTransportError
 except Exception:  # pragma: no cover - optional dependency fallback
     class _MsgpackTransportError(Exception):
-        """Fallback TransportError type when msgpackrpc is unavailable."""
+        """
+        Fallback TransportError type when msgpackrpc is unavailable.
+        """
 
         pass
 
@@ -108,13 +111,15 @@ _LOG_SCALE_HALF_VALUE_FRACTION = 0.3
 
 
 def _log_scale_signed(value: float, scale: float) -> float:
-    """Map a signed distance to [-1, 1] with logarithmic compression.
+    """
+    Map a signed distance to [-1, 1] with logarithmic compression.
 
     Values near zero get finer resolution; the input magnitude equal to
     ``scale`` maps to exactly ±1. The input magnitude equal to
     ``_LOG_SCALE_HALF_VALUE_FRACTION * scale`` maps to approximately ±0.5,
     giving the policy more precision when close to a checkpoint.
     """
+
     if scale <= 1e-6:
         return 0.0
     half_value = _LOG_SCALE_HALF_VALUE_FRACTION * scale
@@ -173,11 +178,13 @@ def normalize_navigation_state(
     speed_scale_mps: float = _SPEED_SCALE_MPS,
     checkpoint_count: int = 1,
 ) -> np.ndarray:
-    """Normalize raw ship telemetry into a compact ``[-1, 1]`` vector.
+    """
+    Normalize raw ship telemetry into a compact ``[-1, 1]`` vector.
 
     This helper is intended for pipelines that consume the run-log schema
     directly (large ``ship_x``/``ship_y`` values and heading in degrees).
     """
+
     safe_half_span = max(float(xy_half_span), 1e-6)
     safe_progress_scale = max(float(route_progress_scale_m), 1e-6)
     safe_speed_scale = max(float(speed_scale_mps), 1e-6)
@@ -210,12 +217,18 @@ def normalize_navigation_state(
 
 
 def _normalize_angle(angle_rad: float) -> float:
-    """Wrap an angle to ``[-pi, pi]``."""
+    """
+    Wrap an angle to ``[-pi, pi]``.
+    """
+
     return math.atan2(math.sin(angle_rad), math.cos(angle_rad))
 
 
 def _safe_load_csv(path: Path, fallback: np.ndarray) -> np.ndarray:
-    """Load a two-column CSV file or return the provided fallback array."""
+    """
+    Load a two-column CSV file or return the provided fallback array.
+    """
+
     try:
         data = np.loadtxt(path, delimiter=",", skiprows=1)
     except Exception:
@@ -231,12 +244,18 @@ def _calculate_perpendicular_lines(
     checkpoints: list[dict[str, Any]],
     line_length: float = 120.0,
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Build short perpendicular guidance lines for each checkpoint."""
+    """
+    Build short perpendicular guidance lines for each checkpoint.
+    """
+
     if not checkpoints:
         return []
 
     def _tangent_at(index: int) -> np.ndarray:
-        """Return a normalized local path tangent vector at a checkpoint index."""
+        """
+        Return a normalized local path tangent vector at a checkpoint index.
+        """
+
         if len(checkpoints) == 1:
             return np.array([1.0, 0.0], dtype=np.float32)
         if index == 0:
@@ -262,7 +281,9 @@ def _calculate_perpendicular_lines(
 
 
 class AirSimEnv(BaseEnv):
-    """Live AirSim route-following environment for PPO training and inference."""
+    """
+    Live AirSim route-following environment for PPO training and inference.
+    """
 
     def __init__(
         self,
@@ -314,7 +335,10 @@ class AirSimEnv(BaseEnv):
         control_interface: str = _CONTROL_INTERFACE_CAR_PHYSICS,
         observation_profile: str = _OBSERVATION_PROFILE_ROUTE_RELATIVE_CAR,
     ) -> None:
-        """Create a live UE5-backed RL environment."""
+        """
+        Create a live UE5-backed RL environment.
+        """
+
         super().__init__(render_mode=render_mode)
 
         self._constructor_kwargs = {
@@ -534,19 +558,31 @@ class AirSimEnv(BaseEnv):
         )
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "AirSimEnv":
-        """Create a fresh UE5-backed copy for vectorized PPO wrappers."""
+        """
+        Create a fresh UE5-backed copy for vectorized PPO wrappers.
+        """
+
         return type(self)(**copy.deepcopy(self._constructor_kwargs, memo))
 
     def neutral_action(self) -> np.ndarray:
-        """Return a neutral AirSim action with zero propulsion."""
+        """
+        Return a neutral AirSim action with zero propulsion.
+        """
+
         return np.array([0.0, -1.0], dtype=np.float32)
 
     def get_agent_state(self) -> Any:
-        """Return the latest lightweight simulator state proxy."""
+        """
+        Return the latest lightweight simulator state proxy.
+        """
+
         return self.phys_sim.state
 
     def set_other_agents_states(self, agent_states: dict[str, Any]) -> None:
-        """Store other-agent state snapshots for framework compatibility."""
+        """
+        Store other-agent state snapshots for framework compatibility.
+        """
+
         self._other_agent_states = {
             agent_name: state
             for agent_name, state in dict(agent_states or {}).items()
@@ -554,12 +590,18 @@ class AirSimEnv(BaseEnv):
         }
 
     def randomize(self, randomization_scale: Optional[float] = None) -> None:
-        """Adjust the curriculum start randomization scale."""
+        """
+        Adjust the curriculum start randomization scale.
+        """
+
         if randomization_scale is not None:
             self.curriculum_randomization_scale = float(randomization_scale)
 
     def render(self) -> None:
-        """UE5 handles rendering directly, so this method is a no-op."""
+        """
+        UE5 handles rendering directly, so this method is a no-op.
+        """
+
         return None
 
     def reset(
@@ -568,7 +610,10 @@ class AirSimEnv(BaseEnv):
         seed: int | None = None,
         options: Optional[dict[str, Any]] = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
-        """Reset the UE5 episode and return the first observation."""
+        """
+        Reset the UE5 episode and return the first observation.
+        """
+
         super().reset(seed=seed)
         if seed is not None:
             self._rng = np.random.default_rng(seed)
@@ -682,7 +727,10 @@ class AirSimEnv(BaseEnv):
         self,
         action: np.ndarray,
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
-        """Apply one policy action to UE5 and return the next transition."""
+        """
+        Apply one policy action to UE5 and return the next transition.
+        """
+
         if not self.bridge.is_connected:
             observation = self._build_observation()
             reward = self._normalize_reward(_DISCONNECT_PENALTY)
@@ -877,7 +925,10 @@ class AirSimEnv(BaseEnv):
         return observation, float(reward), terminated, truncated, info
 
     def close(self) -> None:
-        """Disconnect from AirSim and release bridge resources."""
+        """
+        Disconnect from AirSim and release bridge resources.
+        """
+
         try:
             if getattr(self, "bridge", None) is not None:
                 self.bridge.disconnect()
@@ -885,7 +936,10 @@ class AirSimEnv(BaseEnv):
             logger.debug("AirSimEnv close() swallowed a bridge disconnect error.", exc_info=True)
 
     def _prepare_world_if_needed(self) -> None:
-        """Load the requested save slot and coordinate transform once per env."""
+        """
+        Load the requested save slot and coordinate transform once per env.
+        """
+
         if self._world_prepared:
             return
 
@@ -959,7 +1013,10 @@ class AirSimEnv(BaseEnv):
         self._world_prepared = True
 
     def _settle_after_world_load(self) -> dict[str, float] | None:
-        """Wait briefly for the freshly loaded save-slot spawn pose to stabilize."""
+        """
+        Wait briefly for the freshly loaded save-slot spawn pose to stabilize.
+        """
+
         self._apply_parked_controls()
         deadline = time.monotonic() + _WORLD_LOAD_SETTLE_TIMEOUT_S
         previous_sample: tuple[float, float, float, float] | None = None
@@ -1017,7 +1074,10 @@ class AirSimEnv(BaseEnv):
         }
 
     def _capture_startup_anchor_if_needed(self) -> None:
-        """Adopt the live simulator spawn pose as the reset anchor once."""
+        """
+        Adopt the live simulator spawn pose as the reset anchor once.
+        """
+
         if not self.capture_live_start_pose or self._captured_startup_pose_airsim is not None:
             return
 
@@ -1082,7 +1142,10 @@ class AirSimEnv(BaseEnv):
         )
 
     def _rebuild_route_geometry(self) -> None:
-        """Recompute route geometry after the chosen route anchor changes."""
+        """
+        Recompute route geometry after the chosen route anchor changes.
+        """
+
         self.route_points = self._build_route_points()
         self.route_cumulative_distances = self._compute_cumulative_distances(
             self.route_points
@@ -1108,7 +1171,10 @@ class AirSimEnv(BaseEnv):
         start_pos: np.ndarray,
         start_heading: float,
     ) -> dict[str, float] | None:
-        """Return the exact captured AirSim reset pose for the canonical start."""
+        """
+        Return the exact captured AirSim reset pose for the canonical start.
+        """
+
         if self._captured_startup_pose_airsim is None:
             return None
         if int(start_index) != 0:
@@ -1129,7 +1195,10 @@ class AirSimEnv(BaseEnv):
         return dict(self._captured_startup_pose_airsim)
 
     def _apply_parked_controls(self) -> None:
-        """Stop the AirSim vehicle after a reset teleport."""
+        """
+        Stop the AirSim vehicle after a reset teleport.
+        """
+
         controls = build_car_controls(
             self.bridge.airsim,
             steering=0.0,
@@ -1140,7 +1209,10 @@ class AirSimEnv(BaseEnv):
         self.last_controls = {"steering": 0.0, "throttle": 0.0, "brake": 1.0}
 
     def _enforce_zero_velocity_after_reset(self) -> None:
-        """Explicitly zero linear/angular velocity immediately after reset settle."""
+        """
+        Explicitly zero linear/angular velocity immediately after reset settle.
+        """
+
         try:
             pose = self.bridge.get_vehicle_pose()
             airsim_x = float(pose.position.x_val)
@@ -1173,14 +1245,20 @@ class AirSimEnv(BaseEnv):
         self._apply_parked_controls()
 
     def _set_pause_mode(self, is_paused: bool) -> None:
-        """Toggle paused stepping mode."""
+        """
+        Toggle paused stepping mode.
+        """
+
         try:
             self.bridge.set_pause(bool(is_paused))
         except Exception:
             logger.debug("Could not change AirSim pause mode.", exc_info=True)
 
     def _advance_simulation(self) -> float:
-        """Advance the UE5 simulation according to the configured step mode."""
+        """
+        Advance the UE5 simulation according to the configured step mode.
+        """
+
         step_start = time.perf_counter()
         self._last_pause_timeout = False
 
@@ -1214,7 +1292,10 @@ class AirSimEnv(BaseEnv):
         return time.perf_counter() - step_start
 
     def _snapshot_progress_signature(self) -> dict[str, float | int] | None:
-        """Capture a lightweight telemetry signature for step-progress checks."""
+        """
+        Capture a lightweight telemetry signature for step-progress checks.
+        """
+
         signature: dict[str, float | int] = {}
         try:
             state = self.bridge.get_state()
@@ -1249,7 +1330,10 @@ class AirSimEnv(BaseEnv):
         return signature or None
 
     def _has_progressed_since(self, before_signature: dict[str, float | int] | None) -> bool:
-        """Return whether UE5 telemetry changed after a step command."""
+        """
+        Return whether UE5 telemetry changed after a step command.
+        """
+
         if before_signature is None:
             return False
 
@@ -1282,12 +1366,14 @@ class AirSimEnv(BaseEnv):
         return False
 
     def _refresh_state_from_bridge(self, track_sync: bool = True) -> bool:
-        """Pull the latest pose and velocity state from AirSim.
+        """
+        Pull the latest pose and velocity state from AirSim.
 
         Returns:
             bool: ``True`` when at least one valid telemetry snapshot was
             available for the update, ``False`` otherwise.
         """
+
         state = self.bridge.get_state()
         state_failed = not isinstance(state, dict) or bool(state.get("state_read_failed"))
         airsim_x: float | None = None
@@ -1379,7 +1465,10 @@ class AirSimEnv(BaseEnv):
         return True
 
     def _validate_configuration(self) -> None:
-        """Validate the control and timing model used for the active env."""
+        """
+        Validate the control and timing model used for the active env.
+        """
+
         if self.control_interface not in _CONTROL_MAPPERS:
             raise ValueError(
                 "AirSimEnv currently supports only these control interfaces: "
@@ -1406,7 +1495,10 @@ class AirSimEnv(BaseEnv):
             )
 
     def _resolve_mdp_step_seconds(self) -> float:
-        """Resolve the simulated duration represented by one RL step."""
+        """
+        Resolve the simulated duration represented by one RL step.
+        """
+
         if self.use_pause_stepping and self.use_sim_time_stepping:
             step_seconds = float(self.sim_time_per_action)
         else:
@@ -1416,13 +1508,19 @@ class AirSimEnv(BaseEnv):
         return step_seconds
 
     def _reset_sync_metrics(self) -> None:
-        """Reset state-synchronization metrics at episode boundaries."""
+        """
+        Reset state-synchronization metrics at episode boundaries.
+        """
+
         self._last_state_signature = None
         self._repeated_state_count = 0
         self._state_update_reliable = True
 
     def _update_sync_metrics(self) -> None:
-        """Track whether AirSim returned a fresh state for this RL step."""
+        """
+        Track whether AirSim returned a fresh state for this RL step.
+        """
+
         signature = (
             round(float(self.ship_pos[0]), 3),
             round(float(self.ship_pos[1]), 3),
@@ -1438,7 +1536,10 @@ class AirSimEnv(BaseEnv):
         self._last_state_signature = signature
 
     def _settle_after_reset(self, start_pos: np.ndarray, start_heading: float) -> bool:
-        """Wait briefly until the teleported reset pose is reflected in telemetry."""
+        """
+        Wait briefly until the teleported reset pose is reflected in telemetry.
+        """
+
         deadline = time.perf_counter() + _RESET_SETTLE_TIMEOUT_S
         while time.perf_counter() < deadline:
             if not self._refresh_state_from_bridge():
@@ -1459,7 +1560,10 @@ class AirSimEnv(BaseEnv):
         return False
 
     def _compose_effective_action(self, action: np.ndarray) -> np.ndarray:
-        """Blend residual policy output with an optional guidance prior."""
+        """
+        Blend residual policy output with an optional guidance prior.
+        """
+
         action = validate_policy_action(action)
         if self.guidance_assist_enabled:
             guidance = self._guidance_action()
@@ -1477,7 +1581,10 @@ class AirSimEnv(BaseEnv):
         return self._apply_steering_dynamics(effective)
 
     def _apply_steering_dynamics(self, action: np.ndarray) -> np.ndarray:
-        """Apply vessel-like steering dynamics to reduce left-right snap commands."""
+        """
+        Apply vessel-like steering dynamics to reduce left-right snap commands.
+        """
+
         action = validate_policy_action(action, action_name="effective action")
         target_steering = float(action[0])
         self.last_steering_target = target_steering
@@ -1507,7 +1614,10 @@ class AirSimEnv(BaseEnv):
         return filtered.astype(np.float32, copy=False)
 
     def _guidance_action(self) -> np.ndarray:
-        """Build a conservative route-following prior in policy-action space."""
+        """
+        Build a conservative route-following prior in policy-action space.
+        """
+
         heading_error = self._current_heading_error()
         cross_track_term = float(np.clip(self.cross_error / _CROSS_TRACK_LIMIT_M, -1.0, 1.0))
         steering = np.clip((heading_error / math.pi) * 0.95 + cross_track_term * 0.35, -1.0, 1.0)
@@ -1518,16 +1628,25 @@ class AirSimEnv(BaseEnv):
         return np.array([steering, throttle_signed], dtype=np.float32)
 
     def _distance_to_target(self) -> float:
-        """Return current Euclidean distance to the route target."""
+        """
+        Return current Euclidean distance to the route target.
+        """
+
         return float(np.linalg.norm(self.target_pos - self.ship_pos))
 
     def _distance_to_checkpoint(self, checkpoint_index: int) -> float:
-        """Return Euclidean distance to a checkpoint by index."""
+        """
+        Return Euclidean distance to a checkpoint by index.
+        """
+
         checkpoint = self.checkpoints[min(max(checkpoint_index, 0), len(self.checkpoints) - 1)]
         return float(np.linalg.norm(checkpoint["pos"] - self.ship_pos))
 
     def _update_checkpoint_progress(self) -> float:
-        """Advance the current checkpoint index from route progress."""
+        """
+        Advance the current checkpoint index from route progress.
+        """
+
         reward = 0.0
         if (
             self.checkpoint_index < len(self.checkpoints) - 1
@@ -1552,7 +1671,10 @@ class AirSimEnv(BaseEnv):
         return reward
 
     def _has_reached_target(self) -> bool:
-        """Return whether the ship has reached the route target."""
+        """
+        Return whether the ship has reached the route target.
+        """
+
         if abs(self.cross_error) > _SUCCESS_MAX_CROSS_TRACK_M:
             return False
         if abs(self.heading_error) > _SUCCESS_MAX_HEADING_RAD:
@@ -1563,13 +1685,17 @@ class AirSimEnv(BaseEnv):
         )
 
     def _distance_to_next_checkpoint(self) -> float:
-        """Return Euclidean distance to the next active checkpoint."""
+        """
+        Return Euclidean distance to the next active checkpoint.
+        """
+
         next_idx = min(self.checkpoint_index + 1, len(self.checkpoints) - 1)
         next_pos = self.checkpoints[next_idx]["pos"]
         return float(np.linalg.norm(next_pos - self.ship_pos))
 
     def _effective_offtrack_limit_m(self) -> float:
-        """Return the active off-track threshold for the current episode step.
+        """
+        Return the active off-track threshold for the current episode step.
 
         The threshold follows a two-part schedule:
             1) A curriculum anneal from a generous limit to a stricter limit
@@ -1577,6 +1703,7 @@ class AirSimEnv(BaseEnv):
             2) A next-checkpoint-aware expansion so the threshold does not
                collapse too aggressively in wide turns.
         """
+
         anneal_ratio = float(
             np.clip(
                 (self._episode_index - 1) / max(_OFFTRACK_LIMIT_DECAY_EPISODES, 1),
@@ -1604,7 +1731,10 @@ class AirSimEnv(BaseEnv):
         )
 
     def _detect_collision(self) -> bool | None:
-        """Return whether AirSim reported a collision this step."""
+        """
+        Return whether AirSim reported a collision this step.
+        """
+
         try:
             collision = self.bridge.get_collision_info()
         except _AIRSIM_READ_EXCEPTIONS:
@@ -1615,7 +1745,10 @@ class AirSimEnv(BaseEnv):
         return self._last_collision
 
     def _build_reward_state(self) -> dict[str, float | int]:
-        """Capture the run-log state schema used by the strict reward."""
+        """
+        Capture the run-log state schema used by the strict reward.
+        """
+
         return {
             "route_progress_m": float(self._route_progress_m),
             "cross_track_error": float(self.cross_error),
@@ -1632,7 +1765,10 @@ class AirSimEnv(BaseEnv):
         previous_state: dict[str, float | int],
         checkpoint_reward: float = 0.0,
     ) -> tuple[float, bool]:
-        """Return a stable dense reward and whether this step is off-track."""
+        """
+        Return a stable dense reward and whether this step is off-track.
+        """
+
         current_cte = abs(float(current_state.get("cross_track_error", 0.0)))
         previous_cte = abs(float(previous_state.get("cross_track_error", current_cte)))
         effective_limit = self._effective_offtrack_limit_m()
@@ -1702,14 +1838,20 @@ class AirSimEnv(BaseEnv):
 
 
     def _normalize_reward(self, reward: float) -> float:
-        """Scale route rewards into the PPO-friendly ``[-1, 1]`` interval."""
+        """
+        Scale route rewards into the PPO-friendly `[-1, 1]` interval.
+        """
+
         if not self.normalize_reward:
             return float(reward)
         normalized = float(reward) / self.reward_normalization_scale
         return float(np.clip(normalized, -1.0, 1.0))
 
     def _map_policy_action_to_controls(self, action: np.ndarray) -> Any:
-        """Map the policy action to the active UE5 control interface."""
+        """
+        Map the policy action to the active UE5 control interface.
+        """
+
         try:
             mapper = _CONTROL_MAPPERS[self.control_interface]
         except KeyError as exc:
@@ -1720,12 +1862,14 @@ class AirSimEnv(BaseEnv):
         return mapper(self.bridge.airsim, action)
 
     def _build_observation(self) -> np.ndarray:
-        """Build the PPO observation vector from the current route state.
+        """
+        Build the PPO observation vector from the current route state.
 
         The current car-physics training profile keeps the observation
         route-relative while also exposing the minimum extra dynamics needed
         for tighter turn control: yaw-rate and cross-track trend.
         """
+
         builder_name = _OBSERVATION_BUILDERS.get(
             (self.control_interface, self.observation_profile)
         )
@@ -1740,7 +1884,10 @@ class AirSimEnv(BaseEnv):
         return np.clip(observation, self.observation_space.low, self.observation_space.high)
 
     def _build_route_relative_car_observation(self) -> np.ndarray:
-        """Build the current route-relative car-physics observation vector."""
+        """
+        Build the current route-relative car-physics observation vector.
+        """
+
         current_checkpoint = self.checkpoints[min(self.checkpoint_index, len(self.checkpoints) - 1)]["pos"]
         next_index = min(self.checkpoint_index + 1, len(self.checkpoints) - 1)
         next_checkpoint = self.checkpoints[next_index]["pos"]
@@ -1785,7 +1932,10 @@ class AirSimEnv(BaseEnv):
         return observation
 
     def _build_observation_space(self) -> gym.spaces.Box:
-        """Define the explicit continuous PPO observation space."""
+        """
+        Define the explicit continuous PPO observation space.
+        """
+
         try:
             fields = _OBSERVATION_FIELDS_BY_PROFILE[self.observation_profile]
         except KeyError as exc:
@@ -1797,7 +1947,10 @@ class AirSimEnv(BaseEnv):
         return gym.spaces.Box(low=-high, high=high, dtype=np.float32)
 
     def _world_to_ship_frame(self, point: np.ndarray) -> np.ndarray:
-        """Express a world-frame point in the ship-local frame."""
+        """
+        Express a world-frame point in the ship-local frame.
+        """
+
         delta = np.asarray(point, dtype=np.float32) - self.ship_pos
         cos_h = math.cos(self.ship_heading)
         sin_h = math.sin(self.ship_heading)
@@ -1806,12 +1959,18 @@ class AirSimEnv(BaseEnv):
         return np.array([forward, lateral], dtype=np.float32)
 
     def _current_heading_error(self) -> float:
-        """Compute heading error against the current route segment direction."""
+        """
+        Compute heading error against the current route segment direction.
+        """
+
         route_heading = self._route_heading_at_index(self._route_projection_segment)
         return _normalize_angle(route_heading - self.ship_heading)
 
     def _route_heading_at_index(self, index: int) -> float:
-        """Return the route tangent heading at a route-point index."""
+        """
+        Return the route tangent heading at a route-point index.
+        """
+
         idx = min(max(int(index), 0), len(self.route_points) - 2)
         segment = self.route_points[idx + 1] - self.route_points[idx]
         if float(np.linalg.norm(segment)) <= 1e-9:
@@ -1819,7 +1978,10 @@ class AirSimEnv(BaseEnv):
         return float(math.atan2(float(segment[1]), float(segment[0])))
 
     def _project_onto_route(self, ship_pos: np.ndarray) -> dict[str, float | int]:
-        """Project a ship position onto the route polyline."""
+        """
+        Project a ship position onto the route polyline.
+        """
+
         if len(self.route_points) < 2:
             return {"progress_m": 0.0, "cross_track_error": 0.0, "segment_index": 0}
 
@@ -1874,7 +2036,10 @@ class AirSimEnv(BaseEnv):
         outcome: str,
         all_checkpoints_passed: bool | None = None,
     ) -> dict[str, Any]:
-        """Build the step info dictionary shared by training and inference."""
+        """
+        Build the step info dictionary shared by training and inference.
+        """
+
         reached_target = bool(self._has_reached_target())
         if all_checkpoints_passed is None:
             all_checkpoints_passed = bool(
@@ -1935,17 +2100,26 @@ class AirSimEnv(BaseEnv):
         }
 
     def mark_explicit_reset_context(self, enabled: bool = True) -> None:
-        """Allow the next explicit reset to emit a respawn event."""
+        """
+        Allow the next explicit reset to emit a respawn event.
+        """
+
         self._log_next_reset_event = bool(enabled)
 
     def drain_run_events(self) -> list[dict[str, Any]]:
-        """Return and clear pending training run events."""
+        """
+        Return and clear pending training run events.
+        """
+
         events = list(self._pending_run_events)
         self._pending_run_events.clear()
         return events
 
     def get_training_export_snapshot(self) -> dict[str, Any]:
-        """Return a serializable route snapshot for training exports."""
+        """
+        Return a serializable route snapshot for training exports.
+        """
+
         return {
             "route_points": self.route_points.astype(float).tolist(),
             "checkpoints": [
@@ -1981,7 +2155,10 @@ class AirSimEnv(BaseEnv):
         }
 
     def _record_run_event(self, event_type: str, **fields: Any) -> None:
-        """Queue one structured training event for PPO-side export."""
+        """
+        Queue one structured training event for PPO-side export.
+        """
+
         event = {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "event_type": str(event_type),
@@ -2001,7 +2178,10 @@ class AirSimEnv(BaseEnv):
         self._pending_run_events.append(self._serialize_run_event_value(event))
 
     def _serialize_run_event_value(self, value: Any) -> Any:
-        """Convert nested event values into JSON-safe structures."""
+        """
+        Convert nested event values into JSON-safe structures.
+        """
+
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         if isinstance(value, np.generic):
@@ -2018,7 +2198,10 @@ class AirSimEnv(BaseEnv):
         return str(value)
 
     def _initial_curriculum_frontier(self, target_checkpoint: int | None) -> int:
-        """Resolve the initial curriculum frontier checkpoint."""
+        """
+        Resolve the initial curriculum frontier checkpoint.
+        """
+
         if not self.curriculum_enabled:
             return len(self.checkpoints) - 2
         if target_checkpoint is not None:
@@ -2026,7 +2209,10 @@ class AirSimEnv(BaseEnv):
         return min(self.curriculum_window_size, len(self.checkpoints) - 2)
 
     def _select_episode_start(self) -> tuple[int, np.ndarray]:
-        """Choose the episode start checkpoint and framework position."""
+        """
+        Choose the episode start checkpoint and framework position.
+        """
+
         start_index = 0
         if self.curriculum_enabled and self.training_mode and len(self.checkpoints) > 2:
             window_end = min(self._curriculum_frontier_index, len(self.checkpoints) - 2)
@@ -2043,7 +2229,10 @@ class AirSimEnv(BaseEnv):
         return start_index, start_pos.astype(np.float32)
 
     def _select_episode_start_heading(self, start_index: int) -> float:
-        """Choose the reset heading for the selected episode start."""
+        """
+        Choose the reset heading for the selected episode start.
+        """
+
         if (
             int(start_index) == 0
             and self._captured_startup_framework_heading is not None
@@ -2053,7 +2242,10 @@ class AirSimEnv(BaseEnv):
         return self._route_heading_at_index(start_index)
 
     def _update_curriculum_after_episode(self, success: bool) -> None:
-        """Expand the curriculum frontier after repeated success."""
+        """
+        Expand the curriculum frontier after repeated success.
+        """
+
         if not self.curriculum_enabled:
             return
         if success:
@@ -2088,12 +2280,18 @@ class AirSimEnv(BaseEnv):
         )
 
     def _airsim_yaw_rate_to_framework(self, yaw_rate: float) -> float:
-        """Invert the yaw-rate sign convention used by the coordinate transform."""
+        """
+        Invert the yaw-rate sign convention used by the coordinate transform.
+        """
+
         sign = float(self.coord_transform.framework_yaw_rate_to_airsim(1.0))
         return float(yaw_rate * sign)
 
     def _build_route_points(self) -> np.ndarray:
-        """Load, trim, and densify the framework route used by AirSimEnv."""
+        """
+        Load, trim, and densify the framework route used by AirSimEnv.
+        """
+
         raw_path = self._load_route_points(target_pos=self._requested_target_pos)
         if len(raw_path) == 0:
             raw_path = np.array(
@@ -2123,7 +2321,10 @@ class AirSimEnv(BaseEnv):
         return dense
 
     def _load_route_points(self, target_pos: Optional[np.ndarray] = None) -> np.ndarray:
-        """Load the route CSV used for AirSim training and inference."""
+        """
+        Load the route CSV used for AirSim training and inference.
+        """
+
         fallback_target = (
             np.asarray(target_pos, dtype=np.float32)
             if target_pos is not None
@@ -2133,7 +2334,10 @@ class AirSimEnv(BaseEnv):
         return _safe_load_csv(_DEFAULT_TRAJECTORY_CSV, fallback=fallback)
 
     def _load_outline_points(self, path: Path) -> np.ndarray:
-        """Load an outline CSV used by framework plotting helpers."""
+        """
+        Load an outline CSV used by framework plotting helpers.
+        """
+
         fallback = np.array(
             [
                 [self.initial_ship_pos[0] - 1000.0, self.initial_ship_pos[1] - 1000.0],
@@ -2147,7 +2351,10 @@ class AirSimEnv(BaseEnv):
 
     @staticmethod
     def _compute_cumulative_distances(points: np.ndarray) -> np.ndarray:
-        """Compute cumulative route distances for a polyline."""
+        """
+        Compute cumulative route distances for a polyline.
+        """
+
         if len(points) == 0:
             return np.array([0.0], dtype=np.float32)
         if len(points) == 1:
@@ -2160,7 +2367,10 @@ class AirSimEnv(BaseEnv):
         route_points: np.ndarray,
         cumulative_distances: np.ndarray,
     ) -> list[dict[str, Any]]:
-        """Build checkpoint metadata for route following and plotting."""
+        """
+        Build checkpoint metadata for route following and plotting.
+        """
+
         checkpoints: list[dict[str, Any]] = []
         total_points = max(len(route_points) - 1, 1)
         for index, point in enumerate(route_points):

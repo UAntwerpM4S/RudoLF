@@ -1,4 +1,5 @@
-"""Adapter registry for framework-model visualization in UE5.
+"""
+Adapter registry for framework-model visualization in UE5.
 
 The UE5 replay loop is intentionally model-family agnostic. Framework-specific
 details such as policy loading, environment construction, state extraction, and
@@ -43,7 +44,8 @@ def _interpolate_actuator_state(
     target_state: np.ndarray,
     alpha: float,
 ) -> np.ndarray:
-    """Linearly interpolate between two actuator-state vectors.
+    """
+    Linearly interpolate between two actuator-state vectors.
 
     Args:
         previous_state: Previously mirrored actuator state. When ``None``,
@@ -55,13 +57,15 @@ def _interpolate_actuator_state(
         np.ndarray: Interpolated actuator vector with the same shape as the
         provided state vectors.
     """
+
     if previous_state is None:
         return target_state
     return previous_state + alpha * (target_state - previous_state)
 
 
 def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
-    """Load a PPO policy from a saved framework model.
+    """
+    Load a PPO policy from a saved framework model.
 
     Args:
         model_path: User-provided checkpoint path, relative or absolute.
@@ -70,6 +74,7 @@ def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     Returns:
         PPOPolicy: Loaded policy with its network placed in evaluation mode.
     """
+
     path = resolve_model_path(model_path, _SRC_DIR)
     stem = str(path.with_suffix("")) if path.suffix == ".zip" else str(path)
     policy = PPOPolicy.load(stem, device=device)
@@ -78,7 +83,8 @@ def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
 
 
 def _extract_indexed_value(value: Any, ship_index: int = 0) -> Any:
-    """Return one per-ship item while tolerating common container layouts.
+    """
+    Return one per-ship item while tolerating common container layouts.
 
     Args:
         value: Scalar, NumPy array, or list/tuple carrying framework state.
@@ -88,6 +94,7 @@ def _extract_indexed_value(value: Any, ship_index: int = 0) -> Any:
         Any: A single ship-specific item, the original flat value, or ``None``
         when extraction is not possible.
     """
+
     if value is None:
         return None
 
@@ -115,7 +122,8 @@ def _extract_indexed_value(value: Any, ship_index: int = 0) -> Any:
 
 
 def _extract_physics_entry(env: Any, ship_index: int = 0) -> Any:
-    """Return one physics-simulator entry from common env layouts.
+    """
+    Return one physics-simulator entry from common env layouts.
 
     Args:
         env: Framework environment exposing either ``phys_sims`` or
@@ -126,6 +134,7 @@ def _extract_physics_entry(env: Any, ship_index: int = 0) -> Any:
         Any: Physics simulator entry for one ship, or ``None`` when no known
         simulator attribute is available.
     """
+
     for attr_name in ("phys_sim", "phys_sims"):
         candidate = _extract_indexed_value(getattr(env, attr_name, None), ship_index=ship_index)
         if candidate is not None:
@@ -139,7 +148,8 @@ def _build_framework_motion_state(
     bridge: AirSimBridge,
     ship_index: int = 0,
 ) -> np.ndarray:
-    """Extract AirSim-frame pose and velocities from adapter-provided state.
+    """
+    Extract AirSim-frame pose and velocities from adapter-provided state.
 
     Args:
         adapter: Adapter responsible for framework-specific extraction logic.
@@ -154,6 +164,7 @@ def _build_framework_motion_state(
     Raises:
         RuntimeError: If the AirSim bridge has no active coordinate transform.
     """
+
     coord = bridge.coord_transform
     if coord is None:
         raise RuntimeError("Bridge has no active coordinate transform.")
@@ -183,7 +194,8 @@ def _resolve_interpolation_steps(
     max_translation_step: float,
     max_yaw_step_rad: float,
 ) -> int:
-    """Compute how many UE5 interpolation steps are needed for a motion update.
+    """
+    Compute how many UE5 interpolation steps are needed for a motion update.
 
     Args:
         previous_motion_state: Previously mirrored AirSim-frame motion state.
@@ -198,6 +210,7 @@ def _resolve_interpolation_steps(
     Returns:
         int: Interpolation step count clamped to at least ``1``.
     """
+
     steps = max(1, int(interpolation_steps))
     delta_x = float(target_motion_state[0] - previous_motion_state[0])
     delta_y = float(target_motion_state[1] - previous_motion_state[1])
@@ -217,7 +230,8 @@ def _resolve_visual_update_interval(
     min_render_hz: float,
     max_update_hz: float = _MAX_VISUAL_UPDATE_HZ,
 ) -> float:
-    """Resolve the UE5 pose-update interval for one replay segment.
+    """
+    Resolve the UE5 pose-update interval for one replay segment.
 
     Args:
         total_duration: Planned total interpolation duration in seconds.
@@ -228,6 +242,7 @@ def _resolve_visual_update_interval(
     Returns:
         float: Update interval in seconds used for pose pushes.
     """
+
     total_duration = max(float(total_duration), 0.0)
     interpolation_steps = max(1, int(interpolation_steps))
 
@@ -255,7 +270,8 @@ def _should_snap_visual_update(
     update_interval_s: float,
     interpolation_steps: int,
 ) -> bool:
-    """Return whether a visual update should skip time-based interpolation.
+    """
+    Return whether a visual update should skip time-based interpolation.
 
     Args:
         total_duration: Planned total interpolation duration in seconds.
@@ -266,6 +282,7 @@ def _should_snap_visual_update(
         bool: ``True`` when interpolation should snap directly to the final
         visual state.
     """
+
     total_duration = max(float(total_duration), 0.0)
     update_interval_s = max(float(update_interval_s), 1e-3)
     if total_duration <= 1e-9:
@@ -285,7 +302,8 @@ def _build_visual_controls(
     throttle_visual_gain: float,
     ship_index: int = 0,
 ):
-    """Build the UE5 control payload for one interpolated actuator state.
+    """
+    Build the UE5 control payload for one interpolated actuator state.
 
     Args:
         adapter: Adapter responsible for framework-specific ship extraction.
@@ -303,6 +321,7 @@ def _build_visual_controls(
         Any: AirSim ``CarControls``-compatible payload, or ``None`` when the
         bridge is disconnected.
     """
+
     if not bridge.is_connected:
         return None
 
@@ -321,7 +340,10 @@ def _build_visual_controls(
         speed_ratio = None
 
     def _apply_visual_speed_matching(controls: Any):
-        """Align the replay throttle visual with the framework speed envelope."""
+        """
+        Align the replay throttle visual with the framework speed envelope.
+        """
+
         if controls is None or speed_ratio is None:
             return controls
         controls.throttle = float(
@@ -385,7 +407,8 @@ def _animate_framework_state(
     lock_path_in_ue5: bool = False,
     vehicle_object_name: str = "",
 ) -> tuple[np.ndarray, Optional[np.ndarray]]:
-    """Mirror one framework motion update into UE5 with optional smoothing.
+    """
+    Mirror one framework motion update into UE5 with optional smoothing.
 
     Args:
         adapter: Adapter responsible for framework-specific extraction logic.
@@ -417,6 +440,7 @@ def _animate_framework_state(
         tuple[np.ndarray, Optional[np.ndarray]]: Final mirrored motion state and
         the actuator state used for visual control interpolation.
     """
+
     if previous_motion_state is None:
         previous_motion_state = target_motion_state
 
@@ -428,7 +452,10 @@ def _animate_framework_state(
     _prefetched_pose = None
 
     def _send_pose(alpha: float) -> None:
-        """Push an interpolated motion state to UE5."""
+        """
+        Push an interpolated motion state to UE5.
+        """
+
         if not bridge.is_connected:
             return
         ix = start_x + alpha * (target_x - start_x)
@@ -454,7 +481,10 @@ def _animate_framework_state(
             )
 
     def _send_controls(alpha: float) -> None:
-        """Send interpolated control animation for the current frame."""
+        """
+        Send interpolated control animation for the current frame.
+        """
+
         if vehicle_object_name or target_actuator_state is None:
             return
         if not (mirror_controls_in_ue5 or animate_steering_in_ue5 or animate_throttle_in_ue5):
@@ -530,7 +560,8 @@ def _animate_framework_state(
 
 
 class ModelVisualisationAdapter(ABC):
-    """Base adapter for one visualized model family.
+    """
+    Base adapter for one visualized model family.
 
     Subclasses isolate family-specific policy loading, environment creation,
     and state extraction so the replay runner can remain framework-agnostic.
@@ -542,7 +573,8 @@ class ModelVisualisationAdapter(ABC):
     filename_keywords: tuple[str, ...] = ()
 
     def matches_model_path(self, model_path: str) -> bool:
-        """Return whether the model filename looks like this family.
+        """
+        Return whether the model filename looks like this family.
 
         Args:
             model_path: Candidate model path supplied by the user or runner.
@@ -550,11 +582,13 @@ class ModelVisualisationAdapter(ABC):
         Returns:
             bool: ``True`` when the stem contains one of the family keywords.
         """
+
         stem = Path(model_path).stem.lower()
         return any(keyword in stem for keyword in self.filename_keywords)
 
     def resolve_environment_name(self, model_path: str, requested_env_name: str) -> str:
-        """Resolve the framework environment name used for playback.
+        """
+        Resolve the framework environment name used for playback.
 
         Args:
             model_path: Model path being visualized. Included for adapter APIs
@@ -568,6 +602,7 @@ class ModelVisualisationAdapter(ABC):
             ValueError: If the requested environment is incompatible with this
                 adapter family.
         """
+
         requested = str(requested_env_name).strip() or "auto"
         if requested.lower() != "auto":
             if requested not in self.supported_environment_names:
@@ -584,7 +619,8 @@ class ModelVisualisationAdapter(ABC):
         )
 
     def load_policy(self, model_path: str, device: str = "cpu") -> PPOPolicy:
-        """Load a policy checkpoint for this model family.
+        """
+        Load a policy checkpoint for this model family.
 
         Args:
             model_path: User-provided checkpoint path.
@@ -593,10 +629,12 @@ class ModelVisualisationAdapter(ABC):
         Returns:
             PPOPolicy: Loaded policy instance.
         """
+
         return load_policy(model_path, device=device)
 
     def build_environment(self, environment_name: str, max_steps: int):
-        """Construct the framework environment used during replay.
+        """
+        Construct the framework environment used during replay.
 
         Args:
             environment_name: Canonical framework environment name.
@@ -608,6 +646,7 @@ class ModelVisualisationAdapter(ABC):
         Raises:
             ValueError: If the environment name is unsupported by this adapter.
         """
+
         builder = self.environment_builders().get(environment_name)
         if builder is None:
             supported = ", ".join(self.environment_builders())
@@ -618,16 +657,19 @@ class ModelVisualisationAdapter(ABC):
         return builder(max_steps)
 
     def environment_builders(self) -> dict[str, Callable[[int], object]]:
-        """Return the environment factories supported by this adapter.
+        """
+        Return the environment factories supported by this adapter.
 
         Returns:
             dict[str, Callable[[int], object]]: Mapping from environment name to
             one-argument factory taking ``max_steps``.
         """
+
         raise NotImplementedError
 
     def extract_pose(self, env, ship_index: int = 0) -> tuple[float, float, float]:
-        """Extract framework-frame ``(x, y, heading)`` for one ship.
+        """
+        Extract framework-frame ``(x, y, heading)`` for one ship.
 
         Args:
             env: Active framework environment.
@@ -641,6 +683,7 @@ class ModelVisualisationAdapter(ABC):
             ValueError: If the environment does not expose enough state to
                 extract a pose.
         """
+
         ship_pos = _extract_indexed_value(getattr(env, "ship_pos", None), ship_index=ship_index)
         state_entry = _extract_physics_entry(env, ship_index=ship_index)
         state = getattr(state_entry, "state", state_entry)
@@ -660,7 +703,8 @@ class ModelVisualisationAdapter(ABC):
         )
 
     def extract_velocity(self, env, ship_index: int = 0) -> tuple[float, float, float]:
-        """Extract framework-frame ``(surge, sway, yaw_rate)`` for one ship.
+        """
+        Extract framework-frame ``(surge, sway, yaw_rate)`` for one ship.
 
         Args:
             env: Active framework environment.
@@ -674,6 +718,7 @@ class ModelVisualisationAdapter(ABC):
             ValueError: If the environment does not expose enough state to
                 extract velocity.
         """
+
         phys_sim = _extract_physics_entry(env, ship_index=ship_index)
         state = getattr(phys_sim, "state", phys_sim)
         if state is None or getattr(state, "u", None) is None:
@@ -685,7 +730,8 @@ class ModelVisualisationAdapter(ABC):
         )
 
     def extract_actuator_state(self, env, ship_index: int = 0) -> Optional[np.ndarray]:
-        """Extract the framework actuator state for one ship when available.
+        """
+        Extract the framework actuator state for one ship when available.
 
         Args:
             env: Active framework environment.
@@ -696,6 +742,7 @@ class ModelVisualisationAdapter(ABC):
             Optional[np.ndarray]: Flat actuator vector, or ``None`` when no
             actuator state is available.
         """
+
         action = _extract_indexed_value(getattr(env, "performed_action", None), ship_index=ship_index)
         if action is None:
             return None
@@ -705,7 +752,8 @@ class ModelVisualisationAdapter(ABC):
         return action_arr
 
     def extract_ship_specifications(self, env, ship_index: int = 0):
-        """Extract ship specifications needed for visual control mapping.
+        """
+        Extract ship specifications needed for visual control mapping.
 
         Args:
             env: Active framework environment.
@@ -720,6 +768,7 @@ class ModelVisualisationAdapter(ABC):
             ValueError: If the environment does not expose ship
                 specifications.
         """
+
         ship = _extract_indexed_value(getattr(env, "ships", None), ship_index=ship_index)
         if ship is None:
             ship = _extract_indexed_value(getattr(env, "ship", None), ship_index=ship_index)
@@ -730,7 +779,8 @@ class ModelVisualisationAdapter(ABC):
         return ship.specifications
 
     def motion_state_from_env(self, env, bridge: AirSimBridge) -> np.ndarray:
-        """Extract a generic motion state from the current framework env.
+        """
+        Extract a generic motion state from the current framework env.
 
         Args:
             env: Active framework environment.
@@ -739,10 +789,12 @@ class ModelVisualisationAdapter(ABC):
         Returns:
             np.ndarray: AirSim-frame motion state.
         """
+
         return _build_framework_motion_state(self, env, bridge)
 
     def animate_state(self, env, bridge: AirSimBridge, **kwargs) -> tuple[np.ndarray, Optional[np.ndarray]]:
-        """Mirror one framework state update into UE5.
+        """
+        Mirror one framework state update into UE5.
 
         Args:
             env: Active framework environment.
@@ -754,20 +806,25 @@ class ModelVisualisationAdapter(ABC):
             tuple[np.ndarray, Optional[np.ndarray]]: Final mirrored motion state
             and the actuator state used for interpolation.
         """
+
         return _animate_framework_state(self, env, bridge, **kwargs)
 
     def cleanup_environment(self, env) -> None:
-        """Dispose optional backend resources owned by the environment.
+        """
+        Dispose optional backend resources owned by the environment.
 
         Args:
             env: Framework environment created by this adapter.
         """
+
         if env is not None and hasattr(env, "fh_sim"):
             env.fh_sim.dispose()
 
 
 class PySimVisualisationAdapter(ModelVisualisationAdapter):
-    """Adapter for PySimEnv framework-model visualisation."""
+    """
+    Adapter for PySimEnv framework-model visualisation.
+    """
 
     family = "pysim"
     model_origin = "pysim"
@@ -775,12 +832,14 @@ class PySimVisualisationAdapter(ModelVisualisationAdapter):
     filename_keywords = ("pysimenv", "py_sim", "framework")
 
     def environment_builders(self) -> dict[str, Callable[[int], object]]:
-        """Return the supported PySim environment factories.
+        """
+        Return the supported PySim environment factories.
 
         Returns:
             dict[str, Callable[[int], object]]: Factory mapping for PySim-backed
             replay environments.
         """
+
         return {
             "PySimEnv": lambda max_steps: PySimEnv(
                 max_steps=max_steps,
@@ -791,7 +850,9 @@ class PySimVisualisationAdapter(ModelVisualisationAdapter):
 
 
 class FhSimVisualisationAdapter(ModelVisualisationAdapter):
-    """Adapter for FHSim-backed framework models."""
+    """
+    Adapter for FHSim-backed framework models.
+    """
 
     family = "fhsim"
     model_origin = "fhsim"
@@ -799,12 +860,14 @@ class FhSimVisualisationAdapter(ModelVisualisationAdapter):
     filename_keywords = ("fhsimenv", "fh_sim", "fhsim")
 
     def environment_builders(self) -> dict[str, Callable[[int], object]]:
-        """Return the supported FHSim environment factories.
+        """
+        Return the supported FHSim environment factories.
 
         Returns:
             dict[str, Callable[[int], object]]: Factory mapping for FHSim-backed
             replay environments.
         """
+
         return {
             "FhSimEnv": lambda max_steps: FhSimEnv(
                 max_steps=max_steps,
@@ -822,21 +885,25 @@ _AUTO_DETECTION_ORDER = ("fhsim", "pysim")
 
 
 def get_supported_model_families() -> tuple[str, ...]:
-    """Return the registered model-family names.
+    """
+    Return the registered model-family names.
 
     Returns:
         tuple[str, ...]: Registered adapter family keys in registry order.
     """
+
     return tuple(_VISUALISATION_ADAPTERS.keys())
 
 
 def get_supported_environment_names() -> tuple[str, ...]:
-    """Return the registered framework environment names.
+    """
+    Return the registered framework environment names.
 
     Returns:
         tuple[str, ...]: Sorted unique environment names supported by the
         registered adapters.
     """
+
     names: set[str] = set()
     for adapter in _VISUALISATION_ADAPTERS.values():
         names.update(adapter.supported_environment_names)
@@ -848,7 +915,8 @@ def resolve_visualisation_adapter(
     model_path: str = "",
     env_name: str = "auto",
 ) -> ModelVisualisationAdapter:
-    """Resolve the adapter used for a visualized model replay.
+    """
+    Resolve the adapter used for a visualized model replay.
 
     Args:
         model_family: Requested adapter family, or ``"auto"`` for detection.
@@ -862,6 +930,7 @@ def resolve_visualisation_adapter(
     Raises:
         ValueError: If the requested family or environment is unsupported.
     """
+
     requested_family = str(model_family).strip().lower() or "auto"
     if requested_family != "auto":
         try:

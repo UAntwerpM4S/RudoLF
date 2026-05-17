@@ -1,1 +1,3 @@
-"""Shared framework-level helpers used across fw modules."""
+"""
+Shared framework-level helpers used across fw modules.
+"""

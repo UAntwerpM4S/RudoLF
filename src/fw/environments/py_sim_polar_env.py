@@ -22,7 +22,9 @@ from fw.environments.base_env import BaseEnv
 
 
 class PySimPolarEnv(BaseEnv):
-    """Custom Python Simulator environment for ship navigation with improved physics."""
+    """
+    Custom Python Simulator environment for ship navigation with improved physics.
+    """
 
     # Physical limits
     MIN_SURGE_VELOCITY = 0.0
@@ -72,7 +74,8 @@ class PySimPolarEnv(BaseEnv):
     def __init__(self, ship_pos: np.ndarray, target_pos: np.ndarray, render_mode: Optional[str] = None,
                  time_step: float = 0.1, max_steps: int = 1500,
                  verbose: Optional[bool] = None, wind: bool = False, current: bool = False):
-        """Initialize the ship navigation environment.
+        """
+        Initialize the ship navigation environment.
 
         Args:
             ship_pos: Optional initial ship position
@@ -84,6 +87,7 @@ class PySimPolarEnv(BaseEnv):
             wind: Whether to enable wind effects
             current: Whether to enable current effects
         """
+
         super().__init__(render_mode)
 
         # Environment parameters
@@ -179,16 +183,20 @@ class PySimPolarEnv(BaseEnv):
         self._load_environment_data()
 
     def _load_environment_data(self) -> None:
-        """ load environment data.
         """
+        Load environment data.
+        """
+
         base_path = os.path.dirname(os.path.abspath(__file__))
 
         def load_csv(name: str) -> np.ndarray:
-            """Load csv.
+            """
+            Load csv.
 
             Args:
                 name: Description.
             """
+
             try:
                 data = np.loadtxt(os.path.join(base_path, name), delimiter=',', skiprows=1)
             except FileNotFoundError:
@@ -207,7 +215,10 @@ class PySimPolarEnv(BaseEnv):
         # Don't create prepared_polygon here - create on first use to avoid pickling issues
 
     def __getstate__(self):
-        """Control what gets pickled - exclude non-pickleable objects."""
+        """
+        Control what gets pickled - exclude non-pickleable objects.
+        """
+
         state = self.__dict__.copy()
         # Remove non-pickleable objects
         if '_prepared_polygon' in state:
@@ -227,7 +238,10 @@ class PySimPolarEnv(BaseEnv):
         return state
 
     def __setstate__(self, state):
-        """Restore state after unpickling."""
+        """
+        Restore state after unpickling.
+        """
+
         self.__dict__.update(state)
         # Reinitialize non-pickleable objects
         self._prepared_polygon = None
@@ -235,14 +249,20 @@ class PySimPolarEnv(BaseEnv):
 
     @property
     def prepared_polygon(self):
-        """Lazy initialization of prepared polygon to avoid pickling issues."""
+        """
+        Lazy initialization of prepared polygon to avoid pickling issues.
+        """
+
         if self._prepared_polygon is None:
             from shapely.prepared import prep
             self._prepared_polygon = prep(self.polygon_shape)
         return self._prepared_polygon
 
     def _initialize_rendering(self):
-        """Set up the rendering elements for visualization."""
+        """
+        Set up the rendering elements for visualization.
+        """
+
         self.initialize_plots = False
 
         # Create a temporary Tkinter root window to get screen dimensions
@@ -292,7 +312,8 @@ class PySimPolarEnv(BaseEnv):
         self.ax.legend()
 
     def _initialize_observation_space(self) -> gym.spaces.Box:
-        """Initialize and return the observation space for the environment.
+        """
+        Initialize and return the observation space for the environment.
 
         Observation space includes:
         - Normalized ship position, heading, velocities
@@ -304,6 +325,7 @@ class PySimPolarEnv(BaseEnv):
         Returns:
             gym.spaces.Box: The observation space definition
         """
+
         n_bins = int(self.MAX_DISTANCE / self.BIN_SIZE)
         total_polar_elements = self.NUM_RAYS * n_bins
 
@@ -347,6 +369,7 @@ class PySimPolarEnv(BaseEnv):
         """
         Check if the ship makes contact with any edge of the polygon.
         """
+
         x, y = ship_position
         min_x, min_y, max_x, max_y = polygon.bounds
 
@@ -360,14 +383,19 @@ class PySimPolarEnv(BaseEnv):
 
     @staticmethod
     def _has_enough_keel_clearance():
-        """ has enough keel clearance.
         """
+        Has enough keel clearance.
+        """
+
         return True  # Assume always enough clearance for simplicity
 
     @staticmethod
     def _compute_polar_coordinates_fast(ship_x: float, ship_y: float, ship_angle: float,
                                         num_rays: int, max_distance: int, bin_size: float) -> tuple:
-        """Fast computation for polar coordinates without numba dependency."""
+        """
+        Fast computation for polar coordinates without numba dependency.
+        """
+
         n_bins = int(max_distance / bin_size)
         x_vals = np.zeros((num_rays, n_bins), dtype=np.float64)
         y_vals = np.zeros((num_rays, n_bins), dtype=np.float64)
@@ -389,7 +417,9 @@ class PySimPolarEnv(BaseEnv):
 
     def get_ship_surroundings_polar_coords(self, polygon: Polygon, ship_pos: Tuple[float, float], ship_angle: float,
                                            num_rays: int = None, max_distance: int = None) -> np.ndarray:
-        """Optimized polar coordinates observation generation."""
+        """
+        Optimized polar coordinates observation generation.
+        """
 
         # Use optimized defaults if not specified
         if num_rays is None:
@@ -454,7 +484,8 @@ class PySimPolarEnv(BaseEnv):
     @staticmethod
     def create_rotated_grid_from_polygon(polygon: Polygon, origin: Tuple[float, float],
                                          angle_degrees: float, grid_size: float = 1.0) -> torch.Tensor:
-        """Create rotated grid from polygon.
+        """
+        Create rotated grid from polygon.
 
         Args:
             polygon: Description.
@@ -462,6 +493,7 @@ class PySimPolarEnv(BaseEnv):
             angle_degrees: Description.
             grid_size: Description.
         """
+
         # Convert angle to radians
         angle_rad = math.radians(angle_degrees)
 
@@ -517,11 +549,13 @@ class PySimPolarEnv(BaseEnv):
         return grid_tensor
 
     def _update_ship_dynamics(self, action: np.ndarray) -> None:
-        """Update ship state based on actions and environmental effects.
+        """
+        Update ship state based on actions and environmental effects.
 
         Args:
             action: Array of [rudder, thrust] commands
         """
+
         self.previous_rudder_target = self.current_action[0]
         self.previous_thrust_target = self.current_action[1]
 
@@ -586,7 +620,8 @@ class PySimPolarEnv(BaseEnv):
         self.ship_pos = self.state[:2]
 
     def _compute_environment_transformation(self, action: np.ndarray) -> np.ndarray:
-        """Compute transformation matrix to keep ship at origin while transforming environment.
+        """
+        Compute transformation matrix to keep ship at origin while transforming environment.
 
         This method mimics _update_ship_dynamics but instead of updating the ship state,
         it returns a 3x3 transformation matrix that can be used to transform the environment
@@ -601,6 +636,7 @@ class PySimPolarEnv(BaseEnv):
                                      [sin(θ),  cos(θ), ty],
                                      [0,       0,      1 ]]
         """
+
         # Store current state to compute transformation without modifying it
         current_state = np.copy(self.state)
         current_ship_pos = np.copy(self.ship_pos)
@@ -648,7 +684,10 @@ class PySimPolarEnv(BaseEnv):
         return transformation_matrix
 
     def reset(self, seed: Optional[int] = None, **kwargs) -> Tuple[np.ndarray, Dict]:
-        """Reset the environment to its initial state."""
+        """
+        Reset the environment to its initial state.
+        """
+
         self.ship_pos = np.copy(self.initial_ship_pos)
         self.state = np.array([*self.ship_pos, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
         self.step_count = 0
@@ -665,15 +704,24 @@ class PySimPolarEnv(BaseEnv):
         return self._get_obs(), {}
 
     def _check_collision(self) -> bool:
-        """Check if the ship has collided with any obstacles."""
+        """
+        Check if the ship has collided with any obstacles.
+        """
+
         return not self._ship_in_open_water(self.ship_pos, self.polygon_shape)
 
     def _has_reached_target(self) -> bool:
-        """Check if the ship has reached the target area."""
+        """
+        Check if the ship has reached the target area.
+        """
+
         return np.linalg.norm(self.ship_pos - self.target_pos) < self.TARGET_AREA_SIZE
 
     def _calculate_reward(self) -> Tuple[float, bool]:
-        """Calculate the reward and termination status for the current step."""
+        """
+        Calculate the reward and termination status for the current step.
+        """
+
         terminated = False
         reward = 0.0
 
@@ -733,13 +781,15 @@ class PySimPolarEnv(BaseEnv):
         return reward, terminated
 
     def step(self, action_in: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
-        """Execute one environment timestep.
+        """
+        Execute one environment timestep.
         Args:
             action_in: Array-like with [rudder, thrust] commands in [-1, 1]
 
         Returns:
             tuple: (observation, reward, terminated)
         """
+
         action = np.array([action_in[0], action_in[1]])
         action = np.asarray(action, dtype=np.float32)
         if action.shape != (2,):
@@ -771,8 +821,10 @@ class PySimPolarEnv(BaseEnv):
         return obs, reward, terminated, truncated, {}
 
     def _get_obs(self) -> np.ndarray:
-        """ get obs.
         """
+        Get observation.
+        """
+
         self.observed_surroundings = self.get_ship_surroundings_polar_coords(
             self.polygon_shape,
             (self.state[0], self.state[1]),
@@ -814,6 +866,7 @@ class PySimPolarEnv(BaseEnv):
         If `persistent=True`, it reuses a single figure window for live updates.
         The radar automatically rotates so the ship's heading (bow) points to 0°.
         """
+
         # Use current observation if available
         if self.observed_surroundings is None:
             return
@@ -907,8 +960,10 @@ class PySimPolarEnv(BaseEnv):
 
 
     def _draw_fixed_landmarks(self):
-        """ draw fixed landmarks.
         """
+        Draw fixed landmarks.
+        """
+
         # Draw the path as straight lines
         # if self.checkpoints:  # Check if there are checkpoints to draw
         #     # Start with the ship position and end with the target position
@@ -956,12 +1011,16 @@ class PySimPolarEnv(BaseEnv):
         Args:
             event (matplotlib.backend_bases.DrawEvent): The matplotlib draw event.
         """
+
         if event.canvas is self.fig.canvas:
             self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
 
 
     def render(self):
-        """Render the environment and visualize the ship's movement."""
+        """
+        Render the environment and visualize the ship's movement.
+        """
+
         # Skip rendering if not in human mode or not every N steps
         if self.render_mode != 'human' or self.step_count % self.RENDER_EVERY_N_STEPS != 0:
             return
@@ -995,7 +1054,10 @@ class PySimPolarEnv(BaseEnv):
         self.fig.canvas.flush_events()
 
     def close(self):
-        """Close the environment."""
+        """
+        Close the environment.
+        """
+
         # Clear caches
         self._obs_cache.clear()
         self._cached_observation = None

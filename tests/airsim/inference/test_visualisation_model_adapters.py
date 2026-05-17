@@ -1,4 +1,6 @@
-"""Tests for modular model-visualisation adapters."""
+"""
+Tests for modular model-visualisation adapters.
+"""
 
 from __future__ import annotations
 
@@ -18,10 +20,13 @@ from airsim.inference.visualisation_models.model_adapters import (
 
 
 class _FakeCoordTransform:
-    """Small coordinate-transform stub for adapter motion-state tests."""
+    """
+    Small coordinate-transform stub for adapter motion-state tests.
+    """
 
     def framework_to_airsim(self, x: float, y: float, z: float):
-        """Convert framework coordinates into fake AirSim coordinates.
+        """
+        Convert framework coordinates into fake AirSim coordinates.
 
         Args:
             x: Framework x position.
@@ -31,10 +36,12 @@ class _FakeCoordTransform:
         Returns:
             tuple[float, float, float]: Shifted AirSim-style coordinates.
         """
+
         return x + 100.0, y - 50.0, z
 
     def framework_heading_to_airsim_yaw(self, heading: float) -> float:
-        """Convert framework heading into fake AirSim yaw.
+        """
+        Convert framework heading into fake AirSim yaw.
 
         Args:
             heading: Framework heading in radians.
@@ -42,10 +49,12 @@ class _FakeCoordTransform:
         Returns:
             float: Shifted yaw value for testing.
         """
+
         return heading + 0.25
 
     def framework_velocity_to_airsim(self, vx: float, vy: float):
-        """Convert framework velocity into fake AirSim velocity.
+        """
+        Convert framework velocity into fake AirSim velocity.
 
         Args:
             vx: Framework x velocity.
@@ -54,10 +63,12 @@ class _FakeCoordTransform:
         Returns:
             tuple[float, float]: Shifted velocity pair for testing.
         """
+
         return vx + 1.0, vy - 2.0
 
     def framework_yaw_rate_to_airsim(self, yaw_rate: float) -> float:
-        """Convert framework yaw rate into fake AirSim yaw rate.
+        """
+        Convert framework yaw rate into fake AirSim yaw rate.
 
         Args:
             yaw_rate: Framework yaw rate.
@@ -65,6 +76,7 @@ class _FakeCoordTransform:
         Returns:
             float: Shifted yaw-rate value for testing.
         """
+
         return yaw_rate - 0.1
 
 
@@ -77,7 +89,10 @@ def _framework_env(
     r: float = 0.2,
     performed_action=None,
 ):
-    """Build a lightweight framework-environment double for adapter tests."""
+    """
+    Build a lightweight framework-environment double for adapter tests.
+    """
+
     return SimpleNamespace(
         ship_pos=np.array([12.0, 34.0], dtype=np.float32) if ship_pos is None else ship_pos,
         phys_sims=[SimpleNamespace(state=SimpleNamespace(heading=heading, u=u, v=v, r=r))],
@@ -96,7 +111,10 @@ def _framework_env(
 
 
 def _bridge(*, connected: bool = True):
-    """Build a lightweight bridge double for adapter tests."""
+    """
+    Build a lightweight bridge double for adapter tests.
+    """
+
     return SimpleNamespace(
         coord_transform=_FakeCoordTransform(),
         render_z=-7.5,
@@ -111,17 +129,26 @@ def _bridge(*, connected: bool = True):
 
 
 def test_supported_model_families_are_exposed():
-    """The registry should expose the public adapter families."""
+    """
+    The registry should expose the public adapter families.
+    """
+
     assert get_supported_model_families() == ("pysim", "fhsim")
 
 
 def test_supported_environment_names_are_exposed():
-    """The registry should expose the registered framework environments."""
+    """
+    The registry should expose the registered framework environments.
+    """
+
     assert get_supported_environment_names() == ("FhSimEnv", "PySimEnv")
 
 
 def test_auto_detects_fhsim_adapter_from_model_name():
-    """FHSim model names should select the FHSim adapter automatically."""
+    """
+    FHSim model names should select the FHSim adapter automatically.
+    """
+
     adapter = resolve_visualisation_adapter(
         model_family="auto",
         model_path="models/FhSimEnv_PPO_policy.zip",
@@ -131,7 +158,10 @@ def test_auto_detects_fhsim_adapter_from_model_name():
 
 
 def test_auto_detects_pysim_adapter_from_model_name():
-    """PySim model names should select the PySim adapter automatically."""
+    """
+    PySim model names should select the PySim adapter automatically.
+    """
+
     adapter = resolve_visualisation_adapter(
         model_family="auto",
         model_path="models/PySimEnv_PPO_policy.zip",
@@ -141,7 +171,10 @@ def test_auto_detects_pysim_adapter_from_model_name():
 
 
 def test_explicit_environment_selects_matching_adapter():
-    """A concrete framework environment should pick the owning adapter."""
+    """
+    A concrete framework environment should pick the owning adapter.
+    """
+
     adapter = resolve_visualisation_adapter(
         model_family="auto",
         model_path="models/custom_policy.zip",
@@ -151,7 +184,10 @@ def test_explicit_environment_selects_matching_adapter():
 
 
 def test_fhsim_adapter_rejects_pysim_environment():
-    """Conflicting family/environment combinations should fail loudly."""
+    """
+    Conflicting family/environment combinations should fail loudly.
+    """
+
     adapter = resolve_visualisation_adapter(
         model_family="fhsim",
         model_path="models/FhSimEnv_PPO_policy.zip",
@@ -162,17 +198,24 @@ def test_fhsim_adapter_rejects_pysim_environment():
 
 
 def test_single_environment_adapter_resolves_auto_mode():
-    """Adapters with one supported env should resolve ``auto`` themselves."""
+    """
+    Adapters with one supported env should resolve ``auto`` themselves.
+    """
+
     adapter = PySimVisualisationAdapter()
     assert adapter.resolve_environment_name("models/PySimEnv_PPO_policy.zip", "auto") == "PySimEnv"
 
 
 def test_pysim_adapter_build_environment_uses_shared_defaults(monkeypatch):
-    """Environment construction should use the adapter factory surface."""
+    """
+    Environment construction should use the adapter factory surface.
+    """
+
     captured = {}
 
     def _fake_pysim_env(**kwargs):
-        """Capture construction arguments for the fake PySim environment.
+        """
+        Capture construction arguments for the fake PySim environment.
 
         Args:
             **kwargs: Keyword arguments passed to the environment factory.
@@ -180,6 +223,7 @@ def test_pysim_adapter_build_environment_uses_shared_defaults(monkeypatch):
         Returns:
             SimpleNamespace: Lightweight fake environment object.
         """
+
         captured.update(kwargs)
         return SimpleNamespace(name="fake-pysim-env")
 
@@ -195,7 +239,10 @@ def test_pysim_adapter_build_environment_uses_shared_defaults(monkeypatch):
 
 
 def test_motion_state_from_env_supports_flat_ship_position():
-    """Adapter motion extraction should not require ``ship_pos[0]``."""
+    """
+    Adapter motion extraction should not require ``ship_pos[0]``.
+    """
+
     adapter = PySimVisualisationAdapter()
     env = _framework_env(ship_pos=np.array([12.0, 34.0], dtype=np.float32))
 
@@ -220,7 +267,10 @@ def test_motion_state_from_env_supports_flat_ship_position():
 
 
 def test_motion_state_from_env_supports_single_ship_attribute_layout():
-    """Adapter extraction should support envs exposing ``phys_sim`` and ``ship``."""
+    """
+    Adapter extraction should support envs exposing ``phys_sim`` and ``ship``.
+    """
+
     adapter = PySimVisualisationAdapter()
     env = SimpleNamespace(
         ship_pos=np.array([12.0, 34.0], dtype=np.float32),
@@ -259,7 +309,10 @@ def test_motion_state_from_env_supports_single_ship_attribute_layout():
 
 
 def test_extract_actuator_state_supports_flat_action_vector():
-    """Actuator extraction should not require ``performed_action[0]``."""
+    """
+    Actuator extraction should not require ``performed_action[0]``.
+    """
+
     adapter = PySimVisualisationAdapter()
     env = _framework_env(performed_action=np.array([0.15, -0.4], dtype=np.float32))
 
@@ -269,7 +322,10 @@ def test_extract_actuator_state_supports_flat_action_vector():
 
 
 def test_animate_state_returns_flat_action_vector_when_bridge_disconnects():
-    """Disconnect-safe animation should still propagate the latest actuator state."""
+    """
+    Disconnect-safe animation should still propagate the latest actuator state.
+    """
+
     adapter = PySimVisualisationAdapter()
     env = _framework_env(performed_action=np.array([0.25, 0.75], dtype=np.float32))
     target_motion_state = np.array([1.0, 2.0, 0.3, 4.0, 5.0, 0.6], dtype=np.float64)
@@ -292,7 +348,10 @@ def test_animate_state_returns_flat_action_vector_when_bridge_disconnects():
 
 
 def test_visual_update_interval_adapts_to_short_fast_replay_segments():
-    """Fast replay should tighten pose-update cadence instead of snapping to 90 Hz."""
+    """
+    Fast replay should tighten pose-update cadence instead of snapping to 90 Hz.
+    """
+
     interval = module._resolve_visual_update_interval(
         total_duration=0.02,
         interpolation_steps=20,
@@ -323,7 +382,10 @@ def test_visual_replay_controls_hold_brake_during_pose_mirroring(
     expected_throttle: float,
     expected_brake: float,
 ):
-    """Replay throttle visuals should follow the framework speed envelope."""
+    """
+    Replay throttle visuals should follow the framework speed envelope.
+    """
+
     adapter = PySimVisualisationAdapter()
     env = _framework_env()
 
@@ -345,7 +407,10 @@ def test_visual_replay_controls_hold_brake_during_pose_mirroring(
 
 
 def test_visual_replay_controls_apply_throttle_gain_to_mirrored_controls():
-    """Mirrored replay throttle should scale from framework speed, not raw thrust."""
+    """
+    Mirrored replay throttle should scale from framework speed, not raw thrust.
+    """
+
     adapter = PySimVisualisationAdapter()
     env = _framework_env()
 

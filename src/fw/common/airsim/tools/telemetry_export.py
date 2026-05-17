@@ -1,4 +1,6 @@
-"""Legacy async CSV exporter used by older telemetry tests and tools."""
+"""
+Legacy async CSV exporter used by older telemetry tests and tools.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncTelemetryExporter:
-    """Exports telemetry to CSV asynchronously using a background thread."""
+    """
+    Exports telemetry to CSV asynchronously using a background thread.
+    """
 
     def __init__(
         self,
@@ -23,7 +27,8 @@ class AsyncTelemetryExporter:
         metadata: Optional[Dict[str, Any]] = None,
         export_dir: Optional[str | Path] = None,
     ) -> None:
-        """Initialize the async exporter.
+        """
+        Initialize the async exporter.
 
         Args:
             filename: Output CSV filename.
@@ -31,6 +36,7 @@ class AsyncTelemetryExporter:
             export_dir: Optional export directory. When omitted, the workspace
                 ``exports`` directory is used.
         """
+
         src_dir = Path(__file__).resolve().parents[1]
         self.export_dir = Path(export_dir) if export_dir is not None else (src_dir.parent / "exports")
         self.export_dir.mkdir(parents=True, exist_ok=True)
@@ -51,11 +57,13 @@ class AsyncTelemetryExporter:
                 pass
 
     def start(self, fieldnames: Optional[Iterable[str]] = None) -> None:
-        """Start the background writer and open the CSV file.
+        """
+        Start the background writer and open the CSV file.
 
         Args:
             fieldnames: Optional ordered CSV fieldnames written as the header.
         """
+
         if self._thread is not None:
             return
 
@@ -73,11 +81,13 @@ class AsyncTelemetryExporter:
         logger.info("AsyncTelemetryExporter started: %s", self.path)
 
     def log_row(self, row: Dict[str, Any]) -> None:
-        """Queue one row for asynchronous export.
+        """
+        Queue one row for asynchronous export.
 
         Args:
             row: Flat telemetry payload to append to the CSV.
         """
+
         if self._thread is None:
             if not self._fieldnames:
                 self.start(fieldnames=row.keys())
@@ -89,7 +99,10 @@ class AsyncTelemetryExporter:
             logger.warning("Telemetry queue is full. Dropping row.")
 
     def _worker(self) -> None:
-        """Background thread worker pulling from queue and writing to disk."""
+        """
+        Background thread worker pulling from queue and writing to disk.
+        """
+
         while not self._stop.is_set() or not self._queue.empty():
             try:
                 row = self._queue.get(timeout=0.1)
@@ -108,7 +121,10 @@ class AsyncTelemetryExporter:
                 self._queue.task_done()
 
     def stop(self) -> None:
-        """Stop the background thread and close the file."""
+        """
+        Stop the background thread and close the file.
+        """
+
         if self._thread is None:
             return
         logger.info("Stopping AsyncTelemetryExporter and flushing data...")
@@ -125,19 +141,27 @@ class AsyncTelemetryExporter:
         self._thread = None
 
     def close(self) -> None:
-        """Alias for stop()."""
+        """
+        Alias for stop().
+        """
+
         self.stop()
 
     def save(self) -> None:
-        """Alias for stop() for backwards compatibility."""
+        """
+        Alias for stop() for backwards compatibility.
+        """
+
         self.stop()
 
     def _signal_handler(self, signum, frame) -> None:
-        """Handle termination signals to cleanly stop the exporter.
+        """
+        Handle termination signals to cleanly stop the exporter.
 
         Args:
             signum: Received signal number.
             frame: Current stack frame supplied by ``signal.signal``.
         """
+
         self.stop()
         raise KeyboardInterrupt(f"Signal {signum} received")

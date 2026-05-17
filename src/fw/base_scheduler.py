@@ -1,5 +1,7 @@
 class BaseScheduler:
-    """Base scheduler for managing environment switching and coordinating multi-environment training."""
+    """
+    Base scheduler for managing environment switching and coordinating multi-environment training.
+    """
 
     def __init__(self, agent_mgr, envs):
         """
@@ -12,6 +14,7 @@ class BaseScheduler:
         Raises:
             RuntimeError: If the provided environment list is empty.
         """
+
         if not envs:
             raise RuntimeError("Environments list cannot be empty.")
 
@@ -35,9 +38,11 @@ class BaseScheduler:
         Raises:
             NotImplementedError: Always, since this method must be overridden in a subclass.
         """
+
         # Example logic in a subclass:
         # for env in self.envs:
         #     self.agent_mgr.train(env, configuration)
         #     if agent_mgr.performance(env) > some_threshold:
         #         move to next environment
+
         raise NotImplementedError

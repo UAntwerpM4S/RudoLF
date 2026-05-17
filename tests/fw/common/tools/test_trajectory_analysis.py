@@ -1,4 +1,6 @@
-"""Tests for shared AirSim telemetry analysis helpers."""
+"""
+Tests for shared AirSim telemetry analysis helpers.
+"""
 
 from __future__ import annotations
 
@@ -19,13 +21,15 @@ from fw.common.airsim.tools.trajectory_analysis import (
 
 
 def _write_csv(path: Path, fieldnames, rows) -> None:
-    """Write deterministic CSV content for tests.
+    """
+    Write deterministic CSV content for tests.
 
     Args:
         path: Output CSV path.
         fieldnames: Ordered CSV columns.
         rows: Row dictionaries to persist.
     """
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -34,7 +38,10 @@ def _write_csv(path: Path, fieldnames, rows) -> None:
 
 
 def test_build_run_summary_from_csv_computes_metrics(tmp_path: Path) -> None:
-    """Summary should aggregate reward, duration, distance, and CTE correctly."""
+    """
+    Summary should aggregate reward, duration, distance, and CTE correctly.
+    """
+
     session_csv = tmp_path / "inference_session.csv"
     bridge_csv = tmp_path / "airsim_telemetry.csv"
 
@@ -82,7 +89,10 @@ def test_build_run_summary_from_csv_computes_metrics(tmp_path: Path) -> None:
 
 
 def test_build_run_summary_duration_uses_episode_time_span(tmp_path: Path) -> None:
-    """Duration should be max-min within an episode, not absolute sim_time."""
+    """
+    Duration should be max-min within an episode, not absolute sim_time.
+    """
+
     session_csv = tmp_path / "offset_time_session.csv"
     _write_csv(
         session_csv,
@@ -121,7 +131,10 @@ def test_build_run_summary_duration_uses_episode_time_span(tmp_path: Path) -> No
 
 
 def test_build_run_summary_normalises_episode_values(tmp_path: Path) -> None:
-    """Missing, string, and invalid episode values should group safely."""
+    """
+    Missing, string, and invalid episode values should group safely.
+    """
+
     session_csv = tmp_path / "episode_values_session.csv"
     _write_csv(
         session_csv,
@@ -173,7 +186,10 @@ def test_build_run_summary_normalises_episode_values(tmp_path: Path) -> None:
 
 
 def test_format_performance_summary_contains_expected_lines(tmp_path: Path) -> None:
-    """Console formatter should include key BI metrics and per-episode lines."""
+    """
+    Console formatter should include key BI metrics and per-episode lines.
+    """
+
     session_csv = tmp_path / "visualisation_session.csv"
     _write_csv(
         session_csv,

@@ -1,7 +1,8 @@
-"""Pytest test suite bootstrap for the local AirSim package.
+"""
+Pytest test suite bootstrap for the local AirSim package.
 
 Tests can run without a live UE5 / CosysAirSim instance. This initializer
-forces imports to resolve to the repository's ``src/airsim`` package so test
+forces imports to resolve to the repository's `src/airsim` package so test
 collection does not accidentally mix stale or shadowed module objects.
 """
 

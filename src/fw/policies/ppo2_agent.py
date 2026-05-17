@@ -65,6 +65,7 @@ class PPO2Agent(BaseAgent):
                 Defaults to True.
             **kwargs: Additional keyword arguments passed to the BaseAgent constructor.
         """
+
         super().__init__(*args, **kwargs)
 
         self.total_time_steps = total_time_steps
@@ -116,6 +117,7 @@ class PPO2Agent(BaseAgent):
             Returns:
                 A monitored Gym environment instance for the given worker rank.
             """
+
             return Monitor(self.create_env(), f"logs/env_{rank}")
 
         return _init
@@ -129,6 +131,7 @@ class PPO2Agent(BaseAgent):
             gym.Env: A deep copy of the original environment. If the environment supports randomization,
                      a random initial configuration is applied.
         """
+
         env = copy.deepcopy(self.env)
         if hasattr(env, "randomize"):
             env.randomize()
@@ -146,6 +149,7 @@ class PPO2Agent(BaseAgent):
         Returns:
             Tuple: A tuple (action, None), where action is the predicted action. Log-probabilities are not returned.
         """
+
         action, _ = self.ppo.predict(state, deterministic=deterministic)
         return action, None
 
@@ -163,6 +167,7 @@ class PPO2Agent(BaseAgent):
         Notes:
             The agent is saved both during training (if performance improves) and after training is completed.
         """
+
         print(f"Starting training for {self.total_time_steps} time steps...")
 
         stop_callback = StopTrainingOnRewardThreshold(
@@ -206,6 +211,7 @@ class PPO2Agent(BaseAgent):
             RuntimeError: If no agent is created or the policy fails to load.
             ValueError: If the loaded policy dimensions do not match the environment.
         """
+
         if self.model_dir:
             policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
@@ -230,6 +236,7 @@ class PPO2Agent(BaseAgent):
         Raises:
             RuntimeError: If no agent is created or the policy fails to save.
         """
+
         if self.model_dir:
             policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
@@ -240,4 +247,5 @@ class PPO2Agent(BaseAgent):
         """
         Set policy in evaluation mode.
         """
+
         self.ppo.policy.eval()

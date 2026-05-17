@@ -1,4 +1,5 @@
-"""Unit tests for AirSim transfer learning utilities (T-055 — dimension validation).
+"""
+Unit tests for AirSim transfer learning utilities (T-055 — dimension validation).
 
 Covers:
     - TopologyReport construction and formatting
@@ -30,7 +31,10 @@ from airsim.train.transfer_learning import (
 
 
 def _make_policy(input_dim: int, output_dim: int = 2, device: str = "cpu") -> PPOPolicy:
-    """Create a freshly initialised PPOPolicy without touching disk."""
+    """
+    Create a freshly initialised PPOPolicy without touching disk.
+    """
+
     return PPOPolicy(input_dim, output_dim, device=device)
 
 
@@ -40,41 +44,61 @@ def _make_policy(input_dim: int, output_dim: int = 2, device: str = "cpu") -> PP
 
 
 class TestCompareNetworkTopology:
-    """Tests for compare_network_topology — 2D vs 3D input/output dimension reporting."""
+    """
+    Tests for compare_network_topology — 2D vs 3D input/output dimension reporting.
+    """
 
     def test_extra_dims_computed_correctly(self):
-        """extra_input_dims must equal target_input_dim minus source_input_dim."""
+        """
+        extra_input_dims must equal target_input_dim minus source_input_dim.
+        """
+
         src = _make_policy(input_dim=10)
         report = compare_network_topology(src, target_input_dim=18, target_output_dim=2)
         assert report.extra_input_dims == 8
 
     def test_source_dims_captured(self):
-        """Both source and target input dims must be stored on the report."""
+        """
+        Both source and target input dims must be stored on the report.
+        """
+
         src = _make_policy(input_dim=10)
         report = compare_network_topology(src, target_input_dim=18, target_output_dim=2)
         assert report.source_input_dim == 10
         assert report.target_input_dim == 18
 
     def test_output_compatible_when_matching(self):
-        """output_compatible must be True when action dimensions are equal."""
+        """
+        output_compatible must be True when action dimensions are equal.
+        """
+
         src = _make_policy(input_dim=10, output_dim=2)
         report = compare_network_topology(src, target_input_dim=18, target_output_dim=2)
         assert report.output_compatible is True
 
     def test_output_incompatible_when_mismatched(self):
-        """output_compatible must be False when action dimensions differ."""
+        """
+        output_compatible must be False when action dimensions differ.
+        """
+
         src = _make_policy(input_dim=10, output_dim=3)
         report = compare_network_topology(src, target_input_dim=18, target_output_dim=2)
         assert report.output_compatible is False
 
     def test_shared_layer_shapes_include_256_to_128(self):
-        """The transferable hidden layer (256→128) must appear in shared_layer_shapes."""
+        """
+        The transferable hidden layer (256→128) must appear in shared_layer_shapes.
+        """
+
         src = _make_policy(input_dim=10)
         report = compare_network_topology(src, target_input_dim=18, target_output_dim=2)
         assert (256, 128) in report.shared_layer_shapes
 
     def test_format_contains_key_labels(self):
-        """Formatted report must mention mapping layer and both input dimensions."""
+        """
+        Formatted report must mention mapping layer and both input dimensions.
+        """
+
         src = _make_policy(input_dim=10)
         report = compare_network_topology(src, target_input_dim=18, target_output_dim=2)
         text = report.format()
@@ -89,10 +113,15 @@ class TestCompareNetworkTopology:
 
 
 class TestValidateTransferCompatibility:
-    """Tests for validate_transfer_compatibility — error messages and pass/fail logic."""
+    """
+    Tests for validate_transfer_compatibility — error messages and pass/fail logic.
+    """
 
     def test_valid_config_does_not_raise(self):
-        """A compatible topology report must not raise any exception."""
+        """
+        A compatible topology report must not raise any exception.
+        """
+
         report = TopologyReport(
             source_input_dim=10,
             target_input_dim=18,
@@ -105,7 +134,10 @@ class TestValidateTransferCompatibility:
         validate_transfer_compatibility(report)
 
     def test_output_mismatch_raises(self):
-        """Mismatched action dimensions must raise TransferIncompatibilityError."""
+        """
+        Mismatched action dimensions must raise TransferIncompatibilityError.
+        """
+
         report = TopologyReport(
             source_input_dim=10,
             target_input_dim=18,
@@ -119,7 +151,10 @@ class TestValidateTransferCompatibility:
             validate_transfer_compatibility(report)
 
     def test_target_smaller_than_source_raises(self):
-        """Target observation space smaller than source must raise TransferIncompatibilityError."""
+        """
+        Target observation space smaller than source must raise TransferIncompatibilityError.
+        """
+
         report = TopologyReport(
             source_input_dim=18,
             target_input_dim=10,
@@ -133,7 +168,10 @@ class TestValidateTransferCompatibility:
             validate_transfer_compatibility(report)
 
     def test_both_errors_reported_together(self):
-        """Both action and observation dimension errors must appear in a single exception."""
+        """
+        Both action and observation dimension errors must appear in a single exception.
+        """
+
         report = TopologyReport(
             source_input_dim=18,
             target_input_dim=10,
@@ -150,7 +188,10 @@ class TestValidateTransferCompatibility:
         assert "smaller than" in message
 
     def test_error_message_mentions_source_and_target_dims(self):
-        """The error message must include the concrete dimension numbers."""
+        """
+        The error message must include the concrete dimension numbers.
+        """
+
         report = TopologyReport(
             source_input_dim=10,
             target_input_dim=18,
@@ -166,7 +207,10 @@ class TestValidateTransferCompatibility:
         assert "2" in str(exc_info.value)
 
     def test_exact_same_dims_valid(self):
-        """Zero extra input dims (same-size obs space) must be accepted."""
+        """
+        Zero extra input dims (same-size obs space) must be accepted.
+        """
+
         report = TopologyReport(
             source_input_dim=18,
             target_input_dim=18,
@@ -185,10 +229,15 @@ class TestValidateTransferCompatibility:
 
 
 class TestApplyTransferWeights:
-    """Tests for apply_transfer_weights — key selection, device safety, and freeze logic."""
+    """
+    Tests for apply_transfer_weights — key selection, device safety, and freeze logic.
+    """
 
     def test_transferable_keys_are_copied(self):
-        """Only keys whose shapes match must be copied; skipped keys must not raise."""
+        """
+        Only keys whose shapes match must be copied; skipped keys must not raise.
+        """
+
         src = _make_policy(input_dim=10, output_dim=2)
         tgt = _make_policy(input_dim=18, output_dim=2)
 
@@ -201,7 +250,10 @@ class TestApplyTransferWeights:
             assert torch.allclose(src_sd[key], tgt_sd[key]), f"Key {key!r} not copied correctly"
 
     def test_first_layer_not_transferred_when_dims_differ(self):
-        """When input dims differ the first linear layer values must be unchanged."""
+        """
+        When input dims differ the first linear layer values must be unchanged.
+        """
+
         src = _make_policy(input_dim=10, output_dim=2)
         tgt = _make_policy(input_dim=18, output_dim=2)
 
@@ -214,7 +266,10 @@ class TestApplyTransferWeights:
         )
 
     def test_freeze_disables_grad_only_for_backbone(self):
-        """Only the backbone (shared_network.2) must be frozen; actor/critic heads stay trainable."""
+        """
+        Only the backbone (shared_network.2) must be frozen; actor/critic heads stay trainable.
+        """
+
         src = _make_policy(input_dim=10, output_dim=2)
         tgt = _make_policy(input_dim=18, output_dim=2)
 
@@ -227,7 +282,10 @@ class TestApplyTransferWeights:
                 assert param.requires_grad, f"{name} should remain trainable"
 
     def test_no_freeze_keeps_all_grads_enabled(self):
-        """All parameters must remain trainable when freeze_shared=False."""
+        """
+        All parameters must remain trainable when freeze_shared=False.
+        """
+
         src = _make_policy(input_dim=10, output_dim=2)
         tgt = _make_policy(input_dim=18, output_dim=2)
 
@@ -237,7 +295,10 @@ class TestApplyTransferWeights:
             assert param.requires_grad, f"{name} should remain trainable"
 
     def test_first_layer_remains_trainable_after_freeze(self):
-        """The mapping-layer first linear must stay trainable even when shared layers are frozen."""
+        """
+        The mapping-layer first linear must stay trainable even when shared layers are frozen.
+        """
+
         src = _make_policy(input_dim=10, output_dim=2)
         tgt = _make_policy(input_dim=18, output_dim=2)
 
@@ -247,7 +308,10 @@ class TestApplyTransferWeights:
         assert first_layer_weight.requires_grad, "Mapping layer must remain trainable"
 
     def test_returns_list_of_transferred_key_names(self):
-        """Return value must be a non-empty list of valid state-dict key strings."""
+        """
+        Return value must be a non-empty list of valid state-dict key strings.
+        """
+
         src = _make_policy(input_dim=10, output_dim=2)
         tgt = _make_policy(input_dim=18, output_dim=2)
 
@@ -258,7 +322,10 @@ class TestApplyTransferWeights:
             assert key in _TRANSFERABLE_KEYS
 
     def test_same_input_dim_transfers_all_keys_including_first_layer(self):
-        """When input dims match all keys including shared_network.0 must be transferred."""
+        """
+        When input dims match all keys including shared_network.0 must be transferred.
+        """
+
         src = _make_policy(input_dim=18, output_dim=2)
         tgt = _make_policy(input_dim=18, output_dim=2)
 
@@ -271,7 +338,10 @@ class TestApplyTransferWeights:
         assert "critic.weight" in transferred
 
     def test_first_layer_values_transferred_when_same_dim(self):
-        """First layer weight values must match source when input dimensions are equal."""
+        """
+        First layer weight values must match source when input dimensions are equal.
+        """
+
         src = _make_policy(input_dim=18, output_dim=2)
         tgt = _make_policy(input_dim=18, output_dim=2)
 
@@ -284,7 +354,10 @@ class TestApplyTransferWeights:
         )
 
     def test_output_dim_mismatch_skips_actor_keys(self):
-        """Actor head keys must not be transferred when output dimensions differ."""
+        """
+        Actor head keys must not be transferred when output dimensions differ.
+        """
+
         src = _make_policy(input_dim=10, output_dim=3)
         tgt = _make_policy(input_dim=18, output_dim=2)
 
@@ -294,13 +367,15 @@ class TestApplyTransferWeights:
         assert "actor_mean.bias" not in transferred
 
     def test_actor_log_std_is_not_transferred(self):
-        """``actor_log_std`` must keep the target's fresh init so exploration is preserved.
+        """
+        `actor_log_std` must keep the target's fresh init so exploration is preserved.
 
         A converged 2D policy can collapse log_std to highly negative values for
         some action dimensions, producing near-deterministic actions. Copying
         that into the target freezes exploration and PPO cannot recover. The
         target must retain its default ``log_std = -0.5``.
         """
+
         src = _make_policy(input_dim=18, output_dim=2)
         src.network.actor_log_std.data.copy_(torch.tensor([-3.3, 0.06]))
         tgt = _make_policy(input_dim=18, output_dim=2)
@@ -312,7 +387,10 @@ class TestApplyTransferWeights:
         assert torch.allclose(tgt.network.actor_log_std.detach(), tgt_initial)
 
     def test_cross_device_transfer_preserves_target_device(self):
-        """Transferred weights must land on the target network device, not the source device."""
+        """
+        Transferred weights must land on the target network device, not the source device.
+        """
+
         src = _make_policy(input_dim=18, output_dim=2, device="cpu")
         tgt = _make_policy(input_dim=18, output_dim=2, device="cpu")
 

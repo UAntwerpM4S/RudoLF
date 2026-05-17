@@ -307,11 +307,13 @@ class AgentManagerSimple:
 
     @contextmanager
     def rendering(self, env):
-        """Render.
+        """
+        Render.
 
         Args:
             env: Description.
         """
+
         if hasattr(env, "render_mode"):
             try:
                 self.prev_render_mode = env.render_mode

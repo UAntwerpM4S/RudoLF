@@ -81,7 +81,10 @@ class SinglePPOAgent(BasePPOAgent):
         self.reward_count = 1e-4  # avoid division by zero
 
     def _is_airsim_env(self) -> bool:
-        """Return whether the wrapped environment is the AirSim trainer env."""
+        """
+        Return whether the wrapped environment is the AirSim trainer env.
+        """
+
         return getattr(self.env, "type_name", "") == "AirSimEnv"
 
     def predict(
@@ -229,12 +232,14 @@ class SinglePPOAgent(BasePPOAgent):
 
     @classmethod
     def filter_trainable_episodes(cls, batch_data):
-        """Return only trajectories long enough for a PPO update.
+        """
+        Return only trajectories long enough for a PPO update.
 
         Episodes with fewer than two transitions cannot produce a meaningful
         advantage normalization pass and previously poisoned training with NaN
         losses. We skip them instead of counting them as real PPO updates.
         """
+
         valid_episodes = []
         skipped_count = 0
 
@@ -386,7 +391,10 @@ class SinglePPOAgent(BasePPOAgent):
 
 
     def _drain_env_run_events(self) -> list[dict]:
-        """Collect queued AirSim run events from vectorized envs."""
+        """
+        Collect queued AirSim run events from vectorized envs.
+        """
+
         if getattr(self, "_vec_env", None) is not None and hasattr(self._vec_env, "env_method"):
             drained = self._vec_env.env_method("drain_run_events")
             events = []
@@ -404,7 +412,10 @@ class SinglePPOAgent(BasePPOAgent):
 
 
     def _get_training_export_snapshot(self):
-        """Return the first available AirSim export snapshot from the vec env."""
+        """
+        Return the first available AirSim export snapshot from the vec env.
+        """
+
         if getattr(self, "_vec_env", None) is not None and hasattr(self._vec_env, "env_method"):
             snapshots = self._vec_env.env_method("get_training_export_snapshot")
             for snapshot in snapshots or []:

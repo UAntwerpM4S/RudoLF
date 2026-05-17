@@ -1,4 +1,6 @@
-"""Shared path utilities used across AirSim and framework entrypoints."""
+"""
+Shared path utilities used across AirSim and framework entrypoints.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +10,8 @@ from fw.common.airsim.classes.path_resolution import PathResolutionContext
 
 
 def resolve_model_path(model_path: str, src_dir: Path) -> Path:
-    """Resolve model paths against common repository roots.
+    """
+    Resolve model paths against common repository roots.
 
     Args:
         model_path: User-provided model path, absolute or relative.
@@ -18,6 +21,7 @@ def resolve_model_path(model_path: str, src_dir: Path) -> Path:
         A resolved path to the model file. If no candidate exists, the
         repository-root candidate is returned unchanged but resolved.
     """
+
     context = PathResolutionContext.from_src_dir(src_dir)
     path = Path(model_path)
 

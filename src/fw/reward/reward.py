@@ -2,7 +2,8 @@ from typing import Callable, Dict, Optional
 
 
 class Reward:
-    """Configurable reward calculator for PySimEnv.
+    """
+    Configurable reward calculator for PySimEnv.
 
     Reward profiles select which component functions are combined.
     Component weights can be overridden at runtime.
@@ -31,7 +32,8 @@ class Reward:
     }
 
     def __init__(self, reward_name: str = "default", reward_weights: Optional[Dict[str, float]] = None) -> None:
-        """Initialize the Reward calculator with a specified profile and optional weight overrides.
+        """
+        Initialize the Reward calculator with a specified profile and optional weight overrides.
         
         Args:
             reward_name: Name of the reward profile to use. Must be a key in PROFILE_COMPONENTS.
@@ -41,6 +43,7 @@ class Reward:
         Raises:
             ValueError: If reward_name is not in PROFILE_COMPONENTS.
         """
+
         self.reward_name = reward_name
         # Start from defaults and allow caller overrides for quick experimentation.
         self.reward_weights: Dict[str, float] = dict(self.DEFAULT_WEIGHTS)
@@ -64,7 +67,8 @@ class Reward:
 
     @staticmethod
     def r_forward(velocity: float, target_velocity: float, **_: float) -> float:
-        """Calculate penalty for deviation from target speed.
+        """
+        Calculate penalty for deviation from target speed.
         
         Penalizes the normalized difference between actual and target velocity.
         
@@ -76,6 +80,7 @@ class Reward:
         Returns:
             float: Normalized speed deviation penalty (non-negative).
         """
+
         if target_velocity == 0:
             return 0.0
 
@@ -83,7 +88,8 @@ class Reward:
 
     @staticmethod
     def r_heading_alignment(heading_error: float, **_: float) -> float:
-        """Calculate penalty for heading error.
+        """
+        Calculate penalty for heading error.
         
         Penalizes the absolute difference between desired and actual heading.
         
@@ -94,11 +100,13 @@ class Reward:
         Returns:
             float: Absolute heading error penalty.
         """
+
         return abs(heading_error)
 
     @staticmethod
     def r_cross_track(cross_track_error: float, **_: float) -> float:
-        """Calculate penalty for lateral path deviation.
+        """
+        Calculate penalty for lateral path deviation.
         
         Penalizes deviation from the intended trajectory path.
         
@@ -109,10 +117,12 @@ class Reward:
         Returns:
             float: Cross-track error penalty.
         """
+
         return cross_track_error
 
     def r_rudder_angle_change(self, rudder_change: float, max_rudder_change: float, **_: float) -> float:
-        """Calculate penalty for sudden rudder angle changes.
+        """
+        Calculate penalty for sudden rudder angle changes.
         
         Penalizes large changes in rudder angle, with hard penalty for exceeding max change.
         Respects weight setting to allow component disable via zero weight.
@@ -125,6 +135,7 @@ class Reward:
         Returns:
             float: Rudder change penalty, or 0 if component is disabled (weight=0).
         """
+
         weight = self.reward_weights.get("rudder_change", 1.0)
         if weight == 0.0:
             return 0.0  # No penalty if the component is disabled, even if the function is called.
@@ -134,7 +145,8 @@ class Reward:
     
     @staticmethod
     def r_rudder_angle(rudder_angle: float, **_: float) -> float:
-        """Calculate penalty for large rudder angles.
+        """
+        Calculate penalty for large rudder angles.
         
         Uses a piecewise function with threshold at 0.2 radians to penalize large angles more steeply.
         
@@ -145,10 +157,12 @@ class Reward:
         Returns:
             float: Rudder angle penalty with quadratic growth below 0.2 and quartic growth above.
         """
+
         return (abs(rudder_angle) / 0.2) ** (2 if abs(rudder_angle) < 0.2 else 4)
 
     def r_thrust_change(self, thrust_change: float, max_thrust_change: float, **_: float) -> float:
-        """Calculate penalty for thrust changes.
+        """
+        Calculate penalty for thrust changes.
         
         Penalizes rapid changes in thrust, with hard penalty for exceeding max change.
         Respects weight setting to allow component disable via zero weight.
@@ -161,6 +175,7 @@ class Reward:
         Returns:
             float: Thrust change penalty, or 0 if component is disabled (weight=0).
         """
+
         weight = self.reward_weights.get("thrust_change", 1.0)
         if weight == 0.0:
             return 0.0
@@ -169,7 +184,8 @@ class Reward:
         return (thrust_change / max_thrust_change) if thrust_change < max_thrust_change else (-1/weight)
 
     def r_thrust_change_quadratic(self, thrust_change: float, max_thrust_change: float, **_: float) -> float:
-        """Calculate smooth quadratic penalty for thrust changes.
+        """
+        Calculate smooth quadratic penalty for thrust changes.
         
         Uses piecewise quadratic function that increases in steepness as thrust change approaches max.
         Provides smoother penalty curve compared to r_thrust_change.
@@ -182,6 +198,7 @@ class Reward:
         Returns:
             float: Smooth quadratic penalty, or 0 if component is disabled (weight=0).
         """
+
         weight = self.reward_weights.get("thrust_change", 1.0)
         if weight == 0.0:
             return 0.0
@@ -209,7 +226,8 @@ class Reward:
         thrust_change: float,
         max_thrust_change: float
     ) -> float:
-        """Calculate total reward as weighted sum of component penalties.
+        """
+        Calculate total reward as weighted sum of component penalties.
         
         Evaluates all components in the active reward profile, applies learned weights,
         and returns aggregate reward value. Components are processed in profile order.
@@ -228,6 +246,7 @@ class Reward:
         Returns:
             float: Weighted sum of all enabled component penalties for this timestep.
         """
+
         reward = 0.0
         # Shared inputs for all component functions.
         component_inputs = {

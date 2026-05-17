@@ -1,4 +1,6 @@
-"""Tests for the standalone AirSim training entrypoint helpers."""
+"""
+Tests for the standalone AirSim training entrypoint helpers.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +8,10 @@ from pathlib import Path
 
 
 def test_build_training_env_config_uses_runtime_settings(tmp_path):
-    """Standalone AirSim training config should come from runtime settings."""
+    """
+    Standalone AirSim training config should come from runtime settings.
+    """
+
     from airsim.train.train_airsim import _build_training_env_config
 
     runtime_settings = {
@@ -110,7 +115,10 @@ def test_build_training_env_config_uses_runtime_settings(tmp_path):
 
 
 def test_build_visualize_env_config_uses_runtime_settings():
-    """Visualization config should also honor runtime settings defaults."""
+    """
+    Visualization config should also honor runtime settings defaults.
+    """
+
     from airsim.train.train_airsim import _build_visualize_env_config
 
     runtime_settings = {
@@ -141,7 +149,10 @@ def test_build_visualize_env_config_uses_runtime_settings():
 
 
 def test_build_training_env_config_defaults_to_direct_policy_control():
-    """Standalone training defaults should avoid hidden guidance and use the car profile."""
+    """
+    Standalone training defaults should avoid hidden guidance and use the car profile.
+    """
+
     from airsim.train.train_airsim import _build_training_env_config
 
     config = _build_training_env_config({"training": {}, "airsim": {}})
@@ -160,7 +171,10 @@ def test_build_training_env_config_defaults_to_direct_policy_control():
 
 
 def test_build_training_env_config_applies_speed_profile_defaults():
-    """The standalone trainer should honor named runtime speed profiles too."""
+    """
+    The standalone trainer should honor named runtime speed profiles too.
+    """
+
     from airsim.train.train_airsim import _build_training_env_config
 
     config = _build_training_env_config(
@@ -185,7 +199,10 @@ def test_build_training_env_config_applies_speed_profile_defaults():
 
 
 def test_build_training_stop_condition_uses_runtime_settings():
-    """Standalone AirSim training should source its update budget from runtime settings."""
+    """
+    Standalone AirSim training should source its update budget from runtime settings.
+    """
+
     from airsim.train.train_airsim import _build_training_stop_condition
     from fw.stop_condition import Criterion
 
@@ -203,7 +220,10 @@ def test_build_training_stop_condition_uses_runtime_settings():
 
 
 def test_get_runtime_settings_falls_back_to_defaults_for_invalid_json(tmp_path, monkeypatch):
-    """Malformed runtime settings should not break AirSim config consumers."""
+    """
+    Malformed runtime settings should not break AirSim config consumers.
+    """
+
     import airsim.config.airsim_config as airsim_config
 
     runtime_path = tmp_path / "runtime_settings.json"

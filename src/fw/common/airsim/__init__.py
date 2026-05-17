@@ -1,1 +1,3 @@
-"""Shared AirSim helpers hosted under fw.common."""
+"""
+Shared AirSim helpers hosted under fw.common.
+"""

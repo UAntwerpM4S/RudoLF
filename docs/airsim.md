@@ -1292,7 +1292,7 @@ Checkpoints are spaced every `80 m` along the route (`_ROUTE_POINT_SPACING_M`). 
 A checkpoint is only credited when the vessel reaches the route distance threshold **and** both of the following hold:
 
 | Condition           | Threshold                                        |
-| ------------------- | ------------------------------------------------ |
+|---------------------|--------------------------------------------------|
 | `cross_track_error` | ≤ `120 m` (`_CHECKPOINT_PASS_MAX_CROSS_TRACK_M`) |
 | `heading_error`     | ≤ `75°` (`_CHECKPOINT_PASS_MAX_HEADING_RAD`)     |
 
@@ -1305,7 +1305,7 @@ This prevents the agent from earning checkpoint rewards by drifting through a ch
 **Per-step dense reward formula (`calculate_reward()`):**
 
 | Component           | Formula                                                 | Typical range    |
-| ------------------- | ------------------------------------------------------- | ---------------- |
+|---------------------|---------------------------------------------------------|------------------|
 | Baseline            | `+0.30`                                                 | constant         |
 | Track reward        | `+0.75 × exp(−CTE / 45.0)`                              | `[0, 0.75]`      |
 | Progress reward     | `+0.70 × clip(Δprogress / 20.0, −0.25, 1.0)`            | `[−0.175, 0.70]` |

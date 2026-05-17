@@ -1,4 +1,5 @@
-"""Shared AirSim telemetry analysis and 2D-vs-3D plotting helpers.
+"""
+Shared AirSim telemetry analysis and 2D-vs-3D plotting helpers.
 
 This module focuses on post-run analysis by reusing exported telemetry CSV
 files instead of collecting duplicate runtime data.
@@ -17,7 +18,8 @@ import numpy as np
 
 @dataclass(frozen=True)
 class EpisodePerformance:
-    """Aggregated metrics for one telemetry episode.
+    """
+    Aggregated metrics for one telemetry episode.
 
     Attributes:
         episode: One-based episode index.
@@ -42,7 +44,8 @@ class EpisodePerformance:
 
 @dataclass(frozen=True)
 class RunPerformanceSummary:
-    """Aggregated metrics for a full telemetry session.
+    """
+    Aggregated metrics for a full telemetry session.
 
     Attributes:
         episodes: Per-episode metrics in chronological order.
@@ -65,18 +68,21 @@ class RunPerformanceSummary:
     bridge_samples: int
 
     def to_metadata_dict(self) -> Dict[str, Any]:
-        """Convert summary dataclass content to JSON-safe metadata.
+        """
+        Convert summary dataclass content to JSON-safe metadata.
 
         Returns:
             Dictionary representation suitable for metadata JSON sidecars.
         """
+
         data = asdict(self)
         data["episodes"] = [asdict(episode) for episode in self.episodes]
         return data
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
-    """Convert a value to float with fallback.
+    """
+    Convert a value to float with fallback.
 
     Args:
         value: Source value to parse.
@@ -85,6 +91,7 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     Returns:
         Parsed float or the provided default.
     """
+
     try:
         if value is None:
             return default
@@ -96,7 +103,8 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
-    """Convert a value to int with fallback.
+    """
+    Convert a value to int with fallback.
 
     Args:
         value: Source value to parse.
@@ -105,6 +113,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
     Returns:
         Parsed int or the provided default.
     """
+
     try:
         if value is None:
             return default
@@ -116,7 +125,8 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 
 def _read_csv_rows(path: Path) -> List[Dict[str, str]]:
-    """Read all CSV rows into memory.
+    """
+    Read all CSV rows into memory.
 
     Args:
         path: CSV file path.
@@ -124,6 +134,7 @@ def _read_csv_rows(path: Path) -> List[Dict[str, str]]:
     Returns:
         List of row dictionaries. Empty list if file does not exist.
     """
+
     if not path.exists() or not path.is_file():
         return []
     with open(path, "r", newline="", encoding="utf-8") as handle:
@@ -132,7 +143,8 @@ def _read_csv_rows(path: Path) -> List[Dict[str, str]]:
 
 
 def _cumulative_distance_2d(rows: Iterable[Dict[str, Any]]) -> float:
-    """Compute cumulative 2D distance from x/y columns.
+    """
+    Compute cumulative 2D distance from x/y columns.
 
     Args:
         rows: Telemetry rows containing ``x`` and ``y`` fields.
@@ -140,6 +152,7 @@ def _cumulative_distance_2d(rows: Iterable[Dict[str, Any]]) -> float:
     Returns:
         Cumulative Euclidean distance in meters.
     """
+
     distance = 0.0
     previous_xy: Optional[tuple[float, float]] = None
 
@@ -157,7 +170,8 @@ def _cumulative_distance_2d(rows: Iterable[Dict[str, Any]]) -> float:
 
 
 def _cumulative_distance_3d(rows: Iterable[Dict[str, Any]]) -> float:
-    """Compute cumulative 3D distance from bridge ``pos_*`` columns.
+    """
+    Compute cumulative 3D distance from bridge ``pos_*`` columns.
 
     Args:
         rows: Bridge telemetry rows containing ``pos_x``, ``pos_y``, and
@@ -166,6 +180,7 @@ def _cumulative_distance_3d(rows: Iterable[Dict[str, Any]]) -> float:
     Returns:
         Cumulative 3D Euclidean distance in meters.
     """
+
     distance = 0.0
     previous_xyz: Optional[tuple[float, float, float]] = None
 
@@ -185,7 +200,8 @@ def _cumulative_distance_3d(rows: Iterable[Dict[str, Any]]) -> float:
 
 
 def _group_rows_by_episode(rows: List[Dict[str, str]]) -> Dict[int, List[Dict[str, str]]]:
-    """Group telemetry rows by episode index.
+    """
+    Group telemetry rows by episode index.
 
     Args:
         rows: Session telemetry rows.
@@ -193,6 +209,7 @@ def _group_rows_by_episode(rows: List[Dict[str, str]]) -> Dict[int, List[Dict[st
     Returns:
         Mapping from one-based episode number to rows.
     """
+
     grouped: Dict[int, List[Dict[str, str]]] = {}
     for row in rows:
         raw_episode = row.get("episode", 1)
@@ -204,7 +221,8 @@ def _group_rows_by_episode(rows: List[Dict[str, str]]) -> Dict[int, List[Dict[st
 
 
 def _episode_duration_s(rows: List[Dict[str, str]]) -> float:
-    """Estimate episode duration from telemetry rows.
+    """
+    Estimate episode duration from telemetry rows.
 
     Args:
         rows: Telemetry rows for a single episode.
@@ -212,6 +230,7 @@ def _episode_duration_s(rows: List[Dict[str, str]]) -> float:
     Returns:
         Simulated duration in seconds.
     """
+
     if not rows:
         return 0.0
 
@@ -242,7 +261,8 @@ def build_run_summary_from_csv(
     session_csv_path: str | Path,
     bridge_csv_path: Optional[str | Path] = None,
 ) -> RunPerformanceSummary:
-    """Build a full run summary from exported telemetry CSV files.
+    """
+    Build a full run summary from exported telemetry CSV files.
 
     Args:
         session_csv_path: Session telemetry CSV path from the exporter.
@@ -251,6 +271,7 @@ def build_run_summary_from_csv(
     Returns:
         Aggregated run summary with per-episode and full-session metrics.
     """
+
     session_rows = _read_csv_rows(Path(session_csv_path))
     bridge_rows = _read_csv_rows(Path(bridge_csv_path)) if bridge_csv_path else []
 
@@ -302,7 +323,8 @@ def build_run_summary_from_csv(
 
 
 def format_performance_summary(title: str, summary: RunPerformanceSummary) -> str:
-    """Format a concise multi-line console summary for one run.
+    """
+    Format a concise multi-line console summary for one run.
 
     Args:
         title: User-facing summary title.
@@ -311,6 +333,7 @@ def format_performance_summary(title: str, summary: RunPerformanceSummary) -> st
     Returns:
         Human-readable summary string suitable for stdout.
     """
+
     lines = [
         "=" * 62,
         f"  {title}",
@@ -338,7 +361,10 @@ def format_performance_summary(title: str, summary: RunPerformanceSummary) -> st
 
 
 def _extract_xy(rows: List[Dict[str, Any]], x_key: str = "x", y_key: str = "y") -> np.ndarray:
-    """Extract a (N, 2) float array from telemetry rows."""
+    """
+    Extract a (N, 2) float array from telemetry rows.
+    """
+
     points = []
     for row in rows:
         x = _safe_float(row.get(x_key, row.get("pos_x", 0.0)))
@@ -348,7 +374,10 @@ def _extract_xy(rows: List[Dict[str, Any]], x_key: str = "x", y_key: str = "y") 
 
 
 def _resample_by_arclength(points: np.ndarray, n_samples: int) -> np.ndarray:
-    """Resample a (N, 2) polyline to *n_samples* equally spaced arc-length positions."""
+    """
+    Resample a (N, 2) polyline to *n_samples* equally spaced arc-length positions.
+    """
+
     if len(points) < 2:
         return points
     deltas = np.linalg.norm(np.diff(points, axis=0), axis=1)
@@ -363,7 +392,10 @@ def _resample_by_arclength(points: np.ndarray, n_samples: int) -> np.ndarray:
 
 
 def _normalize_shape(points: np.ndarray) -> np.ndarray:
-    """Translate to centroid and scale by max extent so both trajectories are comparable."""
+    """
+    Translate to centroid and scale by max extent so both trajectories are comparable.
+    """
+
     if len(points) == 0:
         return points
     centered = points - points.mean(axis=0)
@@ -372,7 +404,10 @@ def _normalize_shape(points: np.ndarray) -> np.ndarray:
 
 
 def _dtw_distance(a: np.ndarray, b: np.ndarray) -> float:
-    """Compute Dynamic Time Warping distance between two (N, 2) trajectories."""
+    """
+    Compute Dynamic Time Warping distance between two (N, 2) trajectories.
+    """
+
     n, m = len(a), len(b)
     cost = np.full((n, m), np.inf, dtype=float)
     cost[0, 0] = float(np.linalg.norm(a[0] - b[0]))
@@ -393,7 +428,8 @@ def compute_trajectory_similarity(
     bridge_rows: List[Dict[str, Any]],
     n_samples: int = 150,
 ) -> Tuple[float, float]:
-    """Compute shape-based RMSE and DTW distance between 2D and 3D trajectories.
+    """
+    Compute shape-based RMSE and DTW distance between 2D and 3D trajectories.
 
     Both trajectories are resampled to *n_samples* points by arc-length and
     then shape-normalized (centroid subtracted, scaled to unit extent) before
@@ -408,6 +444,7 @@ def compute_trajectory_similarity(
         Tuple ``(rmse, dtw)`` — lower values indicate more similar shapes.
         Both values are ``float('nan')`` when either trajectory is empty.
     """
+
     pts_2d = _extract_xy(session_rows, x_key="x", y_key="y")
     pts_3d = _extract_xy(bridge_rows, x_key="pos_x", y_key="pos_y")
 
@@ -429,7 +466,8 @@ def render_side_by_side_trajectory_plot(
     output_path: str | Path,
     title: str,
 ) -> Optional[Path]:
-    """Render and save a side-by-side 2D-vs-3D trajectory plot.
+    """
+    Render and save a side-by-side 2D-vs-3D trajectory plot.
 
     The left panel shows 2D trajectory data from session telemetry
     (framework/local frame), while the right panel shows UE5 AirSim 3D bridge
@@ -444,6 +482,7 @@ def render_side_by_side_trajectory_plot(
     Returns:
         Saved output path when successful, otherwise ``None``.
     """
+
     session_rows = _read_csv_rows(Path(session_csv_path))
     bridge_rows = _read_csv_rows(Path(bridge_csv_path))
     if not session_rows:

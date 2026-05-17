@@ -58,22 +58,29 @@ VIEWPORT_H = 400
 
 
 class ContactDetector(contactListener):
-    """ContactDetector."""
+    """
+    ContactDetector.
+    """
+
     def __init__(self, env):
-        """Initialize the instance.
+        """
+        Initialize the instance.
 
         Args:
             env: Description.
         """
+
         contactListener.__init__(self)
         self.env = env
 
     def BeginContact(self, contact):
-        """BeginContact.
+        """
+        BeginContact.
 
         Args:
             contact: Description.
         """
+
         if (
             self.env.lander == contact.fixtureA.body
             or self.env.lander == contact.fixtureB.body
@@ -84,11 +91,13 @@ class ContactDetector(contactListener):
                 self.env.legs[i].ground_contact = True
 
     def EndContact(self, contact):
-        """EndContact.
+        """
+        EndContact.
 
         Args:
             contact: Description.
         """
+
         for i in range(2):
             if self.env.legs[i] in [contact.fixtureA.body, contact.fixtureB.body]:
                 self.env.legs[i].ground_contact = False
@@ -105,7 +114,7 @@ class LunarLander(BaseEnv, EzPickle):
     There are two environment versions: discrete or continuous.
     The landing pad is always at coordinates (0,0). The coordinates are the
     first two numbers in the state vector.
-    Landing outside of the landing pad is possible. Fuel is infinite, so an agent
+    Landing outside the landing pad is possible. Fuel is infinite, so an agent
     can learn to fly and then land on its first attempt.
 
     To see a heuristic landing, run:
@@ -148,7 +157,7 @@ class LunarLander(BaseEnv, EzPickle):
     ## Episode Termination
     The episode finishes if:
     1) the lander crashes (the lander body gets in contact with the moon);
-    2) the lander gets outside of the viewport (`x` coordinate is greater than 1);
+    2) the lander gets outside the viewport (`x` coordinate is greater than 1);
     3) the lander is not awake. From the [Box2D docs](https://box2d.org/documentation/md__d_1__git_hub_box2d_docs_dynamics.html#autotoc_md61),
         a body which is not awake is a body which doesn't move and doesn't
         collide with any other body:
@@ -195,7 +204,7 @@ class LunarLander(BaseEnv, EzPickle):
     ## Version History
     - v3:
         - Reset wind and turbulence offset (`C`) whenever the environment is reset to ensure statistical independence between consecutive episodes (related [GitHub issue](https://github.com/Farama-Foundation/Gymnasium/issues/954)).
-        - Fix non-deterministic behaviour due to not fully destroying the world (related [GitHub issue](https://github.com/Farama-Foundation/Gymnasium/issues/728)).
+        - Fix non-deterministic behavior due to not fully destroying the world (related [GitHub issue](https://github.com/Farama-Foundation/Gymnasium/issues/728)).
         - Changed observation space for `x`, `y`  coordinates from $\pm 1.5$ to $\pm 2.5$, velocities from $\pm 5$ to $\pm 10$ and angles from $\pm \pi$ to $\pm 2\pi$ (related [GitHub issue](https://github.com/Farama-Foundation/Gymnasium/issues/752)).
     - v2: Count energy spent and in v0.24, added turbulence with wind power and turbulence_power parameters
     - v1: Legs contact with ground added in state vector; contact with ground give +10 reward points, and -10 if then lose contact; reward renormalized to 200; harder initial random push.
@@ -237,7 +246,8 @@ class LunarLander(BaseEnv, EzPickle):
         wind_power: float = 15.0,
         turbulence_power: float = 1.5,
     ):
-        """Initialize the instance.
+        """
+        Initialize the instance.
 
         Args:
             render_mode: Description.
@@ -248,6 +258,7 @@ class LunarLander(BaseEnv, EzPickle):
             turbulence_power: Description.
             ,: Description.
         """
+
         BaseEnv.__init__(self, render_mode)
         EzPickle.__init__(
             self,
@@ -342,8 +353,10 @@ class LunarLander(BaseEnv, EzPickle):
             self.action_space = spaces.Discrete(4)
 
     def _destroy(self):
-        """ destroy.
         """
+        Destroy.
+        """
+
         if not self.moon:
             return
         self.world.contactListener = None
@@ -361,12 +374,14 @@ class LunarLander(BaseEnv, EzPickle):
         seed: Optional[int] = None,
         options: Optional[dict] = None,
     ):
-        """Reset the environment state.
+        """
+        Reset the environment state.
 
         Args:
             seed: Optional RNG seed.
             options: Optional reset options.
         """
+
         super().reset(seed=seed)
         self._destroy()
         self._step_count = 0  # reset step counter on episode start
@@ -492,7 +507,8 @@ class LunarLander(BaseEnv, EzPickle):
         return self.step(np.array([0, 0]) if self.continuous else 0)[0], {}
 
     def _create_particle(self, mass, x, y, ttl):
-        """ create particle.
+        """
+        Create particle.
 
         Args:
             mass: Description.
@@ -500,6 +516,7 @@ class LunarLander(BaseEnv, EzPickle):
             y: Description.
             ttl: Description.
         """
+
         p = self.world.CreateDynamicBody(
             position=(x, y),
             angle=0.0,
@@ -518,20 +535,24 @@ class LunarLander(BaseEnv, EzPickle):
         return p
 
     def _clean_particles(self, all_particle):
-        """ clean particles.
+        """
+        Clean particles.
 
         Args:
             all_particle: Description.
         """
+
         while self.particles and (all_particle or self.particles[0].ttl < 0):
             self.world.DestroyBody(self.particles.pop(0))
 
     def step(self, action):
-        """Step.
+        """
+        Step.
 
         Args:
             action: Description.
         """
+
         assert self.lander is not None
 
         # Update wind and apply to the lander
@@ -732,8 +753,10 @@ class LunarLander(BaseEnv, EzPickle):
         return np.array(state, dtype=np.float32), reward, terminated, truncated, {}
 
     def render(self):
-        """Render.
         """
+        Render.
+        """
+
         if self.render_mode is None:
             assert self.spec is not None
             gym.logger.warn(
@@ -850,8 +873,10 @@ class LunarLander(BaseEnv, EzPickle):
             )
 
     def close(self):
-        """Close.
         """
+        Close.
+        """
+
         if self.screen is not None:
             import pygame
 
@@ -915,13 +940,15 @@ def heuristic(env, s):
 
 
 def demo_heuristic_lander(env, seed=None, render=False):
-    """Demo heuristic lander.
+    """
+    Demo heuristic lander.
 
     Args:
         env: Description.
         seed: Description.
         render: Description.
     """
+
     total_reward = 0
     steps = 0
     s, info = env.reset(seed=seed)
@@ -947,14 +974,18 @@ def demo_heuristic_lander(env, seed=None, render=False):
 
 
 class LunarLanderContinuous:
-    """LunarLanderContinuous."""
+    """
+    LunarLanderContinuous.
+    """
+
     def __init__(self):
-        """Initialize the instance.
         """
+        Initialize the instance.
+        """
+
         raise error.Error(
             "Error initializing LunarLanderContinuous Environment.\n"
             "Currently, we do not support initializing this mode of environment by calling the class directly.\n"
             "To use this environment, instead create it by specifying the continuous keyword in gym.make, i.e.\n"
             'gym.make("LunarLander-v3", continuous=True)'
         )
-

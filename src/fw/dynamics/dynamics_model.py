@@ -4,7 +4,9 @@ from abc import ABC, abstractmethod
 
 
 class Model(Enum):
-    """Enumeration of supported vessel-dynamics model families."""
+    """
+    Enumeration of supported vessel-dynamics model families.
+    """
 
     NOMOTO = auto()
     FOSSEN = auto()
@@ -57,4 +59,5 @@ class DynamicsBase(ABC):
                 - dv: Sway acceleration in meters per second squared (m/s²).
                 - dr: Yaw rate in radians per second squared (rad/s²).
         """
+
         pass

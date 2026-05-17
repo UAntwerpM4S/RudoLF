@@ -1,4 +1,6 @@
-"""Small DTO used by fw common tooling."""
+"""
+Small DTO used by fw common tooling.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +10,8 @@ from typing import Any
 
 @dataclass(frozen=True)
 class EnvironmentRequest:
-    """Factory request payload for environment creation.
+    """
+    Factory request payload for environment creation.
 
     Attributes:
         name: Registered environment name.

@@ -15,44 +15,56 @@ from fw.env_factory import (
 
 
 def test_resolve_environment_name_defaults_to_pysim():
-    """Test behavior for resolve environment name defaults to pysim.
     """
+    Test behavior for resolve environment name defaults to pysim.
+    """
+
     assert resolve_environment_name(None) == py_sim_env_name
     assert resolve_environment_name("") == py_sim_env_name
 
 
 def test_resolve_environment_name_accepts_aliases():
-    """Test behavior for resolve environment name accepts aliases.
     """
+    Test behavior for resolve environment name accepts aliases.
+    """
+
     assert resolve_environment_name("pysim") == py_sim_env_name
     assert resolve_environment_name("AirSim") == airsim_env_name
     assert resolve_environment_name("polar") == py_sim_polar_env_name
 
 
 def test_resolve_environment_name_rejects_unknown_alias():
-    """Test behavior for resolve environment name rejects unknown alias.
     """
+    Test behavior for resolve environment name rejects unknown alias.
+    """
+
     with pytest.raises(EnvironmentRegistryError, match="Unknown env_type"):
         resolve_environment_name("not-a-real-env")
 
 
 def test_resolve_environment_names_preserves_order():
-    """Test behavior for resolve environment names preserves order.
     """
+    Test behavior for resolve environment names preserves order.
+    """
+
     names = resolve_environment_names(["PySimEnv", "AirSimEnv", "LunarLander"])
     assert names == ["PySimEnv", "AirSimEnv", "LunarLander"]
 
 
 def test_resolve_environment_names_preserves_repeated_stages():
-    """Test behavior for resolve environment names preserves repeated stages.
     """
+    Test behavior for resolve environment names preserves repeated stages.
+    """
+
     names = resolve_environment_names(["PySimEnv", "AirSimEnv", "PySimEnv"])
     assert names == ["PySimEnv", "AirSimEnv", "PySimEnv"]
 
 
 def test_build_default_environment_accepts_legacy_empty_list_configurations():
-    """Test behavior for build default environment accepts legacy empty list configurations.
     """
+    Test behavior for build default environment accepts legacy empty list configurations.
+    """
+
     get_environment(py_sim_env_name, configuration=[])
 
     environment = build_default_environment(py_sim_env_name)
@@ -62,7 +74,10 @@ def test_build_default_environment_accepts_legacy_empty_list_configurations():
 
 
 def test_get_hyperparameters_keeps_shared_defaults_for_non_airsim_envs():
-    """PySim/FhSim should keep the shared PPO defaults."""
+    """
+    PySim/FhSim should keep the shared PPO defaults.
+    """
+
     params = get_hyperparameters(PPO_POLICY_NAME)
 
     assert params["learning_rate"] == pytest.approx(1e-4)
@@ -71,7 +86,10 @@ def test_get_hyperparameters_keeps_shared_defaults_for_non_airsim_envs():
 
 
 def test_get_hyperparameters_uses_airsim_specific_overrides():
-    """AirSimEnv should get its own PPO tuning set."""
+    """
+    AirSimEnv should get its own PPO tuning set.
+    """
+
     params = get_hyperparameters(PPO_POLICY_NAME, env_name=airsim_env_name)
 
     assert params["learning_rate"] == pytest.approx(3e-4)
@@ -81,7 +99,10 @@ def test_get_hyperparameters_uses_airsim_specific_overrides():
 
 
 def test_get_hyperparameters_uses_override_for_non_airsim_env_names():
-    """Default PPO settings should be applied outside AirSim."""
+    """
+    Default PPO settings should be applied outside AirSim.
+    """
+
     params = get_hyperparameters(PPO_POLICY_NAME, env_name=py_sim_env_name)
 
     assert params["learning_rate"] == pytest.approx(1e-4)
@@ -90,24 +111,31 @@ def test_get_hyperparameters_uses_override_for_non_airsim_env_names():
 
 
 def test_airsim_environment_is_not_singleton_cached(monkeypatch):
-    """Test behavior for airsim environment is not singleton cached.
+    """
+    Test behavior for airsim environment is not singleton cached.
 
     Args:
         monkeypatch: Description.
     """
+
     created = []
 
     class _FakeAirSimEnvironment:
-        """ FakeAirSimEnvironment."""
+        """
+        FakeAirSimEnvironment.
+        """
+
         _cache_instance = False
 
         def __init__(self, name, configuration):
-            """Initialize the instance.
+            """
+            Initialize the instance.
 
             Args:
                 name: Description.
                 configuration: Description.
             """
+
             self._name = name
             self._configuration = dict(configuration)
             self._env = object()
@@ -115,8 +143,10 @@ def test_airsim_environment_is_not_singleton_cached(monkeypatch):
 
         @property
         def configuration(self):
-            """Configuration.
             """
+            Configuration.
+            """
+
             return self._configuration
 
     monkeypatch.setitem(_Factory._environment_classes, airsim_env_name, _FakeAirSimEnvironment)
@@ -131,21 +161,28 @@ def test_airsim_environment_is_not_singleton_cached(monkeypatch):
 
 
 def test_airsim_environment_receives_full_runtime_configuration(monkeypatch):
-    """Test behavior for airsim environment receives full runtime configuration.
+    """
+    Test behavior for airsim environment receives full runtime configuration.
 
     Args:
         monkeypatch: Description.
     """
+
     captured = {}
 
     class _FakeAirSimEnv:
-        """ FakeAirSimEnv."""
+        """
+        FakeAirSimEnv.
+        """
+
         def __init__(self, **kwargs):
-            """Initialize the instance.
+            """
+            Initialize the instance.
 
             Args:
                 **kwargs: Arbitrary runtime configuration arguments.
             """
+
             captured.update(kwargs)
 
     _Factory._environment_instances.pop(airsim_env_name, None)

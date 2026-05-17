@@ -1,4 +1,6 @@
-"""Reusable utility functions for fw modules."""
+"""
+Reusable utility functions for fw modules.
+"""
 
 from ..airsim.tools.airsim_export import (
     AirSimSessionExporter,
