@@ -1,4 +1,5 @@
-"""Gymnasium RL environments for AirSim / UE5.
+"""
+Gymnasium RL environments for AirSim / UE5.
 
 Modules:
     airsim_env: ``AirSimEnv`` — drop-in replacement for ``PySimEnv``

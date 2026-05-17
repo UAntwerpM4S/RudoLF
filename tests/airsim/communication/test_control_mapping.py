@@ -13,15 +13,22 @@ from fw.ships.ship_factory import create_ship
 
 
 def _make_airsim_module():
-    """ make airsim module.
     """
+    Make airsim module.
+    """
+
     module = types.SimpleNamespace()
 
     class CarControls:
-        """CarControls."""
+        """
+        CarControls.
+        """
+
         def __init__(self):
-            """Initialize the instance.
             """
+            Initialize the instance.
+            """
+
             self.steering = 0.0
             self.throttle = 0.0
             self.brake = 0.0
@@ -34,29 +41,37 @@ def _make_airsim_module():
 
 
 def test_validate_policy_action_clips_small_numeric_overshoot():
-    """Test behavior for validate policy action clips small numeric overshoot.
     """
+    Test behavior for validate policy action clips small numeric overshoot.
+    """
+
     action = validate_policy_action(np.array([1.0 + 1e-6, -1.0 - 1e-6], dtype=np.float32))
     np.testing.assert_allclose(action, np.array([1.0, -1.0], dtype=np.float32))
 
 
 def test_validate_policy_action_rejects_large_out_of_bounds():
-    """Test behavior for validate policy action rejects large out of bounds.
     """
+    Test behavior for validate policy action rejects large out of bounds.
+    """
+
     with pytest.raises(ValueError, match=r"within \[-1, 1\]"):
         validate_policy_action(np.array([0.0, 1.2], dtype=np.float32))
 
 
 def test_validate_policy_action_rejects_non_finite_values():
-    """Test behavior for validate policy action rejects non finite values.
     """
+    Test behavior for validate policy action rejects non finite values.
+    """
+
     with pytest.raises(ValueError, match="finite values"):
         validate_policy_action(np.array([0.0, np.nan], dtype=np.float32))
 
 
 def test_map_framework_policy_action_normalizes_to_ue5_throttle_range():
-    """Test behavior for framework policy action normalization to UE5 throttle.
     """
+    Test behavior for framework policy action normalization to UE5 throttle.
+    """
+
     airsim_module = _make_airsim_module()
     specs = create_ship().specifications
 
@@ -72,7 +87,10 @@ def test_map_framework_policy_action_normalizes_to_ue5_throttle_range():
 
 
 def test_map_direct_policy_action_preserves_full_lock_left_and_full_throttle():
-    """AirSim-trained actions should reach the UE5 control extremes."""
+    """
+    AirSim-trained actions should reach the UE5 control extremes.
+    """
+
     airsim_module = _make_airsim_module()
 
     controls = map_direct_policy_action(
@@ -86,7 +104,10 @@ def test_map_direct_policy_action_preserves_full_lock_left_and_full_throttle():
 
 
 def test_map_direct_policy_action_preserves_full_lock_right_and_zero_throttle():
-    """Signed throttle should map -1 to zero propulsion without clipping steering."""
+    """
+    Signed throttle should map -1 to zero propulsion without clipping steering.
+    """
+
     airsim_module = _make_airsim_module()
 
     controls = map_direct_policy_action(
@@ -100,7 +121,10 @@ def test_map_direct_policy_action_preserves_full_lock_right_and_zero_throttle():
 
 
 def test_map_framework_actuator_state_applies_throttle_gain():
-    """Mirrored framework throttle should support calibrated visual scaling."""
+    """
+    Mirrored framework throttle should support calibrated visual scaling.
+    """
+
     airsim_module = _make_airsim_module()
     specs = create_ship().specifications
 

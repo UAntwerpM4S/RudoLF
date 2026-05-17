@@ -51,6 +51,7 @@ class Nomoto(DynamicsBase):
             - The model state itself is not stored internally; only
               accelerations are computed from inputs.
         """
+
         self.ship_spec: ShipSpecifications = ship_spec
         self._initialize_coefficients()
 

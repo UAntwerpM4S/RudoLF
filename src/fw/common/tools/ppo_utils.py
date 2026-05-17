@@ -1,4 +1,6 @@
-"""Shared generic ppo utilities used across the framework."""
+"""
+Shared generic ppo utilities used across the framework.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +10,10 @@ import os
 WINDOWS_INVALID_FILENAME_CHARS = '<>:"/\\|?*'
 
 def _sanitize_file_component(name: str) -> str:
-    """Sanitize a single filename component for cross-platform safety."""
+    """
+    Sanitize a single filename component for cross-platform safety.
+    """
+
     # Remove control characters and trim whitespace/invalid trailing chars.
     cleaned = re.sub(r"[\x00-\x1f]", "", name).strip().rstrip(". ")
     if not cleaned:
@@ -18,7 +23,10 @@ def _sanitize_file_component(name: str) -> str:
 
 
 def normalize_policy_zip_path(filename: str) -> str:
-    """Normalize policy save/load path and ensure a .zip extension."""
+    """
+    Normalize policy save/load path and ensure a .zip extension.
+    """
+
     if filename is None:
         raise ValueError("Policy filename cannot be None.")
 

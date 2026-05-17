@@ -1,4 +1,5 @@
-"""Buffered telemetry CSV writer with sidecar metadata export.
+"""
+Buffered telemetry CSV writer with sidecar metadata export.
 
 The writer is intentionally lightweight during hot simulation loops:
 - rows are queued in memory;
@@ -51,7 +52,8 @@ _DEFAULT_FIELDNAMES = [
 
 
 def _json_safe(value: Any) -> Any:
-    """Recursively convert values into JSON-serializable structures.
+    """
+    Recursively convert values into JSON-serializable structures.
 
     Args:
         value: Arbitrary Python value that may contain ``Path`` objects or
@@ -60,6 +62,7 @@ def _json_safe(value: Any) -> Any:
     Returns:
         A JSON-safe equivalent structure.
     """
+
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     if isinstance(value, Path):
@@ -72,7 +75,8 @@ def _json_safe(value: Any) -> Any:
 
 
 class TelemetryExporter:
-    """Append-safe CSV telemetry writer with metadata export and crash guard.
+    """
+    Append-safe CSV telemetry writer with metadata export and crash guard.
 
     This class makes use of a background writer thread to flush buffered rows.
     Callers must call :meth:`close` explicitly to stop the worker thread cleanly
@@ -91,7 +95,8 @@ class TelemetryExporter:
         csv_filename: Optional[str] = None,
         metadata_filename: Optional[str] = None,
     ) -> None:
-        """Initialize the exporter and open its output files immediately.
+        """
+        Initialize the exporter and open its output files immediately.
 
         Args:
             session_type: Logical session category used for filenames and
@@ -108,6 +113,7 @@ class TelemetryExporter:
             csv_filename: Optional explicit CSV filename.
             metadata_filename: Optional explicit metadata JSON filename.
         """
+
         self._session_type = (session_type or "session").strip().lower()
         self._model_path = model_path
         self._environment_name = environment_name
@@ -156,12 +162,14 @@ class TelemetryExporter:
         )
 
     def update_metadata(self, metadata: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
-        """Merge additional metadata into the JSON sidecar payload.
+        """
+        Merge additional metadata into the JSON sidecar payload.
 
         Args:
             metadata: Optional mapping of metadata fields to merge.
             **kwargs: Additional metadata fields merged after ``metadata``.
         """
+
         payload = {}
         if metadata:
             payload.update(metadata)
@@ -169,12 +177,14 @@ class TelemetryExporter:
         self._metadata.update(_json_safe(payload))
 
     def log_step(self, row: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
-        """Queue one telemetry row for asynchronous CSV writing.
+        """
+        Queue one telemetry row for asynchronous CSV writing.
 
         Args:
             row: Optional row mapping to serialize.
             **kwargs: Additional row fields merged after ``row``.
         """
+
         payload = {}
         if row:
             payload.update(row)
@@ -188,7 +198,10 @@ class TelemetryExporter:
                 self._flush_buffer()
 
     def _flush_buffer(self) -> None:
-        """Hand buffered rows to the background writer thread."""
+        """
+        Hand buffered rows to the background writer thread.
+        """
+
         if not self._buffer:
             return
         batch = list(self._buffer)
@@ -196,7 +209,10 @@ class TelemetryExporter:
         self._queue.put(batch)
 
     def _writer_loop(self) -> None:
-        """Background thread that drains queued CSV batches to disk."""
+        """
+        Background thread that drains queued CSV batches to disk.
+        """
+
         while True:
             batch = self._queue.get()
             try:
@@ -210,7 +226,10 @@ class TelemetryExporter:
                 self._queue.task_done()
 
     def _write_metadata(self) -> None:
-        """Write the metadata JSON sidecar."""
+        """
+        Write the metadata JSON sidecar.
+        """
+
         metadata = {
             "session_type": self._session_type,
             "model_path": self._model_path,
@@ -231,7 +250,10 @@ class TelemetryExporter:
             logger.warning("Failed to write metadata JSON: %s", exc)
 
     def save(self) -> None:
-        """Flush all pending rows and update metadata on disk."""
+        """
+        Flush all pending rows and update metadata on disk.
+        """
+
         with self._lock:
             self._flush_buffer()
         self._queue.join()
@@ -239,13 +261,15 @@ class TelemetryExporter:
         self._saved = True
 
     def close(self) -> None:
-        """Flush pending rows, stop the worker thread, and close the CSV file.
+        """
+        Flush pending rows, stop the worker thread, and close the CSV file.
 
         Important:
             This method must be called explicitly once the exporter is no longer
             needed, to ensure the background writer thread is stopped reliably
             and file handles are closed.
         """
+
         if self._closed:
             return
 

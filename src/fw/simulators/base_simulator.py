@@ -99,4 +99,5 @@ class BaseSimulator(ABC):
                 to compensate for the difference between the original simulator's
                 and the target simulator's maximum rudder angles.
         """
+
         pass

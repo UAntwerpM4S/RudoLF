@@ -1,4 +1,6 @@
-"""Tests for fallback behavior in the generic framework entrypoint."""
+"""
+Tests for fallback behavior in the generic framework entrypoint.
+"""
 
 import runpy
 import sys
@@ -15,13 +17,15 @@ if str(_SRC_DIR) not in sys.path:
 
 
 def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
-    """Verify fw.main exits cleanly when the AirSim extension fails and no
+    """
+    Verify fw.main exits cleanly when the AirSim extension fails and no
     other environments are configured.
 
     When fw.config selects only the AirSim environment but the extension
     exits with a non-zero status, the generic framework entrypoint should
     raise SystemExit(1) rather than continuing with an empty environment list.
     """
+
     import multiprocessing
     import runpy as stdlib_runpy
 
@@ -39,7 +43,10 @@ def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
     original_run_module = stdlib_runpy.run_module
 
     def _failing_run_module(module_name, run_name=None):
-        """Raise a non-zero exit for fw.main_with_airsim to simulate failure."""
+        """
+        Raise a non-zero exit for fw.main_with_airsim to simulate failure.
+        """
+
         if module_name == "fw.main_with_airsim":
             raise SystemExit(1)
         return original_run_module(module_name, run_name=run_name)
@@ -59,7 +66,10 @@ def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
 
 
 def test_main_uses_framework_visualize_action(monkeypatch):
-    """Verify fw.main honors framework config action='visualize'."""
+    """
+    Verify fw.main honors framework config action='visualize'.
+    """
+
     import multiprocessing
 
     import fw.config as fw_config
@@ -82,19 +92,30 @@ def test_main_uses_framework_visualize_action(monkeypatch):
     trainer_calls = {}
 
     class _FakeTrainer:
-        """Minimal trainer test double used to capture call flow."""
+        """
+        Minimal trainer test double used to capture call flow.
+        """
 
         def __init__(self, *args, **kwargs):
-            """Record constructor usage."""
+            """
+            Record constructor usage.
+            """
+
             trainer_calls["constructed"] = True
 
         def train(self, configuration):
-            """Record unexpected train invocation in visualize mode."""
+            """
+            Record unexpected train invocation in visualize mode.
+            """
+
             trainer_calls["train_called"] = True
             return {"status": "unexpected-train"}
 
         def visualize(self, envs, airsim_bridge=None):
-            """Record visualize invocation and forwarded bridge argument."""
+            """
+            Record visualize invocation and forwarded bridge argument.
+            """
+
             trainer_calls["visualize_called"] = True
             trainer_calls["airsim_bridge"] = airsim_bridge
 
@@ -109,7 +130,10 @@ def test_main_uses_framework_visualize_action(monkeypatch):
 
 
 def test_main_passes_action_override_to_airsim_extension(monkeypatch):
-    """Verify fw.main explicitly forwards the framework action to AirSim."""
+    """
+    Verify fw.main explicitly forwards the framework action to AirSim.
+    """
+
     import multiprocessing
     import runpy as stdlib_runpy
 
@@ -127,7 +151,10 @@ def test_main_passes_action_override_to_airsim_extension(monkeypatch):
     captured = {}
 
     def _capture_run_module(module_name, run_name=None):
-        """Capture forwarded action when fw.main delegates to AirSim."""
+        """
+        Capture forwarded action when fw.main delegates to AirSim.
+        """
+
         if module_name == "fw.main_with_airsim":
             captured["module_name"] = module_name
             captured["forwarded_action"] = os.environ.get("FW_MAIN_ACTION_OVERRIDE")
@@ -144,7 +171,10 @@ def test_main_passes_action_override_to_airsim_extension(monkeypatch):
 
 
 def test_main_visualize_respects_environment_order(monkeypatch):
-    """Verify visualize runs in env_type order and includes AirSim in-place."""
+    """
+    Verify visualize runs in env_type order and includes AirSim in-place.
+    """
+
     import multiprocessing
     import runpy as stdlib_runpy
 
@@ -166,21 +196,32 @@ def test_main_visualize_respects_environment_order(monkeypatch):
     call_order = []
 
     def _build_env(name, framework_config=None):
-        """Track framework environment construction order."""
+        """
+        Track framework environment construction order.
+        """
+
         call_order.append(f"build:{name}")
         return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
     class _FakeTrainer:
-        """Test double for framework visualize execution."""
+        """
+        Test double for framework visualize execution.
+        """
 
         def __init__(self, *args, **kwargs):
-            """No-op constructor for parity with Trainer API."""
+            """
+            No-op constructor for parity with Trainer API.
+            """
+
             pass
 
         def visualize(self, envs, airsim_bridge=None):
-            """Record framework visualize call in ordered execution."""
+            """
+            Record framework visualize call in ordered execution.
+            """
+
             call_order.append("visualize:framework")
 
     monkeypatch.setattr(trainer_module, "Trainer", _FakeTrainer)
@@ -188,7 +229,10 @@ def test_main_visualize_respects_environment_order(monkeypatch):
     original_run_module = stdlib_runpy.run_module
 
     def _capture_run_module(module_name, run_name=None):
-        """Inject ordered AirSim visualize step signal."""
+        """
+        Inject ordered AirSim visualize step signal.
+        """
+
         if module_name == "fw.main_with_airsim":
             call_order.append("visualize:airsim")
             raise SystemExit(0)
@@ -206,7 +250,10 @@ def test_main_visualize_respects_environment_order(monkeypatch):
 
 
 def test_main_train_respects_environment_order(monkeypatch):
-    """Verify train runs in env_type order and keeps AirSim in sequence."""
+    """
+    Verify train runs in env_type order and keeps AirSim in sequence.
+    """
+
     import multiprocessing
     import runpy as stdlib_runpy
 
@@ -228,21 +275,32 @@ def test_main_train_respects_environment_order(monkeypatch):
     call_order = []
 
     def _build_env(name, framework_config=None):
-        """Track framework train environment construction order."""
+        """
+        Track framework train environment construction order.
+        """
+
         call_order.append(f"build:{name}")
         return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
     class _FakeTrainer:
-        """Test double for framework training execution."""
+        """
+        Test double for framework training execution.
+        """
 
         def __init__(self, *args, **kwargs):
-            """No-op constructor for parity with Trainer API."""
+            """
+            No-op constructor for parity with Trainer API.
+            """
+
             pass
 
         def train(self, configuration):
-            """Record framework train call in ordered execution."""
+            """
+            Record framework train call in ordered execution.
+            """
+
             call_order.append("train:framework")
             return {}
 
@@ -251,7 +309,10 @@ def test_main_train_respects_environment_order(monkeypatch):
     original_run_module = stdlib_runpy.run_module
 
     def _capture_run_module(module_name, run_name=None):
-        """Inject ordered AirSim train step signal."""
+        """
+        Inject ordered AirSim train step signal.
+        """
+
         if module_name == "fw.main_with_airsim":
             call_order.append("train:airsim")
             raise SystemExit(0)
@@ -269,11 +330,13 @@ def test_main_train_respects_environment_order(monkeypatch):
 
 
 def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
-    """Verify mixed env training continues without duplicating fallback env work.
+    """
+    Verify mixed env training continues without duplicating fallback env work.
 
     If the delegated AirSim step exits non-zero, fw.main should keep already
     completed framework training and not perform an extra fallback training pass.
     """
+
     import multiprocessing
     import runpy as stdlib_runpy
 
@@ -295,21 +358,32 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
     call_order = []
 
     def _build_env(name, framework_config=None):
-        """Track framework train setup for mixed-list fallback scenario."""
+        """
+        Track framework train setup for mixed-list fallback scenario.
+        """
+
         call_order.append(f"build:{name}")
         return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
     class _FakeTrainer:
-        """Test double for framework training in fallback scenario."""
+        """
+        Test double for framework training in fallback scenario.
+        """
 
         def __init__(self, *args, **kwargs):
-            """No-op constructor for parity with Trainer API."""
+            """
+            No-op constructor for parity with Trainer API.
+            """
+
             pass
 
         def train(self, configuration):
-            """Record framework train call before AirSim step failure."""
+            """
+            Record framework train call before AirSim step failure.
+            """
+
             call_order.append("train:framework")
             return {}
 
@@ -318,7 +392,10 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
     original_run_module = stdlib_runpy.run_module
 
     def _capture_run_module(module_name, run_name=None):
-        """Simulate AirSim step failure without replaying framework training."""
+        """
+        Simulate AirSim step failure without replaying framework training.
+        """
+
         if module_name == "fw.main_with_airsim":
             call_order.append("train:airsim:failed")
             raise SystemExit(1)
@@ -336,13 +413,15 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
 
 
 def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(monkeypatch):
-    """Verify repeated list stages are preserved around a failed AirSim step.
+    """
+    Verify repeated list stages are preserved around a failed AirSim step.
 
     Expected order for env_type=[PySimEnv, AirSimEnv, PySimEnv]:
     1) first PySim framework stage trains
     2) AirSim delegated stage fails and is skipped
     3) second PySim framework stage still trains
     """
+
     import multiprocessing
     import runpy as stdlib_runpy
 
@@ -368,34 +447,43 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
     call_order = []
 
     def _build_env(name, framework_config=None):
-        """Build a fake environment and log creation order.
+        """
+        Build a fake environment and log creation order.
 
         Args:
             name: Canonical environment name.
             framework_config: Framework configuration payload forwarded by main.
         """
+
         call_order.append(f"build:{name}")
         return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
     class _FakeTrainer:
-        """ FakeTrainer."""
+        """
+        FakeTrainer.
+        """
+
         def __init__(self, *args, **kwargs):
-            """Create a no-op trainer test double.
+            """
+            Create a no-op trainer test double.
 
             Args:
                 *args: Positional constructor arguments.
                 **kwargs: Keyword constructor arguments.
             """
+
             pass
 
         def train(self, configuration):
-            """Record framework training invocation.
+            """
+            Record framework training invocation.
 
             Args:
                 configuration: Scheduler configuration payload.
             """
+
             call_order.append("train:framework")
             return {}
 
@@ -404,12 +492,14 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
     original_run_module = stdlib_runpy.run_module
 
     def _capture_run_module(module_name, run_name=None):
-        """Simulate a failing AirSim delegated run.
+        """
+        Simulate a failing AirSim delegated run.
 
         Args:
             module_name: Name of the module being executed.
             run_name: Run target name passed to run_module.
         """
+
         if module_name == "fw.main_with_airsim":
             call_order.append("train:airsim:failed")
             raise SystemExit(1)

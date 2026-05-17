@@ -38,6 +38,7 @@ class CollisionEvent:
         Raises:
             ValueError: If timestep or distance is negative.
         """
+
         if self.timestep < 0:
             raise ValueError(f"timestep must be non-negative, got {self.timestep}.")
         if self.distance < 0.0:
@@ -94,6 +95,7 @@ class ShipEpisodeData:
             ValueError: If ship_id is empty, episode is negative, or path has an
                 invalid shape.
         """
+
         if not self.ship_id:
             raise ValueError("ship_id must be a non-empty string.")
         if self.episode < 0:
@@ -134,6 +136,7 @@ class RunData:
         Raises:
             ValueError: If num_episodes is negative or ships is None.
         """
+
         if self.num_episodes < 0:
             raise ValueError(f"num_episodes must be non-negative, got {self.num_episodes}.")
         if self.ships is None:

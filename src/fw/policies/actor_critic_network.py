@@ -6,7 +6,8 @@ from typing import Tuple
 
 
 class ActorCriticNetwork(nn.Module):
-    """Actor-Critic neural network with shared feature extractor.
+    """
+    Actor-Critic neural network with shared feature extractor.
 
     This network has a shared trunk for feature extraction, and two heads:
     one for predicting the action distribution (actor) and one for estimating
@@ -20,22 +21,26 @@ class ActorCriticNetwork(nn.Module):
     """
 
     def __init__(self, input_dim: int, output_dim: int):
-        """Initializes the ActorCriticNetwork.
+        """
+        Initializes the ActorCriticNetwork.
 
         Args:
             input_dim (int): Dimension of the input state space.
             output_dim (int): Dimension of the output action space.
         """
+
         super().__init__()
 
         # Helper to initialize layers orthogonally
         def init_layer(layer, gain=np.sqrt(2)):
-            """Init layer.
+            """
+            Init layer.
 
             Args:
                 layer: Description.
                 gain: Description.
             """
+
             nn.init.orthogonal_(layer.weight, gain=gain)
             nn.init.constant_(layer.bias, 0)
             return layer
@@ -59,7 +64,8 @@ class ActorCriticNetwork(nn.Module):
 
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Computes the forward pass.
+        """
+        Computes the forward pass.
 
         Args:
             state (torch.Tensor): Input state tensor of shape (batch_size, input_dim).
@@ -70,6 +76,7 @@ class ActorCriticNetwork(nn.Module):
                 - action_std (torch.Tensor): Standard deviation of the action distribution.
                 - state_value (torch.Tensor): Estimated value of the input state.
         """
+
         # Pass the state through the shared feature extractor
         shared_features = self.shared_network(state)
 

@@ -1,4 +1,6 @@
-"""AirSim-specific export helpers for inference, visualization, and telemetry sessions."""
+"""
+AirSim-specific export helpers for inference, visualization, and telemetry sessions.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +21,8 @@ from fw.config import (
 
 
 def get_export_directory(export_dir: Optional[str | Path] = None) -> Path:
-    """Return the export directory, creating it when needed.
+    """
+    Return the export directory, creating it when needed.
 
     Args:
         export_dir: Optional root export directory supplied by the caller.
@@ -27,6 +30,7 @@ def get_export_directory(export_dir: Optional[str | Path] = None) -> Path:
     Returns:
         Path: Existing or newly created export directory.
     """
+
     if export_dir is not None:
         path = Path(export_dir)
     else:
@@ -36,7 +40,8 @@ def get_export_directory(export_dir: Optional[str | Path] = None) -> Path:
 
 
 def _slugify(value: str) -> str:
-    """Build a filesystem-friendly slug.
+    """
+    Build a filesystem-friendly slug.
 
     Args:
         value: User-facing session label.
@@ -44,12 +49,14 @@ def _slugify(value: str) -> str:
     Returns:
         str: Filesystem-safe slug suitable for directory names.
     """
+
     slug = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
     return slug.strip("._-") or "session"
 
 
 def build_airsim_env_snapshot(env) -> Dict[str, Any]:
-    """Capture the current AirSim environment state as a serializable dictionary.
+    """
+    Capture the current AirSim environment state as a serializable dictionary.
 
     Args:
         env: Active ``AirSimEnv`` instance exposing ship pose, heading,
@@ -59,6 +66,7 @@ def build_airsim_env_snapshot(env) -> Dict[str, Any]:
         A dictionary with scalar telemetry values that can be written directly
         to metadata or CSV exports.
     """
+
     snapshot = {
         "ship_x": float(env.ship_pos[0]),
         "ship_y": float(env.ship_pos[1]),
@@ -78,7 +86,8 @@ def build_airsim_env_snapshot(env) -> Dict[str, Any]:
 
 
 def _get_ship_scalar(value: Any, ship_index: int = 0, default: Any = 0.0) -> Any:
-    """Return a scalar value for one ship from scalar or per-ship containers.
+    """
+    Return a scalar value for one ship from scalar or per-ship containers.
 
     Args:
         value: Scalar-like value or a per-ship container such as ``list``,
@@ -90,6 +99,7 @@ def _get_ship_scalar(value: Any, ship_index: int = 0, default: Any = 0.0) -> Any
     Returns:
         A scalar-compatible value for the requested ship.
     """
+
     if value is None:
         return default
     if isinstance(value, np.ndarray):
@@ -106,7 +116,8 @@ def _get_ship_scalar(value: Any, ship_index: int = 0, default: Any = 0.0) -> Any
 
 
 def _get_ship_item(value: Any, ship_index: int = 0, default: Any = None) -> Any:
-    """Return one per-ship item while tolerating flat and nested layouts.
+    """
+    Return one per-ship item while tolerating flat and nested layouts.
 
     Args:
         value: Scalar, array, or per-ship container.
@@ -117,6 +128,7 @@ def _get_ship_item(value: Any, ship_index: int = 0, default: Any = None) -> Any:
         Any: Extracted ship-specific item, original flat value, or
         ``default``.
     """
+
     if value is None:
         return default
     if isinstance(value, np.ndarray):
@@ -138,7 +150,8 @@ def _get_ship_item(value: Any, ship_index: int = 0, default: Any = None) -> Any:
 
 
 def _get_ship_sim_state(env, ship_index: int = 0) -> Any:
-    """Return one framework simulator state from common env layouts.
+    """
+    Return one framework simulator state from common env layouts.
 
     Args:
         env: Active framework environment.
@@ -148,6 +161,7 @@ def _get_ship_sim_state(env, ship_index: int = 0) -> Any:
     Returns:
         Any: Simulator state object when available, otherwise ``None``.
     """
+
     for attr_name in ("phys_sims", "phys_sim"):
         sim_entry = _get_ship_item(getattr(env, attr_name, None), ship_index=ship_index)
         if sim_entry is not None:
@@ -156,7 +170,8 @@ def _get_ship_sim_state(env, ship_index: int = 0) -> Any:
 
 
 class AirSimSessionExporter:
-    """Session-scoped export bundle for AirSim inference and visualization runs.
+    """
+    Session-scoped export bundle for AirSim inference and visualization runs.
 
     The exporter owns one timestamped session directory and keeps telemetry,
     bridge logs, and metadata paths aligned for inference and visualization
@@ -172,7 +187,8 @@ class AirSimSessionExporter:
         session_type: str = "inference",
         telemetry_filename: Optional[str] = None,
     ) -> None:
-        """Create a dedicated export directory and file set for one session.
+        """
+        Create a dedicated export directory and file set for one session.
 
         Args:
             session_name: Human-readable session label used to derive the folder
@@ -187,6 +203,7 @@ class AirSimSessionExporter:
             telemetry_filename: Optional explicit CSV filename for the primary
                 session telemetry export.
         """
+
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         slug = _slugify(session_name)
         normalized_session_type = _slugify(session_type).lower()
@@ -228,53 +245,69 @@ class AirSimSessionExporter:
         self.update_metadata(base_metadata)
 
     def log_step(self, row: Dict[str, Any]) -> None:
-        """Queue one session telemetry row.
+        """
+        Queue one session telemetry row.
 
         Args:
             row: Flat telemetry payload to append to the session CSV.
         """
+
         self._exporter.log_step(row)
 
     def log_inference_step(self, row: Dict[str, Any]) -> None:
-        """Queue one inference telemetry row.
+        """
+        Queue one inference telemetry row.
 
         Args:
             row: Inference-step telemetry payload to append to the session CSV.
         """
+
         self.log_step(row)
 
     def log_visualisation_step(self, row: Dict[str, Any]) -> None:
-        """Queue one visualization telemetry row.
+        """
+        Queue one visualization telemetry row.
 
         Args:
             row: Visualisation-step telemetry payload to append to the session
                 CSV.
         """
+
         self.log_step(row)
 
     def update_metadata(self, metadata: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
-        """Merge new metadata into the sidecar JSON.
+        """
+        Merge new metadata into the sidecar JSON.
 
         Args:
             metadata: Optional mapping of metadata fields to merge.
             **kwargs: Additional metadata fields merged after ``metadata``.
         """
+
         self._exporter.update_metadata(metadata, **kwargs)
 
     def save(self) -> None:
-        """Flush CSV rows and write metadata to disk."""
+        """
+        Flush CSV rows and write metadata to disk.
+        """
+
         self._exporter.save()
 
     def close(self) -> None:
-        """Flush everything and close the underlying exporter."""
+        """
+        Flush everything and close the underlying exporter.
+        """
+
         self._exporter.close()
 
     def __enter__(self) -> "AirSimSessionExporter":
-        """Enter runtime context for automatic resource management.
+        """
+        Enter runtime context for automatic resource management.
 
         Returns:
             AirSimSessionExporter: The active exporter instance.
         """
+
         return self
 
     def __exit__(
@@ -283,13 +316,15 @@ class AirSimSessionExporter:
         exc_value,
         traceback,
     ) -> None:
-        """Ensure exporter is closed when exiting context manager.
+        """
+        Ensure exporter is closed when exiting context manager.
 
         Args:
             exc_type: Exception type raised inside the context, if any.
             exc_value: Exception instance raised inside the context, if any.
             traceback: Traceback object for the active exception, if any.
         """
+
         try:
             self.save()
         finally:
@@ -308,7 +343,8 @@ def build_framework_visualisation_row(
     ship_index: int = 0,
     model_origin: str = "framework",
 ) -> Dict[str, Any]:
-    """Build one lightweight visualization telemetry row from framework state.
+    """
+    Build one lightweight visualization telemetry row from framework state.
 
     Args:
         env: Active framework environment containing ship pose and simulator
@@ -332,6 +368,7 @@ def build_framework_visualisation_row(
         A flat CSV-friendly dictionary describing the current visualization
         step.
     """
+
     ship_pos = _get_ship_item(getattr(env, "ship_pos", None), ship_index=ship_index)
     if ship_pos is None or (isinstance(ship_pos, (list, tuple, np.ndarray)) and len(ship_pos) == 0):
         ship_pos = (0.0, 0.0)
@@ -339,7 +376,9 @@ def build_framework_visualisation_row(
     state = _get_ship_sim_state(env, ship_index=ship_index)
     if state is None:
         class _DefaultState:
-            """Default motion state used when AirSim state is unavailable."""
+            """
+            Default motion state used when AirSim state is unavailable.
+            """
 
             heading = 0.0
             u = 0.0

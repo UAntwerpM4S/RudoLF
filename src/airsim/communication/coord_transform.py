@@ -1,4 +1,6 @@
-"""Framework <-> AirSim coordinate transform."""
+"""
+Framework <-> AirSim coordinate transform.
+"""
 
 import json
 import math
@@ -14,7 +16,8 @@ _DEFAULT_CALIBRATION_PATH = _THIS_DIR.parent / "config" / "calibration.json"
 
 
 class CoordTransform:
-    """Bidirectional coordinate transform between framework and AirSim frames.
+    """
+    Bidirectional coordinate transform between framework and AirSim frames.
 
     The transform is defined by an anchor pair
     (``framework_origin`` <-> ``airsim_origin``) plus scale, rotation, and
@@ -24,7 +27,8 @@ class CoordTransform:
     """
 
     def __init__(self, calibration: Optional[dict] = None) -> None:
-        """Initialize the coordinate transform.
+        """
+        Initialize the coordinate transform.
 
         Args:
             calibration: Dictionary containing the calibration parameters.
@@ -34,6 +38,7 @@ class CoordTransform:
                 Legacy calibration files with a non-AirSim origin key are also
                 accepted automatically.
         """
+
         if calibration is not None:
             self._scale = calibration["scale"]
             self._rotation = calibration["rotation"]
@@ -65,7 +70,10 @@ class CoordTransform:
     def framework_to_airsim(
         self, framework_x: float, framework_y: float, z: float = 0.0
     ) -> Tuple[float, float, float]:
-        """Convert a framework position to AirSim ``(x, y, z)``."""
+        """
+        Convert a framework position to AirSim ``(x, y, z)``.
+        """
+
         dx = framework_x - self._framework_origin[0]
         dy = framework_y - self._framework_origin[1]
 
@@ -83,14 +91,20 @@ class CoordTransform:
     def framework_to_airsim_2d(
         self, framework_x: float, framework_y: float
     ) -> Tuple[float, float]:
-        """Convenience wrapper that returns only the 2-D AirSim position."""
+        """
+        Convenience wrapper that returns only the 2-D AirSim position.
+        """
+
         ax, ay, _ = self.framework_to_airsim(framework_x, framework_y)
         return ax, ay
 
     def framework_vector_to_airsim(
         self, framework_dx: float, framework_dy: float
     ) -> Tuple[float, float]:
-        """Convert a framework-frame vector to an AirSim-frame vector."""
+        """
+        Convert a framework-frame vector to an AirSim-frame vector.
+        """
+
         dx = framework_dx
         dy = framework_dy
 
@@ -108,13 +122,19 @@ class CoordTransform:
     def framework_velocity_to_airsim(
         self, framework_vx: float, framework_vy: float
     ) -> Tuple[float, float]:
-        """Convert an earth-fixed framework velocity vector to AirSim."""
+        """
+        Convert an earth-fixed framework velocity vector to AirSim.
+        """
+
         return self.framework_vector_to_airsim(framework_vx, framework_vy)
 
     def airsim_to_framework(
         self, airsim_x: float, airsim_y: float
     ) -> Tuple[float, float]:
-        """Convert an AirSim position back to the framework frame."""
+        """
+        Convert an AirSim position back to the framework frame.
+        """
+
         rx = airsim_x - self._airsim_origin[0]
         ry = airsim_y - self._airsim_origin[1]
 
@@ -134,7 +154,10 @@ class CoordTransform:
         return fx, fy
 
     def framework_heading_to_airsim_yaw(self, heading: float) -> float:
-        """Convert a framework heading to an AirSim yaw angle."""
+        """
+        Convert a framework heading to an AirSim yaw angle.
+        """
+
         adjusted_heading = heading
         if self._mirror_x:
             adjusted_heading = math.pi - adjusted_heading
@@ -143,7 +166,10 @@ class CoordTransform:
         return self._rotation + adjusted_heading
 
     def airsim_yaw_to_framework_heading(self, yaw: float) -> float:
-        """Convert an AirSim yaw angle back to a framework heading."""
+        """
+        Convert an AirSim yaw angle back to a framework heading.
+        """
+
         heading = yaw - self._rotation
         if self._mirror_y:
             heading = -heading
@@ -152,20 +178,29 @@ class CoordTransform:
         return _normalize_angle(heading)
 
     def framework_yaw_rate_to_airsim(self, yaw_rate: float) -> float:
-        """Convert a framework yaw-rate to the matching AirSim yaw-rate."""
+        """
+        Convert a framework yaw-rate to the matching AirSim yaw-rate.
+        """
+
         sign = -1.0 if (self._mirror_x ^ self._mirror_y) else 1.0
         return sign * yaw_rate
 
     @classmethod
     def load(cls, path: Path = _DEFAULT_CALIBRATION_PATH) -> "CoordTransform":
-        """Load a coordinate transform from a JSON calibration file."""
+        """
+        Load a coordinate transform from a JSON calibration file.
+        """
+
         with open(path, "r", encoding="utf-8") as file:
             data = json.load(file)
         return cls(data)
 
     @classmethod
     def identity(cls, framework_origin=(0.0, 0.0)) -> "CoordTransform":
-        """Create a simple axis-swap transform without full calibration."""
+        """
+        Create a simple axis-swap transform without full calibration.
+        """
+
         return cls(
             {
                 "scale": 1.0,

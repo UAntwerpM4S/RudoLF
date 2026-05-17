@@ -1,4 +1,6 @@
-"""Configuration helper utilities shared by framework modules."""
+"""
+Configuration helper utilities shared by framework modules.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +9,8 @@ from typing import Any
 
 
 def normalize_configuration(configuration: Any) -> Any:
-    """Normalize placeholder configuration values to stable runtime objects.
+    """
+    Normalize placeholder configuration values to stable runtime objects.
 
     Args:
         configuration: Configuration object passed by callers. Supported values:
@@ -19,6 +22,7 @@ def normalize_configuration(configuration: Any) -> Any:
     Returns:
         A normalized configuration object suitable for environment factories.
     """
+
     if configuration is None:
         return None
     if isinstance(configuration, Mapping):

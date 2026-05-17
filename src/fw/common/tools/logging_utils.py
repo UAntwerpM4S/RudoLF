@@ -1,4 +1,6 @@
-"""Shared generic logging utilities used across the framework."""
+"""
+Shared generic logging utilities used across the framework.
+"""
 
 from __future__ import annotations
 
@@ -39,6 +41,7 @@ def dump_multi_agent_metrics(model_dir, metrics_dict: dict):
     """
     Helper method to flatten multi-agent metrics for CSV export.
     """
+
     flat_metrics = []
     for agent_name, agent_metrics in metrics_dict.items():
         agent_id = int(agent_name.replace('agent', ''))

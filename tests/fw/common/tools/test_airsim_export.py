@@ -1,4 +1,6 @@
-"""Tests for AirSim-specific export helpers."""
+"""
+Tests for AirSim-specific export helpers.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +19,10 @@ from fw.common.airsim.tools.airsim_export import AirSimSessionExporter, build_fr
 
 
 def test_airsim_session_exporter_writes_into_session_folder(tmp_path: Path) -> None:
-    """AirSim session exporter should write telemetry and metadata to exports."""
+    """
+    AirSim session exporter should write telemetry and metadata to exports.
+    """
+
     exporter = AirSimSessionExporter(
         session_name="demo_run",
         metadata={"model_path": "models/TestModel.zip", "environment_name": "AirSimEnv"},
@@ -40,7 +45,10 @@ def test_airsim_session_exporter_writes_into_session_folder(tmp_path: Path) -> N
 
 
 def test_airsim_visualisation_exporter_uses_visualisation_file_name(tmp_path: Path) -> None:
-    """Visualization sessions should write to a dedicated visualization CSV."""
+    """
+    Visualization sessions should write to a dedicated visualization CSV.
+    """
+
     exporter = AirSimSessionExporter(
         session_name="visualise_run",
         metadata={"model_path": "models/TestModel.zip", "environment_name": "PySimEnv"},
@@ -58,7 +66,10 @@ def test_airsim_visualisation_exporter_uses_visualisation_file_name(tmp_path: Pa
 
 
 def test_airsim_session_exporter_context_manager(tmp_path: Path) -> None:
-    """AirSimSessionExporter should clean up when used as a context manager."""
+    """
+    AirSimSessionExporter should clean up when used as a context manager.
+    """
+
     with AirSimSessionExporter(
         session_name="demo_run_context",
         metadata={"model_path": "models/TestModel.zip", "environment_name": "AirSimEnv"},
@@ -73,7 +84,10 @@ def test_airsim_session_exporter_context_manager(tmp_path: Path) -> None:
 
 
 def test_build_framework_visualisation_row_handles_per_ship_lists() -> None:
-    """Visualisation row builder should extract scalars from per-ship env lists."""
+    """
+    Visualisation row builder should extract scalars from per-ship env lists.
+    """
+
     env = SimpleNamespace(
         ship_pos=[[10.0, 20.0]],
         phys_sims=[SimpleNamespace(state=SimpleNamespace(u=3.5, heading=0.25))],
@@ -100,7 +114,10 @@ def test_build_framework_visualisation_row_handles_per_ship_lists() -> None:
 
 
 def test_build_framework_visualisation_row_handles_empty_collections() -> None:
-    """Safe extraction when env fields are empty or missing."""
+    """
+    Safe extraction when env fields are empty or missing.
+    """
+
     env = SimpleNamespace(
         ship_pos=[],
         phys_sims=[],
@@ -127,7 +144,10 @@ def test_build_framework_visualisation_row_handles_empty_collections() -> None:
 
 
 def test_build_framework_visualisation_row_handles_mismatched_lengths() -> None:
-    """Must handle length mismatch between ship_pos and phys_sims gracefully."""
+    """
+    Must handle length mismatch between ship_pos and phys_sims gracefully.
+    """
+
     env = SimpleNamespace(
         ship_pos=[[10.0, 20.0]],
         phys_sims=[],
@@ -154,7 +174,10 @@ def test_build_framework_visualisation_row_handles_mismatched_lengths() -> None:
 
 
 def test_build_framework_visualisation_row_handles_missing_state_bits() -> None:
-    """Missing state attrs are handled with defaults."""
+    """
+    Missing state attrs are handled with defaults.
+    """
+
     env = SimpleNamespace(
         ship_pos=[[10.0, 20.0]],
         phys_sims=[SimpleNamespace(state=SimpleNamespace())],
@@ -181,7 +204,10 @@ def test_build_framework_visualisation_row_handles_missing_state_bits() -> None:
 
 
 def test_build_framework_visualisation_row_handles_flat_numpy_state() -> None:
-    """Flat NumPy ship state should not require ``[0]`` indexing."""
+    """
+    Flat NumPy ship state should not require ``[0]`` indexing.
+    """
+
     env = SimpleNamespace(
         ship_pos=np.array([10.0, 20.0], dtype=np.float32),
         phys_sims=[SimpleNamespace(state=SimpleNamespace(u=3.5, heading=0.25))],
@@ -208,7 +234,10 @@ def test_build_framework_visualisation_row_handles_flat_numpy_state() -> None:
 
 
 def test_build_framework_visualisation_row_handles_single_phys_sim_layout() -> None:
-    """FHSim-style envs exposing ``phys_sim`` should export true surge speed."""
+    """
+    FHSim-style envs exposing ``phys_sim`` should export true surge speed.
+    """
+
     env = SimpleNamespace(
         ship_pos=np.array([10.0, 20.0], dtype=np.float32),
         phys_sim=SimpleNamespace(state=SimpleNamespace(u=4.25, heading=0.5)),

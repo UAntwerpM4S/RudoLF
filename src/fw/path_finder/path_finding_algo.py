@@ -4,14 +4,20 @@ from shapely.geometry import Point, Polygon
 
 
 def attractive_force(ship_pos, target_pos, attractive_strength=5.0):
-    """Calculate the attractive force toward the target position."""
+    """
+    Calculate the attractive force toward the target position.
+    """
+
     direction = np.array(target_pos) - np.array(ship_pos)
     distance = np.linalg.norm(direction)
     force = attractive_strength * direction / distance if distance != 0 else np.zeros_like(direction)
     return force
 
 def repulsive_force(ship_pos, obstacle, repulsive_strength=10.0, obstacle_radius=100.0):
-    """Calculate the repulsive force from a single polygon obstacle."""
+    """
+    Calculate the repulsive force from a single polygon obstacle.
+    """
+
     poly = Polygon(obstacle)
     closest_point = poly.exterior.interpolate(poly.exterior.project(Point(ship_pos)))
     closest_point_coords = np.array([closest_point.x, closest_point.y])
@@ -25,13 +31,19 @@ def repulsive_force(ship_pos, obstacle, repulsive_strength=10.0, obstacle_radius
     return np.zeros(2), None
 
 def tangential_force(ship_pos, closest_point):
-    """Calculate the tangential force to slide along the obstacle boundary."""
+    """
+    Calculate the tangential force to slide along the obstacle boundary.
+    """
+
     direction = np.array(ship_pos) - closest_point
     tangent = np.array([-direction[1], direction[0]])  # Perpendicular vector
     return tangent / np.linalg.norm(tangent) if np.linalg.norm(tangent) != 0 else np.zeros_like(tangent)
 
 def apf(ship_pos, target_pos, obstacle, step_size=1.0, max_iterations=1000):
-    """Artificial Potential Field algorithm to find the path from ship_pos to target_pos."""
+    """
+    Artificial Potential Field algorithm to find the path from ship_pos to target_pos.
+    """
+
     path = [ship_pos]
     poly = Polygon(obstacle)
     print(poly[0])
@@ -66,7 +78,10 @@ def apf(ship_pos, target_pos, obstacle, step_size=1.0, max_iterations=1000):
     return np.array(path)
 
 def initialize_population(start, target, population_size, safe_polygon):
-    """Randomly initialize a population of paths."""
+    """
+    Randomly initialize a population of paths.
+    """
+
     population = []
     for _ in range(population_size):
         num_waypoints = np.random.randint(3, 10)  # Random number of waypoints
@@ -82,7 +97,10 @@ def initialize_population(start, target, population_size, safe_polygon):
     return population
 
 def fitness_function(path, safe_polygon):
-    """Evaluate the fitness of a path."""
+    """
+    Evaluate the fitness of a path.
+    """
+
     path_length = sum(np.linalg.norm(np.array(path[i]) - np.array(path[i + 1])) for i in range(len(path) - 1))
     penalty = 0
     for point in path:
@@ -93,7 +111,10 @@ def fitness_function(path, safe_polygon):
     return path_length + penalty + smoothness
 
 def select_parents(population, fitness_scores):
-    """Select parents based on their fitness scores using roulette wheel selection."""
+    """
+    Select parents based on their fitness scores using roulette wheel selection.
+    """
+
     total_fitness = sum(fitness_scores)
     probabilities = [1 - score / total_fitness for score in fitness_scores]
     probabilities = probabilities / np.sum(probabilities)  # Normalize to make a probability distribution
@@ -101,14 +122,20 @@ def select_parents(population, fitness_scores):
     return [population[i] for i in indices]
 
 def crossover(parent1, parent2):
-    """Perform single-point crossover between two parents."""
+    """
+    Perform single-point crossover between two parents.
+    """
+
     split_point = np.random.randint(1, min(len(parent1), len(parent2)) - 1)
     child1 = parent1[:split_point] + parent2[split_point:]
     child2 = parent2[:split_point] + parent1[split_point:]
     return child1, child2
 
 def mutate(path, safe_polygon, mutation_rate=0.1):
-    """Mutate a path by randomly shifting waypoints or adding/removing waypoints."""
+    """
+    Mutate a path by randomly shifting waypoints or adding/removing waypoints.
+    """
+
     new_path = []
     for point in path:
         if np.random.rand() < mutation_rate:
@@ -123,7 +150,10 @@ def mutate(path, safe_polygon, mutation_rate=0.1):
     return new_path
 
 def genetic_algorithm(start, target, safe_polygon, population_size=50, generations=1000):
-    """Find the optimal path using a genetic algorithm."""
+    """
+    Find the optimal path using a genetic algorithm.
+    """
+
     # Initialize population
     safe_polygon = Polygon(safe_polygon)
     population = initialize_population(start, target, population_size, safe_polygon)

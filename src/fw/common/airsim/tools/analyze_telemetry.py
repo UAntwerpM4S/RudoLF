@@ -1,4 +1,5 @@
-"""Offline analysis of AirSim bridge telemetry.
+"""
+Offline analysis of AirSim bridge telemetry.
 
 Reads ``airsim_telemetry.csv`` and computes summary statistics including
 mean / max distance error, mean / max heading error, and derived accuracy
@@ -25,7 +26,8 @@ POSSIBLE_PATHS = [
 
 
 def find_telemetry_file() -> str | None:
-    """Search for the telemetry CSV in a list of candidate locations.
+    """
+    Search for the telemetry CSV in a list of candidate locations.
 
     Iterates through ``POSSIBLE_PATHS`` and returns the first path
     that exists on disk.
@@ -34,6 +36,7 @@ def find_telemetry_file() -> str | None:
         The absolute or relative path to the telemetry CSV, or
         ``None`` if no candidate file is found.
     """
+
     for p in POSSIBLE_PATHS:
         if os.path.exists(p):
             return p
@@ -41,7 +44,8 @@ def find_telemetry_file() -> str | None:
 
 
 def analyze() -> None:
-    """Read telemetry data and print summary statistics to stdout.
+    """
+    Read telemetry data and print summary statistics to stdout.
 
     Computes per-step mean absolute distance error, mean absolute
     heading error, and derived positional / heading accuracy
@@ -50,6 +54,7 @@ def analyze() -> None:
     Raises:
         FileNotFoundError: If none of the candidate paths exist.
     """
+
     filename = find_telemetry_file()
     if filename is None:
         print(f"Telemetry file not found in: {POSSIBLE_PATHS}")

@@ -23,6 +23,7 @@ class BaseEnv(gym.Env):
         Args:
             render_mode (str, optional): The rendering mode. Defaults to None.
         """
+
         super().__init__()
 
         self._render_mode = render_mode
@@ -37,6 +38,7 @@ class BaseEnv(gym.Env):
         """
         Environment name.
         """
+
         return self._env_name
 
 
@@ -48,6 +50,7 @@ class BaseEnv(gym.Env):
         Args:
             value: The environment's name.
         """
+
         self._env_name = value
 
 
@@ -56,6 +59,7 @@ class BaseEnv(gym.Env):
         """
         Render mode.
         """
+
         return self._render_mode
 
 
@@ -67,6 +71,7 @@ class BaseEnv(gym.Env):
         Args:
             value: Description.
         """
+
         self._render_mode = value
 
 
@@ -75,6 +80,7 @@ class BaseEnv(gym.Env):
         """
         Enable smoothing.
         """
+
         return self._smoothing_enabled
 
 
@@ -86,6 +92,7 @@ class BaseEnv(gym.Env):
         Args:
             value: Description.
         """
+
         self._smoothing_enabled = value
 
 
@@ -105,6 +112,7 @@ class BaseEnv(gym.Env):
         manual angle configuration is required.  *False* means the raw policy
         output is forwarded to the target simulator without rescaling.
         """
+
         return self._rudder_angle_scaling_enabled
 
 
@@ -116,6 +124,7 @@ class BaseEnv(gym.Env):
         Args:
             value (bool): True to enable scaling, False to disable.
         """
+
         self._rudder_angle_scaling_enabled = value
 
 
@@ -124,6 +133,7 @@ class BaseEnv(gym.Env):
         """
         Returns the sub-environments. This property should only be used by multi-environment.
         """
+
         return self._sub_environments
 
 
@@ -218,6 +228,7 @@ class BaseEnv(gym.Env):
         Returns:
             str: The class name of the current environment instance.
         """
+
         return type(self).__name__
 
 
@@ -232,6 +243,7 @@ class BaseEnv(gym.Env):
             randomization_scale (Optional[Any]): Scale or configuration for the randomization.
                 The exact structure depends on the specific environment's needs.
         """
+
         pass
 
 
@@ -242,4 +254,5 @@ class BaseEnv(gym.Env):
         This method should be overridden to implement additional reset behavior
         that is specific to a subclass (e.g., setting custom internal state).
         """
+
         pass
