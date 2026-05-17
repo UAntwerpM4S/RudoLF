@@ -104,7 +104,7 @@ class ContactDetector(contactListener):
 
 
 class LunarLander(BaseEnv, EzPickle):
-    """
+    r"""
     ## Description
     This environment is a classic rocket trajectory optimization problem.
     According to Pontryagin's maximum principle, it is optimal to fire the
