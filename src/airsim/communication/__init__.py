@@ -1,4 +1,5 @@
-"""Communication layer between the RL framework and CosysAirSim.
+"""
+Communication layer between the RL framework and CosysAirSim.
 
 Modules:
     airsim_bridge: Robust connection manager and pass-through control

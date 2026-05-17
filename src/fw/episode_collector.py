@@ -143,7 +143,8 @@ class EpisodeCollector:
     """
 
     def __init__(self, agent, env, profile: VesselProfile, ship_ids: Optional[list[str]] = None, airsim_bridge=None):
-        """Initialize the collector and resolve the ship IDs to track.
+        """
+        Initialize the collector and resolve the ship IDs to track.
 
         Args:
             agent: Trained agent used to produce actions during evaluation.
@@ -156,6 +157,7 @@ class EpisodeCollector:
         Raises:
             ValueError: If the resolved ship ID list is empty.
         """
+
         self._agent = agent
         self._env = env
         self._profile = profile

@@ -1,4 +1,6 @@
-"""Modular model visualisation runner for UE5."""
+"""
+Modular model visualisation runner for UE5.
+"""
 
 from __future__ import annotations
 
@@ -50,7 +52,8 @@ _DEFAULT_TRAIL_MIN_SEGMENT_M = 1.5
 
 
 def _normalise_policy_observation(obs, expected_dim: int | None = None) -> np.ndarray:
-    """Convert framework observations to a flat policy input vector.
+    """
+    Convert framework observations to a flat policy input vector.
 
     This keeps AirSim replay compatible with both flat single-ship observations
     and batched per-ship layouts, without requiring framework env changes.
@@ -63,6 +66,7 @@ def _normalise_policy_observation(obs, expected_dim: int | None = None) -> np.nd
     Returns:
         np.ndarray: Flat observation vector for ``PPOPolicy.predict``.
     """
+
     arr = np.asarray(obs, dtype=np.float32)
 
     if arr.ndim <= 1:
@@ -82,7 +86,8 @@ def _normalise_policy_observation(obs, expected_dim: int | None = None) -> np.nd
 
 
 def _normalise_policy_action(action, expected_dim: int | None = None) -> np.ndarray:
-    """Convert policy action output to a flat environment action vector.
+    """
+    Convert policy action output to a flat environment action vector.
 
     Args:
         action: Action payload returned by ``PPOPolicy.predict``.
@@ -91,6 +96,7 @@ def _normalise_policy_action(action, expected_dim: int | None = None) -> np.ndar
     Returns:
         np.ndarray: Flat action vector.
     """
+
     arr = np.asarray(action, dtype=np.float32).reshape(-1)
     if expected_dim is None or arr.size <= int(expected_dim):
         return arr
@@ -98,7 +104,8 @@ def _normalise_policy_action(action, expected_dim: int | None = None) -> np.ndar
 
 
 class VisualiseModelsRunner:
-    """Framework-physics visualizer that mirrors model output into UE5.
+    """
+    Framework-physics visualizer that mirrors model output into UE5.
 
     The runner stays model-family agnostic by delegating policy loading,
     environment construction, and state extraction to a
@@ -106,17 +113,20 @@ class VisualiseModelsRunner:
     """
 
     def __init__(self, adapter: ModelVisualisationAdapter, env_name: str = "auto") -> None:
-        """Initialize the generic runner with a model-family adapter.
+        """
+        Initialize the generic runner with a model-family adapter.
 
         Args:
             adapter: Adapter implementing family-specific replay behavior.
             env_name: Requested framework environment name, or ``"auto"``.
         """
+
         self.adapter = adapter
         self.env_name = env_name
 
     def _resolve_environment_name(self, model_path: str) -> str:
-        """Resolve which framework environment should back the visualization.
+        """
+        Resolve which framework environment should back the visualization.
 
         Args:
             model_path: Model checkpoint path used for replay.
@@ -124,10 +134,12 @@ class VisualiseModelsRunner:
         Returns:
             str: Canonical framework environment name.
         """
+
         return self.adapter.resolve_environment_name(model_path, self.env_name)
 
     def _load_policy(self, model_path: str, device: str):
-        """Load the framework policy used for replay.
+        """
+        Load the framework policy used for replay.
 
         Args:
             model_path: Model checkpoint path used for replay.
@@ -136,10 +148,12 @@ class VisualiseModelsRunner:
         Returns:
             Any: Loaded policy object exposing ``predict``.
         """
+
         return self.adapter.load_policy(model_path, device=device)
 
     def _build_environment(self, selected_env: str, max_steps: int):
-        """Construct the framework environment for replay.
+        """
+        Construct the framework environment for replay.
 
         Args:
             selected_env: Canonical framework environment name.
@@ -148,10 +162,12 @@ class VisualiseModelsRunner:
         Returns:
             Any: Instantiated framework environment.
         """
+
         return self.adapter.build_environment(selected_env, max_steps=max_steps)
 
     def _motion_state_from_env(self, env, bridge: AirSimBridge):
-        """Extract the current framework motion state.
+        """
+        Extract the current framework motion state.
 
         Args:
             env: Active framework environment.
@@ -160,10 +176,12 @@ class VisualiseModelsRunner:
         Returns:
             Any: AirSim-frame motion state returned by the adapter.
         """
+
         return self.adapter.motion_state_from_env(env, bridge)
 
     def _animate_state(self, env, bridge: AirSimBridge, **kwargs):
-        """Mirror one framework state transition into UE5.
+        """
+        Mirror one framework state transition into UE5.
 
         Args:
             env: Active framework environment.
@@ -173,10 +191,12 @@ class VisualiseModelsRunner:
         Returns:
             Any: Adapter return value describing the mirrored state.
         """
+
         return self.adapter.animate_state(env, bridge, **kwargs)
 
     def _extract_pose(self, env) -> tuple[float, float, float]:
-        """Extract the current framework pose through the adapter surface.
+        """
+        Extract the current framework pose through the adapter surface.
 
         Args:
             env: Active framework environment.
@@ -184,10 +204,12 @@ class VisualiseModelsRunner:
         Returns:
             tuple[float, float, float]: Framework-frame ``(x, y, heading)``.
         """
+
         return self.adapter.extract_pose(env)
 
     def _extract_velocity(self, env) -> tuple[float, float, float]:
-        """Extract the current framework velocity through the adapter surface.
+        """
+        Extract the current framework velocity through the adapter surface.
 
         Args:
             env: Active framework environment.
@@ -196,6 +218,7 @@ class VisualiseModelsRunner:
             tuple[float, float, float]: Framework-frame
             ``(surge, sway, yaw_rate)``.
         """
+
         return self.adapter.extract_velocity(env)
 
     def run(
@@ -230,7 +253,8 @@ class VisualiseModelsRunner:
         startup_settle_s: float = _DEFAULT_STARTUP_SETTLE_S,
         verbose: bool = False,
     ) -> None:
-        """Run framework-model playback mirrored into UE5.
+        """
+        Run framework-model playback mirrored into UE5.
 
         Args:
             model_path: Path to the trained model checkpoint.
@@ -263,6 +287,7 @@ class VisualiseModelsRunner:
             startup_settle_s: Startup settle window before stepping begins.
             verbose: Whether to emit detailed per-step logging.
         """
+
         logger.setLevel(logging.INFO if verbose else logging.WARNING)
 
         selected_env = self._resolve_environment_name(model_path)
@@ -331,7 +356,8 @@ class VisualiseModelsRunner:
             env = None
 
             def _trail_point_from_motion_state(motion_state: np.ndarray):
-                """Return the current UE5 trail point for the ship path marker.
+                """
+                Return the current UE5 trail point for the ship path marker.
 
                 Args:
                     motion_state: AirSim-frame motion vector
@@ -341,6 +367,7 @@ class VisualiseModelsRunner:
                     Any: ``Vector3r``-compatible point for persistent trail
                     plotting.
                 """
+
                 trail_offset_m = 8.0
                 trail_x = float(motion_state[0] - np.cos(float(motion_state[2])) * trail_offset_m)
                 trail_y = float(motion_state[1] - np.sin(float(motion_state[2])) * trail_offset_m)
@@ -638,7 +665,8 @@ class VisualiseModelsRunner:
 
 
 def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) -> None:
-    """Dispatch visualization to the selected model-family adapter.
+    """
+    Dispatch visualization to the selected model-family adapter.
 
     Args:
         model_path: Model checkpoint path used for replay.
@@ -646,6 +674,7 @@ def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) 
         **kwargs: Additional runner options forwarded to
             ``VisualiseModelsRunner.run``.
     """
+
     env_name = str(kwargs.pop("env_name", "auto"))
     adapter = resolve_visualisation_adapter(
         model_family=model_family,
@@ -658,11 +687,13 @@ def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) 
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser for framework-model replay.
+    """
+    Build the command-line parser for framework-model replay.
 
     Returns:
         argparse.ArgumentParser: Configured CLI parser for UE5 replay runs.
     """
+
     parser = argparse.ArgumentParser(
         description="Visualise framework model playback in UE5.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

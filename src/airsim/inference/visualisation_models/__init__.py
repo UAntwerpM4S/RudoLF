@@ -1,4 +1,6 @@
-"""Model-family adapters for framework visualisation in UE5."""
+"""
+Model-family adapters for framework visualization in UE5.
+"""
 
 from .model_adapters import (
     FhSimVisualisationAdapter,

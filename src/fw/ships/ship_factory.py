@@ -5,7 +5,9 @@ from fw.ships.ship_specs import ShipSpecifications
 
 
 class ShipModel(Enum):
-    """Enumeration of supported ship specification presets."""
+    """
+    Enumeration of supported ship specification presets.
+    """
 
     MYZAKO_DEFAULT = auto()
     MYZAKO_29 = auto()

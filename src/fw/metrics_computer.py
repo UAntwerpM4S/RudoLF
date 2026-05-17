@@ -183,7 +183,8 @@ class MetricsComputer:
                 per_ep_Mu.append(float(np.nanmax(v)))
 
         def safe_mean(lst: list) -> float:
-            """Compute mean of list, returning 0.0 for empty lists.
+            """
+            Compute mean of list, returning 0.0 for empty lists.
             
             Uses np.nanmean to ignore NaN values. Returns 0.0 if list is empty
             to avoid warnings and ensure consistent behavior across episodes.
@@ -194,10 +195,12 @@ class MetricsComputer:
             Returns:
                 float: Mean of non-NaN values, or 0.0 if list is empty.
             """
+
             return float(np.nanmean(lst)) if lst else 0.0
 
         def safe_max(lst: list) -> float:
-            """Compute maximum of list, returning 0.0 for empty lists.
+            """
+            Compute maximum of list, returning 0.0 for empty lists.
             
             Uses np.nanmax to ignore NaN values. Returns 0.0 if list is empty
             to avoid warnings and ensure consistent behavior across episodes.
@@ -208,6 +211,7 @@ class MetricsComputer:
             Returns:
                 float: Maximum of non-NaN values, or 0.0 if list is empty.
             """
+
             return float(np.nanmax(lst)) if lst else 0.0
 
         m.mTEI = safe_mean(per_ep_mTEI)

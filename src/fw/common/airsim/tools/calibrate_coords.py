@@ -1,4 +1,5 @@
-"""Coordinate calibration tool for Framework <-> AirSim mapping.
+"""
+Coordinate calibration tool for Framework <-> AirSim mapping.
 
 Run this script while UE5 + CosysAirSim is running. It will:
 1. Ask you to drive the vehicle to 2 known reference points
@@ -30,12 +31,14 @@ _CONFIG_DIR = _SRC_DIR / "airsim" / "config"
 _ENVIRONMENTS_DIR = _SRC_DIR / "fw" / "environments"
 
 def _load_trajectory_endpoints() -> tuple:
-    """Load the first and last waypoints from the trajectory CSV.
+    """
+    Load the first and last waypoints from the trajectory CSV.
 
     Returns:
         A tuple ``(start, end)`` where each element is a NumPy array
         of shape ``(2,)`` containing ``[x_east, y_north]``.
     """
+
     csv_path = _ENVIRONMENTS_DIR / "trajectory_points_no_scale.csv"
     data = np.loadtxt(csv_path, delimiter=",", skiprows=1)
     start = data[0]
@@ -44,7 +47,8 @@ def _load_trajectory_endpoints() -> tuple:
 
 
 def _detect_origin_drift(client, saved_config: dict) -> np.ndarray:
-    """Detect and report AirSim coordinate-origin drift.
+    """
+    Detect and report AirSim coordinate-origin drift.
 
     Compares the vehicle's current spawn position against the position
     recorded at calibration time.  If the delta exceeds 0.5 m, the
@@ -59,6 +63,7 @@ def _detect_origin_drift(client, saved_config: dict) -> np.ndarray:
     Returns:
         A 2-element NumPy array ``[dx, dy]`` representing the drift.
     """
+
     if "spawn_position" not in saved_config:
         return np.array([0.0, 0.0])
 
@@ -78,7 +83,8 @@ def _detect_origin_drift(client, saved_config: dict) -> np.ndarray:
 
 
 def _collect_reference_points(client, traj_start, traj_end, has_existing, choice):
-    """Gather two Framework <-> AirSim reference-point pairs interactively.
+    """
+    Gather two Framework <-> AirSim reference-point pairs interactively.
 
     Depending on the user's ``choice`` the method either re-uses a
     saved calibration, drives to points in UE5, or accepts manual
@@ -95,6 +101,7 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
         An 8-tuple ``(framework_A, framework_B, ue5_A, ue5_B,
         mirror_x, mirror_y, offset_x, offset_y)``.
     """
+
     if choice in ["1", "4", "5"] and has_existing:
         cal_path = _CONFIG_DIR / "calibration.json"
         with open(cal_path, "r") as f:
@@ -178,7 +185,8 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
 def _compute_calibration(framework_A, framework_B, ue5_A, ue5_B,
                           mirror_x, mirror_y, offset_x, offset_y,
                           spawn_position) -> dict:
-    """Compute the calibration dictionary from two reference-point pairs.
+    """
+    Compute the calibration dictionary from two reference-point pairs.
 
     Args:
         framework_A: First reference point in Framework coordinates.
@@ -194,6 +202,7 @@ def _compute_calibration(framework_A, framework_B, ue5_A, ue5_B,
     Returns:
         A dictionary suitable for writing to ``calibration.json``.
     """
+
     framework_dist = np.linalg.norm(framework_B - framework_A)
     ue5_dist = np.linalg.norm(ue5_B - ue5_A)
     scale = ue5_dist / framework_dist
@@ -236,7 +245,8 @@ def _draw_visualization(
     ship_pos: tuple[float, float] | None = None,
     target_pos: tuple[float, float] | None = None,
 ) -> None:
-    """Draw polygon, trajectory, and reference dots in UE5.
+    """
+    Draw polygon, trajectory, and reference dots in UE5.
 
     Uses the AirSim ``simPlotLineStrip`` and ``simPlotPoints`` APIs to
     render persistent markers so the user can visually verify the
@@ -251,6 +261,7 @@ def _draw_visualization(
         ue5_A: First AirSim reference point.
         ue5_B: Second AirSim reference point.
     """
+
     import cosysairsim as airsim
 
     # Draw overlays high above the water so they remain visible in top-down cameras.
@@ -278,7 +289,10 @@ def _draw_visualization(
     print("\nDrawing Framework polygons in UE5 for visual verification...")
 
     def _plot_polygon_ridges(csv_name: str, color_rgba: list[float], thickness: float, z: float = overlay_z) -> None:
-        """Render a polygon CSV as persistent line-strip chunks in UE5."""
+        """
+        Render a polygon CSV as persistent line-strip chunks in UE5.
+        """
+
         csv_path = _ENVIRONMENTS_DIR / csv_name
         polygon = np.loadtxt(csv_path, delimiter=",", skiprows=1)
 
@@ -377,7 +391,8 @@ def load_saved_calibration_reference(
     ship_pos: tuple[float, float] | None = None,
     target_pos: tuple[float, float] | None = None,
 ) -> tuple[CoordTransform, dict]:
-    """Load saved calibration, apply drift correction, and optionally redraw it.
+    """
+    Load saved calibration, apply drift correction, and optionally redraw it.
 
     Args:
         client: Active ``cosysairsim.CarClient`` instance.
@@ -391,6 +406,7 @@ def load_saved_calibration_reference(
         A tuple ``(coord, config)`` containing the corrected transform and
         calibration dictionary after any drift adjustment.
     """
+
     cal_path = Path(calibration_path) if calibration_path else _CONFIG_DIR / "calibration.json"
     with open(cal_path, "r") as f:
         saved = json.load(f)
@@ -433,13 +449,15 @@ def load_saved_calibration_reference(
 
 
 def run_calibration() -> None:
-    """Run the interactive Framework <-> AirSim calibration wizard.
+    """
+    Run the interactive Framework <-> AirSim calibration wizard.
 
     Connects to AirSim, collects two reference-point pairs (either
     from an existing calibration, interactive driving, or manual
     entry), computes the transform, writes ``calibration.json``,
     and draws a visual verification overlay in UE5.
     """
+
     import cosysairsim as airsim
 
     client = airsim.CarClient()

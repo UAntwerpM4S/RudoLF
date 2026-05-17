@@ -1,4 +1,5 @@
-"""Print the current UE5 AirSim ship pose in both raw and framework coordinates.
+"""
+Print the current UE5 AirSim ship pose in both raw and framework coordinates.
 
 Run from the repository root:
 
@@ -32,7 +33,10 @@ from fw.common.airsim.tools.calibrate_coords import load_saved_calibration_refer
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Create the CLI parser for the framework pose reader."""
+    """
+    Create the CLI parser for the framework pose reader.
+    """
+
     parser = argparse.ArgumentParser(
         description="Read the current AirSim ship pose and convert it to framework coordinates."
     )
@@ -52,7 +56,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    """Connect to AirSim, apply calibration drift correction, and print the pose."""
+    """
+    Connect to AirSim, apply calibration drift correction, and print the pose.
+    """
+
     args = _build_parser().parse_args()
 
     runtime_cfg = get_airsim_config()

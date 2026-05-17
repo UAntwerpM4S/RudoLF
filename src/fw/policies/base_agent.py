@@ -109,6 +109,7 @@ class BaseAgent(ABC):
         Returns:
             Tuple[np.ndarray, float]: A tuple containing the selected action and its log probability.
         """
+
         pass
 
 
@@ -123,6 +124,7 @@ class BaseAgent(ABC):
         Args:
             stop_condition (StopCondition, optional): A stopping criterion to terminate training early.
         """
+
         pass
 
 
@@ -134,6 +136,7 @@ class BaseAgent(ABC):
         Args:
             policy_file_name (str): Name of the policy file to save.
         """
+
         pass
 
 
@@ -145,6 +148,7 @@ class BaseAgent(ABC):
         Args:
             policy_file_name (str): Name of the policy file to load.
         """
+
         pass
 
 
@@ -153,6 +157,7 @@ class BaseAgent(ABC):
         """
         Set policy in eval mode.
         """
+
         pass
 
 
@@ -163,4 +168,5 @@ class BaseAgent(ABC):
         Returns:
             BaseEnv: The training environment instance.
         """
+
         return self.env

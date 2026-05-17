@@ -1,4 +1,6 @@
-"""Session-scoped logging and plotting helpers for AirSim training runs."""
+"""
+Session-scoped logging and plotting helpers for AirSim training runs.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +18,10 @@ from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 
 
 def _json_safe(value: Any) -> Any:
-    """Convert nested training payloads into JSON-safe structures."""
+    """
+    Convert nested training payloads into JSON-safe structures.
+    """
+
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     if isinstance(value, Path):
@@ -33,7 +38,9 @@ def _json_safe(value: Any) -> Any:
 
 
 class AirSimTrainingSession:
-    """Own the files emitted for one AirSim PPO training session."""
+    """
+    Own the files emitted for one AirSim PPO training session.
+    """
 
     _RUN_LOG_FIELDNAMES = (
         "timestamp_utc",
@@ -77,7 +84,10 @@ class AirSimTrainingSession:
         model_dir: str | Path | None = None,
         log_dir: str = "logs/airsim_training_sessions",
     ) -> None:
-        """Create a timestamped AirSim training session directory."""
+        """
+        Create a timestamped AirSim training session directory.
+        """
+
         self._run_started = datetime.now(timezone.utc)
         timestamp = self._run_started.strftime("%Y%m%d_%H%M%S")
         root_dir = resolve_path_relative_to_src(log_dir, src_dir)
@@ -129,11 +139,17 @@ class AirSimTrainingSession:
         )
 
     def update_metadata(self, **metadata: Any) -> None:
-        """Merge extra metadata into the session sidecar JSON."""
+        """
+        Merge extra metadata into the session sidecar JSON.
+        """
+
         self._run_log_exporter.update_metadata(metadata)
 
     def set_route_snapshot(self, snapshot: dict[str, Any] | None) -> None:
-        """Store the latest route geometry snapshot for plotting."""
+        """
+        Store the latest route geometry snapshot for plotting.
+        """
+
         if not snapshot:
             return
         self._route_snapshot = _json_safe(snapshot)
@@ -161,11 +177,17 @@ class AirSimTrainingSession:
         self.update_metadata(route_summary=summary)
 
     def log_iteration(self, **kwargs: Any) -> None:
-        """Append one PPO iteration row to the iteration log."""
+        """
+        Append one PPO iteration row to the iteration log.
+        """
+
         self.iteration_logger.log_iteration(**kwargs)
 
     def log_run_events(self, events: list[dict[str, Any]] | None) -> None:
-        """Append a batch of environment run events to the run log."""
+        """
+        Append a batch of environment run events to the run log.
+        """
+
         for event in events or []:
             normalized = dict(_json_safe(event))
             self._run_events.append(normalized)
@@ -181,7 +203,10 @@ class AirSimTrainingSession:
         best_mean_reward: float,
         stop_rule: str,
     ) -> None:
-        """Flush logs, save plots, and finalize session metadata."""
+        """
+        Flush logs, save plots, and finalize session metadata.
+        """
+
         self.iteration_logger.save()
         self._write_training_metrics_csv(training_metrics)
         self._save_training_metrics_plot(training_metrics)
@@ -202,7 +227,10 @@ class AirSimTrainingSession:
         self._run_log_exporter.close()
 
     def _normalize_run_event(self, event: dict[str, Any]) -> dict[str, Any]:
-        """Map one in-memory event payload onto the CSV schema."""
+        """
+        Map one in-memory event payload onto the CSV schema.
+        """
+
         row = {field: "" for field in self._RUN_LOG_FIELDNAMES}
         extras: dict[str, Any] = {}
 
@@ -216,7 +244,10 @@ class AirSimTrainingSession:
         return row
 
     def _write_training_metrics_csv(self, training_metrics: list[dict[str, Any]]) -> None:
-        """Write the compact training metrics CSV alongside the plots."""
+        """
+        Write the compact training metrics CSV alongside the plots.
+        """
+
         if not training_metrics:
             return
 
@@ -229,7 +260,10 @@ class AirSimTrainingSession:
 
     @staticmethod
     def _auto_normalize_series(values: np.ndarray) -> tuple[np.ndarray, float, float]:
-        """Map one metric series to ``[-1, 1]`` while preserving NaNs."""
+        """
+        Map one metric series to ``[-1, 1]`` while preserving NaNs.
+        """
+
         series = np.asarray(values, dtype=float)
         normalized = np.full(series.shape, np.nan, dtype=float)
         finite_mask = np.isfinite(series)
@@ -251,11 +285,13 @@ class AirSimTrainingSession:
 
     @staticmethod
     def _rolling_average(arr: np.ndarray, window: int) -> tuple[np.ndarray, np.ndarray]:
-        """Return ``(array_indices, rolling_means)`` for valid window positions.
+        """
+        Return ``(array_indices, rolling_means)`` for valid window positions.
 
         The returned indices map directly into the original array so the caller
         can pair them with the matching x-coordinates.
         """
+
         if window < 2 or len(arr) < window:
             return np.array([], dtype=float), np.array([], dtype=float)
         rolled = np.array(
@@ -269,7 +305,10 @@ class AirSimTrainingSession:
     def _load_max_checkpoint_per_episode(
         run_log_path: Path,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Read ``run_log.csv`` and return per-episode max checkpoint index arrays."""
+        """
+        Read ``run_log.csv`` and return per-episode max checkpoint index arrays.
+        """
+
         if not run_log_path.exists():
             return np.array([], dtype=float), np.array([], dtype=float)
         episode_max: dict[int, int] = {}
@@ -293,7 +332,10 @@ class AirSimTrainingSession:
         return episodes, checkpoints
 
     def _save_training_metrics_plot(self, training_metrics: list[dict[str, Any]]) -> None:
-        """Render reward, loss, advantage, and per-episode checkpoint curves to disk."""
+        """
+        Render reward, loss, advantage, and per-episode checkpoint curves to disk.
+        """
+
         if not training_metrics:
             return
 
@@ -392,7 +434,10 @@ class AirSimTrainingSession:
         plt.close(fig)
 
     def _save_route_plot(self) -> None:
-        """Render a static route/debug plot for the current training session."""
+        """
+        Render a static route/debug plot for the current training session.
+        """
+
         if not self._route_snapshot:
             return
 

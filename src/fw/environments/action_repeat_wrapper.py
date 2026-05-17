@@ -4,13 +4,20 @@ class ActionRepeatWrapper(gym.Wrapper):
     """
     Wrapper to repeat the same action for a given number of steps.
     """
+
     def __init__(self, env, repeat=4):
-        """Initialize the wrapper with the base environment and repeat count."""
+        """
+        Initialize the wrapper with the base environment and repeat count.
+        """
+
         super().__init__(env)
         self.repeat = repeat
 
     def step(self, action):
-        """Repeat the action for up to `repeat` steps and accumulate reward."""
+        """
+        Repeat the action for up to `repeat` steps and accumulate reward.
+        """
+
         total_reward = 0.0
         truncated = False
         done = False
