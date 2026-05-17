@@ -1,4 +1,6 @@
-"""Helpers for writing live per-iteration training metrics to CSV."""
+"""
+Helpers for writing live per-iteration training metrics to CSV.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +21,9 @@ _MEMORY_GROWTH_ALERT_RATIO = 2.0  # alert when RSS doubles since last sample (le
 
 
 class TrainingIterationLogger:
-    """Buffer PPO iteration rows and write them to CSV on demand."""
+    """
+    Buffer PPO iteration rows and write them to CSV on demand.
+    """
 
     _FIELDNAMES = (
         "run_started_utc",
@@ -45,7 +49,10 @@ class TrainingIterationLogger:
         src_dir: Path,
         log_dir: str = "logs",
     ) -> None:
-        """Create a new timestamped iteration log under the requested log dir."""
+        """
+        Create a new timestamped iteration log under the requested log dir.
+        """
+
         self._run_started = datetime.now(timezone.utc)
         self._run_started_text = self._run_started.isoformat()
         timestamp = self._run_started.strftime("%Y%m%d_%H%M%S")
@@ -60,7 +67,10 @@ class TrainingIterationLogger:
         self._psutil_proc = _psutil.Process() if _PSUTIL_AVAILABLE else None
 
     def _sample_rss_mb(self) -> float:
-        """Return current process RSS in MiB, or 0.0 if psutil is unavailable."""
+        """
+        Return current process RSS in MiB, or 0.0 if psutil is unavailable.
+        """
+
         if self._psutil_proc is None:
             return 0.0
         try:
@@ -78,7 +88,10 @@ class TrainingIterationLogger:
         num_episode_batches: int,
         elapsed_seconds: float,
     ) -> None:
-        """Append one training-iteration row to the CSV file."""
+        """
+        Append one training-iteration row to the CSV file.
+        """
+
         rss_mb = self._sample_rss_mb()
         if self._prev_rss_mb > 0.0 and rss_mb > self._prev_rss_mb * _MEMORY_GROWTH_ALERT_RATIO:
             print(
@@ -104,7 +117,10 @@ class TrainingIterationLogger:
         self._rows.append(row)
 
     def save(self) -> None:
-        """Write the buffered iteration rows to disk."""
+        """
+        Write the buffered iteration rows to disk.
+        """
+
         if not self._rows:
             return
 

@@ -1,4 +1,5 @@
-"""Run inference for PPO policies trained directly in ``AirSimEnv``.
+"""
+Run inference for PPO policies trained directly in ``AirSimEnv``.
 
 This runner is intentionally single-purpose:
 
@@ -46,11 +47,13 @@ _AIRSIM_MODEL_HINTS: Tuple[str, ...] = ("airsimenv", "airsim_env", "ue5")
 
 
 def _warn_if_model_name_looks_non_airsim(model_path: Path) -> None:
-    """Warn when a model name does not look like an AirSim-trained policy.
+    """
+    Warn when a model name does not look like an AirSim-trained policy.
 
     Args:
         model_path: Resolved model checkpoint path.
     """
+
     stem = model_path.stem.lower()
     if any(hint in stem for hint in _AIRSIM_MODEL_HINTS):
         return
@@ -63,7 +66,8 @@ def _warn_if_model_name_looks_non_airsim(model_path: Path) -> None:
 
 
 def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
-    """Load a :class:`PPOPolicy` from a saved ``.zip`` file.
+    """
+    Load a :class:`PPOPolicy` from a saved ``.zip`` file.
 
     Args:
         model_path: User-provided checkpoint path.
@@ -72,6 +76,7 @@ def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     Returns:
         PPOPolicy: Loaded policy with its network in evaluation mode.
     """
+
     path = resolve_model_path(model_path, _SRC_DIR)
     stem = str(path.with_suffix("")) if path.suffix == ".zip" else str(path)
     policy = PPOPolicy.load(stem, device=device)
@@ -88,7 +93,8 @@ def _build_inference_row(
     action,
     outcome: str,
 ) -> Dict[str, float | int | str]:
-    """Build one inference telemetry row for CSV export.
+    """
+    Build one inference telemetry row for CSV export.
 
     Args:
         env: Active AirSim environment.
@@ -101,6 +107,7 @@ def _build_inference_row(
     Returns:
         Dict[str, float | int | str]: Flat telemetry row ready for CSV export.
     """
+
     snapshot = build_airsim_env_snapshot(env)
     return {
         "step": int(step_index),
@@ -136,7 +143,8 @@ def _run_episode_airsim_env(
     exporter: Optional[AirSimSessionExporter] = None,
     verbose: bool = False,
 ) -> Tuple[List[float], List[float], float, str]:
-    """Run one inference episode through ``AirSimEnv.step()``.
+    """
+    Run one inference episode through ``AirSimEnv.step()``.
 
     This mirrors the trained control loop:
 
@@ -158,6 +166,7 @@ def _run_episode_airsim_env(
         Tuple[List[float], List[float], float, str]: Trajectory x values,
         trajectory y values, total reward, and final outcome label.
     """
+
     obs, _ = env.reset()
     traj_x: List[float] = [float(env.ship_pos[0])]
     traj_y: List[float] = [float(env.ship_pos[1])]
@@ -228,7 +237,8 @@ def run_inference(
     draw_calibration_reference: bool = True,
     verbose: bool = False,
 ) -> None:
-    """Run live inference in UE5 using the native ``AirSimEnv`` loop.
+    """
+    Run live inference in UE5 using the native ``AirSimEnv`` loop.
 
     Args:
         model_path: Path to the AirSimEnv-trained checkpoint.
@@ -243,6 +253,7 @@ def run_inference(
             ridge and route overlay in UE5.
         verbose: Whether to emit detailed runtime logs.
     """
+
     logger.setLevel(logging.INFO if verbose else logging.WARNING)
 
     banner = "=" * 62
@@ -398,11 +409,13 @@ def run_inference(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser for AirSimEnv inference runs.
+    """
+    Build the command-line parser for AirSimEnv inference runs.
 
     Returns:
         argparse.ArgumentParser: Configured parser for AirSimEnv inference.
     """
+
     parser = argparse.ArgumentParser(
         description=(
             "Run inference for PPO models trained directly in AirSimEnv. "

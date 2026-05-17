@@ -1,4 +1,5 @@
-"""Print the current UE5 AirSim ship position and heading.
+"""
+Print the current UE5 AirSim ship position and heading.
 
 Run from the repository root:
 
@@ -30,7 +31,10 @@ from fw.common.airsim.tools.angles import yaw_from_quaternion
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Create the CLI parser for the pose reader."""
+    """
+    Create the CLI parser for the pose reader.
+    """
+
     parser = argparse.ArgumentParser(
         description="Read the current AirSim ship pose from UE5."
     )
@@ -50,7 +54,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    """Connect to AirSim, read the live pose, and print it."""
+    """
+    Connect to AirSim, read the live pose, and print it.
+    """
+
     args = _build_parser().parse_args()
 
     runtime_cfg = get_airsim_config()

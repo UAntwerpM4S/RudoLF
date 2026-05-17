@@ -1,4 +1,5 @@
-"""Train or visualize the UE5 AirSim environment using runtime settings.
+"""
+Train or visualize the UE5 AirSim environment using runtime settings.
 
 Usage:
     python -m airsim.train.train_airsim
@@ -62,10 +63,15 @@ _TRAINING_SPEED_PROFILES = {
 
 
 class _AsyncioWin995Filter(logging.Filter):
-    """Suppress the noisy Windows asyncio self-pipe shutdown traceback."""
+    """
+    Suppress the noisy Windows asyncio self-pipe shutdown traceback.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Return False for the known benign WinError 995 shutdown record."""
+        """
+        Return False for the known benign WinError 995 shutdown record.
+        """
+
         exc = record.exc_info[1] if record.exc_info else None
         message = record.getMessage().lower()
         if (
@@ -84,7 +90,10 @@ class _AsyncioWin995Filter(logging.Filter):
 
 
 def _resolve_repo_relative_path(value: str, repo_root: Path) -> str:
-    """Resolve a runtime-settings path relative to the repository root."""
+    """
+    Resolve a runtime-settings path relative to the repository root.
+    """
+
     if not value:
         return ""
     candidate = Path(value)
@@ -97,7 +106,10 @@ def _emit_training_log_summary(
     episode_log_path: Path,
     route_csv: Path,
 ) -> None:
-    """Print a concise summary of the existing AirSim training log."""
+    """
+    Print a concise summary of the existing AirSim training log.
+    """
+
     from airsim.train.training_log_analysis import analyze_training_log
 
     route_total_checkpoints = max(
@@ -130,7 +142,10 @@ def _emit_training_log_summary(
 def _resolve_effective_training_settings(
     runtime_settings: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Return merged runtime settings plus the effective AirSim training config."""
+    """
+    Return merged runtime settings plus the effective AirSim training config.
+    """
+
     runtime = merge_runtime_settings(
         runtime_settings if runtime_settings is not None else get_runtime_settings()
     )
@@ -156,7 +171,10 @@ def _resolve_effective_training_settings(
 
 
 def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Build the standalone AirSim training config from runtime settings."""
+    """
+    Build the standalone AirSim training config from runtime settings.
+    """
+
     repo_root = Path(__file__).resolve().parents[2]
     _, airsim_cfg, training_cfg = _resolve_effective_training_settings(runtime_settings)
 
@@ -272,7 +290,10 @@ def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -
 def _build_training_stop_condition(
     runtime_settings: dict[str, Any] | None = None,
 ):
-    """Build the AirSim standalone stop condition."""
+    """
+    Build the AirSim standalone stop condition.
+    """
+
     _, _, training_cfg = _resolve_effective_training_settings(runtime_settings)
     max_policy_updates = int(training_cfg.get("max_policy_updates", 1500))
 
@@ -285,7 +306,10 @@ def _build_training_stop_condition(
 
 
 def _build_visualize_env_config(runtime_settings: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Build a simple inference/visualization AirSim config from runtime settings."""
+    """
+    Build a simple inference/visualization AirSim config from runtime settings.
+    """
+
     runtime = merge_runtime_settings(
         runtime_settings if runtime_settings is not None else get_runtime_settings()
     )
@@ -312,12 +336,14 @@ def _run_training_with_transfer(
     repo_root: Path,
     profile=None,
 ) -> dict[str, Any]:
-    """Create a SinglePPOAgent directly, inject a transfer policy, and run learn().
+    """
+    Create a SinglePPOAgent directly, inject a transfer policy, and run learn().
 
     Bypasses Trainer/Scheduler so the policy can be replaced before training
     starts — the Trainer creates the agent inside train() which is too late for
     weight injection.  This path is AirSim-only and has no effect on 2D envs.
     """
+
     import torch.optim as optim
 
     from fw.config import PPO_POLICY_NAME, get_hyperparameters
@@ -373,7 +399,10 @@ def _run_training_with_transfer(
 
 
 def run_training(runtime_settings: dict[str, Any] | None = None):
-    """Run AirSim PPO training from runtime settings and return trainer metrics."""
+    """
+    Run AirSim PPO training from runtime settings and return trainer metrics.
+    """
+
     from fw.trainer import Trainer
     from fw.profile_applier import apply_profile
     from fw.config_profile import ProfileRegistry
@@ -446,7 +475,10 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
 
 
 def run_visualization(runtime_settings: dict[str, Any] | None = None):
-    """Run AirSim visualization from runtime settings and return trainer instance."""
+    """
+    Run AirSim visualization from runtime settings and return trainer instance.
+    """
+
     from fw.trainer import Trainer
     from fw.profile_applier import apply_profile
     from fw.config_profile import ProfileRegistry

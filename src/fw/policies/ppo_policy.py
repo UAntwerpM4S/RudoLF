@@ -11,7 +11,8 @@ from fw.common.tools.ppo_utils import normalize_policy_zip_path
 POLICY_FILE_NAME = 'policy.pth'
 
 def get_device(device: str = "auto") -> torch.device:
-    """Retrieve the PyTorch device to be used for computations.
+    """
+    Retrieve the PyTorch device to be used for computations.
 
     Args:
         device (str, optional): The device to use. Options are 'auto', 'cuda', or 'cpu'.
@@ -39,7 +40,8 @@ def get_device(device: str = "auto") -> torch.device:
 
 
 class PPOPolicy:
-    """Proximal Policy Optimization (PPO) Policy class for Actor-Critic reinforcement learning.
+    """
+    Proximal Policy Optimization (PPO) Policy class for Actor-Critic reinforcement learning.
 
     This class encapsulates the network architecture, model saving/loading functionality,
     and prediction logic for PPO. It uses an Actor-Critic network for making predictions and
@@ -173,11 +175,13 @@ class PPOPolicy:
 
 
     def save(self, filename: str) -> None:
-        """Save the model state and constructor parameters to a file.
+        """
+        Save the model state and constructor parameters to a file.
 
         Args:
             filename (str): The path to the file where the model should be saved.
         """
+
         zip_path = normalize_policy_zip_path(filename)
         parent_dir = os.path.dirname(zip_path)
         if parent_dir:
@@ -198,7 +202,8 @@ class PPOPolicy:
 
     @classmethod
     def load(cls, filename: str, device: str = "cpu") -> "PPOPolicy":
-        """Load a PPOPolicy model from a file.
+        """
+        Load a PPOPolicy model from a file.
 
         Args:
             filename (str): The path to the file from which the model should be loaded.
@@ -210,6 +215,7 @@ class PPOPolicy:
         Raises:
             RuntimeError: If the model file is corrupted or the device doesn't match.
         """
+
         device = get_device(device)
         zip_path = normalize_policy_zip_path(filename)
 
@@ -229,7 +235,8 @@ class PPOPolicy:
         raw_actions: torch.Tensor,
         actions: torch.Tensor,
     ) -> torch.Tensor:
-        """Calculate the log probabilities of actions with an adjustment for tanh squashing.
+        """
+        Calculate the log probabilities of actions with an adjustment for tanh squashing.
 
         Args:
             dist (torch.distributions.Normal): The normal distribution of actions.
@@ -239,13 +246,15 @@ class PPOPolicy:
         Returns:
             torch.Tensor: The log probabilities of the actions.
         """
+
         log_probs = dist.log_prob(raw_actions)  # Calculate log probability of raw actions
         log_probs -= torch.log(1 - actions.pow(2) + 1e-6)  # Adjust for tanh squashing
         return log_probs.sum(dim=-1)  # Sum across the action dimensions
 
 
     def _predict(self, state: torch.Tensor, deterministic: bool = False) -> Tuple:
-        """Predict the action and log probability for a given state.
+        """
+        Predict the action and log probability for a given state.
 
         Args:
             state (torch.Tensor): The input state tensor.
@@ -257,6 +266,7 @@ class PPOPolicy:
                 - log_prob (torch.Tensor): The log probability of the action.
                 - value (torch.Tensor): The predicted value for the state.
         """
+
         action_mean, action_std, value = self.network(state)  # Get network outputs (mean, std, value)
 
         # Create a normal distribution with the mean and std
@@ -280,7 +290,8 @@ class PPOPolicy:
 
     from typing import Union
     def predict(self, state: Union[np.ndarray, torch.Tensor], deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Predict an action for a given state.
+        """
+        Predict an action for a given state.
 
         Args:
             state (np.ndarray): The input state as a NumPy array or a tensor.
@@ -292,6 +303,7 @@ class PPOPolicy:
                 - log_prob (np.ndarray): The log probability of the action.
                 - value (np.ndarray): The predicted value for the state.
         """
+
         if not isinstance(state, torch.Tensor):
             state = torch.FloatTensor(state).to(self.device)  # Convert to tensor if necessary
 

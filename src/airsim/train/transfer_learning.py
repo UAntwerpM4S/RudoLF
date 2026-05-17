@@ -1,4 +1,5 @@
-"""Transfer learning from 2D PPO policies to AirSimEnv (3D).
+"""
+Transfer learning from 2D PPO policies to AirSimEnv (3D).
 
 Only used by AirSimEnv training — has no effect on 2D environment training.
 
@@ -54,7 +55,7 @@ from fw.policies.ppo_policy import PPOPolicy, get_device
 
 
 class TransferIncompatibilityError(ValueError):
-    """Raised when a 2D policy cannot be transferred to the target 3D dimensions."""
+    """ Raised when a 2D policy cannot be transferred to the target 3D dimensions. """
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +65,8 @@ class TransferIncompatibilityError(ValueError):
 
 @dataclass(frozen=True)
 class TopologyReport:
-    """Comparison of source (2D) and target (3D) network topology.
+    """
+    Comparison of source (2D) and target (3D) network topology.
 
     Attributes:
         source_input_dim: Observation dimension of the pretrained 2D policy.
@@ -86,7 +88,10 @@ class TopologyReport:
     output_compatible: bool
 
     def format(self) -> str:
-        """Return a human-readable topology comparison string."""
+        """
+        Return a human-readable topology comparison string.
+        """
+
         lines = [
             "=" * 58,
             "  Transfer Learning — Network Topology Comparison",
@@ -114,7 +119,8 @@ def compare_network_topology(
     target_input_dim: int,
     target_output_dim: int,
 ) -> TopologyReport:
-    """Compare a 2D source policy topology against the 3D AirSimEnv dimensions.
+    """
+    Compare a 2D source policy topology against the 3D AirSimEnv dimensions.
 
     Args:
         source_policy: Pretrained 2D ``PPOPolicy`` instance.
@@ -124,6 +130,7 @@ def compare_network_topology(
     Returns:
         ``TopologyReport`` describing transferable and incompatible elements.
     """
+
     sd = source_policy.network.state_dict()
 
     shared_layers: List[Tuple[int, int]] = [
@@ -150,7 +157,8 @@ def compare_network_topology(
 
 
 def validate_transfer_compatibility(report: TopologyReport) -> None:
-    """Raise ``TransferIncompatibilityError`` with a clear message if transfer is blocked.
+    """
+    Raise `TransferIncompatibilityError` with a clear message if transfer is blocked.
 
     Args:
         report: Topology comparison from :func:`compare_network_topology`.
@@ -159,6 +167,7 @@ def validate_transfer_compatibility(report: TopologyReport) -> None:
         TransferIncompatibilityError: When action dimensions differ or the target
             observation space is smaller than the source.
     """
+
     errors: List[str] = []
 
     if not report.output_compatible:
@@ -215,7 +224,8 @@ def apply_transfer_weights(
     target_policy: PPOPolicy,
     freeze_shared: bool = True,
 ) -> List[str]:
-    """Copy matching weights from *source_policy* to *target_policy*.
+    """
+    Copy matching weights from *source_policy* to *target_policy*.
 
     Only layers whose parameter tensors have identical shapes in source and
     target are transferred. The first layer ``shared_network[0]`` (the mapping
@@ -234,6 +244,7 @@ def apply_transfer_weights(
     Returns:
         List of state-dict keys that were successfully transferred.
     """
+
     src_sd = source_policy.network.state_dict()
     tgt_sd = target_policy.network.state_dict()
 
@@ -269,7 +280,8 @@ def build_transfer_policy(
     target_device: torch.device | None = None,
     freeze_shared: bool = True,
 ) -> PPOPolicy:
-    """Build an AirSimEnv policy initialized from a pretrained 2D checkpoint.
+    """
+    Build an AirSimEnv policy initialized from a pretrained 2D checkpoint.
 
     Pipeline:
         1. Load the 2D source policy on CPU (weight extraction only — no GPU needed).
@@ -301,6 +313,7 @@ def build_transfer_policy(
         TransferIncompatibilityError: If action dims differ or target < source input dim.
         RuntimeError: If the source checkpoint cannot be loaded.
     """
+
     resolved_device = target_device if target_device is not None else get_device("auto")
     source_policy = PPOPolicy.load(str(source_zip_path), device="cpu")
 

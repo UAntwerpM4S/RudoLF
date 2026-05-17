@@ -1,4 +1,6 @@
-"""Shared default framework positions used by local replay environments."""
+"""
+Shared default framework positions used by local replay environments.
+"""
 
 DEFAULT_FRAMEWORK_SHIP_POS = (2245.0, -47.0)
 DEFAULT_FRAMEWORK_TARGET_POS = (-1559.0, 11990.0)

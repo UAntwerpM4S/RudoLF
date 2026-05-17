@@ -15,6 +15,7 @@ def create_checkpoints_from_simple_path(points, max_distance):
     Returns:
         list of tuples: A list of checkpoint coordinates with appropriate spacing.
     """
+
     # Convert to numpy array if not already
     points = np.array(points)
 
@@ -52,6 +53,7 @@ def is_ship_heading_correct(checkpoint, state):
     """
     Check if the ship's heading will cross the line segment formed by the perpendicular line.
     """
+
     # Ship's position and heading
     ship_position = np.array(state[:2])  # Assuming state contains [x, y, heading]
     heading = state[2]  # Heading in radians
@@ -69,7 +71,10 @@ def is_ship_heading_correct(checkpoint, state):
 
     # Function to compute intersection of two line segments
     def line_intersection(p1, p2, q1, q2):
-        """Find the intersection of two line segments if it exists."""
+        """
+        Find the intersection of two line segments if it exists.
+        """
+
         r = p2 - p1
         s = q2 - q1
 
@@ -98,12 +103,18 @@ def is_ship_heading_correct(checkpoint, state):
 
 
 def is_within_obstacle(point, obstacles, safety_margin=3):
-    """Check if a point is within any circular obstacle with an added safety margin."""
+    """
+    Check if a point is within any circular obstacle with an added safety margin.
+    """
+
     return any(np.linalg.norm(point - obs['pos']) < obs['radius'] + safety_margin for obs in obstacles)
 
 
 def distance_point_to_line(p1, p2, point):
-    """Calculate the distance from a point to a line segment defined by p1 and p2."""
+    """
+    Calculate the distance from a point to a line segment defined by p1 and p2.
+    """
+
     p1, p2, point = map(np.asarray, (p1, p2, point))
 
     line_len = np.linalg.norm(p2 - p1)
@@ -121,7 +132,10 @@ def distance_point_to_line(p1, p2, point):
 
 
 def is_line_intersecting_obstacle(p1, p2, obstacles, radius=3):
-    """Check if a line segment intersects any circular obstacle."""
+    """
+    Check if a line segment intersects any circular obstacle.
+    """
+
     for obstacle in obstacles:
         if distance_point_to_line(p1, p2, obstacle) <= radius:
             return True
@@ -129,7 +143,9 @@ def is_line_intersecting_obstacle(p1, p2, obstacles, radius=3):
 
 
 def get_n_closest_obstacles(point, obstacles, n=8):
-    """Order the obstacles based on their distance to the reference point."""
+    """
+    Order the obstacles based on their distance to the reference point.
+    """
 
     # Calculate the distance from each obstacle to the reference point
     distances = np.linalg.norm(obstacles - point, axis=1)
@@ -143,7 +159,10 @@ def get_n_closest_obstacles(point, obstacles, n=8):
 
 
 def astar(start, goal, obstacles, min_grid, max_grid, boundary_threshold=2):
-    """Perform A* search avoiding circular obstacles."""
+    """
+    Perform A* search avoiding circular obstacles.
+    """
+
     open_set = []
     heapq.heappush(open_set, (0, tuple(start)))  # Priority queue with (f_score, node)
 
@@ -194,17 +213,26 @@ def astar(start, goal, obstacles, min_grid, max_grid, boundary_threshold=2):
 
 
 def calculate_cumulative_distances(path):
-    """Calculate cumulative distances along the path."""
+    """
+    Calculate cumulative distances along the path.
+    """
+
     return np.hstack(([0], np.linalg.norm(np.diff(path, axis=0), axis=1).cumsum()))
 
 
 def is_safe_from_obstacles(point, obstacles, safe_distance):
-    """Check if a checkpoint is a safe distance away from any obstacle."""
+    """
+    Check if a checkpoint is a safe distance away from any obstacle.
+    """
+
     return all(np.linalg.norm(point - obs['pos']) >= (obs['radius'] + safe_distance) for obs in obstacles)
 
 
 def generate_even_checkpoints(path, num_checkpoints, obstacles, safe_distance=5.0):
-    """Generate evenly spaced checkpoints along the path."""
+    """
+    Generate evenly spaced checkpoints along the path.
+    """
+
     if len(path) <= num_checkpoints:
         return path
 
@@ -233,13 +261,19 @@ def generate_even_checkpoints(path, num_checkpoints, obstacles, safe_distance=5.
 
 
 def save_hyperparameters(params, filename="best_hyperparameters.json"):
-    """Save hyperparameters to a JSON file."""
+    """
+    Save hyperparameters to a JSON file.
+    """
+
     with open(filename, 'w') as f:
         json.dump(params, f)
 
 
 def load_hyperparameters(filename="best_hyperparameters.json"):
-    """Load hyperparameters from a JSON file."""
+    """
+    Load hyperparameters from a JSON file.
+    """
+
     if os.path.exists(filename) and os.path.getsize(filename) > 0:
         with open(filename, 'r') as f:
             return json.load(f)

@@ -21,10 +21,15 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
 
     class _AsyncioWin995Filter(logging.Filter):
-        """Suppress the noisy Windows asyncio self-pipe shutdown traceback."""
+        """
+        Suppress the noisy Windows asyncio self-pipe shutdown traceback.
+        """
 
         def filter(self, record: logging.LogRecord) -> bool:
-            """Return False for the known benign WinError 995 shutdown record."""
+            """
+            Return False for the known benign WinError 995 shutdown record.
+            """
+
             ex = record.exc_info[1] if record.exc_info else None
             message = record.getMessage().lower()
             if (
@@ -183,12 +188,14 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         action = "visualize"
 
     def _run_airsim_visualization_from_runtime() -> bool:
-        """Dispatch AirSim-specific visualize runners driven by runtime settings.
+        """
+        Dispatch AirSim-specific visualize runners driven by runtime settings.
 
         Returns:
             bool: True when a dedicated AirSim visualize runner was executed,
             False when caller should continue with generic trainer.visualize.
         """
+
         model_visualise = bool(visualization_cfg.get("model_visualise", False))
         inference_visualise = bool(visualization_cfg.get("inference_visualise", False))
 
@@ -273,7 +280,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         return False
 
     def _is_airsim_selected(env_wrappers) -> bool:
-        """Check if any wrapped environment is AirSimEnv.
+        """
+        Check if any wrapped environment is AirSimEnv.
 
         Args:
             env_wrappers: Iterable of framework environment wrappers exposing
@@ -283,6 +291,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             bool: True if at least one wrapped environment has type
             ``AirSimEnv``.
         """
+
         return any(getattr(env.gym_env, "type_name", "") == airsim_env_name for env in env_wrappers)
 
     # AirSim visualize dispatch from runtime settings.

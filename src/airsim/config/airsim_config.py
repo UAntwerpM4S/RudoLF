@@ -1,4 +1,5 @@
-"""AirSim connection configuration with validation.
+"""
+AirSim connection configuration with validation.
 
 Provides a validated ``AirSimConfig`` dataclass that centralizes all
 CosysAirSim connection parameters. PID / control-loop gains are
@@ -36,7 +37,8 @@ DEFAULT_THROTTLE_VISUAL_GAIN = 5.0 / 5.6
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge two nested dictionaries without mutating either input.
+    """
+    Merge two nested dictionaries without mutating either input.
 
     Args:
         base: Baseline dictionary to merge into.
@@ -45,6 +47,7 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     Returns:
         Dict[str, Any]: New recursively merged dictionary.
     """
+
     merged: Dict[str, Any] = dict(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -56,7 +59,8 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 
 @dataclass(frozen=True)
 class AirSimConfig:
-    """Validated, immutable configuration for the AirSim bridge.
+    """
+    Validated, immutable configuration for the AirSim bridge.
 
     All values are validated in ``__post_init__``.  Invalid parameters
     raise ``ValueError`` with a clear, actionable message.
@@ -83,11 +87,13 @@ class AirSimConfig:
     csv_log_path: str = ""
 
     def __post_init__(self) -> None:
-        """Validate all fields after initialization.
+        """
+        Validate all fields after initialization.
 
         Raises:
             ValueError: If any configuration field is invalid.
         """
+
         # ── IP ──
         if self.ip:
             try:
@@ -130,38 +136,46 @@ class AirSimConfig:
 
     @property
     def resolved_ip(self) -> str:
-        """Return the effective IP address (``127.0.0.1`` when empty).
+        """
+        Return the effective IP address (``127.0.0.1`` when empty).
 
         Returns:
             str: Resolved IP address used for network calls.
         """
+
         return self.ip if self.ip else "127.0.0.1"
 
     def to_dict(self) -> Dict[str, Any]:
-        """Return a plain dictionary of all config values.
+        """
+        Return a plain dictionary of all config values.
 
         Returns:
             A dictionary with all configuration parameters.
         """
+
         return asdict(self)
 
 
 def get_runtime_settings_path() -> Path:
-    """Return the path to the runtime settings JSON file.
+    """
+    Return the path to the runtime settings JSON file.
 
     Returns:
         Path: Runtime settings JSON path.
     """
+
     return _RUNTIME_SETTINGS_PATH
 
 
 def get_default_runtime_settings() -> Dict[str, Any]:
-    """Return the built-in runtime defaults used when JSON is absent or invalid.
+    """
+    Return the built-in runtime defaults used when JSON is absent or invalid.
 
     Returns:
         Dict[str, Any]: Nested runtime-settings dictionary with built-in
         defaults.
     """
+
     return {
         "visualization": {
             "model_visualise": False,
@@ -219,7 +233,8 @@ def get_default_runtime_settings() -> Dict[str, Any]:
 
 
 def merge_runtime_settings(override: Dict[str, Any] | None) -> Dict[str, Any]:
-    """Merge a partial runtime-settings override onto the built-in defaults.
+    """
+    Merge a partial runtime-settings override onto the built-in defaults.
 
     Args:
         override: Partial runtime-settings override dictionary.
@@ -227,17 +242,20 @@ def merge_runtime_settings(override: Dict[str, Any] | None) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: Fully merged runtime-settings dictionary.
     """
+
     if not isinstance(override, dict):
         return get_default_runtime_settings()
     return _deep_merge(get_default_runtime_settings(), override)
 
 
 def get_runtime_settings() -> Dict[str, Any]:
-    """Load runtime settings from JSON and merge them with defaults.
+    """
+    Load runtime settings from JSON and merge them with defaults.
 
     Returns:
         Dict[str, Any]: Runtime-settings dictionary ready for consumers.
     """
+
     defaults = get_default_runtime_settings()
 
     if not _RUNTIME_SETTINGS_PATH.exists():
@@ -260,7 +278,8 @@ def get_runtime_settings() -> Dict[str, Any]:
 
 
 def get_airsim_config() -> Dict[str, Any]:
-    """Return a dictionary of AirSim configuration values.
+    """
+    Return a dictionary of AirSim configuration values.
 
     Backward-compatible wrapper around :class:`AirSimConfig`.
 
@@ -273,6 +292,7 @@ def get_airsim_config() -> Dict[str, Any]:
         >>> cfg["port"]
         41451
     """
+
     runtime = get_runtime_settings().get("airsim", {})
     valid_keys = set(AirSimConfig.__dataclass_fields__.keys())
     filtered = {key: runtime[key] for key in valid_keys if key in runtime}
