@@ -244,6 +244,7 @@ def _draw_visualization(
     ridge_overlay_rot_z_deg: float = 0.0,
     ship_pos: tuple[float, float] | None = None,
     target_pos: tuple[float, float] | None = None,
+    duration: float = 7200.0,
 ) -> None:
     """
     Draw polygon, trajectory, and reference dots in UE5.
@@ -316,6 +317,7 @@ def _draw_visualization(
                     chunk,
                     color_rgba=color_rgba,
                     thickness=thickness,
+                    duration=duration,
                     is_persistent=True,
                 )
 
@@ -347,6 +349,7 @@ def _draw_visualization(
                 chunk,
                 color_rgba=[1.0, 1.0, 0.55, 1.0],
                 thickness=56.0,
+                duration=duration,
                 is_persistent=True,
             )
 
@@ -363,12 +366,14 @@ def _draw_visualization(
         [airsim.Vector3r(start_ux, start_uy, -3.0)],
         color_rgba=[0, 0, 1, 1],
         size=30.0,
+        duration=duration,
         is_persistent=True,
     )
     client.simPlotPoints(
         [airsim.Vector3r(target_ux, target_uy, -3.0)],
         color_rgba=[1, 0, 0, 1],
         size=30.0,
+        duration=duration,
         is_persistent=True,
     )
 
@@ -390,6 +395,7 @@ def load_saved_calibration_reference(
     draw_reference: bool = True,
     ship_pos: tuple[float, float] | None = None,
     target_pos: tuple[float, float] | None = None,
+    duration: float = 7200.0,
 ) -> tuple[CoordTransform, dict]:
     """
     Load saved calibration, apply drift correction, and optionally redraw it.
@@ -443,6 +449,7 @@ def load_saved_calibration_reference(
             ridge_overlay_rot_z_deg=ridge_overlay_rot_z_deg,
             ship_pos=ship_pos,
             target_pos=target_pos,
+            duration=duration,
         )
 
     return coord, config
