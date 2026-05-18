@@ -45,6 +45,82 @@ logger = logging.getLogger(__name__)
 
 _AIRSIM_MODEL_HINTS: Tuple[str, ...] = ("airsimenv", "airsim_env", "ue5")
 
+_DEFAULT_TRAIL_THICKNESS = 14.0
+_DEFAULT_TRAIL_MIN_SEGMENT_M = 1.5
+_DEFAULT_TRAIL_DRAW_DURATION_S = 7200.0
+_TRAIL_CHUNK_SIZE = 500
+_TRAIL_COLOR_RGBA = [0.12, 0.52, 1.0, 1.0]
+
+
+def _draw_ship_trail_in_ue5(
+    env: AirSimEnv,
+    traj_x: List[float],
+    traj_y: List[float],
+    thickness: float = _DEFAULT_TRAIL_THICKNESS,
+    min_segment_m: float = _DEFAULT_TRAIL_MIN_SEGMENT_M,
+    duration: float = _DEFAULT_TRAIL_DRAW_DURATION_S,
+    is_persistent: bool = True,
+) -> None:
+    """
+    Draw the ship trail in UE5 as one chunked burst.
+
+    The trail is built from framework-frame positions accumulated during
+    the episode and transformed via the env's ``CoordTransform`` so it
+    aligns with the UE5 world.
+
+    Args:
+        env: Active AirSim environment (provides ``coord_transform`` and ``bridge``).
+        traj_x: Framework-frame X positions captured during the episode.
+        traj_y: Framework-frame Y positions captured during the episode.
+        thickness: Rendered line thickness for the trail.
+        min_segment_m: Minimum distance between consecutive trail points
+            (downsamples very dense trajectories).
+        duration: Seconds the trail stays visible in the 3D world (only
+            meaningful when ``is_persistent=False``).
+        is_persistent: Whether lines persist in the 3D world indefinitely.
+    """
+
+    bridge = env.bridge
+    if bridge is None or not bridge.is_connected:
+        return
+    if len(traj_x) < 2 or len(traj_y) < 2:
+        return
+
+    coord = env.coord_transform
+    vector3r = bridge.airsim.Vector3r
+    render_z = float(getattr(bridge, "render_z", 0.0))
+    trail_z = render_z - 12.0
+
+    points: List = []
+    last_x: Optional[float] = None
+    last_y: Optional[float] = None
+    for fx, fy in zip(traj_x, traj_y):
+        ux, uy = coord.framework_to_airsim_2d(float(fx), float(fy))
+        if last_x is not None:
+            if ((ux - last_x) ** 2 + (uy - last_y) ** 2) ** 0.5 < float(min_segment_m):
+                continue
+        points.append(vector3r(float(ux), float(uy), trail_z))
+        last_x, last_y = ux, uy
+
+    if len(points) < 2:
+        return
+
+    step = max(1, _TRAIL_CHUNK_SIZE - 1)
+    for chunk_start in range(0, len(points), step):
+        chunk = points[chunk_start : chunk_start + _TRAIL_CHUNK_SIZE]
+        if len(chunk) < 2:
+            continue
+        try:
+            bridge.plot_line_strip(
+                chunk,
+                color_rgba=_TRAIL_COLOR_RGBA,
+                thickness=float(thickness),
+                duration=float(duration),
+                is_persistent=is_persistent,
+            )
+        except Exception as exc:
+            logger.debug("Trail chunk draw failed: %s", exc)
+
 
 def _warn_if_model_name_looks_non_airsim(model_path: Path) -> None:
     """
@@ -235,6 +311,7 @@ def run_inference(
     num_episodes: int = 3,
     device: str = "cpu",
     draw_calibration_reference: bool = True,
+    draw_ship_trail_in_ue5: bool = True,
     verbose: bool = False,
 ) -> None:
     """
@@ -251,6 +328,8 @@ def run_inference(
         device: Torch device selector used for inference.
         draw_calibration_reference: Whether to draw the shared calibration
             ridge and route overlay in UE5.
+        draw_ship_trail_in_ue5: Whether to draw the blue ship trail in UE5
+            at the end of each episode.
         verbose: Whether to emit detailed runtime logs.
     """
 
@@ -288,6 +367,7 @@ def run_inference(
                 "device": device,
                 "simulation_speed": 1.0,
                 "draw_calibration_reference": bool(draw_calibration_reference),
+                "draw_ship_trail_in_ue5": bool(draw_ship_trail_in_ue5),
                 "episode_loop": "AirSimEnv.reset -> policy -> AirSimEnv.step",
             },
         },
@@ -341,6 +421,16 @@ def run_inference(
                     f"   Finished: {steps_run} steps | outcome={outcome} | "
                     f"reward={total_reward:+.1f}"
                 )
+
+                # End-of-episode: draw the full trail persistently, then flush
+                # all 3D persistent lines and redraw non-persistently so the
+                # minimap keeps the full picture but the 3D world is clean.
+                if draw_ship_trail_in_ue5 and env.bridge.is_connected:
+                    try:
+                        _draw_ship_trail_in_ue5(env, traj_x, traj_y)
+                        env.bridge.flush_persistent_markers()
+                    except Exception as exc:
+                        logger.debug("Episode-end trail/flush failed: %s", exc)
 
                 session_exporter.update_metadata(
                     {
@@ -483,6 +573,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable the shared ridge/trajectory calibration overlay in UE5.",
     )
     parser.add_argument(
+        "--no-ship-trail",
+        action="store_true",
+        default=False,
+        help="Disable the end-of-episode blue trail draw in UE5.",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         default=False,
@@ -510,5 +606,6 @@ if __name__ == "__main__":
         num_episodes=args.episodes,
         device=args.device,
         draw_calibration_reference=not args.no_calibration_reference,
+        draw_ship_trail_in_ue5=not args.no_ship_trail,
         verbose=args.verbose,
     )

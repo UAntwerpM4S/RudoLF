@@ -44,7 +44,7 @@ def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypat
     monkeypatch.setattr(bridge, "load_world_save", lambda save_slot: None)
     monkeypatch.setattr(AirSimBridge, "_ensure_connected", lambda self: True)
 
-    def _fake_load_saved_calibration_reference(client, draw_reference=True):
+    def _fake_load_saved_calibration_reference(client, draw_reference=True, duration=10.0):
         """
         Return a dummy coordinate transform and metadata payload.
 
