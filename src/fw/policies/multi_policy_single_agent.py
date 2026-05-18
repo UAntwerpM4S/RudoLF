@@ -73,9 +73,9 @@ class CollapseWatchdog:
         self,
         num_policies: int,
         policy_labels: List[str],
-        window_size: int = 6,
+        window_size: int = 50,
         ratio_threshold: float = -1.0,
-        warmup_iterations: int = 50,
+        warmup_iterations: int = 200,
         min_gap_between_rollbacks: int = 5,
         max_rollbacks: int = 100,
         min_peak_for_trigger: float = 0.1,
@@ -535,7 +535,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         return next_states, rewards, terminations, truncations
 
     # ------------------------------------------------------------------
-    # Per-segment GAE: the core of Option 3
+    # Per-segment GAE
     # ------------------------------------------------------------------
 
     def _split_trajectory_and_compute_gae(
@@ -606,7 +606,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 if last_terminated:
                     next_value = 0.0
                 else:
-                    # Truncation or safeguard — bootstrap with this policy's
+                    # Truncation or safeguard: bootstrap with this policy's
                     # value estimate of the state after the segment
                     next_state = episode["next_states"][end - 1]
                     base_next = next_state[:-self.num_policies]
@@ -615,9 +615,9 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         _, _, v = self.policies[policy_id].network(st)
                         next_value = v.squeeze(0).item()
             else:
-                # Mid-episode scenario switch — bootstrap with the outgoing
+                # Mid-episode scenario switch: bootstrap with the outgoing
                 # policy's value estimate of the next state (first state of
-                # the next segment).  This treats the switch as a soft
+                # the next segment). This treats the switch as a soft
                 # episode boundary.
                 boundary_state = episode["states"][end]
                 base_boundary = boundary_state[:-self.num_policies]

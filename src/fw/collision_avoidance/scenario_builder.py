@@ -1,5 +1,3 @@
-import random
-
 import numpy as np
 from fw.collision_avoidance.collision_entity import CollisionEntity
 
@@ -21,35 +19,21 @@ class ScenarioBuilder:
 
     def __init__(self, env) -> None:
         self.step_counter: int = 0
-        # Legacy default; effective values are read from the env per call
-        # (see ``_active_cooldown`` / ``_active_encounter_prob``).
-        self.n_recovery_steps: int = 150
         self.env = env
         self.chosen_scenario: Optional[str] = None
 
-        # ----------------------------------------------------------
         # Focused-encounter training state (per episode)
-        # ----------------------------------------------------------
-        # Number of encounters that have already spawned in the current
-        # episode.  In focused-encounter training we cap this at 1.
-        self._encounters_this_episode: int = 0
-        # When True, a "path-following encounter" is active: no TS is
-        # spawned, we just count PF-only steps until the encounter timer
-        # elapses, then transition into the post-encounter countdown.
-        # This is the "no-obstacle" branch of focused-encounter training.
-        self._pathfollowing_encounter_active: bool = False
-        self._pathfollowing_encounter_counter: int = 0
-        # When True, the post-encounter countdown is active: we no longer
-        # spawn encounters, just count steps until clean truncation.
-        self._post_encounter_active: bool = False
-        self._post_encounter_counter: int = 0
-        # Set to True when the post-encounter countdown elapses.  Read by
-        # PySimColavBaseEnv.step() to flag the episode as truncated.
-        self._truncate_requested: bool = False
+        # Follows a sequence of PF steps -> Encounter steps -> PF step
+        self._encounters_this_episode: int = 0 # Number of encounters that have already spawned in the current episode.
+        self._pathfollowing_encounter_active: bool = False # dedicated PF steps are active instead of encounter
+        self._pathfollowing_encounter_counter: int = 0 # counts steps during active PF steps
+        self._post_encounter_active: bool = False # True if post-encounter cooldown is active
+        self._post_encounter_counter: int = 0 # counts number of steps in the post encounter
+        self._truncate_requested: bool = False # True when the post-encounter is done, and the episode is truncated
 
-    # ------------------------------------------------------------------
-    # Lifecycle hooks (called by PySimColavBaseEnv)
-    # ------------------------------------------------------------------
+    # ----------------
+    # Lifecycle hooks
+    # ----------------
     def on_reset(self) -> None:
         """Called at episode reset.
 
@@ -61,11 +45,6 @@ class ScenarioBuilder:
         """
         env = self.env
 
-        # Reset per-episode state. Without this the step_counter retains
-        # whatever value it had when the previous episode terminated —
-        # if it was already at n_recovery_steps, the very first step of
-        # the new episode is eligible for an encounter, which collides
-        # with the start-of-path skip the user expects.
         self.step_counter = 0
         self.chosen_scenario = None
 
@@ -77,9 +56,7 @@ class ScenarioBuilder:
         self._post_encounter_counter = 0
         self._truncate_requested = False
 
-        # Step-level mode: encounters are spawned by on_step(). We've
-        # already reset the counter above, so just clear entities and
-        # exit; do not run the episode-level builder.
+        # Step-level mode: encounters are spawned by on_step()
         if getattr(env, "scenario_obstacle_level", None) == "step":
             env.collision_entities = []
             env._sync_collision_entity_views()
@@ -91,11 +68,12 @@ class ScenarioBuilder:
             self.chosen_scenario = "path-following"
             self._push_scenario_to_classifier("path-following")
             return
+
         chosen_scenario = self.sample_collision_entity_scenario()
         self.chosen_scenario = chosen_scenario
         env.collision_entities = self.compute_collision_entity_positions(chosen_scenario, env.obstacle_count) or []
         # Tag every spawned entity with its ground-truth scenario (used by
-        # the classifier's ground_truth_label property and by metrics).
+        # the classifier's ground_truth_extended_label property and by metrics).
         for entity in env.collision_entities:
             if getattr(entity, "spawn_scenario_label", None) is None:
                 entity.spawn_scenario_label = chosen_scenario
@@ -177,7 +155,7 @@ class ScenarioBuilder:
             return
 
         # ----------------------------------------------------------
-        # 1b. Path-following encounter active (focused training only)
+        # 1b. Path-following 'encounter' active (focused training only)
         #     The episode sampled "path-following" as its encounter type,
         #     so no TS is spawned — we just run PF for
         #     ``pathfollowing_encounter_steps`` and then transition into
@@ -217,9 +195,6 @@ class ScenarioBuilder:
                     # as the encounter — start the PF-only encounter timer
                     # and lock the classifier to PF for the duration so
                     # reward shaping / observations stay in pure-PF mode.
-                    # Outside focused training the no-op behavior is kept
-                    # (eval mode does not have a single-encounter window,
-                    # so a PF "encounter" has no meaning there).
                     if is_focused:
                         self._pathfollowing_encounter_active = True
                         self._pathfollowing_encounter_counter = 0
@@ -246,11 +221,7 @@ class ScenarioBuilder:
         # 4. Clean up TS that has left forget range OR has finished its
         #    route. The route_finished check covers the case where a
         #    path-following TS (e.g. an overtaking TS that the OS never
-        #    catches up to) reaches the end of the trajectory: the
-        #    advance loop in _advance_entity_along_checkpoints stops
-        #    progressing it and zeroes its speed, but without explicit
-        #    despawn the entity stays parked on the path and the OS
-        #    runs straight into it on its way to the goal.
+        #    catches up to) reaches the end of the trajectory
         # ----------------------------------------------------------
         if env.collision_entities and len(env.collision_entities) == 1:
             if getattr(env, "ts_idx", None) is not None:
@@ -263,13 +234,11 @@ class ScenarioBuilder:
                     env._sync_collision_entity_views()
                     self.step_counter = 0
                     # Reset the classifier so it doesn't hold a stale tracked_ts
-                    # index into the now-empty collision_entities list. Without
-                    # this, _calculate_colav_reward() reads tracked_ts=0 and
-                    # tries collision_entities[0] → IndexError.
+                    # index into the now-empty collision_entities list.
                     if hasattr(env, "scenario_classifier"):
                         env.scenario_classifier.reset()
 
-                    # Focused training: encounter is over — start the
+                    # Focused training: encounter is over, start the
                     # post-encounter countdown to clean truncation.
                     if is_focused:
                         self._post_encounter_active = True
@@ -314,38 +283,13 @@ class ScenarioBuilder:
         env._seg_normals = np.asarray(seg_normals, dtype=np.float32)
         env._seg_cp_end_indices = np.asarray(seg_cp_end_indices, dtype=np.int32)
 
-        # Useful reusable subsets
-        n = len(env._seg_lengths)
-        self._all_seg_indices = np.arange(n, dtype=np.int32)
-
         # Match static/overtaking convention of skipping the first few and last few
+        n = len(env._seg_lengths)
         if n > 5:
             env._eligible_dynamic_seg_indices = np.arange(2, n - 5, dtype=np.int32)
         else:
-            env._eligible_dynamic_seg_indices = env._all_seg_indices.copy()
+            env._eligible_dynamic_seg_indices = np.arange(n, dtype=np.int32)
 
-
-    def remaining_distance_to_goal(self, pos: np.ndarray, next_checkpoint_idx: int) -> float:
-        """
-        Remaining path distance from a position to the goal, assuming the vessel
-        is currently heading toward checkpoints[next_checkpoint_idx].
-        """
-        env = self.env
-        if next_checkpoint_idx >= len(env.checkpoints):
-            return 0.0
-
-        pos = np.asarray(pos, dtype=np.float32)
-
-        rem = float(np.linalg.norm(
-            np.asarray(env.checkpoints[next_checkpoint_idx]["pos"], dtype=np.float32) - pos
-        ))
-
-        for i in range(next_checkpoint_idx + 1, len(env.checkpoints)):
-            pa = np.asarray(env.checkpoints[i - 1]["pos"], dtype=np.float32)
-            pb = np.asarray(env.checkpoints[i]["pos"], dtype=np.float32)
-            rem += float(np.linalg.norm(pb - pa))
-
-        return rem
 
     def sample_collision_entity_scenario(self) -> None:
         """Sample the current episode's collision entities."""
@@ -534,18 +478,6 @@ class ScenarioBuilder:
                     continue
                 break
 
-            # Compute signed CTE of this obstacle relative to its path segment
-            obs_pos = candidate_entity.get_position()
-            to_obs = obs_pos - pa
-            signed_cte = float(np.dot(to_obs, normal))
-            candidate_entity.path_cte = signed_cte
-            if signed_cte > EPSILON:
-                candidate_entity.path_side = "port"
-            elif signed_cte < -EPSILON:
-                candidate_entity.path_side = "starboard"
-            else:
-                candidate_entity.path_side = "on_path"
-
             collision_entities.append(candidate_entity)
 
         return collision_entities
@@ -639,7 +571,6 @@ class ScenarioBuilder:
         entity.next_checkpoint_index = int(env._seg_cp_end_indices[seg_idx])
         entity.path_direction = 1
         entity.path_offset = lat
-        entity.path_offset_mean = lat
         entity.route_mode = "follow_checkpoints"
         entity.route_finished = False
 
@@ -707,7 +638,6 @@ class ScenarioBuilder:
         entity.next_checkpoint_index = int(env._seg_cp_end_indices[seg_idx] - 1)
         entity.path_direction = -1
         entity.path_offset = lat
-        entity.path_offset_mean = lat
         entity.route_mode = "follow_checkpoints"
         entity.route_finished = False
         entity.dodge_trigger_range = float(env.encounter_range)

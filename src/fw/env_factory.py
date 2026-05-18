@@ -331,7 +331,6 @@ class PySimColavEnvironment(BaseEnvironment):
             current=config["current"],
             numerical_damping=config["numerical_damping"],
             enable_obstacles=True,
-            use_polar_scan=True,
         )
 
 
@@ -366,7 +365,6 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             current=config["current"],
             numerical_damping=config["numerical_damping"],
             enable_obstacles=True,
-            use_polar_scan=True,
             eval=False,
             eval_scenario="crossing-right",
             eval_obstacle_count=1,

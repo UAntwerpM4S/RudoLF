@@ -24,8 +24,6 @@ class CollisionEntity:
         self.entity_type = entity_type
         self.is_dynamic = bool(is_dynamic)
         self.lateral_speed = 0.0
-        self.path_cte = 0.0  # signed cross-track error to path segment (positive = port)
-        self.path_side = "on_path"  # "port", "starboard", or "on_path"
 
         if velocity is not None:
             vel = np.asarray(velocity, dtype=np.float32)

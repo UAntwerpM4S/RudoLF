@@ -46,7 +46,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             current: bool = False,
             numerical_damping: bool = False,
             enable_obstacles: bool = True,
-            use_polar_scan: bool = True,
             enable_variable_ship_size: bool = False,
             eval: bool = False,
             include_scenario_one_hot: bool = False,
@@ -71,7 +70,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             **kwargs,
     ) -> None:
         # Polar scan configuration
-        self.use_polar_scan = bool(use_polar_scan)
         self.polar_scan_cached = None
         self.polar_n_sectors = 54
         self.polar_fov = np.radians(270)
@@ -112,7 +110,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0, 0.0, 0.33, 0.33, 0.34, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.0, 0.0, 1.0, 0.0, 0.0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -148,18 +146,12 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.reward_weights = {
             "polar_distance_colreg": 0.65,
             "colreg_bearing": 1.5,
-            "crossing-right": 1.5,
-            "head-on": 0.53125,
-            # Overtaking has no phase-1 directional reward to compensate for,
-            # so its phase-2 boost is decoupled from "overtaking" and tuned
-            # independently (smaller value -> less aggressive post-encounter).
-            "overtaking_phase2": 0.20,
+            "crossing-right": 0.53125,
+            "head-on": 0.75,
+            "overtaking": 0.53125,
         }
 
-        # Estimated peak of base_reward (the 0.9 baseline at zero penalty in
-        # PySimEnv._calculate_reward). Used to size the phase-2 base boost so
-        # the boosted base reward reaches parity with phase-1 (base + cr_sig)
-        # at saturation.
+        # Estimated peak of base_reward
         self._base_reward_peak_est = 0.9
 
     # -------------------------
@@ -171,31 +163,10 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         Called by AgentManager.visualize_trained_agent before running episodes.
         Overrides set here take effect on the next reset/spawn — they are read
         by the scenario builder (lateral spawn) and the base env step loop
-        (OU wander, head-on dodge). Training runs leave these at their safe
-        defaults (set in PySimColavBaseEnv.__init__) and are unaffected.
+        (head-on dodge). Training runs leave these at their safe defaults
+        (set in PySimColavBaseEnv.__init__) and are unaffected.
         """
         self.eval = True
-
-        # Variable TS radii
-        #self.enable_variable_ship_size = True
-        #self.static_ship_radius_min = 20.0
-        #self.static_ship_radius_max = 40.0
-
-        # Lateral lane spawn (parallel-to-path)
-        # Head-on: 30 m to OS-port +/- 10 m (a "left lane")
-        #self.headon_lateral_mean = 30.0
-        #self.headon_lateral_jitter = 10.0
-        # Overtaking: same lane as OS, +/- 10 m jitter only
-        #self.overtaking_lateral_jitter = 10.0
-
-        # Ornstein-Uhlenbeck wander on entity.path_offset
-        #self.enable_path_offset_ou = True
-        #self.ou_theta = 0.1
-        #self.ou_sigma = 1.0
-        #self.ou_clip = 8.0
-
-        # Late dodge for head-on TS at encounter_range/2
-        #self.enable_headon_dodge = True
 
         # overtaking TS speed
         self.overtaking_ts_v_min = 1.0
@@ -301,20 +272,80 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # -----------------------
     def _on_entities_stepped(self) -> None:
         """Rebuild polar scan geometries after entities move."""
-        if self.use_polar_scan:
-            if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
-                self._rebuild_polar_scan_geometries()
-                self.polar_scan_cached = self._get_polar_scan()
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            self._rebuild_polar_scan_geometries()
+            self.polar_scan_cached = self._get_polar_scan()
+
+        self._update_passing_detection()
+
+    def _update_passing_detection(self) -> None:
+        """Track TS passing events and record encounter snapshots.
+
+        TS-frame sign-flip on lateral (crossing-right) or longitudinal
+        (head-on) offset. Linearly interpolate the sub-step crossing point
+        so the dotted snapshot line lies on the TS track.
+        """
+        clf = self.scenario_classifier
+        ts_idx = clf.tracked_ts
+
+        if (
+            ts_idx is None
+            or ts_idx >= len(self.collision_entities)
+            or clf.label not in ("head-on", "crossing-right", "overtaking")
+        ):
+            self._prev_passing_signal = None
+            self._prev_passing_ts_idx = None
+            return
+
+        ts = self.collision_entities[ts_idx]
+        os_pos_now = self.ship_pos
+        ts_pos_now = ts.get_position()
+        signal = ts.passing_signal(os_pos_now, clf.label)
+
+        # Encounter-start snapshot (first step we observe this TS in a
+        # tracked encounter scenario).
+        if self._prev_passing_ts_idx != ts_idx:
+            self._passing_snapshots.append({
+                "os_pos": np.asarray(os_pos_now, dtype=np.float32),
+                "ts_pos": np.asarray(ts_pos_now, dtype=np.float32),
+                "dist": float(np.linalg.norm(os_pos_now - ts_pos_now)),
+                "scenario": clf.label,
+                "kind": "start",
+            })
+
+        prev = self._prev_passing_signal
+        if (
+            prev is not None
+            and self._prev_passing_ts_idx == ts_idx
+            and prev * signal < 0.0
+            and self.ts_passed != ts_idx
+        ):
+            t = prev / (prev - signal)
+            os_at = self._prev_os_pos + t * (os_pos_now - self._prev_os_pos)
+            ts_at = self._prev_ts_pos + t * (ts_pos_now - self._prev_ts_pos)
+            self.ts_passed = ts_idx
+            self._current_encounter_passed = True
+            side = ts.ts_side_from_os_perspective(os_pos_now, self.phys_sim.state.heading)
+            if side == "port":
+                self._colreg_correct += 1
+            elif side == "starboard":
+                self._colreg_violations += 1
+            self._passing_snapshots.append({
+                "os_pos": np.asarray(os_at, dtype=np.float32),
+                "ts_pos": np.asarray(ts_at, dtype=np.float32),
+                "dist": float(np.linalg.norm(os_at - ts_at)),
+                "scenario": clf.label,
+                "kind": "passed",
+            })
+        self._prev_passing_signal = signal
+        self._prev_passing_ts_idx = ts_idx
+        self._prev_os_pos = np.copy(os_pos_now)
+        self._prev_ts_pos = np.copy(ts_pos_now)
 
     def _on_episode_reset(self) -> None:
         """Reset polar-specific state for new episode."""
-        if getattr(self, "use_polar_scan", False):
-            self.polar_scan_cached = None
-
-        self._crossing_left_initial_speed = None
-
-        if getattr(self, "use_polar_scan", False):
-            self._rebuild_polar_scan_geometries()
+        self.polar_scan_cached = None
+        self._rebuild_polar_scan_geometries()
 
         self._overtaking_pass_reported = False
         self._os_speed_samples = []
@@ -357,14 +388,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 self.collision_entities,
             )
 
-        if not getattr(self, "use_polar_scan", False):
-            zeros_polar = np.zeros(self.polar_n_sectors, dtype=np.float32)
-            zeros_tcpa = np.zeros(1, dtype=np.float32)
-            obs = np.hstack([base_obs, zeros_polar, zeros_tcpa]).astype(np.float32)
-            if getattr(self, "include_scenario_one_hot", False):
-                obs = np.hstack([obs, clf.get_one_hot()]).astype(np.float32)
-            return obs
-
         scan = self.polar_scan_cached
         if scan is None:
             scan = self._get_polar_scan()
@@ -375,9 +398,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             scan = np.zeros(self.polar_n_sectors, dtype=np.float32)
 
         # Encounter phase as a single scalar
-        #   ~+1  TS before CPA,
-        #    0   at CPA,
-        #   ~-1  TS already past CPA
+        #   ~+1  TS before CPA, 0 at CPA, ~-1 TS already past CPA
         tcpa_norm = 0.0
         if clf.tracked_ts is not None:
             ts = self.collision_entities[clf.tracked_ts]
@@ -411,7 +432,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.ts_idx = clf.tracked_ts
 
         g_tcpa = 1.0
-        g_tcpa_overtaking = 1.0
         cri = 0.0
         if (
             self.ts_idx is not None
@@ -427,14 +447,9 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             k_tcpa = 0.15
             g_tcpa = 0.5 * (1.0 + math.tanh(k_tcpa * tcpa))
 
-            k_tcpa_overtaking = 0.10
-            g_tcpa_overtaking = 0.5 * (1.0 + math.tanh(k_tcpa_overtaking * tcpa))
-
-
         _step_polar = 0.0
         if (
-            getattr(self, "use_polar_scan", False)
-            and self.polar_scan_cached is not None
+            self.polar_scan_cached is not None
             and clf.label != "path-following"
         ):
             max_close = float(np.max(self.polar_scan_cached))
@@ -503,128 +518,31 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 )
                 reward += crossing_right_signal
 
-        # Post-encounter base-reward boost. Sized per scenario so that the
-        # phase-2 base reward reaches parity with the phase-1 reward
+            elif scenario == "overtaking":
+                ts_pos = ts.get_position()
+                dx = float(ts_pos[0] - os_pos[0])
+                dy = float(ts_pos[1] - os_pos[1])
+                beta = (
+                               math.atan2(dy, dx) - os_heading + math.pi
+                       ) % (2.0 * math.pi) - math.pi
+
+                k = 1
+                _overtaking_term = (
+                        self.reward_weights["overtaking"]
+                        * math.tanh(k * beta)
+                        * g_tcpa
+                )
+                reward += _overtaking_term
+
+
+        # Post-encounter base-reward boost so that the
+        # phase-2 base reward reaches same order of magnitude as the phase-1 reward
         # (base + scenario-specific directional signal) at saturation.
-        base_peak = float(self._base_reward_peak_est)
-        phase2_base_boost = 0.0
-
-        if clf.label == "crossing-right":
-            # Matches the phase 1 crossing-right bearing signal.
-            cr_w = float(self.reward_weights["crossing-right"])
+        if clf.label != "path-following":
+            base_peak = float(self._base_reward_peak_est)
+            cr_w = float(self.reward_weights[clf.label])
             phase2_multiplier = 1.0 + cr_w / max(base_peak, 1e-6)
-            phase2_base_boost = (phase2_multiplier - 1.0) * (1.0 - g_tcpa) * base_reward
-
-        elif clf.label == "head-on":
-            # Phase-1 head-on signal is boosted by (1 + (1 - cri)); mirror
-            # that here using an average CRI of 0.3 so the phase 2 budget
-            # matches phase 1 magnitude in this scenario.
-            cr_w = float(self.reward_weights["head-on"]) * (1.0 + (1.0 - 0.3))
-            phase2_multiplier = 1.0 + cr_w / max(base_peak, 1e-6)
-            phase2_base_boost = (phase2_multiplier - 1.0) * (1.0 - g_tcpa) * base_reward
-
-        elif clf.label == "overtaking":
-            # Overtaking has no phase-1 directional reward to compensate for,
-            # so the boost uses its own (smaller) weight. The gate is also
-            # gentler (g_tcpa_overtaking) because OS/TS range varies slowly.
-            cr_w = float(self.reward_weights["overtaking_phase2"])
-            phase2_multiplier = 1.0 + cr_w / max(base_peak, 1e-6)
-            phase2_base_boost = (phase2_multiplier - 1.0) * (1.0 - g_tcpa_overtaking) * base_reward
-
-        reward += phase2_base_boost
-
-        # Passing detection: TS-frame sign-flip on lateral (crossing-right) or
-        # longitudinal (head-on) offset. Linearly interpolate the sub-step
-        # crossing point so the dotted snapshot line lies on the TS track.
-        if (
-            self.ts_idx is not None
-            and self.ts_idx < len(self.collision_entities)
-            and clf.label in ("head-on", "crossing-right", "overtaking")
-        ):
-            ts = self.collision_entities[self.ts_idx]
-            os_pos_now = self.ship_pos
-            ts_pos_now = ts.get_position()
-            signal = ts.passing_signal(os_pos_now, clf.label)
-
-            # Encounter-start snapshot (first step we observe this TS in a
-            # tracked encounter scenario).
-            if self._prev_passing_ts_idx != self.ts_idx:
-                self._passing_snapshots.append({
-                    "os_pos": np.asarray(os_pos_now, dtype=np.float32),
-                    "ts_pos": np.asarray(ts_pos_now, dtype=np.float32),
-                    "dist": float(np.linalg.norm(os_pos_now - ts_pos_now)),
-                    "scenario": clf.label,
-                    "kind": "start",
-                })
-
-            prev = self._prev_passing_signal
-            if (
-                prev is not None
-                and self._prev_passing_ts_idx == self.ts_idx
-                and prev * signal < 0.0
-                and self.ts_passed != self.ts_idx
-            ):
-                t = prev / (prev - signal)
-                os_at = self._prev_os_pos + t * (os_pos_now - self._prev_os_pos)
-                ts_at = self._prev_ts_pos + t * (ts_pos_now - self._prev_ts_pos)
-                self.ts_passed = self.ts_idx
-                self._current_encounter_passed = True
-                side = ts.ts_side_from_os_perspective(os_pos_now, self.phys_sim.state.heading)
-                if side == "port":
-                    self._colreg_correct += 1
-                elif side == "starboard":
-                    self._colreg_violations += 1
-                self._passing_snapshots.append({
-                    "os_pos": np.asarray(os_at, dtype=np.float32),
-                    "ts_pos": np.asarray(ts_at, dtype=np.float32),
-                    "dist": float(np.linalg.norm(os_at - ts_at)),
-                    "scenario": clf.label,
-                    "kind": "passed",
-                })
-            self._prev_passing_signal = signal
-            self._prev_passing_ts_idx = self.ts_idx
-            self._prev_os_pos = np.copy(os_pos_now)
-            self._prev_ts_pos = np.copy(ts_pos_now)
-        else:
-            self._prev_passing_signal = None
-            self._prev_passing_ts_idx = None
-
-        # ----------------------------------------------------------
-        # Per-step reward diagnostics. Toggle via env.enable_reward_diag.
-        # ----------------------------------------------------------
-        if (
-            getattr(self, "enable_reward_diag", False)
-            and self.ts_idx is not None
-            and self.ts_idx < len(self.collision_entities)
-        ):
-            ts = self.collision_entities[self.ts_idx]
-            os_pos = self.ship_pos
-            os_heading = self.phys_sim.state.heading
-            os_u = float(self.phys_sim.state.u)
-            os_v = float(self.phys_sim.state.v)
-            ts_pos = ts.get_position()
-            dx = float(ts_pos[0] - os_pos[0])
-            dy = float(ts_pos[1] - os_pos[1])
-            beta = (
-                math.atan2(dy, dx) - os_heading + math.pi
-            ) % (2.0 * math.pi) - math.pi
-            cri, tcpa, dcpa = self._compute_cri(
-                os_pos, os_heading, os_u, os_v, ts,
-            )
-            dist = ts.distance_to_point(os_pos)
-            side = ts.ts_side_from_os_perspective(os_pos, os_heading)
-            print(
-                f"[REW] step={getattr(self, 'step_count', -1):4d} "
-                f"scen={clf.label:14s} side={side:9s} "
-                f"beta={math.degrees(beta):+6.1f}deg "
-                f"dist={dist:6.1f} "
-                f"tcpa={tcpa:+7.1f}s dcpa={dcpa:6.1f}m cri={cri:.3f} "
-                f"g_tcpa={g_tcpa:.3f} "
-                f"cr_sig={crossing_right_signal:+7.3f} "
-                f"polar={_step_polar:+7.3f} "
-                f"p2boost={phase2_base_boost:+7.3f} "
-                f"base={base_reward:+7.3f} total={reward:+7.3f}"
-            )
+            reward+= (phase2_multiplier - 1.0) * (1.0 - g_tcpa) * base_reward
 
         return reward, done
 
@@ -635,12 +553,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         super()._initialize_rendering()
 
         self.polar_beams = []
-        if self.use_polar_scan:
-            for _ in range(self.polar_n_sectors):
-                beam_line, = self.ax.plot(
-                    [], [], color='orange', alpha=0.3, linewidth=1,
-                )
-                self.polar_beams.append(beam_line)
+        for _ in range(self.polar_n_sectors):
+            beam_line, = self.ax.plot(
+                [], [], color='orange', alpha=0.3, linewidth=1,
+            )
+            self.polar_beams.append(beam_line)
 
         # Override the legend with a curated, fixed set of entries (proxy
         # artists, so they don't depend on which artists got auto-labeled).
@@ -660,7 +577,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
     def _render_subclass(self, heading: float) -> None:
         """Update polar beam rendering."""
-        if self.use_polar_scan and getattr(self, "polar_beams", None):
+        if getattr(self, "polar_beams", None):
             scan = self.polar_scan_cached
             if scan is None:
                 scan = self._get_polar_scan()
@@ -680,7 +597,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
     def _blit_subclass(self) -> None:
         """Blit polar beam artists."""
-        if self.use_polar_scan and getattr(self, "polar_beams", None):
+        if getattr(self, "polar_beams", None):
             for beam in self.polar_beams:
                 self.ax.draw_artist(beam)
 

@@ -179,8 +179,8 @@ class AgentManager:
         pretrained_specs = {
             #0: {"file": "pretrained_pf", "frozen": False},
             #1: {"file": "pretrained_ho", "frozen": False},
-            #2: {"file": "pretrained_ot", "frozen": False},
-            #3: {"file": "pretrained_cr", "frozen": False},
+            #2: {"file": "pretrained_ot", "frozen": True},
+            #3: {"file": "pretrained_cr", "frozen": True},
         }
         agent.load_pretrained_policies(pretrained_dir, pretrained_specs)
 
@@ -335,8 +335,8 @@ class AgentManager:
                 raw_env = raw_env.env
 
             # Flip on eval-time realism overrides (variable TS radii, lateral
-            # lane spawn, OU wander, late head-on dodge). All overrides are
-            # opt-in via env attributes that default to no-op in training.
+            # lane spawn, late head-on dodge). All overrides are opt-in via
+            # env attributes that default to no-op in training.
             if hasattr(raw_env, "set_evaluation_parameters"):
                 raw_env.set_evaluation_parameters()
             for sub in getattr(raw_env, "sub_environments", {}).values():

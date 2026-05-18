@@ -166,18 +166,6 @@ class PySimColavBaseEnv(PySimEnv):
         self.eval = bool(eval)
         self.min_distance = float("inf")
 
-        # Evaluation-mode realism overrides (all default to OFF/no-op so training
-        # is unaffected; flipped on by PySimColavPolarEnv.set_evaluation_parameters
-        # which is called from agent_manager.visualize_trained_agent).
-        self.headon_lateral_mean = 0.0          # mean lateral shift for head-on TS [m]
-        self.headon_lateral_jitter = 0.0        # uniform +/- jitter around the mean [m]
-        self.overtaking_lateral_jitter = 0.0    # uniform +/- jitter for overtaking TS [m]
-        self.enable_path_offset_ou = False      # OU wander applied to entity.path_offset
-        self.ou_theta = 0.1                     # OU mean-reversion rate
-        self.ou_sigma = 1.0                     # OU noise scale [m / sqrt(s)]
-        self.ou_clip = 8.0                      # max deviation from mean [m]
-        self.enable_headon_dodge = False        # late dodge for head-on TS at encounter_range/2
-
         # Per-episode minimum distance tracking
         self._episode_min_distances: list[float] = []
         self._current_episode_min_dist: float = float("inf")
@@ -531,7 +519,7 @@ class PySimColavBaseEnv(PySimEnv):
 
         # Classification metrics — update after _get_obs() has re-run the
         # scenario classifier for this step.
-        self._update_classification_metrics()
+        self._update_encounter_metrics()
 
         info = {
             "rewards": reward,
@@ -576,21 +564,17 @@ class PySimColavBaseEnv(PySimEnv):
     # ---------------------------
     # Classification metrics
     # ---------------------------
-    def _update_classification_metrics(self) -> None:
-        """Detect encounter start and record a single (gt, pred) pair.
+    def _update_encounter_metrics(self) -> None:
+        """Drive the per-encounter lifecycle from `tracked_ts` transitions.
 
-        Called from `step()` after `_get_obs()` has triggered
-        `scenario_classifier.classify(...)`. An encounter is the interval
-        from "a TS first becomes tracked" to "tracked_ts returns to None".
-        We capture one (gt_extended, pred_extended) record at the start
-        of each encounter and never re-evaluate during the encounter —
-        this mirrors the locking behavior used for the 4-way reward label
-        and means the metric answers "at first sight, did the geometric
-        classifier agree with the builder's ground truth?"
-
-        In step-level generation multiple encounters may occur per episode
-        (classifier is reset between them by `scenario_builder.on_step`);
-        each one contributes an independent record.
+        Called from `step()` after `_get_obs()` re-runs the classifier.
+        Handles three transitions:
+          * terminal/truncated → finalize any active encounter (not resolved).
+          * None → tracked     → start an encounter: capture (gt, pred) at
+                                 first sight and reset the per-encounter
+                                 accumulators (min_dist, CRI, CTE,
+                                 time-to-first-action, pass/collision flags).
+          * tracked → None     → finalize the encounter as resolved.
         """
         # _get_obs() skips re-running the classifier on terminal steps,
         # so the classifier state is stale — do not sample it. Still
@@ -607,7 +591,7 @@ class PySimColavBaseEnv(PySimEnv):
         prev = self._prev_tracked_ts
         self._prev_tracked_ts = curr
 
-        # Encounter end: tracked → None (TS left forget range or was
+        # Encounter end: tracked -> None (TS left forget range or was
         # despawned by step-level cleanup). This is the "resolved" side of
         # the criterion; the encounter is fully resolved only if OS also
         # passed the TS during it.
@@ -615,7 +599,7 @@ class PySimColavBaseEnv(PySimEnv):
             self._finalize_active_encounter(resolved_normally=True)
             return
 
-        # Only act on the transition None → tracked (start of encounter).
+        # Only act on the transition None -> tracked (start of encounter).
         if curr is None or prev is not None:
             return
 
@@ -836,20 +820,6 @@ class PySimColavBaseEnv(PySimEnv):
 
             route_mode = getattr(entity, "route_mode", None)
 
-            # OU wander on path_offset for path-following TS (head-on / overtaking).
-            # Mean-reverting noise around the entity's spawn-time lateral lane.
-            if (self.enable_path_offset_ou
-                    and route_mode == "follow_checkpoints"
-                    and hasattr(entity, "path_offset_mean")):
-                x = float(getattr(entity, "path_offset", 0.0))
-                mu = float(entity.path_offset_mean)
-                dt = float(self.time_step)
-                dx = self.ou_theta * (mu - x) * dt + self.ou_sigma * math.sqrt(dt) * float(self._rng.standard_normal())
-                x_new = x + dx
-                lo = mu - self.ou_clip
-                hi = mu + self.ou_clip
-                entity.path_offset = float(np.clip(x_new, lo, hi))
-
             if route_mode == "follow_checkpoints":
                 self._advance_entity_along_checkpoints(entity, self.time_step)
             else:
@@ -948,7 +918,7 @@ class PySimColavBaseEnv(PySimEnv):
         self._current_episode_collided = False
 
         # Finalize any encounter still active at reset (defensive — terminal
-        # steps already finalize via _update_classification_metrics).
+        # steps already finalize via _update_encounter_metrics).
         # Reaching here mid-encounter means it was cut off by the episode
         # ending without the TS leaving forget range → not resolved.
         if hasattr(self, "_finalize_active_encounter"):
