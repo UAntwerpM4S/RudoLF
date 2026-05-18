@@ -1,15 +1,15 @@
 """
-Run inference for PPO policies trained directly in ``AirSimEnv``.
+Run inference for PPO policies trained directly in `AirSimEnv`.
 
 This runner is intentionally single-purpose:
 
-- it loads a trained ``AirSimEnv`` policy
-- it drives the live UE5/CosysAirSim ship through ``AirSimEnv.step()``
-- it relies on ``AirSimEnv.reset()`` and ``AirSimEnv.close()`` for
+- it loads a trained `AirSimEnv` policy
+- it drives the live UE5/CosysAirSim ship through `AirSimEnv.step()`
+- it relies on `AirSimEnv.reset()` and `AirSimEnv.close()` for
   episode lifecycle handling
 
 Framework-driven replay for modular framework-model visualization lives in
-``run_visualise_models.py`` and is kept separate on purpose.
+`run_visualise_models.py` and is kept separate on purpose.
 """
 
 from __future__ import annotations
@@ -65,18 +65,18 @@ def _draw_ship_trail_in_ue5(
     Draw the ship trail in UE5 as one chunked burst.
 
     The trail is built from framework-frame positions accumulated during
-    the episode and transformed via the env's ``CoordTransform`` so it
+    the episode and transformed via the env's `CoordTransform` so it
     aligns with the UE5 world.
 
     Args:
-        env: Active AirSim environment (provides ``coord_transform`` and ``bridge``).
+        env: Active AirSim environment (provides `coord_transform` and `bridge`).
         traj_x: Framework-frame X positions captured during the episode.
         traj_y: Framework-frame Y positions captured during the episode.
         thickness: Rendered line thickness for the trail.
         min_segment_m: Minimum distance between consecutive trail points
             (downsamples very dense trajectories).
         duration: Seconds the trail stays visible in the 3D world (only
-            meaningful when ``is_persistent=False``).
+            meaningful when `is_persistent=False`).
         is_persistent: Whether lines persist in the 3D world indefinitely.
     """
 
@@ -143,7 +143,7 @@ def _warn_if_model_name_looks_non_airsim(model_path: Path) -> None:
 
 def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     """
-    Load a :class:`PPOPolicy` from a saved ``.zip`` file.
+    Load a :class:`PPOPolicy` from a saved `.zip` file.
 
     Args:
         model_path: User-provided checkpoint path.
@@ -220,13 +220,13 @@ def _run_episode_airsim_env(
     verbose: bool = False,
 ) -> Tuple[List[float], List[float], float, str]:
     """
-    Run one inference episode through ``AirSimEnv.step()``.
+    Run one inference episode through `AirSimEnv.step()`.
 
     This mirrors the trained control loop:
 
-    1. ``env.reset()`` restores the ship to the episode start pose
+    1. `env.reset()` restores the ship to the episode start pose
     2. the policy predicts an action from the current observation
-    3. ``env.step()`` sends the action to UE5, waits for physics, reads back
+    3. `env.step()` sends the action to UE5, waits for physics, reads back
        the new state, and computes reward/termination/truncation
     4. inference stops when the episode terminates or truncates
 
@@ -315,7 +315,7 @@ def run_inference(
     verbose: bool = False,
 ) -> None:
     """
-    Run live inference in UE5 using the native ``AirSimEnv`` loop.
+    Run live inference in UE5 using the native `AirSimEnv` loop.
 
     Args:
         model_path: Path to the AirSimEnv-trained checkpoint.
