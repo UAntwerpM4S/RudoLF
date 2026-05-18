@@ -4,7 +4,7 @@ from typing import Optional
 from abc import abstractmethod
 from fw.policies.base_agent import BaseAgent
 from fw.environments.base_env import BaseEnv
-from fw.profile_applier import SimulatorApplier, ActionAdapter
+from fw.profile_applier import ActionAdapter
 from fw.config_profile import VesselProfile
 
 
@@ -167,6 +167,7 @@ class BasePPOAgent(BaseAgent):
 
         pass
 
+
     @abstractmethod
     def _step_envs(self, actions):
         """
@@ -184,6 +185,7 @@ class BasePPOAgent(BaseAgent):
         """
 
         pass
+
 
     @abstractmethod
     def _predict(self, states, deterministic=False):
@@ -203,6 +205,7 @@ class BasePPOAgent(BaseAgent):
 
         pass
 
+
     @abstractmethod
     def _get_bootstrap_value(self, states, env_id: Optional[int] = None):
         """
@@ -219,6 +222,69 @@ class BasePPOAgent(BaseAgent):
         """
 
         pass
+
+
+    @abstractmethod
+    def _get_simulator_for_env(self, env_id: int):
+        """
+        Return the simulator associated with a specific environment index.
+
+        Each subclass has a different environment layout:
+        - `SinglePPOAgent` uses a flat vectorized env whose worker simulators
+          are not accessible from the base env reference — return `None`.
+        - `MultiPPOAgent` owns `sub_environments` indexed by `env_id` —
+          return that sub-environment's simulator.
+
+        The return value is forwarded to `ActionAdapter.transform` as the
+        `simulator` keyword argument.  `ActionAdapter` currently ignores it
+        (kept for API compatibility), so returning `None` is always safe.
+        If `transform` ever starts consuming simulator state, this is the
+        correct extension point to provide it.
+
+        Args:
+            env_id (int): Zero-based index of the environment/agent.
+
+        Returns:
+            Simulator instance, or `None` if not accessible.
+        """
+
+        pass
+
+
+    @staticmethod
+    def _repack_actions(original_actions, transformed_actions: list):
+        """
+        Repack a list of (transformed) actions into the same container type
+        as the original actions produced by `_predict`.
+
+        `SinglePPOAgent._predict` returns an `np.ndarray`; `MultiPPOAgent`
+        returns a `tuple`.  `_step_envs` in each subclass expects the same
+        type back, so the list built during the rollout loop must be converted.
+
+        Args:
+            original_actions: The actions container returned by `_predict`,
+                used only to determine the target type.
+            transformed_actions (list): Per-environment actions after neutral
+                masking and profile transformation.
+
+        Returns:
+            Actions repacked in the original container type.
+
+        Raises:
+            TypeError: If `original_actions` is not an `np.ndarray`, `tuple`,
+                or `list`.
+        """
+
+        if isinstance(original_actions, np.ndarray):
+            return np.stack(transformed_actions)
+        if isinstance(original_actions, tuple):
+            return tuple(transformed_actions)
+        if isinstance(original_actions, list):
+            return transformed_actions
+        raise TypeError(
+            f"Unsupported action container type: {type(original_actions).__name__}. "
+            f"Expected np.ndarray, tuple, or list."
+        )
 
 
     def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
@@ -290,25 +356,6 @@ class BasePPOAgent(BaseAgent):
 
         # Reset all environments
         states = self._reset_envs(num_envs)
-
-        # If the profile mandates a specific start state, push it to the
-        # simulator right after the vectorized reset so every training
-        # episode begins from the configured position/heading.
-        if self._profile is not None and self._profile.scenario.initial_state is not None:
-            _rollout_sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
-            if _rollout_sim is not None:
-                SimulatorApplier.apply(self._profile, _rollout_sim)
-            elif hasattr(self.env, "sub_environments") and self.env.sub_environments:
-                iterable = (
-                    self.env.sub_environments.values()
-                    if isinstance(self.env.sub_environments, dict)
-                    else self.env.sub_environments
-                )
-                for sub in iterable:
-                    _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
-                    if _sub_sim is not None:
-                        SimulatorApplier.apply(self._profile, _sub_sim)
-
         envs_done = np.zeros(num_envs, dtype=bool)
 
         # Storage for episode data
@@ -332,63 +379,28 @@ class BasePPOAgent(BaseAgent):
             # Policy predicts actions for all agents from live states
             actions, log_probs, values = self._predict(states, deterministic=False)
 
-            # Build effective_actions: zero out done agents before stepping the sim.
-            # This must happen BEFORE _step_envs so the simulator receives a
-            # stable neutral input for ships that have already finished.
-            effective_actions = list(actions)
+            # Replace actions for done environments with a neutral input BEFORE
+            # stepping so the simulator receives a stable helm-zero signal for
+            # ships that have already finished their episode.
+            effective_actions = [
+                self.env.get_neutral_action(env_id, action) if envs_done[env_id] else action
+                for env_id, action in enumerate(actions)
+            ]
 
-            for env_id in range(num_envs):
-                if envs_done[env_id]:
-                    # Replace with zero action (neutral helm) — sim receives a
-                    # stopped ship rather than a randomly-acting one
-                    effective_actions[env_id] = self.env.get_neutral_action(env_id, actions[env_id])
-
-            # Convert back to the same container type _step_envs expects.
-            # SinglePPOAgent uses np.ndarray; MultiPPOAgent uses tuple.
-            if isinstance(actions, np.ndarray):
-                effective_actions = np.stack(effective_actions)
-            else:
-                effective_actions = tuple(effective_actions)
-
+            # Apply optional per-action profile transform (e.g. fixed thrust).
             if self._profile is not None:
-                if isinstance(effective_actions, np.ndarray) and effective_actions.ndim == 2:
-                    sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
-                    if sim is None and hasattr(self.env, "sub_environments") and self.env.sub_environments:
-                        first_sub = next(iter(
-                            self.env.sub_environments.values()
-                            if isinstance(self.env.sub_environments, dict)
-                            else self.env.sub_environments
-                        ), None)
-                        if first_sub is not None:
-                            sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
-                    transformed = np.stack([
-                        ActionAdapter.transform(self._profile, effective_actions[i], simulator=sim)
-                        for i in range(effective_actions.shape[0])
-                    ])
-                    effective_actions = transformed
-                elif isinstance(effective_actions, tuple):
-                    sub_sims: list = []
-                    if hasattr(self.env, "sub_environments") and self.env.sub_environments:
-                        iterable = (
-                            self.env.sub_environments.values()
-                            if isinstance(self.env.sub_environments, dict)
-                            else self.env.sub_environments
-                        )
-                        for sub in iterable:
-                            sub_sims.append(
-                                getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
-                            )
-                    effective_actions = tuple(
-                        ActionAdapter.transform(
-                            self._profile, a,
-                            simulator=sub_sims[i] if i < len(sub_sims) else None,
-                        )
-                        for i, a in enumerate(effective_actions)
+                effective_actions = [
+                    ActionAdapter.transform(
+                        self._profile,
+                        action,
+                        simulator=self._get_simulator_for_env(env_id),
                     )
-                else:
-                    sim = getattr(self.env, "phys_sim", None) or getattr(self.env, "_phys_sim", None)
-                    effective_actions = ActionAdapter.transform(self._profile, effective_actions, simulator=sim)
+                    for env_id, action in enumerate(effective_actions)
+                ]
 
+            # Restore the container type that _step_envs expects, i.e.
+            # np.ndarray for SinglePPOAgent, tuple for MultiPPOAgent.
+            effective_actions = self._repack_actions(actions, effective_actions)
             next_states, rewards, terminations, truncations = self._step_envs(effective_actions)
 
             # Store per-agent transitions
