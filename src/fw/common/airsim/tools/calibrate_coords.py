@@ -4,7 +4,7 @@ Coordinate calibration tool for Framework <-> AirSim mapping.
 Run this script while UE5 + CosysAirSim is running. It will:
 1. Ask you to drive the vehicle to 2 known reference points
 2. Compute the transform (scale, rotation, mirror, offset)
-3. Save calibration as ``calibration.json``
+3. Save calibration as `calibration.json`
 
 4. Visually verify by drawing the Framework polygon in UE5
 
@@ -35,8 +35,8 @@ def _load_trajectory_endpoints() -> tuple:
     Load the first and last waypoints from the trajectory CSV.
 
     Returns:
-        A tuple ``(start, end)`` where each element is a NumPy array
-        of shape ``(2,)`` containing ``[x_east, y_north]``.
+        A tuple `(start, end)` where each element is a NumPy array
+        of shape `(2,)` containing `[x_east, y_north]`.
     """
 
     csv_path = _ENVIRONMENTS_DIR / "trajectory_points_no_scale.csv"
@@ -55,13 +55,13 @@ def _detect_origin_drift(client, saved_config: dict) -> np.ndarray:
     returned drift vector should be added to all AirSim coordinates.
 
     Args:
-        client: An active ``cosysairsim.CarClient`` instance.
-        saved_config: The ``calibration.json`` dictionary.  If it
-            contains a ``"spawn_position"`` key the drift is computed;
+        client: An active `cosysairsim.CarClient` instance.
+        saved_config: The `calibration.json` dictionary.  If it
+            contains a "spawn_position" key the drift is computed;
             otherwise a zero vector is returned.
 
     Returns:
-        A 2-element NumPy array ``[dx, dy]`` representing the drift.
+        A 2-element NumPy array `[dx, dy]` representing the drift.
     """
 
     if "spawn_position" not in saved_config:
@@ -86,20 +86,20 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
     """
     Gather two Framework <-> AirSim reference-point pairs interactively.
 
-    Depending on the user's ``choice`` the method either re-uses a
+    Depending on the user's `choice` the method either re-uses a
     saved calibration, drives to points in UE5, or accepts manual
     coordinates from stdin.
 
     Args:
-        client: An active ``cosysairsim.CarClient`` instance.
+        client: An active `cosysairsim.CarClient` instance.
         traj_start: Start of the reference trajectory (Framework frame).
         traj_end: End of the reference trajectory (Framework frame).
-        has_existing: Whether a ``calibration.json`` already exists.
-        choice: User-selected calibration mode (``"1"``-``"4"``).
+        has_existing: Whether a `calibration.json` already exists.
+        choice: User-selected calibration mode ("1"-"4").
 
     Returns:
-        An 8-tuple ``(framework_A, framework_B, ue5_A, ue5_B,
-        mirror_x, mirror_y, offset_x, offset_y)``.
+        An 8-tuple `(framework_A, framework_B, ue5_A, ue5_B,
+        mirror_x, mirror_y, offset_x, offset_y)`.
     """
 
     if choice in ["1", "4", "5"] and has_existing:
@@ -200,7 +200,7 @@ def _compute_calibration(framework_A, framework_B, ue5_A, ue5_B,
         spawn_position: Current vehicle spawn position in UE5.
 
     Returns:
-        A dictionary suitable for writing to ``calibration.json``.
+        A dictionary suitable for writing to `calibration.json`.
     """
 
     framework_dist = np.linalg.norm(framework_B - framework_A)
@@ -249,13 +249,13 @@ def _draw_visualization(
     """
     Draw polygon, trajectory, and reference dots in UE5.
 
-    Uses the AirSim ``simPlotLineStrip`` and ``simPlotPoints`` APIs to
+    Uses the AirSim `simPlotLineStrip` and `simPlotPoints` APIs to
     render persistent markers so the user can visually verify the
     calibration inside Unreal Engine.
 
     Args:
-        client: An active ``cosysairsim.CarClient`` instance.
-        coord: A ``CoordTransform`` configured with the current
+        client: An active `cosysairsim.CarClient` instance.
+        coord: A `CoordTransform` configured with the current
             calibration.
         framework_A: First Framework reference point.
         framework_B: Second Framework reference point.
@@ -401,15 +401,15 @@ def load_saved_calibration_reference(
     Load saved calibration, apply drift correction, and optionally redraw it.
 
     Args:
-        client: Active ``cosysairsim.CarClient`` instance.
-        calibration_path: Optional override for ``calibration.json``.
+        client: Active `cosysairsim.CarClient` instance.
+        calibration_path: Optional override for `calibration.json`.
         draw_reference: Whether to redraw the saved reference overlay in UE5.
         ship_pos: Optional Framework start position used for the blue marker and
             trajectory slicing.
         target_pos: Optional Framework target position used for the red marker.
 
     Returns:
-        A tuple ``(coord, config)`` containing the corrected transform and
+        A tuple `(coord, config)` containing the corrected transform and
         calibration dictionary after any drift adjustment.
     """
 
@@ -461,7 +461,7 @@ def run_calibration() -> None:
 
     Connects to AirSim, collects two reference-point pairs (either
     from an existing calibration, interactive driving, or manual
-    entry), computes the transform, writes ``calibration.json``,
+    entry), computes the transform, writes `calibration.json`,
     and draws a visual verification overlay in UE5.
     """
 
