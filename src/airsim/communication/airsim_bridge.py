@@ -621,7 +621,8 @@ class AirSimBridge:
         points: Any,
         color_rgba: list[float],
         thickness: float,
-        is_persistent: bool = True,
+        duration: float = 1.0,
+        is_persistent: bool = False,
     ) -> None:
         """
         Draw a line strip in UE5.
@@ -630,7 +631,12 @@ class AirSimBridge:
             points: Sequence of AirSim ``Vector3r`` points.
             color_rgba: RGBA color values in the range ``[0, 1]``.
             thickness: Rendered line thickness.
+            duration: Seconds the line is shown in the 3D world when not
+                persistent. The new UE5 build keeps minimap/world-map
+                markers regardless and only the physical line flashes.
             is_persistent: Whether the line should persist in the scene.
+                Defaults to ``False`` to avoid the per-Actor FPS cost of
+                long persistent strips.
         """
 
         if not self._ensure_connected():
@@ -639,6 +645,7 @@ class AirSimBridge:
             points,
             color_rgba=color_rgba,
             thickness=thickness,
+            duration=duration,
             is_persistent=is_persistent,
         )
 
@@ -647,7 +654,8 @@ class AirSimBridge:
         points: Any,
         color_rgba: list[float],
         size: float,
-        is_persistent: bool = True,
+        duration: float = 1.0,
+        is_persistent: bool = False,
     ) -> None:
         """
         Draw points in UE5.
@@ -656,6 +664,8 @@ class AirSimBridge:
             points: Sequence of AirSim ``Vector3r`` points.
             color_rgba: RGBA color values in the range ``[0, 1]``.
             size: Rendered point size.
+            duration: Seconds the markers are shown in the 3D world when
+                not persistent.
             is_persistent: Whether the points should persist in the scene.
         """
 
@@ -665,6 +675,7 @@ class AirSimBridge:
             points,
             color_rgba=color_rgba,
             size=size,
+            duration=duration,
             is_persistent=is_persistent,
         )
 
@@ -1235,6 +1246,7 @@ class AirSimBridge:
         save_slot: str = DEFAULT_AIRSIM_SAVE_SLOT,
         simulation_speed: float = DEFAULT_AIRSIM_SIMULATION_SPEED,
         draw_reference: bool = True,
+        reference_duration: float = -1.0,
     ):
         """
         Prepare UE5 for framework-model visualization.
@@ -1243,6 +1255,8 @@ class AirSimBridge:
             save_slot: UE5 save slot to load before playback.
             simulation_speed: Simulation-speed multiplier to apply.
             draw_reference: Whether to draw the calibration reference overlay.
+            reference_duration: Passed to the calibration draw call. Unused
+                when ``is_persistent=True`` (which is the current default).
 
         Returns:
             Any: Loaded coordinate-transform object used for replay.
@@ -1258,6 +1272,7 @@ class AirSimBridge:
         self.coord_transform, _ = load_saved_calibration_reference(
             self._client,
             draw_reference=draw_reference,
+            duration=reference_duration,
         )
 
         # Park vehicle immediately after world load so its physics engine does
@@ -1273,6 +1288,40 @@ class AirSimBridge:
             pass
 
         return self.coord_transform
+
+    def redraw_calibration_reference(
+        self,
+        duration: float = 3600.0,
+        ship_pos: tuple[float, float] | None = None,
+        target_pos: tuple[float, float] | None = None,
+    ) -> None:
+        """
+        Redraw the calibration overlay (polygons, trajectory, start/target dots).
+
+        Reloads the saved calibration so any drift correction is re-applied,
+        then renders the overlay persistently. Markers stay until
+        ``simFlushPersistentMarkers`` is called or the level is reloaded.
+
+        Args:
+            duration: Passed to the underlying draw call. Unused when
+                ``is_persistent=True`` (current default).
+            ship_pos: Optional Framework start position for the blue marker
+                and trajectory slicing.
+            target_pos: Optional Framework target position for the red marker.
+        """
+
+        if not self._ensure_connected():
+            return
+
+        from fw.common.airsim.tools.calibrate_coords import load_saved_calibration_reference
+
+        self.coord_transform, _ = load_saved_calibration_reference(
+            self._client,
+            draw_reference=True,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            duration=duration,
+        )
 
     def reset(self) -> None:
         """
