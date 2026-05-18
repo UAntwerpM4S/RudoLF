@@ -24,6 +24,7 @@ from airsim.config.airsim_config import (  # noqa: E402
     DEFAULT_AIRSIM_SAVE_SLOT,
     DEFAULT_AIRSIM_SIMULATION_SPEED,
     DEFAULT_THROTTLE_VISUAL_GAIN,
+    get_runtime_settings,
 )
 from airsim.inference.visualisation_models import (  # noqa: E402
     ModelVisualisationAdapter,
@@ -427,6 +428,21 @@ class VisualiseModelsRunner:
                     print(f"\n-- Visualisation episode {episode + 1}/{num_episodes} --")
                     obs, _ = env.reset()
                     previous_trail_point = None
+                    trail_points_history: list = []
+
+                    # Flash the calibration overlay for 10s at episode start so the
+                    # user can verify ridges/trajectory before the run begins.
+                    # Skipped on episode 0 because prepare_model_visualisation
+                    # already drew it during setup.
+                    if (
+                        draw_calibration_reference
+                        and episode > 0
+                        and bridge.is_connected
+                    ):
+                        try:
+                            bridge.redraw_calibration_reference(duration=3600.0)
+                        except Exception as exc:
+                            logger.debug("Episode-start overlay redraw failed: %s", exc)
 
                     previous_motion_state = self._motion_state_from_env(env, bridge)
                     previous_actuator_state = None
@@ -530,15 +546,14 @@ class VisualiseModelsRunner:
                                     moved_dx = float(current_trail_point.x_val - previous_trail_point.x_val)
                                     moved_dy = float(current_trail_point.y_val - previous_trail_point.y_val)
                                     if np.hypot(moved_dx, moved_dy) >= float(ship_trail_min_segment_m):
-                                        bridge.plot_line_strip(
-                                            [previous_trail_point, current_trail_point],
-                                            color_rgba=[0.12, 0.52, 1.0, 1.0],
-                                            thickness=float(ship_trail_thickness),
-                                            is_persistent=True,
-                                        )
+                                        # Accumulate the trail in memory only. Drawing every
+                                        # segment live causes a heavy FPS drop on long episodes.
+                                        # The full trail is rendered once at episode end.
+                                        trail_points_history.append(current_trail_point)
                                         previous_trail_point = current_trail_point
                                 else:
                                     previous_trail_point = current_trail_point
+                                    trail_points_history.append(current_trail_point)
                         else:
                             previous_motion_state = target_motion_state
 
@@ -585,6 +600,40 @@ class VisualiseModelsRunner:
                         remaining_budget_s = target_elapsed_s - actual_elapsed_s
                         if remaining_budget_s > 0.001:
                             time.sleep(min(remaining_budget_s, target_step_interval_s))
+
+                    # End-of-episode: draw the full trail persistently, then flush
+                    # all 3D persistent lines and redraw everything non-persistently
+                    # so the 3D world is clean while the minimap retains all markers.
+                    if bridge.is_connected:
+                        if draw_ship_trail_in_ue5 and len(trail_points_history) >= 2:
+                            trail_chunk_size = 500
+                            for chunk_start in range(
+                                0,
+                                len(trail_points_history),
+                                trail_chunk_size - 1,
+                            ):
+                                chunk = trail_points_history[
+                                    chunk_start : chunk_start + trail_chunk_size
+                                ]
+                                if len(chunk) < 2:
+                                    continue
+                                try:
+                                    bridge.plot_line_strip(
+                                        chunk,
+                                        color_rgba=[0.12, 0.52, 1.0, 1.0],
+                                        thickness=float(ship_trail_thickness),
+                                        is_persistent=True,
+                                    )
+                                except Exception as exc:
+                                    logger.debug("Trail draw chunk failed: %s", exc)
+
+                        # Flush all persistent lines from the 3D world.
+                        # The minimap retains all markers that were registered
+                        # before the flush, so no redraw is needed.
+                        try:
+                            bridge.flush_persistent_markers()
+                        except Exception as exc:
+                            logger.debug("Episode-end flush failed: %s", exc)
 
                     end_x, end_y, _ = self._extract_pose(env)
                     print(
@@ -708,7 +757,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     parser.add_argument("--log-every", type=int, default=50)
     parser.add_argument("--save-slot", default=DEFAULT_AIRSIM_SAVE_SLOT)
-    parser.add_argument("--simulation-speed", type=float, default=15.0)
+    parser.add_argument(
+        "--simulation-speed",
+        type=float,
+        default=get_runtime_settings().get("airsim", {}).get(
+            "simulation_speed", DEFAULT_AIRSIM_SIMULATION_SPEED
+        ),
+    )
     parser.add_argument("--mirror-controls", action="store_true", default=False)
     parser.add_argument("--no-steering-visual", action="store_true", default=False)
     parser.add_argument("--no-throttle-visual", action="store_true", default=False)
