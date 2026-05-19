@@ -11,6 +11,7 @@ from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
 from fw.environments.multi_sim_env import MultiSimEnv
+from fw.profile_applier import SimulatorApplier
 from fw.config_profile import VesselProfile
 
 
@@ -136,6 +137,13 @@ class MultiPPOAgent(BasePPOAgent):
         for sub_env in self.env.sub_environments.values():
             if hasattr(sub_env, "randomize"):
                 sub_env.randomize()
+
+            # Apply the profile's simulator state so every training episode
+            # starts from the configured pose, not the environment default.
+            if self._profile is not None:
+                _sim = getattr(sub_env, "phys_sim", None) or getattr(sub_env, "_phys_sim", None)
+                if _sim is not None:
+                    SimulatorApplier.apply(self._profile, _sim)
 
         states, _ = self.env.reset()
         return states

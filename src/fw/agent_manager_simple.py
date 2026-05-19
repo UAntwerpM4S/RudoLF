@@ -401,6 +401,11 @@ class AgentManagerSimple:
                 try:
                     for episode in range(num_episodes):
                         state, _ = env.reset()
+
+                        if self._profile is not None:
+                            _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                            SimulatorApplier.apply(self._profile, _rollout_sim)
+
                         episode_reward = 0
                         done = False
                         steps = 0
