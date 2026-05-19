@@ -79,7 +79,7 @@ class RunMode(Enum):
         TRAIN: Standard reinforcement-learning training.
         INFERENCE: Running a trained policy (no weight updates).
         TRANSFER: Inference in a *different* simulator than the one used for
-            training; typically combined with ``enable_rudder_angle_scaling=True``.
+            training; typically combined with `enable_rudder_angle_scaling=True`.
     """
 
     TRAIN = auto()
@@ -98,8 +98,8 @@ class ScenarioConfig:
 
     Attributes:
         initial_speed: Override the environment's initial surge velocity [m/s].
-            Applied via the environment's ``initial_speed`` setter immediately
-            after each ``env.reset()`` call.  *None* means the environment's
+            Applied via the environment's `initial_speed` setter immediately
+            after each `env.reset()` call.  *None* means the environment's
             built-in default is used.
     """
 
@@ -154,8 +154,8 @@ class ThrustConfig:
 
     Attributes:
         mode: :attr:`ThrustMode.FREE` or :attr:`ThrustMode.FIXED`.
-        fixed_value: Normalised thrust in ``[0.1, 1.0]`` used when
-            ``mode == ThrustMode.FIXED``.  Ignored otherwise.
+        fixed_value: Normalised thrust in `[0.1, 1.0]` used when
+            `mode == ThrustMode.FIXED`.  Ignored otherwise.
     """
 
     mode: ThrustMode = ThrustMode.FREE
@@ -242,7 +242,7 @@ class VesselProfile:
 
         Uses :func:`dataclasses.replace` so type safety is preserved:
         callers must pass typed sub-config instances
-        (e.g. ``ActuatorConfig(...)``) rather than plain dicts.
+        (e.g. `ActuatorConfig(...)`) rather than plain dicts.
         Unchanged fields are carried over from *self* — no JSON round-trip,
         no risk of silently dropping nested fields.
 
@@ -385,7 +385,7 @@ class VesselProfile:
 
         Unknown keys inside each sub-config are silently ignored so that
         profiles serialized by a newer schema version remain loadable by
-        older code.  Missing sub-config blocks (e.g. a ``"scenario"`` key
+        older code.  Missing sub-config blocks (e.g. a "scenario" key
         absent from an older serialization) fall back to their dataclass
         defaults rather than raising :exc:`KeyError`.
         """

@@ -4,12 +4,12 @@ profile_applier.py – Apply a :class:`~fw.profile.VesselProfile` to the framewo
 Translates a :class:`VesselProfile` into side effects on existing framework
 objects so that no call-sites outside this module need to be rewritten:
 
-* ``CONFIG_PARAMETERS`` dict  – ship_model, dynamics_model
+* `CONFIG_PARAMETERS` dict  – ship_model, dynamics_model
 * :class:`~fw.environments.base_env.BaseEnv`  – smoothing flag, rudder angle
   scaling flag, and initial speed
 * :class:`~fw.simulators.base_simulator.BaseSimulator`  – actuator-limit
   overrides
-* Raw ``[rudder, thrust]`` action arrays  – rudder scaling, fixed-thrust
+* Raw `[rudder, thrust]` action arrays  – rudder scaling, fixed-thrust
 
 Typical usage
 -------------
@@ -63,21 +63,21 @@ def apply_profile(
     Apply *profile* settings to any combination of framework targets.
 
     Each keyword argument is independent; pass only what you have at hand.
-    ``config``, ``env``, and ``simulator`` are mutated in-place.  When
-    ``action`` is supplied the function returns a transformed copy — the
+    `config`, `env`, and `simulator` are mutated in-place.  When
+    `action` is supplied the function returns a transformed copy — the
     original array is never modified.
 
     Args:
         profile: The :class:`~fw.profile.VesselProfile` to apply.
-        config: Mutable ``CONFIG_PARAMETERS`` dict from
+        config: Mutable `CONFIG_PARAMETERS` dict from
             :func:`~fw.config.get_config_parameters`. Updated in-place.
         env: A :class:`~fw.environments.base_env.BaseEnv` instance.
-            ``enable_smoothing``, ``enable_rudder_angle_scaling``, and
-            ``initial_speed`` are propagated to sub-environments too.
+            `enable_smoothing`, `enable_rudder_angle_scaling`, and
+            `initial_speed` are propagated to sub-environments too.
         simulator: A :class:`~fw.simulators.base_simulator.BaseSimulator`
             instance.  Actuator limits are patched when overrides are present.
-        action: NumPy array of shape ``(2,)`` with ``[rudder, thrust]`` in
-            ``[-1, 1]``.  Returns the transformed array.
+        action: NumPy array of shape `(2,)` with `[rudder, thrust]` in
+            `[-1, 1]`.  Returns the transformed array.
 
     Returns:
         Transformed action array when *action* is not *None*, otherwise *None*.
@@ -107,7 +107,7 @@ def apply_profile(
 
 class ConfigApplier:
     """
-    Patches a ``CONFIG_PARAMETERS`` dict in-place.
+    Patches a `CONFIG_PARAMETERS` dict in-place.
     """
 
     @staticmethod
@@ -182,11 +182,11 @@ class EnvApplier:
     @staticmethod
     def _set_initial_speed(env, value: Optional[float]) -> None:
         """
-        Set the environment's initial surge speed via its ``initial_speed`` setter.
+        Set the environment's initial surge speed via its `initial_speed` setter.
 
         The setter is expected to store the value so that it is applied on the
-        next ``env.reset()`` call rather than immediately.  Environments that do
-        not expose an ``initial_speed`` attribute are silently skipped — not all
+        next `env.reset()` call rather than immediately.  Environments that do
+        not expose an `initial_speed` attribute are silently skipped — not all
         environment types support a configurable start speed.
 
         Args:
@@ -226,7 +226,7 @@ class SimulatorApplier:
 
         Initial vessel speed is no longer handled here — it is set on the
         environment via :meth:`EnvApplier._set_initial_speed` so the
-        environment's own ``reset()`` logic picks it up correctly.
+        environment's own `reset()` logic picks it up correctly.
         """
 
         if profile.actuator.angle_rad is not None or profile.actuator.rate_rad is not None:
@@ -280,7 +280,7 @@ class SimulatorApplier:
 
 class ActionAdapter:
     """
-    Transforms a raw ``[rudder, thrust]`` action using profile settings.
+    Transforms a raw `[rudder, thrust]` action using profile settings.
     """
 
     @staticmethod
@@ -293,18 +293,18 @@ class ActionAdapter:
         """
         Return a transformed copy of *action*.
 
-        When ``thrust_mode == FIXED`` the thrust component (index 1) is
-        replaced with ``profile.thrust.fixed_value`` directly.  The original
+        When `thrust_mode == FIXED` the thrust component (index 1) is
+        replaced with `profile.thrust.fixed_value` directly.  The original
         array is never modified.
 
         Args:
             profile: Profile whose thrust settings to apply.
-            action: Array of shape ``(N,)`` with ``N >= 2``.  Index 0 is
-                rudder, index 1 is thrust, both nominally in ``[-1, 1]``.
+            action: Array of shape `(N,)` with `N >= 2`.  Index 0 is
+                rudder, index 1 is thrust, both nominally in `[-1, 1]`.
             simulator: Accepted for API compatibility; currently unused.
 
         Returns:
-            New ``float32`` array with the same shape as *action*.
+            New `float32` array with the same shape as *action*.
 
         Raises:
             ValueError: If *action* has fewer than 2 elements.

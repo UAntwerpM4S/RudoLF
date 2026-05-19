@@ -37,7 +37,10 @@ class BaseEnv(gym.Env):
     @property
     def env_name(self):
         """
-        Environment name.
+        Name of the environment instance.
+
+        Returns:
+            str: Environment name.
         """
 
         return self._env_name
@@ -46,10 +49,10 @@ class BaseEnv(gym.Env):
     @env_name.setter
     def env_name(self, value):
         """
-        Environment name.
+        Set the environment name.
 
         Args:
-            value: The environment's name.
+            value (str): Environment name.
         """
 
         self._env_name = value
@@ -58,7 +61,10 @@ class BaseEnv(gym.Env):
     @property
     def initial_speed(self):
         """
-        Initial speed.
+        Initial vessel speed at environment reset.
+
+        Returns:
+            float: Initial speed.
         """
 
         return self._initial_speed
@@ -67,10 +73,10 @@ class BaseEnv(gym.Env):
     @initial_speed.setter
     def initial_speed(self, value):
         """
-        Initial speed.
+        Set the initial vessel speed.
 
         Args:
-            value: Description.
+            value (float): Initial speed.
         """
 
         self._initial_speed = value
@@ -79,7 +85,10 @@ class BaseEnv(gym.Env):
     @property
     def render_mode(self):
         """
-        Render mode.
+        Rendering mode used by the environment.
+
+        Returns:
+            str | None: Active render mode.
         """
 
         return self._render_mode
@@ -88,10 +97,10 @@ class BaseEnv(gym.Env):
     @render_mode.setter
     def render_mode(self, value):
         """
-        Render mode.
+        Set the rendering mode.
 
         Args:
-            value: Description.
+            value (str | None): Render mode identifier.
         """
 
         self._render_mode = value
@@ -100,7 +109,10 @@ class BaseEnv(gym.Env):
     @property
     def enable_smoothing(self):
         """
-        Enable smoothing.
+        Whether action smoothing is enabled.
+
+        Returns:
+            bool: True if smoothing is enabled, otherwise False.
         """
 
         return self._smoothing_enabled
@@ -109,10 +121,10 @@ class BaseEnv(gym.Env):
     @enable_smoothing.setter
     def enable_smoothing(self, value):
         """
-        Enable smoothing.
+        Enable or disable action smoothing.
 
         Args:
-            value: Description.
+            value (bool): Smoothing enabled state.
         """
 
         self._smoothing_enabled = value
