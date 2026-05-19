@@ -26,11 +26,12 @@ class BaseEnv(gym.Env):
 
         super().__init__()
 
+        self._initial_speed = 0.0
         self._render_mode = render_mode
         self._smoothing_enabled = False
         self._rudder_angle_scaling_enabled = False
-        self._sub_environments = {}
         self._env_name = type(self).__name__
+        self._sub_environments = {}
 
 
     @property
@@ -52,6 +53,27 @@ class BaseEnv(gym.Env):
         """
 
         self._env_name = value
+
+
+    @property
+    def initial_speed(self):
+        """
+        Initial speed.
+        """
+
+        return self._initial_speed
+
+
+    @initial_speed.setter
+    def initial_speed(self, value):
+        """
+        Initial speed.
+
+        Args:
+            value: Description.
+        """
+
+        self._initial_speed = value
 
 
     @property
