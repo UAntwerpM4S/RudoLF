@@ -297,25 +297,6 @@ class EpisodeCollector:
 
         # Reset environment
         state, _ = env.reset()
-
-        # If the profile specifies an initial vessel state, push it to the
-        # simulator immediately after the environment's own reset so the
-        # override takes effect for this episode.
-        if self._profile is not None and self._profile.scenario.initial_state is not None:
-            _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-            if _rollout_sim is not None:
-                SimulatorApplier.apply(self._profile, _rollout_sim)
-            elif hasattr(env, "sub_environments") and env.sub_environments:
-                iterable = (
-                    env.sub_environments.values()
-                    if isinstance(env.sub_environments, dict)
-                    else env.sub_environments
-                )
-                for sub in iterable:
-                    _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
-                    if _sub_sim is not None:
-                        SimulatorApplier.apply(self._profile, _sub_sim)
-
         done = np.zeros(len(ship_ids), dtype=bool)
         steps = 0
 
