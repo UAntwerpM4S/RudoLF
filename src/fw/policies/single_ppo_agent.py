@@ -18,7 +18,6 @@ from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 # from fw.common.tools.ppo_utils import normalize_policy_zip_path
 from fw.common.tools.logging_utils import dump_metrics_to_csv
-from fw.profile_applier import SimulatorApplier
 from fw.config_profile import VesselProfile
 
 
