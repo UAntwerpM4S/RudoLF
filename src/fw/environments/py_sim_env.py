@@ -289,7 +289,7 @@ class PySimEnv(BaseEnv):
             x=self.initial_ship_pos[0],
             y=self.initial_ship_pos[1],
             heading=self.ship_heading,
-            u=0.0, v=0.0, r=0.0))
+            u=self.initial_speed, v=0.0, r=0.0))
         self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
 
