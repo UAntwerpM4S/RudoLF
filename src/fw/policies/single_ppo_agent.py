@@ -266,36 +266,17 @@ class SinglePPOAgent(BasePPOAgent):
         Notes:
             - Each environment is deep-copied to ensure independence.
             - Wrapped with `Monitor` for logging episode statistics.
-            - When the active profile defines an `initial_state`, that state is
-              applied to the simulator inside the copy immediately after construction
-              so every vectorized worker starts from the configured pose.
         """
-
-        profile = self._profile  # captured by closure; avoids a late-binding issue
 
         def _init():
             """
             Create one monitored deep-copied environment instance.
 
-            Applies the profile's initial simulator state (if any) so that the
-            vectorized worker begins each episode from the configured pose.
-
             Returns:
                 A monitored Gym environment copied from the agent base environment.
             """
 
-            env_copy = copy.deepcopy(self.env)
-
-            # Push the profile's initial state into this worker's simulator so
-            # that _vec_env.reset() begins each episode at the configured pose.
-            # Without this the initial_state setting only affects self.env, not
-            # the parallel training rollouts.
-            if profile is not None and profile.scenario.initial_state is not None:
-                _sim = getattr(env_copy, "phys_sim", None) or getattr(env_copy, "_phys_sim", None)
-                if _sim is not None:
-                    SimulatorApplier.apply(profile, _sim)
-
-            return Monitor(env_copy)
+            return Monitor(copy.deepcopy(self.env))
 
         return _init
 

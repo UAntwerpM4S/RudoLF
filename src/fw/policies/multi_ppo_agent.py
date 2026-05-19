@@ -132,23 +132,11 @@ class MultiPPOAgent(BasePPOAgent):
 
         Returns:
             np.ndarray: Tuple or array of initial observations.
-
-        Notes:
-            When the active profile defines an `initial_state`, that state is
-            pushed into each sub-environment's simulator here, before
-            `self.env.reset()` is called.
         """
 
         for sub_env in self.env.sub_environments.values():
             if hasattr(sub_env, "randomize"):
                 sub_env.randomize()
-
-            # Apply the profile's initial simulator state so every training
-            # episode starts from the configured pose, not the environment default.
-            if self._profile is not None and self._profile.scenario.initial_state is not None:
-                _sim = getattr(sub_env, "phys_sim", None) or getattr(sub_env, "_phys_sim", None)
-                if _sim is not None:
-                    SimulatorApplier.apply(self._profile, _sim)
 
         states, _ = self.env.reset()
         return states
