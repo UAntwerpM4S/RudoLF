@@ -45,15 +45,16 @@ Typical usage
 from __future__ import annotations
 
 import copy
-import dataclasses
-import hashlib
 import json
 import math
+import hashlib
 import warnings
-from dataclasses import dataclass, field, asdict
+import dataclasses
+import numpy as np
+
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional
-
+from dataclasses import dataclass, field, asdict
 from fw.dynamics.dynamics_model import Model
 from fw.ships.ship_factory import ShipModel
 
@@ -108,16 +109,16 @@ class InitialVesselState:
         r: Yaw rate [rad/s].
     """
 
-    x: float = 0.0
-    y: float = 0.0
-    heading: float = 0.0
-    u: float = 0.0
-    v: float = 0.0
-    r: float = 0.0
+    x: np.float32 = 0.0
+    y: np.float32 = 0.0
+    heading: np.float32 = 0.0
+    u: np.float32 = 0.0
+    v: np.float32 = 0.0
+    r: np.float32 = 0.0
 
-    def to_dict(self) -> Dict[str, float]:
+    def to_dict(self) -> Dict[str, np.float32]:
         """
-        Return the state fields as a plain ``float``-valued dictionary.
+        Return the state fields as a plain `np.float32`-valued dictionary.
         """
 
         return asdict(self)
@@ -129,7 +130,7 @@ class InitialVesselState:
         """
 
         known = {f.name for f in dataclasses.fields(cls)}
-        return cls(**{k: float(v) for k, v in d.items() if k in known})
+        return cls(**{k: np.float32(v) for k, v in d.items() if k in known})
 
 
 @dataclass(frozen=True)
@@ -673,12 +674,12 @@ ProfileRegistry.register(VesselProfile(
         dynamics_model=Model.UGENT_SURROGATE,
     ),
     scenario=ScenarioConfig(initial_state=InitialVesselState(
-        x= 0.0,
-        y= 0.0,
-        heading= 0.0,
-        u= 4.8,
-        v= 0.0,
-        r= 0.0)),
+        x=np.float32(0.0),
+        y=np.float32(0.0),
+        heading=np.float32(0.0),
+        u=np.float32(4.8),
+        v=np.float32(0.0),
+        r=np.float32(0.0))),
     actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
     thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
 ))
