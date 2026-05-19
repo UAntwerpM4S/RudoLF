@@ -5,9 +5,10 @@ Translates a :class:`VesselProfile` into side effects on existing framework
 objects so that no call-sites outside this module need to be rewritten:
 
 * ``CONFIG_PARAMETERS`` dict  – ship_model, dynamics_model
-* :class:`~fw.environments.base_env.BaseEnv`  – smoothing flag (+ sub-envs)
-* :class:`~fw.simulators.base_simulator.BaseSimulator`  – initial vessel
-  state, actuator-limit overrides
+* :class:`~fw.environments.base_env.BaseEnv`  – smoothing flag, rudder angle
+  scaling flag, and initial speed
+* :class:`~fw.simulators.base_simulator.BaseSimulator`  – actuator-limit
+  overrides
 * Raw ``[rudder, thrust]`` action arrays  – rudder scaling, fixed-thrust
 
 Typical usage
@@ -24,7 +25,7 @@ Typical usage
     cfg = get_config_parameters()
     apply_profile(profile, config=cfg)
 
-    # 2. Configure smoothing after the env is built
+    # 2. Configure smoothing and initial speed after the env is built
     env = build_default_environment("PySimEnv")
     apply_profile(profile, env=env)
 
@@ -36,16 +37,13 @@ Typical usage
 
 from __future__ import annotations
 
-import math
 import logging
 import warnings
 import numpy as np
 
 from typing import Any, Dict, Optional
-from fw.ships.vessel_state import VesselState
 from fw.config_profile import ThrustMode, VesselProfile
 
-EPS = 1e-6
 logger = logging.getLogger(__name__)
 
 
@@ -74,10 +72,10 @@ def apply_profile(
         config: Mutable ``CONFIG_PARAMETERS`` dict from
             :func:`~fw.config.get_config_parameters`. Updated in-place.
         env: A :class:`~fw.environments.base_env.BaseEnv` instance.
-            ``enable_smoothing`` is propagated to sub-environments too.
+            ``enable_smoothing``, ``enable_rudder_angle_scaling``, and
+            ``initial_speed`` are propagated to sub-environments too.
         simulator: A :class:`~fw.simulators.base_simulator.BaseSimulator`
-            instance.  Reset to ``profile.scenario.initial_state`` when set,
-            and actuator limits are patched when overrides are present.
+            instance.  Actuator limits are patched when overrides are present.
         action: NumPy array of shape ``(2,)`` with ``[rudder, thrust]`` in
             ``[-1, 1]``.  Returns the transformed array.
 
@@ -143,6 +141,7 @@ class EnvApplier:
 
         EnvApplier._set_smoothing(env, profile.actuator.enable_smoothing)
         EnvApplier._set_rudder_angle_scaling(env, profile.transfer.enable_rudder_angle_scaling)
+        EnvApplier._set_initial_speed(env, profile.scenario.initial_speed)
 
         sub_envs = getattr(env, "sub_environments", None)
         if sub_envs is None or not sub_envs:
@@ -152,6 +151,7 @@ class EnvApplier:
         for sub in iterable:
             EnvApplier._set_smoothing(sub, profile.actuator.enable_smoothing)
             EnvApplier._set_rudder_angle_scaling(sub, profile.transfer.enable_rudder_angle_scaling)
+            EnvApplier._set_initial_speed(sub, profile.scenario.initial_speed)
 
     @staticmethod
     def _set_smoothing(env, value: bool) -> None:
@@ -179,6 +179,36 @@ class EnvApplier:
                 value, type(env).__name__,
             )
 
+    @staticmethod
+    def _set_initial_speed(env, value: Optional[float]) -> None:
+        """
+        Set the environment's initial surge speed via its ``initial_speed`` setter.
+
+        The setter is expected to store the value so that it is applied on the
+        next ``env.reset()`` call rather than immediately.  Environments that do
+        not expose an ``initial_speed`` attribute are silently skipped — not all
+        environment types support a configurable start speed.
+
+        Args:
+            env: Environment instance to configure.
+            value: Desired initial surge speed in m/s, or *None* to leave the
+                environment's own default unchanged.
+        """
+
+        if value is None:
+            return
+        if hasattr(env, "initial_speed"):
+            env.initial_speed = value
+            logger.debug(
+                "EnvApplier: set initial_speed=%.3f m/s on %s",
+                value, type(env).__name__,
+            )
+        else:
+            logger.debug(
+                "EnvApplier: %s has no 'initial_speed' attribute — skipped.",
+                type(env).__name__,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Simulator applier
@@ -186,50 +216,21 @@ class EnvApplier:
 
 class SimulatorApplier:
     """
-    Resets the simulator to the profile's initial state and patches actuator limits.
+    Patches actuator limits on the simulator from profile settings.
     """
 
     @staticmethod
     def apply(profile: VesselProfile, simulator) -> None:
         """
-        Reset *simulator* state and patch actuator limits from *profile*.
-        """
+        Patch actuator limits on *simulator* from *profile*.
 
-        if profile.scenario.initial_state is not None:
-            SimulatorApplier._reset_state(profile, simulator)
+        Initial vessel speed is no longer handled here — it is set on the
+        environment via :meth:`EnvApplier._set_initial_speed` so the
+        environment's own ``reset()`` logic picks it up correctly.
+        """
 
         if profile.actuator.angle_rad is not None or profile.actuator.rate_rad is not None:
             SimulatorApplier._patch_specs(profile, simulator)
-
-    @staticmethod
-    def _reset_state(profile: VesselProfile, simulator) -> None:
-        """
-        Call `simulator.reset` with the initial state defined in *profile*.
-        """
-
-        def nz(value, fallback):
-            """
-            Return *fallback* when *value* is numerically zero, otherwise *value*.
-            """
-
-            return np.float32(fallback if math.isclose(value, 0.0, rel_tol=0.0, abs_tol=EPS) else value)
-
-        orig = simulator.state
-        s = profile.scenario.initial_state
-        simulator.reset(VesselState(
-            terminated=False,
-            truncated=False,
-            x=nz(s.x, orig.x),
-            y=nz(s.y, orig.y),
-            heading=nz(s.heading, orig.heading),
-            u=nz(s.u, orig.u),
-            v=nz(s.v, orig.v),
-            r=nz(s.r, orig.r),
-        ))
-        logger.debug(
-            "SimulatorApplier: reset to x=%.1f y=%.1f heading=%.3f rad",
-            s.x, s.y, s.heading,
-        )
 
     @staticmethod
     def _patch_specs(profile: VesselProfile, simulator) -> None:
