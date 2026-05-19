@@ -52,8 +52,8 @@ import warnings
 import dataclasses
 
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 from fw.dynamics.dynamics_model import Model
 from fw.ships.ship_factory import ShipModel
 

@@ -11,7 +11,6 @@ from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
 from fw.environments.multi_sim_env import MultiSimEnv
-from fw.profile_applier import SimulatorApplier
 from fw.config_profile import VesselProfile
 
 
