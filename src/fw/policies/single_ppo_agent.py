@@ -266,9 +266,9 @@ class SinglePPOAgent(BasePPOAgent):
         Notes:
             - Each environment is deep-copied to ensure independence.
             - Wrapped with `Monitor` for logging episode statistics.
-            - When the active profile defines an `initial_state`, that state is
-              applied to the simulator inside the copy immediately after construction
-              so every vectorized worker starts from the configured pose.
+            - Applies the profile state to the simulator inside the copy
+              immediately after construction so every vectorized worker
+              starts from the configured pose.
         """
 
         profile = self._profile  # captured by closure; avoids a late-binding issue
@@ -277,7 +277,7 @@ class SinglePPOAgent(BasePPOAgent):
             """
             Create one monitored deep-copied environment instance.
 
-            Applies the profile's initial simulator state (if any) so that the
+            Applies the profile's simulator state (if any) so that the
             vectorized worker begins each episode from the configured pose.
 
             Returns:

@@ -298,9 +298,6 @@ class EpisodeCollector:
         # Reset environment
         state, _ = env.reset()
 
-        # If the profile specifies an initial vessel state, push it to the
-        # simulator immediately after the environment's own reset so the
-        # override takes effect for this episode.
         if self._profile is not None:
             _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
             if _rollout_sim is not None:
