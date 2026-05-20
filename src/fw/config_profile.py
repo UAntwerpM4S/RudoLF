@@ -635,30 +635,3 @@ ProfileRegistry.register(VesselProfile(
     actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
     thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
 ))
-
-ProfileRegistry.register(VesselProfile(
-    name="train_lunar_default",
-    description=(
-        "LunarLander training profile. Ship-model and dynamics fields are "
-        "unused by the Lunar environment but kept for schema consistency."
-    ),
-    run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="train_pysim_polar_default",
-    description="PySimPolarEnv training profile with Fossen dynamics.",
-    run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
-))

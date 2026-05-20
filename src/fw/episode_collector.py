@@ -151,8 +151,8 @@ class EpisodeCollector:
             env: Environment to evaluate, either single-ship or multi-ship.
             profile: Profile that will be used for training or visualization.
             ship_ids: Optional explicit ship ID list. If omitted, the collector
-                uses ``env.sub_environments`` when available, otherwise
-                defaults to ``["ship_0"]``.
+                uses `env.sub_environments` when available, otherwise
+                defaults to `["ship_0"]`.
 
         Raises:
             ValueError: If the resolved ship ID list is empty.
@@ -218,6 +218,92 @@ class EpisodeCollector:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _get_simulator(self, env_id: int):
+        """
+        Return the simulator for the environment at *env_id*.
+
+        For single-ship environments the simulator lives on `self._env`
+        directly.  For multi-ship environments it is on the sub-environment
+        at position *env_id*.
+
+        Args:
+            env_id: Zero-based index of the agent/sub-environment.
+
+        Returns:
+            Simulator instance, or `None` if not accessible.
+        """
+
+        env = self._env
+
+        if hasattr(env, "sub_environments") and env.sub_environments:
+            sub_envs = env.sub_environments
+            iterable = list(sub_envs.values()) if isinstance(sub_envs, dict) else list(sub_envs)
+            if env_id < len(iterable):
+                sub = iterable[env_id]
+                return getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
+            return None
+
+        return getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+
+    @staticmethod
+    def _transform_actions(
+        profile: VesselProfile,
+        actions,
+        *,
+        get_simulator=None,
+    ):
+        """
+        Apply :meth:`transform` to every action in a batch and return the
+        result in the same container type as the input.
+
+        Supported input types:
+
+        * `np.ndarray` of shape `(N, action_dim)` — one row per agent.
+        * `tuple` of `N` individual action arrays.
+        * A single `np.ndarray` of shape `(action_dim,)` — scalar
+          single-agent case.
+
+        Args:
+            profile: Profile whose thrust settings to apply.
+            actions: Batch of actions in any of the supported container types.
+            get_simulator: Optional callable `(env_id: int) -> simulator`
+                used to supply a per-agent simulator to :meth:`transform`.
+                Pass `None` (or omit) to forward `simulator=None` for all
+                agents, which is correct as long as `transform` does not
+                consume simulator state (currently the case).
+
+        Returns:
+            Transformed actions in the same container type as *actions*.
+
+        Raises:
+            TypeError: If *actions* is not one of the supported types.
+        """
+
+        def _sim(i):
+            return get_simulator(i) if get_simulator is not None else None
+
+        if isinstance(actions, np.ndarray) and actions.ndim == 2:
+            return np.stack([
+                ActionAdapter.transform(profile, actions[i], simulator=_sim(i))
+                for i in range(actions.shape[0])
+            ])
+
+        if isinstance(actions, tuple):
+            return tuple(
+                ActionAdapter.transform(profile, a, simulator=_sim(i))
+                for i, a in enumerate(actions)
+            )
+
+        if isinstance(actions, np.ndarray) and actions.ndim == 1:
+            return ActionAdapter.transform(profile, actions, simulator=_sim(0))
+
+        raise TypeError(
+            f"ActionAdapter.transform_actions: unsupported actions type "
+            f"'{type(actions).__name__}' with ndim="
+            f"{getattr(actions, 'ndim', 'n/a')}. "
+            f"Expected a 2-D np.ndarray, a tuple, or a 1-D np.ndarray."
+        )
 
     @contextmanager
     def _render_mode(self, ship_envs: dict[str, object], enabled: bool):
@@ -303,11 +389,9 @@ class EpisodeCollector:
             if _rollout_sim is not None:
                 SimulatorApplier.apply(self._profile, _rollout_sim)
             elif hasattr(env, "sub_environments") and env.sub_environments:
-                iterable = (
-                    env.sub_environments.values()
-                    if isinstance(env.sub_environments, dict)
-                    else env.sub_environments
-                )
+                sub_envs = env.sub_environments
+                iterable = sub_envs.values() if isinstance(sub_envs, dict) else sub_envs
+
                 for sub in iterable:
                     _sub_sim = getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
                     if _sub_sim is not None:
@@ -325,44 +409,13 @@ class EpisodeCollector:
             while not np.all(done):
                 action, _, _ = self._agent.predict(state=state, deterministic=True)
 
+                # Apply optional per-action profile transform (e.g. fixed thrust).
                 if self._profile is not None:
-                    if isinstance(action, np.ndarray) and action.ndim == 2:
-                        sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-                        if sim is None and hasattr(env, "sub_environments") and env.sub_environments:
-                            first_sub = next(iter(
-                                env.sub_environments.values()
-                                if isinstance(env.sub_environments, dict)
-                                else env.sub_environments
-                            ), None)
-                            if first_sub is not None:
-                                sim = getattr(first_sub, "phys_sim", None) or getattr(first_sub, "_phys_sim", None)
-                        transformed = np.stack([
-                            ActionAdapter.transform(self._profile, action[i], simulator=sim)
-                            for i in range(action.shape[0])
-                        ])
-                        action = transformed
-                    elif isinstance(action, tuple):
-                        sub_sims: list = []
-                        if hasattr(env, "sub_environments") and env.sub_environments:
-                            iterable = (
-                                env.sub_environments.values()
-                                if isinstance(env.sub_environments, dict)
-                                else env.sub_environments
-                            )
-                            for sub in iterable:
-                                sub_sims.append(
-                                    getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
-                                )
-                        action = tuple(
-                            ActionAdapter.transform(
-                                self._profile, a,
-                                simulator=sub_sims[i] if i < len(sub_sims) else None,
-                            )
-                            for i, a in enumerate(action)
-                        )
-                    else:
-                        sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-                        action = ActionAdapter.transform(self._profile, action, simulator=sim)
+                    action = self._transform_actions(
+                        self._profile,
+                        action,
+                        get_simulator=self._get_simulator,
+                    )
 
                 state, reward, terminated, truncated, _ = env.step(action)
 
