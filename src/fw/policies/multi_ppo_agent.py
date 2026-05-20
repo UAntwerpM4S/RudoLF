@@ -200,37 +200,6 @@ class MultiPPOAgent(BasePPOAgent):
         return self.predict(states, deterministic=deterministic)
 
 
-    def _get_simulator_for_env(self, env_id: int):
-        """
-        Return the simulator for the sub-environment at `env_id`.
-
-        `MultiPPOAgent` drives `MultiSimEnv` directly, so each
-        sub-environment is accessible by index and may expose a live simulator.
-
-        Args:
-            env_id (int): Zero-based index into `self.env.sub_environments`.
-
-        Returns:
-            Simulator instance if the sub-environment exposes one, otherwise `None`.
-
-        Raises:
-            IndexError: If `env_id` is out of range for `sub_environments`.
-        """
-
-        sub_envs = self.env.sub_environments
-        iterable = list(sub_envs.values()) if isinstance(sub_envs, dict) else list(sub_envs)
-
-        if env_id >= len(iterable):
-            raise IndexError(
-                f"env_id {env_id} is out of range for sub_environments "
-                f"(len={len(iterable)}). This indicates a mismatch between "
-                f"the number of agents and sub-environments."
-            )
-
-        sub_env = iterable[env_id]
-        return getattr(sub_env, "phys_sim", None) or getattr(sub_env, "_phys_sim", None)
-
-
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):
         """
         Estimate value for bootstrapping for a specific agent.

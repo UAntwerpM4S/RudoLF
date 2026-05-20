@@ -224,33 +224,6 @@ class BasePPOAgent(BaseAgent):
         pass
 
 
-    @abstractmethod
-    def _get_simulator_for_env(self, env_id: int):
-        """
-        Return the simulator associated with a specific environment index.
-
-        Each subclass has a different environment layout:
-        - `SinglePPOAgent` uses a flat vectorized env whose worker simulators
-          are not accessible from the base env reference — return `None`.
-        - `MultiPPOAgent` owns `sub_environments` indexed by `env_id` —
-          return that sub-environment's simulator.
-
-        The return value is forwarded to `ActionAdapter.transform` as the
-        `simulator` keyword argument.  `ActionAdapter` currently ignores it
-        (kept for API compatibility), so returning `None` is always safe.
-        If `transform` ever starts consuming simulator state, this is the
-        correct extension point to provide it.
-
-        Args:
-            env_id (int): Zero-based index of the environment/agent.
-
-        Returns:
-            Simulator instance, or `None` if not accessible.
-        """
-
-        pass
-
-
     @staticmethod
     def _repack_actions(original_actions, transformed_actions: list):
         """
@@ -390,12 +363,8 @@ class BasePPOAgent(BaseAgent):
             # Apply optional per-action profile transform (e.g. fixed thrust).
             if self._profile is not None:
                 effective_actions = [
-                    ActionAdapter.transform(
-                        self._profile,
-                        action,
-                        simulator=self._get_simulator_for_env(env_id),
-                    )
-                    for env_id, action in enumerate(effective_actions)
+                    ActionAdapter.transform(self._profile, action)
+                    for action in effective_actions
                 ]
 
             # Restore the container type that _step_envs expects, i.e.
