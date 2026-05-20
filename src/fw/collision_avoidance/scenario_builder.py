@@ -31,6 +31,11 @@ class ScenarioBuilder:
         self._post_encounter_counter: int = 0 # counts number of steps in the post encounter
         self._truncate_requested: bool = False # True when the post-encounter is done, and the episode is truncated
 
+        # Single-encounter eval mode state (per episode)
+        self._single_encounter_spawned: bool = False  # dormant TS has been placed
+        self._single_encounter_done: bool = False     # TS has despawned; no more encounters
+        self._single_encounter_ts_seen: bool = False  # OS came within encounter_range at least once
+
     # ----------------
     # Lifecycle hooks
     # ----------------
@@ -56,10 +61,19 @@ class ScenarioBuilder:
         self._post_encounter_counter = 0
         self._truncate_requested = False
 
+        # Reset single-encounter eval-mode state
+        self._single_encounter_spawned = False
+        self._single_encounter_done = False
+        self._single_encounter_ts_seen = False
+
         # Step-level mode: encounters are spawned by on_step()
         if getattr(env, "scenario_obstacle_level", None) == "step":
             env.collision_entities = []
             env._sync_collision_entity_views()
+            # Single-encounter mode places the dormant TS at episode reset
+            # so the OS can approach it from path-following distance.
+            if getattr(env, "single_encounter_per_episode", False):
+                self._spawn_single_dormant_encounter()
             return
 
         if not getattr(env, "enable_obstacles", False):
@@ -140,6 +154,14 @@ class ScenarioBuilder:
         if not getattr(env, "enable_obstacles", False):
             env.collision_entities = []
             env._sync_collision_entity_views()
+            return
+
+        # Single-encounter eval mode: bypasses the normal cooldown / spawn /
+        # focused-training plumbing. The dormant TS was placed in on_reset();
+        # here we only handle despawn (OS leaves forget_range) and ensure no
+        # further encounters spawn for the rest of the episode.
+        if getattr(env, "single_encounter_per_episode", False):
+            self._single_encounter_on_step()
             return
 
         is_focused = self._is_training_focused()
@@ -793,3 +815,113 @@ class ScenarioBuilder:
             entity.collides_with_point(env.ship_pos, own_radius=env.own_ship_radius)
             for entity in entities
         )
+
+    # ---------------------------------------------------------------
+    # Single-encounter eval mode
+    # ---------------------------------------------------------------
+    def _resolve_single_encounter_seg_idx(self) -> Optional[int]:
+        """Resolve the target segment index into the cached _seg_* arrays."""
+        env = self.env
+        target = getattr(env, "single_encounter_target_segment_index", None)
+        if target is None:
+            return None
+        target = int(target)
+        n_segments = int(len(getattr(env, "_seg_lengths", [])))
+        if n_segments <= 0 or not (0 <= target < n_segments):
+            return None
+        return target
+
+    def _spawn_single_dormant_encounter(self) -> None:
+        """Place one dormant TS on the user-specified segment.
+
+        Reuses the existing per-scenario builders to get a geometry-correct
+        placement (segment, lateral offset, heading) and then zeros out the
+        TS speed so it sits still until the env step loop activates it.
+        Crossings already spawn dormant via the bearing-aware machinery, so
+        we only attach the generic dormant marker for overtaking / head-on.
+        """
+        env = self.env
+        seg_idx = self._resolve_single_encounter_seg_idx()
+        if seg_idx is None:
+            return
+
+        scenario = getattr(env, "single_encounter_scenario", None) or "overtaking"
+
+        entities = self.compute_collision_entity_positions(
+            scenario, n=1, target_seg_idx=seg_idx,
+        ) or []
+        if not entities:
+            return
+
+        for entity in entities:
+            if getattr(entity, "spawn_scenario_label", None) is None:
+                entity.spawn_scenario_label = scenario
+            # Crossings have their own activation flow; leave their speed
+            # (which the crossing builder already set to 0.0) alone.
+            if scenario in ("crossing-right", "crossing-left"):
+                continue
+            # Generic dormant marker: store the would-be motion speed, then
+            # park the entity. Step-loop activation flips speed back on once
+            # the OS is within encounter_range.
+            orig_speed = float(getattr(entity, "path_speed", entity.get_speed()))
+            entity._dormant_original_speed = orig_speed
+            entity.dormant_activation_range = float(env.encounter_range)
+            entity.dormant_pending_activation = True
+            entity.set_speed(0.0)
+            if hasattr(entity, "path_speed"):
+                entity.path_speed = 0.0
+
+        env.collision_entities = entities
+        env._sync_collision_entity_views()
+        # Cache spawn position so the live renderer can center the camera
+        # on it (paper-comparison mode: identical view across runs).
+        env._single_encounter_ts_spawn_pos = np.asarray(
+            entities[0].get_position(), dtype=np.float32
+        ).copy()
+        self._push_scenario_to_classifier(scenario)
+        self._single_encounter_spawned = True
+        self._encounters_this_episode += 1
+
+    def _single_encounter_on_step(self) -> None:
+        """Per-step bookkeeping for single-encounter eval mode.
+
+        * Despawn the dormant/active TS once the OS leaves forget_range.
+        * After despawn, no further entities are spawned for the rest of
+          the episode (``_single_encounter_done`` blocks any respawn path).
+        """
+        env = self.env
+
+        # If despawn already happened, hold the empty-entity state.
+        if self._single_encounter_done:
+            return
+
+        # If reset/spawn somehow missed (e.g. target_seg_idx unresolved),
+        # don't keep retrying — block further spawns to honor the spec.
+        if not self._single_encounter_spawned:
+            return
+
+        entities = getattr(env, "collision_entities", []) or []
+        if not entities:
+            self._single_encounter_done = True
+            return
+
+        ts = entities[0]
+        dist = ts.distance_to_point(env.ship_pos)
+
+        # Despawn is only valid AFTER the OS has approached the TS at least
+        # once — otherwise the dormant TS placed far ahead on the route
+        # would despawn on step 0 (dist > forget_range from the start).
+        # Use "ever been within encounter_range" as the activation gate,
+        # which is the same trigger that wakes the TS up.
+        if dist <= float(env.encounter_range):
+            self._single_encounter_ts_seen = True
+
+        already_seen = getattr(self, "_single_encounter_ts_seen", False)
+        route_finished = bool(getattr(ts, "route_finished", False))
+        if route_finished or (already_seen and dist > env.forget_range):
+            env.collision_entities = []
+            env.ts_idx = None
+            env._sync_collision_entity_views()
+            if hasattr(env, "scenario_classifier"):
+                env.scenario_classifier.reset()
+            self._single_encounter_done = True

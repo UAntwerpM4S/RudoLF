@@ -758,6 +758,24 @@ class PySimColavBaseEnv(PySimEnv):
 
             old_pos = entity.get_position().copy()
 
+            # Generic dormant activation for single-encounter eval mode.
+            # Applies to any entity tagged ``dormant_pending_activation`` by
+            # the builder (currently overtaking / head-on). Crossings keep
+            # their own bearing-aware activation below.
+            if getattr(entity, "dormant_pending_activation", False) and active_ship_positions:
+                entity_pos = entity.get_position()
+                min_dist_os = min(
+                    float(np.linalg.norm(entity_pos - os_pos))
+                    for os_pos in active_ship_positions
+                )
+                act_range = float(getattr(entity, "dormant_activation_range", self.encounter_range))
+                if min_dist_os <= act_range:
+                    orig_speed = float(getattr(entity, "_dormant_original_speed", 0.0))
+                    entity.dormant_pending_activation = False
+                    entity.set_speed(orig_speed)
+                    if hasattr(entity, "path_speed"):
+                        entity.path_speed = orig_speed
+
             if getattr(entity, "entity_type", None) == "head-on":
                  if active_ship_positions and not getattr(entity, "dodged", False):
                      entity_pos = entity.get_position()
@@ -765,12 +783,12 @@ class PySimColavBaseEnv(PySimEnv):
                          float(np.linalg.norm(entity_pos - os_pos))
                          for os_pos in active_ship_positions
                      )
-                     if self.enable_headon_dodge and min_dist <= self.encounter_range / 2:
-                         entity.dodged = True
-                         dodge_angle = math.radians(20)
-                         entity.set_heading(entity.get_heading() - dodge_angle)
-                         entity.set_lateral_speed(0.0)
-                         entity.route_mode = None
+                     # if self.enable_headon_dodge and min_dist <= self.encounter_range / 2:
+                     #     entity.dodged = True
+                     #     dodge_angle = math.radians(20)
+                     #     entity.set_heading(entity.get_heading() - dodge_angle)
+                     #     entity.set_lateral_speed(0.0)
+                     #     entity.route_mode = None
 
             if getattr(entity, "entity_type", "") in ("crossing-right", "crossing-left"):
                 if not getattr(entity, "crossing_activated", False) and active_ship_positions:
@@ -993,6 +1011,17 @@ class PySimColavBaseEnv(PySimEnv):
         # Passing snapshot artists
         self._passing_snapshot_artists = []
 
+        # Mark every artist that we hand-draw via ax.draw_artist as
+        # "animated". Without this, the next fig.canvas.draw() (e.g. on
+        # collision-entity rebuild when the TS despawns) bakes the OS dot
+        # and trail into the cached background — and every subsequent
+        # blit restores that ghost at the despawn position. set_animated
+        # tells matplotlib to skip these artists during full redraws so
+        # the background contains only static landmarks.
+        self.ship_plot_colav.set_animated(True)
+        self.heading_line_colav.set_animated(True)
+        self.os_trail_line.set_animated(True)
+
     def _get_collision_entity_render_key(self):
         entities = getattr(self, "collision_entities", []) or []
         if not entities:
@@ -1078,6 +1107,7 @@ class PySimColavBaseEnv(PySimEnv):
                 [], [], color='red', alpha=0.5, linewidth=1.5, linestyle='--',
                 label='TS trail' if len(self.ts_trails) == 0 else '',
             )
+            trail_line.set_animated(True)
             self.ts_trails.append(trail_line)
 
         for idx, entity in enumerate(entities):
@@ -1149,6 +1179,8 @@ class PySimColavBaseEnv(PySimEnv):
                 fontsize=12, color='red',
                 ha='center', va='top', zorder=6,
             )
+            for artist in (os_marker, ts_marker, dist_line, dist_text, os_label, ts_label):
+                artist.set_animated(True)
             self._passing_snapshot_artists.append(
                 (os_marker, ts_marker, dist_line, dist_text, os_label, ts_label)
             )

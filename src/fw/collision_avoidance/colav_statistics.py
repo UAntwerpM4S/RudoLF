@@ -6,6 +6,9 @@ on simulation logic.
 """
 from __future__ import annotations
 
+import csv
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import gaussian_kde
@@ -194,14 +197,29 @@ def _plot_min_distance_boxplots(
     data = [per_policy[lbl] for lbl in ordered]
     counts = [len(v) for v in data]
 
+    # Dump the raw min-distance samples next to the boxplot image so the
+    # underlying numbers can be re-plotted / cross-referenced. Long-form
+    # CSV: one row per encounter sample (scenario, min_distance_m).
+    csv_path = os.path.splitext(save_path)[0] + ".csv"
+    try:
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["scenario", "min_distance_m"])
+            for lbl in ordered:
+                for dist in per_policy[lbl]:
+                    writer.writerow([lbl, f"{float(dist):.6f}"])
+        print(f"Min-distance per-encounter samples saved as '{csv_path}'")
+    except OSError as e:
+        print(f"Warning: failed to write min-distance CSV '{csv_path}': {e}")
+
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.boxplot(
         data,
         labels=[f"{lbl}\n(n={c})" for lbl, c in zip(ordered, counts)],
         showmeans=True,
         meanprops=dict(marker="D", markerfacecolor="white",
-                       markeredgecolor="black", markersize=6),
-        medianprops=dict(color="darkblue", linewidth=2),
+                       markeredgecolor="black", markersize=12),
+        medianprops=dict(color="darkblue", linewidth=4),
         boxprops=dict(facecolor="steelblue", alpha=0.6),
         patch_artist=True,
     )
@@ -213,16 +231,17 @@ def _plot_min_distance_boxplots(
                    label=f"Collision boundary (max) = {collision_dist_max:.0f}m")
 
     ax.set_ylim(bottom=0)
-    ylabel_target = "ship or bank" if include_banks else "collision entity"
-    ax.set_ylabel(f"Minimum center-to-center distance to {ylabel_target} [m]")
-    ax.set_xlabel("Scenario / policy")
+    ax.set_ylabel("Minimum distance to TS or bank [m]", fontsize=16)
+    #ax.set_xlabel("Policy", fontsize=18)
     title_suffix = " incl. banks" if include_banks else ""
     ax.set_title(
         f"Min-distance per policy{title_suffix} "
-        f"({int(np.sum(counts))} encounters)"
+        f"({int(np.sum(counts))} encounters)",
+        fontsize=20,
     )
+    ax.tick_params(axis="both", which="major", labelsize=18)
     ax.grid(True, axis="y", alpha=0.3)
-    ax.legend(loc="upper right")
+    ax.legend(loc="upper left", fontsize=18)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches="tight")

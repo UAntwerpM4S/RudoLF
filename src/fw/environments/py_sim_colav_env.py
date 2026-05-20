@@ -110,7 +110,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.0, 0.0, 1.0, 0.0, 0.0, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+            0.0, 0.0, 0.33, 0.33, 0.34, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
         # Call base init (encounter_range = polar_max_range)
@@ -170,7 +170,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
         # overtaking TS speed
         self.overtaking_ts_v_min = 1.0
-        self.overtaking_ts_v_max = self.os_nominal_speed - 0.3
+        self.overtaking_ts_v_max = 1.0
 
         # Head-on TS speed
         self.headon_ts_v_min = self.os_nominal_speed
@@ -178,6 +178,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
         # Let OS always start from the original position
         self.random_segment_start = False
+
+        # Single-encounter mode wiring (read by scenario_builder).
+        # self.single_encounter_per_episode = True
+        # self.single_encounter_target_segment_index = 15
+        # self.single_encounter_zoom_halfwidth = 1450
 
     # -------------------------
     # Polar scan geometry
@@ -557,6 +562,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             beam_line, = self.ax.plot(
                 [], [], color='orange', alpha=0.3, linewidth=1,
             )
+            beam_line.set_animated(True)
             self.polar_beams.append(beam_line)
 
         # Override the legend with a curated, fixed set of entries (proxy
@@ -573,7 +579,36 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             Line2D([0], [0], color='red', linewidth=1.5, linestyle='--',
                    label='TS trajectory'),
         ]
-        self.ax.legend(handles=legend_handles, loc='best')
+        self.ax.legend(handles=legend_handles, loc='best', fontsize=14)
+
+        # Paper-ready axis styling: titled, larger fonts, km on both axes.
+        from matplotlib.ticker import FuncFormatter
+        self.ax.set_title(
+            "Ship Trajectory",
+            fontsize=22,
+        )
+        self.ax.set_xlabel("X position [km]", fontsize=18)
+        self.ax.set_ylabel("Y position [km]", fontsize=18)
+        km_formatter = FuncFormatter(lambda v, _pos: f"{v / 1000:g}")
+        self.ax.xaxis.set_major_formatter(km_formatter)
+        self.ax.yaxis.set_major_formatter(km_formatter)
+        self.ax.tick_params(axis="both", which="major", labelsize=16)
+
+        # Single-encounter eval: center the camera on the dormant TS so
+        # multiple agents share an identical static frame for overlay
+        # comparison. Only the OS trajectory changes between runs.
+        # Zoom is controlled by ``single_encounter_zoom_halfwidth`` (m).
+        if (
+            getattr(self, "single_encounter_per_episode", False)
+            and getattr(self, "_single_encounter_ts_spawn_pos", None) is not None
+        ):
+            ts_pos = self._single_encounter_ts_spawn_pos
+            half_x = float(getattr(self, "single_encounter_zoom_halfwidth", 600.0))
+            half_y = half_x * (9.0 / 16.0)
+            self.ax.set_xlim(float(ts_pos[0]) - half_x, float(ts_pos[0]) + half_x)
+            self.ax.set_ylim(float(ts_pos[1]) - half_y, float(ts_pos[1]) + half_y)
+            self.ax.set_aspect("equal", adjustable="box")
+            self.ax.autoscale(False)
 
     def _render_subclass(self, heading: float) -> None:
         """Update polar beam rendering."""
