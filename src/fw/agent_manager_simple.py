@@ -402,18 +402,14 @@ class AgentManagerSimple:
                     for episode in range(num_episodes):
                         state, _ = env.reset()
 
-                        # If the profile specifies an initial vessel state, push it to the
-                        # simulator immediately after the environment's own reset so the
-                        # override takes effect for this episode.
-                        if self._profile.scenario.initial_state is not None:
+                        if self._profile is not None:
                             _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
                             SimulatorApplier.apply(self._profile, _rollout_sim)
 
+                        start_pos = np.copy(env.ship_pos)
                         episode_reward = 0
                         done = False
                         steps = 0
-
-                        start_pos = np.copy(env.ship_pos)
 
                         # Store positions for this episode
                         path_positions = [np.copy(env.ship_pos)]

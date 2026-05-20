@@ -18,6 +18,7 @@ from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 # from fw.common.tools.ppo_utils import normalize_policy_zip_path
 from fw.common.tools.logging_utils import dump_metrics_to_csv
+from fw.profile_applier import SimulatorApplier
 from fw.config_profile import VesselProfile
 
 
@@ -265,18 +266,36 @@ class SinglePPOAgent(BasePPOAgent):
         Notes:
             - Each environment is deep-copied to ensure independence.
             - Wrapped with `Monitor` for logging episode statistics.
+            - Applies the profile state to the simulator inside the copy
+              immediately after construction so every vectorized worker
+              starts from the configured pose.
         """
+
+        profile = self._profile  # captured by closure; avoids a late-binding issue
 
         def _init():
             """
             Create one monitored deep-copied environment instance.
 
+            Applies the profile's simulator state (if any) so that the
+            vectorized worker begins each episode from the configured pose.
+
             Returns:
-                A monitored Gym environment copied from the agent base
-                environment.
+                A monitored Gym environment copied from the agent base environment.
             """
 
-            return Monitor(copy.deepcopy(self.env))
+            env_copy = copy.deepcopy(self.env)
+
+            # Push the profile's state into this worker's simulator so that
+            # _vec_env.reset() begins each episode at the configured pose.
+            # Without this the state setting only affects self.env, not
+            # the parallel training rollouts.
+            if profile is not None:
+                _sim = getattr(env_copy, "phys_sim", None) or getattr(env_copy, "_phys_sim", None)
+                if _sim is not None:
+                    SimulatorApplier.apply(profile, _sim)
+
+            return Monitor(env_copy)
 
         return _init
 
@@ -370,6 +389,29 @@ class SinglePPOAgent(BasePPOAgent):
         """
 
         return self.policy.predict(states, deterministic=deterministic)
+
+
+    def _get_simulator_for_env(self, env_id: int):
+        """
+        Return `None` for all environment indices.
+
+        `SinglePPOAgent` uses a `SubprocVecEnv` / `DummyVecEnv` whose
+        workers are deep-copied processes.  Their simulators are not accessible
+        from this process, so there is no live simulator reference to return.
+
+        `ActionAdapter.transform` currently ignores the `simulator` argument
+        (it is kept for API compatibility only), so `None` is the correct and
+        safe value here.  If `transform` ever starts consuming simulator state,
+        this method is the extension point to provide per-worker access.
+
+        Args:
+            env_id (int): Zero-based worker index (unused).
+
+        Returns:
+            None
+        """
+
+        return None
 
 
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):

@@ -22,7 +22,7 @@ Typical usage
 -------------
 >>> from fw.config_profile import (
 ...     VesselProfile, ActuatorConfig, ThrustConfig, ThrustMode,
-...     ModelConfig, RunMode, ProfileRegistry,
+...     ScenarioConfig, ModelConfig, RunMode, ProfileRegistry,
 ... )
 
 # Build a custom profile
@@ -45,15 +45,15 @@ Typical usage
 from __future__ import annotations
 
 import copy
-import dataclasses
-import hashlib
 import json
 import math
+import hashlib
 import warnings
-from dataclasses import dataclass, field, asdict
-from enum import Enum, auto
-from typing import Any, Dict, List, Optional
+import dataclasses
 
+from enum import Enum, auto
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 from fw.dynamics.dynamics_model import Model
 from fw.ships.ship_factory import ShipModel
 
@@ -79,7 +79,7 @@ class RunMode(Enum):
         TRAIN: Standard reinforcement-learning training.
         INFERENCE: Running a trained policy (no weight updates).
         TRANSFER: Inference in a *different* simulator than the one used for
-            training; typically combined with ``enable_rudder_angle_scaling=True``.
+            training; typically combined with `enable_rudder_angle_scaling=True`.
     """
 
     TRAIN = auto()
@@ -92,57 +92,18 @@ class RunMode(Enum):
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class InitialVesselState:
-    """
-    Vessel state snapshot used at the start of every episode.
-
-    Units and coordinate conventions match
-    :class:`~fw.ships.vessel_state.VesselState`.
-
-    Attributes:
-        x: Earth-fixed x position [m].
-        y: Earth-fixed y position [m].
-        heading: Yaw angle in the earth-fixed frame [rad].
-        u: Surge (forward) velocity [m/s].
-        v: Sway (starboard) velocity [m/s].
-        r: Yaw rate [rad/s].
-    """
-
-    x: float = 0.0
-    y: float = 0.0
-    heading: float = 0.0
-    u: float = 0.0
-    v: float = 0.0
-    r: float = 0.0
-
-    def to_dict(self) -> Dict[str, float]:
-        """
-        Return the state fields as a plain ``float``-valued dictionary.
-        """
-
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "InitialVesselState":
-        """
-        Construct an :class:`InitialVesselState` from a raw dictionary, ignoring unknown keys.
-        """
-
-        known = {f.name for f in dataclasses.fields(cls)}
-        return cls(**{k: float(v) for k, v in d.items() if k in known})
-
-
-@dataclass(frozen=True)
 class ScenarioConfig:
     """
     Scenario-level settings.
 
     Attributes:
-        initial_state: Override the environment's built-in start state.
-            *None* means the environment's default is used.
+        initial_speed: Override the environment's initial surge velocity [m/s].
+            Applied via the environment's `initial_speed` setter immediately
+            after each `env.reset()` call.  *None* means the environment's
+            built-in default is used.
     """
 
-    initial_state: Optional[InitialVesselState] = None
+    initial_speed: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -193,8 +154,8 @@ class ThrustConfig:
 
     Attributes:
         mode: :attr:`ThrustMode.FREE` or :attr:`ThrustMode.FIXED`.
-        fixed_value: Normalised thrust in ``[0.1, 1.0]`` used when
-            ``mode == ThrustMode.FIXED``.  Ignored otherwise.
+        fixed_value: Normalised thrust in `[0.1, 1.0]` used when
+            `mode == ThrustMode.FIXED`.  Ignored otherwise.
     """
 
     mode: ThrustMode = ThrustMode.FREE
@@ -281,7 +242,7 @@ class VesselProfile:
 
         Uses :func:`dataclasses.replace` so type safety is preserved:
         callers must pass typed sub-config instances
-        (e.g. ``ActuatorConfig(...)``) rather than plain dicts.
+        (e.g. `ActuatorConfig(...)`) rather than plain dicts.
         Unchanged fields are carried over from *self* — no JSON round-trip,
         no risk of silently dropping nested fields.
 
@@ -343,6 +304,13 @@ class VesselProfile:
                     f"got {self.thrust.fixed_value}."
                 )
 
+        if (self.scenario.initial_speed is not None
+                and self.scenario.initial_speed < 0.0):
+            errors.append(
+                f"scenario.initial_speed must be non-negative, "
+                f"got {self.scenario.initial_speed}."
+            )
+
         if (self.actuator.max_rudder_angle_deg is not None
                 and self.actuator.max_rudder_angle_deg <= 0):
             errors.append(
@@ -390,10 +358,7 @@ class VesselProfile:
             "version": self.version,
             "run_mode": self.run_mode.name,
             "scenario": {
-                "initial_state": (
-                    self.scenario.initial_state.to_dict()
-                    if self.scenario.initial_state else None
-                )
+                "initial_speed": self.scenario.initial_speed,
             },
             "actuator": {
                 "max_rudder_angle_deg": self.actuator.max_rudder_angle_deg,
@@ -420,13 +385,13 @@ class VesselProfile:
 
         Unknown keys inside each sub-config are silently ignored so that
         profiles serialized by a newer schema version remain loadable by
-        older code.  Missing sub-config blocks (e.g. a ``"scenario"`` key
+        older code.  Missing sub-config blocks (e.g. a "scenario" key
         absent from an older serialization) fall back to their dataclass
         defaults rather than raising :exc:`KeyError`.
         """
 
         scenario_d = d.get("scenario", {})
-        initial_state_d = scenario_d.get("initial_state") if scenario_d else None
+        initial_speed = scenario_d.get("initial_speed") if scenario_d else None
 
         thrust_d = d.get("thrust", {})
         model_d = d.get("model", {})
@@ -437,9 +402,8 @@ class VesselProfile:
             version=d.get("version", "1.0"),
             run_mode=RunMode[d.get("run_mode", RunMode.TRAIN.name)],
             scenario=ScenarioConfig(
-                initial_state=(
-                    InitialVesselState.from_dict(initial_state_d)
-                    if initial_state_d else None
+                initial_speed=(
+                    float(initial_speed) if initial_speed is not None else None
                 )
             ),
             actuator=ActuatorConfig(
@@ -502,15 +466,10 @@ class VesselProfile:
         lines.append(f"  ship_model   : {self.model.ship_model.name}")
         lines.append(f"  dynamics     : {self.model.dynamics_model.name}")
 
-        s = self.scenario.initial_state
-        if s is not None:
-            lines.append(
-                f"  initial_state: x={s.x}, y={s.y}, "
-                f"heading={math.degrees(s.heading):.1f}°, "
-                f"u={s.u}, v={s.v}, r={s.r}"
-            )
+        if self.scenario.initial_speed is not None:
+            lines.append(f"  initial_speed: {self.scenario.initial_speed} m/s")
         else:
-            lines.append("  initial_state: (environment default)")
+            lines.append("  initial_speed: (environment default)")
 
         lines.append(f"  smoothing    : {self.actuator.enable_smoothing}")
         if self.actuator.max_rudder_angle_deg is not None:
@@ -672,40 +631,7 @@ ProfileRegistry.register(VesselProfile(
         ship_model=ShipModel.TRIPOLI,
         dynamics_model=Model.UGENT_SURROGATE,
     ),
-    scenario=ScenarioConfig(initial_state=InitialVesselState(
-        x= 0.0,
-        y= 0.0,
-        heading= 0.0,
-        u= 4.8,
-        v= 0.0,
-        r= 0.0)),
+    scenario=ScenarioConfig(initial_speed=4.8),
     actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
     thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="train_lunar_default",
-    description=(
-        "LunarLander training profile. Ship-model and dynamics fields are "
-        "unused by the Lunar environment but kept for schema consistency."
-    ),
-    run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="train_pysim_polar_default",
-    description="PySimPolarEnv training profile with Fossen dynamics.",
-    run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))

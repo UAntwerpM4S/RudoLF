@@ -65,7 +65,7 @@ def _normalise_policy_observation(obs, expected_dim: int | None = None) -> np.nd
             flattening vs selecting the first ship row.
 
     Returns:
-        np.ndarray: Flat observation vector for ``PPOPolicy.predict``.
+        np.ndarray: Flat observation vector for `PPOPolicy.predict`.
     """
 
     arr = np.asarray(obs, dtype=np.float32)
@@ -91,7 +91,7 @@ def _normalise_policy_action(action, expected_dim: int | None = None) -> np.ndar
     Convert policy action output to a flat environment action vector.
 
     Args:
-        action: Action payload returned by ``PPOPolicy.predict``.
+        action: Action payload returned by `PPOPolicy.predict`.
         expected_dim: Optional action dimension inferred from env action space.
 
     Returns:
@@ -110,7 +110,7 @@ class VisualiseModelsRunner:
 
     The runner stays model-family agnostic by delegating policy loading,
     environment construction, and state extraction to a
-    ``ModelVisualisationAdapter``.
+    `ModelVisualisationAdapter`.
     """
 
     def __init__(self, adapter: ModelVisualisationAdapter, env_name: str = "auto") -> None:
@@ -119,7 +119,7 @@ class VisualiseModelsRunner:
 
         Args:
             adapter: Adapter implementing family-specific replay behavior.
-            env_name: Requested framework environment name, or ``"auto"``.
+            env_name: Requested framework environment name, or "auto".
         """
 
         self.adapter = adapter
@@ -147,7 +147,7 @@ class VisualiseModelsRunner:
             device: Torch device selector.
 
         Returns:
-            Any: Loaded policy object exposing ``predict``.
+            Any: Loaded policy object exposing `predict`.
         """
 
         return self.adapter.load_policy(model_path, device=device)
@@ -203,7 +203,7 @@ class VisualiseModelsRunner:
             env: Active framework environment.
 
         Returns:
-            tuple[float, float, float]: Framework-frame ``(x, y, heading)``.
+            tuple[float, float, float]: Framework-frame `(x, y, heading)`.
         """
 
         return self.adapter.extract_pose(env)
@@ -217,7 +217,7 @@ class VisualiseModelsRunner:
 
         Returns:
             tuple[float, float, float]: Framework-frame
-            ``(surge, sway, yaw_rate)``.
+            `(surge, sway, yaw_rate)`.
         """
 
         return self.adapter.extract_velocity(env)
@@ -362,10 +362,10 @@ class VisualiseModelsRunner:
 
                 Args:
                     motion_state: AirSim-frame motion vector
-                        ``[x, y, yaw, vx, vy, yaw_rate]``.
+                        `[x, y, yaw, vx, vy, yaw_rate]`.
 
                 Returns:
-                    Any: ``Vector3r``-compatible point for persistent trail
+                    Any: `Vector3r`-compatible point for persistent trail
                     plotting.
                 """
 
@@ -719,9 +719,9 @@ def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) 
 
     Args:
         model_path: Model checkpoint path used for replay.
-        model_family: Requested adapter family, or ``"auto"``.
+        model_family: Requested adapter family, or "auto".
         **kwargs: Additional runner options forwarded to
-            ``VisualiseModelsRunner.run``.
+            `VisualiseModelsRunner.run`.
     """
 
     env_name = str(kwargs.pop("env_name", "auto"))

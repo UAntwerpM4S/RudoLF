@@ -286,10 +286,10 @@ class PySimEnv(BaseEnv):
         self.phys_sim.reset(VesselState(
             terminated=False,
             truncated=False,
-            x=self.initial_ship_pos[0],
-            y=self.initial_ship_pos[1],
-            heading=self.ship_heading,
-            u=0.0, v=0.0, r=0.0))
+            x=np.float32(self.initial_ship_pos[0]),
+            y=np.float32(self.initial_ship_pos[1]),
+            heading=np.float32(self.ship_heading),
+            u=np.float32(self.initial_speed), v=np.float32(0.0), r=np.float32(0.0)))
         self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
 
