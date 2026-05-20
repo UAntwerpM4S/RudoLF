@@ -111,6 +111,12 @@ class SimpleScheduler(BaseScheduler):
         metrics = {}
         policy_strategy = PolicyStrategy.REUSE_OTHER_POLICY
 
+        # Treat a missing configuration the same as an empty one so callers that
+        # don't need per-environment stop-condition overrides can omit the argument
+        # without hitting a TypeError on the `if env_key in configuration` check.
+        if configuration is None:
+            configuration = {}
+
         for i in range(len(self.envs)):
             try:
                 # Switch to the next environment

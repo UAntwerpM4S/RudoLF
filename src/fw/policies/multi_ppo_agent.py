@@ -5,13 +5,14 @@ import tempfile
 import numpy as np
 
 from typing import Optional, Tuple, Union
-from fw.config_profile import VesselProfile
 from fw.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
 from fw.environments.multi_sim_env import MultiSimEnv
+from fw.profile_applier import SimulatorApplier
+from fw.config_profile import VesselProfile
 
 
 class MultiPPOAgent(BasePPOAgent):
@@ -137,6 +138,13 @@ class MultiPPOAgent(BasePPOAgent):
             if hasattr(sub_env, "randomize"):
                 sub_env.randomize()
 
+            # Apply the profile's simulator state so every training episode
+            # starts from the configured pose, not the environment default.
+            if self._profile is not None:
+                _sim = getattr(sub_env, "phys_sim", None) or getattr(sub_env, "_phys_sim", None)
+                if _sim is not None:
+                    SimulatorApplier.apply(self._profile, _sim)
+
         states, _ = self.env.reset()
         return states
 
@@ -190,6 +198,37 @@ class MultiPPOAgent(BasePPOAgent):
         """
 
         return self.predict(states, deterministic=deterministic)
+
+
+    def _get_simulator_for_env(self, env_id: int):
+        """
+        Return the simulator for the sub-environment at `env_id`.
+
+        `MultiPPOAgent` drives `MultiSimEnv` directly, so each
+        sub-environment is accessible by index and may expose a live simulator.
+
+        Args:
+            env_id (int): Zero-based index into `self.env.sub_environments`.
+
+        Returns:
+            Simulator instance if the sub-environment exposes one, otherwise `None`.
+
+        Raises:
+            IndexError: If `env_id` is out of range for `sub_environments`.
+        """
+
+        sub_envs = self.env.sub_environments
+        iterable = list(sub_envs.values()) if isinstance(sub_envs, dict) else list(sub_envs)
+
+        if env_id >= len(iterable):
+            raise IndexError(
+                f"env_id {env_id} is out of range for sub_environments "
+                f"(len={len(iterable)}). This indicates a mismatch between "
+                f"the number of agents and sub-environments."
+            )
+
+        sub_env = iterable[env_id]
+        return getattr(sub_env, "phys_sim", None) or getattr(sub_env, "_phys_sim", None)
 
 
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):
