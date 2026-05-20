@@ -391,29 +391,6 @@ class SinglePPOAgent(BasePPOAgent):
         return self.policy.predict(states, deterministic=deterministic)
 
 
-    def _get_simulator_for_env(self, env_id: int):
-        """
-        Return `None` for all environment indices.
-
-        `SinglePPOAgent` uses a `SubprocVecEnv` / `DummyVecEnv` whose
-        workers are deep-copied processes.  Their simulators are not accessible
-        from this process, so there is no live simulator reference to return.
-
-        `ActionAdapter.transform` currently ignores the `simulator` argument
-        (it is kept for API compatibility only), so `None` is the correct and
-        safe value here.  If `transform` ever starts consuming simulator state,
-        this method is the extension point to provide per-worker access.
-
-        Args:
-            env_id (int): Zero-based worker index (unused).
-
-        Returns:
-            None
-        """
-
-        return None
-
-
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):
         """
         Estimate value for a given state for bootstrapping.

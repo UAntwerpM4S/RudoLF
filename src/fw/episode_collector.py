@@ -215,43 +215,10 @@ class EpisodeCollector:
             num_episodes=num_episodes,
         )
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    def _get_simulator(self, env_id: int):
-        """
-        Return the simulator for the environment at *env_id*.
-
-        For single-ship environments the simulator lives on `self._env`
-        directly.  For multi-ship environments it is on the sub-environment
-        at position *env_id*.
-
-        Args:
-            env_id: Zero-based index of the agent/sub-environment.
-
-        Returns:
-            Simulator instance, or `None` if not accessible.
-        """
-
-        env = self._env
-
-        if hasattr(env, "sub_environments") and env.sub_environments:
-            sub_envs = env.sub_environments
-            iterable = list(sub_envs.values()) if isinstance(sub_envs, dict) else list(sub_envs)
-            if env_id < len(iterable):
-                sub = iterable[env_id]
-                return getattr(sub, "phys_sim", None) or getattr(sub, "_phys_sim", None)
-            return None
-
-        return getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-
     @staticmethod
     def _transform_actions(
         profile: VesselProfile,
         actions,
-        *,
-        get_simulator=None,
     ):
         """
         Apply :meth:`transform` to every action in a batch and return the
@@ -267,11 +234,6 @@ class EpisodeCollector:
         Args:
             profile: Profile whose thrust settings to apply.
             actions: Batch of actions in any of the supported container types.
-            get_simulator: Optional callable `(env_id: int) -> simulator`
-                used to supply a per-agent simulator to :meth:`transform`.
-                Pass `None` (or omit) to forward `simulator=None` for all
-                agents, which is correct as long as `transform` does not
-                consume simulator state (currently the case).
 
         Returns:
             Transformed actions in the same container type as *actions*.
@@ -280,23 +242,20 @@ class EpisodeCollector:
             TypeError: If *actions* is not one of the supported types.
         """
 
-        def _sim(i):
-            return get_simulator(i) if get_simulator is not None else None
-
         if isinstance(actions, np.ndarray) and actions.ndim == 2:
             return np.stack([
-                ActionAdapter.transform(profile, actions[i], simulator=_sim(i))
+                ActionAdapter.transform(profile, actions[i])
                 for i in range(actions.shape[0])
             ])
 
         if isinstance(actions, tuple):
             return tuple(
-                ActionAdapter.transform(profile, a, simulator=_sim(i))
+                ActionAdapter.transform(profile, a)
                 for i, a in enumerate(actions)
             )
 
         if isinstance(actions, np.ndarray) and actions.ndim == 1:
-            return ActionAdapter.transform(profile, actions, simulator=_sim(0))
+            return ActionAdapter.transform(profile, actions)
 
         raise TypeError(
             f"ActionAdapter.transform_actions: unsupported actions type "
@@ -411,11 +370,7 @@ class EpisodeCollector:
 
                 # Apply optional per-action profile transform (e.g. fixed thrust).
                 if self._profile is not None:
-                    action = self._transform_actions(
-                        self._profile,
-                        action,
-                        get_simulator=self._get_simulator,
-                    )
+                    action = self._transform_actions(self._profile, action)
 
                 state, reward, terminated, truncated, _ = env.step(action)
 

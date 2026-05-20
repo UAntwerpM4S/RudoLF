@@ -283,8 +283,6 @@ class ActionAdapter:
     def transform(
         profile: VesselProfile,
         action: np.ndarray,
-        *,
-        simulator=None,  # noqa: ARG004  kept for API compatibility
     ) -> np.ndarray:
         """
         Return a transformed copy of *action*.
@@ -297,7 +295,6 @@ class ActionAdapter:
             profile: Profile whose thrust settings to apply.
             action: Array of shape `(N,)` with `N >= 2`.  Index 0 is
                 rudder, index 1 is thrust, both nominally in `[-1, 1]`.
-            simulator: Accepted for API compatibility; currently unused.
 
         Returns:
             New `float32` array with the same shape as *action*.
