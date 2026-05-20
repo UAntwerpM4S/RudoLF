@@ -223,10 +223,6 @@ class SimulatorApplier:
     def apply(profile: VesselProfile, simulator) -> None:
         """
         Patch actuator limits on *simulator* from *profile*.
-
-        Initial vessel speed is no longer handled here — it is set on the
-        environment via :meth:`EnvApplier._set_initial_speed` so the
-        environment's own `reset()` logic picks it up correctly.
         """
 
         if profile.actuator.angle_rad is not None or profile.actuator.rate_rad is not None:
