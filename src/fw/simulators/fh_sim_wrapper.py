@@ -131,20 +131,18 @@ class FhSimWrapper(BaseSimulator):
                 # Rescale the rudder angle relative to FH simulator's rudder angle range.
                 # Value mapping [-1, 1] -> [-max_deg, +max_deg] in the FH degree scale.
                 fh_max_deg = rudder.getMaximumAngle()   # FH engine's rudder limit in degrees
-                framework_max_deg = np.rad2deg(self._specs.max_rudder_angle)    # convert to degrees as
-                                                # max_rudder_angle is stored in radians in ShipSpecifications
+                framework_max_deg = np.rad2deg(self._specs.max_rudder_angle)
+                                                        # convert to degrees as max_rudder_angle
+                                                        # is stored in radians in ShipSpecifications
                 val = (actuator.rudder_angle * framework_max_deg) / fh_max_deg
             else:
                 # No rescaling: treat the policy output as already in the FH range.
                 val = actuator.rudder_angle
-            rudder.setControlValue(float(-val))     # negated: framework -> FH sign flip
+            rudder.setControlValue(float(-val))         # negated: framework -> FH sign flip
 
         # Step 2b: propeller
         for propeller in self._engine.ship_interface.getPropellerControls():
-            # During visualization (enable_smoothing=False) use full thrust so
-            # the ship maintains steerage way at the correct speed.
-            thrust_cmd = float(actuator.thrust)
-            propeller.setEngineLeverValue(thrust_cmd)
+            propeller.setEngineLeverValue(float(actuator.thrust))
 
         # Step 3: advance FH physics
         self._engine.math_model.simulateSeconds(self.dt)

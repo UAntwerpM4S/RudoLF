@@ -418,8 +418,8 @@ class AgentManagerSimple:
                             # Select action
                             action, _, _ = self._agent.predict(state=state, deterministic=True)
 
-                            sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-                            action = ActionAdapter.transform(self._profile, action, simulator=sim)
+                            if self._profile is not None:
+                                action = ActionAdapter.transform(self._profile, action)
 
                             # Take step in environment
                             state, reward, terminated, truncated, _ = env.step(action)
