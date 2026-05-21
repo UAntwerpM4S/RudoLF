@@ -891,8 +891,8 @@ class PySimEnv(BaseEnv):
             self.phys_sim.state.truncated = truncated
         else:
             reward = 0.0
-            terminated = False
-            truncated = False
+            terminated = self.phys_sim.state.terminated
+            truncated = self.phys_sim.state.truncated
 
         info = {
             "rewards": reward,
