@@ -19,7 +19,7 @@ from fw.env_factory import (
     FhSimEnvironment,
     AirSimEnvironment,
     LunarEnvironment,
-    PySimPolarEnvironment,
+    PySimPolarEnvironment, FhSimSyncEnvironment, sync_sim_env_name,
 )
 from fw.agent_manager import AgentManager
 from fw.agent_manager_simple import AgentManagerSimple
@@ -332,6 +332,8 @@ class Trainer:
             return PySimEnvironment(canonical_name, config)
         if canonical_name == fh_sim_env_name:
             return FhSimEnvironment(canonical_name, config)
+        if canonical_name == sync_sim_env_name:
+            return FhSimSyncEnvironment(canonical_name, config)
         if canonical_name == airsim_env_name:
             return AirSimEnvironment(canonical_name, config)
         if canonical_name == lunar_env_name:
