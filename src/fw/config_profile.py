@@ -595,7 +595,7 @@ ProfileRegistry.register(VesselProfile(
 ))
 
 ProfileRegistry.register(VesselProfile(
-    name="pysim_to_fhsim_transfer_profile",
+    name="myzako_pysim_to_fhsim_transfer_profile",
     description=(
         "Run a PySim-trained policy inside FhSim with rudder angle scaling."
     ),
@@ -603,6 +603,21 @@ ProfileRegistry.register(VesselProfile(
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.FOSSEN,
+    ),
+    actuator=ActuatorConfig(enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
+    transfer=TransferConfig(enable_rudder_angle_scaling=True),
+))
+
+ProfileRegistry.register(VesselProfile(
+    name="tripoli_pysim_to_fhsim_transfer_profile",
+    description=(
+        "Run a PySim-trained policy inside FhSim with rudder angle scaling."
+    ),
+    run_mode=RunMode.TRANSFER,
+    model=ModelConfig(
+        ship_model=ShipModel.TRIPOLI,
+        dynamics_model=Model.UGENT_SURROGATE,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
