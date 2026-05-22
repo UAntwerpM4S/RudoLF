@@ -149,6 +149,7 @@ class FhSimWrapper(BaseSimulator):
 
             # Step 2b: propeller
             for propeller in self._engine.ship_interface.getPropellerControls():
+                propeller.engage()
                 propeller.setEngineLeverValue(float(actuator.thrust))
 
         # Step 3: advance FH physics
