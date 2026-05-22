@@ -129,7 +129,7 @@ CONFIG_PARAMETERS = {
                                         # "myzako_pysim_to_fhsim_transfer_profile",
                                         # "tripoli_pysim_to_fhsim_transfer_profile",
                                         # "ugent_surrogate_training_profile", ...
-    'action': "train",  # Valid action values: "train", "visualize","evaluate_reward"
+    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'wind': False,
     'current': False,
     'numerical_damping': False,
@@ -232,7 +232,7 @@ def get_config_parameters() -> dict:
 
     Resolves the profile name from the config, validates it, applies it to
     the config dict, and returns the result. This is the single authoritative
-    place where profile application onto the config happens callers should
+    place where profile application onto the config happens — callers should
     not re-apply the profile to the config dict after calling this function.
 
     Returns:
