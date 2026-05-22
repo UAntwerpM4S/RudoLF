@@ -1,0 +1,4 @@
+pythonnet
+shapely
+stable-baselines3
+box2d
