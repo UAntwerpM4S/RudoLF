@@ -346,26 +346,46 @@ class BasePPOAgent(BaseAgent):
             for _ in range(num_envs)
         ]
 
+        # Snapshot of each environment's last valid observation.  Once an
+        # environment finishes its episode, its entry here is frozen so that
+        # subsequent calls to _predict and _step_envs receive a stable,
+        # meaningful observation rather than an auto-reset initial state from
+        # a ghost episode.  This prevents finished environments from
+        # contaminating the shared agent-state that still-running environments
+        # rely on for their observations and rewards.
+        frozen_states = list(states) if hasattr(states, "__len__") else [states]
+
         safeguard = 0
         while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
 
-            # Policy predicts actions for all agents from live states
-            actions, log_probs, values = self._predict(states, deterministic=False)
+            # Build the observation array for this step: use the frozen last
+            # valid state for done environments so _predict does not waste a
+            # forward pass on a ghost auto-reset observation, and so that
+            # MultiSimEnv.update_agent_states sees a stable last-known pose.
+            step_states = type(states)(
+                frozen_states[env_id] if envs_done[env_id] else states[env_id]
+                for env_id in range(num_envs)
+            ) if isinstance(states, tuple) else np.stack([
+                frozen_states[env_id] if envs_done[env_id] else states[env_id]
+                for env_id in range(num_envs)
+            ])
+
+            # Policy predicts actions for all agents from live (or frozen) states
+            actions, log_probs, values = self._predict(step_states, deterministic=False)
 
             # Replace actions for done environments with a neutral input BEFORE
             # stepping so the simulator receives a stable helm-zero signal for
             # ships that have already finished their episode.
-            effective_actions = [
-                self.env.get_neutral_action(env_id, action) if envs_done[env_id] else action
-                for env_id, action in enumerate(actions)
-            ]
-
-            # Apply optional per-action profile transform (e.g. fixed thrust).
-            if self._profile is not None:
-                effective_actions = [
-                    ActionAdapter.transform(self._profile, action)
-                    for action in effective_actions
-                ]
+            # Profile transforms are NOT applied to neutral actions — the neutral
+            # signal must reach the simulator unmodified so it does not perturb
+            # the joint physics state for still-running environments.
+            effective_actions = []
+            for env_id, action in enumerate(actions):
+                if envs_done[env_id]:
+                    effective_actions.append(self.env.get_neutral_action(env_id, action))
+                else:
+                    transformed = ActionAdapter.transform(self._profile, action) if self._profile is not None else action
+                    effective_actions.append(transformed)
 
             # Restore the container type that _step_envs expects, i.e.
             # np.ndarray for SinglePPOAgent, tuple for MultiPPOAgent.
@@ -388,6 +408,13 @@ class BasePPOAgent(BaseAgent):
 
             # Update done flags at environment level
             env_done = np.logical_or(terminations, truncations)
+
+            # Freeze the last valid observation for environments that just
+            # finished, before envs_done is updated.
+            for env_id in range(num_envs):
+                if env_done[env_id] and not envs_done[env_id]:
+                    frozen_states[env_id] = states[env_id]
+
             envs_done = np.logical_or(envs_done, env_done)
 
             # Update states for the next step
