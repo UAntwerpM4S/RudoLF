@@ -61,6 +61,7 @@ class FhSimBridge:
             output_path (str, optional): Directory for simulation output / logs.
         """
 
+        self._ship_model = ship_model
         self.exercise_path_exists = True
 
         base_dir = os.path.join(
@@ -71,6 +72,8 @@ class FhSimBridge:
         # Determine scenario suffix
         if ship_model == ShipModel.MYZAKO_DEFAULT:
             scenario_suffix = f"{scenario}_default"
+        elif ship_model == ShipModel.TRIPOLI:
+            scenario_suffix = f"DDShip_Tripoli_scenario_nowindnocurrent"
         else:
             scenario_suffix = f"{scenario}_{ship_model.name.lower()}"
 
@@ -118,6 +121,18 @@ class FhSimBridge:
                 self._logger.warning(
                     "Could not open log file '%s': %s — logging to console.", log_path, exc
                 )
+
+
+    @property
+    def ship_model(self):
+        """
+        Model type of the ship.
+
+        Returns:
+            str: Ship model.
+        """
+
+        return self._ship_model
 
 
     @property
