@@ -115,6 +115,12 @@ class FhSimBridge:
                 handler = logging.FileHandler(log_path)
                 handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
                 self._logger.addHandler(handler)
+
+                # Also route SimAPI's own logger to the same file
+                sim_logger = logging.getLogger("sim")
+                sim_logger.setLevel(logging.INFO)
+                sim_logger.addHandler(handler)
+                sim_logger.propagate = False  # prevent it reaching main's root handler
             except (OSError, FileNotFoundError) as exc:
                 # Fallback to console if the log directory cannot be created.
                 self._logger.addHandler(logging.StreamHandler())
