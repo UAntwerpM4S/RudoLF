@@ -381,11 +381,13 @@ class FhSimSyncEnvironment(BaseEnvironment):
     """
     Realtime sibling of FhSimEnvironment.
 
-    Connects to a running simSync instance over UDP instead of initialising
+    Connects to a running simSync instance over UDP instead of initializing
     a local FH math model. Same framework-facing shape as FhSimEnvironment:
     the framework gets the same env interface, the same observation/reward
     pipeline, the same agent loop — only the underlying simulator changes.
     """
+
+    ENVIRONMENT_NAME = "FhSimSyncEnv"
 
     def __init__(self, name, configuration):
         """Create the realtime simSync environment wrapper.
@@ -410,20 +412,19 @@ class FhSimSyncEnvironment(BaseEnvironment):
         # vessel state lives in the remote simSync.
         ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
         target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
-        config = get_config_parameters()
 
         self._env = FhSimSyncEnv(
             time_step=2.0,
             max_steps=135000,
             start_pos=ship_pos,
             target_pos=target_pos,
-            ship_model=config["ship_model"],
-            remote_ip=config.get("remote_ip", "127.0.0.1"),
-            remote_port=config.get("remote_port", 64999),
-            local_ip=config.get("local_ip", "127.0.0.1"),
-            local_port=config.get("local_port", 64998),
-            connect_timeout=config.get("connect_timeout", 10.0),
-            step_timeout_per_tick=config.get("step_timeout_per_tick", 1.0),
+            ship_model=self.configuration["ship_model"],
+            remote_ip=self.configuration.get("remote_ip", "127.0.0.1"),
+            remote_port=self.configuration.get("remote_port", 64999),
+            local_ip=self.configuration.get("local_ip", "127.0.0.1"),
+            local_port=self.configuration.get("local_port", 64998),
+            connect_timeout=self.configuration.get("connect_timeout", 10.0),
+            step_timeout_per_tick=self.configuration.get("step_timeout_per_tick", 1.0),
         )
 
 class AirSimEnvironment(BaseEnvironment):
