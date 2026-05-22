@@ -18,14 +18,6 @@ except OSError:
     user_login = ""
 
 
-# Configure logging
-try:
-    logfile = os.path.join('C:/Users', user_login, 'Desktop', 'testExercise', 'results', 'math_model.log')
-    logging.basicConfig(filename=logfile, level=logging.INFO, format='%(levelname)s: %(message)s')
-except FileNotFoundError:
-    logfile = None
-
-
 class FhSimBridge:
     """
     Bridge to the FH Simulator math model and ship interface.
@@ -69,6 +61,7 @@ class FhSimBridge:
             output_path (str, optional): Directory for simulation output / logs.
         """
 
+        self._ship_model = ship_model
         self.exercise_path_exists = True
 
         base_dir = os.path.join(
@@ -79,6 +72,8 @@ class FhSimBridge:
         # Determine scenario suffix
         if ship_model == ShipModel.MYZAKO_DEFAULT:
             scenario_suffix = f"{scenario}_default"
+        elif ship_model == ShipModel.TRIPOLI:
+            scenario_suffix = f"DDShip_Tripoli_scenario_nowindnocurrent"
         else:
             scenario_suffix = f"{scenario}_{ship_model.name.lower()}"
 
@@ -107,29 +102,43 @@ class FhSimBridge:
         self._ship_interface = None
         self._math_model = None
 
-        print(self.library_path)
-        print(self.config_path)
-        print(self.output_path)
-
         # Per-instance named logger instead of root logger.
         # Each instance gets a unique logger so output_path changes between
         # instances don't interfere, and the root logger is never touched.
         self._logger = logging.getLogger(f"FhSimBridge.{id(self)}")
         self._logger.setLevel(logging.INFO)
 
-        # if not self._logger.handlers:
-        #     log_path = os.path.join(self.output_path, 'math_model.log')
-        #     try:
-        #         os.makedirs(self.output_path, exist_ok=True)
-        #         handler = logging.FileHandler(log_path)
-        #         handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
-        #         self._logger.addHandler(handler)
-        #     except (OSError, FileNotFoundError) as exc:
-        #         # Fallback to console if the log directory cannot be created.
-        #         self._logger.addHandler(logging.StreamHandler())
-        #         self._logger.warning(
-        #             "Could not open log file '%s': %s — logging to console.", log_path, exc
-        #         )
+        if not self._logger.handlers:
+            log_path = os.path.join(self.output_path, 'math_model.log')
+            try:
+                os.makedirs(self.output_path, exist_ok=True)
+                handler = logging.FileHandler(log_path)
+                handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+                self._logger.addHandler(handler)
+
+                # Also route SimAPI's own logger to the same file
+                sim_logger = logging.getLogger("sim")
+                sim_logger.setLevel(logging.INFO)
+                sim_logger.addHandler(handler)
+                sim_logger.propagate = False  # prevent it reaching main's root handler
+            except (OSError, FileNotFoundError) as exc:
+                # Fallback to console if the log directory cannot be created.
+                self._logger.addHandler(logging.StreamHandler())
+                self._logger.warning(
+                    "Could not open log file '%s': %s — logging to console.", log_path, exc
+                )
+
+
+    @property
+    def ship_model(self):
+        """
+        Model type of the ship.
+
+        Returns:
+            str: Ship model.
+        """
+
+        return self._ship_model
 
 
     @property
