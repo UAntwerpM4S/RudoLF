@@ -27,6 +27,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         resolve_environment_name,
         py_sim_env_name,
         fh_sim_env_name,
+        sync_sim_env_name,
         airsim_env_name,
         lunar_env_name,
         py_sim_polar_env_name,
@@ -105,6 +106,12 @@ if __name__ == "__main__" or __name__ == "fw.main":
             max_time_steps=350,
         ),
         fh_sim_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=3.80,
+            patience=4,
+            max_time_steps=1300,
+        ),
+        sync_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=3.80,
             patience=4,

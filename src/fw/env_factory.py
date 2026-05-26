@@ -390,21 +390,20 @@ class FhSimSyncEnvironment(BaseEnvironment):
     ENVIRONMENT_NAME = "FhSimSyncEnv"
 
     def __init__(self, name, configuration):
-        """Create the realtime simSync environment wrapper.
+        """
+        Create the realtime simSync environment wrapper.
 
         Args:
             name: Registered environment name.
-            configuration: Optional runtime configuration forwarded by the
-                environment factory.
-
-        Expected keys in get_config_parameters() (in addition to ship_model):
-            remote_ip, remote_port: simSync endpoint to connect to.
-            local_ip, local_port:   local UDP endpoint to bind.
-            connect_timeout:        seconds to wait for the first state event.
-            step_timeout_per_tick:  seconds to wait per sim tick during step().
-
-        All of these have sensible defaults if absent.
+            configuration: Scoped configuration dict (see `build_fhsimsync_config`).
+                Required keys: ship_model.
+                Optional keys (all have sensible defaults if absent):
+                    remote_ip, remote_port: simSync endpoint to connect to.
+                    local_ip, local_port:   local UDP endpoint to bind.
+                    connect_timeout:        seconds to wait for the first state event.
+                    step_timeout_per_tick:  seconds to wait per sim tick during step().
         """
+
         super().__init__(name, configuration)
 
         # ship_pos and target_pos remain framework-side concerns (they feed
@@ -420,9 +419,9 @@ class FhSimSyncEnvironment(BaseEnvironment):
             target_pos=target_pos,
             ship_model=self.configuration["ship_model"],
             remote_ip=self.configuration.get("remote_ip", "127.0.0.1"),
-            remote_port=self.configuration.get("remote_port", 64999),
+            remote_port=self.configuration.get("remote_port", 5000),
             local_ip=self.configuration.get("local_ip", "127.0.0.1"),
-            local_port=self.configuration.get("local_port", 64998),
+            local_port=self.configuration.get("local_port", 5001),
             connect_timeout=self.configuration.get("connect_timeout", 10.0),
             step_timeout_per_tick=self.configuration.get("step_timeout_per_tick", 1.0),
         )
@@ -674,6 +673,34 @@ def build_fhsim_config(framework_config: dict) -> dict:
     }
 
 
+def build_fhsimsync_config(framework_config: dict) -> dict:
+    """
+    Extract FhSimSync-relevant keys from *framework_config*.
+
+    Args:
+        framework_config: Full resolved framework configuration dict.
+
+    Returns:
+        A dict containing the required keys consumed by FhSimSyncEnvironment
+        (ship_model, scenario) plus any optional UDP connection overrides
+        (remote_ip, remote_port, local_ip, local_port, connect_timeout,
+        step_timeout_per_tick) when present in the framework config.
+    """
+
+    cfg = {
+        "ship_model": framework_config["ship_model"],
+    }
+    # Forward optional UDP / timing overrides when explicitly set in config.
+    for optional_key in (
+        "remote_ip", "remote_port",
+        "local_ip", "local_port",
+        "connect_timeout", "step_timeout_per_tick",
+    ):
+        if optional_key in framework_config:
+            cfg[optional_key] = framework_config[optional_key]
+    return cfg
+
+
 def build_airsim_config(framework_config: dict, training_mode: bool = True) -> dict:
     """
     Extract AirSim-relevant keys from *framework_config*.
@@ -903,6 +930,10 @@ def build_default_environment(environment_name, framework_config=None):
         cfg = build_fhsim_config(framework_config) if framework_config else {}
         return get(environment_name, configuration=cfg)
 
+    if environment_name == sync_sim_env_name:
+        cfg = build_fhsimsync_config(framework_config) if framework_config else {}
+        return get(environment_name, configuration=cfg)
+
     # LunarLander and PySimPolarEnv need no framework-level config keys.
     return get(environment_name, configuration={})
 
@@ -924,7 +955,7 @@ def initialize_all_environments():
     """
 
     expected = {
-        py_sim_env_name, fh_sim_env_name, lunar_env_name,
+        py_sim_env_name, fh_sim_env_name, sync_sim_env_name, lunar_env_name,
         py_sim_polar_env_name, multi_sim_env_name,
     }
     missing = expected - set(_Factory._environment_classes)
