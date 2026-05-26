@@ -102,7 +102,19 @@ def main():
             output_file=args.save,
         )
 
-        # X, Y, nbr_samples = load_supervised_dataset("fh_data.csv")
+    elif args.mode in ("vectorized", "parallel"):
+        raise NotImplementedError(
+            f"Mode '{args.mode}' is not yet implemented. "
+            "Use --mode one_step (the only currently supported mode)."
+        )
+
+    else:
+        # argparse choices= already guards this, but be explicit
+        raise ValueError(f"Unknown mode: {args.mode}")
+
+    if nbr_samples == 0:
+        print("Warning: no samples were collected – dataset files were not written.")
+        return
 
     print(f"Saved dataset to {args.save} ({nbr_samples} samples)")
 

@@ -16,7 +16,7 @@ class SurrogateMLP(nn.Module):
 
     def __init__(
         self,
-        input_dim: int = 8,
+        input_dim: int = 6,   # 4 kinematic states + 2 actions; was 8 before x/y/t were dropped
         output_dim: int = 6,
         hidden_sizes: Sequence[int] = (128, 128, 128),
         activation: nn.Module = nn.ReLU,
