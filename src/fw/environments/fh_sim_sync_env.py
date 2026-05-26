@@ -11,7 +11,7 @@ from fw.simulators.sync_sim_bridge import SimSyncBridge
 class FhSimSyncEnv(PySimEnv):
     """
     Realtime sibling of FhSimEnv. Connects to a running simSync instance
-    over UDP instead of initialising a local FH math model.
+    over UDP instead of initializing a local FH math model.
 
     Same shape as FhSimEnv from the agent's point of view: phys_sim.step(),
     phys_sim.state, env_specific_reset(), get_keel_clearance() all work
