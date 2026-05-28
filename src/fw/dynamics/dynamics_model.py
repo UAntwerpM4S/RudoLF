@@ -11,6 +11,7 @@ class Model(Enum):
     NOMOTO = auto()
     FOSSEN = auto()
     UGENT_SURROGATE = auto()
+    UANTWERP = auto()
 
 
 class DynamicsBase(ABC):
