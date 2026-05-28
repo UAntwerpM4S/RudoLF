@@ -6,9 +6,12 @@ from typing import Sequence
 
 class SurrogateMLP(nn.Module):
     """
-    Configurable MLP for regression.
+    Configurable MLP for ship dynamics regression.
 
-    Default architecture (tunable):
+    Input  (8-D): [x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action]
+    Output (3-D): [delta_surge, delta_sway, delta_yaw_rate]
+
+    Architecture:
       input_dim -> [Linear -> Activation -> (BatchNorm) -> Dropout] x N -> Linear(output_dim)
 
     Final layer has no activation (regression).
@@ -16,8 +19,8 @@ class SurrogateMLP(nn.Module):
 
     def __init__(
         self,
-        input_dim: int = 6,   # 4 kinematic states + 2 actions; was 8 before x/y/t were dropped
-        output_dim: int = 6,
+        input_dim: int = 8,    # x, y, heading, surge, sway, yaw_rate, rudder, thrust
+        output_dim: int = 3,   # delta_surge, delta_sway, delta_yaw_rate
         hidden_sizes: Sequence[int] = (128, 128, 128),
         activation: nn.Module = nn.ReLU,
         use_batch_norm: bool = False,
@@ -26,13 +29,12 @@ class SurrogateMLP(nn.Module):
         """Initialize the instance.
 
         Args:
-            input_dim: Description.
-            output_dim: Description.
-            hidden_sizes: Description.
-            activation: Description.
-            use_batch_norm: Description.
-            dropout: Description.
-            ,: Description.
+            input_dim:       Number of input features (default 8).
+            output_dim:      Number of output targets (default 3).
+            hidden_sizes:    Sequence of hidden layer widths.
+            activation:      Activation class (instantiated per layer).
+            use_batch_norm:  Whether to insert BatchNorm1d after each linear layer.
+            dropout:         Dropout probability (0.0 disables dropout).
         """
         super().__init__()
 
@@ -57,14 +59,12 @@ class SurrogateMLP(nn.Module):
         """Forward.
 
         Args:
-            x: Description.
+            x: Input tensor of shape (batch, input_dim).
         """
         return self.net(x)
 
     def _initialize_weights(self):
-        """ initialize weights.
-        """
-        # Xavier initialization for linear layers
+        """Xavier initialization for linear layers, ones/zeros for BN."""
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
@@ -73,4 +73,3 @@ class SurrogateMLP(nn.Module):
             elif isinstance(m, nn.BatchNorm1d):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
-

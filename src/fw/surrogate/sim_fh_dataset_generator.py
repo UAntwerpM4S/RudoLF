@@ -44,8 +44,7 @@ except OSError:
     user_login = ""
 
 # Logging is configured per-simulation inside run_simulation so that each
-# subprocess writes to its own scratch directory.  A module-level log file
-# pointing at a Windows desktop path is not appropriate for cross-platform use.
+# subprocess writes to its own scratch directory.
 logfile = None
 
 
@@ -83,10 +82,6 @@ class SimSetup:
 def plot_xy_points_and_trajectories(env: PySimEnv, xy: np.ndarray, trajectories: list) -> None:
     """
     Plot river polygon with start points and trajectories.
-
-    Assumes env has:
-    - polygon_shape attribute with exterior.xy
-    - checkpoints attribute (optional)
 
     Args:
         env: PySimEnv instance with river polygon
@@ -136,7 +131,6 @@ def plot_xy_points_and_trajectories(env: PySimEnv, xy: np.ndarray, trajectories:
         ax.grid(True)
         ax.legend()
 
-        # Save the figure
         plt.savefig("generated_points.png", bbox_inches='tight', dpi=300)
         print("\nPath visualization saved as 'generated_points.png'.")
 
@@ -149,52 +143,45 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
     """
     Load the supervised dataset from CSV instead of running simulations.
 
-    CSV column layout (12 columns, matching collect_supervised_dataset output):
-        X – kinematic inputs (6 columns)
-          col 0:  heading          (rad, normalized to [-pi, pi])
-          col 1:  surge            (m/s, body-frame longitudinal velocity)
-          col 2:  sway             (m/s, body-frame lateral velocity)
-          col 3:  yaw_rate         (rad/s)
-          col 4:  rudder_action    (normalized [-1, 1])
-          col 5:  propeller_action (normalized [-1, 1])
+    CSV column layout (11 columns, matching collect_supervised_dataset output):
+        X – inputs (8 columns)
+          col 0:  x                (m, world-frame position)
+          col 1:  y                (m, world-frame position)
+          col 2:  heading          (rad, normalized to [-pi, pi])
+          col 3:  surge            (m/s, body-frame longitudinal velocity)
+          col 4:  sway             (m/s, body-frame lateral velocity)
+          col 5:  yaw_rate         (rad/s)
+          col 6:  rudder_action    (normalized [-1, 1])
+          col 7:  thrust_action    (normalized [-1, 1])
 
-        Y – one-step delta outputs (6 columns)
-          col  6: delta_x          (m, world-frame)
-          col  7: delta_y          (m, world-frame)
-          col  8: delta_heading    (rad, normalized to [-pi, pi])
-          col  9: delta_surge      (m/s)
-          col 10: delta_sway       (m/s)
-          col 11: delta_yaw_rate   (rad/s)
-
-    Note: absolute position (x, y) and elapsed_t are NOT stored in X because
-    they carry no generalizable dynamics information (see collect_supervised_dataset).
+        Y – one-step delta outputs (3 columns)
+          col  8: delta_surge      (m/s)
+          col  9: delta_sway       (m/s)
+          col 10: delta_yaw_rate   (rad/s)
 
     Returns:
         Tuple of (x_inputs, y_outputs, counter)
     """
     data = np.loadtxt(file_name, delimiter=",")
 
-    expected_cols = 12
+    expected_cols = 11
     if data.ndim != 2 or data.shape[1] != expected_cols:
         raise ValueError(
             f"Expected CSV with {expected_cols} columns, got shape {data.shape}. "
             "Re-generate the dataset or check the file path."
         )
 
-    # --- Extract X and Y using the canonical 6+6 layout ---
-    x_values = data[:, 0:6].astype(np.float32)   # heading, surge, sway, yaw_rate, rudder, prop
-    y_values = data[:, 6:12].astype(np.float32)  # delta_x/y/heading/surge/sway/yaw_rate
+    x_values = data[:, 0:8].astype(np.float32)   # x, y, heading, surge, sway, yaw_rate, rudder, thrust
+    y_values = data[:, 8:11].astype(np.float32)  # delta_surge, delta_sway, delta_yaw_rate
     counter = x_values.shape[0]
 
-    # --- Reconstruct dummy start positions and trajectories for the diagnostic plot.
-    # We have no absolute positions in X, so we use the origin as a common start and
-    # integrate delta_x / delta_y from Y to get a relative endpoint.  The plot is
-    # a sanity-check on action diversity and delta magnitudes, not on absolute geography.
-    origin = np.zeros((counter, 2), dtype=np.float64)
-    delta_xy = y_values[:, 0:2].astype(np.float64)  # delta_x, delta_y from Y cols 0-1
+    # Reconstruct start positions and dummy trajectories for the diagnostic plot.
+    # Use the absolute x/y from X cols 0-1 as start positions.
+    start_xy = x_values[:, 0:2].astype(np.float64)
     env = PySimEnv(render_mode=None, time_step=0.1, wind=False, current=False)
-    trajectories = [np.vstack([origin[i], origin[i] + delta_xy[i]]) for i in range(counter)]
-    plot_xy_points_and_trajectories(env, origin, trajectories)
+    # No world-frame deltas in Y, so trajectories are single-point stubs.
+    trajectories = [np.vstack([start_xy[i], start_xy[i]]) for i in range(counter)]
+    plot_xy_points_and_trajectories(env, start_xy, trajectories)
 
     return x_values, y_values, counter
 
@@ -288,17 +275,18 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         initial_vog = _ship_interface.getShipVelocityOverGround()
         initial_yaw_rate = _ship_interface.getShipYawRate()
 
+        # Full state vector including absolute position:
+        # [x, y, heading, surge, sway, yaw_rate]
         input_state = np.array(
             [
                 initial_position.x,
                 initial_position.y,
-                0.0,
                 env.normalize_angle(np.radians(initial_heading)),
                 initial_vog.x,
                 -initial_vog.y,
                 np.radians(initial_yaw_rate),
             ],
-            dtype=np.float64,  # More precise than float
+            dtype=np.float64,
         )
 
         # Generate random action and duration
@@ -331,12 +319,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
                 break
 
             # Store input state.
-            # We drop the absolute position (indices 0-1) and elapsed_t (index 2)
-            # because they carry no generalizable dynamics information and would
-            # cause the surrogate to overfit to specific spatial locations.
-            # X layout (6-D): [heading, surge, sway, yaw_rate, rudder_action, propeller_action]
-            kinematic_state = input_state[3:7]  # heading, surge, sway, yaw_rate
-            input_states.append(np.concatenate([kinematic_state, action.copy()], axis=0))
+            # X layout (8-D): [x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action]
+            input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0))
 
             # Apply controls with safety checks
             if has_rudders:
@@ -346,7 +330,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
                     rudder.setControlValue(rudder_value)
 
             if has_propellers:
-                # Propeller control
+                # Propeller / thrust control
                 propeller_value = float(action[1])
                 for propeller in propellers:
                     propeller.engage()
@@ -360,42 +344,40 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             curr_ship_pos = np.array([pos.x, pos.y], dtype=np.float32)
             traj.append(curr_ship_pos.copy())
 
-            # Calculate deltas
-            delta_x = pos.x - input_state[0]
-            delta_y = pos.y - input_state[1]
+            # Retrieve new velocities
             current_vog = _ship_interface.getShipVelocityOverGround()
             current_heading = _ship_interface.getShipHeading()
             current_yaw_rate = _ship_interface.getShipYawRate()
 
-            # Store output state
-            # NOTE: dt is intentionally excluded – it is a known constant that carries
-            # no information and would inflate output_dim unnecessarily.
-            # Y layout (6-D): [delta_x, delta_y, delta_heading,
-            #                   delta_surge, delta_sway, delta_yaw_rate]
+            new_surge = current_vog.x
+            new_sway = -current_vog.y
+            new_yaw_rate = np.radians(current_yaw_rate)
+
+            # Store output state.
+            # Y layout (3-D): [delta_surge, delta_sway, delta_yaw_rate]
+            # Body-frame velocity deltas only – world-frame position and heading
+            # deltas are excluded because the surrogate is used to propagate
+            # body-frame dynamics; position integration is handled externally.
             output_states.append(
                 np.array(
                     [
-                        delta_x,
-                        delta_y,
-                        env.normalize_angle(np.radians(current_heading) - input_state[3]),
-                        current_vog.x - input_state[4],
-                        -current_vog.y - input_state[5],
-                        np.radians(current_yaw_rate) - input_state[6],
+                        new_surge    - input_state[3],   # delta_surge
+                        new_sway     - input_state[4],   # delta_sway
+                        new_yaw_rate - input_state[5],   # delta_yaw_rate
                     ],
                     dtype=np.float64,
                 )
             )
 
-            # Update initial state for next iteration
+            # Update state for next iteration (including new absolute position)
             input_state = np.array(
                 [
                     pos.x,
                     pos.y,
-                    input_state[2] + sim_setup.dt,
                     env.normalize_angle(np.radians(current_heading)),
-                    current_vog.x,
-                    -current_vog.y,
-                    np.radians(current_yaw_rate),
+                    new_surge,
+                    new_sway,
+                    new_yaw_rate,
                 ],
                 dtype=np.float64,
             )
@@ -418,13 +400,11 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         sim_setup.output.y_output = output_states
 
     except SimException as e:
-        # Handle simulator-specific exceptions
         error_msg = f"Simulator exception: {e}"
         print(error_msg)
         _handle_exception(sim_setup, e, "SimException")
 
     except Exception as e:
-        # Handle all other exceptions
         error_msg = f"Unexpected error: {e}"
         print(error_msg)
         _handle_exception(sim_setup, e, type(e).__name__)
@@ -438,7 +418,6 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             except Exception as e:
                 print(f"Warning: Error during math model cleanup: {e}")
 
-            # Cleanup output directory, preserving math_model.log
             try:
                 for item in output_path.iterdir():
                     if item.name == "math_model.log":
@@ -462,7 +441,6 @@ def _handle_exception(sim_setup: SimSetup, exception: Exception, exception_type:
     sim_setup.output.info["message"] = str(exception)
     sim_setup.output.info["exception_type"] = exception_type
 
-    # Extract traceback information
     tb = traceback.extract_tb(exception.__traceback__)
     if tb:
         filename, line_number, function_name, _ = tb[-1]
@@ -507,11 +485,15 @@ def collect_supervised_dataset(
     """
     Collect supervised dataset by running multiple simulations.
 
+    CSV column layout (11 columns):
+        X (8): x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action
+        Y (3): delta_surge, delta_sway, delta_yaw_rate
+
     Args:
         nbr_samples: Number of samples to generate
         horizon_seconds: Maximum simulation time
         dt: Time step for simulation
-        workers: Number of worker threads (for compatibility, but simulations run sequentially)
+        workers: Number of worker threads
         output_file: Output CSV file path
 
     Returns:
@@ -525,14 +507,12 @@ def collect_supervised_dataset(
     if horizon_seconds <= 0:
         raise ValueError("horizon_seconds must be positive")
 
-    # Create SimConfig with default values (will be updated below)
+    # Create SimConfig
     sim_config = SimConfig()
     sim_config.lib_path = str(Path(simexe_path) / 'exe' / 'installed')
     sim_config.config_path = str(Path(simexe_path) / 'config' / 'simXdrive.config.xml')
     sim_config.timeout_seconds = TIMEOUT_SECONDS
 
-    # Derive a cross-platform scratch directory next to the output CSV so that
-    # temporary simulator files never land in a hardcoded Windows user path.
     output_path = Path(output_file).resolve().parent / "_sim_scratch"
 
     # Clear output folder
@@ -542,7 +522,7 @@ def collect_supervised_dataset(
     exercise_path = Path(
         simexe_path) / 'database' / 'areas' / 'ScheldeSaeftinge_23_002' / 'invoer' / 'tra' / 'DDShip_scenario2_windnocurrent.tab'
 
-    # Create array of SimSetup test items
+    # Create environment and sample start positions
     env = PySimEnv(render_mode=None, time_step=dt, wind=False, current=False)
 
     setups = []
@@ -569,27 +549,22 @@ def collect_supervised_dataset(
         )
         setups.append(setup)
 
-    # Setup thread pool for parallel test execution
+    # Setup thread pool for parallel execution
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        # Prepare test execution function with fixed math_model_path parameter
         execute_with_param = partial(run_in_process, sim_config=sim_config)
 
-        # Submit all tasks to the executor
         future_to_test = {
             executor.submit(execute_with_param, setup): (i, setup)
             for i, setup in enumerate(setups)
         }
 
-        # Process results as they complete
         for future in concurrent.futures.as_completed(future_to_test):
             try:
-                # Get the completed test result
                 sim_setup = future.result()
                 test_item = future_to_test[future]
                 index, _ = test_item
 
                 if sim_setup.output.status == "PASSED":
-                    # Update test config with results
                     for i in range(len(sim_setup.output.x_input)):
                         x_inputs.append(sim_setup.output.x_input[i])
                         y_outputs.append(sim_setup.output.y_output[i])
@@ -612,9 +587,9 @@ def collect_supervised_dataset(
     y_values = np.vstack(y_outputs).astype(np.float32)
 
     store_data = np.hstack([x_values, y_values])
-    # CSV column layout (12 columns):
-    #   X (6): heading, surge, sway, yaw_rate, rudder_action, propeller_action
-    #   Y (6): delta_x, delta_y, delta_heading, delta_surge, delta_sway, delta_yaw_rate
+    # CSV column layout (11 columns):
+    #   X (8): x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action
+    #   Y (3): delta_surge, delta_sway, delta_yaw_rate
     np.savetxt(output_file, store_data, delimiter=",", fmt="%.8f")
     plot_xy_points_and_trajectories(env, xy, trajectories)
 
@@ -632,8 +607,8 @@ if __name__ == "__main__":
 
     print(f"Dataset generation complete. Successful samples: {successful_count}")
     print("Dataset shapes:")
-    print(f"X: {x_vals.shape}")  # [N, 6] -> (kinematic_state(4) + action(2))
-    print(f"Y: {y_vals.shape}")  # [N, 6] -> one-step deltas
+    print(f"X: {x_vals.shape}")  # [N, 8] -> (x, y, heading, surge, sway, yaw_rate, rudder, thrust)
+    print(f"Y: {y_vals.shape}")  # [N, 3] -> (delta_surge, delta_sway, delta_yaw_rate)
 
     if successful_count > 0:
         np.save("ship_dynamics_inputs.npy", x_vals)
