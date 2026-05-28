@@ -74,8 +74,6 @@ class UAntwerpSurrogate(DynamicsBase):
         heading: Optional[float] = None,
         x: Optional[float] = None,
         y: Optional[float] = None,
-        elapsed_t: Optional[float] = None,
-        dt: Optional[float] = None,
     ) -> Tuple[float, float, float]:
         """
         Predict one-step body-frame velocity deltas using the trained surrogate.
@@ -102,8 +100,6 @@ class UAntwerpSurrogate(DynamicsBase):
             heading:      Current vessel heading [rad].  Required.
             x:            World-frame x position [m].  Required.
             y:            World-frame y position [m].  Required.
-            elapsed_t:    Elapsed simulation time [s].  Required.
-            dt:           Current integration timestep [s].  Required.
 
         Returns:
             Tuple (du, dv, dr) — one-step body-frame velocity deltas to be
@@ -115,7 +111,6 @@ class UAntwerpSurrogate(DynamicsBase):
         missing = [
             name for name, val in (
                 ("heading", heading), ("x", x), ("y", y),
-                ("elapsed_t", elapsed_t), ("dt", dt),
             )
             if val is None
         ]
@@ -131,7 +126,7 @@ class UAntwerpSurrogate(DynamicsBase):
         # [x, y, elapsed_t, heading, surge, sway, yaw_rate,
         #  rudder_normalized, thrust_normalized, dt]
         x_raw = np.array(
-            [x, y, elapsed_t, heading, u, v, r, rudder_angle, thrust, dt],
+            [x, y, heading, u, v, r, rudder_angle, thrust],
             dtype=np.float32,
         )
 
@@ -140,4 +135,4 @@ class UAntwerpSurrogate(DynamicsBase):
         # surrogate predicts (delta_surge, delta_sway, delta_yaw_rate)
         du, dv, dr = self.surrogate.predict_single(x_raw)
 
-        return -float(du), float(dv), float(dr)
+        return float(du), float(dv), float(dr)
