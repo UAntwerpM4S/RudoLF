@@ -125,7 +125,7 @@ CONFIG_PARAMETERS = {
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["PySimEnv"],
-    'profile': "default_profile",       # Possible options: "default_profile",
+    'profile': "uantwerp_training_profile",       # Possible options: "default_profile",
                                         # "myzako_pysim_to_fhsim_transfer_profile",
                                         # "tripoli_pysim_to_fhsim_transfer_profile",
                                         # "ugent_surrogate_training_profile", ...

@@ -904,6 +904,8 @@ class PySimEnv(BaseEnv):
             "truncations": truncated,
         }
 
+        self.render()
+
         return self._get_obs(), reward, terminated | truncated, False, info
 
     # -------------------
@@ -1333,8 +1335,8 @@ class PySimEnv(BaseEnv):
         Render the environment and visualize the ship's movement.
         """
 
-        if self.render_mode != 'human':
-            return
+        # if self.render_mode != 'human':
+        #     return
 
         # Initialize plotting objects once
         if self.initialize_plots and not hasattr(self, 'ship_plot'):

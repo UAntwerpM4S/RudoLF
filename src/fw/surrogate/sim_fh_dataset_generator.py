@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 DEFAULT_MATH_MODEL_FREQUENCY = 10.0  # Hz
 MIN_KEEL_CLEARANCE = 2.0
 TIMEOUT_SECONDS = 60.0
+CACHE_CLEAR_INTERVAL = 100        # Clear C:\cache every N process spawns
+CACHE_FOLDER = Path(r"C:\cache")  # Windows crash-dump folder to periodically wipe
 
 # Try to import simulation modules early
 SIM_AVAILABLE = False
@@ -32,6 +34,35 @@ try:
 except ImportError:
     # Will be imported later with sys.path modification
     pass
+
+def clear_cache_folder(cache_path: Path = CACHE_FOLDER) -> None:
+    """
+    Remove all files and sub-directories inside *cache_path* without deleting
+    the folder itself.  Silently skips items that cannot be deleted (e.g. still
+    locked by another process) and logs a warning instead of crashing.
+
+    Intended to be called every CACHE_CLEAR_INTERVAL process spawns so that
+    crash-dumps written to C:\\cache by failed Python subprocesses do not
+    accumulate and exhaust swap space.
+    """
+    if not cache_path.exists():
+        return
+
+    deleted, skipped = 0, 0
+    for item in cache_path.iterdir():
+        try:
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+            deleted += 1
+        except (PermissionError, OSError) as exc:
+            print(f"Warning: Could not remove cache item {item}: {exc}")
+            skipped += 1
+
+    print(f"Cache folder '{cache_path}' cleared — {deleted} item(s) removed"
+          + (f", {skipped} skipped (locked)" if skipped else "."))
+
 
 try:
     simexe_path = os.environ['SIMEXE_REPO_FOLDER']
@@ -240,10 +271,12 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         ship_config = exercise.getShipConfig()
         rng = np.random.default_rng()
 
+        action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
+
         # Set initial conditions with explicit parameter names
         ship_config.setInitialPosition(sim_setup.x_pos, sim_setup.y_pos)
-        ship_config.setInitialPropellerRps(rng.uniform(low=[0.3], high=[5.5])[0])
-        ship_config.setInitialRudderAngle(rng.uniform(low=[-30.0], high=[30.0])[0])
+        ship_config.setInitialPropellerRps(float(5.5*action[1]))
+        ship_config.setInitialRudderAngle(float(75.0*action[0]))
         ship_config.setInitialHeading(rng.uniform(low=[0.0], high=[360.0])[0])
 
         # -----------------------------
@@ -290,8 +323,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         )
 
         # Generate random action and duration
-        action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
-        duration = rng.uniform(low=[5.0 * sim_setup.dt], high=[sim_setup.horizon_seconds])[0]
+        duration = sim_setup.horizon_seconds # rng.uniform(low=[5.0 * sim_setup.dt], high=[sim_setup.horizon_seconds])[0]
         steps_per_episode = max(1, int(round(duration / sim_setup.dt)))
 
         # -----------------------------
@@ -320,7 +352,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
 
             # Store input state.
             # X layout (8-D): [x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action]
-            input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0))
+            if step > (5.0 / sim_setup.dt):
+                input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0))
 
             # Apply controls with safety checks
             if has_rudders:
@@ -342,7 +375,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             # Update position
             pos = _ship_interface.getShipPosition()
             curr_ship_pos = np.array([pos.x, pos.y], dtype=np.float32)
-            traj.append(curr_ship_pos.copy())
+            if step > (5.0 / sim_setup.dt):
+                traj.append(curr_ship_pos.copy())
 
             # Retrieve new velocities
             current_vog = _ship_interface.getShipVelocityOverGround()
@@ -358,16 +392,17 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             # Body-frame velocity deltas only – world-frame position and heading
             # deltas are excluded because the surrogate is used to propagate
             # body-frame dynamics; position integration is handled externally.
-            output_states.append(
-                np.array(
-                    [
-                        new_surge    - input_state[3],   # delta_surge
-                        new_sway     - input_state[4],   # delta_sway
-                        new_yaw_rate - input_state[5],   # delta_yaw_rate
-                    ],
-                    dtype=np.float64,
+            if step > (5.0 / sim_setup.dt):
+                output_states.append(
+                    np.array(
+                        [
+                            new_surge    - input_state[3],   # delta_surge
+                            new_sway     - input_state[4],   # delta_sway
+                            new_yaw_rate - input_state[5],   # delta_yaw_rate
+                        ],
+                        dtype=np.float64,
+                    )
                 )
-            )
 
             # Update state for next iteration (including new absolute position)
             input_state = np.array(
@@ -536,6 +571,7 @@ def collect_supervised_dataset(
     nbr_samples = len(xy)
     trajectories = []
     counter = 0
+    spawn_counter = 0  # Tracks total process spawns for periodic cache clearing
 
     for i in range(nbr_samples):
         setup = SimSetup(
@@ -559,6 +595,14 @@ def collect_supervised_dataset(
         }
 
         for future in concurrent.futures.as_completed(future_to_test):
+            spawn_counter += 1
+
+            # Periodically wipe C:\cache to reclaim space consumed by crash dumps
+            # from Python subprocesses that terminated unexpectedly.
+            if spawn_counter % CACHE_CLEAR_INTERVAL == 0:
+                print(f"[Cache cleanup] {spawn_counter} processes spawned — clearing {CACHE_FOLDER} …")
+                clear_cache_folder(CACHE_FOLDER)
+
             try:
                 sim_setup = future.result()
                 test_item = future_to_test[future]

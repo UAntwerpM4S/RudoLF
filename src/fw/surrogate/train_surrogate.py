@@ -17,29 +17,72 @@ from fw.surrogate.models.mlp_surrogate import SurrogateMLP
 from fw.surrogate.utils import load_checkpoint, data_path, get_device, save_checkpoint
 
 
-def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> float:
-    """Compute mean MSE loss over a DataLoader.
+def evaluate(
+        model: torch.nn.Module,
+        loader: DataLoader,
+        device: torch.device,
+        y_mean: np.ndarray,
+        y_std: np.ndarray,
+):
+    """Compute normalized MSE loss and denormalized MAE.
 
     Args:
-        model:  Trained (or in-training) SurrogateMLP.
+        model: Trained (or in-training) SurrogateMLP.
         loader: DataLoader yielding normalized (X, Y) batches.
         device: Torch device.
+        y_mean: Output normalization mean.
+        y_std: Output normalization std.
 
     Returns:
-        Mean MSE loss (scalar).
+        Tuple:
+            mean_mse_loss: Mean normalized MSE loss.
+            mae: Mean absolute error in original physical units
+                 for each output dimension.
     """
     model.eval()
+
     total_loss = 0.0
+    total_samples = 0
+    total_abs_error = None
+
+    y_mean_t = torch.as_tensor(
+        y_mean,
+        dtype=torch.float32,
+        device=device,
+    )
+
+    y_std_t = torch.as_tensor(
+        y_std,
+        dtype=torch.float32,
+        device=device,
+    )
 
     with torch.no_grad():
         for X, Y in loader:
             X = X.to(device)
             Y = Y.to(device)
+
             pred = model(X)
+
             loss = F.mse_loss(pred, Y, reduction="mean")
             total_loss += loss.item() * X.size(0)
 
-    return total_loss / len(loader.dataset)
+            pred_phys = pred * y_std_t + y_mean_t
+            y_phys = Y * y_std_t + y_mean_t
+
+            abs_error = torch.abs(pred_phys - y_phys)
+
+            if total_abs_error is None:
+                total_abs_error = abs_error.sum(dim=0)
+            else:
+                total_abs_error += abs_error.sum(dim=0)
+
+            total_samples += X.size(0)
+
+    mean_mse_loss = total_loss / total_samples
+    mae = total_abs_error / total_samples
+
+    return mean_mse_loss, mae.cpu().numpy()
 
 
 def make_dataloaders(train_file, val_file, test_file, batch_size=256, num_workers=0):
@@ -96,15 +139,15 @@ def main(argv=None):
     parser.add_argument("--train-file",    default=data_path("ship_dynamics_dataset_train.npz"))
     parser.add_argument("--val-file",      default=data_path("ship_dynamics_dataset_val.npz"))
     parser.add_argument("--test-file",     default=data_path("ship_dynamics_dataset_test.npz"))
-    parser.add_argument("--batch-size",    type=int,   default=256)
+    parser.add_argument("--batch-size",    type=int,   default=128) # 256)
     parser.add_argument("--lr",            type=float, default=1e-3)
-    parser.add_argument("--weight-decay",  type=float, default=1e-4)
-    parser.add_argument("--epochs",        type=int,   default=300)
+    parser.add_argument("--weight-decay",  type=float, default=0.0) # 1e-4)
+    parser.add_argument("--epochs",        type=int,   default=100) # 300)
     parser.add_argument("--patience",      type=int,   default=25,
                         help="Early-stopping patience (epochs without improvement)")
-    parser.add_argument("--dropout",       type=float, default=0.05)
-    parser.add_argument("--hidden-sizes",  nargs="+",  type=int, default=[128, 128])
-    parser.add_argument("--batchnorm",     action="store_true")
+    parser.add_argument("--dropout",       type=float, default=0.0) # 0.05)
+    parser.add_argument("--hidden-sizes",  nargs="+",  type=int, default=[64]) # 128, 128])
+    parser.add_argument("--batchnorm",     type=bool,  default=False) # action="store_true")
     parser.add_argument("--device",        type=str,   default=None)
     parser.add_argument("--seed",          type=int,   default=42)
     parser.add_argument("--num-workers",   type=int,   default=0)
@@ -168,7 +211,23 @@ def main(argv=None):
             n_samples  += X.size(0)
 
         train_epoch_loss = epoch_loss / n_samples
-        val_loss = evaluate(model, val_loader, device)
+
+        val_loss, val_mae = evaluate(
+            model,
+            val_loader,
+            device,
+            y_mean,
+            y_std,
+        )
+
+        mae_str = ", ".join(f"{v:.6f}" for v in val_mae)
+
+        print(
+            f"Epoch {epoch:03d} – "
+            f"train: {train_epoch_loss:.6f}  "
+            f"val: {val_loss:.6f}  "
+            f"MAE=[{mae_str}]"
+        )
 
         print(f"Epoch {epoch:03d} – train: {train_epoch_loss:.6f}  val: {val_loss:.6f}")
 
@@ -208,11 +267,28 @@ def main(argv=None):
     # Final evaluation on held-out test set
     checkpoint = load_checkpoint(ckpt_path, device)
     model.load_state_dict(checkpoint["model_state_dict"])
-    test_loss = evaluate(model, test_loader, device)
-    print(
-        f"\nFinal Test Loss: {test_loss:.6f} "
-        f"(best val_loss: {checkpoint.get('val_loss', float('nan')):.6f})"
+
+    test_loss, test_mae = evaluate(
+        model,
+        test_loader,
+        device,
+        y_mean,
+        y_std,
     )
+
+    target_names = [
+        "delta_surge",
+        "delta_sway",
+        "delta_yaw_rate",
+    ]
+
+    print("\nFinal Test Results")
+    print("------------------")
+    print(f"Test Loss (normalized MSE): {test_loss:.6f}")
+    print(f"Best Validation Loss      : {checkpoint.get('val_loss', float('nan')):.6f}")
+
+    for name, mae in zip(target_names, test_mae):
+        print(f"MAE {name:<15}: {mae:.6f}")
 
 
 if __name__ == "__main__":

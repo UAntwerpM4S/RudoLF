@@ -92,7 +92,8 @@ class ShipSimulator(BaseSimulator):
         s = self._state
 
         # Compute accelerations from dynamics
-        du, dv, dr = self._dynamics.accelerations(s.u, s.v, s.r, actuator.rudder_angle, actuator.thrust)
+        du, dv, dr = self._dynamics.accelerations(s.u, s.v, s.r, actuator.rudder_angle, actuator.thrust,
+                                                  s.heading, s.x, s.y)
 
         # Add environmental accelerations
         ax_env, ay_env = self._env.accelerations(s.heading)
@@ -196,12 +197,12 @@ class ShipSimulator(BaseSimulator):
             yaw_damping_factor = 0.0
 
         for i in range(n_full):
-            actuator = self._actuators.step(command, dyn_model_time_step, enable_smoothing)
-            self.integrate(actuator, dyn_model_time_step, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
+            # actuator = self._actuators.step(command, dyn_model_time_step, enable_smoothing)
+            self.integrate(command, dyn_model_time_step, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
 
         if dt_rem > 1e-12:
-            actuator = self._actuators.step(command, dt_rem, enable_smoothing)
-            self.integrate(actuator, dt_rem, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
+            # actuator = self._actuators.step(command, dt_rem, enable_smoothing)
+            self.integrate(command, dt_rem, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
 
         s = self._state
         self._state = VesselState(

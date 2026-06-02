@@ -125,7 +125,7 @@ class SimSyncBridge:
     Realtime counterpart of FhSimBridge.
 
     Connects to a running simSync instance over UDP and exposes the same
-    surface as FhSimBridge (ship_interface, math_model, reset, dispose),
+    interface as FhSimBridge (ship_interface, math_model, reset, dispose),
     so FhSimWrapper can be reused unchanged.
     """
 
