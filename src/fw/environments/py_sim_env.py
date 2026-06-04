@@ -7,6 +7,8 @@ import gymnasium as gym
 import tkinter as tk
 import numpy as np
 
+from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
+
 # First try interactive backend
 try:
     matplotlib.use('TkAgg')  # Try using the interactive backend
@@ -312,6 +314,8 @@ class PySimEnv(BaseEnv):
             self.dynamics = Nomoto(self.ship.specifications)
         elif self.dynamics_model == Model.UGENT_SURROGATE:
             self.dynamics = UGentSurrogate(self.ship.specifications)
+        elif self.dynamics_model == Model.UANTWERP:
+            self.dynamics = UAntwerpSurrogate(self.ship.specifications)
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
