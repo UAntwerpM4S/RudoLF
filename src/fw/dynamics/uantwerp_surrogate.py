@@ -48,19 +48,6 @@ class UAntwerpSurrogate(DynamicsBase):
         self.surrogate = SurrogatePredictor("checkpoints/best_surrogate.pth")
 
     # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _to_normalized_rudder(self, rudder_angle: float) -> float:
-        """Inverse of ActionMapper: physical rudder [rad] -> normalized [-1, 1]."""
-        return rudder_angle / self.ship_spec.max_rudder_angle
-
-    def _to_normalized_thrust(self, thrust: float) -> float:
-        """Inverse of ActionMapper: physical thrust -> normalized [-1, 1]."""
-        span = self.ship_spec.max_thrust - self.ship_spec.min_thrust
-        return 2.0 * (thrust - self.ship_spec.min_thrust) / span - 1.0
-
-    # ------------------------------------------------------------------
     # DynamicsBase interface
     # ------------------------------------------------------------------
 
@@ -119,39 +106,11 @@ class UAntwerpSurrogate(DynamicsBase):
                 f"UAntwerpSurrogate.accelerations() requires: {missing}."
             )
 
-        # rudder_norm = self._to_normalized_rudder(rudder_angle)
-        # thrust_norm = self._to_normalized_thrust(thrust)
-
-        # Feature order must match training data (10-D):
-        # [x, y, elapsed_t, heading, surge, sway, yaw_rate,
-        #  rudder_normalized, thrust_normalized, dt]
-
-        # x_mean = np.array([[-9.1314563e+02, 6.7853262e+03, 3.7242725e-04, 3.7544591e+00,
-        #                     -3.4802041e-03, -2.2080111e-04, -1.0515247e-02, -1.2770016e-02]])
-        #
-        # x_std = np.array([[4.9358799e+03, 4.7336113e+03, 1.8142947e+00, 2.8963274e-01,
-        #                    8.5902207e-02, 4.0672850e-03, 5.7348764e-01, 5.7300740e-01]])
-        #
-        # y_mean = np.array([[-1.8486349e-03, -4.2221320e-05, -3.2196103e-06]])
-        #
-        # y_std = np.array([[2.0725389e-03, 1.1499034e-03, 6.7253168e-05]])
-
         x_raw = np.array(
             [x, y, heading, u, v, r, rudder_angle, thrust],
             dtype=np.float32,
         )
 
-        # x_raw = (x_raw - x_mean.reshape(-1)) / x_std.reshape(-1)
-
-        # print(f"x_raw: {x_raw}")
-
         du, dv, dr = self.surrogate.predict_single(x_raw)
 
-        # surrogate predicts (delta_surge, delta_sway, delta_yaw_rate)
-        # du, dv, dr = (
-        #         np.array(self.surrogate.predict_single(x_raw), dtype=np.float32)
-        #         * y_std.reshape(-1)
-        #         + y_mean.reshape(-1)
-        # )
-
-        return float(du), float(dv), float(dr)
+        return float(-du/0.1), float(-dv/0.1), float(-dr/0.1)
