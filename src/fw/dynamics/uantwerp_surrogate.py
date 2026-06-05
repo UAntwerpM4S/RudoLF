@@ -65,10 +65,10 @@ class UAntwerpSurrogate(DynamicsBase):
         """
         Predict one-step body-frame velocity deltas using the trained surrogate.
 
-        The surrogate expects a 10-D input in the same feature order used
+        The surrogate expects a 8-D input in the same feature order used
         during training (see sim_fh_dataset_generator.py):
-            [x, y, elapsed_t, heading, surge, sway, yaw_rate,
-             rudder_normalized, thrust_normalized, dt]
+            [x, y, heading, surge, sway, yaw_rate,
+             rudder_normalized, thrust_normalized]
 
         It returns:
             (delta_surge, delta_sway, delta_yaw_rate)
