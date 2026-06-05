@@ -650,3 +650,15 @@ ProfileRegistry.register(VesselProfile(
     actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
     thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
 ))
+
+ProfileRegistry.register(VesselProfile(
+    name="uantwerp_training_profile",
+    description="Training profile for UAntwerp's surrogate model.",
+    run_mode=RunMode.TRAIN,
+    model=ModelConfig(
+        ship_model=ShipModel.UANTWERP,
+        dynamics_model=Model.UANTWERP,
+    ),
+    actuator=ActuatorConfig(enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
+))

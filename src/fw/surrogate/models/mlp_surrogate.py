@@ -17,7 +17,7 @@ class SurrogateMLP(nn.Module):
     def __init__(
         self,
         input_dim: int = 8,
-        output_dim: int = 6,
+        output_dim: int = 3,
         hidden_sizes: Sequence[int] = (128, 128, 128),
         activation: nn.Module = nn.ReLU,
         use_batch_norm: bool = False,
