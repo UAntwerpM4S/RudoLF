@@ -280,6 +280,9 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         ship_config.setInitialPropellerRps(float(5.5*action[1]))
         ship_config.setInitialRudderAngle(float(75.0*action[0]))
         ship_config.setInitialHeading(rng.uniform(low=[0.0], high=[360.0])[0])
+        ship_config.setInitialSurgeVelocity(float(rng.uniform(low=[0.0], high=[6.0])[0]))
+        ship_config.setInitialSwayVelocity(float(rng.uniform(low=[-2.0], high=[2.0])[0]))
+        ship_config.setInitialYawVelocity(float(rng.uniform(low=[-1.5], high=[1.5])[0]))
 
         # -----------------------------
         # Initialize math model
@@ -370,8 +373,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
 
             # Store input state (only after burn-in).
             # X layout (8-D): [x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action]
-            if step >= burn_in_steps:
-                input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0))
+            # if step >= burn_in_steps:
+            input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0))
 
             # Apply controls with safety checks
             if has_rudders:
@@ -393,8 +396,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             # Update position
             pos = _ship_interface.getShipPosition()
             curr_ship_pos = np.array([pos.x, pos.y], dtype=np.float32)
-            if step >= burn_in_steps:
-                traj.append(curr_ship_pos.copy())
+            # if step >= burn_in_steps:
+            traj.append(curr_ship_pos.copy())
 
             # Retrieve new velocities
             current_vog = _ship_interface.getShipVelocityOverGround()
@@ -410,17 +413,17 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             # Body-frame velocity deltas only – world-frame position and heading
             # deltas are excluded because the surrogate is used to propagate
             # body-frame dynamics; position integration is handled externally.
-            if step >= burn_in_steps:
-                output_states.append(
-                    np.array(
-                        [
-                            new_surge    - input_state[3],   # delta_surge
-                            new_sway     - input_state[4],   # delta_sway
-                            new_yaw_rate - input_state[5],   # delta_yaw_rate
-                        ],
-                        dtype=np.float64,
-                    )
+            # if step >= burn_in_steps:
+            output_states.append(
+                np.array(
+                    [
+                        new_surge    - input_state[3],   # delta_surge
+                        new_sway     - input_state[4],   # delta_sway
+                        new_yaw_rate - input_state[5],   # delta_yaw_rate
+                    ],
+                    dtype=np.float64,
                 )
+            )
 
             # Update initial state for next iteration
             input_state = np.array(

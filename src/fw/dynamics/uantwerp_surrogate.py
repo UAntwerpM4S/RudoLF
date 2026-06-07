@@ -113,4 +113,4 @@ class UAntwerpSurrogate(DynamicsBase):
 
         du, dv, dr = self.surrogate.predict_single(x_raw)
 
-        return float(-du/0.1), float(-dv/0.1), float(-dr/0.1)
+        return float(du/0.1), float(dv/0.1), float(dr/0.1)
