@@ -61,7 +61,7 @@ def main():
 
     parser.add_argument("--horizon",
                         type=float,
-                        default=60.0,
+                        default=80.0,
                         help="Rollout duration (seconds)")
 
     parser.add_argument("--save",

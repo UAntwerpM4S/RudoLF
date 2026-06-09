@@ -22,7 +22,7 @@ MIN_KEEL_CLEARANCE = 2.0
 TIMEOUT_SECONDS = 60.0
 CACHE_CLEAR_INTERVAL = 100        # Clear C:\cache every N process spawns
 CACHE_FOLDER = Path(r"C:\cache")  # Windows crash-dump folder to periodically wipe
-ACTION_CHANGE_INTERVAL_SECONDS = 1.0  # Randomize controls every N seconds mid-episode
+# ACTION_CHANGE_INTERVAL_SECONDS = 2.0  # Randomize controls every N seconds mid-episode
 
 # Try to import simulation modules early
 SIM_AVAILABLE = False
@@ -354,7 +354,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         has_rudders = len(rudders) > 0
 
         # How many steps between mid-episode action randomizations.
-        action_change_steps = max(1, int(round(ACTION_CHANGE_INTERVAL_SECONDS / sim_setup.dt)))
+        # action_change_steps = max(1, int(round(ACTION_CHANGE_INTERVAL_SECONDS / sim_setup.dt)))
 
         # Simulation loop
         for step in range(steps_per_episode):
@@ -368,8 +368,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             # Randomize controls every action_change_steps steps (after burn-in).
             # This ensures the dataset covers control transitions, not just
             # steady-state responses to a single fixed action per episode.
-            if step >= burn_in_steps and (step - burn_in_steps) % action_change_steps == 0:
-                action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
+            # if step >= burn_in_steps and (step - burn_in_steps) % action_change_steps == 0:
+            #     action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
 
             # Store input state (only after burn-in).
             # X layout (8-D): [x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action]
