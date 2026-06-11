@@ -1,6 +1,7 @@
 import numpy as np
 
 from typing import Tuple
+from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 
@@ -68,7 +69,7 @@ class UGentSurrogate(DynamicsBase):
         self.N_rabsr = -3720289534.3422813
 
 
-    def accelerations(self, u: float, v: float, r: float,
+    def accelerations(self, state: VesselState,
                       rudder_angle: float, thrust: float) -> Tuple[float, float, float]:
         """
         Compute body-fixed accelerations from state and control inputs.
@@ -79,9 +80,7 @@ class UGentSurrogate(DynamicsBase):
         lower bound to preserve basic maneuverability.
 
         Args:
-            u: Body-fixed surge velocity in meters per second (m/s).
-            v: Body-fixed sway velocity in meters per second (m/s).
-            r: Body-fixed yaw rate in radians per second (rad/s).
+            state: The current vessel state.
             rudder_angle: Rudder deflection angle in radians, positive to
                 starboard.
             thrust: Normalized thrust command (dimensionless), positive in
@@ -104,16 +103,16 @@ class UGentSurrogate(DynamicsBase):
         n = thrust * 320
         n_rps = n / 60
 
-        I_zz = 4651416900.21  # kgm2
-        x_G = 1.1874  # m
-        D_prop = 1.6573  # m
-        T = 2 * ((0.6723 - 0.7968 * (u * 0.7 / (n_rps * D_prop))) * 1025 * n_rps ** 2 * D_prop ** 4)  # N
+        i_zz = 4651416900.21  # kgm2
+        x_g = 1.1874  # m
+        d_prop = 1.6573  # m
+        t = 2 * ((0.6723 - 0.7968 * (state.u * 0.7 / (n_rps * d_prop))) * 1025 * n_rps ** 2 * d_prop ** 4)  # N
 
-        du = (T * np.cos(rudder_angle) - self.X_u * u - self.X_uabsu * u * abs(u) + self.mass * v *
-            r + self.X_uabsv * u * abs(v)) / (self.mass - self.X_udot)
-        dv = (-self.mass * u * r + self.Y_uv * u * v + self.Y_vabsv * v * abs(v) + T * np.sin(rudder_angle)) / (
-                    self.mass - self.Y_vdot)
-        dr = (-self.mass * x_G * u * r + self.N_ur * u * r + self.N_rabsr * r * np.abs(
-            r) - T * (self.length / 2) * np.sin(rudder_angle)) / (I_zz - self.N_rdot)
+        du = (t * np.cos(rudder_angle) - self.X_u * state.u - self.X_uabsu * state.u * abs(state.u) +
+              self.mass * state.v * state.r + self.X_uabsv * state.u * abs(state.v)) / (self.mass - self.X_udot)
+        dv = (-self.mass * state.u * state.r + self.Y_uv * state.u * state.v +
+              self.Y_vabsv * state.v * abs(state.v) + t * np.sin(rudder_angle)) / (self.mass - self.Y_vdot)
+        dr = (-self.mass * x_g * state.u * state.r + self.N_ur * state.u * state.r + self.N_rabsr *
+              state.r * np.abs(state.r) - t * (self.length / 2) * np.sin(rudder_angle)) / (i_zz - self.N_rdot)
 
         return du, dv, dr

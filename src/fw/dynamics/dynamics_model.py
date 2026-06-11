@@ -1,6 +1,7 @@
 from typing import Tuple
 from enum import auto, Enum
 from abc import ABC, abstractmethod
+from fw.ships.vessel_state import VesselState
 
 
 class Model(Enum):
@@ -31,25 +32,21 @@ class DynamicsBase(ABC):
     @abstractmethod
     def accelerations(
         self,
-        u: float,
-        v: float,
-        r: float,
+        state: VesselState,
         rudder_angle: float,
         thrust: float,
     ) -> Tuple[float, float, float]:
         """
         Compute body-fixed accelerations from the current state and inputs.
 
-        Given the current body-fixed velocities and control inputs, this
-        method computes the corresponding accelerations in surge, sway,
-        and yaw. Implementations may include nonlinear hydrodynamics,
+        Given the current vessel state (position, heading, body-fixed velocities)
+        and control inputs, this method computes the corresponding accelerations
+        in surge, sway, and yaw. Implementations may include nonlinear hydrodynamics,
         damping, Coriolis and centripetal effects, and actuator models,
         as appropriate for the fidelity of the dynamics model.
 
         Args:
-            u: Body-fixed surge velocity in meters per second (m/s).
-            v: Body-fixed sway velocity in meters per second (m/s).
-            r: Body-fixed yaw rate in radians per second (rad/s).
+            state: The current vessel state.
             rudder_angle: Rudder angle in radians, positive to starboard.
             thrust: Normalized thrust command (dimensionless), where positive
                 values correspond to forward propulsion.

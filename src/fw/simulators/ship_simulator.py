@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 
 from fw.ships.vessel_state import VesselState
@@ -89,35 +90,35 @@ class ShipSimulator(BaseSimulator):
             - Heading is wrapped to the interval [-π, π].
         """
 
-        s = self._state
+        state = copy.deepcopy(self._state)
 
         # Compute accelerations from dynamics
-        du, dv, dr = self._dynamics.accelerations(s.u, s.v, s.r, actuator.rudder_angle, actuator.thrust)
+        du, dv, dr = self._dynamics.accelerations(state, actuator.rudder_angle, actuator.thrust)
 
         # Add environmental accelerations
-        ax_env, ay_env = self._env.accelerations(s.heading)
+        ax_env, ay_env = self._env.accelerations(state.heading)
         du += ax_env
         dv += ay_env
 
         # Apply velocity limits
-        u = np.clip((s.u + du * time_step) / (1.0 + surge_damping_factor * time_step),
+        u = np.clip((state.u + du * time_step) / (1.0 + surge_damping_factor * time_step),
                     *self._specs.surge_limits)
-        v = np.clip((s.v + dv * time_step) / (1.0 + sway_damping_factor * time_step),
+        v = np.clip((state.v + dv * time_step) / (1.0 + sway_damping_factor * time_step),
                     *self._specs.sway_limits)
-        r = np.clip((s.r + dr * time_step) / (1.0 + yaw_damping_factor * time_step),
+        r = np.clip((state.r + dr * time_step) / (1.0 + yaw_damping_factor * time_step),
                     *self._specs.yaw_rate_limits)
 
         # Midpoint heading for better integration
-        psi_mid = s.heading + 0.5 * r * time_step
+        psi_mid = state.heading + 0.5 * r * time_step
         dx = u * np.cos(psi_mid) - v * np.sin(psi_mid)
         dy = u * np.sin(psi_mid) + v * np.cos(psi_mid)
 
         self._state = VesselState(
-            terminated=s.terminated,
-            truncated=s.truncated,
-            x=s.x + dx * time_step,
-            y=s.y + dy * time_step,
-            heading=(s.heading + r * time_step + np.pi) % (2.0 * np.pi) - np.pi,
+            terminated=state.terminated,
+            truncated=state.truncated,
+            x=state.x + dx * time_step,
+            y=state.y + dy * time_step,
+            heading=(state.heading + r * time_step + np.pi) % (2.0 * np.pi) - np.pi,
             u=u,
             v=v,
             r=r,
