@@ -5,13 +5,15 @@ from fw.environments.py_sim_env import PySimEnv
 
 
 def plot_xy_points_and_trajectories(env, xy, trajectories):
-    """Plot xy points and trajectories.
+    """
+    Plot xy points and trajectories.
 
     Args:
         env: Description.
         xy: Description.
         trajectories: Description.
     """
+
     try:
         fig, ax = plt.subplots(figsize=(10, 10))
 
@@ -64,34 +66,36 @@ def plot_xy_points_and_trajectories(env, xy, trajectories):
         plt.close('all')
 
 def collect_supervised_dataset(
-    N_samples=5000,
+    n_samples=5000,
     horizon_seconds=3.0,
     dt=0.1,
     output_file="ship_dynamics_dataset.csv"
 ):
-    """Collect supervised dataset.
+    """
+    Collect supervised dataset.
 
     Args:
-        N_samples: Description.
+        n_samples: Description.
         horizon_seconds: Description.
         dt: Description.
         output_file: Description.
     """
+
     env = PySimEnv(render_mode=None, time_step=dt, wind=False, current=False)
     env.time_step = dt
 
-    X_inputs = []
-    Y_outputs = []
+    x_inputs = []
+    y_outputs = []
 
-    xy = env.sample_point_in_river(N_samples)
+    xy = env.sample_point_in_river(n_samples)
     x0 = xy[:, 0]
     y0 = xy[:, 1]
 
-    N_samples = len(xy)
+    n_samples = len(xy)
     trajectories = []
     counter = 0
 
-    for n in range(N_samples):
+    for n in range(n_samples):
         env.initial_ship_pos = np.array([x0[n], y0[n]], dtype=np.float32)
         obs, _ = env.reset()
 
@@ -131,31 +135,30 @@ def collect_supervised_dataset(
             modified_final_state[1] = delta_y  # Replace y with delta_y
 
             counter += 1
-            X_inputs.append(np.concatenate([initial_state, action], axis=0))
-            Y_outputs.append(modified_final_state)
+            x_inputs.append(np.concatenate([initial_state, action], axis=0))
+            y_outputs.append(modified_final_state)
 
-    X = np.vstack(X_inputs).astype(np.float32)
-    Y = np.vstack(Y_outputs).astype(np.float32)
+    x_vals = np.vstack(x_inputs).astype(np.float32)
+    y_vals = np.vstack(y_outputs).astype(np.float32)
 
-    store_data = np.hstack([X_inputs, Y_outputs])  # shape: (N_samples, 8 + 6 = 14)
+    store_data = np.hstack([x_inputs, y_outputs])  # shape: (N_samples, 8 + 6 = 14)
     np.savetxt(output_file, store_data, delimiter=",", fmt="%.6f")
 
     plot_xy_points_and_trajectories(env, xy, trajectories)
 
-    return X, Y, counter
+    return x_vals, y_vals, counter
 
 
 # Example: Generate dataset
 if __name__ == "__main__":
-    X, Y, _ = collect_supervised_dataset(
-        N_samples=10000,
+    x_values, y_values, _ = collect_supervised_dataset(
+        n_samples=10000,
         horizon_seconds=5.0,
         dt=0.1,
     )
 
     print("Dataset shapes:")
-    print("X:", X.shape)  # [N, 8] → (state(6) + action(2))
-    print("Y:", Y.shape)  # [N, 6] → final state
-    np.save("ship_dynamics_inputs.npy", X)
-    np.save("ship_dynamics_outputs.npy", Y)
-
+    print("X:", x_values.shape)  # [N, 8] → (state(6) + action(2))
+    print("Y:", y_values.shape)  # [N, 6] → final state
+    np.save("ship_dynamics_inputs.npy", x_values)
+    np.save("ship_dynamics_outputs.npy", y_values)

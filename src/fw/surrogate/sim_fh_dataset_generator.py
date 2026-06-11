@@ -46,6 +46,7 @@ def clear_cache_folder(cache_path: Path = CACHE_FOLDER) -> None:
     crash-dumps written to C:\\cache by failed Python subprocesses do not
     accumulate and exhaust swap space.
     """
+
     if not cache_path.exists():
         return
 
@@ -82,7 +83,10 @@ logfile = None
 
 @dataclass
 class SimConfig:
-    """Configuration for simulation environment."""
+    """
+    Configuration for simulation environment.
+    """
+
     lib_path: str = ""
     config_path: str = ""
     timeout_seconds: float = TIMEOUT_SECONDS
@@ -90,7 +94,10 @@ class SimConfig:
 
 @dataclass
 class SimOutput:
-    """Container for simulation results."""
+    """
+    Container for simulation results.
+    """
+
     status: str = ""
     time_seconds: float = 0.0
     x_input: Optional[np.ndarray] = None
@@ -101,7 +108,10 @@ class SimOutput:
 
 @dataclass
 class SimSetup:
-    """Setup parameters for individual simulation run."""
+    """
+    Setup parameters for individual simulation run.
+    """
+
     exercise_path: str = ""
     output_path: str = ""
     x_pos: float = 0.0
@@ -120,6 +130,7 @@ def plot_xy_points_and_trajectories(env: PySimEnv, xy: np.ndarray, trajectories:
         xy: Array of start positions (N, 2)
         trajectories: List of trajectory arrays
     """
+
     try:
         fig, ax = plt.subplots(figsize=(10, 10))
 
@@ -195,6 +206,7 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
     Returns:
         Tuple of (x_inputs, y_outputs, counter)
     """
+
     data = np.loadtxt(file_name, delimiter=",")
 
     expected_cols = 11
@@ -226,6 +238,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
     Note: Each simulation runs in its own subprocess to avoid
     simulator concurrency issues.
     """
+
     # Constants
     initialization_time = 0.125
     position_format_string = "[{:10.3f} {:10.3f}]"
@@ -331,13 +344,6 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         duration = sim_setup.horizon_seconds # rng.uniform(low=[5.0 * sim_setup.dt], high=[sim_setup.horizon_seconds])[0]
         steps_per_episode = max(1, int(round(duration / sim_setup.dt)))
 
-        # Burn-in: skip the first 1 second (10 steps at dt=0.1) to let the
-        # simulator settle from its initial conditions, but keep the transient
-        # regime that follows.  The original 5 s burn-in was too aggressive and
-        # excluded almost all transient dynamics from the dataset.
-        BURN_IN_SECONDS = 1.0
-        burn_in_steps = max(1, int(round(BURN_IN_SECONDS / sim_setup.dt)))
-
         # -----------------------------
         # Trajectory storage
         # -----------------------------
@@ -353,9 +359,6 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         has_propellers = len(propellers) > 0
         has_rudders = len(rudders) > 0
 
-        # How many steps between mid-episode action randomizations.
-        # action_change_steps = max(1, int(round(ACTION_CHANGE_INTERVAL_SECONDS / sim_setup.dt)))
-
         # Simulation loop
         for step in range(steps_per_episode):
             # Check termination conditions
@@ -365,15 +368,6 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             if not (is_in_open_water and has_sufficient_keel_clearance):
                 break
 
-            # Randomize controls every action_change_steps steps (after burn-in).
-            # This ensures the dataset covers control transitions, not just
-            # steady-state responses to a single fixed action per episode.
-            # if step >= burn_in_steps and (step - burn_in_steps) % action_change_steps == 0:
-            #     action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
-
-            # Store input state (only after burn-in).
-            # X layout (8-D): [x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action]
-            # if step >= burn_in_steps:
             input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0))
 
             # Apply controls with safety checks
@@ -408,12 +402,6 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             new_sway = -current_vog.y
             new_yaw_rate = np.radians(current_yaw_rate)
 
-            # Store output state (only after burn-in).
-            # Y layout (3-D): [delta_surge, delta_sway, delta_yaw_rate]
-            # Body-frame velocity deltas only – world-frame position and heading
-            # deltas are excluded because the surrogate is used to propagate
-            # body-frame dynamics; position integration is handled externally.
-            # if step >= burn_in_steps:
             output_states.append(
                 np.array(
                     [
@@ -495,7 +483,10 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
 
 
 def _handle_exception(sim_setup: SimSetup, exception: Exception, exception_type: str) -> None:
-    """Handle exceptions consistently."""
+    """
+    Handle exceptions consistently.
+    """
+
     sim_setup.output.status = "FAILED"
     sim_setup.output.info["message"] = str(exception)
     sim_setup.output.info["exception_type"] = exception_type
@@ -519,6 +510,7 @@ def run_in_process(sim_setup: SimSetup, sim_config: SimConfig) -> SimSetup:
     Note: Each simulation runs in its own process to avoid
     simulator concurrency issues. This is intentional.
     """
+
     p = multiprocessing.Pool(1)
     res = p.apply_async(run_simulation, args=[sim_config, sim_setup])
 
@@ -559,6 +551,7 @@ def collect_supervised_dataset(
     Returns:
         Tuple of (x_inputs, y_outputs, successful_count)
     """
+
     # Input validation
     if nbr_samples <= 0:
         raise ValueError("nbr_samples must be positive")

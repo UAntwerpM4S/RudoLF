@@ -22,7 +22,8 @@ class ShipDynamicsDataset(Dataset):
         y_std: Optional[np.ndarray] = None,
         normalize: bool = True,
     ):
-        """Initialize the instance.
+        """
+        Initialize the instance.
 
         Args:
             path: Description.
@@ -31,8 +32,8 @@ class ShipDynamicsDataset(Dataset):
             y_mean: Description.
             y_std: Description.
             normalize: Description.
-            ,: Description.
         """
+
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Dataset not found: {path}")
@@ -62,16 +63,20 @@ class ShipDynamicsDataset(Dataset):
             self.y_std = None
 
     def __len__(self):
-        """  len  .
         """
+        Length.
+        """
+
         return len(self.X)
 
     def __getitem__(self, idx):
-        """  getitem  .
+        """
+        Get item.
 
         Args:
             idx: Description.
         """
+
         x = self.X[idx].reshape(-1)
         y = self.Y[idx].reshape(-1)
 
@@ -83,20 +88,21 @@ class ShipDynamicsDataset(Dataset):
 
     @staticmethod
     def compute_stats(path: str):
-        """Compute stats.
+        """
+        Compute stats.
 
         Args:
             path: Description.
         """
+
         path = Path(path)
         data = np.load(path)
-        X = data["X"].astype(np.float32)
-        Y = data["Y"].astype(np.float32)
+        x_vals = data["X"].astype(np.float32)
+        y_vals = data["Y"].astype(np.float32)
 
-        x_mean = X.mean(axis=0, keepdims=True)
-        x_std = X.std(axis=0, keepdims=True) + 1e-8
-        y_mean = Y.mean(axis=0, keepdims=True)
-        y_std = Y.std(axis=0, keepdims=True) + 1e-8
+        x_mean = x_vals.mean(axis=0, keepdims=True)
+        x_std = x_vals.std(axis=0, keepdims=True) + 1e-8
+        y_mean = y_vals.mean(axis=0, keepdims=True)
+        y_std = y_vals.std(axis=0, keepdims=True) + 1e-8
 
         return x_mean, x_std, y_mean, y_std
-

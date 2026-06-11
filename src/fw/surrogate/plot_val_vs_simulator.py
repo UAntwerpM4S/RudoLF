@@ -19,12 +19,13 @@ Paths (edit the constants below if needed):
     CKPT_PATH – trained surrogate checkpoint
 """
 
-import numpy as np
-import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import numpy as np
+
 from pathlib import Path
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Paths – adjust as needed
@@ -46,7 +47,7 @@ OUTPUT_KEYS   = ["delta_surge","delta_sway",  "delta_yaw_rate"]
 # ──────────────────────────────────────────────────────────────────────────────
 print("Loading validation split …")
 val       = np.load(VAL_NPZ)
-X_val     = val["X"]          # (N, 8)  – normalised inputs expected by predictor
+X_val     = val["X"]          # (N, 8)  – normalized inputs expected by predictor
 Y_sim     = val["Y"]          # (N, 3)  – raw simulator deltas (ground truth)
 
 N = X_val.shape[0]
@@ -68,12 +69,36 @@ print(f"  Predictions shape: {Y_pred.shape}")
 residuals = Y_pred - Y_sim       # (N, 3)
 
 def rmse(a, b):
+    """
+    Root mean squared error.
+
+    Args:
+        a: Description.
+        b: Description.
+    """
+
     return float(np.sqrt(np.mean((a - b) ** 2)))
 
 def mae(a, b):
+    """
+    Mean absolute error.
+
+    Args:
+        a: Description.
+        b: Description.
+    """
+
     return float(np.mean(np.abs(a - b)))
 
 def r2(true, pred):
+    """
+    R squared.
+
+    Args:
+        true: Description.
+        pred: Description.
+    """
+
     ss_res = np.sum((true - pred) ** 2)
     ss_tot = np.sum((true - np.mean(true)) ** 2)
     return 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")

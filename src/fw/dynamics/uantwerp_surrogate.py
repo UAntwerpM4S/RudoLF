@@ -69,7 +69,7 @@ class UAntwerpSurrogate(DynamicsBase):
         """
         Predict one-step body-frame velocity deltas using the trained surrogate.
 
-        The surrogate expects a 8-D input in the same feature order used
+        The surrogate expects an 8-D input in the same feature order used
         during training (see sim_fh_dataset_generator.py):
             [x, y, heading, surge, sway, yaw_rate,
              rudder_normalized, thrust_normalized]
@@ -99,6 +99,7 @@ class UAntwerpSurrogate(DynamicsBase):
         Raises:
             ValueError: If any required positional/context argument is None.
         """
+
         missing = [
             name for name, val in (
                 ("heading", heading), ("x", x), ("y", y),
