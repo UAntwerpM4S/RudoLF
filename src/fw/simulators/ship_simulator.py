@@ -6,8 +6,8 @@ from fw.ships.action_mapper import ActionMapper
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.simulators.base_simulator import BaseSimulator
-from fw.dynamics.environmental_model import EnvironmentModel
 from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
+from fw.dynamics.environmental_model import EnvironmentModel
 
 
 class ShipSimulator(BaseSimulator):
