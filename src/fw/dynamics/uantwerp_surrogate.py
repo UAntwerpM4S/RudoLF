@@ -105,10 +105,10 @@ class UAntwerpSurrogate(DynamicsBase):
         alpha = 0.3
         if abs(self._rudder) < 1e-6 and abs(self._thrust) < 1e-6:
             self._rudder = rudder_angle
-            self._thrust = thrust
+            self._thrust = abs(thrust)
         else:
             self._rudder = alpha * rudder_angle + (1 - alpha) * self._rudder
-            self._thrust = alpha * thrust + (1 - alpha) * self._thrust
+            self._thrust = alpha * abs(thrust) + (1 - alpha) * self._thrust
 
         x_raw = np.array(
             [state.x, state.y, state.heading, state.u, state.v, state.r, self._rudder, self._thrust],
