@@ -134,7 +134,7 @@ def main(argv=None):
         argv: Optional list of CLI arguments (useful for testing).
     """
     parser = argparse.ArgumentParser(
-        description="Train MLP surrogate: 6 inputs -> 3 outputs"
+        description="Train MLP surrogate: 8 inputs -> 3 outputs"
     )
     parser.add_argument("--train-file", default=data_path("ship_dynamics_dataset_train.npz"))
     parser.add_argument("--val-file", default=data_path("ship_dynamics_dataset_val.npz"))

@@ -44,8 +44,12 @@ class UAntwerpSurrogate(DynamicsBase):
                 physical actuator values back to the normalized [-1, 1]
                 action space that the surrogate was trained on.
         """
+
         self.ship_spec: ShipSpecifications = ship_spec
         self.surrogate = SurrogatePredictor("checkpoints/best_surrogate.pth")
+
+        self._rudder = 0.0  # Current rudder angle [rad]
+        self._thrust = 0.0  # Current thrust [-]
 
     # ------------------------------------------------------------------
     # DynamicsBase interface
@@ -106,8 +110,16 @@ class UAntwerpSurrogate(DynamicsBase):
                 f"UAntwerpSurrogate.accelerations() requires: {missing}."
             )
 
+        alpha = 0.3
+        if abs(self._rudder) < 1e-6 and abs(self._thrust) < 1e-6:
+            self._rudder = rudder_angle
+            self._thrust = thrust
+        else:
+            self._rudder = alpha * rudder_angle + (1 - alpha) * self._rudder
+            self._thrust = alpha * thrust + (1 - alpha) * self._thrust
+
         x_raw = np.array(
-            [x, y, heading, u, v, r, rudder_angle, thrust],
+            [x, y, heading, u, v, r, self._rudder, self._thrust],
             dtype=np.float32,
         )
 
