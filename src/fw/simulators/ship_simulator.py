@@ -7,6 +7,7 @@ from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.simulators.base_simulator import BaseSimulator
 from fw.dynamics.environmental_model import EnvironmentModel
+from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 
 
 class ShipSimulator(BaseSimulator):
@@ -177,8 +178,11 @@ class ShipSimulator(BaseSimulator):
         if dt_rem < 1e-15:
             dt_rem = 0.0
 
+        is_ua_surrogate = isinstance(self._dynamics, UAntwerpSurrogate)
+        self._actuators.pass_through = is_ua_surrogate
+
         # Map normalized actions to physical actuators
-        command = self._mapper.map(action, self._specs)
+        command = self._mapper.map(action, self._specs) if not is_ua_surrogate else action
 
         # Surge damping
         if self.numerical_damping and hasattr(self._dynamics, "X_u") and hasattr(self._dynamics, "m11"):
