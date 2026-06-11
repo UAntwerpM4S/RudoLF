@@ -347,7 +347,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         # -----------------------------
         # Trajectory storage
         # -----------------------------
-        curr_ship_pos = np.array([sim_setup.x_pos, sim_setup.y_pos], dtype=np.float32)
+        curr_ship_pos = np.array([initial_position.x, initial_position.y], dtype=np.float32)
 
         input_states = []
         output_states = []
@@ -652,6 +652,13 @@ def collect_supervised_dataset(
 
     x_values = np.vstack(x_inputs).astype(np.float32)
     y_values = np.vstack(y_outputs).astype(np.float32)
+
+    # Shuffle rows to break temporal correlation between consecutive steps from
+    # the same episode, so train/val splits by row index are unbiased.
+    rng = np.random.default_rng()
+    perm = rng.permutation(len(x_values))
+    x_values = x_values[perm]
+    y_values = y_values[perm]
 
     store_data = np.hstack([x_values, y_values])
     # CSV column layout (11 columns):
