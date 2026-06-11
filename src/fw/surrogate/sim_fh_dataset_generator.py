@@ -22,7 +22,7 @@ MIN_KEEL_CLEARANCE = 2.0
 TIMEOUT_SECONDS = 60.0
 CACHE_CLEAR_INTERVAL = 100        # Clear C:\cache every N process spawns
 CACHE_FOLDER = Path(r"C:\cache")  # Windows crash-dump folder to periodically wipe
-ACTION_CHANGE_INTERVAL_SECONDS = 1.0  # Randomize controls every N seconds mid-episode
+# ACTION_CHANGE_INTERVAL_SECONDS = 2.0  # Randomize controls every N seconds mid-episode
 
 # Try to import simulation modules early
 SIM_AVAILABLE = False
@@ -280,6 +280,9 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         ship_config.setInitialPropellerRps(float(5.5*action[1]))
         ship_config.setInitialRudderAngle(float(75.0*action[0]))
         ship_config.setInitialHeading(rng.uniform(low=[0.0], high=[360.0])[0])
+        ship_config.setInitialSurgeVelocity(float(rng.uniform(low=[0.0], high=[6.0])[0]))
+        ship_config.setInitialSwayVelocity(float(rng.uniform(low=[-2.0], high=[2.0])[0]))
+        ship_config.setInitialYawVelocity(float(rng.uniform(low=[-1.5], high=[1.5])[0]))
 
         # -----------------------------
         # Initialize math model
@@ -351,7 +354,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         has_rudders = len(rudders) > 0
 
         # How many steps between mid-episode action randomizations.
-        action_change_steps = max(1, int(round(ACTION_CHANGE_INTERVAL_SECONDS / sim_setup.dt)))
+        # action_change_steps = max(1, int(round(ACTION_CHANGE_INTERVAL_SECONDS / sim_setup.dt)))
 
         # Simulation loop
         for step in range(steps_per_episode):
@@ -365,13 +368,13 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             # Randomize controls every action_change_steps steps (after burn-in).
             # This ensures the dataset covers control transitions, not just
             # steady-state responses to a single fixed action per episode.
-            if step >= burn_in_steps and (step - burn_in_steps) % action_change_steps == 0:
-                action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
+            # if step >= burn_in_steps and (step - burn_in_steps) % action_change_steps == 0:
+            #     action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
 
             # Store input state (only after burn-in).
             # X layout (8-D): [x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action]
-            if step >= burn_in_steps:
-                input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0))
+            # if step >= burn_in_steps:
+            input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0))
 
             # Apply controls with safety checks
             if has_rudders:
@@ -393,8 +396,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             # Update position
             pos = _ship_interface.getShipPosition()
             curr_ship_pos = np.array([pos.x, pos.y], dtype=np.float32)
-            if step >= burn_in_steps:
-                traj.append(curr_ship_pos.copy())
+            # if step >= burn_in_steps:
+            traj.append(curr_ship_pos.copy())
 
             # Retrieve new velocities
             current_vog = _ship_interface.getShipVelocityOverGround()
@@ -410,17 +413,17 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             # Body-frame velocity deltas only – world-frame position and heading
             # deltas are excluded because the surrogate is used to propagate
             # body-frame dynamics; position integration is handled externally.
-            if step >= burn_in_steps:
-                output_states.append(
-                    np.array(
-                        [
-                            new_surge    - input_state[3],   # delta_surge
-                            new_sway     - input_state[4],   # delta_sway
-                            new_yaw_rate - input_state[5],   # delta_yaw_rate
-                        ],
-                        dtype=np.float64,
-                    )
+            # if step >= burn_in_steps:
+            output_states.append(
+                np.array(
+                    [
+                        new_surge    - input_state[3],   # delta_surge
+                        new_sway     - input_state[4],   # delta_sway
+                        new_yaw_rate - input_state[5],   # delta_yaw_rate
+                    ],
+                    dtype=np.float64,
                 )
+            )
 
             # Update initial state for next iteration
             input_state = np.array(

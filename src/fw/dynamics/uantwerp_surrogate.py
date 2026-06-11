@@ -44,8 +44,12 @@ class UAntwerpSurrogate(DynamicsBase):
                 physical actuator values back to the normalized [-1, 1]
                 action space that the surrogate was trained on.
         """
+
         self.ship_spec: ShipSpecifications = ship_spec
         self.surrogate = SurrogatePredictor("checkpoints/best_surrogate.pth")
+
+        self._rudder = 0.0  # Current rudder angle [rad]
+        self._thrust = 0.0  # Current thrust [-]
 
     # ------------------------------------------------------------------
     # DynamicsBase interface
@@ -65,10 +69,10 @@ class UAntwerpSurrogate(DynamicsBase):
         """
         Predict one-step body-frame velocity deltas using the trained surrogate.
 
-        The surrogate expects a 10-D input in the same feature order used
+        The surrogate expects a 8-D input in the same feature order used
         during training (see sim_fh_dataset_generator.py):
-            [x, y, elapsed_t, heading, surge, sway, yaw_rate,
-             rudder_normalized, thrust_normalized, dt]
+            [x, y, heading, surge, sway, yaw_rate,
+             rudder_normalized, thrust_normalized]
 
         It returns:
             (delta_surge, delta_sway, delta_yaw_rate)
@@ -106,11 +110,19 @@ class UAntwerpSurrogate(DynamicsBase):
                 f"UAntwerpSurrogate.accelerations() requires: {missing}."
             )
 
+        alpha = 0.3
+        if abs(self._rudder) < 1e-6 and abs(self._thrust) < 1e-6:
+            self._rudder = rudder_angle
+            self._thrust = thrust
+        else:
+            self._rudder = alpha * rudder_angle + (1 - alpha) * self._rudder
+            self._thrust = alpha * thrust + (1 - alpha) * self._thrust
+
         x_raw = np.array(
-            [x, y, heading, u, v, r, rudder_angle, thrust],
+            [x, y, heading, u, v, r, self._rudder, self._thrust],
             dtype=np.float32,
         )
 
         du, dv, dr = self.surrogate.predict_single(x_raw)
 
-        return float(-du/0.1), float(-dv/0.1), float(-dr/0.1)
+        return float(du/0.1), float(dv/0.1), float(dr/0.1)
