@@ -1,4 +1,2 @@
-src/fw/surrogate/data/*.npz filter=lfs diff=lfs merge=lfs -text
-src/fw/surrogate/data/*.csv filter=lfs diff=lfs merge=lfs -text
-src/fw/surrogate/data/ship_dynamics_dataset.csv filter=lfs diff=lfs merge=lfs -text
-src/fw/surrogate/data/ship_dynamics_dataset_train.npz filter=lfs diff=lfs merge=lfs -text
+# Store all text files with LF line endings in the repository
+* text=auto eol=lf
