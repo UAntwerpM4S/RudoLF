@@ -10,12 +10,14 @@ class SurrogatePredictor:
     """
 
     def __init__(self, checkpoint, device=None):
-        """Initialize the instance.
+        """
+        Initialize the instance.
 
         Args:
             checkpoint: Description.
             device: Description.
         """
+
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         ckpt = torch.load(checkpoint, map_location=self.device, weights_only=False)
 
@@ -39,45 +41,51 @@ class SurrogatePredictor:
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model.eval()
 
-    def _normalize_x(self, X):
-        """ normalize x.
+    def _normalize_x(self, x_vals):
+        """
+        Normalize x.
 
         Args:
-            X: Description.
+            x_vals: Description.
         """
-        return (X - self.x_mean) / self.x_std
 
-    def _unnormalize_y(self, Ynorm):
-        """ unnormalize y.
+        return (x_vals - self.x_mean) / self.x_std
+
+    def _unnormalize_y(self, y_norm):
+        """
+        Unnormalize y.
 
         Args:
-            Ynorm: Description.
+            y_norm: Description.
         """
-        return Ynorm * self.y_std + self.y_mean
 
-    def predict(self, X):
+        return y_norm * self.y_std + self.y_mean
+
+    def predict(self, x_vals):
         """
         X: np.ndarray (N, input_dim) raw unnormalized input data
-        Returns: np.ndarray (N, output_dim) UNnormalized predictions
+        Returns: np.ndarray (N, output_dim) un-normalized predictions
         """
-        if X.ndim == 1:
-            X = X.reshape(1, -1)
 
-        Xn = self._normalize_x(X.astype(np.float32))
+        if x_vals.ndim == 1:
+            x_vals = x_vals.reshape(1, -1)
+
+        x_n = self._normalize_x(x_vals.astype(np.float32))
 
         with torch.no_grad():
-            X_tensor = torch.from_numpy(Xn).to(self.device)
-            pred_norm = self.model(X_tensor).cpu().numpy()
+            x_tensor = torch.from_numpy(x_n).to(self.device)
+            pred_norm = self.model(x_tensor).cpu().numpy()
 
         # UNNORMALIZE OUTPUTS
         pred_raw = self._unnormalize_y(pred_norm)
         return pred_raw
 
-    def predict_single(self, X):
-        """Predict single.
+    def predict_single(self, x_vals):
+        """
+        Predict single.
 
         Args:
-            X: Description.
+            x_vals: Description.
         """
-        return self.predict(np.array(X))[0]
 
+        return self.predict(np.array(x_vals))[0]

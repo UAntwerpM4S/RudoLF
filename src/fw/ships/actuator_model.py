@@ -90,12 +90,15 @@ class ActuatorModel:
         if action.shape != (2,):
             raise ValueError(f"Action must have shape (2,), got {action.shape}")
 
+        thrust = (self.specifications.min_thrust + 0.5 * (action[1] + 1.0) *
+                  (self.specifications.max_thrust - self.specifications.min_thrust))
+
         if not self._initialized or not enable:
             self._rudder = action[0]
-            self._thrust = abs(action[1])
+            self._thrust = thrust
         else:
             self._rudder = alpha * action[0] + (1 - alpha) * self._rudder
-            self._thrust = alpha * abs(action[1]) + (1 - alpha) * self._thrust
+            self._thrust = alpha * thrust + (1 - alpha) * self._thrust
 
         self._initialized = True
 

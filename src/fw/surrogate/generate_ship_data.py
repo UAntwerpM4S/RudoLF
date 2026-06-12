@@ -17,23 +17,24 @@ from fw.surrogate.sim_fh_dataset_generator import collect_supervised_dataset
 # ================================================================
 # TRAIN/VAL/TEST SPLITTING
 # ================================================================
-def split_and_save(X, Y, save_prefix, train=0.8, val=0.1):
+def split_and_save(x_vals, y_vals, save_prefix, train=0.8, val=0.1):
     """
     Split dataset into train/val/test and save as .npz.
     """
-    N = X.shape[0]
-    idx = np.random.permutation(N)
 
-    N_train = int(train * N)
-    N_val = int(val * N)
+    num = x_vals.shape[0]
+    idx = np.random.permutation(num)
 
-    idx_train = idx[:N_train]
-    idx_val = idx[N_train:N_train + N_val]
-    idx_test = idx[N_train + N_val:]
+    n_train = int(train * num)
+    n_val = int(val * num)
 
-    np.savez(save_prefix + "_train.npz", X=X[idx_train], Y=Y[idx_train])
-    np.savez(save_prefix + "_val.npz", X=X[idx_val], Y=Y[idx_val])
-    np.savez(save_prefix + "_test.npz", X=X[idx_test], Y=Y[idx_test])
+    idx_train = idx[:n_train]
+    idx_val = idx[n_train:n_train + n_val]
+    idx_test = idx[n_train + n_val:]
+
+    np.savez(save_prefix + "_train.npz", X=x_vals[idx_train], Y=y_vals[idx_train])
+    np.savez(save_prefix + "_val.npz", X=x_vals[idx_val], Y=y_vals[idx_val])
+    np.savez(save_prefix + "_test.npz", X=x_vals[idx_test], Y=y_vals[idx_test])
 
     print(f"Saved: {save_prefix}_train.npz  ({len(idx_train)} samples)")
     print(f"Saved: {save_prefix}_val.npz    ({len(idx_val)} samples)")
@@ -44,8 +45,10 @@ def split_and_save(X, Y, save_prefix, train=0.8, val=0.1):
 # MAIN CLI ENTRYPOINT
 # ================================================================
 def main():
-    """Main.
     """
+    Main.
+    """
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--mode",
@@ -89,14 +92,11 @@ def main():
     # ============================================================
     # Run selected mode
     # ============================================================
-    X = None
-    Y = None
-    nbr_samples = 0
 
     if args.mode == "one_step":
         print(f"[one_step] Generating {args.samples} samples (max. horizon={args.horizon}s)...")
 
-        X, Y, nbr_samples = collect_supervised_dataset(
+        x_values, y_values, nbr_samples = collect_supervised_dataset(
             nbr_samples=args.samples,
             horizon_seconds=args.horizon,
             output_file=args.save,
@@ -123,7 +123,7 @@ def main():
     # ============================================================
     if args.split:
         prefix = os.path.splitext(args.save)[0]
-        split_and_save(X, Y, prefix)
+        split_and_save(x_values, y_values, prefix)
 
 
 if __name__ == "__main__":

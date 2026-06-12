@@ -652,7 +652,7 @@ ProfileRegistry.register(VesselProfile(
 ))
 
 ProfileRegistry.register(VesselProfile(
-    name="uantwerp_training_profile",
+    name="uantwerp_surrogate_training_profile",
     description="Training profile for UAntwerp's surrogate model.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(

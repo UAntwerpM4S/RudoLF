@@ -1,6 +1,7 @@
 import numpy as np
 
 from typing import Tuple
+from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 
@@ -94,9 +95,7 @@ class Nomoto(DynamicsBase):
 
     def accelerations(
         self,
-        u: float,
-        v: float,
-        r: float,
+        state: VesselState,
         rudder_angle: float,
         thrust: float
     ) -> Tuple[float, float, float]:
@@ -110,9 +109,7 @@ class Nomoto(DynamicsBase):
         acceleration, while thrust acts purely in surge.
 
         Args:
-            u: Body-fixed surge velocity [m/s].
-            v: Body-fixed sway velocity [m/s].
-            r: Body-fixed yaw rate [rad/s].
+            state: The current vessel state.
             rudder_angle: Rudder deflection angle [rad], positive to starboard.
             thrust: Normalized thrust command (dimensionless),
                 positive in the forward direction.
@@ -139,8 +136,9 @@ class Nomoto(DynamicsBase):
         """
 
         # Simplified dynamics
-        du = self.k_t * (thrust * 60.0) + self.xu * u
-        dv = self.k_v * np.sin(rudder_angle) + self.yv * v
-        dr = self.k_r * rudder_angle + self.nr * r + self.yv_r * v + (v * u) / self.l - YAW_RATE_DAMPING * r
+        du = self.k_t * (thrust * 60.0) + self.xu * state.u
+        dv = self.k_v * np.sin(rudder_angle) + self.yv * state.v
+        dr = (self.k_r * rudder_angle + self.nr * state.r + self.yv_r * state.v +
+              (state.v * state.u) / self.l - YAW_RATE_DAMPING * state.r)
 
         return du, dv, dr

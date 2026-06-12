@@ -1,6 +1,7 @@
 import numpy as np
 
-from typing import Tuple, Optional
+from typing import Tuple
+from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.surrogate.inference_surrogate import SurrogatePredictor
@@ -48,28 +49,20 @@ class UAntwerpSurrogate(DynamicsBase):
         self.ship_spec: ShipSpecifications = ship_spec
         self.surrogate = SurrogatePredictor("checkpoints/best_surrogate.pth")
 
-        self._rudder = 0.0  # Current rudder angle [rad]
-        self._thrust = 0.0  # Current thrust [-]
-
     # ------------------------------------------------------------------
     # DynamicsBase interface
     # ------------------------------------------------------------------
 
     def accelerations(
         self,
-        u: float,
-        v: float,
-        r: float,
+        state: VesselState,
         rudder_angle: float,
         thrust: float,
-        heading: Optional[float] = None,
-        x: Optional[float] = None,
-        y: Optional[float] = None,
     ) -> Tuple[float, float, float]:
         """
         Predict one-step body-frame velocity deltas using the trained surrogate.
 
-        The surrogate expects a 8-D input in the same feature order used
+        The surrogate expects an 8-D input in the same feature order used
         during training (see sim_fh_dataset_generator.py):
             [x, y, heading, surge, sway, yaw_rate,
              rudder_normalized, thrust_normalized]
@@ -81,16 +74,11 @@ class UAntwerpSurrogate(DynamicsBase):
         ShipSimulator.integrate() and must not be duplicated here.
 
         Args:
-            u:            Body-fixed surge velocity [m/s].
-            v:            Body-fixed sway velocity [m/s].
-            r:            Body-fixed yaw rate [rad/s].
+            state: The current vessel state.
             rudder_angle: Physical rudder deflection [rad] (inverse-mapped
                           to normalized [-1, 1] internally).
             thrust:       Physical thrust command (inverse-mapped to
                           normalized [-1, 1] internally).
-            heading:      Current vessel heading [rad].  Required.
-            x:            World-frame x position [m].  Required.
-            y:            World-frame y position [m].  Required.
 
         Returns:
             Tuple (du, dv, dr) — one-step body-frame velocity deltas to be
@@ -99,9 +87,10 @@ class UAntwerpSurrogate(DynamicsBase):
         Raises:
             ValueError: If any required positional/context argument is None.
         """
+
         missing = [
             name for name, val in (
-                ("heading", heading), ("x", x), ("y", y),
+                ("heading", state.heading), ("x", state.x), ("y", state.y),
             )
             if val is None
         ]
@@ -110,16 +99,8 @@ class UAntwerpSurrogate(DynamicsBase):
                 f"UAntwerpSurrogate.accelerations() requires: {missing}."
             )
 
-        alpha = 0.3
-        if abs(self._rudder) < 1e-6 and abs(self._thrust) < 1e-6:
-            self._rudder = rudder_angle
-            self._thrust = thrust
-        else:
-            self._rudder = alpha * rudder_angle + (1 - alpha) * self._rudder
-            self._thrust = alpha * thrust + (1 - alpha) * self._thrust
-
         x_raw = np.array(
-            [x, y, heading, u, v, r, self._rudder, self._thrust],
+            [state.x, state.y, state.heading, state.u, state.v, state.r, rudder_angle, thrust],
             dtype=np.float32,
         )
 

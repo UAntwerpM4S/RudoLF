@@ -5,6 +5,7 @@ Training script for the ship dynamics surrogate MLP.
 Input  (8-D): [x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action]
 Output (3-D): [delta_surge, delta_sway, delta_yaw_rate]
 """
+
 import torch
 import argparse
 import numpy as np
@@ -24,7 +25,8 @@ def evaluate(
         y_mean: np.ndarray,
         y_std: np.ndarray,
 ):
-    """Compute normalized MSE loss and denormalized MAE.
+    """
+    Compute normalized MSE loss and denormalized MAE.
 
     Args:
         model: Trained (or in-training) SurrogateMLP.
@@ -39,6 +41,7 @@ def evaluate(
             mae: Mean absolute error in original physical units
                  for each output dimension.
     """
+
     model.eval()
 
     total_loss = 0.0
@@ -58,17 +61,17 @@ def evaluate(
     )
 
     with torch.no_grad():
-        for X, Y in loader:
-            X = X.to(device)
-            Y = Y.to(device)
+        for x_vals, y_vals in loader:
+            x_vals = x_vals.to(device)
+            y_vals = y_vals.to(device)
 
-            pred = model(X)
+            pred = model(x_vals)
 
-            loss = F.mse_loss(pred, Y, reduction="mean")
-            total_loss += loss.item() * X.size(0)
+            loss = F.mse_loss(pred, y_vals, reduction="mean")
+            total_loss += loss.item() * x_vals.size(0)
 
             pred_phys = pred * y_std_t + y_mean_t
-            y_phys = Y * y_std_t + y_mean_t
+            y_phys = y_vals * y_std_t + y_mean_t
 
             abs_error = torch.abs(pred_phys - y_phys)
 
@@ -77,7 +80,7 @@ def evaluate(
             else:
                 total_abs_error += abs_error.sum(dim=0)
 
-            total_samples += X.size(0)
+            total_samples += x_vals.size(0)
 
     mean_mse_loss = total_loss / total_samples
     mae = total_abs_error / total_samples
@@ -86,7 +89,8 @@ def evaluate(
 
 
 def make_dataloaders(train_file, val_file, test_file, batch_size=256, num_workers=0):
-    """Build train / val / test DataLoaders with shared normalization stats.
+    """
+    Build train / val / test DataLoaders with shared normalization stats.
 
     Normalization statistics are computed from the training split only and
     then re-applied identically to the validation and test splits.
@@ -102,6 +106,7 @@ def make_dataloaders(train_file, val_file, test_file, batch_size=256, num_worker
         Tuple of (train_loader, val_loader, test_loader,
                   x_mean, x_std, y_mean, y_std).
     """
+
     x_mean, x_std, y_mean, y_std = ShipDynamicsDataset.compute_stats(train_file)
 
     train_ds = ShipDynamicsDataset(train_file, x_mean, x_std, y_mean, y_std, normalize=True)
@@ -116,11 +121,13 @@ def make_dataloaders(train_file, val_file, test_file, batch_size=256, num_worker
 
 
 def set_seed(seed: int = 42):
-    """Set random seeds for reproducibility.
+    """
+    Set random seeds for reproducibility.
 
     Args:
         seed: Integer seed value.
     """
+
     torch.manual_seed(seed)
     np.random.seed(seed)
     if torch.cuda.is_available():
@@ -128,11 +135,13 @@ def set_seed(seed: int = 42):
 
 
 def main(argv=None):
-    """Entry point for surrogate training.
+    """
+    Entry point for surrogate training.
 
     Args:
         argv: Optional list of CLI arguments (useful for testing).
     """
+
     parser = argparse.ArgumentParser(
         description="Train MLP surrogate: 8 inputs -> 3 outputs"
     )
@@ -196,18 +205,18 @@ def main(argv=None):
         epoch_loss = 0.0
         n_samples  = 0
 
-        for X, Y in train_loader:
-            X = X.to(device)
-            Y = Y.to(device)
+        for x_vals, y_vals in train_loader:
+            x_vals = x_vals.to(device)
+            y_vals = y_vals.to(device)
             optimizer.zero_grad()
-            pred = model(X)
-            loss = F.mse_loss(pred, Y, reduction="mean")
+            pred = model(x_vals)
+            loss = F.mse_loss(pred, y_vals, reduction="mean")
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
 
-            epoch_loss += loss.item() * X.size(0)
-            n_samples  += X.size(0)
+            epoch_loss += loss.item() * x_vals.size(0)
+            n_samples  += x_vals.size(0)
 
         train_epoch_loss = epoch_loss / n_samples
 
