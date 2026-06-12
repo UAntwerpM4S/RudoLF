@@ -2,6 +2,7 @@ import numpy as np
 
 from fw.ships.actuator_state import ActuatorState
 from fw.ships.ship_specs import ShipSpecifications
+from fw.ships.actuator_command import ActuatorCommand
 
 
 class ActuatorModel:
@@ -18,8 +19,6 @@ class ActuatorModel:
           controller stability.
 
     Attributes:
-        _pass_through (bool): If `True`, actuator commands are applied
-            directly without any dynamic processing.
         _rudder: Current rudder angle [rad].
         _thrust: Current thrust command (normalized or physical units).
         _initialized: Flag indicating whether smoothing has been initialized.
@@ -35,39 +34,11 @@ class ActuatorModel:
         """
 
         self.specifications: ShipSpecifications = specifications
-        self._pass_through = False
 
         self._rudder = 0.0  # Current rudder angle [rad]
         self._thrust = 0.0  # Current thrust [-]
 
         self._initialized = False
-
-    @property
-    def pass_through(self):
-        """
-        Return whether pass-through mode is enabled.
-
-        When pass-through mode is enabled, actuator commands bypass all
-        dynamic processing, including rate limiting, saturation, and
-        jitter suppression.
-
-        Returns:
-            bool: True if commands are applied directly; otherwise False.
-        """
-
-        return self._pass_through
-
-    @pass_through.setter
-    def pass_through(self, value):
-        """
-        Enable or disable pass-through mode.
-
-        Args:
-            value: True to bypass actuator dynamics and apply commands
-                directly; False to use the dynamic actuator model.
-        """
-
-        self._pass_through = value
 
     @property
     def current_actuator_state(self):
@@ -119,19 +90,22 @@ class ActuatorModel:
         if action.shape != (2,):
             raise ValueError(f"Action must have shape (2,), got {action.shape}")
 
+        thrust = (self.specifications.min_thrust + 0.5 * (action[1] + 1.0) *
+                  (self.specifications.max_thrust - self.specifications.min_thrust))
+
         if not self._initialized or not enable:
             self._rudder = action[0]
-            self._thrust = abs(action[1])
+            self._thrust = thrust
         else:
             self._rudder = alpha * action[0] + (1 - alpha) * self._rudder
-            self._thrust = alpha * abs(action[1]) + (1 - alpha) * self._thrust
+            self._thrust = alpha * thrust + (1 - alpha) * self._thrust
 
         self._initialized = True
 
         return ActuatorState(self._rudder, self._thrust)
 
 
-    def step(self, action, dt: float, enable_smoothing: bool) -> ActuatorState:
+    def step(self, action: ActuatorCommand, dt: float, enable_smoothing: bool) -> ActuatorState:
         """
         Apply rate-limited and saturated actuator control.
 
@@ -139,7 +113,7 @@ class ActuatorModel:
         to actuator rate limits, jitter thresholds, and optional smoothing.
 
         Args:
-            action: Desired command containing rudder_angle [rad]
+            action: Desired ActuatorCommand containing rudder_angle [rad]
                 and thrust [-].
             dt: Time step in seconds.
             enable_smoothing: Enable rate limiting, saturation, and jitter
@@ -162,43 +136,39 @@ class ActuatorModel:
               with clipping only.
         """
 
-        if not self.pass_through:
-            if dt <= 0:
-                raise ValueError(f"Time step must be positive, got {dt}")
+        if dt <= 0:
+            raise ValueError(f"Time step must be positive, got {dt}")
 
-            target_rudder, target_thrust = action.rudder_angle, action.thrust
+        target_rudder, target_thrust = action.rudder_angle, action.thrust
 
-            if enable_smoothing:
-                # Rate limits (per-second -> per-step)
-                max_rudder_step = self.specifications.max_rudder_rate * dt
-                max_thrust_step = self.specifications.max_thrust_rate * dt
+        if enable_smoothing:
+            # Rate limits (per-second -> per-step)
+            max_rudder_step = self.specifications.max_rudder_rate * dt
+            max_thrust_step = self.specifications.max_thrust_rate * dt
 
-                # Rudder dynamics with jitter suppression
-                rudder_error = target_rudder - self._rudder
-                if abs(rudder_error) < self.specifications.rudder_jitter_threshold:
-                    rudder_step = 0.0
-                else:
-                    rudder_step = np.clip(rudder_error, -max_rudder_step, max_rudder_step)
-                self._rudder += rudder_step
-
-                # Rudder saturation
-                self._rudder = np.clip(self._rudder, -self.specifications.max_rudder_angle, self.specifications.max_rudder_angle)
-
-                # Thrust dynamics with jitter suppression
-                thrust_error = target_thrust - self._thrust
-                if abs(thrust_error) < self.specifications.thrust_jitter_threshold:
-                    thrust_step = 0.0
-                else:
-                    thrust_step = np.clip(thrust_error, -max_thrust_step, max_thrust_step)
-                self._thrust += thrust_step
-
-                # Thrust saturation
-                self._thrust = np.clip(self._thrust, self.specifications.min_thrust, self.specifications.max_thrust)
+            # Rudder dynamics with jitter suppression
+            rudder_error = target_rudder - self._rudder
+            if abs(rudder_error) < self.specifications.rudder_jitter_threshold:
+                rudder_step = 0.0
             else:
-                self._rudder = np.clip(target_rudder, -self.specifications.max_rudder_angle, self.specifications.max_rudder_angle)
-                self._thrust = np.clip(target_thrust, self.specifications.min_thrust, self.specifications.max_thrust)
+                rudder_step = np.clip(rudder_error, -max_rudder_step, max_rudder_step)
+            self._rudder += rudder_step
+
+            # Rudder saturation
+            self._rudder = np.clip(self._rudder, -self.specifications.max_rudder_angle, self.specifications.max_rudder_angle)
+
+            # Thrust dynamics with jitter suppression
+            thrust_error = target_thrust - self._thrust
+            if abs(thrust_error) < self.specifications.thrust_jitter_threshold:
+                thrust_step = 0.0
+            else:
+                thrust_step = np.clip(thrust_error, -max_thrust_step, max_thrust_step)
+            self._thrust += thrust_step
+
+            # Thrust saturation
+            self._thrust = np.clip(self._thrust, self.specifications.min_thrust, self.specifications.max_thrust)
         else:
-            self._rudder = action[0]
-            self._thrust = action[1]
+            self._rudder = np.clip(target_rudder, -self.specifications.max_rudder_angle, self.specifications.max_rudder_angle)
+            self._thrust = np.clip(target_thrust, self.specifications.min_thrust, self.specifications.max_thrust)
 
         return ActuatorState(self._rudder, self._thrust)

@@ -46,6 +46,7 @@ class ShipSimulator(BaseSimulator):
         self._mapper = ActionMapper()
         self.numerical_damping = numerical_damping
         self._env = EnvironmentModel(wind, current)
+        self._is_ua_surrogate = isinstance(self._dynamics, UAntwerpSurrogate)
 
     @property
     def environment(self) -> EnvironmentModel:
@@ -178,11 +179,8 @@ class ShipSimulator(BaseSimulator):
         if dt_rem < 1e-15:
             dt_rem = 0.0
 
-        is_ua_surrogate = isinstance(self._dynamics, UAntwerpSurrogate)
-        self._actuators.pass_through = is_ua_surrogate
-
         # Map normalized actions to physical actuators
-        command = self._mapper.map(action, self._specs) if not is_ua_surrogate else action
+        command = self._mapper.map(action, self._specs)
 
         # Surge damping
         if self.numerical_damping and hasattr(self._dynamics, "X_u") and hasattr(self._dynamics, "m11"):
@@ -201,11 +199,17 @@ class ShipSimulator(BaseSimulator):
             yaw_damping_factor = 0.0
 
         for i in range(n_full):
-            actuator = self._actuators.step(command, dyn_model_time_step, enable_smoothing)
+            if self._is_ua_surrogate:
+                actuator = self._actuators.apply_smoothing(action, enable_smoothing)
+            else:
+                actuator = self._actuators.step(command, dyn_model_time_step, enable_smoothing)
             self.integrate(actuator, dyn_model_time_step, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
 
         if dt_rem > 1e-12:
-            actuator = self._actuators.step(command, dt_rem, enable_smoothing)
+            if self._is_ua_surrogate:
+                actuator = self._actuators.apply_smoothing(action, enable_smoothing)
+            else:
+                actuator = self._actuators.step(command, dt_rem, enable_smoothing)
             self.integrate(actuator, dt_rem, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
 
         s = self._state
