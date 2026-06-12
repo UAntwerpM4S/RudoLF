@@ -100,7 +100,7 @@ class UAntwerpSurrogate(DynamicsBase):
             )
 
         x_raw = np.array(
-            [state.x, state.y, state.heading, state.u, state.v, state.r, rudder_angle, abs(thrust)],
+            [state.x, state.y, state.heading, state.u, state.v, state.r, rudder_angle, thrust],
             dtype=np.float32,
         )
 
