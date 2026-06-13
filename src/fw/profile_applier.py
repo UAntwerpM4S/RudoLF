@@ -96,7 +96,7 @@ def apply_profile(
         SimulatorApplier.apply(profile, simulator)
 
     if action is not None:
-        return ActionAdapter.transform(profile, action, simulator=simulator)
+        return ActionAdapter.transform(profile, action)
 
     return None
 
