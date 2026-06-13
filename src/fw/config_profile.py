@@ -186,13 +186,14 @@ class ModelConfig:
 
     Attributes:
         ship_model: Which :class:`~fw.ships.ship_factory.ShipModel` preset
-            to load.
+            to load.  *None* means no override — the framework's own default
+            is used.
         dynamics_model: Which :class:`~fw.dynamics.dynamics_model.Model`
-            family to use inside the simulator.
+            family to use inside the simulator.  *None* means no override.
     """
 
-    ship_model: ShipModel = ShipModel.MYZAKO_37
-    dynamics_model: Model = Model.FOSSEN
+    ship_model: Optional[ShipModel] = None
+    dynamics_model: Optional[Model] = None
 
 
 # ---------------------------------------------------------------------------
@@ -373,8 +374,8 @@ class VesselProfile:
                 "enable_rudder_angle_scaling": self.transfer.enable_rudder_angle_scaling,
             },
             "model": {
-                "ship_model": self.model.ship_model.name,
-                "dynamics_model": self.model.dynamics_model.name,
+                "ship_model": self.model.ship_model.name if self.model.ship_model is not None else None,
+                "dynamics_model": self.model.dynamics_model.name if self.model.dynamics_model is not None else None,
             },
         }
 
@@ -417,8 +418,16 @@ class VesselProfile:
                 **_filter_fields(TransferConfig, d.get("transfer", {}))
             ),
             model=ModelConfig(
-                ship_model=ShipModel[model_d.get("ship_model", ModelConfig().ship_model.name)],
-                dynamics_model=Model[model_d.get("dynamics_model", ModelConfig().dynamics_model.name)],
+                ship_model=(
+                    ShipModel[model_d["ship_model"]]
+                    if model_d.get("ship_model") is not None
+                    else None
+                ),
+                dynamics_model=(
+                    Model[model_d["dynamics_model"]]
+                    if model_d.get("dynamics_model") is not None
+                    else None
+                ),
             ),
         )
 
@@ -463,8 +472,8 @@ class VesselProfile:
         lines = [f"VesselProfile '{self.name}' [{self.run_mode.name}]"]
         if self.description:
             lines.append(f"  description  : {self.description}")
-        lines.append(f"  ship_model   : {self.model.ship_model.name}")
-        lines.append(f"  dynamics     : {self.model.dynamics_model.name}")
+        lines.append(f"  ship_model   : {self.model.ship_model.name if self.model.ship_model is not None else '(config default)'}")
+        lines.append(f"  dynamics     : {self.model.dynamics_model.name if self.model.dynamics_model is not None else '(config default)'}")
 
         if self.scenario.initial_speed is not None:
             lines.append(f"  initial_speed: {self.scenario.initial_speed} m/s")
@@ -586,10 +595,6 @@ ProfileRegistry.register(VesselProfile(
     name="default_profile",
     description="Standard profile with Fossen dynamics.",
     run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
-    ),
     actuator=ActuatorConfig(enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))
