@@ -116,12 +116,13 @@ class ConfigApplier:
         Patch ship_model and dynamics_model into *config* from *profile*.
         """
 
-        config["ship_model"] = profile.model.ship_model
-        config["dynamics_model"] = profile.model.dynamics_model
-        logger.debug(
-            "ConfigApplier: set ship_model=%s, dynamics_model=%s",
-            config["ship_model"], config["dynamics_model"],
-        )
+        if profile.model.ship_model is not None:
+            config["ship_model"] = profile.model.ship_model
+            logger.debug("ConfigApplier: set ship_model=%s", config["ship_model"])
+
+        if profile.model.dynamics_model is not None:
+            config["dynamics_model"] = profile.model.dynamics_model
+            logger.debug("ConfigApplier: set dynamics_model=%s", config["dynamics_model"])
 
 
 # ---------------------------------------------------------------------------
