@@ -68,7 +68,7 @@ class ShipSimulator(BaseSimulator):
         self._mapper = ActionMapper()
         self.numerical_damping = numerical_damping
         self._env = EnvironmentModel(wind, current)
-        self._is_ua_surrogate = isinstance(self._dynamics, UAntwerpSurrogate)
+        self._is_ua_surrogate = isinstance(self._dynamics, UAntwerpSurrogate) # (UAntwerpSurrogate, FhTabularModel))
 
     @property
     def environment(self) -> EnvironmentModel:
