@@ -94,36 +94,22 @@ class Fossen(DynamicsBase):
         self.Y_uv = self.ship_spec.Y_uv_coeff * mass
         self.N_uv = self.ship_spec.N_uv_coeff * mass * length
 
-
-    def accelerations(self, state: VesselState,
-                      rudder_angle: float, thrust: float) -> Tuple[float, float, float]:
+    def _compute_accelerations(
+        self,
+        state: VesselState,
+        rudder_angle: float,
+        thrust: float,
+    ) -> Tuple[float, float, float]:
         """
         Compute body-fixed accelerations from state and control inputs.
 
-        Computes the surge, sway, and yaw accelerations using a nonlinear
-        3-DOF maneuvering model. Rudder effectiveness is scaled by forward
-        speed to reflect reduced control authority at low speeds, with a
-        lower bound to preserve basic maneuverability.
-
         Args:
-            state: The current vessel state.
-            rudder_angle: Rudder deflection angle in radians, positive to
-                starboard.
-            thrust: Normalized thrust command (dimensionless), positive in
-                the forward direction.
+            state:        Current vessel state.
+            rudder_angle: Rudder deflection angle [rad], positive to starboard.
+            thrust:       Normalized thrust command (dimensionless), positive forward.
 
         Returns:
-            A tuple `(du, dv, dr)` where:
-                - du: Surge acceleration (m/s²).
-                - dv: Sway acceleration (m/s²).
-                - dr: Yaw acceleration (rad/s²).
-
-        Notes:
-            - Coriolis and centripetal effects are included explicitly.
-            - Rudder forces contribute both sway force and yaw moment.
-            - The model assumes thrust acts purely in surge.
-            - This formulation is suitable for control and reinforcement
-              learning, but not for detailed seakeeping analysis.
+            Tuple (du, dv, dr) — surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
 
         # --- CORIOLIS-CENTRIPETAL MATRIX ---
@@ -155,14 +141,9 @@ class Fossen(DynamicsBase):
         # Thrust force
         f_thrust = self.X_thrust * thrust
 
-        # --- COMBINE ALL FORCES/MOMENTS ---
-        total_surge_force = (f_thrust + d_surge + coriolis_surge)
-        total_sway_force = (f_rudder_sway + d_sway + coriolis_sway)
-        total_yaw_moment = (m_rudder_yaw + d_yaw + coriolis_yaw)
-
         # --- CALCULATE ACCELERATIONS ---
-        du = total_surge_force / self.m11
-        dv = total_sway_force / self.m22
-        dr = total_yaw_moment / self.m33
+        du = (f_thrust + d_surge + coriolis_surge) / self.m11
+        dv = (f_rudder_sway + d_sway + coriolis_sway) / self.m22
+        dr = (m_rudder_yaw + d_yaw + coriolis_yaw) / self.m33
 
         return du, dv, dr

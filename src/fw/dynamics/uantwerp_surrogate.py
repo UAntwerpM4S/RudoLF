@@ -6,6 +6,9 @@ from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.surrogate.inference_surrogate import SurrogatePredictor
 
+# Time step the surrogate was trained on [s]
+_SURROGATE_DT = 0.1
+
 
 class UAntwerpSurrogate(DynamicsBase):
     """
@@ -15,19 +18,13 @@ class UAntwerpSurrogate(DynamicsBase):
     one-step body-frame velocity deltas given the current kinematic state
     and normalized control inputs.
 
-    The surrogate predicts:
-        (delta_surge, delta_sway, delta_yaw_rate)
+    The surrogate predicts absolute velocity deltas:
+        (delta_u, delta_v, delta_r)
 
-    World-frame integration (dx, dy, dpsi) is handled externally by
-    ShipSimulator.integrate(), which applies midpoint heading, velocity
-    clipping, and heading wrapping.  This class must NOT attempt to
-    replicate that logic.
-
-    Output of accelerations() matches the DynamicsBase / ShipSimulator
-    contract:
-        (du, dv, dr)
-    where each value is a one-step body-frame delta to be added to the
-    current velocity state by the integrator.
+    These deltas are divided by _SURROGATE_DT (0.1 s) to yield accelerations,
+    which are then integrated over dt by DynamicsBase.step(). This is
+    mathematically correct only when dt == _SURROGATE_DT; step() enforces
+    this with an assertion.
 
     Coordinate frame and assumptions:
         - Body-fixed reference frame at the vessel center of gravity (CG)
@@ -41,7 +38,7 @@ class UAntwerpSurrogate(DynamicsBase):
         Initialize the surrogate dynamics model.
 
         Args:
-            ship_spec: Vessel physical specifications.  Used to inverse-map
+            ship_spec: Vessel physical specifications. Used to inverse-map
                 physical actuator values back to the normalized [-1, 1]
                 action space that the surrogate was trained on.
         """
@@ -49,43 +46,51 @@ class UAntwerpSurrogate(DynamicsBase):
         self.ship_spec: ShipSpecifications = ship_spec
         self.surrogate = SurrogatePredictor("checkpoints/best_surrogate.pth")
 
-    # ------------------------------------------------------------------
-    # DynamicsBase interface
-    # ------------------------------------------------------------------
+    def step(
+        self,
+        state: VesselState,
+        rudder_angle: float,
+        thrust: float,
+        dt: float,
+    ) -> Tuple[float, float, float]:
+        assert dt == _SURROGATE_DT, (
+            f"UAntwerpSurrogate requires dt == {_SURROGATE_DT} s (surrogate training step), got {dt}."
+        )
+        return super().step(state, rudder_angle, thrust, dt)
 
-    def accelerations(
+    def _compute_accelerations(
         self,
         state: VesselState,
         rudder_angle: float,
         thrust: float,
     ) -> Tuple[float, float, float]:
         """
-        Predict one-step body-frame velocity deltas using the trained surrogate.
+        Predict updated body-fixed velocities using the trained surrogate.
 
-        The surrogate expects an 8-D input in the same feature order used
-        during training (see sim_fh_dataset_generator.py):
-            [x, y, heading, surge, sway, yaw_rate,
-             rudder_normalized, thrust_normalized]
+        The surrogate expects an 8-D input in the feature order used during
+        training (see sim_fh_dataset_generator.py):
+            [x, y, heading, surge, sway, yaw_rate, rudder_normalized, thrust_normalized]
 
-        It returns:
-            (delta_surge, delta_sway, delta_yaw_rate)
+        It returns absolute velocity deltas (delta_u, delta_v, delta_r) for
+        a 0.1 s step, which are divided by _SURROGATE_DT to yield accelerations
+        and integrated over dt by DynamicsBase.step().
 
-        World-frame position and heading updates are computed by
-        ShipSimulator.integrate() and must not be duplicated here.
+        Damping and velocity clipping are applied by ShipSimulator after
+        this call and must not be duplicated here.
 
         Args:
-            state: The current vessel state.
-            rudder_angle: Physical rudder deflection [rad] (inverse-mapped
-                          to normalized [-1, 1] internally).
-            thrust:       Physical thrust command (inverse-mapped to
-                          normalized [-1, 1] internally).
+            state:        Current vessel state.
+            rudder_angle: Normalized rudder command (dimensionless) in [-1, 1],
+                          passed directly as a surrogate input feature.
+            thrust:       Normalized thrust command (dimensionless) in [-1, 1],
+                          passed directly as a surrogate input feature.
 
         Returns:
-            Tuple (du, dv, dr) — one-step body-frame velocity deltas to be
-            added directly to the current state by ShipSimulator.integrate().
+            Tuple (du, dv, dr) — body-fixed accelerations [m/s², m/s², rad/s²],
+            valid only for dt == _SURROGATE_DT (0.1 s).
 
         Raises:
-            ValueError: If any required positional/context argument is None.
+            ValueError: If required state fields (x, y, heading) are None.
         """
 
         missing = [
@@ -96,7 +101,7 @@ class UAntwerpSurrogate(DynamicsBase):
         ]
         if missing:
             raise ValueError(
-                f"UAntwerpSurrogate.accelerations() requires: {missing}."
+                f"UAntwerpSurrogate.step() requires state fields: {missing}."
             )
 
         x_raw = np.array(
@@ -104,6 +109,5 @@ class UAntwerpSurrogate(DynamicsBase):
             dtype=np.float32,
         )
 
-        du, dv, dr = self.surrogate.predict_single(x_raw)
-
-        return float(du/0.1), float(dv/0.1), float(dr/0.1)
+        delta_u, delta_v, delta_r = self.surrogate.predict_single(x_raw)
+        return float(delta_u/_SURROGATE_DT), float(delta_v/_SURROGATE_DT), float(delta_r/_SURROGATE_DT)

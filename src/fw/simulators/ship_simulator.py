@@ -6,6 +6,7 @@ from fw.ships.action_mapper import ActionMapper
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.simulators.base_simulator import BaseSimulator
+from fw.dynamics.fh_tabular_model import FhTabularModel
 from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 from fw.dynamics.environmental_model import EnvironmentModel
 
@@ -24,6 +25,26 @@ class ShipSimulator(BaseSimulator):
     The simulator computes the vessel state in earth-fixed coordinates
     using body-fixed velocities and yaw rate. Integration uses a
     midpoint approximation for improved accuracy.
+
+    Dynamics model contract
+    -----------------------
+    All DynamicsBase implementations expose a single step() method:
+
+        u, v, r = dynamics.step(state, rudder_angle, thrust, dt)
+
+    Two families exist:
+
+    Physics-based models (Fossen, Nomoto, UGentSurrogate):
+        Return un-damped, un-clipped (u, v, r) computed via Euler integration
+        of their equations of motion. ShipSimulator applies numerical damping,
+        velocity clipping, and environmental forces after the call.
+
+    Engine-backed models (FhTabularModel, UAntwerpSurrogate):
+        Return (u, v, r) directly from an internal engine or surrogate after
+        advancing by dt. No re-integration is performed by ShipSimulator;
+        damping and clipping are still applied for consistency.
+        Environmental forces are NOT added for these models, as their engine
+        already accounts for relevant dynamics.
     """
 
     def __init__(self, specs: ShipSpecifications, dynamics: DynamicsBase, dt: float, wind: bool = False,
@@ -32,12 +53,13 @@ class ShipSimulator(BaseSimulator):
         Initialize the ship simulator.
 
         Args:
-            specs: ShipSpecifications object defining vessel dimensions,
-                actuator limits, and kinematic constraints.
-            dynamics: DynamicsModel instance implementing 3DOF accelerations.
-            dt: Simulation time step [s]. Must be positive.
-            wind: Enable wind influence if True.
-            current: Enable water current influence if True.
+            specs:             ShipSpecifications object defining vessel dimensions,
+                               actuator limits, and kinematic constraints.
+            dynamics:          DynamicsBase instance implementing the step() interface.
+            dt:                Simulation time step [s]. Must be positive.
+            wind:              Enable wind influence if True.
+            current:           Enable water current influence if True.
+            numerical_damping: Enable numerical damping for physics-based models.
         """
 
         super().__init__(specs, dt)
@@ -64,53 +86,44 @@ class ShipSimulator(BaseSimulator):
         """
         Advance the vessel state by a single physics integration step.
 
-        Performs one substep of the continuous-time vessel dynamics using a
-        zero-order hold actuator input. The provided actuator state is assumed
-        to remain constant over the given time_step.
+        Calls dynamics.step() to obtain updated body-fixed velocities (u, v, r),
+        then applies environmental forces (for physics-based models), numerical
+        damping, velocity clipping, and midpoint position integration.
 
         Args:
-            actuator: ActuatorState containing the current rudder_angle [rad]
-                and thrust command [-], already updated for the environment step.
-            time_step: Physics integration step size in seconds.
-            surge_damping_factor: Linear damping coefficient applied to surge
-                velocity (u).
-            sway_damping_factor: Linear damping coefficient applied to sway
-                velocity (v).
-            yaw_damping_factor: Linear damping coefficient applied to yaw
-                rate (r).
+            actuator:             ActuatorState containing the current rudder_angle
+                                  and thrust command, already updated for the step.
+            time_step:            Physics integration step size in seconds.
+            surge_damping_factor: Linear damping coefficient applied to surge velocity.
+            sway_damping_factor:  Linear damping coefficient applied to sway velocity.
+            yaw_damping_factor:   Linear damping coefficient applied to yaw rate.
 
         Notes:
-            - The actuator state is not modified in this method.
-            - Vessel accelerations are computed using the DynamicsModel.
-            - Environmental accelerations (e.g., wind and current) are added
-              in the body-fixed frame.
-            - Linear damping is applied implicitly in surge, sway, and yaw.
-            - Body-fixed velocities (u, v, r) are clipped to limits defined
-              in ShipSpecifications.
-            - Earth-fixed position is updated using midpoint integration
-              for improved numerical accuracy.
-            - Heading is wrapped to the interval [-π, π].
+            - For physics-based models, environmental accelerations are added
+              to (u, v) before damping and clipping.
+            - For engine-backed models (FhTabularModel, UAntwerpSurrogate),
+              environmental forces are skipped; the engine handles them internally.
+            - Damping and velocity clipping are applied for all model types.
+            - Earth-fixed position is updated using midpoint heading integration.
+            - Heading is wrapped to [-π, π].
         """
 
         state = copy.deepcopy(self._state)
 
-        # Compute accelerations from dynamics
-        du, dv, dr = self._dynamics.accelerations(state, actuator.rudder_angle, actuator.thrust)
+        # Advance dynamics — returns updated (u, v, r)
+        u, v, r = self._dynamics.step(state, actuator.rudder_angle, actuator.thrust, time_step)
 
         # Add environmental accelerations
         ax_env, ay_env = self._env.accelerations(state.heading)
-        du += ax_env
-        dv += ay_env
+        u += ax_env * time_step
+        v += ay_env * time_step
 
-        # Apply velocity limits
-        u = np.clip((state.u + du * time_step) / (1.0 + surge_damping_factor * time_step),
-                    *self._specs.surge_limits)
-        v = np.clip((state.v + dv * time_step) / (1.0 + sway_damping_factor * time_step),
-                    *self._specs.sway_limits)
-        r = np.clip((state.r + dr * time_step) / (1.0 + yaw_damping_factor * time_step),
-                    *self._specs.yaw_rate_limits)
+        # Apply numerical damping and velocity limits (all model types)
+        u = np.clip(u / (1.0 + surge_damping_factor * time_step), * self._specs.surge_limits)
+        v = np.clip(v / (1.0 + sway_damping_factor * time_step), * self._specs.sway_limits)
+        r = np.clip(r / (1.0 + yaw_damping_factor * time_step), * self._specs.yaw_rate_limits)
 
-        # Midpoint heading for better integration
+        # Midpoint heading for improved position integration accuracy
         psi_mid = state.heading + 0.5 * r * time_step
         dx = u * np.cos(psi_mid) - v * np.sin(psi_mid)
         dy = u * np.sin(psi_mid) + v * np.cos(psi_mid)
@@ -118,12 +131,12 @@ class ShipSimulator(BaseSimulator):
         self._state = VesselState(
             terminated=state.terminated,
             truncated=state.truncated,
-            x=state.x + dx * time_step,
-            y=state.y + dy * time_step,
-            heading=(state.heading + r * time_step + np.pi) % (2.0 * np.pi) - np.pi,
-            u=u,
-            v=v,
-            r=r,
+            x=np.float32(state.x + dx * time_step),
+            y=np.float32(state.y + dy * time_step),
+            heading=np.float32((state.heading + r * time_step + np.pi) % (2.0 * np.pi) - np.pi),
+            u=np.float32(u),
+            v=np.float32(v),
+            r=np.float32(r),
         )
 
     def step(self, action: np.ndarray, enable_smoothing: bool = False, enable_rudder_angle_scaling: bool = False) -> None:
@@ -136,34 +149,22 @@ class ShipSimulator(BaseSimulator):
         repeated calls to `integrate`.
 
         Args:
-            action: Normalized action array [rudder, thrust] in [-1, 1].
-            enable_smoothing: Enable actuator rate limiting and smoothing.
+            action:                      Normalized action array [rudder, thrust] in [-1, 1].
+            enable_smoothing:            Enable actuator rate limiting and smoothing.
             enable_rudder_angle_scaling: Accepted for API consistency with
-                :class:`~fw.simulators.fh_sim_wrapper.FhSimWrapper` but has
-                no effect here. ShipSimulator uses its own
-                :class:`~fw.ships.ship_specs.ShipSpecifications` directly, so
-                there is no angle gap to compensate for.
+                                         FhSimWrapper but has no effect here.
 
         Raises:
             ValueError: If `action` does not have shape (2,).
 
         Notes:
-            - The action is mapped to physical actuator commands via
-              ActionMapper.
-            - Actuator dynamics (smoothing/rate limiting) are applied before
-              integration.
-            - Vessel accelerations are computed using the DynamicsModel.
-            - Environmental accelerations from wind and current are added
-              in the body-fixed frame.
-            - Linear damping is applied in surge, sway, and yaw according
-              to the damping factors derived from the dynamics model.
-            - Velocities are clipped to simulation limits specified in
-              ShipSpecifications.
-            - Midpoint integration is used to update earth-fixed positions
-              and heading.
-            - Heading is wrapped to [-π, π] after each integration step.
-            - Partial physics steps are used if the environment time step
-              is not an integer multiple of the dynamics time step.
+            - The action is mapped to physical actuator commands via ActionMapper.
+            - For engine-backed models (FhTabularModel, UAntwerpSurrogate),
+              apply_smoothing() is called ONCE per env step (matching FhSimWrapper
+              call frequency). For physics-based models, ActuatorModel.step() is
+              called once per sub-step.
+            - Partial physics steps are used if the environment time step is not
+              an integer multiple of the dynamics time step.
         """
 
         # Validate action
@@ -213,13 +214,28 @@ class ShipSimulator(BaseSimulator):
             self.integrate(actuator, dt_rem, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
 
         s = self._state
-        self._state = VesselState(
-            terminated=s.terminated,
-            truncated=s.truncated,
-            x=np.float32(s.x),
-            y=np.float32(s.y),
-            heading=np.float32(s.heading),
-            u=np.float32(s.u),
-            v=np.float32(s.v),
-            r=np.float32(s.r),
-        )
+        if isinstance(self._dynamics, FhTabularModel):
+            fh_pos = self._dynamics._engine.ship_interface.getShipPosition()
+            fh_hdg = np.radians(self._dynamics._engine.ship_interface.getShipHeading())
+
+            self._state = VesselState(
+                terminated=s.terminated,
+                truncated=s.truncated,
+                x=np.float32(fh_pos.x),
+                y=np.float32(fh_pos.y),
+                heading=np.float32((fh_hdg + np.pi) % (2.0 * np.pi) - np.pi),
+                u=np.float32(s.u),
+                v=np.float32(s.v),
+                r=np.float32(s.r),
+            )
+        else:
+            self._state = VesselState(
+                terminated=s.terminated,
+                truncated=s.truncated,
+                x=np.float32(s.x),
+                y=np.float32(s.y),
+                heading=np.float32(s.heading),
+                u=np.float32(s.u),
+                v=np.float32(s.v),
+                r=np.float32(s.r),
+            )

@@ -45,37 +45,18 @@ class Nomoto(DynamicsBase):
         Args:
             ship_spec: Vessel physical specifications used to parameterize
                 the dynamics model (e.g., mass, length, actuator limits).
-
-        Notes:
-            - All hydrodynamic and control coefficients are derived or
-              initialized during construction.
-            - The model state itself is not stored internally; only
-              accelerations are computed from inputs.
         """
 
         self.ship_spec: ShipSpecifications = ship_spec
         self._initialize_coefficients()
 
-
     def _initialize_coefficients(self):
         """
         Initialize hydrodynamic and control coefficients.
 
-        This method defines all coefficients used in the maneuvering model,
-        including:
-            - Linear velocity damping terms
-            - Yaw-rate damping
-            - Rudder-induced sway force and yaw moment
-            - Thrust effectiveness in surge
-
-        The coefficients are intentionally simple and heuristic, chosen
-        to yield qualitatively reasonable vessel behavior rather than
-        quantitatively accurate hydrodynamics.
-
-        Notes:
-            - This method is intended to be called once during initialization.
-            - Coefficients are currently hard-coded and do not yet scale
-              explicitly with vessel mass or length.
+        Coefficients are intentionally simple and heuristic, chosen to yield
+        qualitatively reasonable vessel behavior rather than quantitatively
+        accurate hydrodynamics.
         """
 
         # Linear damping and control effectiveness coefficients
@@ -93,46 +74,22 @@ class Nomoto(DynamicsBase):
         self.k_v = 0.03      # Rudder-to-sway effectiveness
 
 
-    def accelerations(
+    def _compute_accelerations(
         self,
         state: VesselState,
         rudder_angle: float,
-        thrust: float
+        thrust: float,
     ) -> Tuple[float, float, float]:
         """
         Compute body-fixed accelerations from state and control inputs.
 
-        Computes surge, sway, and yaw accelerations using a nonlinear,
-        low-order maneuvering model with heuristic coupling terms.
-
-        Rudder-induced forces generate both sway acceleration and yaw
-        acceleration, while thrust acts purely in surge.
-
         Args:
-            state: The current vessel state.
+            state:        Current vessel state.
             rudder_angle: Rudder deflection angle [rad], positive to starboard.
-            thrust: Normalized thrust command (dimensionless),
-                positive in the forward direction.
+            thrust:       Normalized thrust command (dimensionless), positive forward.
 
         Returns:
-            Tuple of accelerations `(du, dv, dr)`:
-                - du: Surge acceleration [m/s²]
-                - dv: Sway acceleration [m/s²]
-                - dr: Yaw acceleration [rad/s²]
-
-        Modeling notes:
-            - Linear damping is applied independently in surge, sway, and yaw.
-            - Rudder forces are modeled as instantaneous functions of rudder
-              angle (no actuator dynamics).
-            - A simple velocity cross-coupling term `(u * v) / L` is included
-              in yaw to emulate centripetal effects.
-            - Additional linear yaw-rate damping is applied to stabilize
-              rotational dynamics.
-
-        Limitations:
-            - No explicit mass or added-mass matrix formulation
-            - No nonlinear damping or saturation effects
-            - No environmental forces or moments
+            Tuple (du, dv, dr) — surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
 
         # Simplified dynamics

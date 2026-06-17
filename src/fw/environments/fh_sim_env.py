@@ -4,8 +4,10 @@ import numpy as np
 
 from typing import Optional
 from fw.ships.ship_factory import ShipModel
+from fw.dynamics.dynamics_model import Model
 from fw.environments.py_sim_env import PySimEnv
-from fw.simulators.fh_sim_wrapper import FhSimWrapper
+from fw.simulators.ship_simulator import ShipSimulator
+from fw.dynamics.fh_tabular_model import FhTabularModel
 
 
 class FhSimEnv(PySimEnv):
@@ -33,6 +35,7 @@ class FhSimEnv(PySimEnv):
                  verbose: Optional[bool] = None,
                  start_pos: Optional[np.ndarray] = None,
                  target_pos: Optional[np.ndarray] = None,
+                 dynamics_model: Optional[Model] = Model.FH_TABULAR,
                  ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
                  scenario: str = "DDShip_scenario1_nowindnocurrent"):
         """
@@ -76,6 +79,7 @@ class FhSimEnv(PySimEnv):
             verbose=verbose,
             start_pos=start_pos,
             target_pos=target_pos,
+            dynamics_model=dynamics_model,
             ship_model=ship_model,
         )
 
@@ -92,21 +96,26 @@ class FhSimEnv(PySimEnv):
         Called by PySimEnv.__init__ via the simulator factory pattern.
 
         Returns:
-            FhSimWrapper: Initialized wrapper around the FH engine.
+            ShipSimulator: Initialized wrapper around the FH engine.
 
         Raises:
             RuntimeError: If _fh_sim is None (should not occur after __init__ fix).
         """
 
         # Explicit guard so any future code path that bypasses
-        # __init__ does not silently pass None to FhSimWrapper.
+        # __init__ does not silently pass None to ShipSimulator.
         if self._fh_sim is None:
             raise RuntimeError(
                 "FH Simulator engine (_fh_sim) is not available. "
                 "FhSimEnv requires a working FH Simulator installation."
             )
 
-        return FhSimWrapper(self.ship.specifications, self._fh_sim, self.time_step)
+        if self.dynamics_model == Model.FH_TABULAR:
+            self.dynamics = FhTabularModel(self.ship.specifications, self._fh_sim)
+        else:
+            raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
+
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current, self.numerical_damping)
 
 
     def __deepcopy__(self, memo):
@@ -121,10 +130,12 @@ class FhSimEnv(PySimEnv):
             memo (dict): Memoization dict used by copy.deepcopy.
 
         Returns:
-            FhSimEnv: Deep copy with shared _fh_sim reference.
+            FhSimEnv: Deep copy with shared _fh_sim reference (including all
+            other references to the same bridge in the object graph).
         """
 
         new_instance = self.__class__.__new__(self.__class__)
+        memo[id(self._fh_sim)] = self._fh_sim
 
         for key, value in self.__dict__.items():
             if key == '_fh_sim':

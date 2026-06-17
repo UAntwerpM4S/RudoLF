@@ -42,15 +42,6 @@ class UGentSurrogate(DynamicsBase):
     def _initialize_coefficients(self):
         """
         Initialize mass, damping, and control coefficients.
-
-        Derives all hydrodynamic coefficients from the vessel's physical
-        properties. The resulting parameters define:
-            - Rigid-body and added-mass terms
-            - Linear and quadratic damping
-            - Rudder-induced forces and moments
-            - Propeller thrust effectiveness
-
-        This method is intended to be called once during initialization.
         """
 
         # Ship parameters
@@ -68,37 +59,27 @@ class UGentSurrogate(DynamicsBase):
         self.N_ur = -1.484041721506744e-11
         self.N_rabsr = -3720289534.3422813
 
-
-    def accelerations(self, state: VesselState,
-                      rudder_angle: float, thrust: float) -> Tuple[float, float, float]:
+    def _compute_accelerations(
+        self,
+        state: VesselState,
+        rudder_angle: float,
+        thrust: float,
+    ) -> Tuple[float, float, float]:
         """
         Compute body-fixed accelerations from state and control inputs.
 
-        Computes the surge, sway, and yaw accelerations using a nonlinear
-        3-DOF maneuvering model. Rudder effectiveness is scaled by forward
-        speed to reflect reduced control authority at low speeds, with a
-        lower bound to preserve basic maneuverability.
-
         Args:
-            state: The current vessel state.
-            rudder_angle: Rudder deflection angle in radians, positive to
-                starboard.
-            thrust: Normalized thrust command (dimensionless), positive in
-                the forward direction.
+            state:        Current vessel state.
+            rudder_angle: Rudder deflection angle [rad], positive to starboard.
+            thrust:       Normalized thrust command (dimensionless), positive forward.
 
         Returns:
-            A tuple `(du, dv, dr)` where:
-                - du: Surge acceleration (m/s²).
-                - dv: Sway acceleration (m/s²).
-                - dr: Yaw acceleration (rad/s²).
-
-        Notes:
-            - Coriolis and centripetal effects are included explicitly.
-            - Rudder forces contribute both sway force and yaw moment.
-            - The model assumes thrust acts purely in surge.
-            - This formulation is suitable for control and reinforcement
-              learning, but not for detailed seakeeping analysis.
+            Tuple (du, dv, dr) — surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
+
+        assert thrust >= 0.0, (
+            f"UGentSurrogate expects a non-negative thrust value, got {thrust}."
+        )
 
         n = thrust * 320
         n_rps = n / 60
@@ -106,7 +87,11 @@ class UGentSurrogate(DynamicsBase):
         i_zz = 4651416900.21  # kgm2
         x_g = 1.1874  # m
         d_prop = 1.6573  # m
-        t = 2 * ((0.6723 - 0.7968 * (state.u * 0.7 / (n_rps * d_prop))) * 1025 * n_rps ** 2 * d_prop ** 4)  # N
+
+        if n_rps < 1e-6:
+            t = 0.0
+        else:
+            t = 2 * ((0.6723 - 0.7968 * (state.u * 0.7 / (n_rps * d_prop))) * 1025 * n_rps ** 2 * d_prop ** 4)  # N
 
         du = (t * np.cos(rudder_angle) - self.X_u * state.u - self.X_uabsu * state.u * abs(state.u) +
               self.mass * state.v * state.r + self.X_uabsv * state.u * abs(state.v)) / (self.mass - self.X_udot)

@@ -12,6 +12,7 @@ from pathlib import Path
 from functools import partial
 from typing import Optional, Tuple
 from matplotlib import pyplot as plt
+from multiprocessing.pool import Pool
 from dataclasses import dataclass, field
 from fw.environments.py_sim_env import PySimEnv
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +23,16 @@ MIN_KEEL_CLEARANCE = 2.0
 TIMEOUT_SECONDS = 60.0
 CACHE_CLEAR_INTERVAL = 100        # Clear C:\cache every N process spawns
 CACHE_FOLDER = Path(r"C:\cache")  # Windows crash-dump folder to periodically wipe
+# Ray-cast proximity sensor constants
+RAY_MAX_DISTANCE = 200.0                                    # metres; beyond this the feature is 0
+RAY_ANGLES_DEG = np.arange(0, 360, 15)                     # 24 rays: 0°, 15°, 30°, …, 345°
+NBR_RAY_FEATURES = len(RAY_ANGLES_DEG)                      # 24
+_RAY_ANGLES_RAD = np.radians(RAY_ANGLES_DEG)               # precomputed; shape (24,)
+_RAY_SIN = np.sin(_RAY_ANGLES_RAD)                         # x-components of unit direction vectors
+_RAY_COS = np.cos(_RAY_ANGLES_RAD)                         # y-components of unit direction vectors
+# Local-frame end-point offsets (rotated by heading at call time); shape (24, 2)
+_RAY_OFFSETS = np.stack([_RAY_SIN, _RAY_COS], axis=1) * RAY_MAX_DISTANCE
+
 # ACTION_CHANGE_INTERVAL_SECONDS = 2.0  # Randomize controls every N seconds mid-episode
 
 # Try to import simulation modules early
@@ -187,21 +198,26 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
     """
     Load the supervised dataset from CSV instead of running simulations.
 
-    CSV column layout (11 columns, matching collect_supervised_dataset output):
-        X – inputs (8 columns)
-          col 0:  x                (m, world-frame position)
-          col 1:  y                (m, world-frame position)
-          col 2:  heading          (rad, normalized to [-pi, pi])
-          col 3:  surge            (m/s, body-frame longitudinal velocity)
-          col 4:  sway             (m/s, body-frame lateral velocity)
-          col 5:  yaw_rate         (rad/s)
-          col 6:  rudder_action    (normalized [-1, 1])
-          col 7:  thrust_action    (normalized [-1, 1])
+    CSV column layout (36 columns, matching collect_supervised_dataset output):
+        X – inputs (33 columns)
+          col  0: x                (m, world-frame position)
+          col  1: y                (m, world-frame position)
+          col  2: heading          (rad, normalized to [-pi, pi])
+          col  3: surge            (m/s, body-frame longitudinal velocity)
+          col  4: sway             (m/s, body-frame lateral velocity)
+          col  5: yaw_rate         (rad/s)
+          col  6: UKC              (m)
+          col  7: rudder_action    (normalized [-1, 1])
+          col  8: thrust_action    (normalized [-1, 1])
+          col  9: ray_0            (proximity at 0°,  0=far, 1=close)
+          col 10: ray_15           (proximity at 15°)
+               …
+          col 32: ray_345          (proximity at 345°)
 
         Y – one-step delta outputs (3 columns)
-          col  8: delta_surge      (m/s)
-          col  9: delta_sway       (m/s)
-          col 10: delta_yaw_rate   (rad/s)
+          col 33: delta_surge      (m/s)
+          col 34: delta_sway       (m/s)
+          col 35: delta_yaw_rate   (rad/s)
 
     Returns:
         Tuple of (x_inputs, y_outputs, counter)
@@ -209,15 +225,15 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
 
     data = np.loadtxt(file_name, delimiter=",")
 
-    expected_cols = 11
+    expected_cols = 36
     if data.ndim != 2 or data.shape[1] != expected_cols:
         raise ValueError(
             f"Expected CSV with {expected_cols} columns, got shape {data.shape}. "
             "Re-generate the dataset or check the file path."
         )
 
-    x_values = data[:, 0:8].astype(np.float32)   # x, y, heading, surge, sway, yaw_rate, rudder, thrust
-    y_values = data[:, 8:11].astype(np.float32)  # delta_surge, delta_sway, delta_yaw_rate
+    x_values = data[:, 0:33].astype(np.float32)   # x, y, heading, surge, sway, yaw_rate, UKC, rudder, thrust, ray*24
+    y_values = data[:, 33:36].astype(np.float32)  # delta_surge, delta_sway, delta_yaw_rate
     counter = x_values.shape[0]
 
     # Reconstruct start positions and dummy trajectories for the diagnostic plot.
@@ -229,6 +245,70 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
     plot_xy_points_and_trajectories(env, start_xy, trajectories)
 
     return x_values, y_values, counter
+
+
+def compute_ray_features(env: "PySimEnv", ship_pos: np.ndarray, heading_rad: float) -> np.ndarray:
+    """Cast 24 rays around the ship and return normalized proximity features.
+
+    Each ray is fired from *ship_pos* in the direction
+    (ship heading + ray_angle_deg) expressed in the world frame.
+    The ray is clipped against the river-polygon boundary (or at
+    RAY_MAX_DISTANCE, whichever comes first).
+
+    Mapping:  distance d  →  feature = (RAY_MAX_DISTANCE - d) / RAY_MAX_DISTANCE
+        d = 0 m   -> feature = 1.0   (obstacle right here)
+        d = 200 m -> feature = 0.0   (no obstacle within range)
+
+    The function tries a vectorized batch call first
+    (``env.ray_cast_distances_batch``), which avoids Python-loop overhead when
+    the environment exposes it.  If that method is absent it falls back to 24
+    sequential ``env.ray_cast_distance`` calls.
+
+    End-point directions are computed from module-level precomputed sin/cos
+    tables (_RAY_SIN, _RAY_COS) rotated by *heading_rad*, so no trig is
+    evaluated at call time.
+
+    Args:
+        env:         PySimEnv instance (provides polygon_shape and ray-cast method).
+        ship_pos:    [x, y] world-frame ship position (m).
+        heading_rad: Current ship heading in radians (world frame, 0 = North/+Y).
+
+    Returns:
+        features: float32 array of shape (NBR_RAY_FEATURES,) = (24,).
+    """
+    # Rotate the precomputed local-frame offsets into world frame using heading.
+    # Convention: dx = sin(angle), dy = cos(angle) (North-referenced bearing).
+    cos_h, sin_h = np.cos(heading_rad), np.sin(heading_rad)
+    rotated = np.empty_like(_RAY_OFFSETS)
+    rotated[:, 0] = _RAY_OFFSETS[:, 0] * cos_h + _RAY_OFFSETS[:, 1] * sin_h
+    rotated[:, 1] = -_RAY_OFFSETS[:, 0] * sin_h + _RAY_OFFSETS[:, 1] * cos_h
+    end_points = ship_pos + rotated                                # (24, 2)
+
+    origin = (float(ship_pos[0]), float(ship_pos[1]))
+
+    # -- Batch path (preferred) -----------------------------------------------
+    if hasattr(env, "ray_cast_distances_batch"):
+        # Expected signature:
+        #   env.ray_cast_distances_batch(origin, end_points, max_distance)
+        #   -> array-like of shape (24,) with distances in [0, RAY_MAX_DISTANCE]
+        distances = np.asarray(
+            env.ray_cast_distances_batch(origin, end_points, RAY_MAX_DISTANCE),
+            dtype=np.float32,
+        )
+        np.clip(distances, 0.0, RAY_MAX_DISTANCE, out=distances)
+
+    # -- Sequential fallback --------------------------------------------------
+    else:
+        distances = np.empty(NBR_RAY_FEATURES, dtype=np.float32)
+        for i in range(NBR_RAY_FEATURES):
+            d = env.ray_cast_distance(
+                origin,
+                (float(end_points[i, 0]), float(end_points[i, 1])),
+                max_distance=RAY_MAX_DISTANCE,
+            )
+            distances[i] = min(max(float(d), 0.0), RAY_MAX_DISTANCE)
+
+    return (RAY_MAX_DISTANCE - distances) / RAY_MAX_DISTANCE
 
 
 def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
@@ -252,11 +332,16 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
     output_path.mkdir(parents=True, exist_ok=True)
 
     logfile_path = output_path / "math_model.log"
-    logging.basicConfig(
-        filename=str(logfile_path),
-        level=logging.INFO,
-        format="%(levelname)s: %(message)s",
-    )
+
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        handler.close()
+        root_logger.removeHandler(handler)
+
+    file_handler = logging.FileHandler(str(logfile_path), mode="w")
+    file_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(logging.INFO)
 
     env = PySimEnv(
         render_mode=None,
@@ -325,9 +410,10 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         initial_heading = _ship_interface.getShipHeading()
         initial_vog = _ship_interface.getShipVelocityOverGround()
         initial_yaw_rate = _ship_interface.getShipYawRate()
+        initial_ukc = _ship_interface.getKeelClearance()
 
         # Full state vector including absolute position:
-        # [x, y, heading, surge, sway, yaw_rate]
+        # [x, y, heading, surge, sway, yaw_rate, UKC]
         input_state = np.array(
             [
                 initial_position.x,
@@ -336,8 +422,16 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
                 initial_vog.x,
                 -initial_vog.y,
                 np.radians(initial_yaw_rate),
+                initial_ukc,
             ],
             dtype=np.float64,
+        )
+
+        # Compute initial ray-cast proximity features (24-D)
+        initial_ray_features = compute_ray_features(
+            env,
+            np.array([initial_position.x, initial_position.y]),
+            float(input_state[2]),
         )
 
         # Generate random action and duration
@@ -352,6 +446,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         input_states = []
         output_states = []
         traj = [curr_ship_pos.copy()]
+        ray_features = initial_ray_features  # will be refreshed each step
 
         # Get controls once for efficiency
         propellers = _ship_interface.getPropellerControls()
@@ -368,7 +463,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             if not (is_in_open_water and has_sufficient_keel_clearance):
                 break
 
-            input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0))
+            input_states.append(np.concatenate([input_state.copy(), action.copy(), ray_features.copy()], axis=0))
 
             # Apply controls with safety checks
             if has_rudders:
@@ -397,6 +492,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             current_vog = _ship_interface.getShipVelocityOverGround()
             current_heading = _ship_interface.getShipHeading()
             current_yaw_rate = _ship_interface.getShipYawRate()
+            current_ukc = _ship_interface.getKeelClearance()
 
             new_surge = current_vog.x
             new_sway = -current_vog.y
@@ -422,8 +518,16 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
                     new_surge,
                     new_sway,
                     new_yaw_rate,
+                    current_ukc,
                 ],
                 dtype=np.float64,
+            )
+
+            # Update ray-cast features for the new position/heading
+            ray_features = compute_ray_features(
+                env,
+                np.array([pos.x, pos.y]),
+                float(input_state[2]),
             )
 
         # Store trajectory
@@ -503,28 +607,21 @@ def _handle_exception(sim_setup: SimSetup, exception: Exception, exception_type:
         sim_setup.output.info["traceback"] = "No traceback available"
 
 
-def run_in_process(sim_setup: SimSetup, sim_config: SimConfig) -> SimSetup:
+def run_in_process(sim_setup: SimSetup, sim_config: SimConfig, pool: Pool) -> SimSetup:
     """
-    Run simulation in a separate subprocess.
-
-    Note: Each simulation runs in its own process to avoid
-    simulator concurrency issues. This is intentional.
+    Run a single simulation using an already-running worker process from
+    *pool*, instead of spawning a brand-new process for every sample.
     """
 
-    p = multiprocessing.Pool(1)
-    res = p.apply_async(run_simulation, args=[sim_config, sim_setup])
+    res = pool.apply_async(run_simulation, args=[sim_config, sim_setup])
 
     try:
         return res.get(sim_config.timeout_seconds)
     except multiprocessing.TimeoutError:
         print("Aborting due to timeout")
-        p.terminate()
         sim_setup.output.status = "TIMEOUT"
         sim_setup.output.time_seconds = sim_config.timeout_seconds
         return sim_setup
-    finally:
-        p.close()
-        p.join()
 
 
 def collect_supervised_dataset(
@@ -537,9 +634,10 @@ def collect_supervised_dataset(
     """
     Collect supervised dataset by running multiple simulations.
 
-    CSV column layout (11 columns):
-        X (8): x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action
-        Y (3): delta_surge, delta_sway, delta_yaw_rate
+    CSV column layout (36 columns):
+        X (33): x, y, heading, surge, sway, yaw_rate, UKC, rudder_action, thrust_action,
+                ray_0, ray_15, ray_30, …, ray_345   (24 proximity features)
+        Y  (3): delta_surge, delta_sway, delta_yaw_rate
 
     Args:
         nbr_samples: Number of samples to generate
@@ -603,46 +701,47 @@ def collect_supervised_dataset(
         )
         setups.append(setup)
 
-    # Setup thread pool for parallel test execution
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        # Prepare test execution function with fixed math_model_path parameter
-        execute_with_param = partial(run_in_process, sim_config=sim_config)
+    num_workers = workers if workers else max(1, multiprocessing.cpu_count() - 1)
 
-        # Submit all tasks to the executor
-        future_to_test = {
-            executor.submit(execute_with_param, setup): (i, setup)
-            for i, setup in enumerate(setups)
-        }
+    with multiprocessing.Pool(num_workers) as pool:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            # Prepare test execution function with fixed sim_config + shared pool
+            execute_with_param = partial(run_in_process, sim_config=sim_config, pool=pool)
 
-        # Process results as they complete
-        for future in concurrent.futures.as_completed(future_to_test):
-            spawn_counter += 1
+            # Submit all tasks to the executor
+            future_to_test = {
+                executor.submit(execute_with_param, setup): (i, setup)
+                for i, setup in enumerate(setups)
+            }
 
-            # Periodically wipe C:\cache to reclaim space consumed by crash dumps
-            # from Python subprocesses that terminated unexpectedly.
-            if spawn_counter % CACHE_CLEAR_INTERVAL == 0:
-                print(f"[Cache cleanup] {spawn_counter} processes spawned — clearing {CACHE_FOLDER} …")
-                clear_cache_folder(CACHE_FOLDER)
+            # Process results as they complete
+            for future in concurrent.futures.as_completed(future_to_test):
+                spawn_counter += 1
+                index, _ = future_to_test[future]
 
-            try:
-                # Get the completed test result
-                sim_setup = future.result()
-                test_item = future_to_test[future]
-                index, _ = test_item
+                # Periodically wipe C:\cache to reclaim space consumed by crash dumps
+                # from Python subprocesses that terminated unexpectedly.
+                if spawn_counter % CACHE_CLEAR_INTERVAL == 0:
+                    print(f"[Cache cleanup] {spawn_counter} processes spawned — clearing {CACHE_FOLDER} …")
+                    clear_cache_folder(CACHE_FOLDER)
 
-                if sim_setup.output.status == "PASSED":
-                    # Update test config with results
-                    for i in range(len(sim_setup.output.x_input)):
-                        x_inputs.append(sim_setup.output.x_input[i])
-                        y_outputs.append(sim_setup.output.y_output[i])
-                    trajectories.append(sim_setup.output.trajectory)
-                    print(f"Simulation {index} succeeded: {sim_setup.output.status}")
-                    counter += 1
-                else:
-                    error_info = sim_setup.output.info.get('error', 'Unknown error')
-                    print(f"Simulation {index} failed: {error_info}")
-            except Exception as exc:
-                print(f"Simulation {index} generated an exception: {exc}")
+                try:
+                    # Get the completed test result
+                    sim_setup = future.result()
+
+                    if sim_setup.output.status == "PASSED":
+                        # Update test config with results
+                        for i in range(len(sim_setup.output.x_input)):
+                            x_inputs.append(sim_setup.output.x_input[i])
+                            y_outputs.append(sim_setup.output.y_output[i])
+                        trajectories.append(sim_setup.output.trajectory)
+                        print(f"Simulation {index} succeeded: {sim_setup.output.status}")
+                        counter += 1
+                    else:
+                        error_info = sim_setup.output.info.get('error', 'Unknown error')
+                        print(f"Simulation {index} failed: {error_info}")
+                except Exception as exc:
+                    print(f"Simulation {index} generated an exception: {exc}")
 
     print(f"Successful simulations: {counter}")
 
@@ -661,9 +760,10 @@ def collect_supervised_dataset(
     y_values = y_values[perm]
 
     store_data = np.hstack([x_values, y_values])
-    # CSV column layout (11 columns):
-    #   X (8): x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action
-    #   Y (3): delta_surge, delta_sway, delta_yaw_rate
+    # CSV column layout (36 columns):
+    #   X (33): x, y, heading, surge, sway, yaw_rate, UKC, rudder_action, thrust_action,
+    #            ray_0, ray_15, …, ray_345  (24 proximity features)
+    #   Y  (3): delta_surge, delta_sway, delta_yaw_rate
     np.savetxt(output_file, store_data, delimiter=",", fmt="%.8f")
     plot_xy_points_and_trajectories(env, xy, trajectories)
 
@@ -681,7 +781,7 @@ if __name__ == "__main__":
 
     print(f"Dataset generation complete. Successful samples: {successful_count}")
     print("Dataset shapes:")
-    print(f"X: {x_vals.shape}")  # [N, 8] -> (x, y, heading, surge, sway, yaw_rate, rudder, thrust)
+    print(f"X: {x_vals.shape}")  # [N, 33] -> (x, y, heading, surge, sway, yaw_rate, UKC, rudder, thrust, ray×24)
     print(f"Y: {y_vals.shape}")  # [N, 3] -> (delta_surge, delta_sway, delta_yaw_rate)
 
     if successful_count > 0:
