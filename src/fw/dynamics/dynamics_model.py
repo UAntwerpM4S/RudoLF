@@ -1,5 +1,5 @@
-from typing import Tuple
 from enum import auto, Enum
+from typing import Tuple, Optional
 from fw.ships.vessel_state import VesselState
 
 
@@ -65,6 +65,7 @@ class DynamicsBase:
         rudder_angle: float,
         thrust: float,
         dt: float,
+        enable_rudder_angle_scaling: Optional[bool] = False,
     ) -> Tuple[float, float, float]:
         """
         Advance body-fixed velocities by dt seconds using Euler integration.
@@ -73,10 +74,12 @@ class DynamicsBase:
         this call and must not be duplicated here.
 
         Args:
-            state:        Current vessel state.
-            rudder_angle: Rudder deflection angle [rad], positive to starboard.
-            thrust:       Normalized thrust command (dimensionless), positive forward.
-            dt:           Integration time step [s].
+            state:                       Current vessel state.
+            rudder_angle:                Rudder deflection angle [rad], positive to starboard.
+            thrust:                      Normalized thrust command (dimensionless),
+                                         positive forward.
+            dt:                          Integration time step [s].
+            enable_rudder_angle_scaling: Enable rudder angle scaling.
 
         Returns:
             Tuple (u, v, r) — un-damped, un-clipped updated body-fixed velocities.

@@ -607,10 +607,10 @@ ProfileRegistry.register(VesselProfile(
     run_mode=RunMode.TRANSFER,
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
+        dynamics_model=Model.FH_TABULAR,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
     transfer=TransferConfig(enable_rudder_angle_scaling=True),
 ))
 

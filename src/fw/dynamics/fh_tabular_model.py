@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import Tuple
+from typing import Tuple, Optional
 from fw.ships.ship_factory import ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
@@ -50,6 +50,7 @@ class FhTabularModel(DynamicsBase):
         rudder_angle: float,
         thrust: float,
         dt: float,
+        enable_rudder_angle_scaling: Optional[bool] = False,
     ) -> Tuple[float, float, float]:
         """
         Advance the FH engine by dt seconds and return updated (u, v, r).
@@ -65,6 +66,7 @@ class FhTabularModel(DynamicsBase):
             dt:           Simulation step size in seconds. Passed directly to
                           simulateSeconds(); the FH engine has been verified to
                           produce identical results for 1x2.0 s and 20x0.1 s.
+            enable_rudder_angle_scaling: Enable rudder angle scaling.
 
         Returns:
             Tuple (u, v, r) read directly from the FH engine after advancing
@@ -83,8 +85,13 @@ class FhTabularModel(DynamicsBase):
                 rudder.setEngineLeverValue(float(thrust))
         else:
             for rudder in self._engine.ship_interface.getRudderControls():
-                fh_max_deg = rudder.getMaximumAngle()
-                val = np.degrees(rudder_angle) / fh_max_deg
+                if enable_rudder_angle_scaling:
+                    framework_max_deg = np.rad2deg(self.ship_spec.max_rudder_angle)
+                                                            # convert to degrees as max_rudder_angle
+                                                            # is stored in radians in ShipSpecifications
+                    val = np.degrees(rudder_angle) / framework_max_deg
+                else:
+                    val = np.degrees(rudder_angle) / rudder.getMaximumAngle()
                 rudder.setControlValue(float(-val))   # negated: framework -> FH sign convention
 
             for propeller in self._engine.ship_interface.getPropellerControls():

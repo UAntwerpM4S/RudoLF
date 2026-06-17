@@ -1,6 +1,7 @@
 import copy
 import numpy as np
 
+from typing import Optional
 from fw.ships.vessel_state import VesselState
 from fw.ships.action_mapper import ActionMapper
 from fw.ships.ship_specs import ShipSpecifications
@@ -82,7 +83,12 @@ class ShipSimulator(BaseSimulator):
 
         return self._env
 
-    def integrate(self, actuator, time_step, surge_damping_factor, sway_damping_factor, yaw_damping_factor) -> None:
+    def integrate(self, actuator,
+                  time_step,
+                  surge_damping_factor,
+                  sway_damping_factor,
+                  yaw_damping_factor,
+                  enable_rudder_angle_scaling: Optional[bool] = False) -> None:
         """
         Advance the vessel state by a single physics integration step.
 
@@ -91,12 +97,13 @@ class ShipSimulator(BaseSimulator):
         damping, velocity clipping, and midpoint position integration.
 
         Args:
-            actuator:             ActuatorState containing the current rudder_angle
-                                  and thrust command, already updated for the step.
-            time_step:            Physics integration step size in seconds.
-            surge_damping_factor: Linear damping coefficient applied to surge velocity.
-            sway_damping_factor:  Linear damping coefficient applied to sway velocity.
-            yaw_damping_factor:   Linear damping coefficient applied to yaw rate.
+            actuator:                    ActuatorState containing the current rudder_angle
+                                         and thrust command, already updated for the step.
+            time_step:                   Physics integration step size in seconds.
+            surge_damping_factor:        Linear damping coefficient applied to surge velocity.
+            sway_damping_factor:         Linear damping coefficient applied to sway velocity.
+            yaw_damping_factor:          Linear damping coefficient applied to yaw rate.
+            enable_rudder_angle_scaling: Enable rudder angle scaling.
 
         Notes:
             - For physics-based models, environmental accelerations are added
@@ -111,7 +118,8 @@ class ShipSimulator(BaseSimulator):
         state = copy.deepcopy(self._state)
 
         # Advance dynamics — returns updated (u, v, r)
-        u, v, r = self._dynamics.step(state, actuator.rudder_angle, actuator.thrust, time_step)
+        u, v, r = self._dynamics.step(state, actuator.rudder_angle, actuator.thrust,
+                                      time_step, enable_rudder_angle_scaling)
 
         # Add environmental accelerations
         ax_env, ay_env = self._env.accelerations(state.heading)
@@ -151,8 +159,7 @@ class ShipSimulator(BaseSimulator):
         Args:
             action:                      Normalized action array [rudder, thrust] in [-1, 1].
             enable_smoothing:            Enable actuator rate limiting and smoothing.
-            enable_rudder_angle_scaling: Accepted for API consistency with
-                                         FhSimWrapper but has no effect here.
+            enable_rudder_angle_scaling: Enable rudder angle scaling.
 
         Raises:
             ValueError: If `action` does not have shape (2,).
@@ -204,14 +211,16 @@ class ShipSimulator(BaseSimulator):
                 actuator = self._actuators.apply_smoothing(action, enable_smoothing)
             else:
                 actuator = self._actuators.step(command, dyn_model_time_step, enable_smoothing)
-            self.integrate(actuator, dyn_model_time_step, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
+            self.integrate(actuator, dyn_model_time_step, surge_damping_factor, sway_damping_factor,
+                           yaw_damping_factor, enable_rudder_angle_scaling)
 
         if dt_rem > 1e-12:
             if self._is_ua_surrogate:
                 actuator = self._actuators.apply_smoothing(action, enable_smoothing)
             else:
                 actuator = self._actuators.step(command, dt_rem, enable_smoothing)
-            self.integrate(actuator, dt_rem, surge_damping_factor, sway_damping_factor, yaw_damping_factor)
+            self.integrate(actuator, dt_rem, surge_damping_factor, sway_damping_factor,
+                           yaw_damping_factor, enable_rudder_angle_scaling)
 
         s = self._state
         if isinstance(self._dynamics, FhTabularModel):
