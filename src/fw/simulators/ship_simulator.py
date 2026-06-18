@@ -120,10 +120,12 @@ class ShipSimulator(BaseSimulator):
         u, v, r = self._dynamics.step(state, actuator.rudder_angle, actuator.thrust,
                                       time_step, enable_rudder_angle_scaling)
 
-        # Add environmental accelerations
-        ax_env, ay_env = self._env.accelerations(state.heading)
-        u += ax_env * time_step
-        v += ay_env * time_step
+        # Add environmental accelerations, except for FhTabularModel and UAntwerpSurrogate,
+        # as they already add environmental effects internally.
+        if not isinstance(self._dynamics, (FhTabularModel, UAntwerpSurrogate)):
+            ax_env, ay_env = self._env.accelerations(state.heading)
+            u += ax_env * time_step
+            v += ay_env * time_step
 
         # Apply numerical damping and velocity limits (all model types)
         u = np.clip(u / (1.0 + surge_damping_factor * time_step), * self._specs.surge_limits)
