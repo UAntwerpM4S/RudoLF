@@ -234,10 +234,9 @@ class SimulatorApplier:
         """
         Override actuator limits on the simulator's :class:`ShipSpecifications`.
 
-        :class:`~fw.ships.ship_specs.ShipSpecifications` is a frozen dataclass;
-        `object.__setattr__` is used to write the new values in-place.  The
-        updated specs object is then propagated to the actuator model so both
-        stay in sync.
+        :class:`~fw.ships.ship_specs.ShipSpecifications` is a mutable dataclass;
+        fields are assigned directly.  The updated specs object is then
+        propagated to the actuator model so both stay in sync.
         """
 
         specs = (

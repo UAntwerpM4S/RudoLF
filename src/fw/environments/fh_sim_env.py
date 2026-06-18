@@ -57,9 +57,6 @@ class FhSimEnv(PySimEnv):
                 pure-Python simulation without external dependencies.
         """
 
-        # Import failure raises immediately instead of silently
-        # setting _fh_sim = None and crashing later in create_simulator(),
-        # env_specific_reset(), get_keel_clearance(), or _has_enough_keel_clearance().
         try:
             fh_bridge_module = importlib.import_module('fw.simulators.fh_sim_bridge')
             fh_bridge_class = getattr(fh_bridge_module, "FhSimBridge")
@@ -115,7 +112,7 @@ class FhSimEnv(PySimEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current, self.numerical_damping)
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
 
 
     def __deepcopy__(self, memo):

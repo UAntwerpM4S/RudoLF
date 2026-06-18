@@ -135,7 +135,8 @@ class FhSimBridge:
         Model type of the ship.
 
         Returns:
-            str: Ship model.
+            ShipModel: Ship model enum value (e.g. ShipModel.MYZAKO_DEFAULT,
+                ShipModel.TRIPOLI).
         """
 
         return self._ship_model
@@ -153,10 +154,16 @@ class FhSimBridge:
     @initial_vessel_state.setter
     def initial_vessel_state(self, value):
         """
-        Initial vessel state.
+        Set the initial vessel state used to seed the math model on first reset().
+
+        Must be assigned before the first call to reset().  The value is used
+        by _initialize_math_model() to set the FH engine's starting position,
+        heading, and velocities.
 
         Args:
-            value: Description.
+            value (VesselState): Initial state to set.  Positions (x, y) in
+                metres, heading in radians, velocities (u, v) in m/s,
+                yaw rate r in rad/s.
         """
 
         self._initial_vessel_state = value
@@ -164,10 +171,11 @@ class FhSimBridge:
 
     def __repr__(self):
         """
-        Returns the FH wrapper's user-friendly name.
+        Return a short identifier string for this bridge.
 
         Returns:
-            str: The name of the FH wrapper.
+            str: "FH" — identifies the FH Simulator bridge in log output
+                and debug representations.
         """
 
         return "FH"

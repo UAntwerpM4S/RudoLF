@@ -8,6 +8,7 @@ from fw.surrogate.inference_surrogate import SurrogatePredictor
 
 # Time step the surrogate was trained on [s]
 _SURROGATE_DT = 0.1
+WATER_DEPTH_M = 15.0
 FH_MYZAKO_MAX_RUDDER_ANGLE = 75.0
 
 # Ray-cast proximity sensor constants
@@ -76,9 +77,9 @@ class UAntwerpSurrogate(DynamicsBase):
             d = 200 m -> feature = 0.0   (no obstacle within range)
 
         The function tries a vectorized batch call first
-        (``env.ray_cast_distances_batch``), which avoids Python-loop overhead when
+        (`env.ray_cast_distances_batch`), which avoids Python-loop overhead when
         the environment exposes it.  If that method is absent it falls back to 24
-        sequential ``env.ray_cast_distance`` calls.
+        sequential `env.ray_cast_distance` calls.
 
         End-point directions are computed from module-level precomputed sin/cos
         tables (_RAY_SIN, _RAY_COS) rotated by *heading_rad*, so no trig is
@@ -134,10 +135,38 @@ class UAntwerpSurrogate(DynamicsBase):
         dt: float,
         enable_rudder_angle_scaling: Optional[bool] = False,
     ) -> Tuple[float, float, float]:
-        assert dt == _SURROGATE_DT, (
+        """
+        Advance body-fixed velocities by dt seconds via the surrogate.
+
+        Delegates to DynamicsBase.step() after asserting that dt matches the
+        surrogate's training step length.  ShipSimulator must therefore use a
+        dt that is an exact integer multiple of _SURROGATE_DT (0.1 s); any
+        fractional remainder sub-step produced by ShipSimulator.step() will
+        trip this assertion.
+
+        Args:
+            state:                       Current vessel state.
+            rudder_angle:                Rudder deflection angle [rad], positive
+                                         to starboard.
+            thrust:                      Normalized thrust command in [-1, 1].
+            dt:                          Integration step size [s].  Must equal
+                                         _SURROGATE_DT exactly.
+            enable_rudder_angle_scaling: Passed through to super().step() for
+                                         interface consistency; unused here.
+
+        Returns:
+            Tuple (u, v, r) — updated body-fixed velocities.
+
+        Raises:
+            AssertionError: If dt != _SURROGATE_DT.
+        """
+
+        assert np.isclose(dt, _SURROGATE_DT), (
             f"UAntwerpSurrogate requires dt == {_SURROGATE_DT} s (surrogate training step), got {dt}."
+            f"Ensure ShipSimulator.dt is an exact integer multiple of {_SURROGATE_DT} s "
+            f"so no fractional remainder sub-step is produced."
         )
-        return super().step(state, rudder_angle, thrust, dt)
+        return super().step(state, rudder_angle, thrust, dt, enable_rudder_angle_scaling)
 
     def _compute_accelerations(
         self,
@@ -146,23 +175,32 @@ class UAntwerpSurrogate(DynamicsBase):
         thrust: float,
     ) -> Tuple[float, float, float]:
         """
-        Predict updated body-fixed velocities using the trained surrogate.
+        Predict body-fixed velocity deltas using the trained MLP surrogate.
 
-        The surrogate expects an 8-D input in the feature order used during
-        training (see sim_fh_dataset_generator.py):
-            [x, y, heading, surge, sway, yaw_rate, rudder_normalized, thrust_normalized]
+        The surrogate expects a 33-D input vector in the feature order used
+        during training (see sim_fh_dataset_generator.py):
 
-        It returns absolute velocity deltas (delta_u, delta_v, delta_r) for
-        a 0.1 s step, which are divided by _SURROGATE_DT to yield accelerations
-        and integrated over dt by DynamicsBase.step().
+            [x, y, heading, surge, sway, yaw_rate,
+             rudder_normalized, thrust_normalized,
+             ray_0, ray_1, …, ray_23]          # 24 proximity features
+
+        `rudder_normalized` is obtained by converting `rudder_angle` from
+        radians to degrees and dividing by FH_MYZAKO_MAX_RUDDER_ANGLE (75°),
+        producing a value in [-1, 1] that matches the training data scale.
+
+        The surrogate returns absolute velocity deltas (delta_u, delta_v,
+        delta_r) for a 0.1 s step. These are divided by _SURROGATE_DT to
+        yield accelerations, which DynamicsBase.step() then integrates over dt.
 
         Damping and velocity clipping are applied by ShipSimulator after
-        this call and must not be duplicated here.
+        this call; they must not be duplicated here.
 
         Args:
             state:        Current vessel state.
-            rudder_angle: Normalized rudder command (dimensionless) in [-1, 1],
-                          passed directly as a surrogate input feature.
+            rudder_angle: Rudder deflection angle [rad], positive to starboard
+                          (body-frame convention, identical to every other
+                          DynamicsBase implementation).  Converted internally to
+                          a normalized [-1, 1] surrogate feature.
             thrust:       Normalized thrust command (dimensionless) in [-1, 1],
                           passed directly as a surrogate input feature.
 
@@ -194,7 +232,7 @@ class UAntwerpSurrogate(DynamicsBase):
         rudder = np.degrees(rudder_angle) / FH_MYZAKO_MAX_RUDDER_ANGLE
 
         x_raw = np.array(
-            [state.x, state.y, state.heading, state.u, state.v, state.r, 15.0, rudder, thrust, *ray_features],
+            [state.x, state.y, state.heading, state.u, state.v, state.r, WATER_DEPTH_M, rudder, thrust, *ray_features],
             dtype=np.float32,
         )
 

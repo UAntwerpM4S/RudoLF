@@ -1,4 +1,3 @@
-import copy
 import numpy as np
 
 from typing import Optional
@@ -18,10 +17,11 @@ class ShipSimulator(BaseSimulator):
 
     This simulator can integrate:
 
-        - Several models like the Fossen 3DOF vessel dynamics model, Nomoto, MMG, etc.
-        - Actuator dynamics and rate limiting
-        - Environmental forces (wind and current)
-        - Unified interface compatible with RL or control loops
+        - Several dynamics models: Fossen 3-DOF, Nomoto, UGentSurrogate,
+          UAntwerpSurrogate, FhTabularModel.
+        - Actuator dynamics and rate limiting.
+        - Environmental forces (wind and current) for physics-based models.
+        - A unified interface compatible with RL or control loops.
 
     The simulator computes the vessel state in earth-fixed coordinates
     using body-fixed velocities and yaw rate. Integration uses a
@@ -46,10 +46,18 @@ class ShipSimulator(BaseSimulator):
         damping and clipping are still applied for consistency.
         Environmental forces are NOT added for these models, as their engine
         already accounts for relevant dynamics.
+
+    Sub-stepping and dt constraints
+    --------------------------------
+    step() always uses a 0.1 s physics sub-step.  If the environment dt is
+    not an exact multiple of 0.1 s a fractional remainder sub-step is issued.
+    UAntwerpSurrogate asserts dt == 0.1 s on every call, so it will crash on
+    a remainder sub-step.  Use an environment dt that is an exact integer
+    multiple of 0.1 s when using UAntwerpSurrogate (e.g. 0.1, 0.5, 1.0, 2.0).
     """
 
     def __init__(self, specs: ShipSpecifications, dynamics: DynamicsBase, dt: float, wind: bool = False,
-                 current: bool = False, numerical_damping: bool = False):
+                 current: bool = False):
         """
         Initialize the ship simulator.
 
@@ -60,14 +68,12 @@ class ShipSimulator(BaseSimulator):
             dt:                Simulation time step [s]. Must be positive.
             wind:              Enable wind influence if True.
             current:           Enable water current influence if True.
-            numerical_damping: Enable numerical damping for physics-based models.
         """
 
         super().__init__(specs, dt)
 
         self._dynamics = dynamics
         self._mapper = ActionMapper()
-        self.numerical_damping = numerical_damping
         self._env = EnvironmentModel(wind, current)
 
     @property
@@ -108,7 +114,7 @@ class ShipSimulator(BaseSimulator):
             - Heading is wrapped to [-π, π].
         """
 
-        state = copy.deepcopy(self._state)
+        state = self._state
 
         # Advance dynamics — returns updated (u, v, r)
         u, v, r = self._dynamics.step(state, actuator.rudder_angle, actuator.thrust,
@@ -121,26 +127,10 @@ class ShipSimulator(BaseSimulator):
             u += ax_env * time_step
             v += ay_env * time_step
 
-        # Surge damping
-        if self.numerical_damping and hasattr(self._dynamics, "X_u") and hasattr(self._dynamics, "m11"):
-            surge_damping_factor = abs(self._dynamics.X_u / self._dynamics.m11)
-        else:
-            surge_damping_factor = 0.0
-        # Sway damping
-        if self.numerical_damping and hasattr(self._dynamics, "Y_v") and hasattr(self._dynamics, "m22"):
-            sway_damping_factor = abs(self._dynamics.Y_v / self._dynamics.m22)
-        else:
-            sway_damping_factor = 0.0
-        # Yaw damping
-        if self.numerical_damping and hasattr(self._dynamics, "N_r") and hasattr(self._dynamics, "m33"):
-            yaw_damping_factor = abs(self._dynamics.N_r / self._dynamics.m33)
-        else:
-            yaw_damping_factor = 0.0
-
         # Apply numerical damping and velocity limits (all model types)
-        u = np.clip(u / (1.0 + surge_damping_factor * time_step), *self._specs.surge_limits)
-        v = np.clip(v / (1.0 + sway_damping_factor * time_step), *self._specs.sway_limits)
-        r = np.clip(r / (1.0 + yaw_damping_factor * time_step), *self._specs.yaw_rate_limits)
+        u = np.clip(u, *self._specs.surge_limits)
+        v = np.clip(v, *self._specs.sway_limits)
+        r = np.clip(r, *self._specs.yaw_rate_limits)
 
         # Midpoint heading for improved position integration accuracy
         psi_mid = state.heading + 0.5 * r * time_step
