@@ -372,7 +372,8 @@ class FhSimEnvironment(BaseEnvironment):
 
         self._env = FhSimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
                              ship_model=self.configuration["ship_model"],
-                             scenario=self.configuration["scenario"])
+                             scenario=self.configuration["scenario"],
+                             dynamics_model=self.configuration["dynamics_model"])
 
 
 
@@ -670,6 +671,7 @@ def build_fhsim_config(framework_config: dict) -> dict:
     return {
         "ship_model": framework_config["ship_model"],
         "scenario":   framework_config["scenario"],
+        "dynamics_model": framework_config["dynamics_model"],
     }
 
 
