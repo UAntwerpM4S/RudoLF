@@ -128,9 +128,9 @@ class ShipSimulator(BaseSimulator):
             v += ay_env * time_step
 
         # Apply numerical damping and velocity limits (all model types)
-        u = np.clip(u / (1.0 + surge_damping_factor * time_step), * self._specs.surge_limits)
-        v = np.clip(v / (1.0 + sway_damping_factor * time_step), * self._specs.sway_limits)
-        r = np.clip(r / (1.0 + yaw_damping_factor * time_step), * self._specs.yaw_rate_limits)
+        u = np.clip(u / (1.0 + surge_damping_factor * time_step), *self._specs.surge_limits)
+        v = np.clip(v / (1.0 + sway_damping_factor * time_step), *self._specs.sway_limits)
+        r = np.clip(r / (1.0 + yaw_damping_factor * time_step), *self._specs.yaw_rate_limits)
 
         # Midpoint heading for improved position integration accuracy
         psi_mid = state.heading + 0.5 * r * time_step
