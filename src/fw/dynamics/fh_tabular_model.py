@@ -20,10 +20,10 @@ class FhTabularModel(DynamicsBase):
     reconstructed by finite-differencing velocity snapshots and then
     re-integrated by ShipSimulator.integrate().
 
-    Coordinate convention (matches FhSimWrapper):
+    Coordinate convention:
         u  =  velocity_over_ground.x          (surge, forward positive)
-        v  = -velocity_over_ground.y           (sway,  starboard positive)
-        r  =  radians(getShipYawRate())        (yaw rate, bow-to-starboard positive)
+        v  = -velocity_over_ground.y          (sway,  starboard positive)
+        r  =  radians(getShipYawRate())       (yaw rate, bow-to-starboard positive)
 
     Note: getShipVelocityOverGround() returns velocities already expressed
     in the body-fixed frame despite its name (confirmed empirically — the
@@ -64,16 +64,15 @@ class FhTabularModel(DynamicsBase):
             thrust:       Normalized thrust command (dimensionless) in [-1, 1],
                           passed directly to setEngineLeverValue().
             dt:           Simulation step size in seconds. Passed directly to
-                          simulateSeconds(); the FH engine has been verified to
-                          produce identical results for 1x2.0 s and 20x0.1 s.
+                          simulateSeconds().
             enable_rudder_angle_scaling: Enable rudder angle scaling.
 
         Returns:
             Tuple (u, v, r) read directly from the FH engine after advancing
             by dt seconds:
                 u = velocity_over_ground.x          [m/s]
-                v = -velocity_over_ground.y          [m/s]
-                r = radians(getShipYawRate())        [rad/s]
+                v = -velocity_over_ground.y         [m/s]
+                r = radians(getShipYawRate())       [rad/s]
         """
 
         # --- Set controls ---
