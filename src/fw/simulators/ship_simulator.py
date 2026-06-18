@@ -69,7 +69,6 @@ class ShipSimulator(BaseSimulator):
         self._mapper = ActionMapper()
         self.numerical_damping = numerical_damping
         self._env = EnvironmentModel(wind, current)
-        self._is_ua_surrogate = isinstance(self._dynamics, UAntwerpSurrogate) # (UAntwerpSurrogate, FhTabularModel))
 
     @property
     def environment(self) -> EnvironmentModel:
@@ -166,10 +165,7 @@ class ShipSimulator(BaseSimulator):
 
         Notes:
             - The action is mapped to physical actuator commands via ActionMapper.
-            - For engine-backed models (FhTabularModel, UAntwerpSurrogate),
-              apply_smoothing() is called ONCE per env step (matching FhSimWrapper
-              call frequency). For physics-based models, ActuatorModel.step() is
-              called once per sub-step.
+            - For physics-based models, ActuatorModel.step() is called once per sub-step.
             - Partial physics steps are used if the environment time step is not
               an integer multiple of the dynamics time step.
         """
@@ -207,18 +203,12 @@ class ShipSimulator(BaseSimulator):
             yaw_damping_factor = 0.0
 
         for i in range(n_full):
-            if self._is_ua_surrogate:
-                actuator = self._actuators.apply_smoothing(action, enable_smoothing)
-            else:
-                actuator = self._actuators.step(command, dyn_model_time_step, enable_smoothing)
+            actuator = self._actuators.step(command, dyn_model_time_step, enable_smoothing)
             self.integrate(actuator, dyn_model_time_step, surge_damping_factor, sway_damping_factor,
                            yaw_damping_factor, enable_rudder_angle_scaling)
 
         if dt_rem > 1e-12:
-            if self._is_ua_surrogate:
-                actuator = self._actuators.apply_smoothing(action, enable_smoothing)
-            else:
-                actuator = self._actuators.step(command, dt_rem, enable_smoothing)
+            actuator = self._actuators.step(command, dt_rem, enable_smoothing)
             self.integrate(actuator, dt_rem, surge_damping_factor, sway_damping_factor,
                            yaw_damping_factor, enable_rudder_angle_scaling)
 

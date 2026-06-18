@@ -664,6 +664,6 @@ ProfileRegistry.register(VesselProfile(
         ship_model=ShipModel.UANTWERP,
         dynamics_model=Model.UANTWERP,
     ),
-    actuator=ActuatorConfig(enable_smoothing=False),
+    actuator=ActuatorConfig(max_rudder_angle_deg=75.0, enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))

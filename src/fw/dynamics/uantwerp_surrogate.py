@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import Tuple
+from typing import Tuple, Optional
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
@@ -8,6 +8,7 @@ from fw.surrogate.inference_surrogate import SurrogatePredictor
 
 # Time step the surrogate was trained on [s]
 _SURROGATE_DT = 0.1
+FH_MYZAKO_MAX_RUDDER_ANGLE = 75.0
 
 # Ray-cast proximity sensor constants
 RAY_MAX_DISTANCE = 200.0                                    # metres; beyond this the feature is 0
@@ -131,6 +132,7 @@ class UAntwerpSurrogate(DynamicsBase):
         rudder_angle: float,
         thrust: float,
         dt: float,
+        enable_rudder_angle_scaling: Optional[bool] = False,
     ) -> Tuple[float, float, float]:
         assert dt == _SURROGATE_DT, (
             f"UAntwerpSurrogate requires dt == {_SURROGATE_DT} s (surrogate training step), got {dt}."
@@ -189,8 +191,10 @@ class UAntwerpSurrogate(DynamicsBase):
             float(state.heading),
         )
 
+        rudder = np.degrees(rudder_angle) / FH_MYZAKO_MAX_RUDDER_ANGLE
+
         x_raw = np.array(
-            [state.x, state.y, state.heading, state.u, state.v, state.r, 15.0, rudder_angle, thrust, *ray_features],
+            [state.x, state.y, state.heading, state.u, state.v, state.r, 15.0, rudder, thrust, *ray_features],
             dtype=np.float32,
         )
 
