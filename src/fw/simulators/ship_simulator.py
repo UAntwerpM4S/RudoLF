@@ -84,9 +84,6 @@ class ShipSimulator(BaseSimulator):
 
     def integrate(self, actuator,
                   time_step,
-                  surge_damping_factor,
-                  sway_damping_factor,
-                  yaw_damping_factor,
                   enable_rudder_angle_scaling: Optional[bool] = False) -> None:
         """
         Advance the vessel state by a single physics integration step.
@@ -99,9 +96,6 @@ class ShipSimulator(BaseSimulator):
             actuator:                    ActuatorState containing the current rudder_angle
                                          and thrust command, already updated for the step.
             time_step:                   Physics integration step size in seconds.
-            surge_damping_factor:        Linear damping coefficient applied to surge velocity.
-            sway_damping_factor:         Linear damping coefficient applied to sway velocity.
-            yaw_damping_factor:          Linear damping coefficient applied to yaw rate.
             enable_rudder_angle_scaling: Enable rudder angle scaling.
 
         Notes:
@@ -126,6 +120,22 @@ class ShipSimulator(BaseSimulator):
             ax_env, ay_env = self._env.accelerations(state.heading)
             u += ax_env * time_step
             v += ay_env * time_step
+
+        # Surge damping
+        if self.numerical_damping and hasattr(self._dynamics, "X_u") and hasattr(self._dynamics, "m11"):
+            surge_damping_factor = abs(self._dynamics.X_u / self._dynamics.m11)
+        else:
+            surge_damping_factor = 0.0
+        # Sway damping
+        if self.numerical_damping and hasattr(self._dynamics, "Y_v") and hasattr(self._dynamics, "m22"):
+            sway_damping_factor = abs(self._dynamics.Y_v / self._dynamics.m22)
+        else:
+            sway_damping_factor = 0.0
+        # Yaw damping
+        if self.numerical_damping and hasattr(self._dynamics, "N_r") and hasattr(self._dynamics, "m33"):
+            yaw_damping_factor = abs(self._dynamics.N_r / self._dynamics.m33)
+        else:
+            yaw_damping_factor = 0.0
 
         # Apply numerical damping and velocity limits (all model types)
         u = np.clip(u / (1.0 + surge_damping_factor * time_step), *self._specs.surge_limits)
@@ -188,31 +198,13 @@ class ShipSimulator(BaseSimulator):
         # Map normalized actions to physical actuators
         command = self._mapper.map(action, self._specs)
 
-        # Surge damping
-        if self.numerical_damping and hasattr(self._dynamics, "X_u") and hasattr(self._dynamics, "m11"):
-            surge_damping_factor = abs(self._dynamics.X_u / self._dynamics.m11)
-        else:
-            surge_damping_factor = 0.0
-        # Sway damping
-        if self.numerical_damping and hasattr(self._dynamics, "Y_v") and hasattr(self._dynamics, "m22"):
-            sway_damping_factor = abs(self._dynamics.Y_v / self._dynamics.m22)
-        else:
-            sway_damping_factor = 0.0
-        # Yaw damping
-        if self.numerical_damping and hasattr(self._dynamics, "N_r") and hasattr(self._dynamics, "m33"):
-            yaw_damping_factor = abs(self._dynamics.N_r / self._dynamics.m33)
-        else:
-            yaw_damping_factor = 0.0
-
         for i in range(n_full):
             actuator = self._actuators.step(command, dyn_model_time_step, enable_smoothing)
-            self.integrate(actuator, dyn_model_time_step, surge_damping_factor, sway_damping_factor,
-                           yaw_damping_factor, enable_rudder_angle_scaling)
+            self.integrate(actuator, dyn_model_time_step, enable_rudder_angle_scaling)
 
         if dt_rem > 1e-12:
             actuator = self._actuators.step(command, dt_rem, enable_smoothing)
-            self.integrate(actuator, dt_rem, surge_damping_factor, sway_damping_factor,
-                           yaw_damping_factor, enable_rudder_angle_scaling)
+            self.integrate(actuator, dt_rem, enable_rudder_angle_scaling)
 
         s = self._state
         if isinstance(self._dynamics, FhTabularModel):
