@@ -1,10 +1,24 @@
 import numpy as np
 
-from typing import Tuple
+from typing import Tuple, Optional
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.surrogate.inference_surrogate import SurrogatePredictor
+
+# Time step the surrogate was trained on [s]
+_SURROGATE_DT = 0.1
+FH_MYZAKO_MAX_RUDDER_ANGLE = 75.0
+
+# Ray-cast proximity sensor constants
+RAY_MAX_DISTANCE = 200.0                                    # metres; beyond this the feature is 0
+RAY_ANGLES_DEG = np.arange(0, 360, 15)                     # 24 rays: 0°, 15°, 30°, …, 345°
+NBR_RAY_FEATURES = len(RAY_ANGLES_DEG)                      # 24
+_RAY_ANGLES_RAD = np.radians(RAY_ANGLES_DEG)               # precomputed; shape (24,)
+_RAY_SIN = np.sin(_RAY_ANGLES_RAD)                         # x-components of unit direction vectors
+_RAY_COS = np.cos(_RAY_ANGLES_RAD)                         # y-components of unit direction vectors
+# Local-frame end-point offsets (rotated by heading at call time); shape (24, 2)
+_RAY_OFFSETS = np.stack([_RAY_SIN, _RAY_COS], axis=1) * RAY_MAX_DISTANCE
 
 
 class UAntwerpSurrogate(DynamicsBase):
@@ -15,19 +29,13 @@ class UAntwerpSurrogate(DynamicsBase):
     one-step body-frame velocity deltas given the current kinematic state
     and normalized control inputs.
 
-    The surrogate predicts:
-        (delta_surge, delta_sway, delta_yaw_rate)
+    The surrogate predicts absolute velocity deltas:
+        (delta_u, delta_v, delta_r)
 
-    World-frame integration (dx, dy, dpsi) is handled externally by
-    ShipSimulator.integrate(), which applies midpoint heading, velocity
-    clipping, and heading wrapping.  This class must NOT attempt to
-    replicate that logic.
-
-    Output of accelerations() matches the DynamicsBase / ShipSimulator
-    contract:
-        (du, dv, dr)
-    where each value is a one-step body-frame delta to be added to the
-    current velocity state by the integrator.
+    These deltas are divided by _SURROGATE_DT (0.1 s) to yield accelerations,
+    which are then integrated over dt by DynamicsBase.step(). This is
+    mathematically correct only when dt == _SURROGATE_DT; step() enforces
+    this with an assertion.
 
     Coordinate frame and assumptions:
         - Body-fixed reference frame at the vessel center of gravity (CG)
@@ -41,7 +49,7 @@ class UAntwerpSurrogate(DynamicsBase):
         Initialize the surrogate dynamics model.
 
         Args:
-            ship_spec: Vessel physical specifications.  Used to inverse-map
+            ship_spec: Vessel physical specifications. Used to inverse-map
                 physical actuator values back to the normalized [-1, 1]
                 action space that the surrogate was trained on.
         """
@@ -49,43 +57,121 @@ class UAntwerpSurrogate(DynamicsBase):
         self.ship_spec: ShipSpecifications = ship_spec
         self.surrogate = SurrogatePredictor("checkpoints/best_surrogate.pth")
 
-    # ------------------------------------------------------------------
-    # DynamicsBase interface
-    # ------------------------------------------------------------------
+        # Imported locally to avoid a circular import (py_sim_env imports this module).
+        # A single instance is created here and reused for ray-cast geometry lookups.
+        from fw.environments.py_sim_env import PySimEnv
+        self._env = PySimEnv(render_mode=None, time_step=_SURROGATE_DT, wind=False, current=False)
 
-    def accelerations(
+    @staticmethod
+    def compute_ray_features(env: "PySimEnv", ship_pos: np.ndarray, heading_rad: float) -> np.ndarray:
+        """Cast 24 rays around the ship and return normalized proximity features.
+
+        Each ray is fired from *ship_pos* in the direction
+        (ship heading + ray_angle_deg) expressed in the world frame.
+        The ray is clipped against the river-polygon boundary (or at
+        RAY_MAX_DISTANCE, whichever comes first).
+
+        Mapping:  distance d  →  feature = (RAY_MAX_DISTANCE - d) / RAY_MAX_DISTANCE
+            d = 0 m   -> feature = 1.0   (obstacle right here)
+            d = 200 m -> feature = 0.0   (no obstacle within range)
+
+        The function tries a vectorized batch call first
+        (``env.ray_cast_distances_batch``), which avoids Python-loop overhead when
+        the environment exposes it.  If that method is absent it falls back to 24
+        sequential ``env.ray_cast_distance`` calls.
+
+        End-point directions are computed from module-level precomputed sin/cos
+        tables (_RAY_SIN, _RAY_COS) rotated by *heading_rad*, so no trig is
+        evaluated at call time.
+
+        Args:
+            env:         PySimEnv instance (provides polygon_shape and ray-cast method).
+            ship_pos:    [x, y] world-frame ship position (m).
+            heading_rad: Current ship heading in radians (world frame, 0 = North/+Y).
+
+        Returns:
+            features: float32 array of shape (NBR_RAY_FEATURES,) = (24,).
+        """
+        # Rotate the precomputed local-frame offsets into world frame using heading.
+        # Convention: dx = sin(angle), dy = cos(angle) (North-referenced bearing).
+        cos_h, sin_h = np.cos(heading_rad), np.sin(heading_rad)
+        rotated = np.empty_like(_RAY_OFFSETS)
+        rotated[:, 0] = _RAY_OFFSETS[:, 0] * cos_h + _RAY_OFFSETS[:, 1] * sin_h
+        rotated[:, 1] = -_RAY_OFFSETS[:, 0] * sin_h + _RAY_OFFSETS[:, 1] * cos_h
+        end_points = ship_pos + rotated  # (24, 2)
+
+        origin = (float(ship_pos[0]), float(ship_pos[1]))
+
+        # -- Batch path (preferred) -----------------------------------------------
+        if hasattr(env, "ray_cast_distances_batch"):
+            # Expected signature:
+            #   env.ray_cast_distances_batch(origin, end_points, max_distance)
+            #   -> array-like of shape (24,) with distances in [0, RAY_MAX_DISTANCE]
+            distances = np.asarray(
+                env.ray_cast_distances_batch(origin, end_points, RAY_MAX_DISTANCE),
+                dtype=np.float32,
+            )
+            np.clip(distances, 0.0, RAY_MAX_DISTANCE, out=distances)
+
+        # -- Sequential fallback --------------------------------------------------
+        else:
+            distances = np.empty(NBR_RAY_FEATURES, dtype=np.float32)
+            for i in range(NBR_RAY_FEATURES):
+                d = env.ray_cast_distance(
+                    origin,
+                    (float(end_points[i, 0]), float(end_points[i, 1])),
+                    max_distance=RAY_MAX_DISTANCE,
+                )
+                distances[i] = min(max(float(d), 0.0), RAY_MAX_DISTANCE)
+
+        return (RAY_MAX_DISTANCE - distances) / RAY_MAX_DISTANCE
+
+    def step(
+        self,
+        state: VesselState,
+        rudder_angle: float,
+        thrust: float,
+        dt: float,
+        enable_rudder_angle_scaling: Optional[bool] = False,
+    ) -> Tuple[float, float, float]:
+        assert dt == _SURROGATE_DT, (
+            f"UAntwerpSurrogate requires dt == {_SURROGATE_DT} s (surrogate training step), got {dt}."
+        )
+        return super().step(state, rudder_angle, thrust, dt)
+
+    def _compute_accelerations(
         self,
         state: VesselState,
         rudder_angle: float,
         thrust: float,
     ) -> Tuple[float, float, float]:
         """
-        Predict one-step body-frame velocity deltas using the trained surrogate.
+        Predict updated body-fixed velocities using the trained surrogate.
 
-        The surrogate expects an 8-D input in the same feature order used
-        during training (see sim_fh_dataset_generator.py):
-            [x, y, heading, surge, sway, yaw_rate,
-             rudder_normalized, thrust_normalized]
+        The surrogate expects an 8-D input in the feature order used during
+        training (see sim_fh_dataset_generator.py):
+            [x, y, heading, surge, sway, yaw_rate, rudder_normalized, thrust_normalized]
 
-        It returns:
-            (delta_surge, delta_sway, delta_yaw_rate)
+        It returns absolute velocity deltas (delta_u, delta_v, delta_r) for
+        a 0.1 s step, which are divided by _SURROGATE_DT to yield accelerations
+        and integrated over dt by DynamicsBase.step().
 
-        World-frame position and heading updates are computed by
-        ShipSimulator.integrate() and must not be duplicated here.
+        Damping and velocity clipping are applied by ShipSimulator after
+        this call and must not be duplicated here.
 
         Args:
-            state: The current vessel state.
-            rudder_angle: Physical rudder deflection [rad] (inverse-mapped
-                          to normalized [-1, 1] internally).
-            thrust:       Physical thrust command (inverse-mapped to
-                          normalized [-1, 1] internally).
+            state:        Current vessel state.
+            rudder_angle: Normalized rudder command (dimensionless) in [-1, 1],
+                          passed directly as a surrogate input feature.
+            thrust:       Normalized thrust command (dimensionless) in [-1, 1],
+                          passed directly as a surrogate input feature.
 
         Returns:
-            Tuple (du, dv, dr) — one-step body-frame velocity deltas to be
-            added directly to the current state by ShipSimulator.integrate().
+            Tuple (du, dv, dr) — body-fixed accelerations [m/s², m/s², rad/s²],
+            valid only for dt == _SURROGATE_DT (0.1 s).
 
         Raises:
-            ValueError: If any required positional/context argument is None.
+            ValueError: If required state fields (x, y, heading) are None.
         """
 
         missing = [
@@ -96,14 +182,21 @@ class UAntwerpSurrogate(DynamicsBase):
         ]
         if missing:
             raise ValueError(
-                f"UAntwerpSurrogate.accelerations() requires: {missing}."
+                f"UAntwerpSurrogate.step() requires state fields: {missing}."
             )
 
+        ray_features = self.compute_ray_features(
+            self._env,
+            np.array([state.x, state.y]),
+            float(state.heading),
+        )
+
+        rudder = np.degrees(rudder_angle) / FH_MYZAKO_MAX_RUDDER_ANGLE
+
         x_raw = np.array(
-            [state.x, state.y, state.heading, state.u, state.v, state.r, rudder_angle, thrust],
+            [state.x, state.y, state.heading, state.u, state.v, state.r, 15.0, rudder, thrust, *ray_features],
             dtype=np.float32,
         )
 
-        du, dv, dr = self.surrogate.predict_single(x_raw)
-
-        return float(du/0.1), float(dv/0.1), float(dr/0.1)
+        delta_u, delta_v, delta_r = self.surrogate.predict_single(x_raw)
+        return float(delta_u/_SURROGATE_DT), float(delta_v/_SURROGATE_DT), float(delta_r/_SURROGATE_DT)

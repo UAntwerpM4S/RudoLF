@@ -607,10 +607,10 @@ ProfileRegistry.register(VesselProfile(
     run_mode=RunMode.TRANSFER,
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
+        dynamics_model=Model.FH_TABULAR,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
     transfer=TransferConfig(enable_rudder_angle_scaling=True),
 ))
 
@@ -622,10 +622,10 @@ ProfileRegistry.register(VesselProfile(
     run_mode=RunMode.TRANSFER,
     model=ModelConfig(
         ship_model=ShipModel.TRIPOLI,
-        dynamics_model=Model.UGENT_SURROGATE,
+        dynamics_model=Model.FH_TABULAR,
     ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
+    actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
     transfer=TransferConfig(enable_rudder_angle_scaling=True),
 ))
 
@@ -637,10 +637,10 @@ ProfileRegistry.register(VesselProfile(
     run_mode=RunMode.INFERENCE,
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
+        dynamics_model=Model.FH_TABULAR,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))
 
 ProfileRegistry.register(VesselProfile(
@@ -664,6 +664,6 @@ ProfileRegistry.register(VesselProfile(
         ship_model=ShipModel.UANTWERP,
         dynamics_model=Model.UANTWERP,
     ),
-    actuator=ActuatorConfig(enable_smoothing=False),
+    actuator=ActuatorConfig(max_rudder_angle_deg=75.0, enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))

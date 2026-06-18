@@ -1,5 +1,6 @@
 import os
 import math
+import shapely
 import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
@@ -16,13 +17,14 @@ except ImportError:
     print("Warning: 'TkAgg' backend not available. Falling back to 'Agg'.")
     matplotlib.use('Agg')  # Use non-interactive backend as fallback
 
+from shapely import LineString
 from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
 from fw.environments.tools import create_checkpoints_from_simple_path
-from fw.reward.reward import Reward
 from fw.ships.ship_factory import create_ship, ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
+from fw.reward.reward import Reward
 
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.dynamics.ugent_surrogate import UGentSurrogate
@@ -164,6 +166,7 @@ class PySimEnv(BaseEnv):
         self.previous_heading = None
         self.performed_action = None
         self.previous_action = None
+        self._boundary_cache = None
         self.background = None
         self.dynamics = None
         
@@ -471,6 +474,136 @@ class PySimEnv(BaseEnv):
         """
 
         return 0.0
+
+    def ray_cast_distance(
+            self,
+            origin: Tuple[float, float],
+            end_point: Tuple[float, float],
+            max_distance: float = 200.0,
+    ) -> float:
+        """Return the distance from *origin* to the nearest river-boundary
+        intersection along the ray ``origin → end_point``.
+
+        The ray is defined by the two points; only the portion within
+        [0, max_distance] from *origin* is considered.  If the ray does not
+        intersect the polygon boundary within that range, *max_distance* is
+        returned (i.e. no obstacle detected).
+
+        Args:
+            origin:       (x, y) start point of the ray (world frame, metres).
+            end_point:    (x, y) point that defines the ray direction.  Its
+                          distance from *origin* should be >= max_distance so
+                          the full sensor range is covered.
+            max_distance: Cut-off range in metres.  Hits beyond this distance
+                          are ignored and the method returns max_distance.
+
+        Returns:
+            float: Distance to the nearest boundary intersection in metres,
+                   clipped to [0, max_distance].
+        """
+        ray = LineString([origin, end_point])
+        hit = self.polygon_shape.boundary.intersection(ray)
+
+        if hit.is_empty:
+            return max_distance
+
+        origin_pt = Point(origin)
+
+        if hit.geom_type == 'Point':
+            dist = origin_pt.distance(hit)
+        elif hit.geom_type in ('MultiPoint', 'GeometryCollection'):
+            # May include the origin itself (distance ≈ 0) when the ship sits
+            # exactly on the boundary; skip those and take the nearest far hit.
+            dists = [origin_pt.distance(g) for g in hit.geoms if not g.is_empty]
+            far = [d for d in dists if d > 1e-6]
+            dist = min(far) if far else 0.0
+        else:
+            # LineString / MultiLineString can appear when the ray is collinear
+            # with a boundary segment; treat as touching the boundary.
+            dist = origin_pt.distance(hit)
+
+        return float(min(dist, max_distance))
+
+    def ray_cast_distances_batch(
+            self,
+            origin: Tuple[float, float],
+            end_points: np.ndarray,
+            max_distance: float = 200.0,
+    ) -> np.ndarray:
+        """Vectorised version of :meth:`ray_cast_distance` for multiple rays.
+
+        Fires *N* rays simultaneously from a common *origin* and returns all
+        distances in a single call.
+
+        Unlike a Python loop calling :meth:`ray_cast_distance` N times, this
+        builds all N ray geometries as a single Shapely array and calls
+        ``shapely.intersection`` / ``shapely.distance`` once each, which run
+        in a compiled GEOS loop (Shapely >= 2.0) rather than once per ray in
+        Python. The only remaining Python-level loop is over the rare subset
+        of rays whose intersection is a MultiPoint/GeometryCollection (e.g.
+        the ship sitting exactly on the boundary), which need the near-zero
+        self-hit filtered out before taking the nearest distance.
+
+        Each ray is processed against the pre-cached boundary object
+        (``self._boundary_cache``), which is created on the first call and
+        reused thereafter.
+
+        Args:
+            origin:       (x, y) start point shared by all rays (world frame).
+            end_points:   Float array of shape (N, 2) — one end-point per ray.
+                          Each row should be at least *max_distance* metres from
+                          *origin* to cover the full sensor range.
+            max_distance: Cut-off range in metres.
+
+        Returns:
+            np.ndarray: Float32 array of shape (N,) with distances clipped to
+                        [0, max_distance].  Index *i* corresponds to the ray
+                        toward ``end_points[i]``.
+        """
+        # Cache the boundary object to avoid re-extracting it every call.
+        if not hasattr(self, '_boundary_cache'):
+            self._boundary_cache = self.polygon_shape.boundary
+
+        boundary = self._boundary_cache
+        origin_pt = Point(origin)
+        n = len(end_points)
+
+        # Build all N ray LineStrings in one vectorized call instead of a
+        # Python loop of LineString(...) constructors.
+        origins_arr = np.tile(np.asarray(origin, dtype=np.float64), (n, 1))
+        ends_arr = np.asarray(end_points, dtype=np.float64)
+        coords = np.stack([origins_arr, ends_arr], axis=1)  # (n, 2, 2)
+        rays = shapely.linestrings(coords)
+
+        # Single vectorized intersection call against the (scalar) boundary,
+        # broadcasting boundary against all n rays at the GEOS level.
+        hits = shapely.intersection(boundary, rays)
+
+        # Vectorised distance call. Works correctly for Point/LineString/
+        # empty results; gives the WRONG answer for MultiPoint/
+        # GeometryCollection hits (it would return the distance to the
+        # nearest point in the set, including a spurious near-zero self-hit
+        # when the origin sits on the boundary) so those are corrected below.
+        dists = shapely.distance(origin_pt, hits)
+
+        # shapely.distance on an empty geometry returns nan -> no obstacle
+        # detected within range, so treat as max_distance.
+        dists = np.where(np.isnan(dists), max_distance, dists)
+
+        # Fix up the rare MultiPoint / GeometryCollection cases individually
+        # (mirrors the scalar fallback in ray_cast_distance).
+        geom_types = shapely.get_type_id(hits)
+        # GEOS type ids: 4 = MultiPoint, 7 = GeometryCollection
+        mixed_mask = np.isin(geom_types, (4, 7))
+        if mixed_mask.any():
+            for i in np.flatnonzero(mixed_mask):
+                hit = hits[i]
+                sub_dists = [origin_pt.distance(g) for g in hit.geoms if not g.is_empty]
+                far = [d for d in sub_dists if d > 1e-6]
+                dists[i] = min(far) if far else 0.0
+
+        distances = np.minimum(dists, max_distance).astype(np.float32)
+        return distances
 
     def _has_enough_keel_clearance(self, depth_threshold: float = 0.5) -> bool:
         """
