@@ -466,12 +466,19 @@ class PySimEnv(BaseEnv):
 
         return np.array(samples, dtype=np.float32)
 
-    def get_keel_clearance(self) -> float:
+    def get_keel_clearance(self, pos: Optional[np.ndarray] = None) -> float:
         """
         Get keel clearance.
+
+        Args:
+            pos (np.array, optional): The position for which
+                to query the keel clearance.
         """
 
-        return 0.0
+        if isinstance(self.dynamics, UAntwerpSurrogate):
+            return self.dynamics.get_ukc(pos)
+        else:
+            return 0.0
 
     def ray_cast_distance(
             self,
@@ -1064,7 +1071,7 @@ class PySimEnv(BaseEnv):
         self.velocities = self.phys_sim.state.u
 
         # Keel clearance
-        self.ukc = self.get_keel_clearance()
+        self.ukc = self.get_keel_clearance(self.ship_pos)
 
         # Ship information
         rudder_change = abs(self.performed_action[0] - self.previous_action[0])

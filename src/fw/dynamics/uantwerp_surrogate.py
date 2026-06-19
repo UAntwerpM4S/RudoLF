@@ -137,6 +137,20 @@ class UAntwerpSurrogate(DynamicsBase):
 
         return (RAY_MAX_DISTANCE - distances) / RAY_MAX_DISTANCE
 
+    def get_ukc(self, pos: Optional[np.ndarray]):
+        """
+        Query the current under-keel clearance.
+
+        Args:
+            pos (np.array, optional): The position for which
+                to query the keel clearance.
+
+        Returns:
+            float: Keel clearance in metres.
+        """
+
+        return self.ukc_lookup.get_ukc(pos[0], pos[1])
+
     def step(
         self,
         state: VesselState,
