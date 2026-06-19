@@ -149,7 +149,7 @@ class UAntwerpSurrogate(DynamicsBase):
             float: Keel clearance in metres.
         """
 
-        return self.ukc_lookup.get_ukc(pos[0], pos[1])
+        return self.ukc_lookup.get_ukc(pos[0], pos[1]) if self.ukc_lookup else WATER_DEPTH_M
 
     def step(
         self,
