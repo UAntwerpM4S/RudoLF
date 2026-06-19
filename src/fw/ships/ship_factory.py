@@ -13,7 +13,6 @@ class ShipModel(Enum):
     MYZAKO_29 = auto()
     MYZAKO_37 = auto()
     TRIPOLI = auto()
-    UANTWERP = auto()
 
 
 class MyzakoShip:
@@ -56,9 +55,6 @@ class MyzakoShip:
 
             TRIPOLI:
                 Length 110 m, mass 6.16 × 10⁶ kg, heuristic coefficients.
-
-            UANTWERP:
-                Length 110 m, mass 3.86 × 10⁶ kg, heuristic coefficients.
         """
 
         if ship_model == ShipModel.MYZAKO_29:
@@ -92,20 +88,6 @@ class MyzakoShip:
         elif ship_model == ShipModel.TRIPOLI:
             mass = 6161870.27   # 7.16e6
             length = 110.0  # 109.0
-            X_udot_coeff = -0.05
-            Y_vdot_coeff = -0.5
-            N_rdot_coeff = -0.05
-            X_u_coeff = -0.002
-            Y_v_coeff = -0.02
-            N_r_coeff = -0.001
-            X_uu_coeff = -0.0005
-            Y_vv_coeff = -0.005
-            N_rr_coeff = -0.0005
-            Y_uv_coeff = -0.005
-            N_uv_coeff = -0.0005
-        elif ship_model == ShipModel.UANTWERP:
-            mass = 3.86e6
-            length = 110.0
             X_udot_coeff = -0.05
             Y_vdot_coeff = -0.5
             N_rdot_coeff = -0.05

@@ -661,7 +661,7 @@ ProfileRegistry.register(VesselProfile(
     description="Training profile for UAntwerp's surrogate model.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
-        ship_model=ShipModel.UANTWERP,
+        ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.UANTWERP,
     ),
     actuator=ActuatorConfig(max_rudder_angle_deg=75.0, enable_smoothing=False),
