@@ -30,8 +30,6 @@ def get_device(device: str = "auto") -> torch.device:
     else:
         device = torch.device(device)
 
- 
-
     # If CUDA is requested but not available, fallback to CPU
     if device.type == torch.device("cuda").type and not torch.cuda.is_available():
         return torch.device("cpu")

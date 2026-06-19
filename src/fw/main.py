@@ -38,11 +38,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     framework_config = get_config_parameters()
 
-    # get_config_parameters() already applies the profile to framework_config;
     # retrieve the profile object here only for the later apply_profile(env/sim) calls.
     profile_name = framework_config.get("profile", "default_profile")
     profile = ProfileRegistry.get(profile_name)
-    profile.validate()
 
     reward_configs = framework_config.get("reward_configs", [])
     configured_env_names = resolve_environment_names(
@@ -162,7 +160,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         # repr(e) returns e._name which equals ENVIRONMENT_NAME (e.g. "MultiSimEnv").
         batch_has_multi = any(e.gym_env.type_name == multi_sim_env_name for e in envs)
         batch_policy = MULTI_PPO_POLICY_NAME if batch_has_multi else PPO_POLICY_NAME
-        std_trainer = Trainer(batch_policy, envs, profile, "SimpleScheduler")
+        std_trainer = Trainer(batch_policy, envs, profile, "SimpleScheduler", config=framework_config)
         if action == "visualize":
             std_trainer.visualize(envs, airsim_bridge=None)
         else:
@@ -195,7 +193,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             first_env_name = resolve_environment_name(first_env_type)
             dummy_env = build_default_environment(first_env_name, framework_config)
             eval_policy_name = MULTI_PPO_POLICY_NAME if first_env_name == multi_sim_env_name else PPO_POLICY_NAME
-            trainer = Trainer(eval_policy_name, [dummy_env], profile, "SimpleScheduler")
+            trainer = Trainer(eval_policy_name, [dummy_env], profile, "SimpleScheduler", config=framework_config)
 
             print(f"[main] Starting reward evaluation for {len(reward_configs)} configurations...")
             results = trainer.evaluate_reward(reward_configs, configuration, verbose=True)

@@ -57,7 +57,6 @@ class SinglePPOAgent(BasePPOAgent):
         Notes:
             - Automatically infers input and output dimensions from the environment.
             - Initializes the PPO policy network and optimizer.
-            - Sets up running statistics for optional reward normalization.
             - Profile-dependent operations (initial state setup, action adaptation) only run when profile is not None.
         """
 
@@ -76,10 +75,6 @@ class SinglePPOAgent(BasePPOAgent):
         self.policy = PPOPolicy(self.input_dim, self.output_dim, str(self.device))
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         self._vec_env = None
-
-        self.reward_mean = 0.0
-        self.reward_var = 1.0
-        self.reward_count = 1e-4  # avoid division by zero
 
     def _is_airsim_env(self) -> bool:
         """

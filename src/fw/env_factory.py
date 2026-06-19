@@ -28,14 +28,6 @@ class EnvironmentRegistryError(Exception):
     """ General environment registry error """
 
 
-def _normalize_configuration(configuration):
-    """
-    Backward-compatible shim to fw.common.tools.config_utils.
-    """
-
-    return normalize_configuration(configuration)
-
-
 class _Factory:
     """
     Environment factory to create and store unique environment instances.
@@ -105,7 +97,7 @@ class _Factory:
                 or if a conflicting configuration is provided.
         """
 
-        normalized_configuration = _normalize_configuration(configuration)
+        normalized_configuration = normalize_configuration(configuration)
 
         try:
             environment_class = cls._environment_classes[environment_name]
@@ -162,7 +154,7 @@ class BaseEnvironment:
         """
 
         super().__init__()
-        normalized_configuration = _normalize_configuration(configuration)
+        normalized_configuration = normalize_configuration(configuration)
         self._configuration = {} if normalized_configuration is None else normalized_configuration
         self._name = name
         self._env = None  # Will hold the actual simulation environment (e.g., PySimEnv or FhSimEnv)

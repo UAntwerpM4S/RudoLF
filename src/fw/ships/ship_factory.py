@@ -32,22 +32,33 @@ class MyzakoShip:
 
     def __init__(self, ship_model: ShipModel):
         """
-        Initialize the Myzako ship with default parameters.
+        Initialize the ship model with parameters specific to *ship_model*.
 
-        The default values are intended for simulation and control
-        testing purposes:
+        Hydrodynamic coefficients (mass, length, added-mass, damping) differ
+        per variant; the actuator and kinematic limits below are shared across
+        all variants:
 
-            - Length: 110 m
-            - Mass: 3.86e6 kg
-            - Maximum rudder angle: 60 deg
-            - Maximum rudder rate: 1 rad/s
-            - Thrust: min 0.1, max 1.0 (normalized)
-            - Maximum thrust rate: 0.5 /s
-            - Rudder jitter threshold: 0.01 rad
-            - Thrust jitter threshold: 0.005
+            - Maximum rudder angle : 46.5 deg  (≈ 0.812 rad)
+            - Maximum rudder rate  : 6.0 deg/s (≈ 0.105 rad/s)
+            - Rudder jitter threshold : 0.6 deg
+            - Thrust               : min 0.1, max 1.0 (normalized)
+            - Maximum thrust rate  : 0.07 /s
+            - Thrust jitter threshold : 0.005
             - Surge velocity limits: 0 – 5 m/s
-            - Sway velocity limits: -2 – 2 m/s
-            - Yaw rate limits: -0.5 – 0.5 rad/s
+            - Sway velocity limits : -2 – 2 m/s
+            - Yaw rate limits      : -0.5 – 0.5 rad/s
+
+        Per-variant hull parameters:
+
+            MYZAKO_DEFAULT / MYZAKO_29 / MYZAKO_37:
+                Length 108–110 m, mass 3.13–4.19 × 10⁶ kg, identified
+                hydrodynamic coefficients from model-test data.
+
+            TRIPOLI:
+                Length 110 m, mass 6.16 × 10⁶ kg, heuristic coefficients.
+
+            UANTWERP:
+                Length 110 m, mass 3.86 × 10⁶ kg, heuristic coefficients.
         """
 
         if ship_model == ShipModel.MYZAKO_29:
@@ -164,11 +175,6 @@ def create_ship(ship_model: ShipModel = ShipModel.MYZAKO_DEFAULT) -> MyzakoShip:
         110.0
     """
 
-    if (ship_model == ShipModel.MYZAKO_DEFAULT or
-        ship_model == ShipModel.MYZAKO_29 or
-        ship_model == ShipModel.MYZAKO_37 or
-        ship_model == ShipModel.TRIPOLI or
-        ship_model == ShipModel.UANTWERP):
-        return MyzakoShip(ship_model)
-    else:
+    if not isinstance(ship_model, ShipModel):
         raise ValueError(f"Ship model '{ship_model}' not supported yet.")
+    return MyzakoShip(ship_model)

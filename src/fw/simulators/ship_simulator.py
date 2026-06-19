@@ -211,14 +211,3 @@ class ShipSimulator(BaseSimulator):
                 v=np.float32(s.v),
                 r=np.float32(s.r),
             )
-        else:
-            self._state = VesselState(
-                terminated=s.terminated,
-                truncated=s.truncated,
-                x=np.float32(s.x),
-                y=np.float32(s.y),
-                heading=np.float32(s.heading),
-                u=np.float32(s.u),
-                v=np.float32(s.v),
-                r=np.float32(s.r),
-            )
