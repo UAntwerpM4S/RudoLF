@@ -130,13 +130,13 @@ class RRTStarReplanner:
 
     def __init__(
         self,
-        danger_radius: float = 40.0,
-        inner_margin: float = 10.0,
-        outer_margin: float = 300.0,
-        max_iter: int = 1_000,
-        refinement_iter: int = 5_000,
+        danger_radius: float = 15.0,
+        inner_margin: float = 5.0,
+        outer_margin: float = 500.0,
+        max_iter: int = 50_000,
+        refinement_iter: int = 3_000,
         step_size: float = 30.0,
-        goal_bias: float = 0.10,
+        goal_bias: float = 0.1,
         goal_tolerance: float = 2.0,
         seed: Optional[int] = None,
     ):

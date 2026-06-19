@@ -1,36 +1,66 @@
 import math
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Tuple
 
 import numpy as np
 
 
 class ArtificialPotentialField:
     """
-    Artificial Potential Field helper used by the hybrid RRT-APF replanner.
+    Attractive-only Artificial Potential Field helper used by the hybrid
+    RRT-APF replanner.
 
-    The implementation follows the structure of the paper the user provided:
-      - total force = attractive(goal) + repulsive(static) + repulsive(dynamic)
-      - weights between RRT and APF are adapted from the local obstacle density
+    Design note
+    -----------
+    This implementation deliberately has NO repulsive term. Obstacle
+    avoidance is already handled upstream by RRTStarReplanner:
+      - sampling is restricted to the annulus [search_inner, search_outer]
+        around the obstacle (see RRTStarReplanner._sample), and
+      - every candidate edge is rejected if it crosses search_inner
+        (see RRTStarReplanner._edge_free).
+    Adding a repulsive force here would double-count obstacle avoidance and
+    was the source of the previous "bad path" behaviour (the two repulsive
+    fields fought each other / pushed nodes out of the valid annulus).
 
-    The class is intentionally lightweight so it can be plugged into the
-    existing RRT code with minimal changes.
+    So this class only ever does one thing: produce a force that pulls a
+    candidate node toward the goal, and a (alpha, beta) blend weight that
+    decides how much of "go toward goal" vs. "go toward random RRT sample"
+    should be used at the current node, based on how close that node already
+    is to the goal.
     """
 
     def __init__(
         self,
-        attractive_gain: float = 1.0,
-        attractive_shape: float = 0.02,
-        repulsive_gain: float = 1.0,
-        repulsive_shape: float = 0.08,
-        density_radius: float = 60.0,
-        max_obstacle_ratio: float = 0.95,
+        attractive_gain: float = 0.1,
+        attractive_shape: float = 0.002,
+        beta_min: float = 0.05,
+        beta_max: float = 0.8,
     ) -> None:
+        """
+        Parameters
+        ----------
+        attractive_gain : float
+            Saturation magnitude of the attractive force (Eq. 5 style,
+            exponential approach to `attractive_gain` as distance grows).
+        attractive_shape : float
+            Controls how quickly the attractive force saturates with
+            distance. Larger -> saturates faster (closer to goal).
+        beta_min : float
+            APF weight when the node is at/beyond search_outer distance
+            from the goal (far away -> mostly random exploration).
+        beta_max : float
+            APF weight when the node is essentially at the goal (close ->
+            mostly direct homing toward the goal).
+        """
         self.attractive_gain = float(attractive_gain)
         self.attractive_shape = float(attractive_shape)
-        self.repulsive_gain = float(repulsive_gain)
-        self.repulsive_shape = float(repulsive_shape)
-        self.density_radius = float(density_radius)
-        self.max_obstacle_ratio = float(max_obstacle_ratio)
+
+        if not (0.0 <= beta_min <= 1.0) or not (0.0 <= beta_max <= 1.0):
+            raise ValueError("beta_min and beta_max must be in [0, 1].")
+        if beta_min > beta_max:
+            raise ValueError("beta_min must be <= beta_max.")
+
+        self.beta_min = float(beta_min)
+        self.beta_max = float(beta_max)
 
     @staticmethod
     def _safe_unit(vec: np.ndarray) -> np.ndarray:
@@ -41,7 +71,8 @@ class ArtificialPotentialField:
 
     def attractive_force(self, q_near: np.ndarray, goal: np.ndarray) -> np.ndarray:
         """
-        Exponential attractive force similar to Eq. (5) in the paper.
+        Exponential attractive force, saturating to `attractive_gain` as
+        distance to the goal grows, and vanishing at the goal itself.
         """
         d_att = np.asarray(goal, dtype=float) - np.asarray(q_near, dtype=float)
         dist = float(np.linalg.norm(d_att))
@@ -51,84 +82,43 @@ class ArtificialPotentialField:
         magnitude = self.attractive_gain * (1.0 - math.exp(-dist * self.attractive_shape))
         return magnitude * (d_att / dist)
 
-    def repulsive_force(
-        self,
-        q_near: np.ndarray,
-        obstacle_center: np.ndarray,
-        safe_distance: float,
-    ) -> np.ndarray:
+    def total_force(self, q_near: np.ndarray, goal: np.ndarray) -> np.ndarray:
         """
-        Smooth repulsive force similar to Eq. (6) in the paper.
-        The direction points away from the obstacle.
+        Kept as a thin wrapper (rather than removed outright) so external
+        callers that already depend on `total_force(...)` as the "APF
+        force at this node" entry point keep working unchanged. With the
+        repulsive term removed, total force == attractive force.
         """
-        q_near = np.asarray(q_near, dtype=float)
-        obstacle_center = np.asarray(obstacle_center, dtype=float)
-
-        d_rep = q_near - obstacle_center
-        dist = float(np.linalg.norm(d_rep))
-        if dist < 1e-12:
-            # Strong deterministic push if we land exactly on the obstacle center.
-            out = np.zeros_like(d_rep, dtype=float)
-            out[0] = self.repulsive_gain
-            return out
-
-        # Logistic-like shaping around safe_distance. Near the obstacle the force is high,
-        # farther away it decays smoothly.
-        magnitude = self.repulsive_gain / (1.0 + math.exp((dist - safe_distance) * self.repulsive_shape))
-        return magnitude * (d_rep / dist)
-
-    def total_force(
-        self,
-        q_near: np.ndarray,
-        goal: np.ndarray,
-        static_obstacles: Optional[Sequence[Tuple[np.ndarray, float]]] = None,
-        dynamic_obstacles: Optional[Sequence[Tuple[np.ndarray, float]]] = None,
-        safe_distance: float = 0.0,
-    ) -> np.ndarray:
-        total = self.attractive_force(q_near, goal)
-
-        for obstacles in (static_obstacles or [], dynamic_obstacles or []):
-            center, radius = obstacles
-            total = total + self.repulsive_force(
-                q_near=q_near,
-                obstacle_center=np.asarray(center, dtype=float),
-                safe_distance=float(safe_distance) + float(radius),
-            )
-
-        return total
+        return self.attractive_force(q_near, goal)
 
     def compute_rrt_apf_weights(
         self,
         q_near: np.ndarray,
-        search_radius: float,
-        static_obstacles: Optional[Sequence[Tuple[np.ndarray, float]]] = None,
-        dynamic_obstacles: Optional[Sequence[Tuple[np.ndarray, float]]] = None,
+        goal: np.ndarray,
+        search_outer: float,
     ) -> Tuple[float, float]:
         """
-        Compute (alpha, beta) = (RRT weight, APF weight).
+        Compute (alpha, beta) = (RRT/random weight, APF/attractive weight)
+        from how close `q_near` already is to the goal, normalized by
+        `search_outer` (the outer radius of the RRT sampling annulus, which
+        is already a problem-scaled distance the planner knows about).
 
-        The paper estimates alpha from the occupancy of a local search space around
-        the current node. We do not have obstacle point clouds in the current ship
-        code, so we use a minimal geometric proxy: the local obstacle occupancy is
-        approximated from the overlap between the search sphere centered at q_near
-        and the obstacle discs. More nearby / larger obstacles => larger alpha.
+        beta is LOW far from the goal (favor random exploration so the
+        tree can still find its way around/through the annulus) and HIGH
+        near the goal (favor direct homing so the tree converges cleanly
+        instead of continuing to wander once it's basically arrived).
+        alpha = 1 - beta.
+
+        ratio = clip(dist_to_goal / search_outer, 0, 1)
+        beta  = beta_min + (beta_max - beta_min) * (1 - ratio)
         """
         q_near = np.asarray(q_near, dtype=float)
-        search_radius = max(float(search_radius), 1e-6)
+        goal = np.asarray(goal, dtype=float)
+        search_outer = max(float(search_outer), 1e-6)
 
-        occupancy = 0.0
-        obstacles: List[Tuple[np.ndarray, float]] = []
-        obstacles.extend(static_obstacles or [])
-        obstacles.extend(dynamic_obstacles or [])
+        dist_to_goal = float(np.linalg.norm(goal - q_near))
+        ratio = float(np.clip(dist_to_goal / search_outer, 0.0, 1.0))
 
-        for center, radius in obstacles:
-            center = np.asarray(center, dtype=float)
-            radius = float(radius)
-            dist = float(np.linalg.norm(q_near - center))
-            influence = max(0.0, 1.0 - dist / (search_radius + radius + 1e-6))
-            size_factor = min(1.0, radius / search_radius)
-            occupancy += influence * (0.5 + 0.5 * size_factor)
-
-        alpha = float(np.clip(occupancy, 0.0, self.max_obstacle_ratio))
-        beta = float(1.0 - alpha)
+        beta = self.beta_min + (self.beta_max - self.beta_min) * (1.0 - ratio)
+        alpha = 1.0 - beta
         return alpha, beta

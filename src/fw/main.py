@@ -92,8 +92,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
     configuration = {
         py_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
-            target_reward=1.75,
-            max_time_steps=1300,
+            target_reward=0.99,
+            max_time_steps=2000,
         ),
         multi_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,

@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from shapely import Polygon, MultiPolygon
+from fw.re_planner.visualization_replanner import RRTCollisionVisualizer
 from fw.ship_episode_data import ShipData
 from fw.metrics_computer import ShipMetrics
 from fw.output_helpers import SHIP_COLORS, shade_color, normalized_time_axis, resample_to_common_time
@@ -48,25 +49,24 @@ class MatplotlibRenderer:
         fig_width_per_ship: int = 10,
     ) -> None:
         """
-        Generates and saves a multi-ship trajectory visualization.
+        Generates and saves separate trajectory and metrics visualizations.
+
+        The trajectory plot is rendered in one window.
+        The metrics plots, containing cross-track error, rudder angle, and UKC,
+        are rendered in a separate window.
 
         Args:
             ship_data: Mapping of ship IDs to lists of `ShipEpisodeData`.
             metrics: Mapping of ship IDs to computed `ShipMetrics`.
-            env: Environment instance (single-ship or multi-ship).
-            save_path: File path where the generated figure is saved.
-            fig_width_per_ship: Width (in inches) allocated per ship column.
+            env: Environment instance, either single-ship or multi-ship.
+            save_path: Base file path used to save the generated figures.
+            fig_width_per_ship: Width in inches allocated per ship column.
 
         Returns:
             None.
 
         Raises:
             ValueError: If fig_width_per_ship is not positive.
-
-        Notes:
-            - Ships without episode data are skipped.
-            - The figure is displayed and saved to disk.
-            - All matplotlib figures are closed after rendering to avoid leaks.
         """
 
         if fig_width_per_ship <= 0:
@@ -76,16 +76,23 @@ class MatplotlibRenderer:
 
         ship_ids = [sid for sid in ship_data if ship_data[sid]]
         n_ships = len(ship_ids)
-        n_rows = 4
 
         if n_ships == 0:
             print("[MatplotlibRenderer] No episode data to render — skipping.")
             return
 
         try:
-            fig, axes = plt.subplots(
-                n_rows, n_ships,
-                figsize=(fig_width_per_ship * n_ships, 16),
+            fig_traj, axes_traj = plt.subplots(
+                1,
+                n_ships,
+                figsize=(fig_width_per_ship * n_ships, 5),
+                squeeze=False,
+            )
+
+            fig_metrics, axes_metrics = plt.subplots(
+                3,
+                n_ships,
+                figsize=(fig_width_per_ship * n_ships, 12),
                 squeeze=False,
             )
 
@@ -95,10 +102,10 @@ class MatplotlibRenderer:
                 colors = shade_color(ship_color, len(episodes))
                 m = metrics[ship_id]
 
-                ax_traj   = axes[0][col]
-                ax_error  = axes[1][col]
-                ax_rudder = axes[2][col]
-                ax_ukc    = axes[3][col]
+                ax_traj = axes_traj[0][col]
+                ax_error = axes_metrics[0][col]
+                ax_rudder = axes_metrics[1][col]
+                ax_ukc = axes_metrics[2][col]
 
                 ship_env = cls._get_ship_env(env, ship_id)
 
@@ -110,42 +117,73 @@ class MatplotlibRenderer:
                         stacklevel=2,
                     )
                 else:
-                    # Add hatched pattern to first subplot
-                    difference_coords = cls.create_hashed_area(ship_env.obstacles, ship_env.overall)
-                    for i, coords in enumerate(difference_coords):
-                        ax_traj.add_patch(patches.Polygon(
-                            coords,
-                            facecolor='none',
-                            edgecolor='gray',
-                            hatch='///',
-                            alpha=0.3,
-                            label='Low water level area' if i == 0 else "",
-                        ))
+                    difference_coords = cls.create_hashed_area(
+                        ship_env.obstacles,
+                        ship_env.overall,
+                    )
 
-                cls._plot_trajectory(ax_traj, episodes, colors, ship_env, ship_id, m)
+                    for i, coords in enumerate(difference_coords):
+                        ax_traj.add_patch(
+                            patches.Polygon(
+                                coords,
+                                facecolor="none",
+                                edgecolor="gray",
+                                hatch="///",
+                                alpha=0.3,
+                                label="Low water level area" if i == 0 else "",
+                            )
+                        )
+
+                cls._plot_trajectory(
+                    ax_traj,
+                    episodes,
+                    colors,
+                    ship_env,
+                    ship_id,
+                    m,
+                )
 
                 cls._plot_signal(
-                    ax_error, episodes, colors,
+                    ax_error,
+                    episodes,
+                    colors,
                     signal_attr="cross_errors",
                     title=f"Cross-track error – {ship_id}",
                     ylabel="Cross-track error",
                     ylim=(0, 45),
                 )
 
-                cls._plot_rudder(ax_rudder, episodes, colors, ship_id)
+                cls._plot_rudder(
+                    ax_rudder,
+                    episodes,
+                    colors,
+                    ship_id,
+                )
 
                 cls._plot_signal(
-                    ax_ukc, episodes, colors,
+                    ax_ukc,
+                    episodes,
+                    colors,
                     signal_attr="ukc_measurements",
                     title=f"UKC – {ship_id}",
                     ylabel="UKC",
                     ylim=(0, 45),
                 )
 
-            plt.tight_layout()
-            plt.savefig(save_path, bbox_inches="tight", dpi=300)
-            plt.show()
-            print(f"Trajectory figure saved to '{save_path}'")
+            fig_traj.tight_layout()
+            fig_metrics.tight_layout()
+
+            trajectory_path = save_path.replace(".png", "_trajectory.png")
+            metrics_path = save_path.replace(".png", "_metrics.png")
+
+            fig_traj.savefig(trajectory_path, bbox_inches="tight", dpi=300)
+            fig_metrics.savefig(metrics_path, bbox_inches="tight", dpi=300)
+
+            plt.show(block=True)
+
+            print(f"Trajectory figure saved to '{trajectory_path}'")
+            print(f"Metrics figure saved to '{metrics_path}'")
+
         finally:
             plt.close("all")
 
@@ -281,6 +319,12 @@ class MatplotlibRenderer:
                 *ep.path[-1], c=end_color, marker=end_marker,
                 s=end_size, zorder=6, edgecolors="black", linewidths=0.6,
             )
+
+        # Add RRT and collision visualization for PySimEnvReplanner
+        print(f"env: {env}, type(env): {type(env)}, env.__class__.__name__: {env.__class__.__name__}")
+        if env is not None and env.__class__.__name__ == "PySimColavPlannerEnv":
+            visualizer = RRTCollisionVisualizer(env)
+            visualizer.plot_on_axis(ax)
 
         ax.set_title(
             f"Trajectory – {ship_id}\n"

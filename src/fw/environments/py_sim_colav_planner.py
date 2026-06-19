@@ -1,3 +1,5 @@
+from datetime import time
+
 from fw.environments.py_sim_colav_base import PySimColavBaseEnv
 from fw.environments.py_sim_env import (
     calculate_perpendicular_lines,
@@ -15,6 +17,8 @@ from typing import Optional, Tuple, Dict, List
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 import numpy as np
+import time
+
 
 
 class PySimColavPlannerEnv(PySimColavBaseEnv):
@@ -60,8 +64,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
         self.ships_inside_observation = int(ships_inside_observation)
         self.detection_radius = float(detection_radius)
         self.collision_detector = CollisionDetector(float(danger_distance), float(time_horizon))
-        self.rrt_replanner = RRTStarReplanner(danger_radius=float(danger_distance))
-        self.rrt_apf_replanner = RRTAPFReplanner(danger_radius=float(danger_distance))
+        self.replanner = RRTStarReplanner(danger_radius=float(danger_distance))
         self.rrt_replan_cooldown_steps = int(rrt_replan_cooldown_steps)
         self._last_rrt_replan_step = -10 ** 9
         self._last_rrt_replan_info: Dict = {}
@@ -90,6 +93,9 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             obstacle_weights=obstacle_weights,
             scenario_obstacle_level=scenario_obstacle_level,
         )
+
+        # Override base lateral max specifically for this planner subclass
+        self.static_ship_lateral_max = 0.0
 
     def _calculate_colav_reward(self) -> Tuple[float, bool]:
         """Replanner-specific reward.
@@ -137,9 +143,8 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
                 remaining_path,
                 velocities,
             )
-
             if any(collision_detected):
-                #print(f"Collision predicted with {len(obstacles_entities)} obstacle(s). Triggering replanner. Details: {obstacles_entities}, {collision_detected}, {cpa_point}, {tcpa}, {dcpa}")
+                print(f"Collision predicted with {len(obstacles_entities)} obstacle(s). Triggering replanner. Details: entities={obstacles_entities}, collision_detected={collision_detected}, cpa_point={cpa_point}, tcpa={tcpa}, dcpa={dcpa}")
                 self._maybe_replan_rrt(
                     obstacles_entities=obstacles_entities,
                     collision_detected=collision_detected,
@@ -288,12 +293,19 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             return
 
         try:
-            replanned = self.rrt_apf_replanner.replan(
+            print("REPLANNING")
+            start_time = time.time()
+            replanned = self.replanner.replan(
                 obstacle_center=obstacle_center,
                 ship_trajectory=trajectory,
                 obstacle_radius=obstacle_radius,
             )
+            end_time = time.time()
+            print(f"REPLANNING TOOK {end_time - start_time:.2f} seconds")
+            print("REPLANNING DONE")
+            print(replanned)
         except Exception as exc:
+            print(f"replanning failed with an exception: {exc}")
             self._last_rrt_replan_info = {
                 "triggered": True,
                 "success": False,
