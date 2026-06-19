@@ -1,6 +1,7 @@
 import numpy as np
 
 from typing import Tuple, Optional
+from fw.dynamics.ukc_lookup import UKCLookup
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
@@ -8,7 +9,6 @@ from fw.surrogate.inference_surrogate import SurrogatePredictor
 
 # Time step the surrogate was trained on [s]
 _SURROGATE_DT = 0.1
-WATER_DEPTH_M = 15.0
 FH_MYZAKO_MAX_RUDDER_ANGLE = 75.0
 
 # Ray-cast proximity sensor constants
@@ -57,6 +57,7 @@ class UAntwerpSurrogate(DynamicsBase):
 
         self.ship_spec: ShipSpecifications = ship_spec
         self.surrogate = SurrogatePredictor("checkpoints/best_surrogate.pth")
+        self.ukc_lookup = UKCLookup("dynamics/ship_dynamics_dataset.csv")
 
         # Imported locally to avoid a circular import (py_sim_env imports this module).
         # A single instance is created here and reused for ray-cast geometry lookups.
@@ -231,8 +232,11 @@ class UAntwerpSurrogate(DynamicsBase):
 
         rudder = np.degrees(rudder_angle) / FH_MYZAKO_MAX_RUDDER_ANGLE
 
+        ukc = self.ukc_lookup.get_ukc(state.x, state.y)
+        # print(f"Closes UKC found is: {ukc}")
+
         x_raw = np.array(
-            [state.x, state.y, state.heading, state.u, state.v, state.r, WATER_DEPTH_M, rudder, thrust, *ray_features],
+            [state.x, state.y, state.heading, state.u, state.v, state.r, ukc, rudder, thrust, *ray_features],
             dtype=np.float32,
         )
 
