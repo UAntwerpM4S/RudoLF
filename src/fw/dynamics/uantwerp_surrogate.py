@@ -1,5 +1,6 @@
 import numpy as np
 
+from pathlib import Path
 from typing import Tuple, Optional
 from fw.dynamics.ukc_lookup import UKCLookup
 from fw.ships.vessel_state import VesselState
@@ -9,7 +10,9 @@ from fw.surrogate.inference_surrogate import SurrogatePredictor
 
 # Time step the surrogate was trained on [s]
 _SURROGATE_DT = 0.1
+WATER_DEPTH_M = 18.5
 FH_MYZAKO_MAX_RUDDER_ANGLE = 75.0
+SHIP_DATA_FILE = Path(__file__).with_name("ship_dynamics_dataset.csv")
 
 # Ray-cast proximity sensor constants
 RAY_MAX_DISTANCE = 200.0                                    # metres; beyond this the feature is 0
@@ -57,7 +60,13 @@ class UAntwerpSurrogate(DynamicsBase):
 
         self.ship_spec: ShipSpecifications = ship_spec
         self.surrogate = SurrogatePredictor("checkpoints/best_surrogate.pth")
-        self.ukc_lookup = UKCLookup("dynamics/ship_dynamics_dataset.csv")
+        self.ukc_lookup = UKCLookup(str(SHIP_DATA_FILE)) if SHIP_DATA_FILE.exists() else None
+
+        if self.ukc_lookup is None:
+            print(
+                f"Ship data file {SHIP_DATA_FILE} not found, "
+                f"falling back to default UKC value of {WATER_DEPTH_M}"
+            )
 
         # Imported locally to avoid a circular import (py_sim_env imports this module).
         # A single instance is created here and reused for ray-cast geometry lookups.
@@ -231,9 +240,7 @@ class UAntwerpSurrogate(DynamicsBase):
         )
 
         rudder = np.degrees(rudder_angle) / FH_MYZAKO_MAX_RUDDER_ANGLE
-
-        ukc = self.ukc_lookup.get_ukc(state.x, state.y)
-        # print(f"Closes UKC found is: {ukc}")
+        ukc = self.ukc_lookup.get_ukc(state.x, state.y) if self.ukc_lookup else WATER_DEPTH_M
 
         x_raw = np.array(
             [state.x, state.y, state.heading, state.u, state.v, state.r, ukc, rudder, thrust, *ray_features],
