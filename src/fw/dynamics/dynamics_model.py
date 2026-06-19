@@ -1,3 +1,5 @@
+import numpy as np
+
 from enum import auto, Enum
 from typing import Tuple, Optional
 from fw.ships.vessel_state import VesselState
@@ -58,6 +60,20 @@ class DynamicsBase:
         """
 
         raise NotImplementedError
+
+    def get_ukc(self, pos: Optional[np.ndarray]):
+        """
+        Query the current under-keel clearance.
+
+        Args:
+            pos (np.array, optional): The position for which
+                to query the keel clearance.
+
+        Returns:
+            float: Keel clearance in metres.
+        """
+
+        pass
 
     def step(
         self,

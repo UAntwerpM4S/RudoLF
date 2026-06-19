@@ -198,9 +198,13 @@ class FhSimEnv(PySimEnv):
         self._fh_sim.reset()
 
 
-    def get_keel_clearance(self) -> float:
+    def get_keel_clearance(self, pos: Optional[np.ndarray] = None) -> float:
         """
         Query the current under-keel clearance from the FH Simulator.
+
+        Args:
+            pos (np.array, optional): Unused. Retained for API
+                compatibility with PySimEnv.get_keel_clearance().
 
         Returns:
             float: Keel clearance in metres as reported by the FH physics engine.
