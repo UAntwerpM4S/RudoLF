@@ -109,7 +109,8 @@ class Trainer:
     Responsible for creating the agent manager, initializing the scheduler, and managing the training loop.
     """
 
-    def __init__(self, agent_type: str, envs, profile: VesselProfile, scheduler_type: str):
+    def __init__(self, agent_type: str, envs, profile: VesselProfile, scheduler_type: str,
+                 config: dict = None):
         """
         Initializes the Trainer.
 
@@ -118,6 +119,11 @@ class Trainer:
             envs (Gym.Env): List of environments for the agent to train in.
             profile (VesselProfile): Profile that will be used for training or visualization.
             scheduler_type (str): The name of the scheduler class to use.
+            config (dict, optional): Pre-built configuration dict from
+                :func:`~fw.config.get_config_parameters`.  When *None* (default)
+                the Trainer calls `get_config_parameters()` itself.  Callers
+                that have already built the config (e.g. `main.py`) should
+                pass it here to avoid applying the profile a second time.
 
         Raises:
             RuntimeError: If the scheduler class cannot be found or initialized.
@@ -127,7 +133,7 @@ class Trainer:
         self._agent_type = agent_type
         self._envs = envs
         self._profile = profile
-        self._config = get_config_parameters()
+        self._config = config if config is not None else get_config_parameters()
         self._hyperparameter_env_name = self._resolve_hyperparameter_env_name()
 
         if self._config["viz_mode"] == VisualizationMode.SIMPLE:

@@ -132,7 +132,6 @@ CONFIG_PARAMETERS = {
     'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'wind': False,
     'current': False,
-    'numerical_damping': False,
     'visualize_best_trained': False,
     'viz_mode': VisualizationMode.COMPLEX,  # Either "simple" or "complex"
     'scenario': "DDShip_scenario1_nowindnocurrent",

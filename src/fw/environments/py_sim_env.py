@@ -48,6 +48,7 @@ MAX_GRID_POS = 14500
 SUCCESS_REWARD = 50.0
 CHECKPOINT_AREA_SIZE = 5.0
 TARGET_AREA_SIZE = 7.0
+TARGET_SURGE_VELOCITY_MS = 4.0  # Target surge velocity in m/s used for velocity reward shaping
 
 # Rendering constants
 MAX_FIG_WIDTH = 1200
@@ -126,7 +127,6 @@ class PySimEnv(BaseEnv):
             ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
             wind: bool = False,
             current: bool = False,
-            numerical_damping: bool = False,
             #Reward configuration
             reward_name: str = "default",
             reward_weights: Optional[Dict[str, float]] = None,
@@ -145,7 +145,6 @@ class PySimEnv(BaseEnv):
             ship_model: optional ship model to use.
             wind: enable wind effects.
             current: enable current effects.
-            numerical_damping: enable numerical damping.
             reward_name: name of reward profile (combination of components).
             reward_weights: optional per-component reward weights.
         """
@@ -160,7 +159,6 @@ class PySimEnv(BaseEnv):
         self.max_steps = int(max_steps)
         self.time_step = float(time_step)
         self.dynamics_model = dynamics_model
-        self.numerical_damping = bool(numerical_damping)
         self.verbose = bool(verbose) if verbose is not None else False
         self.previous_ship_pos = None
         self.previous_heading = None
@@ -322,7 +320,7 @@ class PySimEnv(BaseEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current, self.numerical_damping)
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
 
     # -------------------------
     # Environment data loaders
@@ -482,7 +480,7 @@ class PySimEnv(BaseEnv):
             max_distance: float = 200.0,
     ) -> float:
         """Return the distance from *origin* to the nearest river-boundary
-        intersection along the ray ``origin → end_point``.
+        intersection along the ray `origin → end_point`.
 
         The ray is defined by the two points; only the portion within
         [0, max_distance] from *origin* is considered.  If the ray does not
@@ -537,7 +535,7 @@ class PySimEnv(BaseEnv):
 
         Unlike a Python loop calling :meth:`ray_cast_distance` N times, this
         builds all N ray geometries as a single Shapely array and calls
-        ``shapely.intersection`` / ``shapely.distance`` once each, which run
+        `shapely.intersection` / `shapely.distance` once each, which run
         in a compiled GEOS loop (Shapely >= 2.0) rather than once per ray in
         Python. The only remaining Python-level loop is over the rare subset
         of rays whose intersection is a MultiPoint/GeometryCollection (e.g.
@@ -545,7 +543,7 @@ class PySimEnv(BaseEnv):
         self-hit filtered out before taking the nearest distance.
 
         Each ray is processed against the pre-cached boundary object
-        (``self._boundary_cache``), which is created on the first call and
+        (`self._boundary_cache`), which is created on the first call and
         reused thereafter.
 
         Args:
@@ -558,7 +556,7 @@ class PySimEnv(BaseEnv):
         Returns:
             np.ndarray: Float32 array of shape (N,) with distances clipped to
                         [0, max_distance].  Index *i* corresponds to the ray
-                        toward ``end_points[i]``.
+                        toward `end_points[i]`.
         """
         # Cache the boundary object to avoid re-extracting it every call.
         if not hasattr(self, '_boundary_cache'):
@@ -1074,7 +1072,7 @@ class PySimEnv(BaseEnv):
         heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
         distance_traveled = abs(np.linalg.norm(self.ship_pos - self.previous_ship_pos))
         velocity = distance_traveled / self.time_step
-        target_velocity = 4
+        target_velocity = TARGET_SURGE_VELOCITY_MS
         thrust_change = abs(self.performed_action[1] - self.previous_action[1])
         max_thrust_change = self.ship.specifications.max_thrust_rate * self.time_step / self.ship.specifications.max_thrust 
 
@@ -1141,7 +1139,7 @@ class PySimEnv(BaseEnv):
             c: Query point as a 2D vector.
 
         Returns:
-            The Euclidean distance from ``c`` to the segment ``p1``-``p2``.
+            The Euclidean distance from `c` to the segment `p1`-`p2`.
         """
 
         # project c onto segment p1-p2

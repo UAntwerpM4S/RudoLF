@@ -1,5 +1,5 @@
 """
-profile_applier.py – Apply a :class:`~fw.profile.VesselProfile` to the framework.
+profile_applier.py – Apply a :class:`~fw.config_profile.VesselProfile` to the framework.
 
 Translates a :class:`VesselProfile` into side effects on existing framework
 objects so that no call-sites outside this module need to be rewritten:
@@ -20,10 +20,9 @@ Typical usage
 
     profile = ProfileRegistry.get("inference_pysim")
 
-    # 1. Patch CONFIG_PARAMETERS at startup
+    # 1. Get CONFIG_PARAMETERS at startup
     from fw.config import get_config_parameters
     cfg = get_config_parameters()
-    apply_profile(profile, config=cfg)
 
     # 2. Configure smoothing and initial speed after the env is built
     env = build_default_environment("PySimEnv")
@@ -234,10 +233,9 @@ class SimulatorApplier:
         """
         Override actuator limits on the simulator's :class:`ShipSpecifications`.
 
-        :class:`~fw.ships.ship_specs.ShipSpecifications` is a frozen dataclass;
-        `object.__setattr__` is used to write the new values in-place.  The
-        updated specs object is then propagated to the actuator model so both
-        stay in sync.
+        :class:`~fw.ships.ship_specs.ShipSpecifications` is a mutable dataclass;
+        fields are assigned directly.  The updated specs object is then
+        propagated to the actuator model so both stay in sync.
         """
 
         specs = (

@@ -70,8 +70,8 @@ class DynamicsBase:
         """
         Advance body-fixed velocities by dt seconds using Euler integration.
 
-        Damping and velocity clipping are applied by ShipSimulator after
-        this call and must not be duplicated here.
+        Velocity clipping is applied by ShipSimulator after this call and
+        must not be duplicated here.
 
         Args:
             state:                       Current vessel state.
@@ -82,7 +82,7 @@ class DynamicsBase:
             enable_rudder_angle_scaling: Enable rudder angle scaling.
 
         Returns:
-            Tuple (u, v, r) — un-damped, un-clipped updated body-fixed velocities.
+            Tuple (u, v, r) — un-clipped updated body-fixed velocities.
         """
 
         du, dv, dr = self._compute_accelerations(state, rudder_angle, thrust)

@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 
 from typing import Tuple
@@ -77,9 +78,15 @@ class UGentSurrogate(DynamicsBase):
             Tuple (du, dv, dr) — surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
 
-        assert thrust >= 0.0, (
-            f"UGentSurrogate expects a non-negative thrust value, got {thrust}."
-        )
+        if thrust < 0.0:
+            warnings.warn(
+                f"UGentSurrogate received thrust={thrust:.4f} < 0 (reverse thrust). "
+                "The propeller model is not defined for negative RPM; clamping to 0. "
+                "Extend the model with a reverse-RPM branch if braking thrust is required.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            thrust = 0.0
 
         n = thrust * 320
         n_rps = n / 60

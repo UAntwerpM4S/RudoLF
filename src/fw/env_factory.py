@@ -28,14 +28,6 @@ class EnvironmentRegistryError(Exception):
     """ General environment registry error """
 
 
-def _normalize_configuration(configuration):
-    """
-    Backward-compatible shim to fw.common.tools.config_utils.
-    """
-
-    return normalize_configuration(configuration)
-
-
 class _Factory:
     """
     Environment factory to create and store unique environment instances.
@@ -54,14 +46,14 @@ class _Factory:
         Registers a new environment class for later instantiation.
 
         This method is automatically called when an environment subclass is defined.
-        The class must declare an ``ENVIRONMENT_NAME`` class attribute that provides
+        The class must declare an `ENVIRONMENT_NAME` class attribute that provides
         the canonical registration key; no temporary instance is constructed.
 
         Args:
             environment_class (type): The environment class to register.
 
         Raises:
-            EnvironmentRegistryError: If ``ENVIRONMENT_NAME`` is missing/empty, or
+            EnvironmentRegistryError: If `ENVIRONMENT_NAME` is missing/empty, or
                 if a class with the same name is already registered.
         """
 
@@ -105,7 +97,7 @@ class _Factory:
                 or if a conflicting configuration is provided.
         """
 
-        normalized_configuration = _normalize_configuration(configuration)
+        normalized_configuration = normalize_configuration(configuration)
 
         try:
             environment_class = cls._environment_classes[environment_name]
@@ -162,7 +154,7 @@ class BaseEnvironment:
         """
 
         super().__init__()
-        normalized_configuration = _normalize_configuration(configuration)
+        normalized_configuration = normalize_configuration(configuration)
         self._configuration = {} if normalized_configuration is None else normalized_configuration
         self._name = name
         self._env = None  # Will hold the actual simulation environment (e.g., PySimEnv or FhSimEnv)
@@ -262,14 +254,14 @@ class PySimEnvironment(BaseEnvironment):
 
         Args:
             name: Registered environment name.
-            configuration: Scoped configuration dict (see ``build_pysim_config``).
-                Expected keys: wind, current, numerical_damping, ship_model,
+            configuration: Scoped configuration dict (see `build_pysim_config`).
+                Expected keys: wind, current, ship_model,
                 dynamics_model, reward_name, reward_weights.
         """
 
         super().__init__(name, configuration)
 
-        # Legacy callers (and ``build_default_environment`` without a framework
+        # Legacy callers (and `build_default_environment` without a framework
         # config) may instantiate this environment with an empty configuration
         # purely as a registry placeholder.  Skip the underlying PySimEnv
         # construction in that case rather than failing on missing keys.
@@ -289,7 +281,6 @@ class PySimEnvironment(BaseEnvironment):
                              ship_model=self.configuration["ship_model"],
                              wind=self.configuration["wind"],
                              current=self.configuration["current"],
-                             numerical_damping=self.configuration["numerical_damping"],
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
@@ -307,8 +298,8 @@ class MultiPySimEnvironment(BaseEnvironment):
 
         Args:
             name: Registered environment name.
-            configuration: Scoped configuration dict (see ``build_pysim_config``).
-                Expected keys: wind, current, numerical_damping, ship_model,
+            configuration: Scoped configuration dict (see `build_pysim_config`).
+                Expected keys: wind, current, ship_model,
                 dynamics_model, reward_name, reward_weights.
         """
 
@@ -327,7 +318,6 @@ class MultiPySimEnvironment(BaseEnvironment):
                              ship_model=self.configuration["ship_model"],
                              wind=self.configuration["wind"],
                              current=self.configuration["current"],
-                             numerical_damping=self.configuration["numerical_damping"],
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
@@ -336,7 +326,6 @@ class MultiPySimEnvironment(BaseEnvironment):
                              ship_model=self.configuration["ship_model"],
                              wind=self.configuration["wind"],
                              current=self.configuration["current"],
-                             numerical_damping=self.configuration["numerical_damping"],
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
@@ -356,7 +345,7 @@ class FhSimEnvironment(BaseEnvironment):
 
         Args:
             name: Registered environment name.
-            configuration: Scoped configuration dict (see ``build_fhsim_config``).
+            configuration: Scoped configuration dict (see `build_fhsim_config`).
                 Expected keys: ship_model, scenario.
         """
 
@@ -444,7 +433,7 @@ class AirSimEnvironment(BaseEnvironment):
         Args:
             name: Registered environment name.
             configuration: Scoped AirSim configuration dict
-                (see ``build_airsim_config``). All AirSim-specific keys with
+                (see `build_airsim_config`). All AirSim-specific keys with
                 their defaults live in that builder function.
 
         Raises:
@@ -646,7 +635,6 @@ def build_pysim_config(framework_config: dict, extra: dict | None = None) -> dic
     cfg = {
         "wind":               framework_config["wind"],
         "current":            framework_config["current"],
-        "numerical_damping":  framework_config["numerical_damping"],
         "ship_model":         framework_config["ship_model"],
         "dynamics_model":     framework_config["dynamics_model"],
         "reward_name":        framework_config.get("reward_name", "default"),
@@ -707,8 +695,8 @@ def build_airsim_config(framework_config: dict, training_mode: bool = True) -> d
     """
     Extract AirSim-relevant keys from *framework_config*.
 
-    AirSim configuration lives under the ``airsim`` sub-key (populated by
-    ``get_airsim_config()``).  Any key not present falls back to the
+    AirSim configuration lives under the `airsim` sub-key (populated by
+    `get_airsim_config()`).  Any key not present falls back to the
     AirSimEnvironment constructor defaults.
 
     Args:
@@ -718,7 +706,7 @@ def build_airsim_config(framework_config: dict, training_mode: bool = True) -> d
 
     Returns:
         A dict containing only the keys consumed by AirSimEnvironment, with
-        ``training_mode`` always explicitly set.
+        `training_mode` always explicitly set.
     """
 
     # Fall back to the flat framework_config if no nested "airsim" sub-key
@@ -736,13 +724,13 @@ def _pick_airsim_fallback(configuration) -> str:
 
     Args:
         configuration: The raw configuration passed to the failed AirSim call.
-            Used only to retrieve ``env_type``; may be ``None``.
+            Used only to retrieve `env_type`; may be `None`.
 
     Returns:
         Canonical environment name to use as a fallback.
 
     Side-effects:
-        Calls ``sys.exit(1)`` if AirSimEnv is the *only* configured environment
+        Calls `sys.exit(1)` if AirSimEnv is the *only* configured environment
         and no fallback is available.
     """
 
@@ -779,8 +767,8 @@ def get(environment_name: str, configuration=None):
 
     This is the single public entry-point for obtaining environments.  For
     every environment other than AirSim it delegates directly to
-    ``_Factory.get``.  For AirSim it additionally intercepts
-    ``ImportError`` and ``ConnectionError`` and transparently re-routes the
+    `_Factory.get`.  For AirSim it additionally intercepts
+    `ImportError` and `ConnectionError` and transparently re-routes the
     call to the configured fallback environment so that callers always
     receive an instance whose Python type exactly matches the environment
     that is actually running.
@@ -794,7 +782,7 @@ def get(environment_name: str, configuration=None):
         BaseEnvironment: A fully constructed environment instance.
 
     Raises:
-        EnvironmentRegistryError: Propagated from ``_Factory.get`` for any
+        EnvironmentRegistryError: Propagated from `_Factory.get` for any
             non-AirSim environment, or for AirSim when the resolved fallback
             is also unavailable.
     """
@@ -809,8 +797,8 @@ def get(environment_name: str, configuration=None):
         # `configuration` here is an AirSim-scoped dict (from build_airsim_config),
         # *not* the full framework config.  Passing it to build_default_environment
         # for a PySim-family fallback would cause a KeyError on keys such as
-        # "wind", "current", and "numerical_damping" that the AirSim config does
-        # not carry.  Load the full framework config instead so the fallback
+        # "wind", and "current" that the AirSim config does not carry.
+        # Load the full framework config instead so the fallback
         # environment receives the keys it actually needs.
         from fw.config import get_config_parameters as _get_fw_config  # local to avoid circular import
         fallback_framework_config = _get_fw_config()
@@ -910,10 +898,10 @@ def build_default_environment(environment_name, framework_config=None):
 
     Args:
         environment_name: Canonical environment name returned by
-            ``resolve_environment_name``.
+            `resolve_environment_name`.
         framework_config: The already-resolved framework configuration dict
-            (from ``get_config_parameters()``).  Required for all non-Lunar,
-            non-Polar environments; pass ``None`` only when those environments
+            (from `get_config_parameters()`).  Required for all non-Lunar,
+            non-Polar environments; pass `None` only when those environments
             are requested without a live config (rare / test scenarios).
 
     Returns:
@@ -944,14 +932,14 @@ def initialize_all_environments():
     """
     Trigger registration of all supported environment classes.
 
-    Because registration is now driven purely by the ``ENVIRONMENT_NAME``
+    Because registration is now driven purely by the `ENVIRONMENT_NAME`
     class attribute (set at class-definition time), this function no longer
-    needs to construct any instances.  Subclassing ``BaseEnvironment``
-    automatically calls ``_Factory.register`` via ``__init_subclass__``, so
+    needs to construct any instances.  Subclassing `BaseEnvironment`
+    automatically calls `_Factory.register` via `__init_subclass__`, so
     by the time this function runs all classes defined in this module are
     already registered.
 
-    The function is kept as an explicit call-site in ``main.py`` to make the
+    The function is kept as an explicit call-site in `main.py` to make the
     registration step visible and to allow future pre-flight checks (e.g.
     verifying that expected environment names are present in the registry).
     """

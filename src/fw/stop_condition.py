@@ -4,7 +4,13 @@ from typing import Optional, Tuple
 
 class Criterion(Enum):
     """
-    Criterion.
+    Stopping criteria for training loops.
+
+    Attributes:
+        NBR_POLICY_UPDATES: Stop after a fixed number of policy updates.
+        TARGET_REWARD: Stop once the (smoothed) episode reward reaches a target value.
+        TARGET_REWARD_AND_LOSS: Stop once both a target reward and a target loss are reached.
+        AUTO_CONVERGE: Stop automatically once reward/loss plateaus within a tolerance.
     """
 
     NBR_POLICY_UPDATES = auto()
