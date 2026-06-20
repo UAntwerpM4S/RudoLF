@@ -7,7 +7,7 @@ from fw.ships.actuator_command import ActuatorCommand
 
 class ActuatorModel:
     """
-    Models actuator dynamics with rate limiting, smoothing, and jitter suppression.
+    Models actuator dynamics with rate limiting and jitter suppression.
 
     This class simulates the dynamic response of vessel actuators (rudder
     and thrust) to commanded inputs. It supports:
@@ -15,13 +15,16 @@ class ActuatorModel:
         - Rate-limited updates to prevent unrealistically fast changes.
         - Jitter suppression to ignore small actuator errors below a
           threshold.
-        - Optional exponential smoothing for reinforcement learning or
-          controller stability.
+        - An `enable_smoothing` toggle that switches the above (rate
+          limiting + jitter suppression + saturation) on or off; when
+          disabled, actuators jump directly to the commanded value
+          (clipped to physical limits only). Note: despite the toggle's
+          name, this is rate-limiting, not exponential/low-pass smoothing
+          — no smoothing filter is applied anywhere in this class.
 
     Attributes:
         _rudder: Current rudder angle [rad].
         _thrust: Current thrust command (normalized or physical units).
-        _initialized: Flag indicating whether smoothing has been initialized.
     """
 
     def __init__(self, specifications: ShipSpecifications):
@@ -37,8 +40,6 @@ class ActuatorModel:
 
         self._rudder = 0.0  # Current rudder angle [rad]
         self._thrust = 0.0  # Current thrust [-]
-
-        self._initialized = False
 
     @property
     def current_actuator_state(self):
@@ -56,14 +57,11 @@ class ActuatorModel:
         """
         Reset actuators to neutral position.
 
-        Sets rudder and thrust to zero and marks the model as
-        uninitialized for smoothing purposes.
+        Sets rudder and thrust to zero.
         """
 
         self._rudder = 0.0
         self._thrust = 0.0
-
-        self._initialized = False
 
     def step(self, action: ActuatorCommand, dt: float, enable_smoothing: bool) -> ActuatorState:
         """

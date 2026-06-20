@@ -57,6 +57,19 @@ class MyzakoShip:
                 Length 110 m, mass 6.16 × 10⁶ kg, heuristic coefficients.
         """
 
+        default_actuator_envelope = dict(
+            max_rudder_angle=np.radians(46.5),
+            max_rudder_rate=np.radians(6.0),
+            min_thrust=0.1,
+            max_thrust=1.0,
+            max_thrust_rate=0.07,
+            rudder_jitter_threshold=np.radians(0.6),
+            thrust_jitter_threshold=0.005,
+            surge_limits=(0.0, 5.0),
+            sway_limits=(-2.0, 2.0),
+            yaw_rate_limits=(-0.5, 0.5),
+        )
+
         if ship_model == ShipModel.MYZAKO_29:
             mass = 3.13e6
             length = 108.0
@@ -71,6 +84,7 @@ class MyzakoShip:
             N_rr_coeff = -0.0392
             Y_uv_coeff = -0.00426
             N_uv_coeff = -0.00007
+            actuator_envelope = dict(default_actuator_envelope)
         elif ship_model == ShipModel.MYZAKO_37:
             mass = 4.19e6
             length = 108.0
@@ -85,6 +99,7 @@ class MyzakoShip:
             N_rr_coeff = -0.0362
             Y_uv_coeff = -0.00467
             N_uv_coeff = -0.00007
+            actuator_envelope = dict(default_actuator_envelope)
         elif ship_model == ShipModel.TRIPOLI:
             mass = 6161870.27   # 7.16e6
             length = 110.0  # 109.0
@@ -99,6 +114,7 @@ class MyzakoShip:
             N_rr_coeff = -0.0005
             Y_uv_coeff = -0.005
             N_uv_coeff = -0.0005
+            actuator_envelope = dict(default_actuator_envelope)
         else:
             mass = 3.86e6
             length = 110.0
@@ -113,20 +129,11 @@ class MyzakoShip:
             N_rr_coeff = -0.0005
             Y_uv_coeff = -0.005
             N_uv_coeff = -0.0005
+            actuator_envelope = dict(default_actuator_envelope)
 
         self.specifications = ShipSpecifications(
             length=length,
             mass=mass,
-            max_rudder_angle=np.radians(46.5),
-            max_rudder_rate=np.radians(6.0),
-            min_thrust=0.1,
-            max_thrust=1.0,
-            max_thrust_rate=0.07,
-            rudder_jitter_threshold=np.radians(0.6),
-            thrust_jitter_threshold=0.005,
-            surge_limits=(0.0, 5.0),
-            sway_limits=(-2.0, 2.0),
-            yaw_rate_limits=(-0.5, 0.5),
             X_udot_coeff=X_udot_coeff,
             Y_vdot_coeff=Y_vdot_coeff,
             N_rdot_coeff=N_rdot_coeff,
@@ -138,6 +145,7 @@ class MyzakoShip:
             N_rr_coeff=N_rr_coeff,
             Y_uv_coeff=Y_uv_coeff,
             N_uv_coeff=N_uv_coeff,
+            **actuator_envelope,
         )
 
 def create_ship(ship_model: ShipModel = ShipModel.MYZAKO_DEFAULT) -> MyzakoShip:

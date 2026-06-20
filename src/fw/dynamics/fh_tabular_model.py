@@ -58,14 +58,25 @@ class FhTabularModel(DynamicsBase):
         Args:
             state:        Current vessel state (used for interface consistency;
                           the FH engine maintains its own internal state).
-            rudder_angle: Rudder deflection angle [rad], positive to starboard.
-                          Converted internally to the FH engine's normalized
-                          [-1, 1] range via np.degrees(rudder_angle) / fh_max_deg.
+            rudder_angle: Rudder deflection angle [rad], positive to starboard
+                          (same convention as the rest of the framework — NOT
+                          a normalized [-1, 1] value).
+                          - Conventional rudder ships: converted internally to
+                            the FH engine's normalized [-1, 1] range via
+                            np.degrees(rudder_angle) / fh_max_deg.
+                          - TRIPOLI (azipod-controlled): converted to plain
+                            degrees via np.degrees(rudder_angle) and passed
+                            directly to setDesiredDirection(), which expects
+                            an absolute angle in degrees (not normalized).
             thrust:       Normalized thrust command (dimensionless) in [-1, 1],
                           passed directly to setEngineLeverValue().
             dt:           Simulation step size in seconds. Passed directly to
                           simulateSeconds().
-            enable_rudder_angle_scaling: Enable rudder angle scaling.
+            enable_rudder_angle_scaling: When True (conventional-rudder ships
+                          only), scales the rudder command using this
+                          framework's max_rudder_angle instead of the FH
+                          rudder object's own getMaximumAngle(), to correct
+                          for a mismatch between the two. Ignored for TRIPOLI.
 
         Returns:
             Tuple (u, v, r) read directly from the FH engine after advancing

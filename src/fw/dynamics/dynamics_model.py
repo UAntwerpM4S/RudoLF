@@ -33,12 +33,22 @@ class DynamicsBase:
 
     - Physics-based models (Fossen, Nomoto, UGentSurrogate):
         Compute accelerations (du, dv, dr) from equations of motion and
-        return (u + du*dt, v + dv*dt, r + dr*dt). Damping and clipping
-        are applied by ShipSimulator after the call.
+        return (u + du*dt, v + dv*dt, r + dr*dt) via this class's default
+        `step()` implementation. Velocity clipping is applied by
+        ShipSimulator after the call.
 
-    - Black-box / engine-backed models (FhTabularModel, UAntwerpSurrogate):
-        Advance an internal engine or surrogate by dt seconds and return
-        the resulting (u, v, r) directly. No re-integration is performed.
+    - Engine-backed models (FhTabularModel):
+        Advance an internal engine by dt seconds and return the resulting
+        (u, v, r) directly, bypassing this class's `step()` entirely (the
+        subclass overrides `step()` and never calls `_compute_accelerations`).
+
+    - Surrogate models (UAntwerpSurrogate):
+        Predict an absolute velocity delta over a fixed training time step
+        and convert it to an equivalent acceleration (delta / dt), then
+        still go through this class's default Euler-integration `step()`.
+        This only reproduces the surrogate's intended behavior when dt
+        equals the surrogate's training step size, which the subclass
+        enforces explicitly.
     """
 
     def _compute_accelerations(
@@ -95,7 +105,13 @@ class DynamicsBase:
             thrust:                      Normalized thrust command (dimensionless),
                                          positive forward.
             dt:                          Integration time step [s].
-            enable_rudder_angle_scaling: Enable rudder angle scaling.
+            enable_rudder_angle_scaling: When True, rescales the rudder command to
+                                         compensate for a difference between this
+                                         framework's maximum rudder angle and a
+                                         target engine's maximum rudder angle (used
+                                         for sim-to-sim transfer). Currently only
+                                         consumed by FhTabularModel; other models
+                                         accept but ignore this flag.
 
         Returns:
             Tuple (u, v, r) — un-clipped updated body-fixed velocities.
