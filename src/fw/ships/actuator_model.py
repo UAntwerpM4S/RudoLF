@@ -20,7 +20,7 @@ class ActuatorModel:
           disabled, actuators jump directly to the commanded value
           (clipped to physical limits only). Note: despite the toggle's
           name, this is rate-limiting, not exponential/low-pass smoothing
-          — no smoothing filter is applied anywhere in this class.
+          - no smoothing filter is applied anywhere in this class.
 
     Attributes:
         _rudder: Current rudder angle [rad].
