@@ -578,7 +578,7 @@ class PySimEnv(BaseEnv):
                         toward `end_points[i]`.
         """
         # Cache the boundary object to avoid re-extracting it every call.
-        if not hasattr(self, '_boundary_cache'):
+        if self._boundary_cache is None:
             self._boundary_cache = self.polygon_shape.boundary
 
         boundary = self._boundary_cache
