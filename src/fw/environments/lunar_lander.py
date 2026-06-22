@@ -1,16 +1,15 @@
 __credits__ = ["Andrea PIERRÉ"]
 
 import math
-from typing import TYPE_CHECKING, Optional
-
 import numpy as np
 import gymnasium as gym
 
 from gymnasium import error, spaces
 from gymnasium.utils import EzPickle
+from typing import TYPE_CHECKING, Optional
+from fw.environments.base_env import BaseEnv
 from gymnasium.error import DependencyNotInstalled
 from gymnasium.utils.step_api_compatibility import step_api_compatibility
-from fw.environments.base_env import BaseEnv
 
 
 try:
