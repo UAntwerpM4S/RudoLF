@@ -14,9 +14,9 @@ def normalize_configuration(configuration: Any) -> Any:
 
     Args:
         configuration: Configuration object passed by callers. Supported values:
-            - ``None``: returned unchanged.
-            - ``Mapping``: copied into a plain dict.
-            - empty ``list``/``tuple``: converted to ``{}``.
+            - `None`: returned unchanged.
+            - `Mapping`: copied into a plain dict.
+            - empty `list`/`tuple`: converted to `{}`.
             - anything else: returned unchanged.
 
     Returns:

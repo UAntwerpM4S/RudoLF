@@ -7,9 +7,9 @@ settings:
 - Visualization dispatch to either modular framework-model replay or
   AirSimEnv inference.
 
-It is intended to be called directly (``python -m fw.main_with_airsim``) or via
-delegation from ``fw.main`` when ``fw.config.CONFIG_PARAMETERS['env_type']`` is
-set to ``"AirSimEnv"``.
+It is intended to be called directly (`python -m fw.main_with_airsim`) or via
+delegation from `fw.main` when `fw.config.CONFIG_PARAMETERS['env_type']` is
+set to "AirSimEnv".
 """
 
 if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
@@ -285,11 +285,11 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
         Args:
             env_wrappers: Iterable of framework environment wrappers exposing
-                ``gym_env``.
+                `gym_env`.
 
         Returns:
             bool: True if at least one wrapped environment has type
-            ``AirSimEnv``.
+            `AirSimEnv`.
         """
 
         return any(getattr(env.gym_env, "type_name", "") == airsim_env_name for env in env_wrappers)

@@ -260,9 +260,9 @@ def compute_ray_features(env: "PySimEnv", ship_pos: np.ndarray, heading_rad: flo
         d = 200 m -> feature = 0.0   (no obstacle within range)
 
     The function tries a vectorized batch call first
-    (``env.ray_cast_distances_batch``), which avoids Python-loop overhead when
+    (`env.ray_cast_distances_batch`), which avoids Python-loop overhead when
     the environment exposes it.  If that method is absent it falls back to 24
-    sequential ``env.ray_cast_distance`` calls.
+    sequential `env.ray_cast_distance` calls.
 
     End-point directions are computed from module-level precomputed sin/cos
     tables (_RAY_SIN, _RAY_COS) rotated by *heading_rad*, so no trig is

@@ -59,7 +59,7 @@ def build_airsim_env_snapshot(env) -> Dict[str, Any]:
     Capture the current AirSim environment state as a serializable dictionary.
 
     Args:
-        env: Active ``AirSimEnv`` instance exposing ship pose, heading,
+        env: Active `AirSimEnv` instance exposing ship pose, heading,
             checkpoint, and timing state.
 
     Returns:
@@ -90,9 +90,9 @@ def _get_ship_scalar(value: Any, ship_index: int = 0, default: Any = 0.0) -> Any
     Return a scalar value for one ship from scalar or per-ship containers.
 
     Args:
-        value: Scalar-like value or a per-ship container such as ``list``,
-            ``tuple``, or ``np.ndarray``.
-        ship_index: Zero-based ship index to extract when ``value`` is a
+        value: Scalar-like value or a per-ship container such as `list`,
+            `tuple`, or `np.ndarray`.
+        ship_index: Zero-based ship index to extract when `value` is a
             per-ship container.
         default: Fallback value returned when extraction is not possible.
 
@@ -121,12 +121,12 @@ def _get_ship_item(value: Any, ship_index: int = 0, default: Any = None) -> Any:
 
     Args:
         value: Scalar, array, or per-ship container.
-        ship_index: Preferred ship index when ``value`` stores per-ship items.
+        ship_index: Preferred ship index when `value` stores per-ship items.
         default: Fallback returned when extraction is not possible.
 
     Returns:
         Any: Extracted ship-specific item, original flat value, or
-        ``default``.
+        `default`.
     """
 
     if value is None:
@@ -159,7 +159,7 @@ def _get_ship_sim_state(env, ship_index: int = 0) -> Any:
             stores per-ship simulator entries.
 
     Returns:
-        Any: Simulator state object when available, otherwise ``None``.
+        Any: Simulator state object when available, otherwise `None`.
     """
 
     for attr_name in ("phys_sims", "phys_sim"):
@@ -193,13 +193,13 @@ class AirSimSessionExporter:
         Args:
             session_name: Human-readable session label used to derive the folder
                 name.
-            metadata: Optional initial metadata stored in ``metadata.json``.
+            metadata: Optional initial metadata stored in `metadata.json`.
             export_dir: Optional root export directory. When omitted, the
-                workspace-level ``exports`` folder is used.
+                workspace-level `exports` folder is used.
             flush_interval: Number of queued rows to buffer before the async
                 writer flushes them to disk.
-            session_type: Logical session kind such as ``"inference"`` or
-                ``"visualisation"``. This controls default filenames.
+            session_type: Logical session kind such as "inference" or
+                "visualisation". This controls default filenames.
             telemetry_filename: Optional explicit CSV filename for the primary
                 session telemetry export.
         """
@@ -281,7 +281,7 @@ class AirSimSessionExporter:
 
         Args:
             metadata: Optional mapping of metadata fields to merge.
-            **kwargs: Additional metadata fields merged after ``metadata``.
+            **kwargs: Additional metadata fields merged after `metadata`.
         """
 
         self._exporter.update_metadata(metadata, **kwargs)
@@ -355,14 +355,14 @@ def build_framework_visualisation_row(
         step_index: One-based step index within the active episode.
         reward: Reward value returned for the current framework step.
         action: Policy action associated with the current step.
-        outcome: Step outcome label such as ``"running"``, ``"terminated"``,
-            or ``"truncated"``.
+        outcome: Step outcome label such as "running", "terminated",
+            or "truncated".
         control_mode: Export label describing how controls are being mirrored
             during visualization.
         ship_index: Zero-based ship index used when the environment stores
             per-ship state in lists or arrays.
         model_origin: High-level source label for the mirrored model, such as
-            ``"pysim"`` or ``"fhsim"``.
+            "pysim" or "fhsim".
 
     Returns:
         A flat CSV-friendly dictionary describing the current visualization
