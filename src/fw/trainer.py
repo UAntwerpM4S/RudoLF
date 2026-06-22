@@ -239,11 +239,14 @@ class Trainer:
         show_plots: bool = True,
     ):
         """
-        Visualize.
+        Run the trained agent(s) and render/collect evaluation results.
 
         Args:
-            envs: Description.
-            airsim_bridge: Description.
+            envs: Iterable of trained environment wrappers (each exposing a
+                  `.gym_env` and `.agent_mgr`) to visualize/evaluate, or None
+                  to skip visualization entirely.
+            airsim_bridge: Optional AirSim coordinate-transform bridge used to
+                  mirror ship pose into UE5 during evaluation; ignored if None.
             collect_evaluation_summary: Whether to return final evaluation metrics.
             show_plots: Whether to show interactive matplotlib windows.
         """
@@ -259,8 +262,6 @@ class Trainer:
                         sim_name = (
                             f"{gym_env.dynamics_model.name}-based simulator"
                             if hasattr(sim, "_dynamics")
-                            else f"{getattr(sim, '_engine')} simulator"
-                            if hasattr(sim, "_engine")
                             else None
                         )
 

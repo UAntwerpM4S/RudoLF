@@ -105,3 +105,18 @@ class ShipSpecifications:
     Y_uv_coeff: float
 
     N_uv_coeff: float
+
+    Y_rudder_coeff: float = 0.1
+    """
+    Sway-force-from-rudder coefficient [-]. Scaled by mass: Y_rudder = Y_rudder_coeff * mass.
+    """
+
+    N_rudder_coeff: float = 0.001
+    """
+    Yaw-moment-from-rudder coefficient [-]. Scaled by mass*length: N_rudder = N_rudder_coeff * mass * length.
+    """
+
+    X_thrust_coeff: float = 0.05
+    """
+    Surge-force-from-thrust coefficient [-]. Scaled by mass: X_thrust = X_thrust_coeff * mass.
+    """

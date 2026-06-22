@@ -74,8 +74,6 @@ class SimpleScheduler(BaseScheduler):
             sim_name = (
                 f"{gym_env.dynamics_model.name}-based simulator"
                 if hasattr(sim, "_dynamics")
-                else f"{getattr(sim, '_engine')} simulator"
-                if hasattr(sim, "_engine")
                 else None
             )
 

@@ -6,9 +6,6 @@ from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 
 
-YAW_RATE_DAMPING = 0.1
-
-
 class Nomoto(DynamicsBase):
     """
     Nomoto-inspired low-order vessel maneuvering model.
@@ -63,7 +60,7 @@ class Nomoto(DynamicsBase):
         self.xu = -0.02      # Surge damping
         self.yv = -0.4       # Sway damping
         self.yv_r = -0.09    # Sway–yaw coupling
-        self.nr = -0.26      # Yaw-rate damping
+        self.nr = -0.36      # Yaw-rate damping
 
         # Characteristic length scale (used for cross-coupling)
         self.l = 50.0
@@ -96,6 +93,6 @@ class Nomoto(DynamicsBase):
         du = self.k_t * (thrust * 60.0) + self.xu * state.u
         dv = self.k_v * np.sin(rudder_angle) + self.yv * state.v
         dr = (self.k_r * rudder_angle + self.nr * state.r + self.yv_r * state.v +
-              (state.v * state.u) / self.l - YAW_RATE_DAMPING * state.r)
+              (state.v * state.u) / self.l)
 
         return du, dv, dr

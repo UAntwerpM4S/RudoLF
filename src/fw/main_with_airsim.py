@@ -209,8 +209,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
         ip = airsim_runtime_cfg.get("ip", "")
         port = int(airsim_runtime_cfg.get("port", 41451))
-        simulation_speed = float(airsim_runtime_cfg["simulation_speed"])
-        save_slot = str(airsim_runtime_cfg["save_slot"])
+        simulation_speed = float(airsim_runtime_cfg.get("simulation_speed", 1.0))
+        save_slot = str(airsim_runtime_cfg.get("save_slot", ""))
 
         max_steps = int(visualization_cfg.get("max_steps", 14000))
         episodes = int(visualization_cfg.get("episodes", 1))
@@ -348,9 +348,9 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         else int(visualization_cfg.get("max_steps", 14000))
     )
     effective_simulation_speed = (
-        float(effective_training_cfg.get("simulation_speed", airsim_runtime_cfg["simulation_speed"]))
+        float(effective_training_cfg.get("simulation_speed", airsim_runtime_cfg.get("simulation_speed", 1.0)))
         if is_training
-        else float(airsim_runtime_cfg["simulation_speed"])
+        else float(airsim_runtime_cfg.get("simulation_speed", 1.0))
     )
     airsim_env_cfg.update({
         "training_mode": is_training,

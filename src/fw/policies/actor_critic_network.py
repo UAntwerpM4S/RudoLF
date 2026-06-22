@@ -34,11 +34,16 @@ class ActorCriticNetwork(nn.Module):
         # Helper to initialize layers orthogonally
         def init_layer(layer, gain=np.sqrt(2)):
             """
-            Init layer.
+            Orthogonally initialize a linear layer's weights and zero its bias.
 
             Args:
-                layer: Description.
-                gain: Description.
+                layer: An nn.Linear layer to initialize in-place.
+                gain: Scaling factor for the orthogonal initialization
+                      (see torch.nn.init.orthogonal_). Smaller gains keep
+                      initial outputs closer to zero.
+
+            Returns:
+                The same layer instance, for convenient chaining.
             """
 
             nn.init.orthogonal_(layer.weight, gain=gain)
@@ -72,7 +77,11 @@ class ActorCriticNetwork(nn.Module):
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-                - action_mean (torch.Tensor): Mean of the action distribution (after tanh activation).
+                - action_mean (torch.Tensor): Mean of the underlying Normal
+                  distribution (raw linear output -- NOT tanh-squashed here).
+                  Tanh squashing is applied downstream, in
+                  PPOPolicy.predict()/calc_log_probs(), to the SAMPLED action,
+                  not to this mean.
                 - action_std (torch.Tensor): Standard deviation of the action distribution.
                 - state_value (torch.Tensor): Estimated value of the input state.
         """

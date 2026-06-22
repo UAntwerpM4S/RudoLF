@@ -84,11 +84,11 @@ class Fossen(DynamicsBase):
         self.N_rr = self.ship_spec.N_rr_coeff * mass * length ** 2.0  # Quadratic damping
 
         # Rudder coefficients
-        self.Y_rudder = 0.1 * mass  # Sway force from rudder
-        self.N_rudder = 0.001 * mass * length  # Yaw moment from rudder
+        self.Y_rudder = self.ship_spec.Y_rudder_coeff * mass  # Sway force from rudder
+        self.N_rudder = self.ship_spec.N_rudder_coeff * mass * length  # Yaw moment from rudder
 
         # Propeller/thrust coefficient
-        self.X_thrust = 0.05 * mass  # Surge force from thrust
+        self.X_thrust = self.ship_spec.X_thrust_coeff * mass  # Surge force from thrust
 
         # Cross-flow drag coefficients
         self.Y_uv = self.ship_spec.Y_uv_coeff * mass

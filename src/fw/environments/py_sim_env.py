@@ -346,10 +346,22 @@ class PySimEnv(BaseEnv):
 
         def load_csv_strict(name: str) -> np.ndarray:
             """
-            Load csv strict.
+            Load a 2-column (x, y) CSV file from this module's directory,
+            validating its shape and raising clear, specific errors instead
+            of letting a malformed or missing file fail deeper in the stack.
 
             Args:
-                name: Description.
+                name: CSV filename (relative to this module's directory),
+                    e.g. 'env_Sche_no_scale.csv'. Expected format: one
+                    header row, followed by comma-separated (x, y) rows.
+
+            Returns:
+                np.ndarray: Float array of shape (N, 2).
+
+            Raises:
+                FileNotFoundError: If the file does not exist.
+                RuntimeError: If the file exists but cannot be parsed.
+                ValueError: If the parsed array is not a non-empty (N, 2) array.
             """
 
             csv_path = os.path.join(base_path, name)
@@ -487,7 +499,7 @@ class PySimEnv(BaseEnv):
             max_distance: float = 200.0,
     ) -> float:
         """Return the distance from *origin* to the nearest river-boundary
-        intersection along the ray `origin → end_point`.
+        intersection along the ray `origin -> end_point`.
 
         The ray is defined by the two points; only the portion within
         [0, max_distance] from *origin* is considered.  If the ray does not
@@ -566,7 +578,7 @@ class PySimEnv(BaseEnv):
                         toward `end_points[i]`.
         """
         # Cache the boundary object to avoid re-extracting it every call.
-        if not hasattr(self, '_boundary_cache'):
+        if self._boundary_cache is None:
             self._boundary_cache = self.polygon_shape.boundary
 
         boundary = self._boundary_cache
@@ -770,10 +782,10 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Distance to current checkpoint
                 -1.0,   # Distance to checkpoint+1
                 -1.0,   # Cross-track error
-                -1.0,   # Heading error
-                -1.0,   # Heading error
-                -1.0,   # Heading error
-                -1.0,   # Heading error
+                -1.0,   # Heading error to current checkpoint
+                -1.0,   # Heading error to next checkpoint
+                -1.0,   # Heading error, parallel to current checkpoint segment
+                -1.0,   # Heading error, parallel to next checkpoint segment
                 -1.0,   # Previous rudder angle
                 -1.0,   # Optimal LOS guidance
             ],
@@ -788,10 +800,10 @@ class PySimEnv(BaseEnv):
                 1.0,    # Distance to current checkpoint
                 1.0,    # Distance to checkpoint+1
                 1.0,    # Cross-track error
-                1.0,    # Heading error
-                1.0,    # Heading error
-                1.0,    # Heading error
-                1.0,    # Heading error
+                1.0,    # Heading error to current checkpoint
+                1.0,    # Heading error to next checkpoint
+                1.0,    # Heading error, parallel to current checkpoint segment
+                1.0,    # Heading error, parallel to next checkpoint segment
                 1.0,    # Previous rudder angle
                 1.0,    # Optimal LOS guidance
             ],
@@ -968,10 +980,10 @@ class PySimEnv(BaseEnv):
             [2 * norm_distance - 1],                # Distance to current checkpoint
             [2 * norm_next_distance - 1],           # Distance to next checkpoint
             [norm_cross_error],                     # Normalized cross-track error
-            [heading_error / np.pi],                # Normalized heading error
-            [heading_error2 / np.pi],               # Normalized heading error
-            [heading_error_parallel / np.pi],       # Normalized heading error
-            [heading_error_parallel2 / np.pi],      # Normalized heading error
+            [heading_error / np.pi],                # Heading error to current checkpoint
+            [heading_error2 / np.pi],               # Heading error to next checkpoint
+            [heading_error_parallel / np.pi],       # Heading error, parallel to current segment
+            [heading_error_parallel2 / np.pi],      # Heading error, parallel to next segment
             self.performed_action[0],               # Previous rudder angle
             los_heading_error / np.pi,              # Optimal LOS guidance
         ])
@@ -1358,6 +1370,9 @@ class PySimEnv(BaseEnv):
         # Normalize value and half_value to [0, 1]
         x = (clamped - min_value) / (max_value - min_value)
         m = (half_value - min_value) / (max_value - min_value)
+
+        if math.isclose(m, 0.5, abs_tol=1e-9):
+            return x
 
         # Compute k: curvature parameter derived from the desired midpoint
         k = (1 - 2 * m) / (m ** 2)

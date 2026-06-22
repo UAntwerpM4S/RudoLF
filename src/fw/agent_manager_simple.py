@@ -308,10 +308,13 @@ class AgentManagerSimple:
     @contextmanager
     def rendering(self, env):
         """
-        Render.
+        Temporarily force an environment's render_mode to 'human' for the
+        duration of the `with` block, restoring its previous value afterward.
 
         Args:
-            env: Description.
+            env: The environment instance to toggle render_mode on. If it
+                 has no `render_mode` attribute, this is a no-op (the block
+                 still runs, just without forcing rendering on).
         """
 
         if hasattr(env, "render_mode"):

@@ -9,7 +9,13 @@ objects so that no call-sites outside this module need to be rewritten:
   scaling flag, and initial speed
 * :class:`~fw.simulators.base_simulator.BaseSimulator`  – actuator-limit
   overrides
-* Raw `[rudder, thrust]` action arrays  – rudder scaling, fixed-thrust
+* Raw `[rudder, thrust]` action arrays  – fixed-thrust substitution only
+  (see :class:`ActionAdapter` below). Rudder-angle *scaling* is NOT applied
+  here to the raw action array — it's a boolean flag
+  (`enable_rudder_angle_scaling`) set on `BaseEnv` by :class:`EnvApplier`,
+  which is threaded down through `ShipSimulator` into the dynamics model's
+  own `step()` (currently consumed only by `FhTabularModel`; see that
+  class's docstring for the actual scaling formula).
 
 Typical usage
 -------------
