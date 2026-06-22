@@ -4,7 +4,6 @@ from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from fw.profile_applier import apply_profile
 from fw.config_profile import ProfileRegistry
-from airsim.config.airsim_config import get_airsim_config  # re-export
 
 
 class VisualizationMode(Enum):
@@ -139,8 +138,6 @@ CONFIG_PARAMETERS = {
     'ship_model': ShipModel.MYZAKO_37,
     'dynamics_model': Model.FOSSEN,
     'live_animation': False,
-    # AirSim settings are now in airsim.config.airsim_config
-    # Use get_airsim_config() to access them.
 
     # Evaluate reward configurations
     'reward_configs': [

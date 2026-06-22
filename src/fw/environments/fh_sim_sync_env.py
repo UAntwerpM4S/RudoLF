@@ -157,12 +157,16 @@ class FhSimSyncEnv(PySimEnv):
         self._fh_sim.reset()
 
 
-    def get_keel_clearance(self) -> float:
+    def get_keel_clearance(self, pos: Optional[np.ndarray] = None) -> float:
         """
         Query under-keel clearance from the live ship interface.
 
         Works identically to FhSimEnv: the IShip interface exposed by
         evSyncState is the same managed type, so getKeelClearance() exists.
+
+        Args:
+            pos (np.array, optional): Unused. Retained for API
+                compatibility with PySimEnv.get_keel_clearance().
         """
 
         if self._fh_sim is None:

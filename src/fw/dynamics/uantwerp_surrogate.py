@@ -245,14 +245,14 @@ class UAntwerpSurrogate(DynamicsBase):
                 f"UAntwerpSurrogate.step() requires state fields: {missing}."
             )
 
-        ray_features = self.compute_ray_features(
-            self._env,
-            np.array([state.x, state.y]),
-            float(state.heading),
-        )
+        # ray_features = self.compute_ray_features(
+        #     self._env,
+        #     np.array([state.x, state.y]),
+        #     float(state.heading),
+        # )
 
         rudder = np.degrees(rudder_angle) / FH_MYZAKO_MAX_RUDDER_ANGLE
-        ukc = self.ukc_lookup.get_ukc(state.x, state.y) if self.ukc_lookup else WATER_DEPTH_M
+        # ukc = self.ukc_lookup.get_ukc(state.x, state.y) if self.ukc_lookup else WATER_DEPTH_M
 
         # x_raw = np.array(
         #     [state.x, state.y, state.heading, state.u, state.v, state.r, ukc, rudder, thrust, *ray_features],
