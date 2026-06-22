@@ -204,9 +204,7 @@ class UAntwerpSurrogate(DynamicsBase):
         The surrogate expects a 33-D input vector in the feature order used
         during training (see sim_fh_dataset_generator.py):
 
-            [x, y, heading, surge, sway, yaw_rate,
-             rudder_normalized, thrust_normalized,
-             ray_0, ray_1, …, ray_23]          # 24 proximity features
+            [x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action]
 
         `rudder_normalized` is obtained by converting `rudder_angle` from
         radians to degrees and dividing by FH_MYZAKO_MAX_RUDDER_ANGLE (75°),
@@ -256,8 +254,13 @@ class UAntwerpSurrogate(DynamicsBase):
         rudder = np.degrees(rudder_angle) / FH_MYZAKO_MAX_RUDDER_ANGLE
         ukc = self.ukc_lookup.get_ukc(state.x, state.y) if self.ukc_lookup else WATER_DEPTH_M
 
+        # x_raw = np.array(
+        #     [state.x, state.y, state.heading, state.u, state.v, state.r, ukc, rudder, thrust, *ray_features],
+        #     dtype=np.float32,
+        # )
+
         x_raw = np.array(
-            [state.x, state.y, state.heading, state.u, state.v, state.r, ukc, rudder, thrust, *ray_features],
+            [state.x, state.y, state.heading, state.u, state.v, state.r, rudder, thrust],
             dtype=np.float32,
         )
 
