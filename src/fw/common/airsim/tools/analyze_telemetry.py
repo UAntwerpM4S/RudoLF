@@ -1,7 +1,7 @@
 """
 Offline analysis of AirSim bridge telemetry.
 
-Reads ``airsim_telemetry.csv`` and computes summary statistics including
+Reads `airsim_telemetry.csv` and computes summary statistics including
 mean / max distance error, mean / max heading error, and derived accuracy
 percentages.  Results are printed to stdout.
 
@@ -29,12 +29,12 @@ def find_telemetry_file() -> str | None:
     """
     Search for the telemetry CSV in a list of candidate locations.
 
-    Iterates through ``POSSIBLE_PATHS`` and returns the first path
+    Iterates through `POSSIBLE_PATHS` and returns the first path
     that exists on disk.
 
     Returns:
         The absolute or relative path to the telemetry CSV, or
-        ``None`` if no candidate file is found.
+        `None` if no candidate file is found.
     """
 
     for p in POSSIBLE_PATHS:

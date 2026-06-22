@@ -89,7 +89,7 @@ class ShipEpisodeData:
         """Validate episode metadata and normalize the path array shape.
 
         Ensures the ship identifier and episode index are valid, and coerces an
-        empty path into a consistent shape of ``(0, 2)``.
+        empty path into a consistent shape of `(0, 2)`.
 
         Raises:
             ValueError: If ship_id is empty, episode is negative, or path has an

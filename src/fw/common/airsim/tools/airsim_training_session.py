@@ -261,7 +261,7 @@ class AirSimTrainingSession:
     @staticmethod
     def _auto_normalize_series(values: np.ndarray) -> tuple[np.ndarray, float, float]:
         """
-        Map one metric series to ``[-1, 1]`` while preserving NaNs.
+        Map one metric series to `[-1, 1]` while preserving NaNs.
         """
 
         series = np.asarray(values, dtype=float)
@@ -286,7 +286,7 @@ class AirSimTrainingSession:
     @staticmethod
     def _rolling_average(arr: np.ndarray, window: int) -> tuple[np.ndarray, np.ndarray]:
         """
-        Return ``(array_indices, rolling_means)`` for valid window positions.
+        Return `(array_indices, rolling_means)` for valid window positions.
 
         The returned indices map directly into the original array so the caller
         can pair them with the matching x-coordinates.
@@ -306,7 +306,7 @@ class AirSimTrainingSession:
         run_log_path: Path,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Read ``run_log.csv`` and return per-episode max checkpoint index arrays.
+        Read `run_log.csv` and return per-episode max checkpoint index arrays.
         """
 
         if not run_log_path.exists():

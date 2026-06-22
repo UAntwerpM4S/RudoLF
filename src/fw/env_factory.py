@@ -305,7 +305,7 @@ class MultiPySimEnvironment(BaseEnvironment):
 
         super().__init__(name, configuration)
 
-        # Legacy callers (and ``build_default_environment`` without a framework
+        # Legacy callers (and `build_default_environment` without a framework
         # config) may instantiate this environment with an empty configuration
         # purely as a registry placeholder.  Skip the underlying PySimEnv
         # construction in that case rather than failing on missing keys.
