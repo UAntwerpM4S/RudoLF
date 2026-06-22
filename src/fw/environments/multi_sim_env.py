@@ -175,10 +175,12 @@ class MultiSimEnv(BaseEnv):
                 - infos (list[dict]): Per-env info dicts.
         """
 
-        assert isinstance(action, (tuple, list)), "Action must be tuple or list"
-        assert len(action) == self.num_envs, (
-            f"Action count mismatch: got {len(action)}, expected {self.num_envs}"
-        )
+        if not isinstance(action, (tuple, list)):
+            raise TypeError(f"Action must be tuple or list, got {type(action).__name__}")
+        if len(action) != self.num_envs:
+            raise ValueError(
+                f"Action count mismatch: got {len(action)}, expected {self.num_envs}"
+            )
 
         # spaces.Tuple.contains() is sensitive to exact dtypes and rejects valid
         # float32 arrays in practice. Use DEBUG_ENV=1 to enable during development.

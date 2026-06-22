@@ -1,3 +1,4 @@
+from copy import deepcopy
 from enum import Enum, auto
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
@@ -222,7 +223,7 @@ def load_config_parameters() -> dict:
     in tests that want to control the profile step explicitly).
     """
 
-    return CONFIG_PARAMETERS.copy()
+    return deepcopy(CONFIG_PARAMETERS)
 
 
 def get_config_parameters() -> dict:
