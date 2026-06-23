@@ -600,6 +600,18 @@ ProfileRegistry.register(VesselProfile(
 ))
 
 ProfileRegistry.register(VesselProfile(
+    name="fhsim_training_profile",
+    description="Training profile for the FH simulator.",
+    run_mode=RunMode.TRAIN,
+    model=ModelConfig(
+        ship_model=ShipModel.MYZAKO_37,
+        dynamics_model=Model.FH_TABULAR,
+    ),
+    actuator=ActuatorConfig(max_rudder_angle_deg=75.0, enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
+))
+
+ProfileRegistry.register(VesselProfile(
     name="myzako_pysim_to_fhsim_transfer_profile",
     description=(
         "Run a PySim-trained policy inside FhSim with rudder angle scaling."
