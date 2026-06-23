@@ -198,8 +198,8 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
     """
     Load the supervised dataset from CSV instead of running simulations.
 
-    CSV column layout (36 columns, matching collect_supervised_dataset output):
-        X – inputs (33 columns)
+    CSV column layout (16 columns, matching collect_supervised_dataset output):
+        X – inputs (13 columns)
           col  0: x                (m, world-frame position)
           col  1: y                (m, world-frame position)
           col  2: heading          (rad, normalized to [-pi, pi])
@@ -207,17 +207,25 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
           col  4: sway             (m/s, body-frame lateral velocity)
           col  5: yaw_rate         (rad/s)
           col  6: UKC              (m)
-          col  7: rudder_action    (normalized [-1, 1])
-          col  8: thrust_action    (normalized [-1, 1])
+          col  7: wind speed       (m/s)
+          col  8: wind direction   (rad)
+          col  9: current speed    (m/s)
+          col 10: current direction(rad)
+          col 11: rudder_action    (normalized [-1, 1])
+          col 12: thrust_action    (normalized [-1, 1])
+
+    # commented out for now
+    # start
           col  9: ray_0            (proximity at 0°,  0=far, 1=close)
           col 10: ray_15           (proximity at 15°)
                …
           col 32: ray_345          (proximity at 345°)
+    # end
 
         Y – one-step delta outputs (3 columns)
-          col 33: delta_surge      (m/s)
-          col 34: delta_sway       (m/s)
-          col 35: delta_yaw_rate   (rad/s)
+          col 13: delta_surge      (m/s)
+          col 14: delta_sway       (m/s)
+          col 15: delta_yaw_rate   (rad/s)
 
     Returns:
         Tuple of (x_inputs, y_outputs, counter)
@@ -225,15 +233,17 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
 
     data = np.loadtxt(file_name, delimiter=",")
 
-    expected_cols = 36
+    expected_cols = 16
     if data.ndim != 2 or data.shape[1] != expected_cols:
         raise ValueError(
             f"Expected CSV with {expected_cols} columns, got shape {data.shape}. "
             "Re-generate the dataset or check the file path."
         )
 
-    x_values = data[:, 0:33].astype(np.float32)   # x, y, heading, surge, sway, yaw_rate, UKC, rudder, thrust, ray*24
-    y_values = data[:, 33:36].astype(np.float32)  # delta_surge, delta_sway, delta_yaw_rate
+    x_values = data[:, 0:13].astype(np.float32)   # x, y, heading, surge, sway, yaw_rate, UKC, wind speed
+                                                  # wind direction, current speed, current direction, rudder, thrust
+                                                  # commented out: ray*24
+    y_values = data[:, 13:16].astype(np.float32)  # delta_surge, delta_sway, delta_yaw_rate
     counter = x_values.shape[0]
 
     # Reconstruct start positions and dummy trajectories for the diagnostic plot.
@@ -310,6 +320,35 @@ def compute_ray_features(env: "PySimEnv", ship_pos: np.ndarray, heading_rad: flo
 
     return (RAY_MAX_DISTANCE - distances) / RAY_MAX_DISTANCE
 
+def get_current_velocity(_ship_interface):
+    """
+    Returns current speed (m/s) and direction (degrees, east-zero CCW, flowing toward).
+
+    getShipVelocityOverGround() and getShipVelocityThroughWater() return an object
+    with .x (surge) and .y (sway) in body frame. Heading is east-zero, CCW (north=90°).
+    """
+    heading_deg = _ship_interface.getShipHeading()
+    psi = np.radians(heading_deg)
+
+    R = np.array([
+        [np.cos(psi), -np.sin(psi)],
+        [np.sin(psi),  np.cos(psi)]
+    ])
+
+    vog = _ship_interface.getShipVelocityOverGround()
+    vtw = _ship_interface.getShipVelocityThroughWater()
+
+    vog_earth = R @ np.array([vog.x, vog.y])
+    vtw_earth = R @ np.array([vtw.x, vtw.y])
+
+    current = vog_earth - vtw_earth
+
+    current_speed = np.linalg.norm(current)
+    current_direction_deg = np.degrees(np.arctan2(current[1], current[0]))
+    if current_direction_deg < 0:
+        current_direction_deg += 360  # normalize to [0, 360)
+
+    return current_speed, current_direction_deg
 
 def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
     """
@@ -411,9 +450,11 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         initial_vog = _ship_interface.getShipVelocityOverGround()
         initial_yaw_rate = _ship_interface.getShipYawRate()
         initial_ukc = _ship_interface.getKeelClearance()
+        initial_wind_state = _ship_interface.getWindState()
+        initial_current_speed, initial_current_direction = get_current_velocity(_ship_interface)
 
         # Full state vector including absolute position:
-        # [x, y, heading, surge, sway, yaw_rate, UKC]
+        # [x, y, heading, surge, sway, yaw_rate, UKC, wind speed, wind direction, current speed, current direction]
         input_state = np.array(
             [
                 initial_position.x,
@@ -423,16 +464,20 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
                 -initial_vog.y,
                 np.radians(initial_yaw_rate),
                 initial_ukc,
+                initial_wind_state.Speed,
+                env.normalize_angle(np.radians(initial_wind_state.Direction)),
+                initial_current_speed,
+                env.normalize_angle(np.radians(initial_current_direction)),
             ],
             dtype=np.float64,
         )
 
         # Compute initial ray-cast proximity features (24-D)
-        initial_ray_features = compute_ray_features(
-            env,
-            np.array([initial_position.x, initial_position.y]),
-            float(input_state[2]),
-        )
+        # initial_ray_features = compute_ray_features(
+        #     env,
+        #     np.array([initial_position.x, initial_position.y]),
+        #     float(input_state[2]),
+        # )
 
         # Generate random action and duration
         duration = sim_setup.horizon_seconds # rng.uniform(low=[5.0 * sim_setup.dt], high=[sim_setup.horizon_seconds])[0]
@@ -446,7 +491,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         input_states = []
         output_states = []
         traj = [curr_ship_pos.copy()]
-        ray_features = initial_ray_features  # will be refreshed each step
+        # ray_features = initial_ray_features  # will be refreshed each step
 
         # Get controls once for efficiency
         propellers = _ship_interface.getPropellerControls()
@@ -463,7 +508,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             if not (is_in_open_water and has_sufficient_keel_clearance):
                 break
 
-            input_states.append(np.concatenate([input_state.copy(), action.copy(), ray_features.copy()], axis=0))
+            input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0)) # , ray_features.copy()
 
             # Apply controls with safety checks
             if has_rudders:
@@ -493,6 +538,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             current_heading = _ship_interface.getShipHeading()
             current_yaw_rate = _ship_interface.getShipYawRate()
             current_ukc = _ship_interface.getKeelClearance()
+            current_wind_state = _ship_interface.getWindState()
+            current_current_speed, current_current_direction = get_current_velocity(_ship_interface)
 
             new_surge = current_vog.x
             new_sway = -current_vog.y
@@ -519,16 +566,20 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
                     new_sway,
                     new_yaw_rate,
                     current_ukc,
+                    current_wind_state.Speed,
+                    env.normalize_angle(np.radians(current_wind_state.Direction)),
+                    current_current_speed,
+                    env.normalize_angle(np.radians(current_current_direction)),
                 ],
                 dtype=np.float64,
             )
 
             # Update ray-cast features for the new position/heading
-            ray_features = compute_ray_features(
-                env,
-                np.array([pos.x, pos.y]),
-                float(input_state[2]),
-            )
+            # ray_features = compute_ray_features(
+            #     env,
+            #     np.array([pos.x, pos.y]),
+            #     float(input_state[2]),
+            # )
 
         # Store trajectory
         sim_setup.output.trajectory = np.array(traj, dtype=np.float32)
@@ -635,8 +686,9 @@ def collect_supervised_dataset(
     Collect supervised dataset by running multiple simulations.
 
     CSV column layout (36 columns):
-        X (33): x, y, heading, surge, sway, yaw_rate, UKC, rudder_action, thrust_action,
-                ray_0, ray_15, ray_30, …, ray_345   (24 proximity features)
+        X (13): x, y, heading, surge, sway, yaw_rate, UKC, wind speed, wind direction,
+                current speed, current direction, rudder_action, thrust_action,
+                commented out: ray_0, ray_15, ray_30, …, ray_345   (24 proximity features)
         Y  (3): delta_surge, delta_sway, delta_yaw_rate
 
     Args:
@@ -671,7 +723,7 @@ def collect_supervised_dataset(
     output_path.mkdir(parents=True, exist_ok=True)
 
     exercise_path = Path(
-        simexe_path) / 'database' / 'areas' / 'ScheldeSaeftinge_23_002' / 'invoer' / 'tra' / 'DDShip_scenario1_nowindnocurrent.tab'
+        simexe_path) / 'database' / 'areas' / 'ScheldeSaeftinge_23_002' / 'invoer' / 'tra' / 'DDShip_scenario3_windcurrent.tab'
 
     # Create array of SimSetup test items
     env = PySimEnv(render_mode=None, time_step=dt, wind=False, current=False)
@@ -761,8 +813,9 @@ def collect_supervised_dataset(
 
     store_data = np.hstack([x_values, y_values])
     # CSV column layout (36 columns):
-    #   X (33): x, y, heading, surge, sway, yaw_rate, UKC, rudder_action, thrust_action,
-    #            ray_0, ray_15, …, ray_345  (24 proximity features)
+    #   X (13): x, y, heading, surge, sway, yaw_rate, UKC, wind speed, wind direction,
+    #                 current speed, current direction, rudder_action, thrust_action,
+    #                 commented out: ray_0, ray_15, …, ray_345  (24 proximity features)
     #   Y  (3): delta_surge, delta_sway, delta_yaw_rate
     np.savetxt(output_file, store_data, delimiter=",", fmt="%.8f")
     plot_xy_points_and_trajectories(env, xy, trajectories)
@@ -781,7 +834,9 @@ if __name__ == "__main__":
 
     print(f"Dataset generation complete. Successful samples: {successful_count}")
     print("Dataset shapes:")
-    print(f"X: {x_vals.shape}")  # [N, 33] -> (x, y, heading, surge, sway, yaw_rate, UKC, rudder, thrust, ray×24)
+    print(f"X: {x_vals.shape}")  # [N, 13] -> (x, y, heading, surge, sway, yaw_rate, UKC, wind speed,
+                                 # wind direction, current speed, current direction, rudder, thrust)
+                                 # commented out: ray×24)
     print(f"Y: {y_vals.shape}")  # [N, 3] -> (delta_surge, delta_sway, delta_yaw_rate)
 
     if successful_count > 0:
