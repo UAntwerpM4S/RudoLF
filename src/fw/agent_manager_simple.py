@@ -433,8 +433,8 @@ class AgentManagerSimple:
                                 path_positions.append(np.copy(env.ship_pos))
 
                                 # Calculate the average episode reward
-                                episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
                                 steps += 1
+                                episode_reward += (reward - episode_reward) / steps
 
                                 # Uncomment for animated evaluation
                                 if live_animation:

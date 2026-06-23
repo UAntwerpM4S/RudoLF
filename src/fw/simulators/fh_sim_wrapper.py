@@ -3,6 +3,7 @@ import numpy as np
 
 from fw.ships.ship_factory import ShipModel
 from fw.ships.vessel_state import VesselState
+from fw.ships.actuator_state import ActuatorState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.simulators.base_simulator import BaseSimulator
 
@@ -123,7 +124,9 @@ class FhSimWrapper(BaseSimulator):
         """
 
         # Step 1: smooth the policy action
-        actuator = self._actuators.apply_smoothing(action, enable_smoothing)
+        thrust = (self._specs.min_thrust + 0.5 * (action[1] + 1.0) *
+                  (self._specs.max_thrust - self._specs.min_thrust))
+        actuator = ActuatorState(action[0], thrust)
 
         if self._engine.ship_model == ShipModel.TRIPOLI:
             for rudder in self._engine.ship_interface.getAzipodControls():

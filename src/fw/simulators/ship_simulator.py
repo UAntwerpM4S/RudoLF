@@ -36,14 +36,14 @@ class ShipSimulator(BaseSimulator):
     Two families exist:
 
     Physics-based models (Fossen, Nomoto, UGentSurrogate):
-        Return un-damped, un-clipped (u, v, r) computed via Euler integration
-        of their equations of motion. ShipSimulator applies numerical damping,
-        velocity clipping, and environmental forces after the call.
+        Return un-clipped (u, v, r) computed via Euler integration of
+        their equations of motion. ShipSimulator applies velocity clipping,
+        and environmental forces after the call.
 
     Engine-backed models (FhTabularModel, UAntwerpSurrogate):
         Return (u, v, r) directly from an internal engine or surrogate after
         advancing by dt. No re-integration is performed by ShipSimulator;
-        damping and clipping are still applied for consistency.
+        clipping is still applied for consistency.
         Environmental forces are NOT added for these models, as their engine
         already accounts for relevant dynamics.
 
@@ -95,8 +95,8 @@ class ShipSimulator(BaseSimulator):
         Advance the vessel state by a single physics integration step.
 
         Calls dynamics.step() to obtain updated body-fixed velocities (u, v, r),
-        then applies environmental forces (for physics-based models), numerical
-        damping, velocity clipping, and midpoint position integration.
+        then applies environmental forces (for physics-based models), velocity
+        clipping, and midpoint position integration.
 
         Args:
             actuator:                    ActuatorState containing the current rudder_angle
@@ -106,10 +106,10 @@ class ShipSimulator(BaseSimulator):
 
         Notes:
             - For physics-based models, environmental accelerations are added
-              to (u, v) before damping and clipping.
+              to (u, v) before clipping.
             - For engine-backed models (FhTabularModel, UAntwerpSurrogate),
               environmental forces are skipped; the engine handles them internally.
-            - Damping and velocity clipping are applied for all model types.
+            - Velocity clipping is applied for all model types.
             - Earth-fixed position is updated using midpoint heading integration.
             - Heading is wrapped to [-π, π].
         """
@@ -127,7 +127,7 @@ class ShipSimulator(BaseSimulator):
             u += ax_env * time_step
             v += ay_env * time_step
 
-        # Apply numerical damping and velocity limits (all model types)
+        # Apply velocity limits (all model types)
         u = np.clip(u, *self._specs.surge_limits)
         v = np.clip(v, *self._specs.sway_limits)
         r = np.clip(r, *self._specs.yaw_rate_limits)
