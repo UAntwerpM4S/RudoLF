@@ -126,6 +126,20 @@ class RRTStarReplanner:
         Distance within which a node is considered to have reached the goal.
     seed : int | None
         Random seed for reproducibility.
+    max_turn_angle_deg : float | None
+        Maximum allowed relative angle [deg] between a new edge and the
+        immediately preceding edge along the same branch (deviation from
+        straight-ahead; 0 = no turn, 180 = unrestricted). Edges that would
+        exceed this threshold are discarded (treated like a collision).
+        ``None`` disables the check. Default None.
+    smooth_rrt_path : bool
+        If True, apply shortcut smoothing only to the local RRT* segment
+        between entry_wp and exit_wp before splicing it into the original
+        trajectory. The original trajectory outside the replanned segment is
+        not smoothed or modified. Default True.
+    smoothing_iterations : int
+        Number of random shortcut attempts used to simplify/smooth the local
+        RRT* path. Default 200.
     """
 
     def __init__(
@@ -134,16 +148,23 @@ class RRTStarReplanner:
         inner_margin: float = 5.0,
         outer_margin: float = 500.0,
         max_iter: int = 50_000,
-        refinement_iter: int = 3_000,
+        refinement_iter: int = 5_000,
         step_size: float = 30.0,
         goal_bias: float = 0.1,
         goal_tolerance: float = 2.0,
         seed: Optional[int] = None,
+        max_turn_angle_deg: Optional[float] = 15,
+        smooth_rrt_path: bool = False,
+        smoothing_iterations: int = 3,
     ):
         if danger_radius <= 0:
             raise ValueError("danger_radius must be positive.")
         if inner_margin < 0 or outer_margin <= 0:
             raise ValueError("Margins must be non-negative (inner) / positive (outer).")
+        if max_turn_angle_deg is not None and not (0.0 < max_turn_angle_deg <= 180.0):
+            raise ValueError("max_turn_angle_deg must be in (0, 180].")
+        if smoothing_iterations < 0:
+            raise ValueError("smoothing_iterations must be non-negative.")
 
         self.danger_radius = float(danger_radius)
         self.inner_margin = float(inner_margin)
@@ -156,6 +177,9 @@ class RRTStarReplanner:
         self.goal_bias = float(goal_bias)
         self.goal_tolerance = float(goal_tolerance)
         self.rng = np.random.default_rng(seed)
+        self.max_turn_angle_deg = float(max_turn_angle_deg) if max_turn_angle_deg is not None else None
+        self.smooth_rrt_path = bool(smooth_rrt_path)
+        self.smoothing_iterations = int(smoothing_iterations)
 
         # Rewiring neighbourhood radius (RRT* asymptotically optimal formula).
         # Will be updated at runtime once we know the dimension.
@@ -225,6 +249,16 @@ class RRTStarReplanner:
             search_outer,
         )
 
+        # Checkpoints immediately outside the search area, used for the
+        # turn-angle check on the first/last RRT* segments.
+        point_before, point_after = self._find_outer_checkpoints(
+            obstacle_center,
+            ship_trajectory,
+            search_outer,
+            entry_idx,
+            exit_idx,
+        )
+
         # 2. Run RRT*
         rrt_path, iters = self._run_rrt_star(
             start=entry_wp,
@@ -234,12 +268,25 @@ class RRTStarReplanner:
             search_inner=search_inner,
             search_outer=search_outer,
             dim=dim,
+            point_before=point_before,
+            point_after=point_after,
         )
 
         dt = time.perf_counter() - t0
         success = rrt_path is not None and len(rrt_path) >= 2
 
         if success:
+            # Smooth only the local RRT* segment. The original trajectory
+            # before entry_idx and after exit_idx is left unchanged.
+            if self.smooth_rrt_path:
+                rrt_path = self._smooth_rrt_path(
+                    rrt_path=rrt_path,
+                    obstacle_center=obstacle_center,
+                    search_inner=search_inner,
+                    point_before=point_before,
+                    point_after=point_after,
+                )
+
             cost = float(sum(
                 np.linalg.norm(rrt_path[i + 1] - rrt_path[i])
                 for i in range(len(rrt_path) - 1)
@@ -316,6 +363,16 @@ class RRTStarReplanner:
             entry_idx = int(np.clip(entry_seg_idx, 0, N - 2))
             exit_idx = int(np.clip(exit_seg_idx + 1, 1, N - 1))
 
+            # If entry_wp is too close to entry_idx checkpoint,
+            # move entry_idx one waypoint backward.
+            if np.linalg.norm(entry_wp - trajectory[entry_idx]) < 50:
+                entry_idx = max(0, entry_idx - 1)
+
+            # If exit_wp is too close to exit_idx checkpoint,
+            # move exit_idx one waypoint forward.
+            if np.linalg.norm(exit_wp - trajectory[exit_idx]) < 50:
+                exit_idx = min(N - 1, exit_idx + 1)
+
             if entry_idx >= exit_idx:
                 exit_idx = min(N - 1, entry_idx + 1)
 
@@ -334,6 +391,32 @@ class RRTStarReplanner:
             trajectory[entry_idx].copy(),
             trajectory[exit_idx].copy(),
         )
+
+    def _find_outer_checkpoints(
+        self,
+        obstacle_center: np.ndarray,
+        ship_trajectory: np.ndarray,
+        search_outer: float,
+        entry_idx: int,
+        exit_idx: int,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Determine the trajectory waypoints immediately outside the
+        search_outer boundary: the one right before the entry point and the
+        one right after the exit point.
+
+        Given the trajectory, the obstacle position/dimensions (folded into
+        ``search_outer``) and the boundary indices found by
+        ``_find_boundary_waypoints``, these are simply the original
+        waypoints ``ship_trajectory[entry_idx]`` (last waypoint outside the
+        annulus before entering it) and ``ship_trajectory[exit_idx]`` (first
+        waypoint outside the annulus after leaving it), since by
+        construction neither lies within ``search_outer`` of
+        ``obstacle_center``.
+        """
+        point_before = ship_trajectory[entry_idx].copy()
+        point_after = ship_trajectory[exit_idx].copy()
+        return point_before, point_after
 
     @staticmethod
     def _segment_sphere_intersections(
@@ -385,15 +468,36 @@ class RRTStarReplanner:
         search_inner: float,
         search_outer: float,
         dim: int,
+        point_before: np.ndarray,
+        point_after: np.ndarray,
     ) -> Tuple[Optional[List[np.ndarray]], int]:
         """
         Run RRT* and return (path, iterations_used).
 
         Returns None as path if no solution was found within max_iter.
+
+        point_before / point_after are the waypoints immediately outside the
+        search area (before `start` and after `goal` respectively) and are
+        used solely for the turn-angle check on the first/last segments.
+
+        Turn-angle policy
+        -----------------
+        The normal RRT* turn-angle check is applied only when the middle point
+        of the tested turn lies in the outer 10% of the search area radius.
+        Example: if search_outer = 500 m, only nodes with distance from
+        obstacle_center >= 450 m are protected by the turn-angle limit.
+
+        The two fixed boundary turns are always checked:
+            point_before -> start -> first RRT node
+            last RRT node -> goal -> point_after
         """
-        # Rewire radius: RRT* formula γ*(log n / n)^(1/d), simplified to a
+        # Rewire radius: RRT* formula gamma*(log n / n)^(1/d), simplified to a
         # fixed multiple of step_size that works well in practice.
         rewire_r = self.step_size * 3.5
+
+        # Only the farthest 10% of the search radius is angle-protected.
+        # Example: search_outer = 500 -> check band starts at 450.
+        turn_check_band_start = 0.9 * search_outer
 
         # Tree
         nodes: List[Node] = [Node(pos=start.copy(), cost=0.0)]
@@ -410,10 +514,52 @@ class RRTStarReplanner:
             kd = KDTree(positions)
             kd_dirty = False
 
+        def _prev_pos(node: Node) -> np.ndarray:
+            return node.parent.pos if node.parent is not None else point_before
+
+        def _inside_turn_check_band(pos: np.ndarray) -> bool:
+            """True if pos is in the outer 10% of the search area radius."""
+            return bool(np.linalg.norm(pos - obstacle_center) >= turn_check_band_start)
+
+        def _guarded_turn_angle_ok(
+            prev_pos: np.ndarray,
+            mid_pos: np.ndarray,
+            new_pos: np.ndarray,
+            *,
+            force: bool = False,
+        ) -> bool:
+            """
+            Apply the turn-angle check only in the protected outer band.
+
+            force=True is used for fixed boundary transitions, which must
+            always respect the turn-angle limit regardless of radius.
+            """
+            if force or _inside_turn_check_band(mid_pos):
+                return self._turn_angle_ok(prev_pos, mid_pos, new_pos)
+            return True
+
+        def _children_turns_ok_after_reparent(
+            node: Node,
+            new_parent_pos: np.ndarray,
+        ) -> bool:
+            """
+            Rewiring changes the incoming edge of `node`.
+
+            If `node` is in the protected outer band, all existing turns
+            through `node` must remain valid after the parent change. Middle
+            nodes outside the protected band intentionally ignore this check.
+            """
+            if not _inside_turn_check_band(node.pos):
+                return True
+            return all(
+                self._turn_angle_ok(new_parent_pos, node.pos, child.pos)
+                for child in node.children
+            )
+
         iters = 0
         for iters in range(1, self.max_iter + 1):
 
-            # ── early exit once we have a goal + refinement budget spent ──
+            # Early exit once we have a goal + refinement budget spent.
             if goal_node is not None:
                 if refinement_budget <= 0:
                     break
@@ -431,7 +577,7 @@ class RRTStarReplanner:
             # 3. Steer toward q_rand
             q_new_pos = self._steer(q_near.pos, q_rand)
 
-            # 4. Collision check on the edge (q_near → q_new)
+            # 4. Collision check on the edge (q_near -> q_new)
             if not self._edge_free(q_near.pos, q_new_pos, obstacle_center, search_inner):
                 continue
 
@@ -441,12 +587,38 @@ class RRTStarReplanner:
             neighbour_idxs = kd.query_ball_point(q_new_pos, rewire_r)
             neighbours = [nodes[i] for i in neighbour_idxs]
 
-            # 6. Choose best parent
-            best_parent, best_cost = q_near, q_near.cost + np.linalg.norm(q_new_pos - q_near.pos)
+            # 6. Choose best parent.
+            #
+            # The angle is checked only if the candidate parent is in the
+            # outer 10% radius band. The root/start boundary is always checked
+            # because it connects the replanned path to point_before.
+            best_parent, best_cost = None, math.inf
+            if _guarded_turn_angle_ok(
+                _prev_pos(q_near),
+                q_near.pos,
+                q_new_pos,
+                force=(q_near.parent is None),
+            ):
+                best_parent = q_near
+                best_cost = q_near.cost + np.linalg.norm(q_new_pos - q_near.pos)
+
             for nb in neighbours:
                 c = nb.cost + np.linalg.norm(q_new_pos - nb.pos)
-                if c < best_cost and self._edge_free(nb.pos, q_new_pos, obstacle_center, search_inner):
+                if (
+                    c < best_cost
+                    and self._edge_free(nb.pos, q_new_pos, obstacle_center, search_inner)
+                    and _guarded_turn_angle_ok(
+                        _prev_pos(nb),
+                        nb.pos,
+                        q_new_pos,
+                        force=(nb.parent is None),
+                    )
+                ):
                     best_parent, best_cost = nb, c
+
+            if best_parent is None:
+                # No candidate parent satisfies the required angle limit.
+                continue
 
             # 7. Add new node
             q_new = Node(pos=q_new_pos, parent=best_parent, cost=best_cost)
@@ -458,8 +630,26 @@ class RRTStarReplanner:
             for nb in neighbours:
                 if nb is best_parent:
                     continue
+
                 new_cost = best_cost + np.linalg.norm(nb.pos - q_new_pos)
-                if new_cost < nb.cost and self._edge_free(q_new_pos, nb.pos, obstacle_center, search_inner):
+
+                # Rewiring creates/changes these turns:
+                #   best_parent -> q_new -> nb
+                #   q_new -> nb -> each existing child of nb
+                # Middle nodes outside the outer 10% band ignore these checks.
+                angle_ok = _guarded_turn_angle_ok(best_parent.pos, q_new_pos, nb.pos)
+                angle_ok = angle_ok and _children_turns_ok_after_reparent(nb, q_new_pos)
+
+                if nb is goal_node:
+                    # The fixed boundary turn goal -> point_after is always
+                    # checked, regardless of the goal radius.
+                    angle_ok = angle_ok and self._turn_angle_ok(q_new_pos, nb.pos, point_after)
+
+                if (
+                    new_cost < nb.cost
+                    and self._edge_free(q_new_pos, nb.pos, obstacle_center, search_inner)
+                    and angle_ok
+                ):
                     # Detach nb from old parent
                     if nb.parent is not None:
                         try:
@@ -470,11 +660,19 @@ class RRTStarReplanner:
                     q_new.children.append(nb)
                     self._propagate_cost(nb, new_cost)
 
-            # 9. Goal check
+            # 9. Goal check.
+            #
+            # Two angle checks may matter here:
+            #   best_parent -> q_new -> goal      only if q_new is protected
+            #   q_new -> goal -> point_after      always, fixed boundary
             dist_to_goal = float(np.linalg.norm(q_new_pos - goal))
             if dist_to_goal <= self.goal_tolerance:
                 goal_cost = best_cost + dist_to_goal
-                if goal_node is None or goal_cost < goal_node.cost:
+                if (
+                    (goal_node is None or goal_cost < goal_node.cost)
+                    and _guarded_turn_angle_ok(best_parent.pos, q_new_pos, goal)
+                    and self._turn_angle_ok(q_new_pos, goal, point_after)
+                ):
                     # Connect to goal
                     gn = Node(pos=goal.copy(), parent=q_new, cost=goal_cost)
                     q_new.children.append(gn)
@@ -579,6 +777,33 @@ class RRTStarReplanner:
         closest = a + t_star * d
         return bool(np.linalg.norm(closest - obstacle_center) > search_inner)
 
+    def _turn_angle_ok(
+        self,
+        prev_pos: np.ndarray,
+        mid_pos: np.ndarray,
+        new_pos: np.ndarray,
+    ) -> bool:
+        """
+        True if the relative angle between segment (prev_pos -> mid_pos)
+        and segment (mid_pos -> new_pos) does not exceed
+        ``self.max_turn_angle_deg``.
+
+        The angle is measured as deviation from straight-ahead
+        (0 deg = continuing straight, 180 deg = doubling back).
+        If ``max_turn_angle_deg`` is None the check is disabled.
+        """
+        if self.max_turn_angle_deg is None:
+            return True
+        v1 = mid_pos - prev_pos
+        v2 = new_pos - mid_pos
+        n1 = float(np.linalg.norm(v1))
+        n2 = float(np.linalg.norm(v2))
+        if n1 < 1e-12 or n2 < 1e-12:
+            return True
+        cos_angle = float(np.clip((v1 @ v2) / (n1 * n2), -1.0, 1.0))
+        angle_deg = math.degrees(math.acos(cos_angle))
+        return angle_deg <= self.max_turn_angle_deg
+
     def _propagate_cost(self, node: Node, new_cost: float) -> None:
         """Recursively update costs after a rewire (DFS)."""
         node.cost = new_cost
@@ -597,6 +822,51 @@ class RRTStarReplanner:
             node = node.parent
         path.reverse()
         return path
+
+    def _smooth_rrt_path(
+        self,
+        rrt_path: List[np.ndarray],
+        obstacle_center: np.ndarray,
+        search_inner: float,
+        point_before: np.ndarray,
+        point_after: np.ndarray,
+    ) -> List[np.ndarray]:
+        """
+        Shortcut-smooth only the RRT* segment from entry_wp to exit_wp.
+
+        This does not touch the original trajectory outside the replanned
+        interval. A shortcut is accepted only if:
+          - the replacement edge stays outside search_inner, and
+          - the turn-angle constraint is still valid at the shortcut endpoints.
+        """
+        if len(rrt_path) <= 2 or self.smoothing_iterations <= 0:
+            return [p.copy() for p in rrt_path]
+
+        smoothed = [p.copy() for p in rrt_path]
+
+        for _ in range(self.smoothing_iterations):
+            if len(smoothed) <= 2:
+                break
+
+            # Pick two non-consecutive points and try to replace the
+            # intermediate polyline with one direct segment.
+            i = int(self.rng.integers(0, len(smoothed) - 2))
+            j = int(self.rng.integers(i + 2, len(smoothed)))
+
+            if not self._edge_free(smoothed[i], smoothed[j], obstacle_center, search_inner):
+                continue
+
+            prev_i = point_before if i == 0 else smoothed[i - 1]
+            next_j = point_after if j == len(smoothed) - 1 else smoothed[j + 1]
+
+            if not self._turn_angle_ok(prev_i, smoothed[i], smoothed[j]):
+                continue
+            if not self._turn_angle_ok(smoothed[i], smoothed[j], next_j):
+                continue
+
+            smoothed = smoothed[:i + 1] + smoothed[j:]
+
+        return smoothed
 
     @staticmethod
     def _splice(

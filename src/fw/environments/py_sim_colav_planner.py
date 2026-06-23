@@ -1,7 +1,8 @@
 from datetime import time
 
-from fw.environments.py_sim_colav_base import PySimColavBaseEnv
+from fw.environments.py_sim_colav_base import CHECKPOINTS_DISTANCE, PySimColavBaseEnv
 from fw.environments.py_sim_env import (
+    MAX_CHECKPOINTS_DISTANCE,
     calculate_perpendicular_lines,
     CHECKPOINT_AREA_SIZE,
     TARGET_AREA_SIZE,
@@ -34,7 +35,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
     def __init__(
             self,
             render_mode: Optional[str] = None,
-            time_step: float = 1,
+            time_step: float = 2,
             max_steps: int = 1500,
             verbose: Optional[bool] = None,
             ship_pos: Optional[np.ndarray] = None,
@@ -48,17 +49,17 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             encounter_range: float = 500.0,
             eval: bool = True,
             # replanner parameters
-            danger_distance: float = 40.0,
+            danger_distance: float = 15.0,
             time_horizon: float = 100.0,
             ships_inside_observation: int = 3,
             detection_radius: float = 1000.0,
-            rrt_replan_cooldown_steps: int = 30,
+            rrt_replan_cooldown_steps: int = 0,
             # Scenario configuration (passed to base)
-            scenario_types: Optional[list] = None,
-            scenario_probs: Optional[list] = None,
-            obstacle_population: Optional[list] = None,
-            obstacle_weights: Optional[list] = None,
-            scenario_obstacle_level: Optional[str] = None,
+            scenario_types: Optional[list] = ["static"],
+            scenario_probs: Optional[list] = [1.0],
+            obstacle_population: Optional[list] = [1],
+            obstacle_weights: Optional[list] = [1],
+            scenario_obstacle_level: Optional[str] = "episode",
     ) -> None:
 
         self.ships_inside_observation = int(ships_inside_observation)
@@ -151,7 +152,99 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
                     cpa_point=cpa_point,
                     tcpa=tcpa,
                 )
-        return super()._get_obs()
+        obs = super()._get_obs()
+
+
+        # Add two additional future checkpoints to the observation.
+        # This assumes _get_obs() is still the original version, without these 6 values.
+        current_chkp_idx = self.checkpoint_index
+        next_chkp_idx = current_chkp_idx + 1
+        next2_chkp_idx = current_chkp_idx + 2
+        next3_chkp_idx = current_chkp_idx + 3
+
+        # Get checkpoint positions, extrapolating beyond the final checkpoint if needed
+        if next_chkp_idx <= len(self.checkpoints) - 1:
+            next_chkp_pos = self.checkpoints[next_chkp_idx]['pos']
+        else:
+            multiplier = next_chkp_idx - (len(self.checkpoints) - 1)
+            next_chkp_pos = (
+                self.checkpoints[len(self.checkpoints) - 1]['pos']
+                + 2 * multiplier * self.direction_last_path
+            )
+
+        if next2_chkp_idx <= len(self.checkpoints) - 1:
+            next2_chkp_pos = self.checkpoints[next2_chkp_idx]['pos']
+        else:
+            multiplier = next2_chkp_idx - (len(self.checkpoints) - 1)
+            next2_chkp_pos = (
+                self.checkpoints[len(self.checkpoints) - 1]['pos']
+                + 2 * multiplier * self.direction_last_path
+            )
+
+        if next3_chkp_idx <= len(self.checkpoints) - 1:
+            next3_chkp_pos = self.checkpoints[next3_chkp_idx]['pos']
+        else:
+            multiplier = next3_chkp_idx - (len(self.checkpoints) - 1)
+            next3_chkp_pos = (
+                self.checkpoints[len(self.checkpoints) - 1]['pos']
+                + 2 * multiplier * self.direction_last_path
+            )
+
+        # Distance to checkpoint +2
+        norm_next2_distance = self._logarithmic_scaling(
+            value=float(np.linalg.norm(self.ship_pos - next2_chkp_pos)),
+            value_range=(0, 3 * MAX_CHECKPOINTS_DISTANCE),
+            half_value=2.5 * CHECKPOINTS_DISTANCE
+        )
+
+        # Distance to checkpoint +3
+        norm_next3_distance = self._logarithmic_scaling(
+            value=float(np.linalg.norm(self.ship_pos - next3_chkp_pos)),
+            value_range=(0, 4 * MAX_CHECKPOINTS_DISTANCE),
+            half_value=3.5 * CHECKPOINTS_DISTANCE
+        )
+
+        # Heading error to checkpoint +2
+        heading_error3 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next2_chkp_pos - self.ship_pos),
+            self.phys_sim.state.heading,
+            0.0
+        )
+
+        # Parallel heading error for segment next -> next2
+        heading_error_parallel3 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next2_chkp_pos - next_chkp_pos),
+            self.phys_sim.state.heading,
+            0.0
+        )
+
+        # Heading error to checkpoint +3
+        heading_error4 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next3_chkp_pos - self.ship_pos),
+            self.phys_sim.state.heading,
+            0.0
+        )
+
+        # Parallel heading error for segment next2 -> next3
+        heading_error_parallel4 = self._calculate_heading_error(
+            self._safe_heading_from_vector(next3_chkp_pos - next2_chkp_pos),
+            self.phys_sim.state.heading,
+            0.0
+        )
+
+        obs = np.hstack([
+            obs,
+
+            [2 * norm_next2_distance - 1],          # Distance to checkpoint +2
+            [heading_error3 / np.pi],               # Heading error to checkpoint +2
+            [heading_error_parallel3 / np.pi],      # Parallel heading error, next -> next2
+
+            [2 * norm_next3_distance - 1],          # Distance to checkpoint +3
+            [heading_error4 / np.pi],               # Heading error to checkpoint +3
+            [heading_error_parallel4 / np.pi],      # Parallel heading error, next2 -> next3
+        ]).astype(np.float32)
+
+        return obs
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]: #NON USA LE FUNZIONI DI QUESTO AMBIENTE
         """Keep base stepping logic and expose replanning diagnostics like the old env."""
@@ -302,7 +395,6 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             )
             end_time = time.time()
             print(f"REPLANNING TOOK {end_time - start_time:.2f} seconds")
-            print("REPLANNING DONE")
             print(replanned)
         except Exception as exc:
             print(f"replanning failed with an exception: {exc}")

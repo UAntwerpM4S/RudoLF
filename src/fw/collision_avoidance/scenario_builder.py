@@ -472,7 +472,7 @@ class ScenarioBuilder:
                 # cached segment's end checkpoint.
                 random_seg = int(env._seg_cp_end_indices[target_seg_idx])
             else:
-                eligible_indices = list(range(5, len(env.checkpoints) - 3))
+                eligible_indices = list(range(5, len(env.checkpoints) - 5))
                 if not eligible_indices:
                     break
 

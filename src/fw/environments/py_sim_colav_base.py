@@ -95,12 +95,12 @@ class PySimColavBaseEnv(PySimEnv):
             encounter_range: float = 500.0,
             eval: bool = False,
             # Scenario type configuration
-            scenario_types: Optional[list] = None,
-            scenario_probs: Optional[list] = None,
-            scenario_obstacle_level: Optional[str] = None,
+            scenario_types: Optional[list] = ["static"],
+            scenario_probs: Optional[list] = [1.0],
+            scenario_obstacle_level: Optional[str] = "episode",
             # Obstacle population configuration
-            obstacle_population: Optional[list] = None,
-            obstacle_weights: Optional[list] = None,
+            obstacle_population: Optional[list] = [3],
+            obstacle_weights: Optional[list] = [1],
             # Classifier behavior:
             #   True  → classifier is locked to the builder's ground-truth
             #           scenario label (at episode-level and on each step-level
@@ -135,7 +135,7 @@ class PySimColavBaseEnv(PySimEnv):
 
         # Obstacle population (how many TS per episode)
         self.obstacle_population = obstacle_population if obstacle_population is not None else [0, 1, 2, 3]
-        self.obstacle_weights = obstacle_weights if obstacle_weights is not None else [0, 100, 0, 0]
+        self.obstacle_weights = obstacle_weights if obstacle_weights is not None else [0, 0, 0, 1]
         self.obstacle_probs = np.asarray(self.obstacle_weights, dtype=np.float32)
         self.obstacle_probs /= self.obstacle_probs.sum()
 
