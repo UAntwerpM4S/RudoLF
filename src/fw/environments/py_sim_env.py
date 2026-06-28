@@ -127,6 +127,7 @@ class PySimEnv(BaseEnv):
             ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
             wind: bool = False,
             current: bool = False,
+            ua_surrogate_config: Optional[Dict] = None,
             #Reward configuration
             reward_name: str = "default",
             reward_weights: Optional[Dict[str, float]] = None,
@@ -145,6 +146,7 @@ class PySimEnv(BaseEnv):
             ship_model: optional ship model to use.
             wind: enable wind effects.
             current: enable current effects.
+            ua_surrogate_config: optional configuration for the UA surrogate model.
             reward_name: name of reward profile (combination of components).
             reward_weights: optional per-component reward weights.
         """
@@ -197,7 +199,7 @@ class PySimEnv(BaseEnv):
 
         # State and control placeholders
         self.ship = create_ship(self.ship_model)
-        self.phys_sim = self.create_simulator()
+        self.phys_sim = self.create_simulator(ua_surrogate_config)
 
         self._initialize_simulation()
 
@@ -296,7 +298,7 @@ class PySimEnv(BaseEnv):
         self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
 
-    def create_simulator(self):
+    def create_simulator(self, ua_surrogate_config):
         """
         Create and return a configured ship simulator.
 
@@ -306,7 +308,8 @@ class PySimEnv(BaseEnv):
 
         Returns:
             ShipSimulator: A fully initialized simulator instance configured
-            with the specified initial state and the current model parameters.
+                with the specified initial state and the current model parameters.
+            ua_surrogate_config: Configuration for the UA surrogate model.
         """
 
         if self.dynamics_model == Model.FOSSEN:
@@ -316,7 +319,7 @@ class PySimEnv(BaseEnv):
         elif self.dynamics_model == Model.UGENT_SURROGATE:
             self.dynamics = UGentSurrogate(self.ship.specifications)
         elif self.dynamics_model == Model.UANTWERP:
-            self.dynamics = UAntwerpSurrogate(self.ship.specifications)
+            self.dynamics = UAntwerpSurrogate(self.ship.specifications, ua_surrogate_config)
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 

@@ -281,6 +281,7 @@ class PySimEnvironment(BaseEnvironment):
                              ship_model=self.configuration["ship_model"],
                              wind=self.configuration["wind"],
                              current=self.configuration["current"],
+                             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
@@ -640,12 +641,13 @@ def build_pysim_config(framework_config: dict, extra: dict | None = None) -> dic
     """
 
     cfg = {
-        "wind":               framework_config["wind"],
-        "current":            framework_config["current"],
-        "ship_model":         framework_config["ship_model"],
-        "dynamics_model":     framework_config["dynamics_model"],
-        "reward_name":        framework_config.get("reward_name", "default"),
-        "reward_weights":     framework_config.get("reward_weights", None),
+        "wind":                 framework_config["wind"],
+        "current":              framework_config["current"],
+        "ship_model":           framework_config["ship_model"],
+        "dynamics_model":       framework_config["dynamics_model"],
+        "ua_surrogate_config":  framework_config["ua_surrogate_config"],
+        "reward_weights":       framework_config.get("reward_weights", None),
+        "reward_name":          framework_config.get("reward_name", "default"),
     }
     if extra:
         cfg.update(extra)

@@ -48,10 +48,10 @@ def _interpolate_actuator_state(
     Linearly interpolate between two actuator-state vectors.
 
     Args:
-        previous_state: Previously mirrored actuator state. When ``None``,
-            interpolation starts directly at ``target_state``.
+        previous_state: Previously mirrored actuator state. When `None`,
+            interpolation starts directly at `target_state`.
         target_state: Latest framework actuator state.
-        alpha: Interpolation factor in the inclusive range ``[0, 1]``.
+        alpha: Interpolation factor in the inclusive range `[0, 1]`.
 
     Returns:
         np.ndarray: Interpolated actuator vector with the same shape as the
@@ -69,7 +69,7 @@ def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
 
     Args:
         model_path: User-provided checkpoint path, relative or absolute.
-        device: Torch device selector forwarded to ``PPOPolicy.load``.
+        device: Torch device selector forwarded to `PPOPolicy.load`.
 
     Returns:
         PPOPolicy: Loaded policy with its network placed in evaluation mode.
@@ -88,10 +88,10 @@ def _extract_indexed_value(value: Any, ship_index: int = 0) -> Any:
 
     Args:
         value: Scalar, NumPy array, or list/tuple carrying framework state.
-        ship_index: Preferred ship index when ``value`` stores per-ship items.
+        ship_index: Preferred ship index when `value` stores per-ship items.
 
     Returns:
-        Any: A single ship-specific item, the original flat value, or ``None``
+        Any: A single ship-specific item, the original flat value, or `None`
         when extraction is not possible.
     """
 
@@ -126,12 +126,12 @@ def _extract_physics_entry(env: Any, ship_index: int = 0) -> Any:
     Return one physics-simulator entry from common env layouts.
 
     Args:
-        env: Framework environment exposing either ``phys_sims`` or
-            ``phys_sim``.
+        env: Framework environment exposing either `phys_sims` or
+            `phys_sim`.
         ship_index: Preferred ship index for multi-ship environments.
 
     Returns:
-        Any: Physics simulator entry for one ship, or ``None`` when no known
+        Any: Physics simulator entry for one ship, or `None` when no known
         simulator attribute is available.
     """
 
@@ -158,7 +158,7 @@ def _build_framework_motion_state(
         ship_index: Ship index to extract when the environment is multi-ship.
 
     Returns:
-        np.ndarray: Motion vector ``[x, y, yaw, vx, vy, yaw_rate]`` in the
+        np.ndarray: Motion vector `[x, y, yaw, vx, vy, yaw_rate]` in the
         AirSim reference frame.
 
     Raises:
@@ -208,7 +208,7 @@ def _resolve_interpolation_steps(
             radians.
 
     Returns:
-        int: Interpolation step count clamped to at least ``1``.
+        int: Interpolation step count clamped to at least `1`.
     """
 
     steps = max(1, int(interpolation_steps))
@@ -279,7 +279,7 @@ def _should_snap_visual_update(
         interpolation_steps: Requested interpolation step count.
 
     Returns:
-        bool: ``True`` when interpolation should snap directly to the final
+        bool: `True` when interpolation should snap directly to the final
         visual state.
     """
 
@@ -318,7 +318,7 @@ def _build_visual_controls(
         ship_index: Ship index to extract when the environment is multi-ship.
 
     Returns:
-        Any: AirSim ``CarControls``-compatible payload, or ``None`` when the
+        Any: AirSim `CarControls`-compatible payload, or `None` when the
         bridge is disconnected.
     """
 
@@ -580,7 +580,7 @@ class ModelVisualisationAdapter(ABC):
             model_path: Candidate model path supplied by the user or runner.
 
         Returns:
-            bool: ``True`` when the stem contains one of the family keywords.
+            bool: `True` when the stem contains one of the family keywords.
         """
 
         stem = Path(model_path).stem.lower()
@@ -593,7 +593,7 @@ class ModelVisualisationAdapter(ABC):
         Args:
             model_path: Model path being visualized. Included for adapter APIs
                 that may want filename-aware resolution.
-            requested_env_name: User-requested environment name, or ``"auto"``.
+            requested_env_name: User-requested environment name, or "auto".
 
         Returns:
             str: Canonical framework environment name to instantiate.
@@ -662,14 +662,14 @@ class ModelVisualisationAdapter(ABC):
 
         Returns:
             dict[str, Callable[[int], object]]: Mapping from environment name to
-            one-argument factory taking ``max_steps``.
+            one-argument factory taking `max_steps`.
         """
 
         raise NotImplementedError
 
     def extract_pose(self, env, ship_index: int = 0) -> tuple[float, float, float]:
         """
-        Extract framework-frame ``(x, y, heading)`` for one ship.
+        Extract framework-frame `(x, y, heading)` for one ship.
 
         Args:
             env: Active framework environment.
@@ -704,7 +704,7 @@ class ModelVisualisationAdapter(ABC):
 
     def extract_velocity(self, env, ship_index: int = 0) -> tuple[float, float, float]:
         """
-        Extract framework-frame ``(surge, sway, yaw_rate)`` for one ship.
+        Extract framework-frame `(surge, sway, yaw_rate)` for one ship.
 
         Args:
             env: Active framework environment.
@@ -739,7 +739,7 @@ class ModelVisualisationAdapter(ABC):
                 multi-ship.
 
         Returns:
-            Optional[np.ndarray]: Flat actuator vector, or ``None`` when no
+            Optional[np.ndarray]: Flat actuator vector, or `None` when no
             actuator state is available.
         """
 
@@ -800,7 +800,7 @@ class ModelVisualisationAdapter(ABC):
             env: Active framework environment.
             bridge: AirSim bridge used to push visual updates.
             **kwargs: Playback parameters forwarded to
-                ``_animate_framework_state``.
+                `_animate_framework_state`.
 
         Returns:
             tuple[np.ndarray, Optional[np.ndarray]]: Final mirrored motion state
@@ -919,10 +919,10 @@ def resolve_visualisation_adapter(
     Resolve the adapter used for a visualized model replay.
 
     Args:
-        model_family: Requested adapter family, or ``"auto"`` for detection.
+        model_family: Requested adapter family, or "auto" for detection.
         model_path: Candidate model path used during automatic family
             detection.
-        env_name: Explicit environment name, or ``"auto"``.
+        env_name: Explicit environment name, or "auto".
 
     Returns:
         ModelVisualisationAdapter: Resolved adapter instance.

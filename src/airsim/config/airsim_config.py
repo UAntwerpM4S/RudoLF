@@ -1,7 +1,7 @@
 """
 AirSim connection configuration with validation.
 
-Provides a validated ``AirSimConfig`` dataclass that centralizes all
+Provides a validated `AirSimConfig` dataclass that centralizes all
 CosysAirSim connection parameters. PID / control-loop gains are
 intentionally **not** stored here because they belong in the
 input-mapping layer instead.
@@ -62,14 +62,14 @@ class AirSimConfig:
     """
     Validated, immutable configuration for the AirSim bridge.
 
-    All values are validated in ``__post_init__``.  Invalid parameters
-    raise ``ValueError`` with a clear, actionable message.
+    All values are validated in `__post_init__`.  Invalid parameters
+    raise `ValueError` with a clear, actionable message.
 
     Attributes:
-        use_airsim: Enable the AirSim bridge. When ``False`` the bridge
+        use_airsim: Enable the AirSim bridge. When `False` the bridge
             is never connected, regardless of other settings.
         ip: AirSim server IP address.  An empty string means
-            ``127.0.0.1`` (localhost).
+            `127.0.0.1` (localhost).
         port: AirSim RPC port (1–65 535).
         timeout: Connection timeout in seconds (must be > 0).
         max_retries: Maximum number of connection attempts before
@@ -137,7 +137,7 @@ class AirSimConfig:
     @property
     def resolved_ip(self) -> str:
         """
-        Return the effective IP address (``127.0.0.1`` when empty).
+        Return the effective IP address (`127.0.0.1` when empty).
 
         Returns:
             str: Resolved IP address used for network calls.

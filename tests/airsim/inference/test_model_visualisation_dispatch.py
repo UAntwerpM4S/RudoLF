@@ -115,7 +115,7 @@ def test_main_with_airsim_model_visualisation_exits_cleanly_when_ue5_is_unreacha
     Verifies:
         - runtime settings enable model_visualise.
         - a ConnectionError from the AirSim visualiser is converted into a
-          clean ``SystemExit(1)`` rather than an uncaught traceback.
+          clean `SystemExit(1)` rather than an uncaught traceback.
         - the user-facing message explains the missing UE5 dependency.
     """
 
