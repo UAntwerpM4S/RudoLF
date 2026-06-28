@@ -8,8 +8,6 @@ import gymnasium as gym
 import tkinter as tk
 import numpy as np
 
-from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
-
 # First try interactive backend
 try:
     matplotlib.use('TkAgg')  # Try using the interactive backend
@@ -26,6 +24,7 @@ from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 from fw.reward.reward import Reward
 
+from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.dynamics_model import Model
@@ -298,7 +297,7 @@ class PySimEnv(BaseEnv):
         self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
 
-    def create_simulator(self, ua_surrogate_config):
+    def create_simulator(self, ua_surrogate_config: Optional[Dict]=None):
         """
         Create and return a configured ship simulator.
 

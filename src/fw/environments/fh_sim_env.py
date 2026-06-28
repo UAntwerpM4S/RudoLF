@@ -2,7 +2,7 @@ import copy
 import importlib
 import numpy as np
 
-from typing import Optional
+from typing import Optional, Dict
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from fw.environments.py_sim_env import PySimEnv
@@ -86,7 +86,7 @@ class FhSimEnv(PySimEnv):
         self._fh_sim.initial_vessel_state = self.phys_sim.state
 
 
-    def create_simulator(self):
+    def create_simulator(self, ua_surrogate_config: Optional[Dict]=None):
         """
         Create and return a configured FH-based ship simulator.
 
