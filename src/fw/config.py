@@ -133,8 +133,10 @@ CONFIG_PARAMETERS = {
     'wind': False,
     'current': False,
     'visualize_best_trained': False,
-    'viz_mode': VisualizationMode.COMPLEX,  # Either "simple" or "complex"
+    'viz_mode': VisualizationMode.COMPLEX,
     'scenario': "DDShip_scenario1_nowindnocurrent",
+    'ua_surrogate_config': {"wcu_enabled": False,
+                            "file_name": "checkpoints/best_surrogate_clean.pth"},
     'ship_model': ShipModel.MYZAKO_37,
     'dynamics_model': Model.FOSSEN,
     'live_animation': False,

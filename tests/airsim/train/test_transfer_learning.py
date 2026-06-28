@@ -373,7 +373,7 @@ class TestApplyTransferWeights:
         A converged 2D policy can collapse log_std to highly negative values for
         some action dimensions, producing near-deterministic actions. Copying
         that into the target freezes exploration and PPO cannot recover. The
-        target must retain its default ``log_std = -0.5``.
+        target must retain its default `log_std = -0.5`.
         """
 
         src = _make_policy(input_dim=18, output_dim=2)

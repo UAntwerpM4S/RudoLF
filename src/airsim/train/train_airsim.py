@@ -5,8 +5,8 @@ Usage:
     python -m airsim.train.train_airsim
 
 This entrypoint now reads its AirSim environment configuration from
-``airsim/config/runtime_settings.json`` so standalone AirSim training stays in
-sync with ``fw.main_with_airsim``.
+`airsim/config/runtime_settings.json` so standalone AirSim training stays in
+sync with `fw.main_with_airsim`.
 """
 
 from __future__ import annotations

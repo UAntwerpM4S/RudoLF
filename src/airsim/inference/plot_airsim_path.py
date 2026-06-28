@@ -1,7 +1,7 @@
 """
 Live path-reconstruction plotter for AirSim telemetry.
 
-Reads ``airsim_telemetry.csv`` produced by the AirSim bridge, reconstructs
+Reads `airsim_telemetry.csv` produced by the AirSim bridge, reconstructs
 ship and vehicle paths via dead reckoning, and displays them in a
 continuously updating matplotlib window.
 """
@@ -26,7 +26,7 @@ def find_telemetry_file():
     """
     Search for the telemetry CSV in a list of candidate locations.
     Returns:
-        The first existing path from ``POSSIBLE_PATHS``, or ``None``
+        The first existing path from `POSSIBLE_PATHS`, or `None`
         if no file is found.
     """
 
@@ -49,11 +49,11 @@ def reconstruct_path(speeds, headings_deg, start_pos=(0, 0)):
         speeds: Sequence of scalar speeds (m/s) at each time step.
         headings_deg: Sequence of headings in degrees
             (0 = North, 90 = East).
-        start_pos: ``(x, y)`` starting position. Defaults to ``(0, 0)``.
+        start_pos: `(x, y)` starting position. Defaults to `(0, 0)`.
 
     Returns:
-        A tuple ``(x_list, y_list)`` of reconstructed positions.
-        Each list has ``len(speeds) + 1`` elements (start + one per step).
+        A tuple `(x_list, y_list)` of reconstructed positions.
+        Each list has `len(speeds) + 1` elements (start + one per step).
     """
 
     x, y = [start_pos[0]], [start_pos[1]]
@@ -70,12 +70,12 @@ class LivePlotter:
     """
     Continuously updating matplotlib plot of reference-ship vs. AirSim paths.
 
-    Reads ``airsim_telemetry.csv`` every second, reconstructs both paths
+    Reads `airsim_telemetry.csv` every second, reconstructs both paths
     with dead reckoning, aligns their initial headings, and re-draws the
     figure.
 
     Attributes:
-        telemetry_file: Path to the CSV file, or ``None`` while waiting.
+        telemetry_file: Path to the CSV file, or `None` while waiting.
         is_running: Whether the animation loop is still active.
     """
 
@@ -119,7 +119,7 @@ class LivePlotter:
         """
         Read the latest telemetry and refresh the plot.
 
-        Called automatically by ``FuncAnimation`` each interval.
+        Called automatically by `FuncAnimation` each interval.
 
         Args:
             frame: Frame index supplied by the animation timer
@@ -194,7 +194,7 @@ class LivePlotter:
 
     def save_plot(self):
         """
-        Save the current figure to ``airsim_path_reconstruction.png``.
+        Save the current figure to `airsim_path_reconstruction.png`.
         """
 
         if self.telemetry_file:
@@ -210,7 +210,7 @@ class LivePlotter:
         Handle the matplotlib window-close event.
 
         Args:
-            event: The matplotlib ``CloseEvent``.
+            event: The matplotlib `CloseEvent`.
         """
 
         if self.is_running:
@@ -223,7 +223,7 @@ class LivePlotter:
         Handle keyboard input; pressing *q* stops the plot.
 
         Args:
-            event: The matplotlib ``KeyEvent``.
+            event: The matplotlib `KeyEvent`.
         """
 
         if event.key == 'q':

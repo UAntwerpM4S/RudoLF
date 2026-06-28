@@ -199,7 +199,7 @@ def test_fhsim_adapter_rejects_pysim_environment():
 
 def test_single_environment_adapter_resolves_auto_mode():
     """
-    Adapters with one supported env should resolve ``auto`` themselves.
+    Adapters with one supported env should resolve `auto` themselves.
     """
 
     adapter = PySimVisualisationAdapter()
@@ -240,7 +240,7 @@ def test_pysim_adapter_build_environment_uses_shared_defaults(monkeypatch):
 
 def test_motion_state_from_env_supports_flat_ship_position():
     """
-    Adapter motion extraction should not require ``ship_pos[0]``.
+    Adapter motion extraction should not require `ship_pos[0]`.
     """
 
     adapter = PySimVisualisationAdapter()
@@ -268,7 +268,7 @@ def test_motion_state_from_env_supports_flat_ship_position():
 
 def test_motion_state_from_env_supports_single_ship_attribute_layout():
     """
-    Adapter extraction should support envs exposing ``phys_sim`` and ``ship``.
+    Adapter extraction should support envs exposing `phys_sim` and `ship`.
     """
 
     adapter = PySimVisualisationAdapter()
@@ -310,7 +310,7 @@ def test_motion_state_from_env_supports_single_ship_attribute_layout():
 
 def test_extract_actuator_state_supports_flat_action_vector():
     """
-    Actuator extraction should not require ``performed_action[0]``.
+    Actuator extraction should not require `performed_action[0]`.
     """
 
     adapter = PySimVisualisationAdapter()

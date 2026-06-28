@@ -115,7 +115,7 @@ def test_airsim_training_session_writes_logs_metadata_and_plots(tmp_path):
 
 def test_auto_normalize_series_maps_data_to_minus_one_plus_one():
     """
-    Metric series should be rescaled to the full ``[-1, 1]`` interval.
+    Metric series should be rescaled to the full `[-1, 1]` interval.
     """
 
     normalized, value_min, value_max = AirSimTrainingSession._auto_normalize_series(

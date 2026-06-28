@@ -115,8 +115,8 @@ def _log_scale_signed(value: float, scale: float) -> float:
     Map a signed distance to [-1, 1] with logarithmic compression.
 
     Values near zero get finer resolution; the input magnitude equal to
-    ``scale`` maps to exactly ±1. The input magnitude equal to
-    ``_LOG_SCALE_HALF_VALUE_FRACTION * scale`` maps to approximately ±0.5,
+    `scale` maps to exactly ±1. The input magnitude equal to
+    `_LOG_SCALE_HALF_VALUE_FRACTION * scale` maps to approximately ±0.5,
     giving the policy more precision when close to a checkpoint.
     """
 
@@ -179,10 +179,10 @@ def normalize_navigation_state(
     checkpoint_count: int = 1,
 ) -> np.ndarray:
     """
-    Normalize raw ship telemetry into a compact ``[-1, 1]`` vector.
+    Normalize raw ship telemetry into a compact `[-1, 1]` vector.
 
     This helper is intended for pipelines that consume the run-log schema
-    directly (large ``ship_x``/``ship_y`` values and heading in degrees).
+    directly (large `ship_x`/`ship_y` values and heading in degrees).
     """
 
     safe_half_span = max(float(xy_half_span), 1e-6)
@@ -218,7 +218,7 @@ def normalize_navigation_state(
 
 def _normalize_angle(angle_rad: float) -> float:
     """
-    Wrap an angle to ``[-pi, pi]``.
+    Wrap an angle to `[-pi, pi]`.
     """
 
     return math.atan2(math.sin(angle_rad), math.cos(angle_rad))
@@ -1370,8 +1370,8 @@ class AirSimEnv(BaseEnv):
         Pull the latest pose and velocity state from AirSim.
 
         Returns:
-            bool: ``True`` when at least one valid telemetry snapshot was
-            available for the update, ``False`` otherwise.
+            bool: `True` when at least one valid telemetry snapshot was
+            available for the update, `False` otherwise.
         """
 
         state = self.bridge.get_state()

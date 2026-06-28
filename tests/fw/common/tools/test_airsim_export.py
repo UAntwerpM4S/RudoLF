@@ -205,7 +205,7 @@ def test_build_framework_visualisation_row_handles_missing_state_bits() -> None:
 
 def test_build_framework_visualisation_row_handles_flat_numpy_state() -> None:
     """
-    Flat NumPy ship state should not require ``[0]`` indexing.
+    Flat NumPy ship state should not require `[0]` indexing.
     """
 
     env = SimpleNamespace(
@@ -235,7 +235,7 @@ def test_build_framework_visualisation_row_handles_flat_numpy_state() -> None:
 
 def test_build_framework_visualisation_row_handles_single_phys_sim_layout() -> None:
     """
-    FHSim-style envs exposing ``phys_sim`` should export true surge speed.
+    FHSim-style envs exposing `phys_sim` should export true surge speed.
     """
 
     env = SimpleNamespace(
