@@ -196,11 +196,11 @@ class ShipSimulator(BaseSimulator):
             actuator = self._actuators.step(command, dt_rem, enable_smoothing)
             self.integrate(actuator, dt_rem, enable_rudder_angle_scaling)
 
-        s = self._state
         if isinstance(self._dynamics, FhTabularModel):
             fh_pos = self._dynamics._engine.ship_interface.getShipPosition()
             fh_hdg = np.radians(self._dynamics._engine.ship_interface.getShipHeading())
 
+            s = self._state
             self._state = VesselState(
                 terminated=s.terminated,
                 truncated=s.truncated,
