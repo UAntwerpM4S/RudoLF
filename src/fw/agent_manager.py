@@ -215,8 +215,9 @@ class AgentManager:
         self._agent.learn(stop_condition=stop_condition)
 
         # Cleanup the environment
-        if hasattr(self.get_env(), "fh_sim"):
-            self.get_env().fh_sim.dispose()
+        fh_sim = getattr(self.get_env(), "fh_sim", None)
+        if fh_sim is not None:
+            fh_sim.dispose()
 
     @staticmethod
     def _get_ship_env(env, ship_id: str):
@@ -345,8 +346,9 @@ class AgentManager:
                 # )
 
             # Cleanup the environment
-            if hasattr(self.get_env(), "fh_sim"):
-                self.get_env().fh_sim.dispose()
+            fh_sim = getattr(self.get_env(), "fh_sim", None)
+            if fh_sim is not None:
+                fh_sim.dispose()
 
             if return_summary:
                 return summaries
