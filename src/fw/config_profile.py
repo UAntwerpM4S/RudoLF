@@ -593,19 +593,44 @@ class ProfileRegistry:
 
 ProfileRegistry.register(VesselProfile(
     name="default_profile",
-    description="Standard profile with Fossen dynamics.",
+    description="Default configuration profile.",
     run_mode=RunMode.TRAIN,
     actuator=ActuatorConfig(enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))
 
 ProfileRegistry.register(VesselProfile(
-    name="fhsim_training_profile",
-    description="Training profile for the FH simulator.",
+    name="fh_simulator_profile",
+    description="Configuration profile for the FH simulator.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.FH_TABULAR,
+    ),
+    actuator=ActuatorConfig(max_rudder_angle_deg=75.0, enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
+))
+
+ProfileRegistry.register(VesselProfile(
+    name="ugent_surrogate_profile",
+    description="Configuration profile for UGent's surrogate model.",
+    run_mode=RunMode.TRAIN,
+    model=ModelConfig(
+        ship_model=ShipModel.TRIPOLI,
+        dynamics_model=Model.UGENT_SURROGATE,
+    ),
+    scenario=ScenarioConfig(initial_speed=4.8),
+    actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
+    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
+))
+
+ProfileRegistry.register(VesselProfile(
+    name="uantwerp_surrogate_profile",
+    description="Configuration profile for UAntwerp's surrogate model.",
+    run_mode=RunMode.TRAIN,
+    model=ModelConfig(
+        ship_model=ShipModel.MYZAKO_37,
+        dynamics_model=Model.UANTWERP,
     ),
     actuator=ActuatorConfig(max_rudder_angle_deg=75.0, enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FREE),
@@ -639,43 +664,4 @@ ProfileRegistry.register(VesselProfile(
     actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
     transfer=TransferConfig(enable_rudder_angle_scaling=True),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="fhsim_visualization_profile",
-    description=(
-        "Visualize an FhSim-trained policy."
-    ),
-    run_mode=RunMode.INFERENCE,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FH_TABULAR,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="ugent_surrogate_training_profile",
-    description="Training profile for UGent's surrogate model.",
-    run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.TRIPOLI,
-        dynamics_model=Model.UGENT_SURROGATE,
-    ),
-    scenario=ScenarioConfig(initial_speed=4.8),
-    actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="uantwerp_surrogate_training_profile",
-    description="Training profile for UAntwerp's surrogate model.",
-    run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.UANTWERP,
-    ),
-    actuator=ActuatorConfig(max_rudder_angle_deg=75.0, enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))
