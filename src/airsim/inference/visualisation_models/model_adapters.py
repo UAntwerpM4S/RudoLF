@@ -817,8 +817,10 @@ class ModelVisualisationAdapter(ABC):
             env: Framework environment created by this adapter.
         """
 
-        if env is not None and hasattr(env, "fh_sim"):
-            env.fh_sim.dispose()
+        if env is not None:
+            fh_sim = getattr(env, "fh_sim", None)
+            if fh_sim is not None:
+                fh_sim.dispose()
 
 
 class PySimVisualisationAdapter(ModelVisualisationAdapter):
