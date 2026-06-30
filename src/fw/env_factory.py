@@ -4,7 +4,7 @@ import types
 from typing import Any
 from collections.abc import Mapping
 from fw.environments.py_sim_env import PySimEnv
-from fw.environments.fh_sim_env import FhSimEnv
+# from fw.environments.fh_sim_env import FhSimEnv
 from airsim.environments.airsim_env import AirSimEnv
 from fw.environments.lunar_lander import LunarLander
 from fw.environments.multi_sim_env import MultiSimEnv
@@ -367,7 +367,7 @@ class FhSimEnvironment(BaseEnvironment):
         # self._env = DummyVecEnv([lambda: Monitor(FhSimEnv(render_mode='human', max_steps=1200, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = FhSimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
+        self._env = PySimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
                              ship_model=self.configuration["ship_model"],
                              scenario=self.configuration["scenario"],
                              dynamics_model=self.configuration["dynamics_model"])

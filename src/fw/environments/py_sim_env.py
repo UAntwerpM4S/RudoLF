@@ -1,6 +1,8 @@
 import os
+import copy
 import math
 import shapely
+import importlib
 import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
@@ -25,6 +27,7 @@ from fw.environments.base_env import BaseEnv
 from fw.reward.reward import Reward
 
 from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
+from fw.dynamics.fh_tabular_model import FhTabularModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.dynamics_model import Model
@@ -111,7 +114,23 @@ def calculate_perpendicular_lines(
 
 class PySimEnv(BaseEnv):
     """
-    Custom Python Simulator environment for ship navigation with improved physics.
+    Custom ship navigation environment with improved physics.
+
+    Supports both pure-Python dynamics models (Fossen, Nomoto,
+    UGentSurrogate, UAntwerpSurrogate) and the external FH Simulator engine
+    (Model.FH_TABULAR). When dynamics_model == Model.FH_TABULAR, the
+    environment is backed by an FhSimBridge instance (self._fh_sim /
+    self.fh_sim) that manages the FH Simulator math model; interaction in
+    that mode is limited to setting normalized rudder and thrust commands
+    in [-1, 1] via the SimAPI Python layer. For all other dynamics models,
+    self._fh_sim is None and the environment behaves exactly as before.
+
+    Attributes:
+        _fh_sim: FhSimBridge instance managing the FH Simulator math model
+            when dynamics_model == Model.FH_TABULAR; None otherwise. Is
+            None despite FH_TABULAR being selected only if the
+            fh_sim_bridge module cannot be imported, in which case
+            instantiation fails during __init__ with a RuntimeError.
     """
 
     def __init__(
@@ -130,6 +149,8 @@ class PySimEnv(BaseEnv):
             #Reward configuration
             reward_name: str = "default",
             reward_weights: Optional[Dict[str, float]] = None,
+            # FH Simulator configuration (only used when dynamics_model == Model.FH_TABULAR)
+            scenario: Optional[str] = "DDShip_scenario1_nowindnocurrent",
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -141,14 +162,39 @@ class PySimEnv(BaseEnv):
             verbose: whether to print informational logs.
             start_pos: optional initial ship position (2-array).
             target_pos: optional target position (unused if checkpoints available).
-            dynamics_model: optional dynamics model to use.
+            dynamics_model: optional dynamics model to use. Pass Model.FH_TABULAR
+                to drive the environment with the external FH Simulator engine
+                instead of the pure-Python dynamics models.
             ship_model: optional ship model to use.
             wind: enable wind effects.
             current: enable current effects.
             ua_surrogate_config: optional configuration for the UA surrogate model.
             reward_name: name of reward profile (combination of components).
             reward_weights: optional per-component reward weights.
+            scenario: FH Simulator scenario name. Only used when
+                dynamics_model == Model.FH_TABULAR; ignored otherwise.
         """
+
+        # ---------------------------------------------------------------
+        # FH Simulator bridge setup (only when dynamics_model is FH_TABULAR).
+        # Done first, before any other initialization, so that a missing FH
+        # Simulator installation fails fast instead of after doing
+        # potentially expensive setup work (mirrors prior FhSimEnv behavior).
+        # ---------------------------------------------------------------
+        self._fh_sim = None
+        if dynamics_model == Model.FH_TABULAR:
+            try:
+                fh_bridge_module = importlib.import_module('fw.simulators.fh_sim_bridge')
+                fh_bridge_class = getattr(fh_bridge_module, "FhSimBridge")
+                self._fh_sim = fh_bridge_class(ship_model, scenario)
+            except ModuleNotFoundError as e:
+                raise RuntimeError(
+                    "FH Simulator bridge module 'fw.simulators.fh_sim_bridge' could not be "
+                    "imported. Ensure the FH Simulator package is installed and the "
+                    "SIMEXE_REPO_FOLDER environment variable is set correctly. "
+                    "Use a non-FH_TABULAR dynamics_model for pure-Python simulation "
+                    "without external dependencies."
+                ) from e
 
         super().__init__(render_mode)
 
@@ -160,6 +206,7 @@ class PySimEnv(BaseEnv):
         self.max_steps = int(max_steps)
         self.time_step = float(time_step)
         self.dynamics_model = dynamics_model
+        self.scenario = scenario
         self.verbose = bool(verbose) if verbose is not None else False
         self.previous_ship_pos = None
         self.previous_heading = None
@@ -201,6 +248,12 @@ class PySimEnv(BaseEnv):
         self.phys_sim = self.create_simulator(ua_surrogate_config)
 
         self._initialize_simulation()
+
+        # When driven by the FH Simulator, set the initial vessel state on the
+        # bridge so the math model can be initialized with the correct
+        # position, heading, and velocities on the first reset() call.
+        if self._fh_sim is not None:
+            self._fh_sim.initial_vessel_state = self.phys_sim.state
 
         # Gym spaces
         self.action_space = gym.spaces.Box(
@@ -319,10 +372,61 @@ class PySimEnv(BaseEnv):
             self.dynamics = UGentSurrogate(self.ship.specifications)
         elif self.dynamics_model == Model.UANTWERP:
             self.dynamics = UAntwerpSurrogate(self.ship.specifications, ua_surrogate_config)
+        elif self.dynamics_model == Model.FH_TABULAR:
+            # Explicit guard so any future code path that bypasses __init__
+            # does not silently pass None to FhTabularModel.
+            if self._fh_sim is None:
+                raise RuntimeError(
+                    "FH Simulator engine (_fh_sim) is not available. "
+                    "Model.FH_TABULAR requires a working FH Simulator installation."
+                )
+            self.dynamics = FhTabularModel(self.ship.specifications, self._fh_sim)
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
         return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
+
+    def __deepcopy__(self, memo):
+        """
+        Deep copy this instance, sharing the FH Simulator reference (if any).
+
+        The FH Simulator bridge (_fh_sim) is not deep-copied because it holds
+        non-picklable external resources (native library handles, COM
+        objects). All other attributes are deep-copied normally. When
+        _fh_sim is None (non-FH dynamics models), this is equivalent to a
+        normal deep copy.
+
+        Args:
+            memo (dict): Memoization dict used by copy.deepcopy.
+
+        Returns:
+            PySimEnv: Deep copy with shared _fh_sim reference (including all
+            other references to the same bridge in the object graph).
+        """
+
+        new_instance = self.__class__.__new__(self.__class__)
+        if self._fh_sim is not None:
+            memo[id(self._fh_sim)] = self._fh_sim
+
+        for key, value in self.__dict__.items():
+            if key == '_fh_sim':
+                setattr(new_instance, key, value)   # Retain the original reference
+            else:
+                setattr(new_instance, key, copy.deepcopy(value, memo))  # Deep copy all other attributes
+
+        return new_instance
+
+    @property
+    def fh_sim(self):
+        """
+        The FH Simulator bridge instance.
+
+        Returns:
+            FhSimBridge: Active bridge to the FH Simulator math model, or
+            None if dynamics_model is not Model.FH_TABULAR.
+        """
+
+        return self._fh_sim
 
     # -------------------------
     # Environment data loaders
@@ -485,11 +589,21 @@ class PySimEnv(BaseEnv):
         Get keel clearance.
 
         Args:
-            pos (np.array, optional): The position for which
-                to query the keel clearance.
+            pos (np.array, optional): The position for which to query the
+                keel clearance. Ignored when driven by the FH Simulator,
+                which reports clearance for its own internal state.
+
+        Returns:
+            float: Keel clearance in metres.
+
+        Raises:
+            RuntimeError: If dynamics_model is Model.FH_TABULAR and _fh_sim
+                is unexpectedly unavailable.
         """
 
-        if isinstance(self.dynamics, UAntwerpSurrogate):
+        if self._fh_sim is not None:
+            return self._fh_sim.ship_interface.getKeelClearance()
+        elif isinstance(self.dynamics, UAntwerpSurrogate):
             return self.dynamics.get_ukc(pos)
         else:
             return 0.0
@@ -626,9 +740,23 @@ class PySimEnv(BaseEnv):
 
     def _has_enough_keel_clearance(self, depth_threshold: float = 0.5) -> bool:
         """
-        Placeholder to check keel clearance; returns True by default to preserve
-        existing behavior. Override or expand if real depth data available.
+        Check whether the vessel has sufficient keel clearance.
+
+        When driven by the FH Simulator, queries the bridge's ship interface
+        directly. Otherwise, this is a placeholder returning True by default
+        to preserve existing behavior for the pure-Python dynamics models.
+
+        Args:
+            depth_threshold (float): Minimum acceptable keel clearance in
+                metres. Only used in FH Simulator mode. Defaults to 0.5 m.
+
+        Returns:
+            bool: True if keel clearance >= depth_threshold (FH mode), or
+            True unconditionally (pure-Python dynamics models).
         """
+
+        if self._fh_sim is not None:
+            return self._fh_sim.ship_interface.getKeelClearance() >= depth_threshold
 
         return True
 
@@ -822,17 +950,53 @@ class PySimEnv(BaseEnv):
 
         return gym.spaces.Box(low=base_low, high=base_high, dtype=np.float32)
 
+    def env_specific_reset(self):
+        """
+        Hook for environment-specific reset operations, called by reset()
+        before _initialize_simulation().
+
+        When driven by the FH Simulator, resets the FH Simulator to its
+        initial state (rewinding the math model to t=0.25s, the earliest
+        supported rewind point). Otherwise, defers to the base class hook
+        to preserve prior (non-FH) behavior unchanged.
+
+        Raises:
+            RuntimeError: If dynamics_model is Model.FH_TABULAR and _fh_sim
+                is unexpectedly unavailable.
+        """
+
+        if self._fh_sim is not None:
+            self._fh_sim.reset()
+            return
+
+        super().env_specific_reset()
+
     def randomize(self, randomization_scale: Optional[float] = None) -> None:
         """
         Randomize the ship's initial position within specified bounds.
 
+        Intentionally a no-op when driven by the FH Simulator: the FH
+        Simulator always rewinds to the fixed initial state baked into the
+        exercise file at math model initialization time. The initial
+        position, heading, and velocities are set once via
+        FhSimBridge.initial_vessel_state and cannot be changed between
+        episodes without reinitializing the math model from scratch. If
+        per-episode starting position variation is needed in FH mode, it
+        must be implemented by loading a different exercise file or by
+        extending this method to call dispose() + reset() with a new
+        initial_vessel_state.
+
         Args:
             randomization_scale: Maximum absolute value for position
                 randomization. If None, uses the class's default scale.
+                Ignored when driven by the FH Simulator.
 
         Raises:
-            ValueError: If randomization_scale is not positive
+            ValueError: If randomization_scale is not positive (non-FH mode).
         """
+
+        if self._fh_sim is not None:
+            return  # Intentional no-op when driven by the FH Simulator
 
         if randomization_scale is not None:
             if randomization_scale <= 0:

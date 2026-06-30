@@ -1,4 +1,5 @@
 import copy
+import logging
 import importlib
 import numpy as np
 
@@ -41,6 +42,9 @@ class FhSimEnv(PySimEnv):
         """
         Initialize the FhSimEnv environment.
 
+        .. deprecated::
+            FhSimEnv is deprecated; use PySimEnv instead.
+
         Args:
             render_mode (str, optional): The rendering mode. Defaults to None.
             time_step (float, optional): Simulation time step in seconds. Defaults to 1.0.
@@ -56,6 +60,11 @@ class FhSimEnv(PySimEnv):
                 requires the FH Simulator to be installed — use PySimEnv for
                 pure-Python simulation without external dependencies.
         """
+
+        logging.warning(
+            "FhSimEnv is deprecated and will be removed in a future version; "
+            "use PySimEnv instead."
+        )
 
         try:
             fh_bridge_module = importlib.import_module('fw.simulators.fh_sim_bridge')

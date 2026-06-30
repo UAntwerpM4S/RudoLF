@@ -1,4 +1,5 @@
 import copy
+import logging
 import numpy as np
 
 from fw.ships.ship_factory import ShipModel
@@ -48,6 +49,9 @@ class FhSimWrapper(BaseSimulator):
         """
         Initialize the FH Simulator wrapper.
 
+        .. deprecated::
+            FhSimWrapper is deprecated; use ShipSimulator instead.
+
         Args:
             specs: ShipSpecifications defining vessel and actuator limits.
             fh_engine: FhSimBridge instance (the FH engine handle).
@@ -56,6 +60,11 @@ class FhSimWrapper(BaseSimulator):
         Raises:
             ValueError: If dt <= 0 (enforced by BaseSimulator).
         """
+
+        logging.warning(
+            "FhSimWrapper is deprecated and will be removed in a future version; "
+            "use ShipSimulator instead."
+        )
 
         super().__init__(specs, dt)
 
