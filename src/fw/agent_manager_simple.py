@@ -428,14 +428,14 @@ class AgentManagerSimple:
                             state, reward, terminated, truncated, _ = env.step(action)
                             done = terminated or truncated
 
+                            # Include every reward, including the terminal transition
+                            steps += 1
+                            episode_reward += (reward - episode_reward) / steps
+
+                            # Store the new position (also the terminal one)
+                            path_positions.append(np.copy(env.ship_pos))
+
                             if not done:
-                                # Store current position
-                                path_positions.append(np.copy(env.ship_pos))
-
-                                # Calculate the average episode reward
-                                steps += 1
-                                episode_reward += (reward - episode_reward) / steps
-
                                 # Uncomment for animated evaluation
                                 if live_animation:
                                     env.render()
