@@ -349,8 +349,9 @@ class AgentManagerSimple:
         )
 
         # Cleanup the environment
-        if hasattr(self.get_env(), "fh_sim"):
-            self.get_env().fh_sim.dispose()
+        fh_sim = getattr(self.get_env(), "fh_sim", None)
+        if fh_sim is not None:
+            fh_sim.dispose()
 
 
     def visualize_trained_agent(
@@ -475,8 +476,9 @@ class AgentManagerSimple:
                 )
 
                 # Cleanup the environment
-                if hasattr(env, "fh_sim"):
-                    env.fh_sim.dispose()
+                fh_sim = getattr(env, "fh_sim", None)
+                if fh_sim is not None:
+                    fh_sim.dispose()
 
                 if return_summary:
                     env_name = getattr(env, "type_name", "environment")
