@@ -1,4 +1,5 @@
-"""Nearest-neighbor lookup of Under Keel Clearance (UKC) and environmental
+"""
+Nearest-neighbor lookup of Under Keel Clearance (UKC) and environmental
 conditions (wind speed/direction, current speed/direction) from a CSV of
 supervised-dataset points, backed by a scipy cKDTree.
 
@@ -34,10 +35,18 @@ from scipy.spatial import cKDTree
 
 @dataclass(frozen=True, slots=True)
 class EnvironmentData:
-    """Environmental conditions returned from a nearest-neighbor lookup.
+    """
+    Container for environmental conditions returned by a nearest-neighbor lookup.
 
-    All angular quantities are in radians. None values indicate that no
-    point was found within the requested max_distance.
+    All angular quantities are expressed in radians. A field is `None` when no
+    dataset point satisfies the requested search constraints.
+
+    Attributes:
+        ukc: Under-keel clearance in meters.
+        wind_speed: Wind speed in meters per second.
+        wind_direction: Wind direction in radians.
+        current_speed: Current speed in meters per second.
+        current_direction: Current direction in radians.
     """
 
     ukc: float | None               # m
@@ -58,21 +67,20 @@ _ENV_DTYPE = np.dtype([
 
 
 class WcuLookup:
-    """Nearest-neighbor lookup for wind, current and UKC.
+    """
+    Nearest-neighbor lookup for under-keel clearance and environmental data.
 
-    The tree is built on (x, y) world-frame coordinates (cols 0 and 1).
-    Querying returns the five environmental scalars stored at the nearest
-    sampled point.
+    The lookup is backed by a scipy `cKDTree` constructed from the dataset's
+    world-frame `(x, y)` coordinates. Each query returns the environmental
+    values associated with the nearest sampled point.
 
-    Column indices default to the layout produced by
-    `collect_supervised_dataset`, but each can be overridden by passing
-    either an integer (positional) or a string (header name).
+    By default, the column indices match the CSV layout produced by
+    `collect_supervised_dataset`. Individual columns may be specified either by
+    their integer position or by their header name.
 
-    Backward-compatible API
-    -----------------------
-    `get_ukc` / `get_ukc_batch` still exist and behave exactly as before.
-    The new `get_env` / `get_env_batch` methods return all five fields as
-    an :class:`EnvironmentData` instance or a structured NumPy array.
+    The legacy `get_ukc()` and `get_ukc_batch()` methods remain available for
+    backward compatibility. The newer `get_env()` and `get_env_batch()`
+    methods return all available environmental variables.
     """
 
     def __init__(
@@ -86,6 +94,27 @@ class WcuLookup:
         current_speed_col: int | str = 9,
         current_dir_col: int | str = 10,
     ):
+        """
+        Load a dataset and build the nearest-neighbor search tree.
+
+        Rows containing invalid coordinates or environmental values (NaN or infinity)
+        are discarded before constructing the lookup structure.
+
+        Args:
+            csv_file: Path to the CSV dataset.
+            x_col: Column containing the x-coordinate.
+            y_col: Column containing the y-coordinate.
+            ukc_col: Column containing under-keel clearance values.
+            wind_speed_col: Column containing wind speed values.
+            wind_dir_col: Column containing wind direction values.
+            current_speed_col: Column containing current speed values.
+            current_dir_col: Column containing current direction values.
+
+        Raises:
+            ValueError: If the CSV does not contain the required columns or no valid
+                rows remain after filtering invalid data.
+        """
+
         df = pd.read_csv(csv_file, header=None)
 
         # Validate that we have enough columns for every positional index used.
@@ -106,6 +135,17 @@ class WcuLookup:
                 )
 
         def _select(col: int | str) -> pd.Series:
+            """
+            Return a DataFrame column by index or column name.
+
+            Args:
+                col: Column identifier, specified either as a zero-based integer
+                    index or as a column name.
+
+            Returns:
+                The selected pandas Series.
+            """
+
             return df.iloc[:, col] if isinstance(col, int) else df[col]
 
         x   = _select(x_col).to_numpy(dtype=np.float64)
@@ -161,11 +201,21 @@ class WcuLookup:
         y: float,
         max_distance: float | None,
     ) -> tuple[int, float]:
-        """Return (idx, distance) for the nearest point to (x, y).
-
-        idx is `len(self.ukc)` (i.e., out-of-range) when no point lies
-        within *max_distance*.
         """
+        Find the nearest dataset point for a single query location.
+
+        Args:
+            x: World-frame x-coordinate in meters.
+            y: World-frame y-coordinate in meters.
+            max_distance: Optional maximum search radius in meters.
+
+        Returns:
+            A tuple `(index, distance)` where `index` is the nearest dataset
+            index and `distance` is the Euclidean distance in meters. If no point
+            lies within `max_distance`, the returned index equals
+            `len(self.ukc)`.
+        """
+
         kwargs = {}
         if max_distance is not None:
             kwargs["distance_upper_bound"] = max_distance
@@ -178,7 +228,21 @@ class WcuLookup:
         max_distance: float | None,
         workers: int,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Return (idx_array, distance_array) for an (N, 2) query array."""
+        """
+        Perform nearest-neighbor lookup for multiple query points.
+
+        Args:
+            xy: Array of shape `(N, 2)` containing world-frame `(x, y)`
+                coordinates.
+            max_distance: Optional maximum search radius in meters.
+            workers: Number of worker threads passed to `cKDTree.query()`.
+                A value of `-1` uses all available CPU cores.
+
+        Returns:
+            A tuple `(indices, distances)` containing the nearest dataset index
+            and Euclidean distance for each query point.
+        """
+
         kwargs: dict = {"workers": workers}
         if max_distance is not None:
             kwargs["distance_upper_bound"] = max_distance
@@ -196,24 +260,23 @@ class WcuLookup:
         max_distance: float | None = None,
         return_distance: bool = False,
     ) -> EnvironmentData | tuple[EnvironmentData, float]:
-        """Look up all environmental conditions nearest to (x, y).
-
-        Parameters
-        ----------
-        x, y:
-            World-frame coordinates (m).
-        max_distance:
-            If given, only points within this radius are considered.
-            All fields in the returned :class:`EnvironmentData` are `None`
-            when no point qualifies.
-        return_distance:
-            When `True`, returns `(EnvironmentData, distance)` where
-            *distance* is `inf` if no point was within *max_distance*.
-
-        Returns
-        -------
-        :class:`EnvironmentData` (or a `(EnvironmentData, float)` tuple).
         """
+        Retrieve environmental conditions nearest to a world-frame position.
+
+        Args:
+            x: World-frame x-coordinate in meters.
+            y: World-frame y-coordinate in meters.
+            max_distance: Optional maximum search radius in meters. If no dataset
+                point falls within this distance, all returned fields are `None`.
+            return_distance: If `True`, also returns the distance to the nearest
+                dataset point.
+
+        Returns:
+            An `EnvironmentData` instance. If `return_distance` is `True`,
+            returns a tuple `(environment, distance)` where `distance` is
+            `float('inf')` when no matching point is found.
+        """
+
         idx, distance = self._query(x, y, max_distance)
         if idx >= len(self.ukc):
             env = EnvironmentData(
@@ -240,10 +303,24 @@ class WcuLookup:
         max_distance: float | None = None,
         return_distance: bool = False,
     ) -> float | None | tuple[float | None, float]:
-        """Look up UKC only (backward-compatible).
-
-        See :meth:`get_env` for full environmental data.
         """
+        Retrieve only the under-keel clearance for a query location.
+
+        This method is retained for backward compatibility. Use `get_env()` to
+        retrieve the complete set of environmental conditions.
+
+        Args:
+            x: World-frame x-coordinate in meters.
+            y: World-frame y-coordinate in meters.
+            max_distance: Optional maximum search radius in meters.
+            return_distance: If `True`, also returns the lookup distance.
+
+        Returns:
+            The under-keel clearance in meters, or `None` if no dataset point lies
+            within `max_distance`. If `return_distance` is `True`, returns a
+            tuple `(ukc, distance)`.
+        """
+
         idx, distance = self._query(x, y, max_distance)
         result = None if idx >= len(self.ukc) else float(self.ukc[idx])
         return (result, distance) if return_distance else result
@@ -258,23 +335,24 @@ class WcuLookup:
         max_distance: float | None = None,
         workers: int = -1,
     ) -> np.ndarray:
-        """Vectorized lookup for many points at once.
-
-        Parameters
-        ----------
-        xy:
-            (N, 2) array-like of (x, y) pairs.
-        max_distance:
-            Points with no neighbor within this radius get NaN in all fields.
-        workers:
-            Passed to `cKDTree.query`; `-1` uses all CPU cores.
-
-        Returns
-        -------
-        Structured NumPy array of shape (N,) with dtype fields
-        `ukc`, `wind_speed`, `wind_direction`, `current_speed`,
-        `current_direction` (all `float32`).  Missing values are NaN.
         """
+        Retrieve environmental conditions for multiple query locations.
+
+        Args:
+            xy: Array-like object of shape `(N, 2)` containing world-frame
+                `(x, y)` coordinates.
+            max_distance: Optional maximum search radius in meters. Query points
+                without a nearby dataset point receive `NaN` values.
+            workers: Number of worker threads passed to `cKDTree.query()`.
+                A value of `-1` uses all available CPU cores.
+
+        Returns:
+            A structured NumPy array of shape `(N,)` containing the fields
+            `ukc`, `wind_speed`, `wind_direction`, `current_speed`, and
+            `current_direction`. All fields have dtype `float32`. Missing values
+            are represented by `NaN`.
+        """
+
         xy  = np.asarray(xy, dtype=np.float64)
         idx, _ = self._query_batch(xy, max_distance, workers)
 
@@ -294,10 +372,24 @@ class WcuLookup:
         max_distance: float | None = None,
         workers: int = -1,
     ) -> np.ndarray:
-        """Vectorized UKC-only lookup (backward-compatible).
-
-        Returns an (N,) float32 array with NaN where no point was found.
         """
+        Retrieve under-keel clearance for multiple query locations.
+
+        This method is retained for backward compatibility.
+
+        Args:
+            xy: Array-like object of shape `(N, 2)` containing world-frame
+                `(x, y)` coordinates.
+            max_distance: Optional maximum search radius in meters.
+            workers: Number of worker threads passed to `cKDTree.query()`.
+                A value of `-1` uses all available CPU cores.
+
+        Returns:
+            A one-dimensional `float32` NumPy array containing the under-keel
+            clearance for each query point. Entries corresponding to unmatched
+            locations are `NaN`.
+        """
+
         xy  = np.asarray(xy, dtype=np.float64)
         idx, _ = self._query_batch(xy, max_distance, workers)
         out = np.full(len(xy), np.nan, dtype=np.float32)
@@ -310,7 +402,22 @@ class WcuLookup:
     # ------------------------------------------------------------------
 
     def __len__(self) -> int:
+        """
+        Return the number of valid dataset points available for lookup.
+
+        Returns:
+            The number of points stored in the lookup tree.
+        """
+
         return len(self.points)
 
     def __repr__(self) -> str:
+        """
+        Return a developer-friendly string representation of the lookup object.
+
+        Returns:
+            A string containing the class name and the number of indexed dataset
+            points.
+        """
+
         return f"UKCLookup(n_points={len(self.points)})"
