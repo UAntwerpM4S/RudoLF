@@ -2,6 +2,7 @@ import os
 import copy
 import math
 import shapely
+import logging
 import importlib
 import matplotlib
 import matplotlib.patches as patches
@@ -1531,6 +1532,9 @@ class PySimEnv(BaseEnv):
         # Clamp to range
         clamped = max(min_value, min(value, max_value))
         if clamped != value:
+            logging.getLogger(__name__).debug(
+                "Value %s clamped to [%s, %s]", value, min_value, max_value
+            )
             print(f"Value {value} clamped to [{min_value}, {max_value}]")
 
         # Normalize value and half_value to [0, 1]
