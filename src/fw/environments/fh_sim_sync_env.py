@@ -81,12 +81,17 @@ class FhSimSyncEnv(PySimEnv):
         self._fh_sim.initial_vessel_state = self.phys_sim.state
 
 
-    def create_simulator(self):
+    def create_simulator(self, ua_surrogate_config=None):
         """
         Create and return the FhSimWrapper bound to the realtime bridge.
 
         FhSimWrapper is unchanged — it duck-types on .ship_interface and
         .math_model.simulateSeconds(), both of which SimSyncBridge provides.
+
+        Args:
+            ua_surrogate_config: Accepted for API compatibility with
+                PySimEnv.create_simulator(); unused by this subclass since
+                SimSyncBridge owns the dynamics model.
         """
 
         if self._fh_sim is None:

@@ -297,7 +297,7 @@ class AgentManagerSimple:
                 print(f"Reusing {policy_file_name}.")
                 try:
                     self._agent.load_policy(policy_file_name)
-                except ValueError as e:
+                except (ValueError, RuntimeError) as e:
                     print(f"[Fallback] Incompatible model: {e}")
                     print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
             else:
