@@ -26,10 +26,10 @@ CSV column layout (16 columns, matching collect_supervised_dataset output):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 import pandas as pd
+
+from dataclasses import dataclass
 from scipy.spatial import cKDTree
 
 
