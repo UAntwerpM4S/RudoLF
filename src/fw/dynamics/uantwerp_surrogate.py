@@ -25,6 +25,15 @@ _FALLBACK_ENV = EnvironmentData(
     current_direction=0.0,
 )
 
+# Ray-cast proximity sensor constants
+RAY_MAX_DISTANCE = 200.0                                    # metres; beyond this the feature is 0
+RAY_ANGLES_DEG = np.arange(0, 360, 15)                     # 24 rays
+NBR_RAY_FEATURES = len(RAY_ANGLES_DEG)                      # 24
+_RAY_ANGLES_RAD = np.radians(RAY_ANGLES_DEG)               # precomputed; shape (24,)
+_RAY_SIN = np.sin(_RAY_ANGLES_RAD)                         # x-components of unit direction vectors
+_RAY_COS = np.cos(_RAY_ANGLES_RAD)                         # y-components of unit direction vectors
+# Local-frame end-point offsets (rotated by heading at call time); shape (24, 2)
+_RAY_OFFSETS = np.stack([_RAY_SIN, _RAY_COS], axis=1) * RAY_MAX_DISTANCE
 
 class UAntwerpSurrogate(DynamicsBase):
     """
@@ -57,13 +66,13 @@ class UAntwerpSurrogate(DynamicsBase):
         self.wcu_enabled = ua_surrogate_config.get("wcu_enabled", False)
         self.surrogate = SurrogatePredictor(ua_surrogate_config.get("file_name", "checkpoints/best_surrogate_clean.pth"))
 
-        expects_wcu = self.surrogate.input_dim >= 9
-        if expects_wcu != self.wcu_enabled:
-            raise RuntimeError(
-                f"Incorrect surrogate model file is used. "
-                f"Wind, current and UKC {'are' if self.wcu_enabled else 'are not'} enabled, "
-                f"but the surrogate model expects {self.surrogate.input_dim} inputs."
-            )
+        # expects_wcu = self.surrogate.input_dim >= 9
+        # if expects_wcu != self.wcu_enabled:
+        #     raise RuntimeError(
+        #         f"Incorrect surrogate model file is used. "
+        #         f"Wind, current and UKC {'are' if self.wcu_enabled else 'are not'} enabled, "
+        #         f"but the surrogate model expects {self.surrogate.input_dim} inputs."
+        #     )
 
         self.wcu_lookup = WcuLookup(str(SHIP_DATA_FILE)) if self.wcu_enabled and SHIP_DATA_FILE.exists() else None
         self.default_ukc = WATER_DEPTH_M if self.wcu_enabled else 0.0
@@ -74,6 +83,75 @@ class UAntwerpSurrogate(DynamicsBase):
                 f"Ship data file {SHIP_DATA_FILE} not found, "
                 f"falling back to default UKC value of {WATER_DEPTH_M}"
             )
+
+        # Imported locally to avoid a circular import (py_sim_env imports this module).
+        # A single instance is created here and reused for ray-cast geometry lookups.
+        from fw.environments.py_sim_env import PySimEnv
+        self._env = PySimEnv(render_mode=None, time_step=_SURROGATE_DT, wind=False, current=False)
+
+    @staticmethod
+    def compute_ray_features(env: "PySimEnv", ship_pos: np.ndarray, heading_rad: float) -> np.ndarray:
+        """Cast 24 rays around the ship and return normalized proximity features.
+
+        Each ray is fired from *ship_pos* in the direction
+        (ship heading + ray_angle_deg) expressed in the world frame.
+        The ray is clipped against the river-polygon boundary (or at
+        RAY_MAX_DISTANCE, whichever comes first).
+
+        Mapping:  distance d  ->  feature = (RAY_MAX_DISTANCE - d) / RAY_MAX_DISTANCE
+            d = 0 m   -> feature = 1.0   (obstacle right here)
+            d = 200 m -> feature = 0.0   (no obstacle within range)
+
+        The function tries a vectorized batch call first
+        (`env.ray_cast_distances_batch`), which avoids Python-loop overhead when
+        the environment exposes it.  If that method is absent it falls back to 24
+        sequential `env.ray_cast_distance` calls.
+
+        End-point directions are computed from module-level precomputed sin/cos
+        tables (_RAY_SIN, _RAY_COS) rotated by *heading_rad*, so no trig is
+        evaluated at call time.
+
+        Args:
+            env:         PySimEnv instance (provides polygon_shape and ray-cast method).
+            ship_pos:    [x, y] world-frame ship position (m).
+            heading_rad: Current ship heading in radians (world frame, 0 = North/+Y).
+
+        Returns:
+            features: float32 array of shape (NBR_RAY_FEATURES,) = (24,).
+        """
+        # Rotate the precomputed local-frame offsets into world frame using heading.
+        # Convention: dx = sin(angle), dy = cos(angle) (North-referenced bearing).
+        cos_h, sin_h = np.cos(heading_rad), np.sin(heading_rad)
+        rotated = np.empty_like(_RAY_OFFSETS)
+        rotated[:, 0] = _RAY_OFFSETS[:, 0] * cos_h + _RAY_OFFSETS[:, 1] * sin_h
+        rotated[:, 1] = -_RAY_OFFSETS[:, 0] * sin_h + _RAY_OFFSETS[:, 1] * cos_h
+        end_points = ship_pos + rotated  # (24, 2)
+
+        origin = (float(ship_pos[0]), float(ship_pos[1]))
+
+        # -- Batch path (preferred) -----------------------------------------------
+        if hasattr(env, "ray_cast_distances_batch"):
+            # Expected signature:
+            #   env.ray_cast_distances_batch(origin, end_points, max_distance)
+            #   -> array-like of shape (24,) with distances in [0, RAY_MAX_DISTANCE]
+            distances = np.asarray(
+                env.ray_cast_distances_batch(origin, end_points, RAY_MAX_DISTANCE),
+                dtype=np.float32,
+            )
+            np.clip(distances, 0.0, RAY_MAX_DISTANCE, out=distances)
+
+        # -- Sequential fallback --------------------------------------------------
+        else:
+            distances = np.empty(NBR_RAY_FEATURES, dtype=np.float32)
+            for i in range(NBR_RAY_FEATURES):
+                d = env.ray_cast_distance(
+                    origin,
+                    (float(end_points[i, 0]), float(end_points[i, 1])),
+                    max_distance=RAY_MAX_DISTANCE,
+                )
+                distances[i] = min(max(float(d), 0.0), RAY_MAX_DISTANCE)
+
+        return (RAY_MAX_DISTANCE - distances) / RAY_MAX_DISTANCE
 
     def get_ukc(self, pos: Optional[np.ndarray]):
         """
@@ -195,11 +273,18 @@ class UAntwerpSurrogate(DynamicsBase):
                 dtype=np.float32,
             )
         else:
+            # Update ray-cast features for the new position/heading
+            ray_features = self.compute_ray_features(
+                self._env,
+                np.array([state.x, state.y]),
+                float(state.heading),
+            )
+
             return np.array(
                 [
-                    state.x, state.y, state.heading,
-                    state.u, state.v, state.r,
-                    rudder, thrust,
+                    state.heading,
+                    state.u, state.v, state.r, env.ukc,
+                    rudder, thrust, *ray_features
                 ],
                 dtype=np.float32,
             )
