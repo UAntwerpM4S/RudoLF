@@ -68,7 +68,7 @@ class MatplotlibRenderer:
         Raises:
             ValueError: If fig_width_per_ship is not positive.
         """
-
+        
         if fig_width_per_ship <= 0:
             raise ValueError(
                 f"fig_width_per_ship must be positive, got {fig_width_per_ship}."
@@ -153,12 +153,20 @@ class MatplotlibRenderer:
                     ylim=(0, 45),
                 )
 
+                if ship_env is not None and ship_env.__class__.__name__ == "PySimColavPlannerEnv":
+                    visualizer = RRTCollisionVisualizer(ship_env)
+                    visualizer.plot_reference_lines(ax_error, episodes)
+
                 cls._plot_rudder(
                     ax_rudder,
                     episodes,
                     colors,
                     ship_id,
                 )
+
+                if ship_env is not None and ship_env.__class__.__name__ == "PySimColavPlannerEnv":
+                    visualizer = RRTCollisionVisualizer(ship_env)
+                    visualizer.plot_reference_lines(ax_rudder, episodes)
 
                 cls._plot_signal(
                     ax_ukc,
@@ -169,6 +177,10 @@ class MatplotlibRenderer:
                     ylabel="UKC",
                     ylim=(0, 45),
                 )
+
+                if ship_env is not None and ship_env.__class__.__name__ == "PySimColavPlannerEnv":
+                    visualizer = RRTCollisionVisualizer(ship_env)
+                    visualizer.plot_reference_lines(ax_ukc, episodes)
 
             fig_traj.tight_layout()
             fig_metrics.tight_layout()

@@ -153,8 +153,8 @@ class RRTStarReplanner:
         goal_bias: float = 0.1,
         goal_tolerance: float = 2.0,
         seed: Optional[int] = None,
-        max_turn_angle_deg: Optional[float] = 15,
-        smooth_rrt_path: bool = False,
+        max_turn_angle_deg: Optional[float] = 5,
+        smooth_rrt_path: bool = None,
         smoothing_iterations: int = 3,
     ):
         if danger_radius <= 0:

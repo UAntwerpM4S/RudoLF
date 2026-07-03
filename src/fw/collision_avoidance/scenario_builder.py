@@ -498,6 +498,7 @@ class ScenarioBuilder:
             normal = np.array([-tangent[1], tangent[0]], dtype=np.float32)
             ship_radius = float(env._rng.uniform(env.static_ship_radius_min, env.static_ship_radius_max))
             pos = (0.5 * (pa + pb)).astype(np.float32)
+            #pos = np.array([ -58.61833572, 8188.17089844], dtype=np.float32) #set the entity in a specific position for testing
             candidate_entity = CollisionEntity(
                 velocity=np.zeros(2, dtype=np.float32),
                 radius=ship_radius,
@@ -506,7 +507,8 @@ class ScenarioBuilder:
                 entity_type="static",
             )
 
-            t_min = max(0.0, segment_margin_frac)
+            #REMOVE THIS PART IF YOU WANT TO SET THE ENTITY IN A SPECIFIC POSITION FOR TESTING
+            """ t_min = max(0.0, segment_margin_frac)
             t_max = min(1.0, 1.0 - segment_margin_frac)
             if t_min > t_max:
                 t_min, t_max = 0.0, 1.0
@@ -525,7 +527,7 @@ class ScenarioBuilder:
                 )
                 if too_close:
                     continue
-                break
+                break """
 
             # Compute signed CTE of this obstacle relative to its path segment
             obs_pos = candidate_entity.get_position()
