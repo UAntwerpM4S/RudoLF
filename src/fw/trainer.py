@@ -205,7 +205,7 @@ class Trainer:
         metrics = self._scheduler.execute(configuration)
 
         last_env = self._envs[-1] if self._envs else None
-        env_type = last_env.gym_env.type_name if last_env else None
+        env_type = last_env.name if last_env else None
         env_metrics = metrics.get(env_type) if env_type else None
 
         if env_metrics and env_metrics.get("status") == "success":
