@@ -198,6 +198,19 @@ class BaseEnvironment:
 
 
     @property
+    def name(self):
+        """
+        str: Name of the environment.
+
+        Returns the name assigned to the environment when the instance was
+        created. The name can be used for identification, logging, and other
+        environment management tasks.
+        """
+
+        return self._name
+
+
+    @property
     def gym_env(self):
         """
         Returns the underlying Gym environment.
