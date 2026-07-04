@@ -137,6 +137,12 @@ class PPOPolicy:
                 "output_dim": model_state_dict["actor_mean.weight"].shape[0],
                 "device": device.type,
             }
+
+        # Filter to only the keys accepted by the current constructor, so
+        # checkpoints saved with extra metadata fields don't break loading.
+        allowed_keys = {"input_dim", "output_dim", "device"}
+        data = {k: v for k, v in data.items() if k in allowed_keys}
+
         return data
 
 
