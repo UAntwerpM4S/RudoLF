@@ -9,6 +9,7 @@ from airsim.environments.airsim_env import AirSimEnv
 from fw.environments.lunar_lander import LunarLander
 from fw.environments.multi_sim_env import MultiSimEnv
 from fw.environments.py_sim_polar_env import PySimPolarEnv
+from fw.environments.py_sim_colav_env import PySimColavEnv
 from fw.common.tools.config_utils import normalize_configuration
 from fw.environments.action_repeat_wrapper import ActionRepeatWrapper
 
@@ -351,6 +352,85 @@ class MultiPySimEnvironment(BaseEnvironment):
                              reward_weights=self.configuration.get("reward_weights", None))
 
         self._env = MultiSimEnv(sub_environments=[single_pysim_env1, single_pysim_env2])
+
+
+class PySimColavEnvironment(BaseEnvironment):
+    """
+    Class for a single PySimColav environment (one COLREGs scenario type).
+    """
+
+    def __init__(self, name, configuration):
+        """Create the default PySimColav environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Optional runtime configuration forwarded by the
+                environment factory.
+        """
+        super().__init__(name, configuration)
+
+        # During registration probe (name==""), return a dummy to avoid
+        # instantiating the full environment. The class name determines the
+        # registered key in the factory.
+        if name == "":
+            self._env = type("PySimColavEnv", (), {})()
+            return
+
+        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
+        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+        config = get_config_parameters()
+
+        self._env = PySimColavEnv(
+            time_step=1.0,
+            max_steps=1500,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            dynamics_model=config["dynamics_model"],
+            ship_model=config["ship_model"],
+            wind=config["wind"],
+            current=config["current"],
+            numerical_damping=config["numerical_damping"],
+            enable_obstacles=True,
+        )
+
+
+class MultiPolicyColavEnvironment(BaseEnvironment):
+    """
+    Single PySimColavEnv with scenario one-hot encoding enabled, for use
+    with MultiPolicySingleAgent.  The environment appends a one-hot vector
+    to the observation indicating the active scenario type, allowing the
+    agent to route each timestep to the correct policy.
+    """
+
+    def __init__(self, name, configuration):
+        super().__init__(name, configuration)
+
+        # Registration probe — return a lightweight dummy.
+        if name == "":
+            self._env = type("MultiPolicyColavEnv", (), {})()
+            return
+
+        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
+        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+        config = get_config_parameters()
+
+        self._env = PySimColavEnv(
+            time_step=1.0,
+            max_steps=1500,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            dynamics_model=config["dynamics_model"],
+            ship_model=config["ship_model"],
+            wind=config["wind"],
+            current=config["current"],
+            numerical_damping=config["numerical_damping"],
+            enable_obstacles=True,
+            eval=False,
+            eval_scenario="crossing-right",
+            eval_obstacle_count=1,
+            include_scenario_one_hot=True,
+            minimal_path_render=True
+        )
 
 
 class FhSimEnvironment(BaseEnvironment):
@@ -839,6 +919,8 @@ airsim_env_name = "AirSimEnv"
 lunar_env_name = "LunarLander"
 py_sim_polar_env_name = "PySimPolarEnv"
 multi_sim_env_name = "MultiSimEnv"
+py_sim_colav_env_name = "PySimColavEnv"
+multi_policy_colav_env_name = "MultiPolicyColavEnv"
 
 _ENVIRONMENT_NAME_ALIASES = {
     py_sim_env_name.lower(): py_sim_env_name,
@@ -856,6 +938,12 @@ _ENVIRONMENT_NAME_ALIASES = {
     "polar": py_sim_polar_env_name,
     multi_sim_env_name.lower(): multi_sim_env_name,
     "multipysim": multi_sim_env_name,
+    py_sim_colav_env_name.lower(): py_sim_colav_env_name,
+    "pysimcolav": py_sim_colav_env_name,
+    "colav": py_sim_colav_env_name,
+    multi_policy_colav_env_name.lower(): multi_policy_colav_env_name,
+    "multipolicycolav": multi_policy_colav_env_name,
+    "mpcolav": multi_policy_colav_env_name,
 }
 
 

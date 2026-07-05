@@ -310,16 +310,30 @@ class MatplotlibRenderer:
                 label=f"Ep {i + 1} (R={ep.reward:.1f})",
             )
 
-            ax.scatter(*ep.path[0],  c="blue", s=80, zorder=5)
-            ax.scatter(*ep.path[-1], c="red",  s=80, zorder=5)
+            # Start marker (always blue dot).
+            ax.scatter(*ep.path[0], c="blue", s=80, zorder=5)
 
-            # Collision events
-            # for ev in ep.collision_events:
-            #     t = min(ev.timestep, len(ep.path) - 1)
-            #     marker = "x" if ev.is_collision else "^"
-            #     color  = "red" if ev.is_collision else "orange"
-            #     ax.scatter(*ep.path[t], marker=marker, c=color, s=120, zorder=6,
-            #                label="Collision" if ev.is_collision else "Near-miss")
+            # End marker. Distinguish actual collisions (env-reported via
+            # ep.collision) from non-collision terminations (clean
+            # truncation, max-steps, heading-change/cross-track failures
+            # that aren't tagged as collisions). Without this split, a
+            # "red dot near a bank" looks like a bank crash even when the
+            # episode ended for an unrelated reason.
+            if ep.collision:
+                ctype = (ep.collision_type or "").lower()
+                if ctype == "bank":
+                    end_color, end_marker, end_size = "red", "X", 130
+                elif ctype == "ship":
+                    end_color, end_marker, end_size = "magenta", "X", 130
+                else:
+                    end_color, end_marker, end_size = "red", "X", 130
+            else:
+                # Non-collision endpoint — gray, smaller, less prominent.
+                end_color, end_marker, end_size = "dimgray", "o", 60
+            ax.scatter(
+                *ep.path[-1], c=end_color, marker=end_marker,
+                s=end_size, zorder=6, edgecolors="black", linewidths=0.6,
+            )
 
         ax.set_title(
             f"Trajectory – {ship_id}\n"

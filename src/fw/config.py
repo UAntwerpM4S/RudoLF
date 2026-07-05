@@ -38,6 +38,7 @@ class PolicyStrategy(Enum):
 PPO_POLICY_NAME = "PPO"
 PPO2_POLICY_NAME = "PPO2"
 MULTI_PPO_POLICY_NAME = "MPPO"
+MULTI_POLICY_SINGLE_NAME = "MPSA"  # Multi-Policy Single Agent
 
 AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE = "{session_type}_session.csv"
 AIRSIM_BRIDGE_LOG_FILENAME = "airsim_telemetry.csv"
@@ -108,6 +109,24 @@ DEFAULT_HYPERPARAMETERS = {
         'batch_size': 64,
         'device': "cpu",
         'model_dir': "models"
+    },
+    MULTI_POLICY_SINGLE_NAME: {
+        'learning_rate': 3e-4,
+        'gamma': 0.99,
+        'gae_lambda': 0.95,
+        'entropy_coef': 0.025,
+        'value_loss_coef': 0.1,
+        'max_grad_norm': 0.5,
+        'clip_range': 0.2,
+        'eval_frequency': 10,
+        'num_envs': 12,
+        'num_epochs': 8,
+        'normalize': False,
+        'max_nbr_iterations': 5000,
+        'batch_size': 2048,
+        'device': "cpu",
+        'model_dir': "models",
+        'steps_per_policy_update': 8192,
     },
 }
 

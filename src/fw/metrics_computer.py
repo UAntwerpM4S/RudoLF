@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 import numpy as np
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from fw.ship_episode_data import RunData, ShipEpisodeData
 
 
@@ -64,6 +66,74 @@ class ShipMetrics:
     avg_reward: float = 0.0
     best_reward: float = 0.0
     worst_reward: float = 0.0
+    # Env-reported collision / COLREG metrics, aggregated across episodes.
+    num_episodes: int = 0
+    collision_count: int = 0
+    collision_type_count: dict = field(default_factory=dict)
+    collision_side_count: dict = field(default_factory=dict)
+    colreg_violation_count: int = 0
+    # Scenario classification diagnostics, aggregated per-encounter across
+    # all episodes (5-way extended label space). In step-level generation an
+    # episode may contain multiple encounters; each contributes one record.
+    num_encounters: int = 0
+    encounter_misclassification_count: int = 0
+    encounter_confusion: dict = field(default_factory=dict)   # {(gt, pred): count}
+    # Per-policy (gt scenario) collision counts and encounter denominators.
+    # Outside-encounter collisions (e.g. bank groundings while path-following)
+    # are tracked separately since they have no encounter denominator.
+    # encounters_per_policy is the *valid-outcome* denominator used by the
+    # collision rate: collided OR (passed AND tracked_lost). Encounters cut
+    # off by episode termination/truncation are excluded since they weren't
+    # exposed to the full range of dangers. total_encounters_per_policy
+    # retains the raw count of all encounter starts for diagnostics.
+    encounters_per_policy: dict = field(default_factory=dict)         # {gt: valid_outcome_count}
+    total_encounters_per_policy: dict = field(default_factory=dict)   # {gt: all_encounter_starts}
+    collisions_per_policy: dict = field(default_factory=dict)         # {gt: collided_encounter_count}
+    collisions_outside_encounters: int = 0
+    # Per-policy outcome breakdown over all encounter starts. Categories:
+    # "collided", "resolved", "passed_not_tracked_lost",
+    # "tracked_lost_not_passed", "neither". Sums to total_encounters_per_policy.
+    encounter_outcomes_per_policy: dict = field(default_factory=dict) # {gt: {category: count}}
+    # Per-policy CRI aggregates over *valid* encounters only. An encounter
+    # is "valid" when it resolved normally (OS passed the TS and the TS
+    # subsequently left the forget range) and did not end in collision.
+    # mean_cri_per_policy is the average of per-encounter mean-CRI samples,
+    # median_cri_per_policy the median of those same samples, and
+    # max_cri_per_policy the maximum of per-encounter max-CRI samples.
+    # valid_encounters_per_policy gives the sample count behind each entry.
+    mean_cri_per_policy: dict = field(default_factory=dict)           # {gt: mean of per-encounter mean CRI}
+    median_cri_per_policy: dict = field(default_factory=dict)         # {gt: median of per-encounter mean CRI}
+    max_cri_per_policy: dict = field(default_factory=dict)            # {gt: max of per-encounter max CRI}
+    valid_encounters_per_policy: dict = field(default_factory=dict)   # {gt: valid encounter count}
+    # Per-policy cross-track error aggregates over the same *valid*
+    # encounters as the CRI metrics. mean_cte_per_policy / median_cte_per_policy
+    # are computed from per-encounter mean-CTE samples; max_cte_per_policy
+    # takes the maximum of per-encounter max-CTE samples.
+    mean_cte_per_policy: dict = field(default_factory=dict)           # {gt: mean of per-encounter mean CTE [m]}
+    median_cte_per_policy: dict = field(default_factory=dict)         # {gt: median of per-encounter mean CTE [m]}
+    max_cte_per_policy: dict = field(default_factory=dict)            # {gt: max of per-encounter max CTE [m]}
+    # Per-policy time-to-first-action aggregates, in seconds. Restricted to
+    # valid encounters where the OS commanded a rudder above the configured
+    # threshold (default 10 deg). reactive_encounters_per_policy gives the
+    # sample count; non_reactive_encounters_per_policy counts valid encounters
+    # in which no rudder command crossed the threshold (excluded from the
+    # mean/median aggregates to avoid skewing them with a fall-back value).
+    mean_tfa_per_policy: dict = field(default_factory=dict)           # {gt: mean time-to-first-action [s]}
+    median_tfa_per_policy: dict = field(default_factory=dict)         # {gt: median time-to-first-action [s]}
+    reactive_encounters_per_policy: dict = field(default_factory=dict)     # {gt: count with reaction}
+    non_reactive_encounters_per_policy: dict = field(default_factory=dict) # {gt: count without reaction}
+    # Baseline CRI: a "floor" against which the per-policy CRI numbers can
+    # be read. Empirical baseline is the mean (and absolute min) of the
+    # per-encounter MIN-CRI samples across all valid encounters from every
+    # policy - i.e. "the lowest CRI value samples typically hit in any
+    # encounter, regardless of policy". Theoretical baseline is what the
+    # CRI formula yields when a TS sits exactly at encounter_range with
+    # TCPA = 0 (parting). Together they bound where the policy mean CRI
+    # *could* possibly land if the OS perfectly disengaged.
+    baseline_cri_empirical_mean: float = 0.0
+    baseline_cri_empirical_min: float = 0.0
+    baseline_cri_theoretical: float = 0.0
+    baseline_cri_sample_count: int = 0
 
 
 class MetricsComputer:
@@ -227,5 +297,169 @@ class MetricsComputer:
         m.mHE  = safe_mean(per_ep_mHE)
         m.mu   = safe_mean(per_ep_mu)
         m.Mu   = safe_max(per_ep_Mu)
+
+        # Aggregate env-reported collision / COLREG info.
+        m.num_episodes = len(episodes)
+        m.collision_type_count = dict(
+            Counter(ep.collision_type for ep in episodes if ep.collision and ep.collision_type)
+        )
+        m.collision_side_count = dict(
+            Counter(ep.collision_side for ep in episodes if ep.collision and ep.collision_side)
+        )
+        m.colreg_violation_count = sum(int(ep.colreg_violations) for ep in episodes)
+
+        # Classification diagnostics - one record per encounter.
+        # num_encounters counts all encounter starts (including those without
+        # a gt label); classification accuracy metrics only use labeled ones.
+        # collision_count is the total: collided encounters + episode-terminating
+        # collisions that happened outside any encounter (e.g. bank groundings
+        # while path-following). Per-policy counts use only encounter-level
+        # collisions since outside-encounter collisions have no gt scenario.
+        confusion: dict[tuple[str, str], int] = {}
+        mismatches = 0
+        total = 0
+        classified = 0
+        collided_encounters = 0
+        valid_encounters_per_policy: dict[str, int] = {}
+        total_encounters_per_policy: dict[str, int] = {}
+        collisions_per_policy: dict[str, int] = {}
+        outcomes_per_policy: dict[str, dict[str, int]] = {}
+        collisions_outside_encounters = 0
+        mean_cri_samples_per_policy: dict[str, list[float]] = {}
+        max_cri_per_policy: dict[str, float] = {}
+        mean_cte_samples_per_policy: dict[str, list[float]] = {}
+        max_cte_per_policy: dict[str, float] = {}
+        tfa_samples_per_policy: dict[str, list[float]] = {}
+        non_reactive_per_policy: dict[str, int] = {}
+        # Pool of per-encounter min-CRI samples across *all* policies - used
+        # to compute the empirical baseline CRI floor reported globally.
+        min_cri_samples_all_policies: list[float] = []
+        for ep in episodes:
+            encounter_collision_in_ep = False
+            for enc in ep.scenario_encounters:
+                total += 1
+                gt = enc.get("gt")
+                collided = bool(enc.get("collided", False))
+                passed = bool(enc.get("passed", False))
+                tracked_lost = bool(enc.get("tracked_lost", False))
+                # An encounter has a fully determined outcome when it either
+                # ended in collision or fully resolved (OS passed and TS left
+                # forget range). Truncated / mid-encounter records are skipped
+                # since they weren't exposed to the full set of dangers.
+                valid_outcome = collided or (passed and tracked_lost)
+                if gt is not None:
+                    total_encounters_per_policy[gt] = total_encounters_per_policy.get(gt, 0) + 1
+                    if valid_outcome:
+                        valid_encounters_per_policy[gt] = valid_encounters_per_policy.get(gt, 0) + 1
+                    # Outcome category for the diagnostic breakdown.
+                    if collided:
+                        cat = "collided"
+                    elif passed and tracked_lost:
+                        cat = "resolved"
+                    elif passed and not tracked_lost:
+                        cat = "passed_not_tracked_lost"
+                    elif tracked_lost and not passed:
+                        cat = "tracked_lost_not_passed"
+                    else:
+                        cat = "neither"
+                    bucket = outcomes_per_policy.setdefault(gt, {})
+                    bucket[cat] = bucket.get(cat, 0) + 1
+                if collided:
+                    collided_encounters += 1
+                    encounter_collision_in_ep = True
+                    if gt is not None:
+                        collisions_per_policy[gt] = collisions_per_policy.get(gt, 0) + 1
+                # CRI samples are restricted to *valid* encounters: those
+                # that resolved (OS passed and TS left forget range) and
+                # did not end in collision. Unresolved encounters give a
+                # truncated view of CRI and would skew the aggregate.
+                if (
+                    gt is not None
+                    and enc.get("resolved", False)
+                    and not enc.get("collided", False)
+                ):
+                    enc_mean_cri = float(enc.get("mean_cri", 0.0))
+                    enc_max_cri = float(enc.get("max_cri", 0.0))
+                    mean_cri_samples_per_policy.setdefault(gt, []).append(enc_mean_cri)
+                    if enc_max_cri > max_cri_per_policy.get(gt, 0.0):
+                        max_cri_per_policy[gt] = enc_max_cri
+                    # Per-encounter min CRI contributes to the global baseline
+                    # (pooled across all policies - that's the user-requested
+                    # "lowest CRI value typically attainable" reference).
+                    enc_min_cri = float(enc.get("min_cri", 0.0))
+                    if math.isfinite(enc_min_cri):
+                        min_cri_samples_all_policies.append(enc_min_cri)
+                    # Same valid-encounter gate for per-policy CTE samples.
+                    enc_mean_cte = float(enc.get("mean_cte", 0.0))
+                    enc_max_cte = float(enc.get("max_cte", 0.0))
+                    mean_cte_samples_per_policy.setdefault(gt, []).append(enc_mean_cte)
+                    if enc_max_cte > max_cte_per_policy.get(gt, 0.0):
+                        max_cte_per_policy[gt] = enc_max_cte
+                    # Time-to-first-action: None means the OS never commanded
+                    # a rudder above threshold during the encounter - bucket
+                    # those separately so they don't skew the mean/median.
+                    tfa = enc.get("time_to_first_action", None)
+                    if tfa is None:
+                        non_reactive_per_policy[gt] = non_reactive_per_policy.get(gt, 0) + 1
+                    else:
+                        tfa_samples_per_policy.setdefault(gt, []).append(float(tfa))
+                pred = enc.get("pred")
+                if gt is None or pred is None:
+                    continue
+                classified += 1
+                key = (gt, pred)
+                confusion[key] = confusion.get(key, 0) + 1
+                if gt != pred:
+                    mismatches += 1
+            # Episode-terminating collisions that didn't occur in any encounter
+            # (e.g. bank groundings while path-following) are counted separately
+            # so total collisions aren't underreported.
+            if ep.collision and not encounter_collision_in_ep:
+                collisions_outside_encounters += 1
+
+        m.num_encounters = total
+        m.collision_count = collided_encounters + collisions_outside_encounters
+        m.encounters_per_policy = valid_encounters_per_policy
+        m.total_encounters_per_policy = total_encounters_per_policy
+        m.collisions_per_policy = collisions_per_policy
+        m.encounter_outcomes_per_policy = outcomes_per_policy
+        m.collisions_outside_encounters = collisions_outside_encounters
+        m.encounter_misclassification_count = mismatches
+        m.encounter_confusion = confusion
+        m.mean_cri_per_policy = {
+            gt: float(np.mean(samples)) for gt, samples in mean_cri_samples_per_policy.items()
+        }
+        m.median_cri_per_policy = {
+            gt: float(np.median(samples)) for gt, samples in mean_cri_samples_per_policy.items()
+        }
+        m.max_cri_per_policy = max_cri_per_policy
+        m.valid_encounters_per_policy = {
+            gt: len(samples) for gt, samples in mean_cri_samples_per_policy.items()
+        }
+        m.mean_cte_per_policy = {
+            gt: float(np.mean(samples)) for gt, samples in mean_cte_samples_per_policy.items()
+        }
+        m.median_cte_per_policy = {
+            gt: float(np.median(samples)) for gt, samples in mean_cte_samples_per_policy.items()
+        }
+        m.max_cte_per_policy = max_cte_per_policy
+        m.mean_tfa_per_policy = {
+            gt: float(np.mean(samples)) for gt, samples in tfa_samples_per_policy.items()
+        }
+        m.median_tfa_per_policy = {
+            gt: float(np.median(samples)) for gt, samples in tfa_samples_per_policy.items()
+        }
+        m.reactive_encounters_per_policy = {
+            gt: len(samples) for gt, samples in tfa_samples_per_policy.items()
+        }
+        m.non_reactive_encounters_per_policy = non_reactive_per_policy
+        # Empirical baseline CRI - pooled across all policies.
+        if min_cri_samples_all_policies:
+            m.baseline_cri_empirical_mean = float(np.mean(min_cri_samples_all_policies))
+            m.baseline_cri_empirical_min = float(np.min(min_cri_samples_all_policies))
+            m.baseline_cri_sample_count = len(min_cri_samples_all_policies)
+        # Theoretical baseline is left at 0.0 here - it depends on env-side
+        # CRI/encounter-range constants the metric layer doesn't see. The
+        # caller (agent_manager) fills it in before printing.
 
         return m
