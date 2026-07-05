@@ -105,7 +105,7 @@ def calculate_perpendicular_lines(
     return lines
 
 
-class PySimEnv(BaseEnv):
+class PySimBaseEnv(BaseEnv):
     """
     Custom Python Simulator environment for ship navigation with improved physics.
     """
@@ -910,8 +910,8 @@ class PySimEnv(BaseEnv):
             self.phys_sim.state.truncated = truncated
         else:
             reward = 0.0
-            terminated = False
-            truncated = False
+            terminated = self.phys_sim.state.terminated
+            truncated = self.phys_sim.state.truncated
 
         info = {
             "rewards": reward,

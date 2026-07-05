@@ -6,13 +6,12 @@ on simulation logic.
 """
 from __future__ import annotations
 
-import csv
 import os
-
-import matplotlib.pyplot as plt
+import csv
 import numpy as np
-from scipy.stats import gaussian_kde
+import matplotlib.pyplot as plt
 
+from scipy.stats import gaussian_kde
 from fw.collision_avoidance.scenario_classifier import EXTENDED_SCENARIO_LABELS
 
 

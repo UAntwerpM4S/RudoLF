@@ -1,10 +1,9 @@
+import numpy as np
 
-from fw.environments.py_sim_colav_base import PySimColavBaseEnv
-
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
-import numpy as np
+from fw.environments.py_sim_colav_base import PySimColavBaseEnv
 
 
 class PySimColavPlannerEnv(PySimColavBaseEnv):

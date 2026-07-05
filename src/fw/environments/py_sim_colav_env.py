@@ -3,13 +3,11 @@
 Extends PySimColavBaseEnv with a polar rangefinder observation and
 COLREG-aware reward shaping for the polar/rangefinder approach.
 """
-import matplotlib
-import gymnasium as gym
-from fw.collision_avoidance.scenario_classifier import NUM_SCENARIOS
 
 import math
-
-from fw.environments.py_sim_colav_base import PySimColavBaseEnv
+import matplotlib
+import numpy as np
+import gymnasium as gym
 
 try:
     matplotlib.use('TkAgg')
@@ -17,10 +15,11 @@ except ImportError:
     print("Warning: 'TkAgg' backend not available. Falling back to 'Agg'.")
     matplotlib.use('Agg')
 
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
-import numpy as np
+from fw.environments.py_sim_colav_base import PySimColavBaseEnv
+from fw.collision_avoidance.scenario_classifier import NUM_SCENARIOS
 
 EPSILON = 1e-9
 

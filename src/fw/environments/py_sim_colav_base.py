@@ -10,16 +10,12 @@ Class hierarchy:
           -> PySimColavPolarEnv (rangefinder approach)
           -> PySimColavPlannerEnv (replanner approach)
 """
-import matplotlib
-import matplotlib.patches as patches
-import matplotlib.pyplot as plt
-import gymnasium as gym
-from fw.collision_avoidance.scenario_builder import ScenarioBuilder
-from fw.collision_avoidance.scenario_classifier import ScenarioClassifier
 
 import math
-
-from fw.environments.py_sim_env import PySimEnv
+import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import numpy as np
 
 try:
     matplotlib.use('TkAgg')
@@ -27,11 +23,13 @@ except ImportError:
     print("Warning: 'TkAgg' backend not available. Falling back to 'Agg'.")
     matplotlib.use('Agg')
 
+from shapely.geometry import Point
 from typing import Optional, Tuple, Dict
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
-import numpy as np
-from shapely.geometry import Point
+from fw.environments.py_sim_base_env import PySimBaseEnv
+from fw.collision_avoidance.scenario_builder import ScenarioBuilder
+from fw.collision_avoidance.scenario_classifier import ScenarioClassifier
 
 
 # -----------------------
@@ -56,7 +54,7 @@ CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
 EPSILON = 1e-9
 
 
-class PySimColavBaseEnv(PySimEnv):
+class PySimColavBaseEnv(PySimBaseEnv):
     """Base collision avoidance environment with scenario construction
     and entity management.
 

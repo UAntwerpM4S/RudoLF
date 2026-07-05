@@ -1,5 +1,3 @@
-
-
 """
 Source: https://www.samgongustofa.is/media/log-og-reglur/COLREG-Consolidated-2018.pdf
 Scenarios:
@@ -12,6 +10,7 @@ Scenarios:
 
 import math
 import numpy as np
+
 from typing import Optional
 
 SCENARIO_LABELS = ["path-following", "head-on", "overtaking", "crossing-right"]
@@ -316,7 +315,8 @@ class ScenarioClassifier:
 
         return best_idx
 
-    def _classify_geometry_extended(self, os_pos, os_heading: float, ts_pos, ts_heading: float) -> int:
+    @staticmethod
+    def _classify_geometry_extended(os_pos, os_heading: float, ts_pos, ts_heading: float) -> int:
         """
         Classifies a tracked TS by *heading difference*. The difference is
         folded to [0, pi] and bucketed by which canonical angle it is

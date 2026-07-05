@@ -359,38 +359,40 @@ class PySimColavEnvironment(BaseEnvironment):
     Class for a single PySimColav environment (one COLREGs scenario type).
     """
 
+    ENVIRONMENT_NAME = "PySimColavEnv"
+
     def __init__(self, name, configuration):
-        """Create the default PySimColav environment wrapper.
+        """
+        Create the default PySimColav environment wrapper.
 
         Args:
             name: Registered environment name.
-            configuration: Optional runtime configuration forwarded by the
-                environment factory.
+            configuration: Scoped configuration dict (see `build_colav_config`).
+                Expected keys: wind, current, ship_model, dynamics_model,
+                enable_obstacles.
         """
         super().__init__(name, configuration)
 
-        # During registration probe (name==""), return a dummy to avoid
-        # instantiating the full environment. The class name determines the
-        # registered key in the factory.
-        if name == "":
-            self._env = type("PySimColavEnv", (), {})()
+        # Legacy callers (and `build_default_environment` without a framework
+        # config) may instantiate this environment with an empty configuration
+        # purely as a registry placeholder.  Skip the underlying PySimColavEnv
+        # construction in that case rather than failing on missing keys.
+        if not self.configuration:
             return
 
         ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
         target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
-        config = get_config_parameters()
 
         self._env = PySimColavEnv(
             time_step=1.0,
             max_steps=1500,
             ship_pos=ship_pos,
             target_pos=target_pos,
-            dynamics_model=config["dynamics_model"],
-            ship_model=config["ship_model"],
-            wind=config["wind"],
-            current=config["current"],
-            numerical_damping=config["numerical_damping"],
-            enable_obstacles=True,
+            dynamics_model=self.configuration["dynamics_model"],
+            ship_model=self.configuration["ship_model"],
+            wind=self.configuration["wind"],
+            current=self.configuration["current"],
+            enable_obstacles=self.configuration.get("enable_obstacles", True),
         )
 
 
@@ -402,29 +404,43 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
     agent to route each timestep to the correct policy.
     """
 
+    ENVIRONMENT_NAME = "MultiPolicyColavEnv"
+
     def __init__(self, name, configuration):
+        """
+        Create the MultiPolicyColav environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Scoped configuration dict (see
+                `build_multi_policy_colav_config`). Expected keys: wind,
+                current, ship_model, dynamics_model, enable_obstacles.
+                eval/eval_scenario/eval_obstacle_count/
+                include_scenario_one_hot/minimal_path_render remain
+                hardcoded below pending a future rework.
+        """
         super().__init__(name, configuration)
 
-        # Registration probe — return a lightweight dummy.
-        if name == "":
-            self._env = type("MultiPolicyColavEnv", (), {})()
+        # Legacy callers (and `build_default_environment` without a framework
+        # config) may instantiate this environment with an empty configuration
+        # purely as a registry placeholder.  Skip the underlying PySimColavEnv
+        # construction in that case rather than failing on missing keys.
+        if not self.configuration:
             return
 
         ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
         target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
-        config = get_config_parameters()
 
         self._env = PySimColavEnv(
             time_step=1.0,
             max_steps=1500,
             ship_pos=ship_pos,
             target_pos=target_pos,
-            dynamics_model=config["dynamics_model"],
-            ship_model=config["ship_model"],
-            wind=config["wind"],
-            current=config["current"],
-            numerical_damping=config["numerical_damping"],
-            enable_obstacles=True,
+            dynamics_model=self.configuration["dynamics_model"],
+            ship_model=self.configuration["ship_model"],
+            wind=self.configuration["wind"],
+            current=self.configuration["current"],
+            enable_obstacles=self.configuration.get("enable_obstacles", True),
             eval=False,
             eval_scenario="crossing-right",
             eval_obstacle_count=1,
@@ -500,6 +516,10 @@ class FhSimSyncEnvironment(BaseEnvironment):
         """
 
         super().__init__(name, configuration)
+
+        # Registry placeholder instantiation with no config - nothing to build.
+        if not self.configuration:
+            return
 
         # ship_pos and target_pos remain framework-side concerns (they feed
         # observation construction and reward), even though the *actual*
@@ -749,6 +769,50 @@ def build_pysim_config(framework_config: dict, extra: dict | None = None) -> dic
     if extra:
         cfg.update(extra)
     return cfg
+
+
+def build_colav_config(framework_config: dict, extra: dict | None = None) -> dict:
+    """
+    Extract PySimColav-relevant keys from *framework_config*.
+
+    Args:
+        framework_config: Full resolved framework configuration dict.
+        extra: Optional overrides merged on top.
+
+    Returns:
+        A dict containing only the keys consumed by PySimColavEnvironment.
+    """
+
+    cfg = {
+        "wind":                framework_config["wind"],
+        "current":             framework_config["current"],
+        "ship_model":          framework_config["ship_model"],
+        "dynamics_model":      framework_config["dynamics_model"],
+        "enable_obstacles":    framework_config.get("enable_obstacles", True),
+    }
+    if extra:
+        cfg.update(extra)
+    return cfg
+
+
+def build_multi_policy_colav_config(framework_config: dict, extra: dict | None = None) -> dict:
+    """
+    Extract MultiPolicyColav-relevant keys from *framework_config*.
+
+    Currently identical to `build_colav_config`; the eval/scenario-related
+    fields (eval, eval_scenario, eval_obstacle_count, include_scenario_one_hot,
+    minimal_path_render) remain hardcoded in MultiPolicyColavEnvironment
+    pending a future rework, so they are not sourced from framework_config yet.
+
+    Args:
+        framework_config: Full resolved framework configuration dict.
+        extra: Optional overrides merged on top.
+
+    Returns:
+        A dict containing only the keys consumed by MultiPolicyColavEnvironment.
+    """
+
+    return build_colav_config(framework_config, extra)
 
 
 def build_fhsim_config(framework_config: dict) -> dict:
@@ -1038,6 +1102,14 @@ def build_default_environment(environment_name, framework_config=None):
         cfg = build_fhsimsync_config(framework_config) if framework_config else {}
         return get(environment_name, configuration=cfg)
 
+    if environment_name == py_sim_colav_env_name:
+        cfg = build_colav_config(framework_config) if framework_config else {}
+        return get(environment_name, configuration=cfg)
+
+    if environment_name == multi_policy_colav_env_name:
+        cfg = build_multi_policy_colav_config(framework_config) if framework_config else {}
+        return get(environment_name, configuration=cfg)
+
     # LunarLander and PySimPolarEnv need no framework-level config keys.
     return get(environment_name, configuration={})
 
@@ -1061,6 +1133,7 @@ def initialize_all_environments():
     expected = {
         py_sim_env_name, fh_sim_env_name, sync_sim_env_name, lunar_env_name,
         py_sim_polar_env_name, multi_sim_env_name,
+        py_sim_colav_env_name, multi_policy_colav_env_name,
     }
     missing = expected - set(_Factory._environment_classes)
     if missing:

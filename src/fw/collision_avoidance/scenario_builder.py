@@ -1,8 +1,9 @@
+import math
 import numpy as np
+
+from typing import Optional
 from fw.collision_avoidance.collision_entity import CollisionEntity
 
-import math
-from typing import Optional
 
 EPSILON = 1e-9
 
@@ -93,7 +94,7 @@ class ScenarioBuilder:
                 entity.spawn_scenario_label = chosen_scenario
         env._sync_collision_entity_views()
         # Lock the classifier to the builder's choice so misclassification
-        # (e.g. a head-on being geometrically labelled as crossing-right)
+        # (e.g. a head-on being geometrically labeled as crossing-right)
         # cannot poison reward shaping during training.
         self._push_scenario_to_classifier(chosen_scenario)
 
@@ -313,7 +314,7 @@ class ScenarioBuilder:
             env._eligible_dynamic_seg_indices = np.arange(n, dtype=np.int32)
 
 
-    def sample_collision_entity_scenario(self) -> None:
+    def sample_collision_entity_scenario(self):
         """Sample the current episode's collision entities."""
         env = self.env
         env.obstacle_count = env._rng.choice(env.obstacle_population, p=env.obstacle_probs)

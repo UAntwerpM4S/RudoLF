@@ -1,7 +1,6 @@
 import math
-from typing import List, Optional, Tuple, Union
-
 import numpy as np
+
 from shapely.geometry import Point, Polygon
 
 EPSILON = 1e-9
