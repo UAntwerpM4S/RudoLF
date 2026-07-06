@@ -173,14 +173,15 @@ if __name__ == "__main__" or __name__ == "fw.main":
             The agent type string (e.g. "PPO", "MPPO", or "MPSA").
         """
 
-
-        from fw.environments.multi_sim_env import MultiSimEnv
         for sub_env in envs:
-
             if getattr(sub_env.gym_env, "include_scenario_one_hot", False):
                 return MULTI_POLICY_SINGLE_NAME
-            if isinstance(sub_env.gym_env, MultiSimEnv):
-                return MULTI_PPO_POLICY_NAME
+
+        # MultiSimEnv requires its own policy type; all other envs use PPO.
+        # type_name equals ENVIRONMENT_NAME (e.g. "MultiSimEnv").
+        if any(e.gym_env.type_name == multi_sim_env_name for e in envs):
+            return MULTI_PPO_POLICY_NAME
+
         return PPO_POLICY_NAME
 
     def _run_standard_batch(envs: list) -> bool:
@@ -205,12 +206,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
             if sim is not None:
                 apply_profile(profile, simulator=sim)
 
-        # MultiSimEnv requires its own policy type; all other envs use PPO.
-        # repr(e) returns e._name which equals ENVIRONMENT_NAME (e.g. "MultiSimEnv").
-        batch_has_multi = any(e.gym_env.type_name == multi_sim_env_name for e in envs)
-        batch_policy = MULTI_PPO_POLICY_NAME if batch_has_multi else PPO_POLICY_NAME
-        ## agent_type = _select_agent_type(envs) ##
-        std_trainer = Trainer(batch_policy, envs, profile, "SimpleScheduler", config=framework_config)
+        agent_type = _select_agent_type(envs)
+        std_trainer = Trainer(agent_type, envs, profile, "SimpleScheduler", config=framework_config)
         if action == "visualize":
             std_trainer.visualize(envs, airsim_bridge=None)
         else:
