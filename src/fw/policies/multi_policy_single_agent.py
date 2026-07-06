@@ -32,13 +32,13 @@ import zipfile
 import tempfile
 
 from collections import deque
-from typing import Optional, Tuple, Union, List, Dict
 from fw.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
+from typing import Optional, Tuple, Union, List, Dict
 from fw.common.tools.logging_utils import dump_metrics_to_csv
-from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+from stable_baselines3.common.monitor import Monitor
 
 
 class CollapseWatchdog:
