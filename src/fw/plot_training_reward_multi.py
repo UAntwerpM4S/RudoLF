@@ -4,7 +4,7 @@ plot_training_reward_multi.py
 Plots average reward vs. training iteration per policy from a
 multi_policy_training_metrics.csv file.
 
-  - One line (rolling mean) per policy, each with its own colour.
+  - One line (rolling mean) per policy, each with its own color.
   - Faint raw reward and ±1 σ band per policy.
   - Policies whose reward is NaN for every row are skipped.
 
@@ -16,19 +16,18 @@ Usage
 """
 
 import argparse
-from pathlib import Path
-
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-import numpy as np
-import pandas as pd
+
+from pathlib import Path
 
 
 DEFAULT_CSV    = "models/multi_policy_training_metrics.csv"
 DEFAULT_WINDOW = 50
 DEFAULT_OUT    = "reward_curve_multi.pdf"
 
-# Distinct, print-friendly colours per policy.
+# Distinct, print-friendly colors per policy.
 POLICY_COLORS = {
     "path-following": "#1a5fa8",   # blue
     "head-on":        "#d1495b",   # red

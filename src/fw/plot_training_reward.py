@@ -16,12 +16,12 @@ Usage
 """
 
 import argparse
-from pathlib import Path
-
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -32,8 +32,8 @@ DEFAULT_CSV    = "training_metrics.csv"
 DEFAULT_WINDOW = 50          # rolling-window size (iterations)
 DEFAULT_OUT    = "reward_curve.pdf"
 
-# Colour palette — a single accent colour keeps the figure clean and readable
-# in both colour and greyscale print.
+# Color palette — a single accent color keeps the figure clean and readable
+# in both color and greyscale print.
 COLOR_RAW    = "#a8c7e8"     # light blue  → raw reward
 COLOR_SMOOTH = "#1a5fa8"     # dark blue   → rolling mean
 COLOR_BAND   = "#a8c7e8"     # same as raw → ±1 σ band
@@ -61,7 +61,7 @@ def load_data(csv_path: str) -> pd.DataFrame:
             f"CSV must contain a 'reward' column. Found: {list(df.columns)}"
         )
 
-    # Normalise column names to lowercase
+    # Normalize column names to lowercase
     df.columns = df.columns.str.lower()
 
     # Use explicit iteration column if present, else use row index
