@@ -80,6 +80,40 @@ class CollapseWatchdog:
         max_rollbacks: int = 100,
         min_peak_for_trigger: float = 0.1,
     ):
+        """
+        Initialize CollapseWatchdog.
+
+        Tracks per-policy rolling mean rewards and stores the best observed
+        policy parameters. If the current smoothed reward drops sufficiently
+        relative to the best observed peak, a rollback state can be returned.
+
+        Args:
+            num_policies (int):
+                Number of policies to monitor.
+
+            policy_labels (List[str]):
+                Labels for each policy (used for logging/debugging).
+
+            window_size (int, optional):
+                Size of rolling window used to compute smoothed rewards.
+
+            ratio_threshold (float, optional):
+                Collapse threshold applied to ratio of current smoothed reward
+                over best smoothed reward.
+
+            warmup_iterations (int, optional):
+                Number of initial iterations before rollback logic is active.
+
+            min_gap_between_rollbacks (int, optional):
+                Minimum iterations required between rollbacks per policy.
+
+            max_rollbacks (int, optional):
+                Maximum number of rollbacks allowed per policy.
+
+            min_peak_for_trigger (float, optional):
+                Minimum peak reward required before enabling rollback checks.
+        """
+
         self.num_policies = num_policies
         self.policy_labels = policy_labels
         self.window_size = int(window_size)
@@ -128,6 +162,7 @@ class CollapseWatchdog:
             Optional[dict]: A cloned `state_dict` to load if a collapse
                 is detected; `None` otherwise.
         """
+
         if reward is None or np.isnan(reward):
             return None
 
@@ -181,6 +216,7 @@ class CollapseWatchdog:
         still sitting in the window.  The best snapshot itself is
         retained: subsequent improvements may still surpass it.
         """
+
         self._rollback_count[pid] += 1
         self._last_rollback_iter[pid] = iteration
         self._reward_history[pid].clear()
@@ -473,7 +509,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
     # Vectorized environment management (mirrors SinglePPOAgent)
     # ------------------------------------------------------------------
     def make_env(self):
-        """Create a callable factory for deep-copied, monitored environments.
+        """
+        Create a callable factory for deep-copied, monitored environments.
 
         The closure captures only `self.env` (not the full agent) to
         avoid pickling CUDA policy tensors when `SubprocVecEnv` sends
@@ -483,6 +520,13 @@ class MultiPolicySingleAgent(BasePPOAgent):
         env = self.env  # capture only the lightweight env, not the agent
 
         def _init():
+            """
+            Create one monitored deep-copied environment instance.
+
+            Returns:
+                A monitored Gym environment copied from the agent base environment.
+            """
+
             return Monitor(copy.deepcopy(env))
 
         return _init
@@ -671,6 +715,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 mean entropy) across all minibatches/epochs.  All NaN if no
                 usable data.
         """
+
         if policy_id in self.frozen_pids:
             return float("nan"), float("nan"), float("nan"), float("nan")
 
@@ -1181,12 +1226,17 @@ class MultiPolicySingleAgent(BasePPOAgent):
     # Misc
     # ------------------------------------------------------------------
     def set_policy_eval(self):
-        """Set all policy networks to evaluation mode."""
+        """
+        Set all policy networks to evaluation mode.
+        """
+
         for policy in self.policies:
             policy.network.eval()
 
     def _dump_training_metrics(self, metrics: Dict[str, list]) -> None:
-        """Flatten per-policy metrics and write to CSV."""
+        """
+        Flatten per-policy metrics and write to CSV.
+        """
 
         flat = []
         for label, records in metrics.items():

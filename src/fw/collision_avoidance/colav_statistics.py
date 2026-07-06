@@ -1,9 +1,11 @@
-"""Evaluation plots for collision-avoidance environments.
+"""
+Evaluation plots for collision-avoidance environments.
 
 Functions take the env as their first argument and read encounter / geometry
 state directly from it. Kept out of the env module to keep that file focused
 on simulation logic.
 """
+
 from __future__ import annotations
 
 import os
@@ -21,8 +23,28 @@ def plot_min_distance_stats(
     boxplot_save_path: str = "min_distance_boxplots.png",
     include_banks: bool = False,
 ) -> None:
+    """
+    Plots minimum-distance encounter statistics.
+
+    Generates:
+
+    * A histogram and kernel density estimate (KDE) of minimum encounter
+      distances.
+    * Per-scenario boxplots of the same distances.
+
+    Only successfully resolved, non-collision encounters are included.
+
+    Args:
+        env: Collision-avoidance environment.
+        pdf_save_path: Output path for the PDF plot.
+        boxplot_save_path: Output path for the boxplot figure.
+        include_banks: Whether to include bank clearance when computing the
+            minimum distance.
+    """
+
     print(f"banks included: {include_banks}")
-    """Plot encounter-level min-distance statistics.
+    """
+    Plot encounter-level min-distance statistics.
 
     Generates two images:
       * `pdf_save_path` — histogram + KDE of min center-to-center distance
@@ -41,6 +63,7 @@ def plot_min_distance_stats(
     out / terminated mid-encounter) are excluded to avoid skewing the
     distribution with partial samples.
     """
+
     # Make sure any encounter still active at call time is finalized.
     # Calling here means we're outside the env's normal step/reset loop,
     # so the encounter was not resolved by TS leaving forget range.
@@ -101,6 +124,21 @@ def _plot_min_distance_pdf(
     save_path: str,
     include_banks: bool = False,
 ) -> None:
+    """
+    Plots the minimum-distance probability density.
+
+    Args:
+        distances: Minimum encounter distances.
+        os_r: Own-ship radius.
+        ts_r_min: Minimum target-ship radius.
+        ts_r_max: Maximum target-ship radius.
+        variable_ts: Whether target-ship radii vary.
+        collision_dist_min: Minimum collision boundary.
+        collision_dist_max: Maximum collision boundary.
+        save_path: Output image path.
+        include_banks: Whether bank distances are included.
+    """
+
     fig, ax = plt.subplots(figsize=(10, 6))
 
     n_bins = max(10, len(distances) // 3)
@@ -184,6 +222,20 @@ def _plot_min_distance_boxplots(
     save_path: str,
     include_banks: bool = False,
 ) -> None:
+    """
+    Plots minimum-distance boxplots by scenario.
+
+    Also exports the underlying encounter samples as a CSV file.
+
+    Args:
+        per_policy: Mapping from scenario labels to distance samples.
+        collision_dist_min: Minimum collision boundary.
+        collision_dist_max: Maximum collision boundary.
+        variable_ts: Whether target-ship radii vary.
+        save_path: Output image path.
+        include_banks: Whether bank distances are included.
+    """
+
     # Order known labels first (canonical scenario order), then any
     # extras encountered (e.g. "unknown") tacked on at the end.
     ordered = [lbl for lbl in EXTENDED_SCENARIO_LABELS if per_policy.get(lbl)]
@@ -252,12 +304,14 @@ def plot_scenario_confusion_matrix(
     env,
     save_path: str = "scenario_confusion_matrix.png",
 ) -> None:
-    """Plot a confusion matrix over encounters aggregated across episodes.
+    """
+    Plot a confusion matrix over encounters aggregated across episodes.
 
     Rows = builder ground-truth scenario, columns = geometric classifier
     prediction at encounter entry. One entry per encounter (multiple
     encounters may occur per episode in step-level generation).
     """
+
     # Flush current episode's encounters if the run ended without another
     # env_specific_reset() being called.
     encounters = list(env._all_encounters)

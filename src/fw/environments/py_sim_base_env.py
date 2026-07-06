@@ -286,13 +286,15 @@ class PySimBaseEnv(BaseEnv):
         self.performed_action = np.zeros(2, dtype=np.float32)
 
     def _apply_random_starting_checkpoint(self) -> None:
-        """Pick a uniformly random starting segment along the path,
+        """
+        Pick a uniformly random starting segment along the path,
         excluding the last `skip_tail_segments` segments.
 
         Mutates `self.ship_pos`, `self.previous_ship_pos` and
         `self.checkpoint_index` to start at the chosen segment's
         beginning checkpoint, heading toward its end checkpoint.
         """
+
         n_skip = int(getattr(self, "skip_tail_segments", 1))
         n_segments = len(self.checkpoints) - 1
         max_seg = n_segments - n_skip

@@ -9,7 +9,8 @@ EPSILON = 1e-9
 
 
 class ScenarioBuilder:
-    """Episode-level scenario builder.
+    """
+    Episode-level scenario builder.
 
     Reads scenario_types, scenario_probs, and encounter_range from the
     environment so that subclass environments can configure them.
@@ -19,6 +20,13 @@ class ScenarioBuilder:
     """
 
     def __init__(self, env) -> None:
+        """
+        Initializes the scenario builder.
+
+        Args:
+            env: Environment that owns the builder.
+        """
+
         self.step_counter: int = 0
         self.env = env
         self.chosen_scenario: Optional[str] = None
@@ -41,7 +49,8 @@ class ScenarioBuilder:
     # Lifecycle hooks
     # ----------------
     def on_reset(self) -> None:
-        """Called at episode reset.
+        """
+        Called at episode reset.
 
         Resets per-episode builder state regardless of mode (so the
         recovery counter doesn't leak across episodes after early
@@ -49,6 +58,7 @@ class ScenarioBuilder:
         the full episode scenario; at step level, entities are spawned
         later by `on_step()`.
         """
+
         env = self.env
 
         self.step_counter = 0
@@ -99,13 +109,15 @@ class ScenarioBuilder:
         self._push_scenario_to_classifier(chosen_scenario)
 
     def _push_scenario_to_classifier(self, scenario_label: Optional[str]) -> None:
-        """Propagate the builder's chosen scenario to the classifier.
+        """
+        Propagate the builder's chosen scenario to the classifier.
 
         Only applies when the env has ground_truth_classification=True.
         When False, the classifier runs in pure geometric mode at both
         episode and step levels (so its misclassification rate can be
         measured against the builder's ground truth).
         """
+
         env = self.env
         if not getattr(env, "ground_truth_classification", True):
             return
@@ -115,7 +127,10 @@ class ScenarioBuilder:
         clf.set_episode_scenario(scenario_label)
 
     def _is_training_focused(self) -> bool:
-        """True when focused-encounter training is active for this env."""
+        """
+        True when focused-encounter training is active for this env.
+        """
+
         env = self.env
         return (
             not getattr(env, "eval", False)
@@ -123,21 +138,28 @@ class ScenarioBuilder:
         )
 
     def _active_cooldown(self) -> int:
-        """Pre-encounter cooldown (steps) for the current train/eval mode."""
+        """
+        Pre-encounter cooldown (steps) for the current train/eval mode.
+        """
+
         env = self.env
         if getattr(env, "eval", False):
             return int(getattr(env, "eval_encounter_cooldown", 500))
         return int(getattr(env, "train_encounter_cooldown", 150))
 
     def _active_encounter_prob(self) -> float:
-        """Encounter spawn probability per step for the current mode."""
+        """
+        Encounter spawn probability per step for the current mode.
+        """
+
         env = self.env
         if getattr(env, "eval", False):
             return float(getattr(env, "eval_encounter_prob", 0.004))
         return float(getattr(env, "train_encounter_prob", 1.0))
 
     def on_step(self, dt: float) -> None:
-        """Called each environment step for step-level encounter spawning.
+        """
+        Called each environment step for step-level encounter spawning.
 
         Behavior depends on training vs eval mode:
 
@@ -151,6 +173,7 @@ class ScenarioBuilder:
           countdown of `post_encounter_steps` runs and then `_truncate_requested`
           is set so the env step loop can clean-truncate the episode.
         """
+
         env = self.env
         if not getattr(env, "enable_obstacles", False):
             env.collision_entities = []
@@ -272,6 +295,7 @@ class ScenarioBuilder:
         Cache checkpoint segment geometry for the current episode geometry.
         Rebuild whenever self.checkpoints changes.
         """
+
         env = self.env
         seg_starts = []
         seg_ends = []
@@ -315,14 +339,18 @@ class ScenarioBuilder:
 
 
     def sample_collision_entity_scenario(self):
-        """Sample the current episode's collision entities."""
+        """
+        Sample the current episode's collision entities.
+        """
+
         env = self.env
         env.obstacle_count = env._rng.choice(env.obstacle_population, p=env.obstacle_probs)
         chosen_scenario = env._rng.choice(env.scenario_types, p=env.scenario_probs)
         return chosen_scenario
 
     def _find_segment_at_encounter_range(self) -> Optional[int]:
-        """Find the cached-segment index whose start lies just beyond
+        """
+        Find the cached-segment index whose start lies just beyond
         `encounter_range` ahead of the OS along the path.
 
         Walks forward from the OS's current position (projected onto its
@@ -340,6 +368,7 @@ class ScenarioBuilder:
         `CHECKPOINTS_DISTANCE` and returns a segment that is well
         inside `encounter_range` — leaving the agent no time to react.
         """
+
         env = self.env
         accumulated = 0.0
         encounter_range = float(env.encounter_range)
@@ -394,7 +423,8 @@ class ScenarioBuilder:
         n: int = 1,
         target_seg_idx: Optional[int] = None,
     ):
-        """Build collision entities for *episode_type*.
+        """
+        Build collision entities for *episode_type*.
 
         Args:
             scenario_type: Scenario name (e.g. "head-on").
@@ -403,6 +433,7 @@ class ScenarioBuilder:
             target_seg_idx: If given, force placement on this cached
                segment index (used by step-level spawning).
         """
+
         entities = []
         match scenario_type:
             case "path-following":
@@ -431,6 +462,7 @@ class ScenarioBuilder:
         Randomly placed obstacle_count static obstacles along the path, laterally randomized (uniform).
         When target_seg_idx is given (step-level), places exactly one obstacle on that segment.
         """
+
         env = self.env
         if not hasattr(env, "checkpoints") or len(env.checkpoints) < 2:
             return None
@@ -515,6 +547,7 @@ class ScenarioBuilder:
         Step-level (target_seg_idx given): places the TS on the specified
         segment just outside encounter range.
         """
+
         env = self.env
 
         segment_margin_frac = float(getattr(env, "static_ship_segment_margin_frac", 0.0))
@@ -611,6 +644,7 @@ class ScenarioBuilder:
         Episode-level (target_seg_idx is None): picks a random eligible segment.
         Step-level (target_seg_idx given): places on the specified segment.
         """
+
         env = self.env
 
         segment_margin_frac = float(getattr(env, "static_ship_segment_margin_frac", 0.0))
@@ -689,6 +723,7 @@ class ScenarioBuilder:
         side: "starboard" for crossing-right (TS on OS starboard, OS give-way)
               "port"      for crossing-left  (TS on OS port, OS stand-on)
         """
+
         env = self.env
 
         if target_seg_idx is not None:
@@ -801,6 +836,7 @@ class ScenarioBuilder:
         Crossing-right: TS on OS starboard side, heading across the path
         towards port. OS is the give-way vessel (must pass behind TS stern).
         """
+
         return self._compute_crossing_collision_entities(side="starboard", target_seg_idx=target_seg_idx)
 
     def compute_crossing_left_collision_entities(self, target_seg_idx: Optional[int] = None):
@@ -808,10 +844,14 @@ class ScenarioBuilder:
         Crossing-left: TS on OS port side, heading across the path
         towards starboard. OS is the stand-on vessel (maintain course/speed).
         """
+
         return self._compute_crossing_collision_entities(side="port", target_seg_idx=target_seg_idx)
 
     def check_collision_entity_collision(self) -> bool:
-        """Checks collision between OS and TS"""
+        """
+        Checks collision between OS and TS.
+        """
+
         env = self.env
         entities = getattr(env, "collision_entities", []) or []
         return any(
@@ -823,7 +863,10 @@ class ScenarioBuilder:
     # Single-encounter eval mode
     # ---------------------------------------------------------------
     def _resolve_single_encounter_seg_idx(self) -> Optional[int]:
-        """Resolve the target segment index into the cached _seg_* arrays."""
+        """
+        Resolve the target segment index into the cached _seg_* arrays.
+        """
+
         env = self.env
         target = getattr(env, "single_encounter_target_segment_index", None)
         if target is None:
@@ -835,7 +878,8 @@ class ScenarioBuilder:
         return target
 
     def _spawn_single_dormant_encounter(self) -> None:
-        """Place one dormant TS on the user-specified segment.
+        """
+        Place one dormant TS on the user-specified segment.
 
         Reuses the existing per-scenario builders to get a geometry-correct
         placement (segment, lateral offset, heading) and then zeros out the
@@ -843,6 +887,7 @@ class ScenarioBuilder:
         Crossings already spawn dormant via the bearing-aware machinery, so
         we only attach the generic dormant marker for overtaking / head-on.
         """
+
         env = self.env
         seg_idx = self._resolve_single_encounter_seg_idx()
         if seg_idx is None:
@@ -886,12 +931,14 @@ class ScenarioBuilder:
         self._encounters_this_episode += 1
 
     def _single_encounter_on_step(self) -> None:
-        """Per-step bookkeeping for single-encounter eval mode.
+        """
+        Per-step bookkeeping for single-encounter eval mode.
 
         * Despawn the dormant/active TS once the OS leaves forget_range.
         * After despawn, no further entities are spawned for the rest of
           the episode (`_single_encounter_done` blocks any respawn path).
         """
+
         env = self.env
 
         # If despawn already happened, hold the empty-entity state.

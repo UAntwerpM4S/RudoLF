@@ -47,6 +47,25 @@ FIG_W, FIG_H = 9, 5
 
 
 def load_data(csv_path: str) -> pd.DataFrame:
+    """
+    Load and normalize training metrics from a CSV file.
+
+    The function ensures required columns are present, normalizes column names
+    to lowercase, and constructs a consistent 'iteration' column if missing.
+
+    Args:
+        csv_path (str): Path to the input CSV file containing training metrics.
+
+    Returns:
+        pd.DataFrame: Normalized dataframe containing at least:
+            - policy (str)
+            - reward (float)
+            - iteration (int)
+
+    Raises:
+        ValueError: If required columns ('policy', 'reward') are missing.
+    """
+
     df = pd.read_csv(csv_path)
     df.columns = df.columns.str.lower()
 
@@ -64,12 +83,51 @@ def load_data(csv_path: str) -> pd.DataFrame:
 
 
 def rolling_stats(series: pd.Series, window: int):
+    """
+    Compute rolling mean and rolling standard deviation bounds.
+
+    This function computes a rolling mean over the input series and derives
+    upper and lower confidence bands using ±1 standard deviation.
+
+    Args:
+        series (pd.Series): Input numeric series (e.g., rewards).
+        window (int): Rolling window size.
+
+    Returns:
+        tuple[pd.Series, pd.Series, pd.Series]:
+            - rolling mean
+            - lower bound (mean - std)
+            - upper bound (mean + std)
+    """
+
     rm   = series.rolling(window, min_periods=1).mean()
     rstd = series.rolling(window, min_periods=1).std().fillna(0)
     return rm, rm - rstd, rm + rstd
 
 
 def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
+    """
+    Plot per-policy training reward curves with rolling statistics.
+
+    For each policy in the dataframe, this function plots:
+        - Raw reward trajectory (low opacity)
+        - Rolling mean reward
+        - ±1 standard deviation band around the rolling mean
+
+    Policies with entirely NaN rewards are skipped.
+
+    Args:
+        df (pd.DataFrame): Input dataframe containing columns:
+            - policy
+            - reward
+            - iteration
+        window (int): Rolling window size for smoothing.
+        out_path (str): Output file path for saving the figure.
+
+    Raises:
+        RuntimeError: If no valid (non-NaN) policies are available to plot.
+    """
+
     fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
 
     policies = list(df["policy"].unique())
@@ -131,6 +189,23 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
 
 
 def main() -> None:
+    """
+    CLI entry point for plotting multi-policy training reward curves.
+
+    This function:
+        1. Parses command-line arguments
+        2. Loads and normalizes the CSV dataset
+        3. Generates and saves a reward curve visualization
+
+    CLI Arguments:
+        --csv (str): Path to input CSV file.
+        --window (int): Rolling window size for smoothing.
+        --out (str): Output file path for saved figure.
+
+    Returns:
+        None
+    """
+
     parser = argparse.ArgumentParser(
         description="Plot per-policy DRL training reward curves."
     )

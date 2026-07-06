@@ -51,7 +51,26 @@ FIG_W, FIG_H = 8, 4.5       # inches — fits a single-column thesis layout
 # ---------------------------------------------------------------------------
 
 def load_data(csv_path: str) -> pd.DataFrame:
-    """Load CSV and return a DataFrame with a zero-based 'iteration' column."""
+    """
+    Load training reward data from a CSV file and normalize its structure.
+
+    The function ensures a consistent format by:
+    - Lowercasing column names
+    - Ensuring an 'iteration' column exists
+    - Creating a synthetic iteration index if necessary
+
+    Args:
+        csv_path (str): Path to the CSV file containing training data.
+
+    Returns:
+        pd.DataFrame: DataFrame containing at least:
+            - iteration (int)
+            - reward (float)
+
+    Raises:
+        ValueError: If the required 'reward' column is missing.
+    """
+
     df = pd.read_csv(csv_path)
 
     required = {"reward"}
@@ -76,7 +95,20 @@ def load_data(csv_path: str) -> pd.DataFrame:
 def rolling_stats(
     series: pd.Series, window: int
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """Return (rolling_mean, rolling_mean - std, rolling_mean + std)."""
+    """
+    Compute rolling mean and ±1 standard deviation envelope.
+
+    Args:
+        series (pd.Series): Input numeric series (e.g., rewards).
+        window (int): Rolling window size.
+
+    Returns:
+        tuple:
+            - rolling mean (pd.Series)
+            - lower bound (mean - std)
+            - upper bound (mean + std)
+    """
+
     rm   = series.rolling(window, min_periods=1).mean()
     rstd = series.rolling(window, min_periods=1).std().fillna(0)
     return rm, rm - rstd, rm + rstd
@@ -87,6 +119,25 @@ def rolling_stats(
 # ---------------------------------------------------------------------------
 
 def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
+    """
+    Plot DRL training reward curve with smoothing and variance visualization.
+
+    The plot includes:
+        - Raw reward signal (low-opacity line)
+        - Rolling mean reward (main curve)
+        - ±1 standard deviation band around rolling mean
+
+    Args:
+        df (pd.DataFrame): Input dataframe containing:
+            - iteration (int)
+            - reward (float)
+        window (int): Rolling window size for smoothing.
+        out_path (str): Output file path for saving the figure.
+
+    Returns:
+        None
+    """
+
     iterations = df["iteration"].values
     reward     = df["reward"].values
 
@@ -161,6 +212,23 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    """
+    Command-line entry point for DRL reward curve visualization.
+
+    Workflow:
+        1. Parse CLI arguments
+        2. Load and normalize training CSV
+        3. Generate and save reward plot
+
+    CLI Arguments:
+        --csv (str): Path to input CSV file.
+        --window (int): Rolling window size for smoothing.
+        --out (str): Output file path.
+
+    Returns:
+        None
+    """
+
     parser = argparse.ArgumentParser(
         description="Plot DRL training reward curve (thesis-quality)."
     )

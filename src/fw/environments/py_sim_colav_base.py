@@ -1,4 +1,5 @@
-"""Base environment for collision avoidance scenarios.
+"""
+Base environment for collision avoidance scenarios.
 
 Provides scenario construction, entity advancement along checkpoints,
 and collision detection infrastructure. Subclasses add observation-specific
@@ -55,7 +56,8 @@ EPSILON = 1e-9
 
 
 class PySimColavBaseEnv(PySimBaseEnv):
-    """Base collision avoidance environment with scenario construction
+    """
+    Base collision avoidance environment with scenario construction
     and entity management.
 
     This environment extends PySimEnv with:
@@ -110,6 +112,38 @@ class PySimColavBaseEnv(PySimBaseEnv):
             #           against the builder's ground truth).
             ground_truth_classification: bool = True,
     ) -> None:
+        """
+        Initializes the base collision avoidance environment.
+
+        Configures scenario generation, collision entities, encounter tracking,
+        scenario classification, and collision risk computation before
+        initializing the underlying path-following environment.
+
+        Args:
+            render_mode: Rendering mode for the environment.
+            time_step: Simulation time step in seconds.
+            max_steps: Maximum number of simulation steps per episode.
+            verbose: Enables verbose logging if True.
+            ship_pos: Initial own-ship position. Randomized if None.
+            target_pos: Target position. Randomized if None.
+            dynamics_model: Vessel dynamics model.
+            ship_model: Ship specification model.
+            wind: Enables wind disturbances.
+            current: Enables current disturbances.
+            minimal_path_render: Enables simplified path rendering.
+            enable_obstacles: Enables obstacle generation.
+            enable_variable_ship_size: Enables randomized target ship sizes.
+            encounter_range: Distance within which encounters become active.
+            evaluate: Enables evaluation mode.
+            scenario_types: Available encounter scenario types.
+            scenario_probs: Sampling probabilities for scenario types.
+            scenario_obstacle_level: Whether obstacles are generated per episode
+                or per simulation step.
+            obstacle_population: Available obstacle counts.
+            obstacle_weights: Sampling weights for obstacle counts.
+            ground_truth_classification: Uses scenario-builder labels instead of
+                geometric classification for reward shaping.
+        """
 
         self.ground_truth_classification = bool(ground_truth_classification)
 
@@ -313,12 +347,14 @@ class PySimColavBaseEnv(PySimBaseEnv):
     # Utility & Math
     # -------------------------
     def _compute_cri(self, os_pos, os_heading, os_u, os_v, ts) -> Tuple[float, float, float]:
-        """Compute (CRI, TCPA, DCPA) for a target ship.
+        """
+        Compute (CRI, TCPA, DCPA) for a target ship.
 
         TCPA in seconds (positive = approaching, negative = receding).
         DCPA in metres. Falls back to (0, 0, current_range) when relative
         velocity is effectively zero.
         """
+
         ts_pos = ts.get_position()
         ts_vel = ts.get_velocity()
 
@@ -355,7 +391,10 @@ class PySimColavBaseEnv(PySimBaseEnv):
     # Dynamics update & step
     # -----------------------
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
-        """Execute one environment timestep with collision entity management."""
+        """
+        Execute one environment timestep with collision entity management.
+        """
+
         action = np.asarray(action, dtype=np.float32)
 
         if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
@@ -540,32 +579,41 @@ class PySimColavBaseEnv(PySimBaseEnv):
     # Reward (override in subclass)
     # --------------------------------
     def _calculate_colav_reward(self) -> Tuple[float, bool]:
-        """Calculate COLAV reward. Subclasses override this with domain-specific shaping.
+        """
+        Calculate COLAV reward. Subclasses override this with domain-specific shaping.
 
         Returns:
             (reward, terminated): The shaped reward and whether the episode ends.
             Note: collision detection and failure penalty are handled by step().
         """
+
         return super()._calculate_reward()
 
     # -----------------------
     # Hooks for subclasses
     # -----------------------
     def _on_entities_stepped(self) -> None:
-        """Called after collision entities have been stepped.
-        Override in subclass for sensor geometry updates (e.g. polar scan rebuild)."""
+        """
+        Called after collision entities have been stepped.
+        Override in subclass for sensor geometry updates (e.g. polar scan rebuild).
+        """
+
         pass
 
     def _on_episode_reset(self) -> None:
-        """Called at the end of env_specific_reset(), after scenario sampling.
-        Override in subclass for additional per-episode setup."""
+        """
+        Called at the end of env_specific_reset(), after scenario sampling.
+        Override in subclass for additional per-episode setup.
+        """
+
         pass
 
     # ---------------------------
     # Classification metrics
     # ---------------------------
     def _update_encounter_metrics(self) -> None:
-        """Drive the per-encounter lifecycle from `tracked_ts` transitions.
+        """
+        Drive the per-encounter lifecycle from `tracked_ts` transitions.
 
         Called from `step()` after `_get_obs()` re-runs the classifier.
         Handles three transitions:
@@ -576,6 +624,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
                                  time-to-first-action, pass/collision flags).
           * tracked → None     → finalize the encounter as resolved.
         """
+
         # _get_obs() skips re-running the classifier on terminal steps,
         # so the classifier state is stale — do not sample it. Still
         # finalize an in-progress encounter so its min_dist/collided flags
@@ -651,7 +700,8 @@ class PySimColavBaseEnv(PySimBaseEnv):
         })
 
     def _finalize_active_encounter(self, resolved_normally: bool = False) -> None:
-        """Write per-encounter aggregates into the latest record.
+        """
+        Write per-encounter aggregates into the latest record.
 
         Args:
             resolved_normally: True if finalize was triggered by the normal
@@ -661,6 +711,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
                 or reset. The record's `resolved` flag is set only when
                 this is True *and* `_current_encounter_passed` is True.
         """
+
         if not self._in_encounter or not self._episode_encounters:
             self._in_encounter = False
             return
@@ -726,6 +777,13 @@ class PySimColavBaseEnv(PySimBaseEnv):
     # Collision-entity helpers
     # ---------------------------
     def _sync_collision_entity_views(self) -> None:
+        """
+        Synchronizes cached collision-entity arrays.
+
+        Updates the cached positions, radii, and entity count used by
+        observation generation and rendering.
+        """
+
         if not getattr(self, "collision_entities", None):
             self.obstacle_pos = np.zeros((0, 2), dtype=np.float32)
             self.static_ship_radii = np.zeros((0,), dtype=np.float32)
@@ -743,6 +801,13 @@ class PySimColavBaseEnv(PySimBaseEnv):
         )
 
     def _step_collision_entities(self) -> None:
+        """
+        Advances all collision entities by one simulation step.
+
+        Handles activation logic, encounter-specific behavior, and checkpoint
+        following before updating cached collision-entity data.
+        """
+
         if not getattr(self, "collision_entities", None):
             return
 
@@ -850,6 +915,17 @@ class PySimColavBaseEnv(PySimBaseEnv):
             self._sync_collision_entity_views()
 
     def _advance_entity_along_checkpoints(self, entity, dt: float) -> None:
+        """
+        Advances an entity along the checkpoint path.
+
+        Moves the entity toward successive checkpoints while respecting the
+        configured path direction and lateral offset.
+
+        Args:
+            entity: Collision entity to advance.
+            dt: Simulation time step in seconds.
+        """
+
         remaining_dist = float(entity.path_speed) * float(dt)
         path_direction = int(getattr(entity, "path_direction", 1))
         path_offset = float(getattr(entity, "path_offset", 0.0))
@@ -927,7 +1003,10 @@ class PySimColavBaseEnv(PySimBaseEnv):
     # Reset
     # -----------------------
     def env_specific_reset(self) -> None:
-        """Reset episode-specific geometry and build collision entities."""
+        """
+        Reset episode-specific geometry and build collision entities.
+        """
+
         # Finalize previous episode's min distance
         if hasattr(self, "_current_episode_min_dist"):
             if not self._current_episode_collided and self._current_episode_min_dist < float("inf"):
@@ -993,6 +1072,13 @@ class PySimColavBaseEnv(PySimBaseEnv):
     # Rendering
     # -----------------------
     def _initialize_rendering(self) -> None:
+        """
+        Initializes collision avoidance rendering.
+
+        Creates artists for the own ship, target ships, trajectories, and
+        encounter annotations.
+        """
+
         super()._initialize_rendering()
 
         self.ship_plot_colav, = self.ax.plot([], [], 'bo', markersize=10, label='OS')
@@ -1023,6 +1109,13 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self.os_trail_line.set_animated(True)
 
     def _get_collision_entity_render_key(self):
+        """
+        Returns a hashable key describing the current collision entities.
+
+        Returns:
+            A key that changes whenever the rendered collision entities change.
+        """
+
         entities = getattr(self, "collision_entities", []) or []
         if not entities:
             return "none", 0
@@ -1033,6 +1126,10 @@ class PySimColavBaseEnv(PySimBaseEnv):
         return len(entities), rounded
 
     def _clear_collision_entity_patches(self) -> None:
+        """
+        Removes all collision-entity patches from the plot.
+        """
+
         if not hasattr(self, "_collision_entity_patches"):
             self._collision_entity_patches = []
             return
@@ -1044,6 +1141,10 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._collision_entity_patches = []
 
     def _draw_collision_entities(self) -> None:
+        """
+        Draws collision-entity safety regions.
+        """
+
         if not hasattr(self, "ax"):
             return
         self._clear_collision_entity_patches()
@@ -1060,11 +1161,18 @@ class PySimColavBaseEnv(PySimBaseEnv):
             self._collision_entity_patches.append(safety)
 
     def _draw_fixed_landmarks(self) -> None:
+        """
+        Draws static environment landmarks.
+        """
+
         self.start_pos = np.asarray(self.initial_ship_pos, dtype=np.float32).copy()
         super()._draw_fixed_landmarks()
 
     def render(self) -> None:
-        """Render the environment with collision entities and trails."""
+        """
+        Render the environment with collision entities and trails.
+        """
+
         if self.render_mode != 'human':
             return
 
@@ -1080,6 +1188,13 @@ class PySimColavBaseEnv(PySimBaseEnv):
         canvas = self.fig.canvas
 
         def _safe(callable_obj):
+            """
+            Safe.
+
+            Args:
+                callable_obj: Description.
+            """
+
             try:
                 callable_obj()
             except (RuntimeError, AttributeError, TypeError, ValueError):
@@ -1205,9 +1320,15 @@ class PySimColavBaseEnv(PySimBaseEnv):
         _safe(canvas.flush_events)
 
     def _render_subclass(self, heading: float) -> None:
-        """Override in subclass to add rendering (e.g. polar beams)."""
+        """
+        Override in subclass to add rendering (e.g. polar beams).
+        """
+
         pass
 
     def _blit_subclass(self) -> None:
-        """Override in subclass to blit additional artists (e.g. polar beams)."""
+        """
+        Override in subclass to blit additional artists (e.g. polar beams).
+        """
+
         pass

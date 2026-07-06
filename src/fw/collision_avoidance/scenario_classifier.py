@@ -53,15 +53,42 @@ _BUILDER_TO_EXTENDED = {
 
 
 def _normalize_angle(angle: float) -> float:
+    """
+    Normalizes an angle to the interval [-π, π).
+
+    Args:
+        angle: Angle in radians.
+
+    Returns:
+        The normalized angle in radians.
+    """
+
     return float((angle + math.pi) % (2.0 * math.pi) - math.pi)
 
 
 class ScenarioClassifier:
+    """
+    Classifies COLREG encounter scenarios.
+
+    Tracks the nearest dynamic target ship, applies geometric encounter
+    classification with hysteresis, and optionally overrides the result with
+    ground-truth scenario labels provided by the scenario builder.
+    """
+
     def __init__(
         self,
         classify_range: float = 750.0,
         forget_range: float = 770.0,
     ):
+        """
+        Initializes the scenario classifier.
+
+        Args:
+            classify_range: Maximum distance for selecting a target ship.
+            forget_range: Distance beyond which the currently tracked target ship
+                is forgotten.
+        """
+
         self.classify_range = classify_range
         self.forget_range = forget_range
 
@@ -100,16 +127,22 @@ class ScenarioClassifier:
         seg_tangents: np.ndarray,
         seg_lengths: np.ndarray,
     ) -> None:
-        """Register the path segment geometry used by classify_path_projected.
+        """
+        Register the path segment geometry used by classify_path_projected.
 
         Expected shapes: seg_starts (N, 2), seg_tangents (N, 2) unit vectors,
         seg_lengths (N,).
         """
+
         self._seg_starts = np.asarray(seg_starts, dtype=np.float32)
         self._seg_tangents = np.asarray(seg_tangents, dtype=np.float32)
         self._seg_lengths = np.asarray(seg_lengths, dtype=np.float32)
 
     def reset(self) -> None:
+        """
+        Resets the classifier state for a new episode.
+        """
+
         self._tracked_ts = None
         self._scenario = 0
         self._overtaking_locked = False
@@ -121,13 +154,15 @@ class ScenarioClassifier:
         self._last_entities = None
 
     def set_episode_scenario(self, scenario_label: Optional[str]) -> None:
-        """Lock the classifier to a ground-truth scenario.
+        """
+        Lock the classifier to a ground-truth scenario.
 
         When a label is set, classification short-circuits the geometric
         result and always returns this scenario's index.
 
         Pass None to release the lock and resume geometric classification.
         """
+
         if scenario_label is None:
             self._episode_scenario_label = None
             return
@@ -148,7 +183,8 @@ class ScenarioClassifier:
         collision_entities: list,
         approach_offset: float = 20.0,
     ) -> int:
-        """Path-aware classification. Uses the heading of the path segment
+        """
+        Path-aware classification. Uses the heading of the path segment
         nearest the tracked TS in place of the OS heading, and a virtual
         OS position projected onto that segment, so curvature does not
         skew the heading-difference bucket or the port/starboard bearing
@@ -158,6 +194,7 @@ class ScenarioClassifier:
         Falls back to raw-geometry classification if set_path_segments()
         has not been called.
         """
+
         self._last_entities = collision_entities
 
         ts_idx = self._select_ts(os_pos, collision_entities)
@@ -187,9 +224,11 @@ class ScenarioClassifier:
         return self._finalize_scenario(ext)
 
     def _finalize_scenario(self, ext: Optional[int]) -> int:
-        """Apply the ts-in-range, GT-lock, and hysteresis logic given the
+        """
+        Apply the ts-in-range, GT-lock, and hysteresis logic given the
         extended geometric label just computed (or None if no TS tracked).
         """
+
         # No TS in range -> path-following, regardless of any GT lock. The GT
         # lock must only override geometry during an encounter; otherwise the
         # agent would spend the approach phase routed to the wrong policy
@@ -239,10 +278,12 @@ class ScenarioClassifier:
         return self._scenario
 
     def _find_nearest_segment(self, ts_pos: np.ndarray):
-        """Return (seg_idx, foot_point) for the path segment whose clamped
+        """
+        Return (seg_idx, foot_point) for the path segment whose clamped
         foot-of-perpendicular to ts_pos is nearest. Returns (None, None) if
         no path is registered.
         """
+
         if self._seg_starts is None or len(self._seg_starts) == 0:
             return None, None
 
@@ -256,29 +297,49 @@ class ScenarioClassifier:
         return best, feet[best]
 
     def get_one_hot(self) -> np.ndarray:
+        """
+        Returns the current scenario as a one-hot vector.
+
+        Returns:
+            One-hot encoded scenario vector.
+        """
+
         vec = np.zeros(NUM_SCENARIOS, dtype=np.float32)
         vec[self._scenario] = 1.0
         return vec
 
     @property
     def label(self) -> str:
+        """
+        Current reduced scenario label.
+        """
+
         return SCENARIO_LABELS[self._scenario]
 
     @property
     def tracked_ts(self) -> Optional[int]:
+        """
+        Index of the currently tracked target ship, if any.
+        """
+
         return self._tracked_ts
 
     @property
     def geometric_extended_label(self) -> str:
-        """5-way extended geometric classification (distinguishes crossing-left)."""
+        """
+        5-way extended geometric classification (distinguishes crossing-left).
+        """
+
         return EXTENDED_SCENARIO_LABELS[self._last_geometric_extended]
 
     @property
     def ground_truth_extended_label(self) -> Optional[str]:
-        """5-way GT label from the tracked TS's spawn_scenario_label.
+        """
+        5-way GT label from the tracked TS's spawn_scenario_label.
 
         Preserves crossing-left as a distinct class for diagnostics.
         """
+
         if self._tracked_ts is None or self._last_entities is None:
             return None
         if self._tracked_ts >= len(self._last_entities):
@@ -294,6 +355,7 @@ class ScenarioClassifier:
         Pick nearest dynamic TS within range, with hysteresis on the tracked one.
         Hysteresis makes sure that TS don't oscillate in and out of classification range
         """
+
         if not collision_entities:
             return None
 
@@ -341,6 +403,7 @@ class ScenarioClassifier:
         "stand-on" convention) is produced downstream via
         `_BUILDER_TO_CLASSIFIER[EXTENDED_SCENARIO_LABELS[ext]]`.
         """
+
         # Heading difference, folded to [0, pi].
         delta_heading = abs(_normalize_angle(ts_heading - os_heading))
 
