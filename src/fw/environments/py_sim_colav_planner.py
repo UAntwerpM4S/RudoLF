@@ -10,7 +10,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
     """
     Collision avoidance environment using a replanner approach.
 
-    This environment extends ``PySimColavBaseEnv`` with planner-specific
+    This environment extends `PySimColavBaseEnv` with planner-specific
     configuration while reusing the base implementation for scenario
     generation, simulation, collision detection, and reward computation.
 
@@ -45,7 +45,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
 
         This constructor forwards all configuration parameters to the base
         environment while changing the default obstacle generation level to
-        ``"step"``, enabling obstacle regeneration at every simulation step.
+        "step", enabling obstacle regeneration at every simulation step.
 
         Args:
             render_mode: Rendering mode for the environment.
@@ -66,7 +66,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             obstacle_population: Available obstacle density levels.
             obstacle_weights: Sampling weights for obstacle densities.
             scenario_obstacle_level: Obstacle generation level. Defaults to
-                ``"step"`` when not specified.
+                "step" when not specified.
         """
 
         # Any of the parameters in the below super().__init(...)

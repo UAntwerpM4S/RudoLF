@@ -245,7 +245,7 @@ class CollisionEntity:
             own_radius: Radius of the other object.
 
         Returns:
-            ``True`` if a collision exists.
+            `True` if a collision exists.
         """
 
         return self.clearance_to_point(point, own_radius) <= 0.0
@@ -259,7 +259,7 @@ class CollisionEntity:
             own_radius: Radius of the other object.
 
         Returns:
-            ``True`` if a collision exists.
+            `True` if a collision exists.
         """
 
         return self.collides_with_point(point, own_radius)
@@ -276,7 +276,7 @@ class CollisionEntity:
             own_radius: Own-ship radius.
 
         Returns:
-            ``True`` if the entity is fully contained.
+            `True` if the entity is fully contained.
         """
 
         inflated = float(self.radius) + float(own_radius)
@@ -292,7 +292,7 @@ class CollisionEntity:
             margin: Additional safety margin.
 
         Returns:
-            ``True`` if the entities overlap.
+            `True` if the entities overlap.
         """
 
         distance = float(np.linalg.norm(self.get_position() - other.get_position()))
@@ -310,7 +310,7 @@ class CollisionEntity:
             os_heading: Own-ship heading.
 
         Returns:
-            ``True`` if the own ship has passed the entity.
+            `True` if the own ship has passed the entity.
         """
 
         # Check if TS is now abaft OS beam (OS has passed it)
