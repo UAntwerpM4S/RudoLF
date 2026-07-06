@@ -162,7 +162,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         """
         Choose the correct agent type based on the environments.
 
-        If any environment has ``include_scenario_one_hot`` enabled, use
+        If any environment has `include_scenario_one_hot` enabled, use
         MPSA (Multi-Policy Single Agent).  If any environment is a
         MultiSimEnv, use MPPO.  Otherwise, default to single-policy PPO.
 

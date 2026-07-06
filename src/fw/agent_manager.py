@@ -143,9 +143,9 @@ class AgentManager:
 
     def _build_multi_policy_single_agent(self, env):
         """
-        Create a ``MultiPolicySingleAgent`` for the given environment.
+        Create a `MultiPolicySingleAgent` for the given environment.
 
-        The environment must have ``include_scenario_one_hot=True`` so that
+        The environment must have `include_scenario_one_hot=True` so that
         its observations carry a one-hot suffix the agent uses for policy
         routing.
 
@@ -178,7 +178,7 @@ class AgentManager:
 
         # Directory holding the pre-trained per-scenario policies and the
         # spec describing which slots to populate and whether to freeze them.
-        # File names are given without the ``.zip`` extension.
+        # File names are given without the `.zip` extension.
         # Slot mapping (from SCENARIO_LABELS):
         #   0 = path-following   <- pretrained_pf
         #   1 = head-on          <- pretrained_ho

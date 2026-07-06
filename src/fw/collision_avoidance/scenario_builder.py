@@ -47,7 +47,7 @@ class ScenarioBuilder:
         recovery counter doesn't leak across episodes after early
         terminations such as collisions). At episode level, also builds
         the full episode scenario; at step level, entities are spawned
-        later by ``on_step()``.
+        later by `on_step()`.
         """
         env = self.env
 
@@ -142,13 +142,13 @@ class ScenarioBuilder:
         Behavior depends on training vs eval mode:
 
         * **Eval mode**: original behavior — after a cooldown, a TS may
-          spawn each step with ``eval_encounter_prob``.  Multiple
-          encounters per episode are allowed; episode runs to ``max_steps``.
+          spawn each step with `eval_encounter_prob`.  Multiple
+          encounters per episode are allowed; episode runs to `max_steps`.
         * **Focused-encounter training mode**: a single encounter per
-          episode.  After ``train_encounter_cooldown`` steps of recovery,
-          a TS spawns with probability ``train_encounter_prob`` (typically
-          1.0).  Once the TS leaves ``forget_range``, a post-encounter
-          countdown of ``post_encounter_steps`` runs and then ``_truncate_requested``
+          episode.  After `train_encounter_cooldown` steps of recovery,
+          a TS spawns with probability `train_encounter_prob` (typically
+          1.0).  Once the TS leaves `forget_range`, a post-encounter
+          countdown of `post_encounter_steps` runs and then `_truncate_requested`
           is set so the env step loop can clean-truncate the episode.
         """
         env = self.env
@@ -181,7 +181,7 @@ class ScenarioBuilder:
         # 1b. Path-following 'encounter' active (focused training only)
         #     The episode sampled "path-following" as its encounter type,
         #     so no TS is spawned — we just run PF for
-        #     ``pathfollowing_encounter_steps`` and then transition into
+        #     `pathfollowing_encounter_steps` and then transition into
         #     the post-encounter countdown so the episode terminates with
         #     the same 150-step PF tail as a normal TS encounter.
         # ----------------------------------------------------------
@@ -323,13 +323,13 @@ class ScenarioBuilder:
 
     def _find_segment_at_encounter_range(self) -> Optional[int]:
         """Find the cached-segment index whose start lies just beyond
-        ``encounter_range`` ahead of the OS along the path.
+        `encounter_range` ahead of the OS along the path.
 
         Walks forward from the OS's current position (projected onto its
         current segment), accumulating remaining path length.  Returns the
-        first segment index (into the cached ``_seg_*`` arrays) where the
-        accumulated distance exceeds ``encounter_range`` AND the segment
-        is one of the eligible dynamic segments, or ``None`` if no such
+        first segment index (into the cached `_seg_*` arrays) where the
+        accumulated distance exceeds `encounter_range` AND the segment
+        is one of the eligible dynamic segments, or `None` if no such
         segment exists (OS is too close to the start/end of the route).
 
         Note on the "remaining" accounting: the first iteration must use
@@ -337,8 +337,8 @@ class ScenarioBuilder:
         full segment length. Without this correction, when the OS is
         deep inside its current segment (which is the common case after
         the recovery wait), the function over-counts by up to one full
-        ``CHECKPOINTS_DISTANCE`` and returns a segment that is well
-        inside ``encounter_range`` — leaving the agent no time to react.
+        `CHECKPOINTS_DISTANCE` and returns a segment that is well
+        inside `encounter_range` — leaving the agent no time to react.
         """
         env = self.env
         accumulated = 0.0
@@ -888,7 +888,7 @@ class ScenarioBuilder:
 
         * Despawn the dormant/active TS once the OS leaves forget_range.
         * After despawn, no further entities are spawned for the rest of
-          the episode (``_single_encounter_done`` blocks any respawn path).
+          the episode (`_single_encounter_done` blocks any respawn path).
         """
         env = self.env
 

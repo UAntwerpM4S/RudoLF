@@ -25,12 +25,12 @@ def plot_min_distance_stats(
     """Plot encounter-level min-distance statistics.
 
     Generates two images:
-      * ``pdf_save_path`` — histogram + KDE of min center-to-center distance
+      * `pdf_save_path` — histogram + KDE of min center-to-center distance
         aggregated across all non-collision encounters (no per-policy split).
-      * ``boxplot_save_path`` — per-policy/scenario boxplots of the same
+      * `boxplot_save_path` — per-policy/scenario boxplots of the same
         min-distance values, bucketed by the encounter's ground-truth label.
 
-    When ``include_banks`` is True, the per-encounter distance is the minimum
+    When `include_banks` is True, the per-encounter distance is the minimum
     of the closest target-ship distance and the closest distance to the bank
     (polygon boundary) observed during the encounter; otherwise only
     target-ship distance is used.

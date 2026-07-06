@@ -87,7 +87,6 @@ class PySimColavBaseEnv(PySimBaseEnv):
             ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
             wind: bool = False,
             current: bool = False,
-            numerical_damping: bool = False,
             minimal_path_render: bool = False,
             # COLAV configuration
             enable_obstacles: bool = True,
@@ -253,7 +252,6 @@ class PySimColavBaseEnv(PySimBaseEnv):
             ship_model=ship_model,
             wind=wind,
             current=current,
-            numerical_damping=numerical_damping,
             minimal_path_render=minimal_path_render,
         )
 
@@ -656,8 +654,8 @@ class PySimColavBaseEnv(PySimBaseEnv):
                 classifier-driven tracked → None transition (TS left forget
                 range or was despawned by step-level cleanup). False when
                 the encounter was cut off by episode termination, truncation,
-                or reset. The record's ``resolved`` flag is set only when
-                this is True *and* ``_current_encounter_passed`` is True.
+                or reset. The record's `resolved` flag is set only when
+                this is True *and* `_current_encounter_passed` is True.
         """
         if not self._in_encounter or not self._episode_encounters:
             self._in_encounter = False
@@ -757,7 +755,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
             old_pos = entity.get_position().copy()
 
             # Generic dormant activation for single-encounter eval mode.
-            # Applies to any entity tagged ``dormant_pending_activation`` by
+            # Applies to any entity tagged `dormant_pending_activation` by
             # the builder (currently overtaking / head-on). Crossings keep
             # their own bearing-aware activation below.
             if getattr(entity, "dormant_pending_activation", False) and active_ship_positions:

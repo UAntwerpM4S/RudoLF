@@ -43,7 +43,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
             wind: bool = False,
             current: bool = False,
-            numerical_damping: bool = False,
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
             eval: bool = False,
@@ -124,7 +123,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             ship_model=ship_model,
             wind=wind,
             current=current,
-            numerical_damping=numerical_damping,
             enable_obstacles=enable_obstacles,
             enable_variable_ship_size=enable_variable_ship_size,
             encounter_range=self.polar_max_range,
@@ -596,7 +594,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Single-encounter eval: center the camera on the dormant TS so
         # multiple agents share an identical static frame for overlay
         # comparison. Only the OS trajectory changes between runs.
-        # Zoom is controlled by ``single_encounter_zoom_halfwidth`` (m).
+        # Zoom is controlled by `single_encounter_zoom_halfwidth` (m).
         if (
             getattr(self, "single_encounter_per_episode", False)
             and getattr(self, "_single_encounter_ts_spawn_pos", None) is not None

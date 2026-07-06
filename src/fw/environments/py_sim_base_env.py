@@ -122,7 +122,6 @@ class PySimBaseEnv(BaseEnv):
             ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
             wind: bool = False,
             current: bool = False,
-            numerical_damping: bool = False,
             minimal_path_render: bool = False,
     ) -> None:
         """
@@ -139,7 +138,6 @@ class PySimBaseEnv(BaseEnv):
             ship_model: optional ship model to use.
             wind: enable wind effects.
             current: enable current effects.
-            numerical_damping: enable numerical damping.
         """
 
         super().__init__(render_mode)
@@ -153,7 +151,6 @@ class PySimBaseEnv(BaseEnv):
         self.max_steps = int(max_steps)
         self.time_step = float(time_step)
         self.dynamics_model = dynamics_model
-        self.numerical_damping = bool(numerical_damping)
         self.verbose = bool(verbose) if verbose is not None else False
         self.previous_ship_pos = None
         self.previous_heading = None
@@ -259,8 +256,8 @@ class PySimBaseEnv(BaseEnv):
 
         # Focused-encounter training: optionally start at a random mid-path
         # checkpoint instead of the route start.  This rewrites
-        # ``self.ship_pos``, ``self.previous_ship_pos`` and
-        # ``self.checkpoint_index`` in-place so the rest of this method
+        # `self.ship_pos`, `self.previous_ship_pos` and
+        # `self.checkpoint_index` in-place so the rest of this method
         # picks up the new starting state.
         if getattr(self, "random_segment_start", False):
             self._apply_random_starting_checkpoint()
@@ -291,10 +288,10 @@ class PySimBaseEnv(BaseEnv):
 
     def _apply_random_starting_checkpoint(self) -> None:
         """Pick a uniformly random starting segment along the path,
-        excluding the last ``skip_tail_segments`` segments.
+        excluding the last `skip_tail_segments` segments.
 
-        Mutates ``self.ship_pos``, ``self.previous_ship_pos`` and
-        ``self.checkpoint_index`` to start at the chosen segment's
+        Mutates `self.ship_pos`, `self.previous_ship_pos` and
+        `self.checkpoint_index` to start at the chosen segment's
         beginning checkpoint, heading toward its end checkpoint.
         """
         n_skip = int(getattr(self, "skip_tail_segments", 1))
@@ -334,7 +331,7 @@ class PySimBaseEnv(BaseEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current, self.numerical_damping)
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
 
     # -------------------------
     # Environment data loaders
@@ -1025,7 +1022,7 @@ class PySimBaseEnv(BaseEnv):
             c: Query point as a 2D vector.
 
         Returns:
-            The Euclidean distance from ``c`` to the segment ``p1``-``p2``.
+            The Euclidean distance from `c` to the segment `p1`-`p2`.
         """
 
         # project c onto segment p1-p2
