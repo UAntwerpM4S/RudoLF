@@ -92,7 +92,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
             encounter_range: float = 500.0,
-            eval: bool = False,
+            evaluate: bool = False,
             # Scenario type configuration
             scenario_types: Optional[list] = None,
             scenario_probs: Optional[list] = None,
@@ -160,7 +160,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self.own_ship_radius = 0.0
 
         # Evaluation / tracking
-        self.eval = bool(eval)
+        self.eval = bool(evaluate)
         self.min_distance = float("inf")
 
         # Per-episode minimum distance tracking
@@ -239,6 +239,10 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self.cri_T = 120.0
         self.cri_omega1 = 0.5
         self.cri_omega2 = 0.5
+
+        self._seg_starts: Optional[np.ndarray] = None
+        self._seg_tangents: Optional[np.ndarray] = None
+        self._seg_lengths: Optional[np.ndarray] = None
 
         # Call parent (PySimEnv) init
         super().__init__(
@@ -1021,12 +1025,12 @@ class PySimColavBaseEnv(PySimBaseEnv):
     def _get_collision_entity_render_key(self):
         entities = getattr(self, "collision_entities", []) or []
         if not entities:
-            return ("none", 0)
+            return "none", 0
         rounded = tuple(
             (float(round(entity.x, 2)), float(round(entity.y, 2)), float(round(entity.radius, 2)), entity.entity_type)
             for entity in entities
         )
-        return (len(entities), rounded)
+        return len(entities), rounded
 
     def _clear_collision_entity_patches(self) -> None:
         if not hasattr(self, "_collision_entity_patches"):

@@ -750,6 +750,8 @@ class ScenarioBuilder:
 
                 placed = False
                 d_ts = d_ts_ideal
+                candidate_pos = None
+
                 while d_ts >= d_ts_min_abs:
                     candidate_pos = crossing_point + offset_dir * d_ts
 

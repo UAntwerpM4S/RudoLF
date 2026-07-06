@@ -45,7 +45,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             current: bool = False,
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
-            eval: bool = False,
+            evaluate: bool = False,
             include_scenario_one_hot: bool = False,
             # Scenario configuration (passed to base)
             scenario_types: Optional[list] = None,
@@ -126,7 +126,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             enable_obstacles=enable_obstacles,
             enable_variable_ship_size=enable_variable_ship_size,
             encounter_range=self.polar_max_range,
-            eval=eval,
+            evaluate=evaluate,
             scenario_types=scenario_types,
             scenario_probs=scenario_probs,
             obstacle_population=obstacle_population,
@@ -473,7 +473,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 reward -= _step_polar
 
         _headon_term = 0.0
-        crossing_right_signal = 0.0
         if self.ts_idx is not None and self.ts_idx < len(self.collision_entities):
             ts_idx = self.ts_idx
             ts = self.collision_entities[ts_idx]

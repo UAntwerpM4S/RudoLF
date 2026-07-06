@@ -441,7 +441,7 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             wind=self.configuration["wind"],
             current=self.configuration["current"],
             enable_obstacles=self.configuration.get("enable_obstacles", True),
-            eval=False,
+            evaluate=False,
             eval_scenario="crossing-right",
             eval_obstacle_count=1,
             include_scenario_one_hot=True,

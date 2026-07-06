@@ -27,7 +27,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             current: bool = False,
             enable_obstacles: bool = True,
             encounter_range: float = 500.0,
-            eval: bool = True,
+            evaluate: bool = True,
             # Scenario configuration (passed to base)
             scenario_types: Optional[list] = None,
             scenario_probs: Optional[list] = None,
@@ -54,7 +54,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             current=current,
             enable_obstacles=enable_obstacles,
             encounter_range=encounter_range,
-            eval=eval,
+            evaluate=evaluate,
             scenario_types=scenario_types,
             scenario_probs=scenario_probs,
             obstacle_population=obstacle_population,

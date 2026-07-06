@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 import tkinter as tk
 import numpy as np
-from Box2D.examples.cloth import step_cloth
 
 # First try interactive backend
 try:
@@ -477,14 +476,16 @@ class PySimBaseEnv(BaseEnv):
 
         return np.array(samples, dtype=np.float32)
 
-    def get_keel_clearance(self) -> float:
+    @staticmethod
+    def get_keel_clearance() -> float:
         """
         Get keel clearance.
         """
 
         return 0.0
 
-    def _has_enough_keel_clearance(self, depth_threshold: float = 0.5) -> bool:
+    @staticmethod
+    def _has_enough_keel_clearance(depth_threshold: float = 0.5) -> bool:
         """
         Placeholder to check keel clearance; returns True by default to preserve
         existing behavior. Override or expand if real depth data available.

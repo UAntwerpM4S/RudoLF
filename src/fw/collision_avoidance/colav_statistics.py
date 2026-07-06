@@ -214,7 +214,7 @@ def _plot_min_distance_boxplots(
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.boxplot(
         data,
-        labels=[f"{lbl}\n(n={c})" for lbl, c in zip(ordered, counts)],
+        tick_labels=[f"{lbl}\n(n={c})" for lbl, c in zip(ordered, counts)],
         showmeans=True,
         meanprops=dict(marker="D", markerfacecolor="white",
                        markeredgecolor="black", markersize=12),
