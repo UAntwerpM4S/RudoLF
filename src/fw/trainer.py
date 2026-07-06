@@ -205,7 +205,7 @@ class Trainer:
         metrics = self._scheduler.execute(configuration)
 
         last_env = self._envs[-1] if self._envs else None
-        env_type = last_env.name if last_env else None
+        env_type = str(last_env) if last_env else None
         env_metrics = metrics.get(env_type) if env_type else None
 
         if env_metrics and env_metrics.get("status") == "success":
@@ -256,6 +256,8 @@ class Trainer:
         if envs is not None:
             for env_idx, env in enumerate(envs):
                 gym_env = env.gym_env
+                env_name = str(env)
+
                 try:
                     sim = getattr(gym_env, "phys_sim", None)
                     if sim is not None:
@@ -268,8 +270,8 @@ class Trainer:
                         if sim_name:
                             print(f"Visualization of {gym_env.ship_model.name} in a {sim_name}.")
 
-                    policy_name = f"Best_{gym_env.type_name}" if self._config[
-                        "visualize_best_trained"] else gym_env.type_name
+                    policy_name = f"Best_{env_name}" if self._config[
+                        "visualize_best_trained"] else env_name
 
                     self._agent_mgr.set_environment(
                         env=gym_env,
@@ -286,8 +288,8 @@ class Trainer:
                     )
                     if collect_evaluation_summary and env_summary is not None:
                         if isinstance(env_summary, dict):
-                            if gym_env.type_name in env_summary:
-                                summaries[gym_env.type_name] = env_summary[gym_env.type_name]
+                            if env_name in env_summary:
+                                summaries[env_name] = env_summary[env_name]
                             else:
                                 # For composite envs (e.g. MultiSimEnv), collect summaries for all
                                 # sub-environments whose keys appear in env_summary.
@@ -299,24 +301,24 @@ class Trainer:
                                         if name in env_summary
                                     }
                                     if matched:
-                                        summaries[gym_env.type_name] = matched
+                                        summaries[env_name] = matched
                                     else:
                                         print(
                                             f"visualize(): env_summary dict has no key for "
-                                            f"'{gym_env.type_name}' or its sub-environments "
+                                            f"'{env_name}' or its sub-environments "
                                             f"({list(sub_envs.keys())}). Available keys: "
                                             f"{list(env_summary.keys())}. Skipping summary for this env."
                                         )
                                 else:
                                     print(
                                         f"visualize(): env_summary dict has no key for "
-                                        f"'{gym_env.type_name}'. Available keys: "
+                                        f"'{env_name}'. Available keys: "
                                         f"{list(env_summary.keys())}. Skipping summary for this env."
                                     )
                         else:
-                            summaries[gym_env.type_name] = env_summary
+                            summaries[env_name] = env_summary
                 except RuntimeError as e:
-                    print(f"Could not visualize {gym_env.type_name}. {e}")
+                    print(f"Could not visualize {env_name}. {e}")
         else:
             print("No data found to visualize.")
 

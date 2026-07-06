@@ -166,16 +166,14 @@ class SimpleScheduler(BaseScheduler):
 
                 # Save policy if reusing it later
                 self._previous_env_name = (
-                    self.current_env.gym_env.type_name
+                    str(self.current_env)
                     if policy_strategy != PolicyStrategy.RESET_POLICY
                     else None
                 )
 
                 if self._previous_env_name:
                     try:
-                        env_name = self.current_env.gym_env.type_name
-                        save_name = f"{env_name}_{self.agent_mgr.agent_type}_policy"
-                        #self.agent_mgr.agent.save_policy(save_name)
+                        save_name = f"{self.current_env}_{self.agent_mgr.agent_type}_policy"
 
                         reward_weights = getattr(self.current_env.gym_env, "reward_weights", None)
                         weight_suffix = self._format_reward_weight_suffix(reward_weights)
@@ -191,7 +189,7 @@ class SimpleScheduler(BaseScheduler):
                         profile = getattr(self.agent_mgr, "profile", None)
                         if profile is not None:
                             model_dir = getattr(self.agent_mgr.agent, "model_dir", None) or "models"
-                            profile_path = os.path.join(model_dir, f"{env_name}_profile.json")
+                            profile_path = os.path.join(model_dir, f"{self.current_env}_profile.json")
                             try:
                                 with open(profile_path, "w", encoding="utf-8") as _fp:
                                     _fp.write(profile.to_json())
