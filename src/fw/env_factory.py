@@ -232,6 +232,10 @@ class BaseEnvironment:
 
     @env.setter
     def env(self, value):
+        """
+        Setter for the env property.
+        """
+
         self._env = value
 
         if value is not None:
