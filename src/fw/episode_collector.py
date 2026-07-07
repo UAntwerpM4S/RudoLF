@@ -382,7 +382,7 @@ class EpisodeCollector:
                 if self._profile is not None:
                     action = self._transform_actions(self._profile, action)
 
-                state, reward, terminated, truncated, _ = env.step(action)
+                state, reward, terminated, truncated, info = env.step(action)
 
                 # Current minimum distance to any collision entity (post-step)
                 _cur_dist = float("inf")
