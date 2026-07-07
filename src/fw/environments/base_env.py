@@ -32,6 +32,7 @@ class BaseEnv(gym.Env):
         self._rudder_angle_scaling_enabled = False
         self._env_name = type(self).__name__
         self._sub_environments = {}
+        self._training_name = None
 
 
     @property
@@ -259,11 +260,53 @@ class BaseEnv(gym.Env):
         """
         Return the type name of the environment.
 
+        This reflects the underlying gym implementation *class* only (e.g.
+        "PySimEnv"). Multiple logically distinct environments (e.g. FhSimEnv
+        and PySimEnv) can share the same implementation class, so this must
+        NOT be used as an identity for policy files, metrics keys, or config
+        lookups. Use `training_name` for that instead.
+
         Returns:
             str: The class name of the current environment instance.
         """
 
         return type(self).__name__
+
+
+    @property
+    def training_name(self):
+        """
+        Logical training identity of this environment.
+
+        This is the registered wrapper name (e.g. "FhSimEnv",
+        "PySimColavEnv") assigned by the `BaseEnvironment` factory wrapper
+        that constructed this gym env, and is guaranteed unique per logical
+        environment even when several wrappers share the same underlying
+        gym implementation class. Use this (not `type_name`) for policy file
+        naming, metrics dict keys, and any other place that needs to identify
+        *which training run/environment* this is.
+
+        Falls back to `type_name` when never explicitly set, e.g. when a gym
+        env is constructed directly (tests, scripts) without going through a
+        `BaseEnvironment` wrapper.
+
+        Returns:
+            str: The logical training identity for this environment.
+        """
+
+        return self._training_name if self._training_name is not None else self.type_name
+
+
+    @training_name.setter
+    def training_name(self, value):
+        """
+        Set the logical training identity for this environment.
+
+        Args:
+            value (str): The registered wrapper name to assign.
+        """
+
+        self._training_name = value
 
 
     def randomize(self, randomization_scale: Optional[float] = None):

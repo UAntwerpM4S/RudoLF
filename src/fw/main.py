@@ -178,8 +178,10 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 return MULTI_POLICY_SINGLE_NAME
 
         # MultiSimEnv requires its own policy type; all other envs use PPO.
-        # type_name equals ENVIRONMENT_NAME (e.g. "MultiSimEnv").
-        if any(e.gym_env.type_name == multi_sim_env_name for e in envs):
+        # training_name equals the wrapper's ENVIRONMENT_NAME (e.g. "MultiSimEnv").
+        # NOTE: type_name is NOT safe here - it reflects the underlying gym
+        # implementation class, which multiple wrapper environments can share.
+        if any(e.gym_env.training_name == multi_sim_env_name for e in envs):
             return MULTI_PPO_POLICY_NAME
 
         return PPO_POLICY_NAME

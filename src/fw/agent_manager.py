@@ -221,7 +221,7 @@ class AgentManager:
         policy_file_name = None
 
         if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._agent:
-            policy_file_name = f"{self.get_env().type_name}_{self._agent_type}_policy"
+            policy_file_name = f"{self.get_env().training_name}_{self._agent_type}_policy"
             self._agent.save_policy(policy_file_name)
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
             policy_file_name = f"{other_env_name}_{self._agent_type}_policy"
@@ -381,7 +381,8 @@ class AgentManager:
                     "mTC": m.mTC,
                     "mHE": m.mHE,
                 }
-                print(f"\n{env_name} evaluation completed!")
+                training_name = getattr(ship_env, "training_name", sid)
+                print(f"\n{training_name} evaluation completed!")
                 print(f"Average reward: {m.avg_reward:.2f}")
                 print(f"Best episode reward: {m.best_reward:.2f}")
                 print(f"Worst episode reward: {m.worst_reward:.2f}")

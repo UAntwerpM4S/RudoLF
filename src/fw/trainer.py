@@ -256,8 +256,6 @@ class Trainer:
         if envs is not None:
             for env_idx, env in enumerate(envs):
                 gym_env = env.gym_env
-                env_name = str(env)
-
                 try:
                     sim = getattr(gym_env, "phys_sim", None)
                     if sim is not None:
@@ -270,8 +268,8 @@ class Trainer:
                         if sim_name:
                             print(f"Visualization of {gym_env.ship_model.name} in a {sim_name}.")
 
-                    policy_name = f"Best_{env_name}" if self._config[
-                        "visualize_best_trained"] else env_name
+                    policy_name = f"Best_{gym_env.training_name}" if self._config[
+                        "visualize_best_trained"] else gym_env.training_name
 
                     self._agent_mgr.set_environment(
                         env=gym_env,
@@ -288,8 +286,14 @@ class Trainer:
                     )
                     if collect_evaluation_summary and env_summary is not None:
                         if isinstance(env_summary, dict):
-                            if env_name in env_summary:
-                                summaries[env_name] = env_summary[env_name]
+                            if gym_env.type_name in env_summary:
+                                # env_summary's own keys come from the underlying gym
+                                # implementation (e.g. an agent's internal per-class
+                                # bookkeeping), so this lookup intentionally stays on
+                                # type_name. What we STORE it under must be the logical
+                                # training identity so trainer.train()'s str(wrapper)
+                                # lookup (env_type) can find it.
+                                summaries[gym_env.training_name] = env_summary[gym_env.type_name]
                             else:
                                 # For composite envs (e.g. MultiSimEnv), collect summaries for all
                                 # sub-environments whose keys appear in env_summary.
@@ -301,24 +305,24 @@ class Trainer:
                                         if name in env_summary
                                     }
                                     if matched:
-                                        summaries[env_name] = matched
+                                        summaries[gym_env.training_name] = matched
                                     else:
                                         print(
                                             f"visualize(): env_summary dict has no key for "
-                                            f"'{env_name}' or its sub-environments "
+                                            f"'{gym_env.type_name}' or its sub-environments "
                                             f"({list(sub_envs.keys())}). Available keys: "
                                             f"{list(env_summary.keys())}. Skipping summary for this env."
                                         )
                                 else:
                                     print(
                                         f"visualize(): env_summary dict has no key for "
-                                        f"'{env_name}'. Available keys: "
+                                        f"'{gym_env.type_name}'. Available keys: "
                                         f"{list(env_summary.keys())}. Skipping summary for this env."
                                     )
                         else:
-                            summaries[env_name] = env_summary
+                            summaries[gym_env.training_name] = env_summary
                 except RuntimeError as e:
-                    print(f"Could not visualize {env_name}. {e}")
+                    print(f"Could not visualize {gym_env.training_name}. {e}")
         else:
             print("No data found to visualize.")
 
