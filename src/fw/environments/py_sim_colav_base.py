@@ -6,7 +6,7 @@ and collision detection infrastructure. Subclasses add observation-specific
 logic (e.g. polar rangefinder, replanner) and reward shaping.
 
 Class hierarchy:
-    PySimEnv (path following)
+    PySimBaseEnv (path following; independent of PySimEnv, not kept in sync with it)
       -> PySimColavBaseEnv (scenario + entity management)
           -> PySimColavPolarEnv (rangefinder approach)
           -> PySimColavPlannerEnv (replanner approach)
