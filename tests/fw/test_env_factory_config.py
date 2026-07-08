@@ -8,7 +8,7 @@ from fw.env_factory import (
     build_default_environment,
     get as get_environment,
     py_sim_env_name,
-    py_sim_polar_env_name,
+    py_sim_colav_env_name,
     resolve_environment_name,
     resolve_environment_names,
 )
@@ -30,7 +30,7 @@ def test_resolve_environment_name_accepts_aliases():
 
     assert resolve_environment_name("pysim") == py_sim_env_name
     assert resolve_environment_name("AirSim") == airsim_env_name
-    assert resolve_environment_name("polar") == py_sim_polar_env_name
+    assert resolve_environment_name("colav") == py_sim_colav_env_name
 
 
 def test_resolve_environment_name_rejects_unknown_alias():

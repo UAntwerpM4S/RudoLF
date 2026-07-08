@@ -40,7 +40,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
         sync_sim_env_name,
         airsim_env_name,
         lunar_env_name,
-        py_sim_polar_env_name,
         multi_sim_env_name,
         py_sim_colav_env_name,
         multi_policy_colav_env_name,
@@ -133,10 +132,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
             target_loss=0.8,
             patience=1,
             max_time_steps=300,
-        ),
-        py_sim_polar_env_name: StopCondition(
-            stop_criterion=Criterion.NBR_POLICY_UPDATES,
-            max_time_steps=600,
         ),
         py_sim_colav_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,

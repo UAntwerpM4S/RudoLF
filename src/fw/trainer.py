@@ -14,12 +14,11 @@ from fw.env_factory import (
     fh_sim_env_name,
     airsim_env_name,
     lunar_env_name,
-    py_sim_polar_env_name,
     PySimEnvironment,
     FhSimEnvironment,
     AirSimEnvironment,
     LunarEnvironment,
-    PySimPolarEnvironment, FhSimSyncEnvironment, sync_sim_env_name,
+    FhSimSyncEnvironment, sync_sim_env_name,
 )
 from fw.agent_manager import AgentManager
 from fw.agent_manager_simple import AgentManagerSimple
@@ -351,8 +350,6 @@ class Trainer:
             return AirSimEnvironment(canonical_name, config)
         if canonical_name == lunar_env_name:
             return LunarEnvironment(canonical_name, config)
-        if canonical_name == py_sim_polar_env_name:
-            return PySimPolarEnvironment(canonical_name, config)
         raise ValueError(f"Unsupported environment '{canonical_name}' for reward evaluation")
     
 
