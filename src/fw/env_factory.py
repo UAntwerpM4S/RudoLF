@@ -19,7 +19,6 @@ from airsim.config.airsim_config import (
 from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_SHIP_POS,
     DEFAULT_FRAMEWORK_TARGET_POS,
-    DEFAULT_PYSIM_POLAR_SHIP_POS,
 )
 from fw.environments.fh_sim_sync_env import FhSimSyncEnv
 
@@ -1061,9 +1060,9 @@ def build_default_environment(environment_name, framework_config=None):
         environment_name: Canonical environment name returned by
             `resolve_environment_name`.
         framework_config: The already-resolved framework configuration dict
-            (from `get_config_parameters()`).  Required for all non-Lunar,
-            non-Polar environments; pass `None` only when those environments
-            are requested without a live config (rare / test scenarios).
+            (from `get_config_parameters()`).  Required for all non-Lunar;
+            pass `None` only when those environments are requested without
+            a live config (rare / test scenarios).
 
     Returns:
         A registered environment instance ready for training or visualization.
