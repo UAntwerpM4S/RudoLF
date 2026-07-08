@@ -8,7 +8,7 @@ from fw.environments.py_sim_env import PySimEnv
 from airsim.environments.airsim_env import AirSimEnv
 from fw.environments.lunar_lander import LunarLander
 from fw.environments.multi_sim_env import MultiSimEnv
-from fw.environments.py_sim_polar_env import PySimPolarEnv
+from fw.environments.py_sim_colav_env import PySimColavEnv
 from fw.common.tools.config_utils import normalize_configuration
 from fw.environments.action_repeat_wrapper import ActionRepeatWrapper
 
@@ -19,7 +19,6 @@ from airsim.config.airsim_config import (
 from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_SHIP_POS,
     DEFAULT_FRAMEWORK_TARGET_POS,
-    DEFAULT_PYSIM_POLAR_SHIP_POS,
 )
 from fw.environments.fh_sim_sync_env import FhSimSyncEnv
 
@@ -198,19 +197,6 @@ class BaseEnvironment:
 
 
     @property
-    def name(self):
-        """
-        str: Name of the environment.
-
-        Returns the name assigned to the environment when the instance was
-        created. The name can be used for identification, logging, and other
-        environment management tasks.
-        """
-
-        return self._name
-
-
-    @property
     def gym_env(self):
         """
         Returns the underlying Gym environment.
@@ -226,6 +212,38 @@ class BaseEnvironment:
             return self._env
         else:
             raise SystemError('No environment created yet!')
+
+
+    @property
+    def env(self):
+        """
+        Internal accessor for the underlying gym env. Subclasses assign to
+        this (`self.env = SomeGymEnv(...)`) exactly as before; the setter
+        below stamps the wrapper's registered name onto the gym env as its
+        `training_name` so downstream code has a stable logical identity to
+        key policies/metrics/configs on, even when several wrapper classes
+        happen to share the same underlying gym implementation class.
+        """
+
+        return self._env
+
+
+    @env.setter
+    def env(self, value):
+        """
+        Setter for the env property.
+        """
+
+        self._env = value
+
+        if value is not None:
+            try:
+                value.training_name = self._name
+            except AttributeError:
+                # Underlying object doesn't support training_name (e.g. a
+                # non-BaseEnv object such as a VecEnv wrapper) - nothing to
+                # stamp, callers using type_name-based fallbacks are unaffected.
+                pass
 
 
     @property
@@ -286,10 +304,10 @@ class PySimEnvironment(BaseEnvironment):
         target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
 
         # Wrap the environment in a Monitor and a DummyVecEnv
-        # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
+        # self.env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
+        self.env = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
                              dynamics_model=self.configuration["dynamics_model"],
                              ship_model=self.configuration["ship_model"],
                              wind=self.configuration["wind"],
@@ -331,7 +349,7 @@ class MultiPySimEnvironment(BaseEnvironment):
         target_pos = [-1559, 11990]
 
         # Wrap the environment in a Monitor and a DummyVecEnv
-        # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
+        # self.env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
         single_pysim_env1 = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
@@ -350,7 +368,102 @@ class MultiPySimEnvironment(BaseEnvironment):
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
-        self._env = MultiSimEnv(sub_environments=[single_pysim_env1, single_pysim_env2])
+        self.env = MultiSimEnv(sub_environments=[single_pysim_env1, single_pysim_env2])
+
+
+class PySimColavEnvironment(BaseEnvironment):
+    """
+    Class for a single PySimColav environment (one COLREGs scenario type).
+    """
+
+    ENVIRONMENT_NAME = "PySimColavEnv"
+
+    def __init__(self, name, configuration):
+        """
+        Create the default PySimColav environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Scoped configuration dict (see `build_colav_config`).
+                Expected keys: wind, current, ship_model, dynamics_model,
+                enable_obstacles.
+        """
+        super().__init__(name, configuration)
+
+        # Legacy callers (and `build_default_environment` without a framework
+        # config) may instantiate this environment with an empty configuration
+        # purely as a registry placeholder.  Skip the underlying PySimColavEnv
+        # construction in that case rather than failing on missing keys.
+        if not self.configuration:
+            return
+
+        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
+        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+
+        self.env = PySimColavEnv(
+            time_step=1.0,
+            max_steps=1500,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            dynamics_model=self.configuration["dynamics_model"],
+            ship_model=self.configuration["ship_model"],
+            wind=self.configuration["wind"],
+            current=self.configuration["current"],
+            enable_obstacles=self.configuration.get("enable_obstacles", True),
+        )
+
+
+class MultiPolicyColavEnvironment(BaseEnvironment):
+    """
+    Single PySimColavEnv with scenario one-hot encoding enabled, for use
+    with MultiPolicySingleAgent.  The environment appends a one-hot vector
+    to the observation indicating the active scenario type, allowing the
+    agent to route each timestep to the correct policy.
+    """
+
+    ENVIRONMENT_NAME = "MultiPolicyColavEnv"
+
+    def __init__(self, name, configuration):
+        """
+        Create the MultiPolicyColav environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Scoped configuration dict (see
+                `build_multi_policy_colav_config`). Expected keys: wind,
+                current, ship_model, dynamics_model, enable_obstacles.
+                eval/eval_scenario/eval_obstacle_count/
+                include_scenario_one_hot/minimal_path_render remain
+                hardcoded below pending a future rework.
+        """
+        super().__init__(name, configuration)
+
+        # Legacy callers (and `build_default_environment` without a framework
+        # config) may instantiate this environment with an empty configuration
+        # purely as a registry placeholder.  Skip the underlying PySimColavEnv
+        # construction in that case rather than failing on missing keys.
+        if not self.configuration:
+            return
+
+        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
+        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+
+        self.env = PySimColavEnv(
+            time_step=1.0,
+            max_steps=1500,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            dynamics_model=self.configuration["dynamics_model"],
+            ship_model=self.configuration["ship_model"],
+            wind=self.configuration["wind"],
+            current=self.configuration["current"],
+            enable_obstacles=self.configuration.get("enable_obstacles", True),
+            evaluate=False,
+            eval_scenario="crossing-right",
+            eval_obstacle_count=1,
+            include_scenario_one_hot=True,
+            minimal_path_render=True
+        )
 
 
 class FhSimEnvironment(BaseEnvironment):
@@ -381,10 +494,10 @@ class FhSimEnvironment(BaseEnvironment):
         target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
 
         # Wrap the environment in a Monitor and a DummyVecEnv
-        # self._env = DummyVecEnv([lambda: Monitor(FhSimEnv(render_mode='human', max_steps=1200, verbose=True,
+        # self.env = DummyVecEnv([lambda: Monitor(FhSimEnv(render_mode='human', max_steps=1200, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = PySimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
+        self.env = PySimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
                              ship_model=self.configuration["ship_model"],
                              scenario=self.configuration["scenario"],
                              dynamics_model=self.configuration["dynamics_model"])
@@ -421,13 +534,17 @@ class FhSimSyncEnvironment(BaseEnvironment):
 
         super().__init__(name, configuration)
 
+        # Registry placeholder instantiation with no config - nothing to build.
+        if not self.configuration:
+            return
+
         # ship_pos and target_pos remain framework-side concerns (they feed
         # observation construction and reward), even though the *actual*
         # vessel state lives in the remote simSync.
         ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
         target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
 
-        self._env = FhSimSyncEnv(
+        self.env = FhSimSyncEnv(
             time_step=2.0,
             max_steps=135000,
             start_pos=ship_pos,
@@ -517,7 +634,7 @@ class AirSimEnvironment(BaseEnvironment):
         control_interface = str(cfg.get("control_interface", "car_physics"))
         observation_profile = str(cfg.get("observation_profile", "ppo_route_relative_car"))
 
-        self._env = AirSimEnv(
+        self.env = AirSimEnv(
             ship_pos=ship_pos,
             target_pos=target_pos,
             max_steps=max_steps,
@@ -574,7 +691,7 @@ class AirSimEnvironment(BaseEnvironment):
         # Action repeat wrapper can be set dynamically or statically (e.g., repeat=4)
         repeat_steps = int(cfg.get("action_repeat", 1))
         if repeat_steps > 1:
-            self._env = ActionRepeatWrapper(self._env, repeat=repeat_steps)
+            self.env = ActionRepeatWrapper(self.env, repeat=repeat_steps)
 
 
 class LunarEnvironment(BaseEnvironment):
@@ -596,38 +713,7 @@ class LunarEnvironment(BaseEnvironment):
 
         super().__init__(name, configuration)
 
-        self._env = LunarLander(continuous=True)
-
-
-class PySimPolarEnvironment(BaseEnvironment):
-    """
-    Wrapper for the polar-coordinate Python Simulator environment.
-    """
-
-    ENVIRONMENT_NAME = "PySimPolarEnv"
-
-    def __init__(self, name, configuration):
-        """
-        Create the default PySim polar environment wrapper.
-
-        Args:
-            name: Registered environment name.
-            configuration: Optional runtime configuration forwarded by the
-                environment factory.
-        """
-
-        super().__init__(name, configuration)
-
-        # Ship_pos and target_pos should eventually be generated by the framework.
-        ship_pos = list(DEFAULT_PYSIM_POLAR_SHIP_POS)
-        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
-
-        # Wrap the environment in a Monitor and a DummyVecEnv
-        # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
-        #                                                   ship_pos=ship_pos, target_pos=target_pos))])
-
-        self._env = PySimPolarEnv(ship_pos=ship_pos, target_pos=target_pos, max_steps=2000, verbose=False)
-
+        self.env = LunarLander(continuous=True)
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +755,50 @@ def build_pysim_config(framework_config: dict, extra: dict | None = None) -> dic
     if extra:
         cfg.update(extra)
     return cfg
+
+
+def build_colav_config(framework_config: dict, extra: dict | None = None) -> dict:
+    """
+    Extract PySimColav-relevant keys from *framework_config*.
+
+    Args:
+        framework_config: Full resolved framework configuration dict.
+        extra: Optional overrides merged on top.
+
+    Returns:
+        A dict containing only the keys consumed by PySimColavEnvironment.
+    """
+
+    cfg = {
+        "wind":                framework_config["wind"],
+        "current":             framework_config["current"],
+        "ship_model":          framework_config["ship_model"],
+        "dynamics_model":      framework_config["dynamics_model"],
+        "enable_obstacles":    framework_config.get("enable_obstacles", True),
+    }
+    if extra:
+        cfg.update(extra)
+    return cfg
+
+
+def build_multi_policy_colav_config(framework_config: dict, extra: dict | None = None) -> dict:
+    """
+    Extract MultiPolicyColav-relevant keys from *framework_config*.
+
+    Currently identical to `build_colav_config`; the eval/scenario-related
+    fields (eval, eval_scenario, eval_obstacle_count, include_scenario_one_hot,
+    minimal_path_render) remain hardcoded in MultiPolicyColavEnvironment
+    pending a future rework, so they are not sourced from framework_config yet.
+
+    Args:
+        framework_config: Full resolved framework configuration dict.
+        extra: Optional overrides merged on top.
+
+    Returns:
+        A dict containing only the keys consumed by MultiPolicyColavEnvironment.
+    """
+
+    return build_colav_config(framework_config, extra)
 
 
 def build_fhsim_config(framework_config: dict) -> dict:
@@ -837,8 +967,9 @@ fh_sim_env_name = "FhSimEnv"
 sync_sim_env_name = "FhSimSyncEnv"
 airsim_env_name = "AirSimEnv"
 lunar_env_name = "LunarLander"
-py_sim_polar_env_name = "PySimPolarEnv"
 multi_sim_env_name = "MultiSimEnv"
+py_sim_colav_env_name = "PySimColavEnv"
+multi_policy_colav_env_name = "MultiPolicyColavEnv"
 
 _ENVIRONMENT_NAME_ALIASES = {
     py_sim_env_name.lower(): py_sim_env_name,
@@ -851,11 +982,14 @@ _ENVIRONMENT_NAME_ALIASES = {
     "airsim": airsim_env_name,
     lunar_env_name.lower(): lunar_env_name,
     "lunar": lunar_env_name,
-    py_sim_polar_env_name.lower(): py_sim_polar_env_name,
-    "pysimpolar": py_sim_polar_env_name,
-    "polar": py_sim_polar_env_name,
     multi_sim_env_name.lower(): multi_sim_env_name,
     "multipysim": multi_sim_env_name,
+    py_sim_colav_env_name.lower(): py_sim_colav_env_name,
+    "pysimcolav": py_sim_colav_env_name,
+    "colav": py_sim_colav_env_name,
+    multi_policy_colav_env_name.lower(): multi_policy_colav_env_name,
+    "multipolicycolav": multi_policy_colav_env_name,
+    "mpcolav": multi_policy_colav_env_name,
 }
 
 
@@ -926,9 +1060,9 @@ def build_default_environment(environment_name, framework_config=None):
         environment_name: Canonical environment name returned by
             `resolve_environment_name`.
         framework_config: The already-resolved framework configuration dict
-            (from `get_config_parameters()`).  Required for all non-Lunar,
-            non-Polar environments; pass `None` only when those environments
-            are requested without a live config (rare / test scenarios).
+            (from `get_config_parameters()`).  Required for all non-Lunar;
+            pass `None` only when those environments are requested without
+            a live config (rare / test scenarios).
 
     Returns:
         A registered environment instance ready for training or visualization.
@@ -950,7 +1084,15 @@ def build_default_environment(environment_name, framework_config=None):
         cfg = build_fhsimsync_config(framework_config) if framework_config else {}
         return get(environment_name, configuration=cfg)
 
-    # LunarLander and PySimPolarEnv need no framework-level config keys.
+    if environment_name == py_sim_colav_env_name:
+        cfg = build_colav_config(framework_config) if framework_config else {}
+        return get(environment_name, configuration=cfg)
+
+    if environment_name == multi_policy_colav_env_name:
+        cfg = build_multi_policy_colav_config(framework_config) if framework_config else {}
+        return get(environment_name, configuration=cfg)
+
+    # LunarLander needs no framework-level config keys.
     return get(environment_name, configuration={})
 
 
@@ -972,7 +1114,7 @@ def initialize_all_environments():
 
     expected = {
         py_sim_env_name, fh_sim_env_name, sync_sim_env_name, lunar_env_name,
-        py_sim_polar_env_name, multi_sim_env_name,
+        multi_sim_env_name, py_sim_colav_env_name, multi_policy_colav_env_name,
     }
     missing = expected - set(_Factory._environment_classes)
     if missing:

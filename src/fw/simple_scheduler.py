@@ -166,16 +166,15 @@ class SimpleScheduler(BaseScheduler):
 
                 # Save policy if reusing it later
                 self._previous_env_name = (
-                    self.current_env.gym_env.type_name
+                    self.current_env.gym_env.training_name
                     if policy_strategy != PolicyStrategy.RESET_POLICY
                     else None
                 )
 
                 if self._previous_env_name:
                     try:
-                        env_name = self.current_env.gym_env.type_name
+                        env_name = self.current_env.gym_env.training_name
                         save_name = f"{env_name}_{self.agent_mgr.agent_type}_policy"
-                        #self.agent_mgr.agent.save_policy(save_name)
 
                         reward_weights = getattr(self.current_env.gym_env, "reward_weights", None)
                         weight_suffix = self._format_reward_weight_suffix(reward_weights)

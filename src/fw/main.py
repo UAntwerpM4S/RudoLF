@@ -1,4 +1,14 @@
 if __name__ == "__main__" or __name__ == "fw.main":
+    # MUST run before any import that pulls in torch/numpy, since both
+    # BLAS thread pools read these once at library load time. With
+    # SubprocVecEnv (num_envs=12) each child process inherits the env
+    # and respects the same single-thread setting, eliminating the
+    # 12-subproc x N-thread oversubscription that destabilizes PPO on
+    # CPUs with high core counts
+    import os
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+
     import logging
     import multiprocessing
 
@@ -21,7 +31,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
     from fw.profile_applier import apply_profile
     from fw.config_profile import ProfileRegistry
     from fw.stop_condition import StopCondition, Criterion
-    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, get_config_parameters
+    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, MULTI_POLICY_SINGLE_NAME, get_config_parameters
     from fw.env_factory import (
         build_default_environment,
         resolve_environment_name,
@@ -30,8 +40,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
         sync_sim_env_name,
         airsim_env_name,
         lunar_env_name,
-        py_sim_polar_env_name,
         multi_sim_env_name,
+        py_sim_colav_env_name,
+        multi_policy_colav_env_name,
         resolve_environment_names,
         initialize_all_environments
     )
@@ -122,9 +133,17 @@ if __name__ == "__main__" or __name__ == "fw.main":
             patience=1,
             max_time_steps=300,
         ),
-        py_sim_polar_env_name: StopCondition(
-            stop_criterion=Criterion.NBR_POLICY_UPDATES,
-            max_time_steps=600,
+        py_sim_colav_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=1.75,
+            patience=4,
+            max_time_steps=500,
+        ),
+        multi_policy_colav_env_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=5.0,
+            patience=4,
+            max_time_steps=1150
         ),
     }
 
@@ -133,6 +152,34 @@ if __name__ == "__main__" or __name__ == "fw.main":
         raise SystemExit(1)
 
     initialize_all_environments()
+
+    def _select_agent_type(envs: list) -> str:
+        """
+        Choose the correct agent type based on the environments.
+
+        If any environment has `include_scenario_one_hot` enabled, use
+        MPSA (Multi-Policy Single Agent).  If any environment is a
+        MultiSimEnv, use MPPO.  Otherwise, default to single-policy PPO.
+
+        Args:
+            envs: List of framework environment wrappers.
+
+        Returns:
+            The agent type string (e.g. "PPO", "MPPO", or "MPSA").
+        """
+
+        for sub_env in envs:
+            if getattr(sub_env.gym_env, "include_scenario_one_hot", False):
+                return MULTI_POLICY_SINGLE_NAME
+
+        # MultiSimEnv requires its own policy type; all other envs use PPO.
+        # training_name equals the wrapper's ENVIRONMENT_NAME (e.g. "MultiSimEnv").
+        # NOTE: type_name is NOT safe here - it reflects the underlying gym
+        # implementation class, which multiple wrapper environments can share.
+        if any(e.gym_env.training_name == multi_sim_env_name for e in envs):
+            return MULTI_PPO_POLICY_NAME
+
+        return PPO_POLICY_NAME
 
     def _run_standard_batch(envs: list) -> bool:
         """
@@ -156,11 +203,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
             if sim is not None:
                 apply_profile(profile, simulator=sim)
 
-        # MultiSimEnv requires its own policy type; all other envs use PPO.
-        # repr(e) returns e._name which equals ENVIRONMENT_NAME (e.g. "MultiSimEnv").
-        batch_has_multi = any(e.gym_env.type_name == multi_sim_env_name for e in envs)
-        batch_policy = MULTI_PPO_POLICY_NAME if batch_has_multi else PPO_POLICY_NAME
-        std_trainer = Trainer(batch_policy, envs, profile, "SimpleScheduler", config=framework_config)
+        agent_type = _select_agent_type(envs)
+        std_trainer = Trainer(agent_type, envs, profile, "SimpleScheduler", config=framework_config)
         if action == "visualize":
             std_trainer.visualize(envs, airsim_bridge=None)
         else:

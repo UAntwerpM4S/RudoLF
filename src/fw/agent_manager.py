@@ -1,4 +1,5 @@
 import os
+import math
 
 from pathlib import Path
 from fw.config_profile import VesselProfile
@@ -17,7 +18,9 @@ from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
+from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
+from fw.collision_avoidance.scenario_classifier import SCENARIO_LABELS, NUM_SCENARIOS
+from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy, MULTI_POLICY_SINGLE_NAME
 from fw.profile_applier import apply_profile
 
 
@@ -138,6 +141,62 @@ class AgentManager:
 
         return MultiPPOAgent(self.profile, environment=env, agents=agents, **self._hyperparameters)
 
+    def _build_multi_policy_single_agent(self, env):
+        """
+        Create a `MultiPolicySingleAgent` for the given environment.
+
+        The environment must have `include_scenario_one_hot=True` so that
+        its observations carry a one-hot suffix the agent uses for policy
+        routing.
+
+        Args:
+            env: Environment instance (a single PySimColavEnv with one-hot
+                encoding enabled, NOT a MultiSimEnv).
+
+        Returns:
+            MultiPolicySingleAgent: Initialized multi-policy agent.
+        """
+
+        sub_envs = getattr(env, "sub_environments", None)
+
+        if sub_envs is None or len(sub_envs) < 1:
+            target_env = env
+        elif len(sub_envs) == 1:
+            target_env = next(iter(sub_envs.values()))
+        else:
+            raise RuntimeError(
+                "MultiPolicySingleAgent operates on a single environment.  "
+                "Got a MultiSimEnv with multiple sub-environments."
+            )
+
+        agent = MultiPolicySingleAgent(
+            environment=target_env,
+            num_policies=NUM_SCENARIOS,
+            policy_labels=list(SCENARIO_LABELS),
+            **self._hyperparameters,
+        )
+
+        # Directory holding the pre-trained per-scenario policies and the
+        # spec describing which slots to populate and whether to freeze them.
+        # File names are given without the `.zip` extension.
+        # Slot mapping (from SCENARIO_LABELS):
+        #   0 = path-following   <- pretrained_pf
+        #   1 = head-on          <- pretrained_ho
+        #   2 = overtaking       (no pretrained file, slot stays randomly initialized)
+        #   3 = crossing-right   <- pretrained_cr
+        # All loaded slots are unfrozen (frozen=False) so they continue to
+        # train from the pretrained weights as a warm start.
+        pretrained_dir = agent.model_dir
+        pretrained_specs = {
+            #0: {"file": "pretrained_pf", "frozen": False},
+            #1: {"file": "pretrained_ho", "frozen": False},
+            #2: {"file": "pretrained_ot", "frozen": True},
+            #3: {"file": "pretrained_cr", "frozen": True},
+        }
+        agent.load_pretrained_policies(pretrained_dir, pretrained_specs)
+
+        return agent
+
     def set_environment(
         self,
         env: BaseEnv,
@@ -162,7 +221,7 @@ class AgentManager:
         policy_file_name = None
 
         if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._agent:
-            policy_file_name = f"{self.get_env().type_name}_{self._agent_type}_policy"
+            policy_file_name = f"{self.get_env().training_name}_{self._agent_type}_policy"
             self._agent.save_policy(policy_file_name)
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
             policy_file_name = f"{other_env_name}_{self._agent_type}_policy"
@@ -173,6 +232,8 @@ class AgentManager:
             self._agent = PPO2Agent(environment=env, **self._hyperparameters)
         elif MULTI_PPO_POLICY_NAME == self._agent_type:
             self._agent = self._build_multi_agent(env)
+        elif MULTI_POLICY_SINGLE_NAME == self._agent_type:
+            self._agent = self._build_multi_policy_single_agent(env)
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 
@@ -268,6 +329,15 @@ class AgentManager:
         elif hasattr(raw_env, "env"):   # gym Wrapper
             raw_env = raw_env.env
 
+        # Flip on eval-time realism overrides (variable TS radii, lateral
+        # lane spawn, late head-on dodge). All overrides are opt-in via
+        # env attributes that default to no-op in training.
+        if hasattr(raw_env, "set_evaluation_parameters"):
+            raw_env.set_evaluation_parameters()
+        for sub in getattr(raw_env, "sub_environments", {}).values():
+            if hasattr(sub, "set_evaluation_parameters"):
+                sub.set_evaluation_parameters()
+
         is_lunar_lander = isinstance(raw_env, LunarLander)
 
         collector = EpisodeCollector(self._agent, raw_env, self._profile, airsim_bridge=airsim_bridge)
@@ -311,7 +381,8 @@ class AgentManager:
                     "mTC": m.mTC,
                     "mHE": m.mHE,
                 }
-                print(f"\n{env_name} evaluation completed!")
+                training_name = getattr(ship_env, "training_name", sid)
+                print(f"\n{training_name} evaluation completed!")
                 print(f"Average reward: {m.avg_reward:.2f}")
                 print(f"Best episode reward: {m.best_reward:.2f}")
                 print(f"Worst episode reward: {m.worst_reward:.2f}")
@@ -328,12 +399,134 @@ class AgentManager:
                 print(f"Maximum Thrust (MT): {m.MT:.3f}")
                 print(f"Mean Thrust Change (mTC): {m.mTC:.4f}")
                 print(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
+                print("Collision rate per policy (over valid-outcome encounters: collided OR resolved):")
+                for policy in sorted(m.total_encounters_per_policy):
+                    enc_n = m.encounters_per_policy.get(policy, 0)
+                    total_n = m.total_encounters_per_policy[policy]
+                    col_n = m.collisions_per_policy.get(policy, 0)
+                    rate = (col_n / enc_n * 100) if enc_n else 0.0
+                    print(
+                        f"  {policy:<16s} {rate:6.2f}% "
+                        f"({col_n}/{enc_n} valid; {total_n} total starts)"
+                    )
+                print("Encounter outcome breakdown per policy (all encounter starts):")
+                cat_order = (
+                    "collided",
+                    "resolved",
+                    "passed_not_tracked_lost",
+                    "tracked_lost_not_passed",
+                    "neither",
+                )
+                for policy in sorted(m.total_encounters_per_policy):
+                    buckets = m.encounter_outcomes_per_policy.get(policy, {})
+                    total_n = m.total_encounters_per_policy[policy]
+                    parts = [f"{cat}={buckets.get(cat, 0)}" for cat in cat_order]
+                    print(f"  {policy:<16s} total={total_n}  " + "  ".join(parts))
+                print("CRI per policy (mean / median / max over valid encounters):")
+                for policy in sorted(m.total_encounters_per_policy):
+                    n_valid = m.valid_encounters_per_policy.get(policy, 0)
+                    mean_cri = m.mean_cri_per_policy.get(policy, 0.0)
+                    median_cri = m.median_cri_per_policy.get(policy, 0.0)
+                    max_cri = m.max_cri_per_policy.get(policy, 0.0)
+                    print(
+                        f"  {policy:<16s} mean={mean_cri:.3f}  "
+                        f"median={median_cri:.3f}  max={max_cri:.3f}  "
+                        f"(n={n_valid})"
+                    )
+                # Baseline CRI floor - single global value, useful for
+                # reading the per-policy CRI numbers against. Theoretical
+                # baseline uses the CRI formula at DCPA=encounter_range,
+                # TCPA<=0 (parting); the TCPA term collapses to 0 so only
+                # the DCPA half remains.
+                enc_r = float(getattr(ship_env, "encounter_range", 0.0))
+                cri_D = float(getattr(ship_env, "cri_D", 1.0))
+                cri_alpha1 = float(getattr(ship_env, "cri_alpha1", -1.0))
+                cri_omega1 = float(getattr(ship_env, "cri_omega1", 0.5))
+                theoretical = cri_omega1 * math.exp(cri_alpha1 * enc_r / max(cri_D, 1e-12))
+                m.baseline_cri_theoretical = theoretical
+                n_baseline = m.baseline_cri_sample_count
+                print(
+                    "Baseline CRI (lowest-achievable reference, across all policies):"
+                )
+                print(
+                    f"  empirical: mean(per-encounter min CRI)={m.baseline_cri_empirical_mean:.3f}  "
+                    f"min(observed)={m.baseline_cri_empirical_min:.3f}  (n={n_baseline})"
+                )
+                print(
+                    f"  theoretical: CRI at DCPA=encounter_range ({enc_r:.0f}m), "
+                    f"TCPA parting = {theoretical:.3f}"
+                )
+                print("Cross-track error per policy [m] (mean / median / max over valid encounters):")
+                for policy in sorted(m.total_encounters_per_policy):
+                    n_valid = m.valid_encounters_per_policy.get(policy, 0)
+                    mean_cte = m.mean_cte_per_policy.get(policy, 0.0)
+                    median_cte = m.median_cte_per_policy.get(policy, 0.0)
+                    max_cte = m.max_cte_per_policy.get(policy, 0.0)
+                    print(
+                        f"  {policy:<16s} mean={mean_cte:.2f}m  "
+                        f"median={median_cte:.2f}m  max={max_cte:.2f}m  "
+                        f"(n={n_valid})"
+                    )
+                print("Time to first action per policy [s] (|rudder| > 10 deg, over valid encounters):")
+                for policy in sorted(m.total_encounters_per_policy):
+                    n_reactive = m.reactive_encounters_per_policy.get(policy, 0)
+                    n_non_reactive = m.non_reactive_encounters_per_policy.get(policy, 0)
+                    mean_tfa = m.mean_tfa_per_policy.get(policy, 0.0)
+                    median_tfa = m.median_tfa_per_policy.get(policy, 0.0)
+                    print(
+                        f"  {policy:<16s} mean={mean_tfa:.2f}s  "
+                        f"median={median_tfa:.2f}s  "
+                        f"(n_reactive={n_reactive}, n_non_reactive={n_non_reactive})"
+                    )
+                n_ep = m.num_episodes
+                out_rate = (m.collisions_outside_encounters / n_ep * 100) if n_ep else 0.0
+                print(f"  outside-encounter {out_rate:6.2f}% ({m.collisions_outside_encounters}/{n_ep} episodes)")
+                in_enc = m.collision_count - m.collisions_outside_encounters
+                total_denom = m.num_encounters + n_ep
+                cr_pct = (m.collision_count / total_denom * 100) if total_denom else 0.0
+                print(
+                    f"Total collision rate (CR): {cr_pct:.2f}% "
+                    f"({m.collision_count} = {in_enc} in {m.num_encounters} encounters "
+                    f"+ {m.collisions_outside_encounters} outside / {n_ep} episodes)"
+                )
+                print(f"Collision per type: {m.collision_type_count}")
+                print(f"Collision per side: {m.collision_side_count}")
+                print(f"COLREG violation count: {m.colreg_violation_count}")
 
+                # Scenario classification diagnostics - per encounter
+                # (one record captured at encounter entry).
+                enc_rate = (
+                    m.encounter_misclassification_count / m.num_encounters * 100
+                    if m.num_encounters else 0.0
+                )
+                print(
+                    f"Scenario misclassification - "
+                    f"{m.encounter_misclassification_count}/{m.num_encounters} encounters "
+                    f"({enc_rate:.2f}%)"
+                )
+                if m.encounter_confusion:
+                    print("Encounter confusion (gt -> pred: count):")
+                    for (gt, pred), cnt in sorted(m.encounter_confusion.items()):
+                        tag = "" if gt == pred else "  [MISMATCH]"
+                        print(f"  {gt} -> {pred}: {cnt}{tag}")
 
             save_dir = self.agent.model_dir or "."
             if not save_dir:
                 save_dir = "models"
             os.makedirs(save_dir, exist_ok=True)
+
+            for sid in metrics.keys():
+                ship_env = self._get_ship_env(raw_env, sid)
+                env_name = getattr(ship_env, "env_name", sid)
+                if hasattr(ship_env, "plot_min_distance_stats"):
+                    ship_env.plot_min_distance_stats(
+                        pdf_save_path=f"{save_dir}/{env_name}_min_distance_PDF.png",
+                        boxplot_save_path=f"{save_dir}/{env_name}_min_distance_boxplots.png",
+                    )
+                if hasattr(ship_env, "plot_scenario_confusion_matrix"):
+                    ship_env.plot_scenario_confusion_matrix(
+                        save_path=f"{save_dir}/{env_name}_scenario_confusion_matrix.png",
+                    )
 
             MatplotlibRenderer.render(
                 run_data.ships, metrics, raw_env,

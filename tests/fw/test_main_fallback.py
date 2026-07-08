@@ -86,7 +86,7 @@ def test_main_uses_framework_visualize_action(monkeypatch):
     monkeypatch.setattr(
         env_factory,
         "build_default_environment",
-        lambda name, *args, **kwargs: SimpleNamespace(gym_env=SimpleNamespace(type_name=name)),
+        lambda name, *args, **kwargs: SimpleNamespace(gym_env=SimpleNamespace(type_name=name, training_name=name)),
     )
 
     trainer_calls = {}
@@ -201,7 +201,7 @@ def test_main_visualize_respects_environment_order(monkeypatch):
         """
 
         call_order.append(f"build:{name}")
-        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
+        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name, training_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -280,7 +280,7 @@ def test_main_train_respects_environment_order(monkeypatch):
         """
 
         call_order.append(f"build:{name}")
-        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
+        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name, training_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -363,7 +363,7 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
         """
 
         call_order.append(f"build:{name}")
-        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
+        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name, training_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
@@ -456,7 +456,7 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
         """
 
         call_order.append(f"build:{name}")
-        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name))
+        return SimpleNamespace(gym_env=SimpleNamespace(type_name=name, training_name=name))
 
     monkeypatch.setattr(env_factory, "build_default_environment", _build_env)
 
