@@ -266,8 +266,8 @@ class MultiPPOAgent(BasePPOAgent):
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
         best_policy_files = [
-            f"Best_{env.type_name}_{i+1}_PPO_policy" if self.num_envs > 1
-            else f"Best_{env.type_name}_PPO_policy"
+            f"Best_{env.training_name}_{i+1}_PPO_policy" if self.num_envs > 1
+            else f"Best_{env.training_name}_PPO_policy"
             for i, env in enumerate(self.env.sub_environments.values())
         ]
 

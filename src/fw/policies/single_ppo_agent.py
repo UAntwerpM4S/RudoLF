@@ -473,7 +473,7 @@ class SinglePPOAgent(BasePPOAgent):
 
         training_session = (
             AirSimTrainingSession(
-                env_name=self.env.type_name,
+                env_name=self.env.training_name,
                 agent_type="PPO",
                 device=str(self.device),
                 src_dir=project_src_dir,
@@ -486,7 +486,7 @@ class SinglePPOAgent(BasePPOAgent):
             training_session.iteration_logger
             if training_session is not None
             else TrainingIterationLogger(
-                env_name=self.env.type_name,
+                env_name=self.env.training_name,
                 agent_type="PPO",
                 device=str(self.device),
                 src_dir=project_src_dir,
@@ -500,7 +500,7 @@ class SinglePPOAgent(BasePPOAgent):
         last_save_index = 0
         training_metrics = []
         best_mean_reward = float('-inf')
-        best_policy_file = f"Best_{self.env.type_name}_PPO_policy"
+        best_policy_file = f"Best_{self.env.training_name}_PPO_policy"
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
         learn_started = time.perf_counter()
 
