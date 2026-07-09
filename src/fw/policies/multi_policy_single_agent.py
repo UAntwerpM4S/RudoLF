@@ -851,7 +851,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         }
 
         best_policy_files = [
-            f"Best_{self.env.type_name}_{label}_policy"
+            f"Best_{self.env.training_name}_{label}_policy"
             for label in self.policy_labels
         ]
 
