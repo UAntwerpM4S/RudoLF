@@ -2,7 +2,7 @@
   "_remarks": {
     "file_purpose": "Runtime controls for AirSim train/visualize behavior used by fw.main_with_airsim and airsim.train.train_airsim.",
     "json_note": "JSON does not support comments, so remarks are stored in _remarks blocks.",
-    "routing_note": "fw.config chooses env_type/action; this file refines AirSim behavior once AirSimEnv is selected.",
+    "routing_note": "fw.configuration.config chooses env_type/action; this file refines AirSim behavior once AirSimEnv is selected.",
     "merge_note": "All keys are merged onto built-in defaults via merge_runtime_settings(); absent keys fall back to code defaults, not JSON zeros."
   },
   "visualization": {

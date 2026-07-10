@@ -2,8 +2,8 @@ from copy import deepcopy
 from enum import Enum, auto
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
-from fw.profile_applier import apply_profile
-from fw.config_profile import ProfileRegistry
+from fw.configuration.profile_applier import apply_profile
+from fw.configuration.config_profile import ProfileRegistry
 
 
 class VisualizationMode(Enum):

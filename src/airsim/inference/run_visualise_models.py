@@ -41,7 +41,7 @@ from fw.common.airsim.tools.trajectory_analysis import (  # noqa: E402
     format_performance_summary,
     render_side_by_side_trajectory_plot,
 )
-from fw.config import AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME  # noqa: E402
+from fw.configuration.config import AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME  # noqa: E402
 from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 
 logger = logging.getLogger(__name__)

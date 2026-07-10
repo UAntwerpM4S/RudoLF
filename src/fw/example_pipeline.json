@@ -1,0 +1,53 @@
+{
+  "on_block_failure": "abort",
+  "blocks": [
+    {
+      "name": "pysim_fossen_base",
+      "env_type": "PySimEnv",
+      "ship_model": "MYZAKO_37",
+      "dynamics_model": "FOSSEN",
+      "profile": "default_profile",
+      "action": "train",
+      "wind": false,
+      "current": false,
+      "stop_condition": {
+        "criterion": "NBR_POLICY_UPDATES",
+        "target_reward": 0.99,
+        "patience": 4,
+        "max_time_steps": 10
+      }
+    },
+    {
+      "name": "fhsim_transfer",
+      "env_type": "FhSimEnv",
+      "ship_model": "MYZAKO_37",
+      "dynamics_model": "FH_TABULAR",
+      "profile": "myzako_pysim_to_fhsim_transfer_profile",
+      "action": "train",
+      "stop_condition": {
+        "criterion": "NBR_POLICY_UPDATES",
+        "target_reward": 3.80,
+        "patience": 4,
+        "max_time_steps": 10
+      },
+      "hyperparameter_overrides": {
+        "learning_rate": 5e-5
+      },
+      "transfer": {
+        "from_block": "pysim_fossen_base"
+      }
+    },
+    {
+      "name": "fhsim_transfer_visualize",
+      "env_type": "FhSimEnv",
+      "ship_model": "MYZAKO_37",
+      "dynamics_model": "FH_TABULAR",
+      "profile": "myzako_pysim_to_fhsim_transfer_profile",
+      "action": "visualize",
+      "show_plots": true,
+      "transfer": {
+        "from_block": "fhsim_transfer"
+      }
+    }
+  ]
+}

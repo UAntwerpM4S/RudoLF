@@ -29,9 +29,9 @@ def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
     import multiprocessing
     import runpy as stdlib_runpy
 
-    import fw.config as fw_config
-    import fw.env_factory as env_factory
-    import fw.trainer as trainer_module
+    import fw.configuration.config as fw_config
+    import fw.configuration.env_factory as env_factory
+    import fw.scheduling.trainer as trainer_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -72,9 +72,9 @@ def test_main_uses_framework_visualize_action(monkeypatch):
 
     import multiprocessing
 
-    import fw.config as fw_config
-    import fw.env_factory as env_factory
-    import fw.trainer as trainer_module
+    import fw.configuration.config as fw_config
+    import fw.configuration.env_factory as env_factory
+    import fw.scheduling.trainer as trainer_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -137,8 +137,8 @@ def test_main_passes_action_override_to_airsim_extension(monkeypatch):
     import multiprocessing
     import runpy as stdlib_runpy
 
-    import fw.config as fw_config
-    import fw.env_factory as env_factory
+    import fw.configuration.config as fw_config
+    import fw.configuration.env_factory as env_factory
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -178,9 +178,9 @@ def test_main_visualize_respects_environment_order(monkeypatch):
     import multiprocessing
     import runpy as stdlib_runpy
 
-    import fw.config as fw_config
-    import fw.env_factory as env_factory
-    import fw.trainer as trainer_module
+    import fw.configuration.config as fw_config
+    import fw.configuration.env_factory as env_factory
+    import fw.scheduling.trainer as trainer_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -257,9 +257,9 @@ def test_main_train_respects_environment_order(monkeypatch):
     import multiprocessing
     import runpy as stdlib_runpy
 
-    import fw.config as fw_config
-    import fw.env_factory as env_factory
-    import fw.trainer as trainer_module
+    import fw.configuration.config as fw_config
+    import fw.configuration.env_factory as env_factory
+    import fw.scheduling.trainer as trainer_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -340,9 +340,9 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
     import multiprocessing
     import runpy as stdlib_runpy
 
-    import fw.config as fw_config
-    import fw.env_factory as env_factory
-    import fw.trainer as trainer_module
+    import fw.configuration.config as fw_config
+    import fw.configuration.env_factory as env_factory
+    import fw.scheduling.trainer as trainer_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -425,9 +425,9 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
     import multiprocessing
     import runpy as stdlib_runpy
 
-    import fw.config as fw_config
-    import fw.env_factory as env_factory
-    import fw.trainer as trainer_module
+    import fw.configuration.config as fw_config
+    import fw.configuration.env_factory as env_factory
+    import fw.scheduling.trainer as trainer_module
 
     monkeypatch.setattr(multiprocessing, "set_start_method", lambda *args, **kwargs: None)
     monkeypatch.setattr(

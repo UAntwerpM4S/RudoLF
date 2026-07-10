@@ -13,7 +13,7 @@ import numpy as np
 
 from .telemetry_exporter import TelemetryExporter, _DEFAULT_EXPORT_DIR
 from .util import _timestamp_utc
-from fw.config import (
+from fw.configuration.config import (
     AIRSIM_BRIDGE_LOG_FILENAME,
     AIRSIM_METADATA_FILENAME,
     AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE,

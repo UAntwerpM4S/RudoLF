@@ -6,7 +6,7 @@ import numpy as np
 import gymnasium as gym
 
 from typing import Optional, Tuple
-from fw.stop_condition import StopCondition
+from fw.configuration.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv

@@ -47,7 +47,7 @@ import warnings
 import numpy as np
 
 from typing import Any, Dict, Optional
-from fw.config_profile import ThrustMode, VesselProfile
+from fw.configuration.config_profile import ThrustMode, VesselProfile
 
 logger = logging.getLogger(__name__)
 

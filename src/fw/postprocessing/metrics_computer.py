@@ -5,7 +5,7 @@ import numpy as np
 
 from collections import Counter
 from dataclasses import dataclass, field
-from fw.ship_episode_data import RunData, ShipEpisodeData
+from fw.postprocessing.ship_episode_data import RunData, ShipEpisodeData
 
 
 # ---------------------------------------------------------------------------

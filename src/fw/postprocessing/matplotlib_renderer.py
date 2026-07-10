@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from shapely import Polygon, MultiPolygon
-from fw.ship_episode_data import ShipData
-from fw.metrics_computer import ShipMetrics
-from fw.output_helpers import SHIP_COLORS, shade_color, normalized_time_axis, resample_to_common_time
+from fw.postprocessing.ship_episode_data import ShipData
+from fw.postprocessing.metrics_computer import ShipMetrics
+from fw.postprocessing.output_helpers import SHIP_COLORS, shade_color, normalized_time_axis, resample_to_common_time
 
 
 # ---------------------------------------------------------------------------

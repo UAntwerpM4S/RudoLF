@@ -6,10 +6,10 @@ import numpy as np
 from typing import Optional
 from collections import deque
 from contextlib import contextmanager
-from fw.config_profile import VesselProfile
-from fw.output_helpers import compute_heading_error
-from fw.profile_applier import SimulatorApplier, ActionAdapter
-from fw.ship_episode_data import RunData, ShipData, ShipEpisodeData
+from fw.configuration.config_profile import VesselProfile
+from fw.postprocessing.output_helpers import compute_heading_error
+from fw.configuration.profile_applier import SimulatorApplier, ActionAdapter
+from fw.postprocessing.ship_episode_data import RunData, ShipData, ShipEpisodeData
 
 
 class ShipDataExtractor:
