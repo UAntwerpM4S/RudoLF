@@ -5,14 +5,14 @@ import tempfile
 import numpy as np
 
 from typing import Optional, Tuple, Union
-from fw.stop_condition import StopCondition
+from fw.configuration.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
 from fw.environments.multi_sim_env import MultiSimEnv
-from fw.profile_applier import SimulatorApplier
-from fw.config_profile import VesselProfile
+from fw.configuration.profile_applier import SimulatorApplier
+from fw.configuration.config_profile import VesselProfile
 
 
 class MultiPPOAgent(BasePPOAgent):

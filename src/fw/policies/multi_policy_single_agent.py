@@ -32,7 +32,7 @@ import zipfile
 import tempfile
 
 from collections import deque
-from fw.stop_condition import StopCondition
+from fw.configuration.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from typing import Optional, Tuple, Union, List, Dict

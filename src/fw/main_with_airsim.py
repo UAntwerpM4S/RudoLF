@@ -75,12 +75,12 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         merge_runtime_settings,
     )
     from fw.common.tools.path_utils import resolve_path_relative_to_src
-    from fw.env_factory import (
+    from fw.configuration.env_factory import (
         airsim_env_name,
     )
-    from fw.config import get_config_parameters
-    from fw.profile_applier import apply_profile
-    from fw.config_profile import ProfileRegistry
+    from fw.configuration.config import get_config_parameters
+    from fw.configuration.profile_applier import apply_profile
+    from fw.configuration.config_profile import ProfileRegistry
 
     # AirSim runtime only controls AirSim-specific behavior.
     # The selected framework environment is handled by fw.main / fw.config.
@@ -330,9 +330,9 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # -------------------------------------------------------------------------
 
     # Ensure all environments are registered once
-    from fw.trainer import Trainer
-    from fw.config import PPO_POLICY_NAME
-    from fw.env_factory import (
+    from fw.scheduling.trainer import Trainer
+    from fw.configuration.config import PPO_POLICY_NAME
+    from fw.configuration.env_factory import (
         get as get_environment,
         initialize_all_environments,
     )

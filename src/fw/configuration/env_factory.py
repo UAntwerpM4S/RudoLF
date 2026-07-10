@@ -895,7 +895,7 @@ def _pick_airsim_fallback(configuration) -> str:
     if configuration and isinstance(configuration, dict):
         config = configuration
     else:
-        from fw.config import get_config_parameters  # local import — last resort only
+        from fw.configuration.config import get_config_parameters  # local import — last resort only
         config = get_config_parameters()
 
     env_types = config.get("env_type", [])
@@ -956,7 +956,7 @@ def get(environment_name: str, configuration=None):
         # "wind", and "current" that the AirSim config does not carry.
         # Load the full framework config instead so the fallback
         # environment receives the keys it actually needs.
-        from fw.config import get_config_parameters as _get_fw_config  # local to avoid circular import
+        from fw.configuration.config import get_config_parameters as _get_fw_config  # local to avoid circular import
         fallback_framework_config = _get_fw_config()
         fallback_name = _pick_airsim_fallback(fallback_framework_config)
         return build_default_environment(fallback_name, framework_config=fallback_framework_config)

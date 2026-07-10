@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any
-from fw.env_factory import (
+from fw.configuration.env_factory import (
     resolve_environment_name,
     py_sim_env_name,
     fh_sim_env_name,
@@ -20,10 +20,10 @@ from fw.env_factory import (
     LunarEnvironment,
     FhSimSyncEnvironment, sync_sim_env_name,
 )
-from fw.agent_manager import AgentManager
-from fw.agent_manager_simple import AgentManagerSimple
-from fw.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
-from fw.config_profile import VesselProfile
+from fw.scheduling.agent_manager import AgentManager
+from fw.scheduling.agent_manager_simple import AgentManagerSimple
+from fw.configuration.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
+from fw.configuration.config_profile import VesselProfile
 
 
 # logging.basicConfig(level=logging.INFO)  # Configure logging once, possibly in main script.
@@ -76,28 +76,52 @@ def find_existing_filename(class_name: str, directory: str = ".") -> str:
 
     Tries different naming styles (snake_case, lowercase, kebab-case) until it finds a match.
 
+    Search order, for each naming style:
+      1. `directory` (defaults to the caller's current working directory -
+         kept for backward compatibility with any existing callers/cwd-based
+         layouts, e.g. running scripts from a repo root).
+      2. `<directory>/fw/` (also cwd-relative, same backward-compat reason -
+         predates the fw.configuration/fw.scheduling package split).
+      3. The directory this module (`trainer.py`) itself lives in - i.e.
+         `fw/scheduling/`, now that trainer.py has moved there. Scheduler
+         classes (`simple_scheduler.py`, `pipeline_scheduler.py`, ...) are
+         siblings of trainer.py in that same folder, so this makes
+         resolution independent of wherever `main.py`/`main_pipeline.py`
+         happens to be launched from.
+
     Args:
         class_name (str): The name of the class to search for.
-        directory (str, optional): The directory to search in. Defaults to the current directory.
+        directory (str, optional): The directory to search in. Defaults to
+            the current directory (see search order above).
 
     Returns:
-        str: The relative path to the matching file.
+        str: The filename that matched (no directory prefix - the caller
+            only ever uses `Path(...).stem`, and always imports via the
+            fixed `fw.scheduling.` package path regardless of which
+            directory the match was actually found in).
 
     Raises:
         FileNotFoundError: If no matching file is found using any style.
     """
 
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+
     for style in FilenameStyle:
         filename = class_name_to_filename(class_name, style)
-        file_path = os.path.join(directory, filename)
-        if os.path.isfile(file_path):
-            return filename  # Match found in the given directory
-        elif os.path.isfile(f"fw/{file_path}"):
-            return f"fw/{filename}"  # Match found in the 'fw/' subdirectory
+
+        candidates = [
+            os.path.join(directory, filename),
+            os.path.join(directory, "fw", filename),
+            os.path.join(module_dir, filename),
+        ]
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                return filename  # Match found - caller resolves the module path itself
 
     raise FileNotFoundError(
-        f"No file found for class '{class_name}' in {directory}. "
-        f"Tried styles: {[class_name_to_filename(class_name, s) for s in FilenameStyle]}"
+        f"No file found for class '{class_name}' in '{directory}' or "
+        f"'{module_dir}'. Tried styles: "
+        f"{[class_name_to_filename(class_name, s) for s in FilenameStyle]}"
     )
 
 
@@ -151,7 +175,7 @@ class Trainer:
         # Dynamically load the scheduler based on its name
         try:
             scheduler_file = Path(find_existing_filename(scheduler_type))
-            scheduler_module = importlib.import_module(f"fw.{scheduler_file.stem}")
+            scheduler_module = importlib.import_module(f"fw.scheduling.{scheduler_file.stem}")
             scheduler_class = getattr(scheduler_module, scheduler_type)
             scheduler = scheduler_class(self._agent_mgr, self._envs)
         except ModuleNotFoundError:
@@ -194,14 +218,25 @@ class Trainer:
         Args:
             configuration (dict, optional): Additional configuration parameters
                 for training, such as number of steps per environment.
-            show_plots (bool, optional): Show interactive visualization windows.
-                If False, only save outputs without opening matplotlib windows.
+            show_plots (bool, optional): Whether to run the automatic
+                post-training evaluation/visualization at all. When False,
+                the entire step - episode rollout, metrics computation,
+                figure saving, and any interactive window - is skipped
+                entirely, not just the interactive window. Running a full
+                evaluation episode costs real time and clutters logs for a
+                step nobody's going to look at (e.g. an intermediate stage
+                of a multi-stage run). Defaults to True, matching existing
+                behavior exactly - nothing changes for existing callers
+                that never pass this.
 
         Returns:
             dict: Training metrics collected during execution.
         """
 
         metrics = self._scheduler.execute(configuration)
+
+        if not show_plots:
+            return metrics
 
         last_env = self._envs[-1] if self._envs else None
         env_type = str(last_env) if last_env else None

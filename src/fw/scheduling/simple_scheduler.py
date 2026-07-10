@@ -3,8 +3,8 @@ import time
 import logging
 import traceback
 
-from fw.config import PolicyStrategy
-from fw.base_scheduler import BaseScheduler
+from fw.configuration.config import PolicyStrategy
+from fw.scheduling.base_scheduler import BaseScheduler
 
 
 class SimpleScheduler(BaseScheduler):

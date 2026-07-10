@@ -20,7 +20,7 @@ Profiles can be serialized to/from JSON and stored as named presets in the
 
 Typical usage
 -------------
->>> from fw.config_profile import (
+>>> from fw.configuration.config_profile import (
 ...     VesselProfile, ActuatorConfig, ThrustConfig, ThrustMode,
 ...     ScenarioConfig, ModelConfig, RunMode, ProfileRegistry,
 ... )

@@ -1,7 +1,7 @@
 import pytest
 
-from fw.config import PPO_POLICY_NAME, get_hyperparameters
-from fw.env_factory import (
+from fw.configuration.config import PPO_POLICY_NAME, get_hyperparameters
+from fw.configuration.env_factory import (
     _Factory,
     EnvironmentRegistryError,
     airsim_env_name,
@@ -186,7 +186,7 @@ def test_airsim_environment_receives_full_runtime_configuration(monkeypatch):
             captured.update(kwargs)
 
     _Factory._environment_instances.pop(airsim_env_name, None)
-    monkeypatch.setattr("fw.env_factory.AirSimEnv", _FakeAirSimEnv)
+    monkeypatch.setattr("fw.configuration.env_factory.AirSimEnv", _FakeAirSimEnv)
 
     config = {
         "training_mode": False,

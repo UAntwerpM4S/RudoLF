@@ -2,8 +2,8 @@ from copy import deepcopy
 from enum import Enum, auto
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
-from fw.profile_applier import apply_profile
-from fw.config_profile import ProfileRegistry
+from fw.configuration.profile_applier import apply_profile
+from fw.configuration.config_profile import ProfileRegistry
 
 
 class VisualizationMode(Enum):
@@ -148,7 +148,7 @@ CONFIG_PARAMETERS = {
                                         # "myzako_pysim_to_fhsim_transfer_profile",
                                         # "tripoli_pysim_to_fhsim_transfer_profile",
                                         # "ugent_surrogate_training_profile", ...
-    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'action': "visualize",  # Valid action values: "train", "visualize", "evaluate_reward"
     'wind': False,
     'current': False,
     'visualize_best_trained': False,

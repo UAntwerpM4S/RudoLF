@@ -2,26 +2,26 @@ import os
 import math
 
 from pathlib import Path
-from fw.config_profile import VesselProfile
-from fw.metrics_computer import MetricsComputer
-from fw.episode_collector import EpisodeCollector
-from fw.ship_episode_data import CollisionAnnotator
-from fw.matplotlib_renderer import MatplotlibRenderer
+from fw.configuration.config_profile import VesselProfile
+from fw.postprocessing.metrics_computer import MetricsComputer
+from fw.postprocessing.episode_collector import EpisodeCollector
+from fw.postprocessing.ship_episode_data import CollisionAnnotator
+from fw.postprocessing.matplotlib_renderer import MatplotlibRenderer
 
 from fw.environments.base_env import BaseEnv
 from fw.environments.lunar_lander import LunarLander
 from fw.environments.multi_sim_env import MultiSimEnv
 from airsim.communication.airsim_bridge import AirSimBridge
 
-from fw.stop_condition import StopCondition
+from fw.configuration.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
 from fw.collision_avoidance.scenario_classifier import SCENARIO_LABELS, NUM_SCENARIOS
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy, MULTI_POLICY_SINGLE_NAME
-from fw.profile_applier import apply_profile
+from fw.configuration.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy, MULTI_POLICY_SINGLE_NAME
+from fw.configuration.profile_applier import apply_profile
 
 
 class AgentManager:
@@ -202,6 +202,8 @@ class AgentManager:
         env: BaseEnv,
         policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
         other_env_name: str = None,
+        profile: VesselProfile = None,
+        hyperparameters: dict = None,
     ) -> None:
         """
         Assign an environment to the agent and configure the policy strategy.
@@ -213,10 +215,28 @@ class AgentManager:
                 Default is PolicyStrategy.RESET_POLICY.
             other_env_name (str, optional): Name of the environment whose policy
                 should be reused (if applicable).
+            profile (VesselProfile, optional): Replace the manager's active
+                profile before building the new agent. Defaults to None,
+                which keeps whichever profile the manager already holds -
+                this preserves the exact behavior every existing caller
+                (Trainer, SimpleScheduler) relies on. `fw.pipeline_scheduler`
+                passes a different profile here per pipeline block, so one
+                AgentManager can be reused across a whole JSON-driven run
+                instead of constructing a new one per block.
+            hyperparameters (dict, optional): Replace the manager's active
+                hyperparameters before building the new agent. Defaults to
+                None, which keeps the hyperparameters already held. Same
+                rationale as `profile` above.
 
         Raises:
             RuntimeError: If an unknown policy type is specified.
         """
+
+        if profile is not None:
+            self._profile = profile
+
+        if hyperparameters is not None:
+            self._hyperparameters = hyperparameters
 
         policy_file_name = None
 

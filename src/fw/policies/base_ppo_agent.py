@@ -4,8 +4,8 @@ from typing import Optional
 from abc import abstractmethod
 from fw.policies.base_agent import BaseAgent
 from fw.environments.base_env import BaseEnv
-from fw.profile_applier import ActionAdapter
-from fw.config_profile import VesselProfile
+from fw.configuration.profile_applier import ActionAdapter
+from fw.configuration.config_profile import VesselProfile
 
 
 class BasePPOAgent(BaseAgent):

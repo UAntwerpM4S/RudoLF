@@ -27,12 +27,12 @@ if __name__ == "__main__" or __name__ == "fw.main":
     import os
     import runpy
 
-    from fw.trainer import Trainer
-    from fw.profile_applier import apply_profile
-    from fw.config_profile import ProfileRegistry
-    from fw.stop_condition import StopCondition, Criterion
-    from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, MULTI_POLICY_SINGLE_NAME, get_config_parameters
-    from fw.env_factory import (
+    from fw.scheduling.trainer import Trainer
+    from fw.configuration.profile_applier import apply_profile
+    from fw.configuration.config_profile import ProfileRegistry
+    from fw.configuration.stop_condition import StopCondition, Criterion
+    from fw.configuration.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, MULTI_POLICY_SINGLE_NAME, get_config_parameters
+    from fw.configuration.env_factory import (
         build_default_environment,
         resolve_environment_name,
         py_sim_env_name,
