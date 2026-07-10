@@ -63,14 +63,12 @@ import logging
 import traceback
 
 from typing import Any, Dict, Optional, Tuple
-
 from fw.scheduling.base_scheduler import BaseScheduler
-from fw.configuration.config import PolicyStrategy, get_hyperparameters, load_config_parameters
-from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.configuration.profile_applier import apply_profile
-
+from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.scheduling.run_spec import PipelineBlock, StopConditionSpec, TransferSpec
 from fw.scheduling.pipeline_env import resolve_block_profile, build_block_environment
+from fw.configuration.config import PolicyStrategy, get_hyperparameters, load_config_parameters
 
 logger = logging.getLogger(__name__)
 
@@ -103,16 +101,14 @@ class PipelineScheduler(BaseScheduler):
             on_block_failure: Run-level default - "continue" or "abort" -
                 for what happens when a block raises. Overridable per block
                 via `PipelineBlock.on_failure`.
-
-        Note:
-            `BaseScheduler.__init__` requires a non-empty `envs` list up
-            front, which doesn't fit here (environments are built lazily,
-            per block). We therefore set up the same minimal state
-            ourselves instead of calling `super().__init__()`.
         """
 
-        self.agent_mgr = agent_mgr
-        self.envs = []
+        # No upfront `envs` here - each block's environment is built lazily
+        # in `_run_block`. `BaseScheduler` doesn't require a non-empty
+        # `envs` list, so this is a plain `super().__init__()` call, not a
+        # workaround.
+        super().__init__(agent_mgr)
+
         self._blocks = blocks or []
         self._on_block_failure = on_block_failure
 
@@ -299,8 +295,9 @@ class PipelineScheduler(BaseScheduler):
             base = {**base, **block.hyperparameter_overrides}
         return base
 
+    @staticmethod
     def _resolve_transfer(
-        self, block: PipelineBlock, completed_block_names: set
+            block: PipelineBlock, completed_block_names: set
     ) -> Tuple[PolicyStrategy, Optional[str]]:
         """
         Resolve (policy_strategy, other_env_name) for this block.

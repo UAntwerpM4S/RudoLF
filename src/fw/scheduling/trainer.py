@@ -25,7 +25,6 @@ from fw.scheduling.agent_manager_simple import AgentManagerSimple
 from fw.configuration.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
 from fw.configuration.config_profile import VesselProfile
 
-
 # logging.basicConfig(level=logging.INFO)  # Configure logging once, possibly in main script.
 
 

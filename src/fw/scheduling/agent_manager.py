@@ -2,7 +2,9 @@ import os
 import math
 
 from pathlib import Path
+from fw.configuration.stop_condition import StopCondition
 from fw.configuration.config_profile import VesselProfile
+from fw.configuration.profile_applier import apply_profile
 from fw.postprocessing.metrics_computer import MetricsComputer
 from fw.postprocessing.episode_collector import EpisodeCollector
 from fw.postprocessing.ship_episode_data import CollisionAnnotator
@@ -13,7 +15,6 @@ from fw.environments.lunar_lander import LunarLander
 from fw.environments.multi_sim_env import MultiSimEnv
 from airsim.communication.airsim_bridge import AirSimBridge
 
-from fw.configuration.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
@@ -21,7 +22,6 @@ from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
 from fw.collision_avoidance.scenario_classifier import SCENARIO_LABELS, NUM_SCENARIOS
 from fw.configuration.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy, MULTI_POLICY_SINGLE_NAME
-from fw.configuration.profile_applier import apply_profile
 
 
 class AgentManager:

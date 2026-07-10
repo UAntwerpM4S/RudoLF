@@ -3,24 +3,19 @@ class BaseScheduler:
     Base scheduler for managing environment switching and coordinating multi-environment training.
     """
 
-    def __init__(self, agent_mgr, envs):
+    def __init__(self, agent_mgr, envs=None):
         """
         Initializes the BaseScheduler.
 
         Args:
             agent_mgr: The agent manager instance responsible for training.
-            envs: List of environments to be used during training.
-
-        Raises:
-            RuntimeError: If the provided environment list is empty.
+            envs: Optional list of environments to be used during training.
+                Defaults to an empty list for schedulers that build their
+                environments lazily instead of receiving them up front.
         """
 
-        if not envs:
-            raise RuntimeError("Environments list cannot be empty.")
-
-        self.envs = envs
         self.agent_mgr = agent_mgr
-
+        self.envs = envs if envs is not None else []
 
     def execute(self, configuration=None):
         """

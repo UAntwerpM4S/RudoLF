@@ -38,10 +38,10 @@ must use the *canonical* env name / `include_scenario_one_hot`, not
 from __future__ import annotations
 
 from typing import Any, Dict
-
-from fw.configuration.config_profile import ModelConfig, ProfileRegistry, VesselProfile
-from fw.dynamics.dynamics_model import Model
 from fw.ships.ship_factory import ShipModel
+from fw.dynamics.dynamics_model import Model
+from fw.scheduling.run_spec import PipelineBlock
+from fw.configuration.config_profile import ModelConfig, ProfileRegistry, VesselProfile
 
 from fw.configuration.env_factory import (
     resolve_environment_name,
@@ -66,8 +66,6 @@ from fw.configuration.env_factory import (
     build_colav_config,
     build_multi_policy_colav_config,
 )
-
-from fw.scheduling.run_spec import PipelineBlock
 
 # Direct-instantiation builders, bypassing the `_Factory` singleton cache.
 # AirSim is intentionally excluded here - see main_pipeline.py's explicit
