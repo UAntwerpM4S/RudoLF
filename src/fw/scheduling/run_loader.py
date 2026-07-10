@@ -192,7 +192,7 @@ def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopCon
         raise PipelineSpecError(
             f"{where} ('{name}'): stop_condition.criterion '{criterion}' is "
             f"not implemented by StopCondition yet (see "
-            f"fw.stop_condition.Criterion) and cannot be used here."
+            f"fw.configuration.stop_condition.Criterion) and cannot be used here."
         )
     return StopConditionSpec(
         criterion=criterion,
