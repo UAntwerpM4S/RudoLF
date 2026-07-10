@@ -148,7 +148,7 @@ CONFIG_PARAMETERS = {
                                         # "myzako_pysim_to_fhsim_transfer_profile",
                                         # "tripoli_pysim_to_fhsim_transfer_profile",
                                         # "ugent_surrogate_training_profile", ...
-    'action': "visualize",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'wind': False,
     'current': False,
     'visualize_best_trained': False,
