@@ -5,17 +5,17 @@ import matplotlib.patches as patches
 
 from pathlib import Path
 from contextlib import contextmanager
-from fw.configuration.config_profile import VesselProfile
 from fw.environments.base_env import BaseEnv
 from fw.environments.multi_sim_env import MultiSimEnv
 from fw.configuration.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
 from fw.configuration.profile_applier import apply_profile, ActionAdapter, SimulatorApplier
 from airsim.communication.airsim_bridge import AirSimBridge
+from fw.configuration.config_profile import VesselProfile
+from fw.configuration.stop_condition import StopCondition
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
-from fw.configuration.stop_condition import StopCondition
 
 MIN_GRID_POS = -11700
 MAX_GRID_POS = 14500

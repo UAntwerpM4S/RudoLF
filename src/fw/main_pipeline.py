@@ -40,6 +40,7 @@ Scope, explicitly out for now:
 
 if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     import os
+
     # Same rationale as main.py: must be set before any torch/numpy import.
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
@@ -58,9 +59,9 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     from fw.configuration.config import PPO_POLICY_NAME
     from fw.scheduling.agent_manager import AgentManager
     from fw.configuration.config_profile import ProfileRegistry
-    from fw.configuration.env_factory import initialize_all_environments, resolve_environment_name, airsim_env_name
-    from fw.scheduling.run_loader import load_pipeline_spec, PipelineSpecError
     from fw.scheduling.pipeline_scheduler import PipelineScheduler
+    from fw.scheduling.run_loader import load_pipeline_spec, PipelineSpecError
+    from fw.configuration.env_factory import initialize_all_environments, resolve_environment_name, airsim_env_name
 
     parser = argparse.ArgumentParser(description="Run a JSON-defined training pipeline.")
     parser.add_argument("--spec", required=True, help="Path to the pipeline JSON file.")

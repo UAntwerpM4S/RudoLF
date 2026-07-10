@@ -11,16 +11,15 @@ deep inside training.
 from __future__ import annotations
 
 import json
+
 from pathlib import Path
 from typing import Any, Dict, Set
-
-from fw.configuration.config import PolicyStrategy
-from fw.configuration.config_profile import ProfileRegistry
-from fw.configuration.stop_condition import Criterion
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
+from fw.configuration.config import PolicyStrategy
+from fw.configuration.stop_condition import Criterion
+from fw.configuration.config_profile import ProfileRegistry
 from fw.configuration.env_factory import resolve_environment_name, EnvironmentRegistryError
-
 from fw.scheduling.run_spec import PipelineBlock, PipelineSpec, StopConditionSpec, TransferSpec
 
 _VALID_ACTIONS = {"train", "visualize", "evaluate_reward"}

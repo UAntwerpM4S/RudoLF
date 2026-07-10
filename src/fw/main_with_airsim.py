@@ -14,6 +14,10 @@ set to "AirSimEnv".
 
 if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     import os
+
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+
     import logging
     import multiprocessing
 

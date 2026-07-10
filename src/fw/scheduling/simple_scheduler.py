@@ -19,9 +19,19 @@ class SimpleScheduler(BaseScheduler):
         Args:
             agent_mgr: The AgentManager instance responsible for training and policy management.
             envs (list): List of environments used for training.
+
+        Raises:
+            RuntimeError: If the provided environment list is empty. Unlike
+                `PipelineScheduler`, this scheduler trains over a fixed,
+                pre-built list, so a non-empty `envs` is a real precondition
+                here - checked in this class rather than in `BaseScheduler`,
+                since it isn't a precondition for every scheduler.
         """
 
         super().__init__(agent_mgr, envs)
+
+        if not self.envs:
+            raise RuntimeError("Environments list cannot be empty.")
 
         self.current_env = None
         self._previous_env_name = None

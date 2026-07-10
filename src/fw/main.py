@@ -6,9 +6,11 @@ if __name__ == "__main__" or __name__ == "fw.main":
     # 12-subproc x N-thread oversubscription that destabilizes PPO on
     # CPUs with high core counts
     import os
+
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
 
+    import runpy
     import logging
     import multiprocessing
 
@@ -23,9 +25,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
 
     multiprocessing.set_start_method("spawn", force=True)
-
-    import os
-    import runpy
 
     from fw.scheduling.trainer import Trainer
     from fw.configuration.profile_applier import apply_profile
