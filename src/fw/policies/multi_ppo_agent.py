@@ -182,16 +182,6 @@ class MultiPPOAgent(BasePPOAgent):
             rewards = next_rewards
             terminations = next_terminations
 
-            # `truncations` still holds whatever the wrapped env's raw step()
-            # returned in this branch. If that env instead exposes SB3's
-            # "TimeLimit.truncated" info key, prefer it as the more reliable
-            # per-env truncation signal.
-            if infos and all("TimeLimit.truncated" in env_info for env_info in infos):
-                truncations = np.array(
-                    [bool(env_info["TimeLimit.truncated"]) for env_info in infos],
-                    dtype=bool,
-                )
-
         return next_states, rewards, terminations, truncations
 
 
