@@ -363,7 +363,18 @@ class SinglePPOAgent(BasePPOAgent):
         else:
             rewards = next_rewards
             terminations = next_terminations
-            truncations = np.zeros(actions.shape[0], dtype=bool)
+
+            # `next_terminations` here is SB3 VecEnv's combined `done` flag
+            # (terminated OR truncated). Recover the true truncation signal
+            # from SB3's own "TimeLimit.truncated" info key when present,
+            # rather than reporting every episode end as a hard termination.
+            if infos:
+                truncations = np.array(
+                    [bool(env_info.get("TimeLimit.truncated", False)) for env_info in infos],
+                    dtype=bool,
+                )
+            else:
+                truncations = np.zeros(actions.shape[0], dtype=bool)
 
         return next_states, rewards, terminations, truncations
 

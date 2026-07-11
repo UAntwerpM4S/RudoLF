@@ -2097,6 +2097,15 @@ class AirSimEnv(BaseEnv):
             ),
             "terminated": bool(terminated),
             "truncated": bool(truncated),
+            # Plural aliases consumed by BasePPOAgent._step_envs() and its
+            # subclasses so GAE bootstrapping can distinguish a true episode
+            # termination from a time-limit truncation. Without these keys,
+            # SB3's VecEnv wrapping collapses terminated/truncated into a
+            # single `done` flag before it reaches the policy layer, and
+            # truncations get silently zeroed (treated as hard terminations).
+            "rewards": float(reward),
+            "terminations": bool(terminated),
+            "truncations": bool(truncated),
         }
 
     def mark_explicit_reset_context(self, enabled: bool = True) -> None:

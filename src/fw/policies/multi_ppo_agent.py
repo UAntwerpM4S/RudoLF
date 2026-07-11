@@ -424,11 +424,17 @@ class MultiPPOAgent(BasePPOAgent):
                     agent.policy = PPOPolicy.build_policy_from_state(saved_variables, self.device)
                     # Rebind optimizer to the newly-loaded network's parameters.
                     # Without this, agent.optimizer still references the old (GC'd) network
-                    # and subsequent train() calls silently update dead weights.
-                    # agent.optimizer = torch.optim.Adam(
-                    #     agent.policy.network.parameters(), lr=agent.learning_rate
-                    # )
+                    # and subsequent train() calls silently update dead weights while the
+                    # active policy never actually learns further. This part is NOT optional
+                    # (unlike the Adam-momentum restore below) - see SinglePPOAgent.load_policy
+                    # for the equivalent, already-correct rebind.
+                    agent.optimizer = torch.optim.Adam(
+                        agent.policy.network.parameters(), lr=agent.learning_rate
+                    )
                     #
+                    # Restoring Adam momentum from a saved optimizer_state_dict is left
+                    # disabled for now, same scope as SinglePPOAgent/save_policy above -
+                    # deliberately deferred, not required for correct training to resume.
                     # if "optimizer_state_dict" in saved_variables:
                     #     try:
                     #         agent.optimizer.load_state_dict(saved_variables["optimizer_state_dict"])
