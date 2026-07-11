@@ -363,6 +363,7 @@ class SinglePPOAgent(BasePPOAgent):
         else:
             rewards = next_rewards
             terminations = next_terminations
+
             # `next_terminations` here is SB3 VecEnv's combined `done` flag
             # (terminated OR truncated). Recover the true truncation signal
             # from SB3's own "TimeLimit.truncated" info key when present,
