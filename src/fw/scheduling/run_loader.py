@@ -31,14 +31,20 @@ _VALID_FAILURE_MODES = {"continue", "abort"}
 # long time. Reject it here instead, at *load* time, for the whole plan.
 _UNIMPLEMENTED_CRITERIA = {"AUTO_CONVERGE"}
 
-# Every pipeline block gets its own Trainer/AgentManager (see
-# main_pipeline.py), so there is no in-memory "current" agent to carry
-# across blocks - any transfer necessarily goes through a saved policy
-# file on disk. REUSE_CURRENT_POLICY would, in practice, behave exactly
-# like REUSE_OTHER_POLICY pointed at the current block's own env, in a
-# confusing way (AgentManager.set_environment saves-then-reloads a file for
-# BOTH strategies - see its source). Rejected here instead of silently
-# accepted.
+# PipelineScheduler reuses ONE shared AgentManager across every block in a
+# run (see pipeline_scheduler.py's module docstring) - it does NOT build a
+# fresh Trainer/AgentManager per block, so there *is* an in-memory "current"
+# agent carried across blocks. That's not why REUSE_CURRENT_POLICY is
+# rejected here.
+#
+# It's rejected because AgentManager.set_environment saves-then-reloads a
+# policy *file* for BOTH REUSE_CURRENT_POLICY and REUSE_OTHER_POLICY (see
+# its source) - it never keeps the in-memory agent object across the
+# set_environment() call regardless of strategy. So REUSE_CURRENT_POLICY
+# would, in practice, behave exactly like REUSE_OTHER_POLICY pointed at the
+# current block's own env, just via a more confusing name. Rejected here
+# instead of silently accepted; see main_pipeline.py's docstring for the
+# same rationale.
 _UNSUPPORTED_POLICY_STRATEGIES = {"REUSE_CURRENT_POLICY"}
 
 
