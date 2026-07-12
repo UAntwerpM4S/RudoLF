@@ -442,13 +442,13 @@ class AgentManagerSimple:
                                     env.render()
 
                                 # Bridge ship position and heading to UE5 via coordinate transform
-                                if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
+                                if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
                                     ax, ay, _ = coord_transform.framework_to_airsim(
                                         float(env.ship_pos[0][0]),
                                         float(env.ship_pos[0][1])
                                     )
                                     ayaw = coord_transform.framework_heading_to_airsim_yaw(
-                                        float(env.phys_sims[0].state.heading)
+                                        float(env.phys_sim.state.heading)
                                     )
                                     airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
                             else:
