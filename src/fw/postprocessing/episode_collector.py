@@ -376,8 +376,10 @@ class EpisodeCollector:
         with self._render_mode(ship_envs, live_animation):
             while not np.all(done):
                 action, _, value = self._agent.predict(state=state, deterministic=True)
-                if value:
-                    _value_buffer.append(float(np.asarray(value).reshape(-1)[0]))
+                if value is not None:
+                    value_arr = np.asarray(value)
+                    if value_arr.size > 0:
+                        _value_buffer.append(float(value_arr.reshape(-1)[0]))
 
                 # Apply optional per-action profile transform (e.g. fixed thrust).
                 if self._profile is not None:
