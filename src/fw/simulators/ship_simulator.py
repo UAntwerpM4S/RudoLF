@@ -140,12 +140,12 @@ class ShipSimulator(BaseSimulator):
         self._state = VesselState(
             terminated=state.terminated,
             truncated=state.truncated,
-            x=np.float32(state.x + dx * time_step),
-            y=np.float32(state.y + dy * time_step),
-            heading=np.float32((state.heading + r * time_step + np.pi) % (2.0 * np.pi) - np.pi),
-            u=np.float32(u),
-            v=np.float32(v),
-            r=np.float32(r),
+            x=state.x + dx * time_step,
+            y=state.y + dy * time_step,
+            heading=(state.heading + r * time_step + np.pi) % (2.0 * np.pi) - np.pi,
+            u=u,
+            v=v,
+            r=r,
         )
 
     def step(self, action: np.ndarray, enable_smoothing: bool = False, enable_rudder_angle_scaling: bool = False) -> None:
@@ -204,10 +204,10 @@ class ShipSimulator(BaseSimulator):
             self._state = VesselState(
                 terminated=s.terminated,
                 truncated=s.truncated,
-                x=np.float32(fh_pos.x),
-                y=np.float32(fh_pos.y),
-                heading=np.float32((fh_hdg + np.pi) % (2.0 * np.pi) - np.pi),
-                u=np.float32(s.u),
-                v=np.float32(s.v),
-                r=np.float32(s.r),
+                x=fh_pos.x,
+                y=fh_pos.y,
+                heading=(fh_hdg + np.pi) % (2.0 * np.pi) - np.pi,
+                u=s.u,
+                v=s.v,
+                r=s.r,
             )

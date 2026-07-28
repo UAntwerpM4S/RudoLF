@@ -44,10 +44,10 @@ class BaseSimulator(ABC):
         self._state = VesselState(
             terminated=False,
             truncated=False,
-            x=np.float32(0.0),
-            y=np.float32(0.0),
-            heading=np.float32(0.0),
-            u=np.float32(0.0), v=np.float32(0.0), r=np.float32(0.0))
+            x=0.0,
+            y=0.0,
+            heading=0.0,
+            u=0.0, v=0.0, r=0.0)
 
     @property
     def state(self) -> VesselState:

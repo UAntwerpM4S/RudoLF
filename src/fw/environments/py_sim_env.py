@@ -19,8 +19,8 @@ except ImportError:
     matplotlib.use('Agg')  # Use non-interactive backend as fallback
 
 from shapely import LineString
-from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
+from shapely.geometry import Point, Polygon, MultiPoint, GeometryCollection
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, ShipModel
 from fw.ships.vessel_state import VesselState
@@ -203,10 +203,10 @@ class PySimEnv(BaseEnv):
         self.wind = bool(wind)
         self.current = bool(current)
         self.start_pos = start_pos
-        self.ship_model = ship_model
+        self.ship_model: ShipModel = ship_model if ship_model is not None else ShipModel.MYZAKO_DEFAULT
         self.max_steps = int(max_steps)
         self.time_step = float(time_step)
-        self.dynamics_model = dynamics_model
+        self.dynamics_model: Model = dynamics_model if dynamics_model is not None else Model.FOSSEN
         self.scenario = scenario
         self.verbose = bool(verbose) if verbose is not None else False
         self.previous_ship_pos = None
@@ -344,10 +344,10 @@ class PySimEnv(BaseEnv):
         self.phys_sim.reset(VesselState(
             terminated=False,
             truncated=False,
-            x=np.float32(self.initial_ship_pos[0]),
-            y=np.float32(self.initial_ship_pos[1]),
-            heading=np.float32(self.ship_heading),
-            u=np.float32(self.initial_speed), v=np.float32(0.0), r=np.float32(0.0)))
+            x=self.initial_ship_pos[0],
+            y=self.initial_ship_pos[1],
+            heading=self.ship_heading,
+            u=self.initial_speed, v=0.0, r=0.0))
         self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
 
@@ -533,7 +533,7 @@ class PySimEnv(BaseEnv):
         # Calculate direction of last path segment
         if len(self.checkpoints) < 2:
             raise ValueError(
-                f"Path reduction from start_pos={self.initial_ship_pos} resulted "
+                f"Path reduction from start_pos={self.initial_ship_pos.tolist()} resulted "
                 f"in fewer than 2 checkpoints. Check that the CSV trajectory file "
                 f"contains points ahead of the ship's start position, and that "
                 f"CHECKPOINTS_DISTANCE ({CHECKPOINTS_DISTANCE}) is not larger than "
@@ -603,6 +603,7 @@ class PySimEnv(BaseEnv):
         """
 
         if self._fh_sim is not None:
+            # noinspection PyUnresolvedReferences
             return self._fh_sim.ship_interface.getKeelClearance()
         elif isinstance(self.dynamics, UAntwerpSurrogate):
             return self.dynamics.get_ukc(pos)
@@ -645,7 +646,7 @@ class PySimEnv(BaseEnv):
 
         if hit.geom_type == 'Point':
             dist = origin_pt.distance(hit)
-        elif hit.geom_type in ('MultiPoint', 'GeometryCollection'):
+        elif isinstance(hit, (MultiPoint, GeometryCollection)):
             # May include the origin itself (distance ≈ 0) when the ship sits
             # exactly on the boundary; skip those and take the nearest far hit.
             dists = [origin_pt.distance(g) for g in hit.geoms if not g.is_empty]
@@ -711,7 +712,7 @@ class PySimEnv(BaseEnv):
 
         # Single vectorized intersection call against the (scalar) boundary,
         # broadcasting boundary against all n rays at the GEOS level.
-        hits = shapely.intersection(boundary, rays)
+        hits = np.asarray(shapely.intersection(boundary, rays))
 
         # Vectorised distance call. Works correctly for Point/LineString/
         # empty results; gives the WRONG answer for MultiPoint/
@@ -732,6 +733,9 @@ class PySimEnv(BaseEnv):
         if mixed_mask.any():
             for i in np.flatnonzero(mixed_mask):
                 hit = hits[i]
+                assert isinstance(hit, (MultiPoint, GeometryCollection)), (
+                    f"GEOS type id {geom_types[i].tolist()} should imply MultiPoint/GeometryCollection"
+                )
                 sub_dists = [origin_pt.distance(g) for g in hit.geoms if not g.is_empty]
                 far = [d for d in sub_dists if d > 1e-6]
                 dists[i] = min(far) if far else 0.0
@@ -757,6 +761,7 @@ class PySimEnv(BaseEnv):
         """
 
         if self._fh_sim is not None:
+            # noinspection PyUnresolvedReferences
             return self._fh_sim.ship_interface.getKeelClearance() >= depth_threshold
 
         return True
@@ -812,7 +817,7 @@ class PySimEnv(BaseEnv):
         if len(reduced_path) == 0:
             raise ValueError(
                 f"_reduce_path produced an empty path. The start position "
-                f"{start_pos} is at or beyond the last point in the trajectory "
+                f"{np.asarray(start_pos).tolist()} is at or beyond the last point in the trajectory "
                 f"(closest index {closest_index} of {len(path) - 1}). "
                 f"Check that start_pos lies near the beginning of the trajectory."
             )
@@ -862,13 +867,13 @@ class PySimEnv(BaseEnv):
         return (angle + np.pi) % (2.0 * np.pi) - np.pi
 
     @staticmethod
-    def _safe_heading_from_vector(vec):
+    def _safe_heading_from_vector(vec) -> float:
         """
         Return heading angle for vector, or 0.0 if vector is zero.
         """
 
         if np.linalg.norm(vec) > 0.0:
-            return np.arctan2(vec[1], vec[0])
+            return float(np.arctan2(vec[1], vec[0]))
         return 0.0
 
     def _calculate_heading_error(self, target_heading: float, current_heading: float, dead_zone_deg: float = 5.0) -> float:
@@ -967,6 +972,7 @@ class PySimEnv(BaseEnv):
         """
 
         if self._fh_sim is not None:
+            # noinspection PyUnresolvedReferences
             self._fh_sim.reset()
             return
 
@@ -1182,7 +1188,7 @@ class PySimEnv(BaseEnv):
         if action.shape != (2,):
             raise ValueError(
                 f"Expected action shape (2,), got {action.shape}. "
-                f"Action values: {action}. Use [-1,1] for [rudder, thrust]."
+                f"Action values: {action.tolist()}. Use [-1,1] for [rudder, thrust]."
             )
 
         if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
@@ -1278,7 +1284,7 @@ class PySimEnv(BaseEnv):
         reward = 1.0 + (reward / num_non_zero if num_non_zero > 0 else 0.0)
         
         # Checkpoint handling (may increment checkpoint_index)
-        checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint["pos"])
+        checkpoint_distance = float(np.linalg.norm(self.ship_pos - current_checkpoint["pos"]))
 
         # Reached checkpoint circle
         if self.segment_point_distance(self.previous_ship_pos, self.ship_pos, current_checkpoint["pos"]) <= current_checkpoint['radius']:
@@ -1315,7 +1321,7 @@ class PySimEnv(BaseEnv):
         return reward, done
 
     @staticmethod
-    def segment_point_distance(p1, p2, c):
+    def segment_point_distance(p1, p2, c) -> float:
         """
         Compute the shortest distance from a point to a line segment.
 
@@ -1330,19 +1336,19 @@ class PySimEnv(BaseEnv):
 
         # project c onto segment p1-p2
         if np.allclose(p1, p2):
-            return np.linalg.norm(c - p1)
+            return float(np.linalg.norm(c - p1))
 
         v = p2 - p1
         w = c - p1
 
-        t = np.dot(w, v) / np.dot(v, v)
-        t = np.clip(t, 0.0, 1.0)
+        t = float(np.dot(w, v) / np.dot(v, v))
+        t = min(1.0, max(0.0, t))
 
         closest = p1 + t * v
-        return np.linalg.norm(c - closest)
+        return float(np.linalg.norm(c - closest))
 
     @staticmethod
-    def _segments_intersect(prev_point: np.ndarray, curr_point: np.ndarray, line_start: np.ndarray, line_end: np.ndarray) -> float:
+    def _segments_intersect(prev_point: np.ndarray, curr_point: np.ndarray, line_start: np.ndarray, line_end: np.ndarray) -> bool:
         """
         Return True if segment prev — curr intersects the infinite line through
         line_seg_start — line_seg_end.
@@ -1649,6 +1655,7 @@ class PySimEnv(BaseEnv):
         """
 
         if event.canvas is self.fig.canvas:
+            # noinspection PyUnresolvedReferences
             self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
 
     def render(self) -> None:
@@ -1664,6 +1671,7 @@ class PySimEnv(BaseEnv):
             self._initialize_rendering()
             self._draw_fixed_landmarks()
             self.fig.canvas.draw()
+            # noinspection PyUnresolvedReferences
             self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
             self.fig.canvas.mpl_connect('draw_event', self._on_draw)
             plt.show(block=False)
@@ -1686,6 +1694,7 @@ class PySimEnv(BaseEnv):
 
         # Restore background for blit optimization when available
         if hasattr(self, 'background'):
+            # noinspection PyUnresolvedReferences
             _safe(lambda: canvas.restore_region(self.background))
 
         # Update ship and heading graphics
