@@ -1,8 +1,10 @@
 import sys
 import types
+import logging
 
 from typing import Any
 from collections.abc import Mapping
+from fw.dynamics.dynamics_model import Model
 from fw.environments.py_sim_env import PySimEnv
 # from fw.environments.fh_sim_env import FhSimEnv
 from airsim.environments.airsim_env import AirSimEnv
@@ -497,10 +499,17 @@ class FhSimEnvironment(BaseEnvironment):
         # self.env = DummyVecEnv([lambda: Monitor(FhSimEnv(render_mode='human', max_steps=1200, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
+        dynamics_model = self.configuration["dynamics_model"]
+        if dynamics_model != Model.FH_TABULAR:
+            logging.warning(
+                f"Using FhSimEnv with a {dynamics_model} dynamics model is not recommended, "
+                f"use {Model.FH_TABULAR} instead."
+            )
+
         self.env = PySimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
                              ship_model=self.configuration["ship_model"],
                              scenario=self.configuration["scenario"],
-                             dynamics_model=self.configuration["dynamics_model"])
+                             dynamics_model=dynamics_model)
 
 
 
