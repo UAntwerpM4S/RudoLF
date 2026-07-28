@@ -180,10 +180,10 @@ class FhSimWrapper(BaseSimulator):
         self._state = VesselState(
             terminated=False,
             truncated=False,
-            x=np.float32(new_ship_pos.x),
-            y=np.float32(new_ship_pos.y),
-            heading=np.float32((heading_rad + np.pi) % (2.0 * np.pi) - np.pi),
-            u=np.float32(velocity_over_ground.x),
-            v=np.float32(-velocity_over_ground.y),
-            r=np.float32(yaw_rate),
+            x=new_ship_pos.x,
+            y=new_ship_pos.y,
+            heading=(heading_rad + np.pi) % (2.0 * np.pi) - np.pi,
+            u=velocity_over_ground.x,
+            v=-velocity_over_ground.y,
+            r=yaw_rate,
         )

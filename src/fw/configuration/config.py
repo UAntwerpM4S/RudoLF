@@ -140,7 +140,8 @@ AIRSIM_HYPERPARAMETER_OVERRIDES = {
 }
 
 CONFIG_PARAMETERS = {
-    # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "LunarLander"
+    # Valid env_type values: "PySimEnv", "FhSimEnv", "MultiSimEnv",
+    # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander"
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["PySimEnv"],
