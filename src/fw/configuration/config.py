@@ -4,6 +4,10 @@ from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from fw.configuration.profile_applier import apply_profile
 from fw.configuration.config_profile import ProfileRegistry
+from fw.common.default_positions import (
+    DEFAULT_FRAMEWORK_SHIP_POS,
+    DEFAULT_FRAMEWORK_TARGET_POS,
+)
 
 
 class VisualizationMode(Enum):
@@ -154,6 +158,8 @@ CONFIG_PARAMETERS = {
     'current': False,
     'visualize_best_trained': False,
     'viz_mode': VisualizationMode.COMPLEX,
+    'start_pos': DEFAULT_FRAMEWORK_SHIP_POS,
+    'target_pos': DEFAULT_FRAMEWORK_TARGET_POS,
     'overall_contour': "env_Sche_no_scale.csv",
     'depth_contour': "env_Sche_250cm_no_scale.csv",
     'trajectory': "trajectory_points_no_scale.csv",
