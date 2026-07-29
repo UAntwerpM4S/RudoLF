@@ -36,6 +36,9 @@ class FhSimEnv(PySimEnv):
                  verbose: Optional[bool] = None,
                  start_pos: Optional[np.ndarray] = None,
                  target_pos: Optional[np.ndarray] = None,
+                 overall_contour: Optional[str] = None,
+                 depth_contour: Optional[str] = None,
+                 trajectory: Optional[str] = None,
                  dynamics_model: Optional[Model] = Model.FH_TABULAR,
                  ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
                  scenario: str = "DDShip_scenario1_nowindnocurrent"):
@@ -85,6 +88,9 @@ class FhSimEnv(PySimEnv):
             verbose=verbose,
             start_pos=start_pos,
             target_pos=target_pos,
+            overall_contour=overall_contour,
+            depth_contour=depth_contour,
+            trajectory=trajectory,
             dynamics_model=dynamics_model,
             ship_model=ship_model,
         )

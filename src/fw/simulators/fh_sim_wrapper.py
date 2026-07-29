@@ -173,8 +173,8 @@ class FhSimWrapper(BaseSimulator):
         heading_deg           = self._engine.ship_interface.getShipHeading()
         yaw_rate_deg_per_s    = self._engine.ship_interface.getShipYawRate()
 
-        heading_rad = np.radians(heading_deg)
-        yaw_rate    = np.radians(yaw_rate_deg_per_s)
+        heading_rad = float(np.radians(heading_deg))
+        yaw_rate    = float(np.radians(yaw_rate_deg_per_s))
 
         # Step 5: store VesselState
         self._state = VesselState(

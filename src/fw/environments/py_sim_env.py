@@ -142,6 +142,9 @@ class PySimEnv(BaseEnv):
             verbose: Optional[bool] = None,
             start_pos: Optional[np.ndarray] = None,
             target_pos: Optional[np.ndarray] = None,
+            overall_contour: Optional[str] = None,
+            depth_contour: Optional[str] = None,
+            trajectory: Optional[str] = None,
             dynamics_model: Optional[Model] = Model.FOSSEN,
             ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
             wind: bool = False,
@@ -203,6 +206,9 @@ class PySimEnv(BaseEnv):
         self.wind = bool(wind)
         self.current = bool(current)
         self.start_pos = start_pos
+        self.overall_contour = overall_contour if overall_contour is not None else "env_Sche_no_scale.csv"
+        self.depth_contour = depth_contour if depth_contour is not None else "env_Sche_250cm_no_scale.csv"
+        self.trajectory = trajectory if trajectory is not None else "trajectory_points_no_scale.csv"
         self.ship_model: ShipModel = ship_model if ship_model is not None else ShipModel.MYZAKO_DEFAULT
         self.max_steps = int(max_steps)
         self.time_step = float(time_step)
@@ -485,13 +491,12 @@ class PySimEnv(BaseEnv):
             return data
 
         # Load obstacles and overall map shapes
-        self.overall = load_csv_strict('env_Sche_no_scale.csv')
-        self.obstacles = load_csv_strict('env_Sche_250cm_no_scale.csv')
+        self.overall = load_csv_strict(self.overall_contour)
+        self.obstacles = load_csv_strict(self.depth_contour)
         self.polygon_shape = Polygon(self.obstacles)
 
         # Load trajectory
-        self.path_name = 'trajectory_points_no_scale.csv'
-        path = load_csv_strict(self.path_name)
+        path = load_csv_strict(self.trajectory)
 
         # Preprocess path (stub currently returns same path)
         path = self._reduce_path(path, self.initial_ship_pos)

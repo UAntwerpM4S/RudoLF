@@ -33,6 +33,9 @@ class FhSimSyncEnv(PySimEnv):
                  verbose: Optional[bool] = None,
                  start_pos: Optional[np.ndarray] = None,
                  target_pos: Optional[np.ndarray] = None,
+                 overall_contour: Optional[str] = None,
+                 depth_contour: Optional[str] = None,
+                 trajectory: Optional[str] = None,
                  ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
                  remote_ip: str = "127.0.0.1", remote_port: int = 5000,
                  local_ip: str  = "127.0.0.1", local_port: int  = 5001,
@@ -74,6 +77,9 @@ class FhSimSyncEnv(PySimEnv):
             verbose=verbose,
             start_pos=start_pos,
             target_pos=target_pos,
+            overall_contour=overall_contour,
+            depth_contour=depth_contour,
+            trajectory=trajectory,
             ship_model=ship_model,
         )
 
