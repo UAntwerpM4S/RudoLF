@@ -165,7 +165,14 @@ class PySimEnv(BaseEnv):
             max_steps: maximum steps per episode (for truncation).
             verbose: whether to print informational logs.
             start_pos: optional initial ship position (2-array).
-            target_pos: optional target position (unused if checkpoints available).
+            target_pos: optional target position. If given, the trajectory
+                path is truncated to end exactly here, walked in whichever
+                direction reaches it - forwards if target_pos lies further
+                along the trajectory than start_pos, backwards (reversing
+                the trajectory's point order) if target_pos lies earlier -
+                shortened either way to reach it. If omitted, the
+                trajectory's own last point is used as the target and the
+                path is walked forwards, as before.
             dynamics_model: optional dynamics model to use. Pass Model.FH_TABULAR
                 to drive the environment with the external FH Simulator engine
                 instead of the pure-Python dynamics models.
@@ -498,8 +505,16 @@ class PySimEnv(BaseEnv):
         # Load trajectory
         path = load_csv_strict(self.trajectory)
 
-        # Preprocess path (stub currently returns same path)
-        path = self._reduce_path(path, self.initial_ship_pos)
+        # Resolve the target position up front: if the caller provided one,
+        # it now dictates where the path ends (path is shortened to reach
+        # it if needed). Otherwise fall back to the trajectory's own last
+        # point, preserving the previous behavior.
+        target_pos_arr = np.array(target_pos, dtype=np.float32) if target_pos is not None else None
+
+        # Preprocess path: trim the start to begin after start_pos, and
+        # trim the end so the path finishes exactly at target_pos_arr (or
+        # keep the trajectory's own last point if no target_pos was given).
+        path = self._reduce_path(path, self.initial_ship_pos, target_pos_arr)
 
         # Create checkpoints spaced along path
         path = create_checkpoints_from_simple_path(path, CHECKPOINTS_DISTANCE)
@@ -555,8 +570,8 @@ class PySimEnv(BaseEnv):
             self.target_pos = self.checkpoints[-1]['pos']
         else:
             # If user provided target_pos, use it; otherwise fallback to initial_ship_pos
-            if target_pos is not None:
-                self.target_pos = np.array(target_pos, dtype=np.float32)
+            if target_pos_arr is not None:
+                self.target_pos = target_pos_arr
             else:
                 self.target_pos = self.initial_ship_pos.copy()
 
@@ -792,42 +807,109 @@ class PySimEnv(BaseEnv):
         return bool(contains and deep_enough)
 
     @staticmethod
-    def _reduce_path(path: np.ndarray, start_pos: np.ndarray) -> np.ndarray:
+    def _reduce_path(path: np.ndarray, start_pos: np.ndarray, target_pos: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        Reduce the path to start from the point just after the one closest to
-        start_pos.
+        Reduce the path to run from start_pos to target_pos, in whichever
+        direction along the trajectory's stored point order gets you there.
+
+        The trajectory's points are stored in one fixed order (e.g. south
+        to north). The path can be walked forwards - start_pos comes
+        before target_pos in that order - or backwards, by swapping which
+        end is start_pos and which is target_pos (e.g. sailing
+        north-to-south along a trajectory that was recorded
+        south-to-north). Either way, the returned path always begins just
+        after start_pos and ends exactly at target_pos, shortened as
+        needed to reach it - target_pos dictates where the path ends,
+        rather than being inferred from the trajectory's stored last
+        point.
+
+        If target_pos is None, the trajectory's own last point is used as
+        the end and the path is walked forwards (previous default
+        behavior).
 
         Args:
             path (np.ndarray): Full trajectory as (N, 2) array.
             start_pos (np.ndarray): Ship's starting position.
+            target_pos (Optional[np.ndarray]): Desired end position of the
+                path. If None, the trajectory's own last point is used.
 
         Returns:
-            np.ndarray: Reduced path beginning after the closest point.
+            np.ndarray: Reduced path beginning just after start_pos and
+            ending at target_pos - in forward or reverse order, whichever
+            direction target_pos lies in - or ending at the trajectory's
+            original last point if target_pos is None.
 
         Raises:
-            ValueError: If the reduction results in an empty path, meaning
-                start_pos is at or beyond the end of the trajectory.
+            ValueError: If the reduction results in an empty path, or if
+                start_pos and target_pos resolve to the same point on the
+                trajectory.
         """
 
         if len(path) == 0:
             raise ValueError("Path is empty.")
 
         # Find index of the point on the path closest to start_pos
-        distances = np.linalg.norm(path - start_pos, axis=1)
-        closest_index = int(np.argmin(distances))
+        start_distances = np.linalg.norm(path - start_pos, axis=1)
+        start_index = int(np.argmin(start_distances))
 
-        # Slice the path from following point to the end
-        reduced_path = path[closest_index+1:]
+        if target_pos is None:
+            # Slice the path from following point to the end (forward, as before)
+            reduced_path = path[start_index+1:]
 
-        if len(reduced_path) == 0:
+            if len(reduced_path) == 0:
+                raise ValueError(
+                    f"_reduce_path produced an empty path. The start position "
+                    f"{np.asarray(start_pos).tolist()} is at or beyond the last point in the trajectory "
+                    f"(closest index {start_index} of {len(path) - 1}). "
+                    f"Check that start_pos lies near the beginning of the trajectory."
+                )
+
+            return reduced_path
+
+        target_pos = np.asarray(target_pos)
+
+        # Find index of the point on the path closest to target_pos, over
+        # the full original trajectory (direction-agnostic).
+        target_distances = np.linalg.norm(path - target_pos, axis=1)
+        target_index = int(np.argmin(target_distances))
+
+        if target_index == start_index:
             raise ValueError(
-                f"_reduce_path produced an empty path. The start position "
-                f"{np.asarray(start_pos).tolist()} is at or beyond the last point in the trajectory "
-                f"(closest index {closest_index} of {len(path) - 1}). "
-                f"Check that start_pos lies near the beginning of the trajectory."
+                f"start_pos {np.asarray(start_pos).tolist()} and target_pos "
+                f"{target_pos.tolist()} both resolve to the same point on the "
+                f"trajectory (closest index {start_index}); no path exists "
+                f"between them."
             )
 
-        return reduced_path
+        if target_index > start_index:
+            # Forward traversal: target_pos lies further along the
+            # trajectory's stored order than start_pos.
+            truncated_path = path[start_index + 1: target_index + 1].copy()
+        else:
+            # Backward traversal: target_pos lies earlier in the
+            # trajectory's stored order than start_pos, so walk the
+            # trajectory in reverse - e.g. sailing north-to-south along a
+            # trajectory recorded south-to-north. path[target_index:start_index]
+            # is everything strictly between (and including) target_index up
+            # to just before start_index, in stored order; reversing it gives
+            # a path starting just before start_index and ending at target_index.
+            truncated_path = path[target_index:start_index][::-1].copy()
+
+        if len(truncated_path) == 0:
+            # Defensive: shouldn't happen given target_index != start_index,
+            # but guard against it explicitly rather than let it fail deeper.
+            raise ValueError(
+                f"_reduce_path produced an empty path between start_pos "
+                f"{np.asarray(start_pos).tolist()} (index {start_index}) and target_pos "
+                f"{target_pos.tolist()} (index {target_index})."
+            )
+
+        # Force the final point to be exactly target_pos, rather than
+        # merely the closest existing trajectory point to it - this is
+        # what allows target_pos to shorten the path.
+        truncated_path[-1] = target_pos.astype(truncated_path.dtype)
+
+        return truncated_path
 
     @staticmethod
     def _distance_from_point_to_line(point: np.ndarray, line_start: np.ndarray, line_end: np.ndarray) -> float:
