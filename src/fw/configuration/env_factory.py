@@ -612,8 +612,8 @@ class AirSimEnvironment(BaseEnvironment):
 
         super().__init__(name, configuration)
 
-        ship_pos = list(self.configuration["start_pos"])
-        target_pos = list(self.configuration["target_pos"])
+        ship_pos = np.asarray(self.configuration.get("start_pos")).tolist()
+        target_pos = np.asarray(self.configuration.get("target_pos")).tolist()
 
         # Allow callers to control training vs. inference mode via configuration dict.
         # training_mode=True  -> disables UE5 rendering + uses fast frame-stepping.
