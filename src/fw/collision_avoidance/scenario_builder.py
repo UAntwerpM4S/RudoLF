@@ -270,7 +270,7 @@ class ScenarioBuilder:
         #    catches up to) reaches the end of the trajectory
         # ----------------------------------------------------------
         if env.collision_entities and len(env.collision_entities) == 1:
-            if getattr(env, "ts_idx", None) is not None:
+            if getattr(env, "ts_idx", None) is not None and env.ts_idx < len(env.collision_entities):
                 ts = env.collision_entities[env.ts_idx]
                 dist = env.collision_entities[0].distance_to_point(env.ship_pos)
                 route_finished = bool(getattr(ts, "route_finished", False))
