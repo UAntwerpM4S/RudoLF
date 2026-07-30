@@ -19,6 +19,10 @@ from airsim.config.airsim_config import (
     DEFAULT_AIRSIM_SAVE_SLOT,
     DEFAULT_AIRSIM_SIMULATION_SPEED,
 )
+from fw.common.default_positions import (
+    DEFAULT_FRAMEWORK_SHIP_POS,
+    DEFAULT_FRAMEWORK_TARGET_POS,
+)
 from fw.environments.fh_sim_sync_env import FhSimSyncEnv
 
 
@@ -612,8 +616,8 @@ class AirSimEnvironment(BaseEnvironment):
 
         super().__init__(name, configuration)
 
-        ship_pos = np.asarray(self.configuration.get("start_pos")).tolist()
-        target_pos = np.asarray(self.configuration.get("target_pos")).tolist()
+        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
+        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
 
         # Allow callers to control training vs. inference mode via configuration dict.
         # training_mode=True  -> disables UE5 rendering + uses fast frame-stepping.
