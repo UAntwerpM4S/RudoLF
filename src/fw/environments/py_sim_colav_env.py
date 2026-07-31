@@ -487,7 +487,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         # Encounter phase as a single scalar
         #   ~+1  TS before CPA, 0 at CPA, ~-1 TS already past CPA
         tcpa_norm = 0.0
-        if clf.tracked_ts is not None:
+        if clf.tracked_ts is not None and clf.tracked_ts < len(self.collision_entities):
             ts = self.collision_entities[clf.tracked_ts]
             os_pos = self.ship_pos
             os_heading = self.phys_sim.state.heading

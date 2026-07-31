@@ -170,9 +170,10 @@ def main(argv=None):
         batch_size=args.batch_size, num_workers=args.num_workers
     )
 
-    # Derive dims from data (guards against accidental mismatch)
-    input_dim  = next(iter(train_loader))[0].shape[1]   # should be 6
-    output_dim = next(iter(train_loader))[1].shape[1]   # should be 3
+    # Derive dims from data (guards against accidental mismatch with whatever
+    # dataset schema is currently in train_file/val_file/test_file)
+    input_dim  = next(iter(train_loader))[0].shape[1]
+    output_dim = next(iter(train_loader))[1].shape[1]
 
     print(f"Model: input_dim={input_dim}, output_dim={output_dim}, "
           f"hidden={args.hidden_sizes}, dropout={args.dropout}, "

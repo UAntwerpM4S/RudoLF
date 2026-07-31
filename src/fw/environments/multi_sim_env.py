@@ -65,7 +65,6 @@ class MultiSimEnv(BaseEnv):
     def _get_ordered_envs(self):
         """
         Returns a stable ordered list of sub-environments.
-        Cached to ensure consistent indexing.
         """
 
         return list(self.sub_environments.values())

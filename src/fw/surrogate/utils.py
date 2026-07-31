@@ -13,10 +13,14 @@ def data_path(*relative):
 
 def get_device(prefer_gpu: bool = True) -> torch.device:
     """
-    Get device.
+    Return the torch device to use.
 
     Args:
-        prefer_gpu: Description.
+        prefer_gpu: If True (default) and a CUDA device is available,
+            return it; otherwise fall back to CPU.
+
+    Returns:
+        `torch.device("cuda")` or `torch.device("cpu")`.
     """
 
     if prefer_gpu and torch.cuda.is_available():
@@ -25,11 +29,12 @@ def get_device(prefer_gpu: bool = True) -> torch.device:
 
 def save_checkpoint(state: dict, path: Path):
     """
-    Save checkpoint.
+    Save a checkpoint dict to disk, creating parent directories as needed.
 
     Args:
-        state: Description.
-        path: Description.
+        state: Checkpoint payload to save (e.g. model/optimizer state).
+        path: Destination file path; its parent directories are created
+            if they don't already exist.
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,11 +43,17 @@ def save_checkpoint(state: dict, path: Path):
 
 def load_checkpoint(path: Path, device: torch.device):
     """
-    Load checkpoint.
+    Load a checkpoint dict previously saved by `save_checkpoint`.
 
     Args:
-        path: Description.
-        device: Description.
+        path: Path to the checkpoint file.
+        device: Device to map the loaded tensors onto.
+
+    Returns:
+        The deserialized checkpoint object (as passed to `torch.save`).
+
+    Raises:
+        FileNotFoundError: If `path` does not exist.
     """
 
     if not path.exists():

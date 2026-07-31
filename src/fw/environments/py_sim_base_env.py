@@ -371,10 +371,20 @@ class PySimBaseEnv(BaseEnv):
 
         def load_csv_strict(name: str) -> np.ndarray:
             """
-            Load csv strict.
+            Load a required 2-column CSV as an (N, 2) array, or raise.
 
             Args:
-                name: Description.
+                name: CSV filename, resolved relative to this module's
+                    directory (`base_path`).
+
+            Returns:
+                The loaded (N, 2) array.
+
+            Raises:
+                FileNotFoundError: If the file doesn't exist.
+                ValueError: If the loaded array isn't a non-empty (N, 2)
+                    array.
+                RuntimeError: If loading fails for any other reason.
             """
 
             csv_path = os.path.join(base_path, name)
@@ -1300,12 +1310,25 @@ class PySimBaseEnv(BaseEnv):
     @staticmethod
     def _logarithmic_scaling(value: float, value_range: tuple, half_value: float = 10):
         """
-        Logarithmic scaling.
+        Map `value` in `value_range` to [0, 1] via log-curved scaling.
+
+        Linearly normalizes `value` into [0, 1] first, then applies a
+        logarithmic curvature chosen so that `half_value` maps to 0.5 -
+        useful for reward/observation shaping where values near one end
+        of the range should be distinguished more finely than a linear
+        scale would allow.
 
         Args:
-            value: Description.
-            value_range: Description.
-            half_value: Description.
+            value: The value to scale; must lie within `value_range`.
+            value_range: `(min_value, max_value)` bounds for `value`.
+            half_value: The value within `value_range` that should map
+                to 0.5 after scaling (controls the curve's steepness).
+
+        Returns:
+            The scaled value in [0, 1].
+
+        Raises:
+            ValueError: If `value` is outside `value_range`.
         """
 
         # Unpack the range, they correspondent with values that return 0 and 1
@@ -1459,10 +1482,14 @@ class PySimBaseEnv(BaseEnv):
         # --- Helper: safe execution without aborting the simulation ---
         def _safe(callable_obj):
             """
-            Safe.
+            Call `callable_obj()`, swallowing rendering-related errors.
+
+            Used to keep a single flaky matplotlib/Tk draw call from
+            aborting the whole simulation.
 
             Args:
-                callable_obj: Description.
+                callable_obj: A zero-argument callable to invoke; its
+                    return value is discarded.
             """
 
             try:
