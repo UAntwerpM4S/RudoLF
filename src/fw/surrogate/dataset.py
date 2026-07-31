@@ -23,15 +23,30 @@ class ShipDynamicsDataset(Dataset):
         normalize: bool = True,
     ):
         """
-        Initialize the instance.
+        Load a `.npz` dataset (keys "X", "Y") and set up normalization.
+
+        If `normalize` is True and `x_mean` is None, per-feature mean/std
+        are computed from this dataset's own `X`/`Y` (std has `1e-8`
+        added to avoid division by zero); otherwise the given
+        `x_mean`/`x_std`/`y_mean`/`y_std` are used as-is. Note only
+        `x_mean` is checked to decide which path to take - callers should
+        pass all four stats together or none of them.
 
         Args:
-            path: Description.
-            x_mean: Description.
-            x_std: Description.
-            y_mean: Description.
-            y_std: Description.
-            normalize: Description.
+            path: Path to the `.npz` file containing `X` and `Y` arrays.
+            x_mean: Precomputed per-feature input mean; if None (and
+                `normalize` is True), computed from this dataset's `X`.
+            x_std: Precomputed per-feature input std (paired with
+                `x_mean`).
+            y_mean: Precomputed per-feature target mean (paired with
+                `x_mean`).
+            y_std: Precomputed per-feature target std (paired with
+                `x_mean`).
+            normalize: If False, `__getitem__` returns raw `X`/`Y` values
+                and no stats are computed or stored.
+
+        Raises:
+            FileNotFoundError: If `path` does not exist.
         """
 
         path = Path(path)
@@ -64,17 +79,21 @@ class ShipDynamicsDataset(Dataset):
 
     def __len__(self):
         """
-        Length.
+        Return the number of samples in the dataset.
         """
 
         return len(self.X)
 
     def __getitem__(self, idx):
         """
-        Get item.
+        Return the (optionally normalized) sample at `idx`.
 
         Args:
-            idx: Description.
+            idx: Sample index into `X`/`Y`.
+
+        Returns:
+            `(x, y)` tensors, normalized using the stored stats if
+            `self.normalize` is True.
         """
 
         x = self.X[idx].reshape(-1)
@@ -89,10 +108,15 @@ class ShipDynamicsDataset(Dataset):
     @staticmethod
     def compute_stats(path: str):
         """
-        Compute stats.
+        Compute per-feature mean/std for X and Y from a `.npz` dataset.
 
         Args:
-            path: Description.
+            path: Path to the `.npz` file containing `X` and `Y` arrays.
+
+        Returns:
+            `(x_mean, x_std, y_mean, y_std)`, each shaped
+            `(1, num_features)`; std has `1e-8` added to avoid division
+            by zero.
         """
 
         path = Path(path)

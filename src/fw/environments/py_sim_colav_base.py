@@ -1195,10 +1195,14 @@ class PySimColavBaseEnv(PySimBaseEnv):
 
         def _safe(callable_obj):
             """
-            Safe.
+            Call `callable_obj()`, swallowing rendering-related errors.
+
+            Used to keep a single flaky matplotlib/Tk draw call from
+            aborting the whole simulation.
 
             Args:
-                callable_obj: Description.
+                callable_obj: A zero-argument callable to invoke; its
+                    return value is discarded.
             """
 
             try:

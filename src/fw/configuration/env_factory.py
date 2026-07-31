@@ -12,8 +12,8 @@ from airsim.environments.airsim_env import AirSimEnv
 from fw.environments.lunar_lander import LunarLander
 from fw.environments.multi_sim_env import MultiSimEnv
 from fw.environments.py_sim_colav_env import PySimColavEnv
-from fw.common.tools.config_utils import normalize_configuration
 from fw.environments.action_repeat_wrapper import ActionRepeatWrapper
+from fw.common.tools.config_utils import normalize_configuration, get_validated_bool
 
 from airsim.config.airsim_config import (
     DEFAULT_AIRSIM_SAVE_SLOT,
@@ -623,13 +623,13 @@ class AirSimEnvironment(BaseEnvironment):
         # training_mode=True  -> disables UE5 rendering + uses fast frame-stepping.
         # training_mode=False -> restores UE5 rendering + uses real-time stepping.
         cfg = configuration if isinstance(configuration, dict) else {}
-        training_mode = cfg.get("training_mode", True)
-        no_rendering_mode = bool(cfg.get("no_rendering_mode", False))
-        use_pause = cfg.get("use_pause_stepping", training_mode)
+        training_mode = get_validated_bool(cfg, "training_mode", True)
+        no_rendering_mode = get_validated_bool(cfg, "no_rendering_mode", False)
+        use_pause = get_validated_bool(cfg, "use_pause_stepping", training_mode)
         max_steps = int(cfg.get("max_steps", 14000))
         ip = cfg.get("ip", "")
         port = int(cfg.get("port", 41451))
-        use_airsim = bool(cfg.get("use_airsim", True))
+        use_airsim = get_validated_bool(cfg, "use_airsim", True)
         timeout = float(cfg.get("timeout", 10.0))
         max_retries = int(cfg.get("max_retries", 3))
         health_check_interval = float(cfg.get("health_check_interval", 30.0))
@@ -638,28 +638,28 @@ class AirSimEnvironment(BaseEnvironment):
         load_world_on_start = cfg.get("load_world_on_start", None)
         capture_live_start_pose = cfg.get("capture_live_start_pose", None)
         simulation_speed = float(cfg.get("simulation_speed", DEFAULT_AIRSIM_SIMULATION_SPEED))
-        draw_calibration_reference = bool(cfg.get("draw_calibration_reference", True))
+        draw_calibration_reference = get_validated_bool(cfg, "draw_calibration_reference", True)
         episode_log_path = str(cfg.get("episode_log_path", ""))
-        normalize_reward = bool(cfg.get("normalize_reward", True))
+        normalize_reward = get_validated_bool(cfg, "normalize_reward", True)
         reward_normalization_scale = float(cfg.get("reward_normalization_scale", 5.0))
         reset_mode = str(cfg.get("reset_mode", "rewind_pose"))
         progress_log_interval_steps = int(cfg.get("progress_log_interval_steps", 0))
-        log_pause_watchdog_warnings = bool(cfg.get("log_pause_watchdog_warnings", False))
-        use_sim_time_stepping = bool(cfg.get("use_sim_time_stepping", False))
+        log_pause_watchdog_warnings = get_validated_bool(cfg, "log_pause_watchdog_warnings", False)
+        use_sim_time_stepping = get_validated_bool(cfg, "use_sim_time_stepping", False)
         sim_time_per_action = float(cfg.get("sim_time_per_action", cfg.get("time_step", 0.1)))
         frames_per_step = int(cfg.get("frames_per_step", 8))
         time_step = float(cfg.get("time_step", 0.1))
         physics_update_timeout = float(cfg.get("physics_update_timeout", 1.0))
         state_poll_interval = float(cfg.get("state_poll_interval", 0.005))
         latency_warning_threshold = cfg.get("latency_warning_threshold", None)
-        curriculum_enabled = bool(cfg.get("curriculum_enabled", False))
+        curriculum_enabled = get_validated_bool(cfg, "curriculum_enabled", False)
         curriculum_window_size = int(cfg.get("curriculum_window_size", 8))
         curriculum_target_checkpoint = cfg.get("curriculum_target_checkpoint", None)
         curriculum_frontier_increment = int(cfg.get("curriculum_frontier_increment", 4))
         curriculum_window_increment = int(cfg.get("curriculum_window_increment", 6))
         curriculum_success_patience = int(cfg.get("curriculum_success_patience", 2))
         curriculum_randomization_scale = float(cfg.get("curriculum_randomization_scale", 0.0))
-        guidance_assist_enabled = bool(cfg.get("guidance_assist_enabled", False))
+        guidance_assist_enabled = get_validated_bool(cfg, "guidance_assist_enabled", False)
         guidance_residual_steering_scale = float(cfg.get("guidance_residual_steering_scale", 0.45))
         guidance_residual_throttle_scale = float(cfg.get("guidance_residual_throttle_scale", 0.55))
         control_interface = str(cfg.get("control_interface", "car_physics"))

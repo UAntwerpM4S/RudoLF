@@ -74,7 +74,23 @@ def load_pipeline_spec(path: str) -> PipelineSpec:
 
 def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
     """
-    _parse_spec
+    Validate the top-level run file and parse every block in order.
+
+    Validates `on_block_failure` and that `blocks` is non-empty, parses
+    each raw block via `_parse_block` (rejecting duplicate names as it
+    goes), then makes a second pass ensuring every `transfer.from_block`
+    reference names a strictly earlier block in the same file.
+
+    Args:
+        raw: Parsed JSON content of the run file.
+        source: Path string used only for error messages.
+
+    Returns:
+        A validated `PipelineSpec`.
+
+    Raises:
+        PipelineSpecError: On any invalid field or forward/self
+            `transfer.from_block` reference.
     """
 
     on_block_failure = raw.get("on_block_failure", "continue")
@@ -112,7 +128,28 @@ def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
 
 def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], source: str) -> PipelineBlock:
     """
-    _parse_block
+    Validate one raw block dict and build its `PipelineBlock`.
+
+    Checks: `name` is a non-empty, unique string; `env_type` resolves via
+    `resolve_environment_name`; `profile` is registered; `ship_model` /
+    `dynamics_model`, if given, are valid enum members; `action` is one
+    of the supported actions; `reward_configs` is present if and only if
+    `action == "evaluate_reward"`; `stop_condition` and `transfer` are
+    delegated to `_parse_stop_condition`/`_parse_transfer`; `on_failure`,
+    if given, is a valid failure mode.
+
+    Args:
+        raw_block: One entry from the run file's `blocks` list.
+        index: Position of this block in `blocks`, used in error messages.
+        seen_names: Names of blocks already parsed earlier in this file,
+            used to reject duplicates.
+        source: Path string used only for error messages.
+
+    Returns:
+        A validated `PipelineBlock`.
+
+    Raises:
+        PipelineSpecError: On any missing or invalid field.
     """
 
     where = f"[{source}] block[{index}]"
@@ -188,7 +225,24 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
 
 def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopConditionSpec:
     """
-    _parse_stop_condition
+    Validate a raw `stop_condition` dict and build its `StopConditionSpec`.
+
+    `criterion` defaults to "NBR_POLICY_UPDATES" and must name a member
+    of `fw.configuration.stop_condition.Criterion`; "AUTO_CONVERGE" is
+    rejected here even though it is a valid enum member, since
+    `StopCondition.__init__` raises `NotImplementedError` for it (see
+    `_UNIMPLEMENTED_CRITERIA`).
+
+    Args:
+        raw: The block's raw `stop_condition` dict (may be empty).
+        where: Location string used in error messages.
+        name: The owning block's name, used in error messages.
+
+    Returns:
+        A validated `StopConditionSpec`.
+
+    Raises:
+        PipelineSpecError: If `criterion` is unknown or unimplemented.
     """
 
     criterion = raw.get("criterion", "NBR_POLICY_UPDATES")
@@ -210,7 +264,25 @@ def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopCon
 
 def _parse_transfer(raw: Dict[str, Any], where: str, name: str) -> TransferSpec:
     """
-    _parse_transfer
+    Validate a raw `transfer` dict and build its `TransferSpec`.
+
+    `policy_strategy`, if given, must name a member of
+    `fw.configuration.config.PolicyStrategy`; "REUSE_CURRENT_POLICY" is
+    rejected even though it is a valid enum member (see
+    `_UNSUPPORTED_POLICY_STRATEGIES` for why). `from_block` and
+    `external_training_name` are mutually exclusive.
+
+    Args:
+        raw: The block's raw `transfer` dict (may be empty).
+        where: Location string used in error messages.
+        name: The owning block's name, used in error messages.
+
+    Returns:
+        A validated `TransferSpec`.
+
+    Raises:
+        PipelineSpecError: If `policy_strategy` is unknown/unsupported,
+            or both `from_block` and `external_training_name` are set.
     """
 
     policy_strategy = raw.get("policy_strategy")
@@ -220,9 +292,11 @@ def _parse_transfer(raw: Dict[str, Any], where: str, name: str) -> TransferSpec:
             raise PipelineSpecError(
                 f"{where} ('{name}'): transfer.policy_strategy "
                 f"'{policy_strategy}' is not supported by pipeline blocks - "
-                f"each block gets its own Trainer/agent, so there is no "
-                f"in-memory 'current' policy to carry over. Use "
-                f"'REUSE_OTHER_POLICY' with an explicit 'from_block' or "
+                f"AgentManager.set_environment saves-then-reloads a policy "
+                f"file for every transfer strategy, so REUSE_CURRENT_POLICY "
+                f"would behave identically to REUSE_OTHER_POLICY pointed at "
+                f"this block's own env, just under a more confusing name. "
+                f"Use 'REUSE_OTHER_POLICY' with an explicit 'from_block' or "
                 f"'external_training_name' instead."
             )
 
@@ -243,7 +317,17 @@ def _parse_transfer(raw: Dict[str, Any], where: str, name: str) -> TransferSpec:
 
 def _validate_choice(field_name: str, value: Any, valid: Set[str], where: str) -> None:
     """
-    _validate_choice
+    Raise if `value` is not one of `valid`.
+
+    Args:
+        field_name: Name of the field being validated, used in the
+            error message.
+        value: The value to check.
+        valid: Set of acceptable values.
+        where: Location string used in the error message.
+
+    Raises:
+        PipelineSpecError: If `value` is not in `valid`.
     """
 
     if value not in valid:
@@ -254,7 +338,19 @@ def _validate_choice(field_name: str, value: Any, valid: Set[str], where: str) -
 
 def _validate_enum_member(field_name: str, value: str, enum_cls, where: str, block_name: str) -> None:
     """
-    _validate_enum_member
+    Raise if `value` does not name a member of `enum_cls`.
+
+    Args:
+        field_name: Name of the field being validated, used in the
+            error message.
+        value: The raw string to check against `enum_cls`'s member names.
+        enum_cls: The enum class `value` must name a member of.
+        where: Location string used in the error message.
+        block_name: The owning block's name, used in the error message.
+
+    Raises:
+        PipelineSpecError: If `value` does not match any member name of
+            `enum_cls`.
     """
 
     valid_names = {member.name for member in enum_cls}

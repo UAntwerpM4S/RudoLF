@@ -164,7 +164,25 @@ class PipelineScheduler(BaseScheduler):
 
     def _run_block(self, block: PipelineBlock, completed_block_names: set) -> Dict[str, Any]:
         """
-        _run_block
+        Build this block's environment and run its `action`.
+
+        Resolves the block's profile and applies it to the framework
+        config, gym env, and simulator; for `action == "evaluate_reward"`
+        delegates entirely to `_run_evaluate_reward`. Otherwise resolves
+        the transfer/hyperparameters, calls `agent_mgr.set_environment`,
+        then either visualizes (`action == "visualize"`) or trains and
+        checkpoints (`action == "train"`) - only running the post-train
+        evaluation rollout when `block.show_plots` is set.
+
+        Args:
+            block: The block to run.
+            completed_block_names: Names of blocks already run earlier in
+                this scheduler's execution, used to validate
+                `transfer.from_block` references.
+
+        Returns:
+            Dict with at least `"duration"`; also `"evaluation_summary"`
+            when a post-train evaluation rollout ran.
         """
 
         profile = resolve_block_profile(block)
@@ -237,8 +255,22 @@ class PipelineScheduler(BaseScheduler):
         return {"duration": time.time() - start}
 
     def _save_checkpoint(self, block: PipelineBlock, env, profile) -> None:
-        """"
-        _save_checkpoint
+        """
+        Save the just-trained agent's policy file and profile JSON.
+
+        Policy is saved via `agent_mgr.agent.save_policy` under a name
+        derived from the env's `training_name` and the agent type. The
+        profile JSON is written alongside it in the agent's `model_dir`
+        (or `"models"` if unset); a failure to write the profile JSON is
+        logged as a warning rather than raised, since the policy file
+        itself is already saved by that point.
+
+        Args:
+            block: Currently unused by this method - the checkpoint name
+                is derived entirely from `env`/`agent_mgr` instead.
+            env: The block's environment wrapper (`env.gym_env` supplies
+                `training_name`).
+            profile: The profile to serialize alongside the policy.
         """
 
         training_name = env.gym_env.training_name
@@ -256,7 +288,28 @@ class PipelineScheduler(BaseScheduler):
 
     def _run_evaluate_reward(self, block: PipelineBlock, env, profile, framework_config: dict) -> Dict[str, Any]:
         """
-        _run_evaluate_reward
+        Run an `action == "evaluate_reward"` block via a scoped `Trainer`.
+
+        Builds a fresh, block-scoped `Trainer`/`AgentManager` pair (using
+        `agent_mgr.agent_type` and a `"SimpleScheduler"` internally, since
+        `Trainer.evaluate_reward` doesn't use the scheduler it's built
+        with) rather than reusing `self.agent_mgr`. As a result, these
+        blocks don't participate in this run's transfer chain and don't
+        receive `block.hyperparameter_overrides` (`Trainer` resolves its
+        own hyperparameter defaults). Results are written to
+        `{block.name}_reward_evaluation_results.csv`.
+
+        Args:
+            block: The block to run; must have `action == "evaluate_reward"`
+                and a non-empty `reward_configs`.
+            env: The block's environment wrapper, passed to `Trainer`.
+            profile: The profile to train with.
+            framework_config: Framework config dict to pass through to
+                `Trainer` so the profile isn't applied a second time.
+
+        Returns:
+            Dict with `"duration"` (evaluation results themselves are
+            written to the CSV file, not returned).
         """
 
         # Local import: evaluate_reward delegates to the existing, already
@@ -287,7 +340,17 @@ class PipelineScheduler(BaseScheduler):
 
     def _resolve_hyperparameters(self, block: PipelineBlock, canonical_name: str) -> dict:
         """
-        _resolve_hyperparameters
+        Merge this block's hyperparameter overrides onto the env's defaults.
+
+        Args:
+            block: The block whose `hyperparameter_overrides` (if any)
+                take precedence over the defaults.
+            canonical_name: The block's resolved environment name, used
+                to look up its default hyperparameters.
+
+        Returns:
+            Dict of hyperparameters: `get_hyperparameters(...)` defaults
+            with `block.hyperparameter_overrides` merged on top.
         """
 
         base = get_hyperparameters(self.agent_mgr.agent_type, env_name=canonical_name)
@@ -352,7 +415,15 @@ class PipelineScheduler(BaseScheduler):
     @staticmethod
     def _build_stop_condition(spec: StopConditionSpec) -> StopCondition:
         """
-        _build_stop_condition
+        Build a `StopCondition` from a validated `StopConditionSpec`.
+
+        Args:
+            spec: A spec already validated by
+                `run_loader._parse_stop_condition` (so `spec.criterion`
+                is guaranteed to name a member of `Criterion`).
+
+        Returns:
+            A new `StopCondition` configured from `spec`.
         """
 
         return StopCondition(

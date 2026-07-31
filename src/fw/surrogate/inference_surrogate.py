@@ -11,11 +11,15 @@ class SurrogatePredictor:
 
     def __init__(self, checkpoint, device=None):
         """
-        Initialize the instance.
+        Load a trained `SurrogateMLP` and its normalization stats.
 
         Args:
-            checkpoint: Description.
-            device: Description.
+            checkpoint: Path to a checkpoint saved by `train_surrogate.py`
+                (via `utils.save_checkpoint`), containing the model
+                state dict, architecture args, and `x_mean`/`x_std`/
+                `y_mean`/`y_std` normalization stats.
+            device: Device to load the model onto; defaults to CUDA if
+                available, else CPU.
         """
 
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -43,28 +47,41 @@ class SurrogatePredictor:
 
     def _normalize_x(self, x_vals):
         """
-        Normalize x.
+        Normalize raw input features using the loaded x_mean/x_std.
 
         Args:
-            x_vals: Description.
+            x_vals: Raw input array, shape `(N, input_dim)`.
+
+        Returns:
+            Normalized array, same shape as `x_vals`.
         """
 
         return (x_vals - self.x_mean) / self.x_std
 
     def _unnormalize_y(self, y_norm):
         """
-        Unnormalize y.
+        Convert normalized model outputs back to raw units.
 
         Args:
-            y_norm: Description.
+            y_norm: Normalized model output, shape `(N, output_dim)`.
+
+        Returns:
+            Un-normalized predictions, same shape as `y_norm`.
         """
 
         return y_norm * self.y_std + self.y_mean
 
     def predict(self, x_vals):
         """
-        X: np.ndarray (N, input_dim) raw unnormalized input data
-        Returns: np.ndarray (N, output_dim) un-normalized predictions
+        Predict outputs for one or more raw input rows.
+
+        Args:
+            x_vals: Raw unnormalized input, `np.ndarray` of shape
+                `(N, input_dim)` or `(input_dim,)` for a single sample.
+
+        Returns:
+            `np.ndarray` of shape `(N, output_dim)` with un-normalized
+            predictions.
         """
 
         if x_vals.ndim == 1:
@@ -82,10 +99,15 @@ class SurrogatePredictor:
 
     def predict_single(self, x_vals):
         """
-        Predict single.
+        Predict outputs for a single raw input row.
 
         Args:
-            x_vals: Description.
+            x_vals: Raw unnormalized input for one sample (e.g. a list
+                or 1-D array of length `input_dim`).
+
+        Returns:
+            `np.ndarray` of shape `(output_dim,)` with un-normalized
+            predictions.
         """
 
         return self.predict(np.array(x_vals))[0]

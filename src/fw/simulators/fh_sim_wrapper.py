@@ -29,20 +29,15 @@ class FhSimWrapper(BaseSimulator):
         line must be updated.
 
     Velocity frame:
-        getShipVelocityOverGround() returns velocities in the earth-fixed
-        (NED/ENU) frame. VesselState expects body-fixed surge (u) and sway (v).
-        The transformation is:
-            u =  vx * cos(ψ) + vy * sin(ψ)
-            v = -vx * sin(ψ) + vy * cos(ψ)
-        where ψ is the vessel heading [rad] and (vx, vy) are earth-fixed
-        velocity components. Without this rotation the observation vector
-        contains earth-fixed velocities mislabeled as body-fixed, which
-        becomes significant in the presence of wind or current.
+        getShipVelocityOverGround() values are used directly as body-fixed
+        surge (u) and sway (v) - no earth-to-body rotation by heading is
+        applied. This mirrors FhTabularModel's documented empirical finding
+        that this FH engine call returns velocities already expressed in the
+        body-fixed frame despite its name.
 
     Sway sign:
         The FH engine returns y-velocity with positive = port (opposite to the
         body-fixed convention where positive = starboard), so vy is negated.
-        This is consistent with the earth ->body rotation above.
     """
 
     def __init__(self, specs: ShipSpecifications, fh_engine, dt: float):
