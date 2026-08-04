@@ -1,6 +1,8 @@
+import warnings
 import numpy as np
 
 from typing import Tuple
+from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 
@@ -41,15 +43,6 @@ class UGentSurrogate(DynamicsBase):
     def _initialize_coefficients(self):
         """
         Initialize mass, damping, and control coefficients.
-
-        Derives all hydrodynamic coefficients from the vessel's physical
-        properties. The resulting parameters define:
-            - Rigid-body and added-mass terms
-            - Linear and quadratic damping
-            - Rudder-induced forces and moments
-            - Propeller thrust effectiveness
-
-        This method is intended to be called once during initialization.
         """
 
         # Ship parameters
@@ -67,53 +60,51 @@ class UGentSurrogate(DynamicsBase):
         self.N_ur = -1.484041721506744e-11
         self.N_rabsr = -3720289534.3422813
 
-
-    def accelerations(self, u: float, v: float, r: float,
-                      rudder_angle: float, thrust: float) -> Tuple[float, float, float]:
+    def _compute_accelerations(
+        self,
+        state: VesselState,
+        rudder_angle: float,
+        thrust: float,
+    ) -> Tuple[float, float, float]:
         """
         Compute body-fixed accelerations from state and control inputs.
 
-        Computes the surge, sway, and yaw accelerations using a nonlinear
-        3-DOF maneuvering model. Rudder effectiveness is scaled by forward
-        speed to reflect reduced control authority at low speeds, with a
-        lower bound to preserve basic maneuverability.
-
         Args:
-            u: Body-fixed surge velocity in meters per second (m/s).
-            v: Body-fixed sway velocity in meters per second (m/s).
-            r: Body-fixed yaw rate in radians per second (rad/s).
-            rudder_angle: Rudder deflection angle in radians, positive to
-                starboard.
-            thrust: Normalized thrust command (dimensionless), positive in
-                the forward direction.
+            state:        Current vessel state.
+            rudder_angle: Rudder deflection angle [rad], positive to starboard.
+            thrust:       Normalized thrust command (dimensionless), positive forward.
 
         Returns:
-            A tuple `(du, dv, dr)` where:
-                - du: Surge acceleration (m/s²).
-                - dv: Sway acceleration (m/s²).
-                - dr: Yaw acceleration (rad/s²).
-
-        Notes:
-            - Coriolis and centripetal effects are included explicitly.
-            - Rudder forces contribute both sway force and yaw moment.
-            - The model assumes thrust acts purely in surge.
-            - This formulation is suitable for control and reinforcement
-              learning, but not for detailed seakeeping analysis.
+            Tuple (du, dv, dr) — surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
+
+        if thrust < 0.0:
+            warnings.warn(
+                f"UGentSurrogate received thrust={thrust:.4f} < 0 (reverse thrust). "
+                "The propeller model is not defined for negative RPM; clamping to 0. "
+                "Extend the model with a reverse-RPM branch if braking thrust is required.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            thrust = 0.0
 
         n = thrust * 320
         n_rps = n / 60
 
-        I_zz = 4651416900.21  # kgm2
-        x_G = 1.1874  # m
-        D_prop = 1.6573  # m
-        T = 2 * ((0.6723 - 0.7968 * (u * 0.7 / (n_rps * D_prop))) * 1025 * n_rps ** 2 * D_prop ** 4)  # N
+        i_zz = 4651416900.21  # kgm2
+        x_g = 1.1874  # m
+        d_prop = 1.6573  # m
 
-        du = (T * np.cos(rudder_angle) - self.X_u * u - self.X_uabsu * u * abs(u) + self.mass * v *
-            r + self.X_uabsv * u * abs(v)) / (self.mass - self.X_udot)
-        dv = (-self.mass * u * r + self.Y_uv * u * v + self.Y_vabsv * v * abs(v) + T * np.sin(rudder_angle)) / (
-                    self.mass - self.Y_vdot)
-        dr = (-self.mass * x_G * u * r + self.N_ur * u * r + self.N_rabsr * r * np.abs(
-            r) - T * (self.length / 2) * np.sin(rudder_angle)) / (I_zz - self.N_rdot)
+        if n_rps < 1e-6:
+            t = 0.0
+        else:
+            t = 2 * ((0.6723 - 0.7968 * (state.u * 0.7 / (n_rps * d_prop))) * 1025 * n_rps ** 2 * d_prop ** 4)  # N
+
+        du = (t * np.cos(rudder_angle) - self.X_u * state.u - self.X_uabsu * state.u * abs(state.u) +
+              self.mass * state.v * state.r + self.X_uabsv * state.u * abs(state.v)) / (self.mass - self.X_udot)
+        dv = (-self.mass * state.u * state.r + self.Y_uv * state.u * state.v +
+              self.Y_vabsv * state.v * abs(state.v) + t * np.sin(rudder_angle)) / (self.mass - self.Y_vdot)
+        dr = (-self.mass * x_g * state.u * state.r + self.N_ur * state.u * state.r + self.N_rabsr *
+              state.r * np.abs(state.r) - t * (self.length / 2) * np.sin(rudder_angle)) / (i_zz - self.N_rdot)
 
         return du, dv, dr

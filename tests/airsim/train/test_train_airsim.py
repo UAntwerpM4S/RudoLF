@@ -204,7 +204,7 @@ def test_build_training_stop_condition_uses_runtime_settings():
     """
 
     from airsim.train.train_airsim import _build_training_stop_condition
-    from fw.stop_condition import Criterion
+    from fw.configuration.stop_condition import Criterion
 
     stop_condition = _build_training_stop_condition(
         {

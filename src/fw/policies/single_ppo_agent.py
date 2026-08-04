@@ -9,7 +9,7 @@ import numpy as np
 
 from pathlib import Path
 from typing import Optional, Tuple, Union
-from fw.stop_condition import StopCondition
+from fw.configuration.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from stable_baselines3.common.monitor import Monitor
@@ -18,8 +18,8 @@ from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 # from fw.common.tools.ppo_utils import normalize_policy_zip_path
 from fw.common.tools.logging_utils import dump_metrics_to_csv
-from fw.profile_applier import SimulatorApplier
-from fw.config_profile import VesselProfile
+from fw.configuration.profile_applier import SimulatorApplier
+from fw.configuration.config_profile import VesselProfile
 
 
 class SinglePPOAgent(BasePPOAgent):
@@ -57,7 +57,6 @@ class SinglePPOAgent(BasePPOAgent):
         Notes:
             - Automatically infers input and output dimensions from the environment.
             - Initializes the PPO policy network and optimizer.
-            - Sets up running statistics for optional reward normalization.
             - Profile-dependent operations (initial state setup, action adaptation) only run when profile is not None.
         """
 
@@ -76,10 +75,6 @@ class SinglePPOAgent(BasePPOAgent):
         self.policy = PPOPolicy(self.input_dim, self.output_dim, str(self.device))
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         self._vec_env = None
-
-        self.reward_mean = 0.0
-        self.reward_var = 1.0
-        self.reward_count = 1e-4  # avoid division by zero
 
     def _is_airsim_env(self) -> bool:
         """
@@ -368,7 +363,18 @@ class SinglePPOAgent(BasePPOAgent):
         else:
             rewards = next_rewards
             terminations = next_terminations
-            truncations = np.zeros(actions.shape[0], dtype=bool)
+
+            # `next_terminations` here is SB3 VecEnv's combined `done` flag
+            # (terminated OR truncated). Recover the true truncation signal
+            # from SB3's own "TimeLimit.truncated" info key when present,
+            # rather than reporting every episode end as a hard termination.
+            if infos:
+                truncations = np.array(
+                    [bool(env_info.get("TimeLimit.truncated", False)) for env_info in infos],
+                    dtype=bool,
+                )
+            else:
+                truncations = np.zeros(actions.shape[0], dtype=bool)
 
         return next_states, rewards, terminations, truncations
 
@@ -478,7 +484,7 @@ class SinglePPOAgent(BasePPOAgent):
 
         training_session = (
             AirSimTrainingSession(
-                env_name=self.env.type_name,
+                env_name=self.env.training_name,
                 agent_type="PPO",
                 device=str(self.device),
                 src_dir=project_src_dir,
@@ -491,7 +497,7 @@ class SinglePPOAgent(BasePPOAgent):
             training_session.iteration_logger
             if training_session is not None
             else TrainingIterationLogger(
-                env_name=self.env.type_name,
+                env_name=self.env.training_name,
                 agent_type="PPO",
                 device=str(self.device),
                 src_dir=project_src_dir,
@@ -505,7 +511,7 @@ class SinglePPOAgent(BasePPOAgent):
         last_save_index = 0
         training_metrics = []
         best_mean_reward = float('-inf')
-        best_policy_file = f"Best_{self.env.type_name}_PPO_policy"
+        best_policy_file = f"Best_{self.env.training_name}_PPO_policy"
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
         learn_started = time.perf_counter()
 

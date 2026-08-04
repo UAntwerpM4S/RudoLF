@@ -23,7 +23,8 @@ class SurrogateMLP(nn.Module):
         use_batch_norm: bool = False,
         dropout: float = 0.0,
     ):
-        """Initialize the instance.
+        """
+        Initialize the instance.
 
         Args:
             input_dim: Description.
@@ -32,8 +33,8 @@ class SurrogateMLP(nn.Module):
             activation: Description.
             use_batch_norm: Description.
             dropout: Description.
-            ,: Description.
         """
+
         super().__init__()
 
         layers = []
@@ -54,16 +55,20 @@ class SurrogateMLP(nn.Module):
         self._initialize_weights()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward.
+        """
+        Forward.
 
         Args:
             x: Description.
         """
+
         return self.net(x)
 
     def _initialize_weights(self):
-        """ initialize weights.
         """
+        Initialize weights.
+        """
+
         # Xavier initialization for linear layers
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -73,4 +78,3 @@ class SurrogateMLP(nn.Module):
             elif isinstance(m, nn.BatchNorm1d):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
-

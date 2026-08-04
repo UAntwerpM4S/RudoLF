@@ -14,9 +14,9 @@ def normalize_configuration(configuration: Any) -> Any:
 
     Args:
         configuration: Configuration object passed by callers. Supported values:
-            - ``None``: returned unchanged.
-            - ``Mapping``: copied into a plain dict.
-            - empty ``list``/``tuple``: converted to ``{}``.
+            - `None`: returned unchanged.
+            - `Mapping`: copied into a plain dict.
+            - empty `list`/`tuple`: converted to `{}`.
             - anything else: returned unchanged.
 
     Returns:
@@ -30,3 +30,39 @@ def normalize_configuration(configuration: Any) -> Any:
     if isinstance(configuration, (list, tuple)) and len(configuration) == 0:
         return {}
     return configuration
+
+
+def get_validated_bool(mapping: Mapping, key: str, default: bool) -> bool:
+    """
+    Fetch a boolean flag from a JSON-sourced config mapping, failing fast on
+    non-bool values instead of silently coercing them.
+
+    Guards against the `bool("false") == True` foot-gun: a JSON config file
+    that (incorrectly) quotes a boolean as a string, e.g. `"use_airsim":
+    "false"`, would otherwise be silently truthy if passed through
+    `bool(mapping.get(key, default))`.
+
+    Args:
+        mapping: Configuration dict (or other Mapping) to read from.
+        key: Key to look up.
+        default: Value to return if `key` is absent. Not type-checked, since
+            defaults are supplied by code, not by config files.
+
+    Returns:
+        The boolean value stored at `key`, or `default` if absent.
+
+    Raises:
+        ValueError: If `key` is present but its value is not a `bool`.
+    """
+
+    if key not in mapping:
+        return default
+
+    value = mapping[key]
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"Configuration key '{key}' must be a boolean, got {value!r} "
+            f"({type(value).__name__}). Check for a quoted \"true\"/\"false\" "
+            f"string in the JSON config where a literal true/false was intended."
+        )
+    return value

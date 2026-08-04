@@ -56,7 +56,7 @@ def _json_safe(value: Any) -> Any:
     Recursively convert values into JSON-serializable structures.
 
     Args:
-        value: Arbitrary Python value that may contain ``Path`` objects or
+        value: Arbitrary Python value that may contain `Path` objects or
             nested containers.
 
     Returns:
@@ -167,7 +167,7 @@ class TelemetryExporter:
 
         Args:
             metadata: Optional mapping of metadata fields to merge.
-            **kwargs: Additional metadata fields merged after ``metadata``.
+            **kwargs: Additional metadata fields merged after `metadata`.
         """
 
         payload = {}
@@ -182,7 +182,7 @@ class TelemetryExporter:
 
         Args:
             row: Optional row mapping to serialize.
-            **kwargs: Additional row fields merged after ``row``.
+            **kwargs: Additional row fields merged after `row`.
         """
 
         payload = {}

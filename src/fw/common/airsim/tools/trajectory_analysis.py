@@ -147,7 +147,7 @@ def _cumulative_distance_2d(rows: Iterable[Dict[str, Any]]) -> float:
     Compute cumulative 2D distance from x/y columns.
 
     Args:
-        rows: Telemetry rows containing ``x`` and ``y`` fields.
+        rows: Telemetry rows containing `x` and `y` fields.
 
     Returns:
         Cumulative Euclidean distance in meters.
@@ -171,11 +171,11 @@ def _cumulative_distance_2d(rows: Iterable[Dict[str, Any]]) -> float:
 
 def _cumulative_distance_3d(rows: Iterable[Dict[str, Any]]) -> float:
     """
-    Compute cumulative 3D distance from bridge ``pos_*`` columns.
+    Compute cumulative 3D distance from bridge `pos_*` columns.
 
     Args:
-        rows: Bridge telemetry rows containing ``pos_x``, ``pos_y``, and
-            ``pos_z`` fields.
+        rows: Bridge telemetry rows containing `pos_x`, `pos_y`, and
+            `pos_z` fields.
 
     Returns:
         Cumulative 3D Euclidean distance in meters.
@@ -436,13 +436,13 @@ def compute_trajectory_similarity(
     comparison, making the metric coordinate-system agnostic.
 
     Args:
-        session_rows: Framework session telemetry rows (fields ``x``/``y``).
-        bridge_rows: AirSim bridge telemetry rows (fields ``pos_x``/``pos_y``).
+        session_rows: Framework session telemetry rows (fields `x`/`y`).
+        bridge_rows: AirSim bridge telemetry rows (fields `pos_x`/`pos_y`).
         n_samples: Number of arc-length sample points for resampling.
 
     Returns:
-        Tuple ``(rmse, dtw)`` — lower values indicate more similar shapes.
-        Both values are ``float('nan')`` when either trajectory is empty.
+        Tuple `(rmse, dtw)` — lower values indicate more similar shapes.
+        Both values are `float('nan')` when either trajectory is empty.
     """
 
     pts_2d = _extract_xy(session_rows, x_key="x", y_key="y")
@@ -480,7 +480,7 @@ def render_side_by_side_trajectory_plot(
         title: Figure title.
 
     Returns:
-        Saved output path when successful, otherwise ``None``.
+        Saved output path when successful, otherwise `None`.
     """
 
     session_rows = _read_csv_rows(Path(session_csv_path))

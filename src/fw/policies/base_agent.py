@@ -1,12 +1,12 @@
 import os
-import torch
 import numpy as np
 
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple, Union
-from fw.stop_condition import StopCondition
+from fw.configuration.stop_condition import StopCondition
 from fw.environments.base_env import BaseEnv
+from fw.policies.ppo_policy import get_device
 from fw.common.tools.path_utils import resolve_path_relative_to_src
 
 
@@ -52,12 +52,14 @@ class BaseAgent(ABC):
             entropy_coef (float, optional): Coefficient for entropy bonus. Default is 0.01.
             num_epochs (int, optional): Number of training epochs per update. Default is 10.
             batch_size (int, optional): Mini-batch size. Default is 64.
-            device (str, optional): Device for training, either 'cpu' or 'cuda'. Default is 'cpu'.
+            device (str, optional): Device for training. One of 'cpu', 'cuda',
+                or 'auto' ('auto' resolves to 'cuda' if available, else 'cpu').
+                Default is 'cpu'.
             model_dir (str, optional): Folder in which the generated agents are saved.
         """
 
-        if device not in ("cpu", "cuda"):
-            raise ValueError("device must be 'cpu' or 'cuda'")
+        if device not in ("cpu", "cuda", "auto"):
+            raise ValueError("device must be 'cpu', 'cuda', or 'auto'")
 
         if num_envs <= 0:
             raise ValueError("num_envs must be positive")
@@ -77,7 +79,7 @@ class BaseAgent(ABC):
         self.num_epochs = num_epochs
         self.batch_size = batch_size
 
-        self.device = torch.device(device)
+        self.device = get_device(device)
         self.model_dir = model_dir
 
         # Normalize relative model paths so they always land under src/models.

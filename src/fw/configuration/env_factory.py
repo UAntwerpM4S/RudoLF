@@ -1,16 +1,19 @@
 import sys
 import types
+import logging
+import numpy as np
 
 from typing import Any
 from collections.abc import Mapping
+from fw.dynamics.dynamics_model import Model
 from fw.environments.py_sim_env import PySimEnv
-from fw.environments.fh_sim_env import FhSimEnv
+# from fw.environments.fh_sim_env import FhSimEnv
 from airsim.environments.airsim_env import AirSimEnv
 from fw.environments.lunar_lander import LunarLander
 from fw.environments.multi_sim_env import MultiSimEnv
-from fw.environments.py_sim_polar_env import PySimPolarEnv
-from fw.common.tools.config_utils import normalize_configuration
+from fw.environments.py_sim_colav_env import PySimColavEnv
 from fw.environments.action_repeat_wrapper import ActionRepeatWrapper
+from fw.common.tools.config_utils import normalize_configuration, get_validated_bool
 
 from airsim.config.airsim_config import (
     DEFAULT_AIRSIM_SAVE_SLOT,
@@ -19,21 +22,12 @@ from airsim.config.airsim_config import (
 from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_SHIP_POS,
     DEFAULT_FRAMEWORK_TARGET_POS,
-    DEFAULT_PYSIM_POLAR_SHIP_POS,
 )
 from fw.environments.fh_sim_sync_env import FhSimSyncEnv
 
 
 class EnvironmentRegistryError(Exception):
     """ General environment registry error """
-
-
-def _normalize_configuration(configuration):
-    """
-    Backward-compatible shim to fw.common.tools.config_utils.
-    """
-
-    return normalize_configuration(configuration)
 
 
 class _Factory:
@@ -54,14 +48,14 @@ class _Factory:
         Registers a new environment class for later instantiation.
 
         This method is automatically called when an environment subclass is defined.
-        The class must declare an ``ENVIRONMENT_NAME`` class attribute that provides
+        The class must declare an `ENVIRONMENT_NAME` class attribute that provides
         the canonical registration key; no temporary instance is constructed.
 
         Args:
             environment_class (type): The environment class to register.
 
         Raises:
-            EnvironmentRegistryError: If ``ENVIRONMENT_NAME`` is missing/empty, or
+            EnvironmentRegistryError: If `ENVIRONMENT_NAME` is missing/empty, or
                 if a class with the same name is already registered.
         """
 
@@ -105,7 +99,7 @@ class _Factory:
                 or if a conflicting configuration is provided.
         """
 
-        normalized_configuration = _normalize_configuration(configuration)
+        normalized_configuration = normalize_configuration(configuration)
 
         try:
             environment_class = cls._environment_classes[environment_name]
@@ -162,7 +156,7 @@ class BaseEnvironment:
         """
 
         super().__init__()
-        normalized_configuration = _normalize_configuration(configuration)
+        normalized_configuration = normalize_configuration(configuration)
         self._configuration = {} if normalized_configuration is None else normalized_configuration
         self._name = name
         self._env = None  # Will hold the actual simulation environment (e.g., PySimEnv or FhSimEnv)
@@ -224,6 +218,38 @@ class BaseEnvironment:
 
 
     @property
+    def env(self):
+        """
+        Internal accessor for the underlying gym env. Subclasses assign to
+        this (`self.env = SomeGymEnv(...)`) exactly as before; the setter
+        below stamps the wrapper's registered name onto the gym env as its
+        `training_name` so downstream code has a stable logical identity to
+        key policies/metrics/configs on, even when several wrapper classes
+        happen to share the same underlying gym implementation class.
+        """
+
+        return self._env
+
+
+    @env.setter
+    def env(self, value):
+        """
+        Setter for the env property.
+        """
+
+        self._env = value
+
+        if value is not None:
+            try:
+                value.training_name = self._name
+            except AttributeError:
+                # Underlying object doesn't support training_name (e.g. a
+                # non-BaseEnv object such as a VecEnv wrapper) - nothing to
+                # stamp, callers using type_name-based fallbacks are unaffected.
+                pass
+
+
+    @property
     def configuration(self) -> Mapping[str, Any]:
         """
         Returns a read-only view of the environment's configuration.
@@ -262,14 +288,14 @@ class PySimEnvironment(BaseEnvironment):
 
         Args:
             name: Registered environment name.
-            configuration: Scoped configuration dict (see ``build_pysim_config``).
-                Expected keys: wind, current, numerical_damping, ship_model,
+            configuration: Scoped configuration dict (see `build_pysim_config`).
+                Expected keys: wind, current, ship_model,
                 dynamics_model, reward_name, reward_weights.
         """
 
         super().__init__(name, configuration)
 
-        # Legacy callers (and ``build_default_environment`` without a framework
+        # Legacy callers (and `build_default_environment` without a framework
         # config) may instantiate this environment with an empty configuration
         # purely as a registry placeholder.  Skip the underlying PySimEnv
         # construction in that case rather than failing on missing keys.
@@ -277,21 +303,24 @@ class PySimEnvironment(BaseEnvironment):
             return
 
         # Ship_pos and target_pos should eventually be generated by the framework.
-        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
-        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+        ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
+        target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
         # Wrap the environment in a Monitor and a DummyVecEnv
-        # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
+        # self.env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
-                             dynamics_model=self.configuration["dynamics_model"],
-                             ship_model=self.configuration["ship_model"],
-                             wind=self.configuration["wind"],
-                             current=self.configuration["current"],
-                             numerical_damping=self.configuration["numerical_damping"],
-                             reward_name=self.configuration.get("reward_name", "default"),
-                             reward_weights=self.configuration.get("reward_weights", None))
+        self.env = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
+                            overall_contour=self.configuration["overall_contour"],
+                            depth_contour=self.configuration["depth_contour"],
+                            trajectory=self.configuration["trajectory"],
+                            dynamics_model=self.configuration["dynamics_model"],
+                            ship_model=self.configuration["ship_model"],
+                            wind=self.configuration["wind"],
+                            current=self.configuration["current"],
+                            ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
+                            reward_name=self.configuration.get("reward_name", "default"),
+                            reward_weights=self.configuration.get("reward_weights", None))
 
 
 class MultiPySimEnvironment(BaseEnvironment):
@@ -307,40 +336,152 @@ class MultiPySimEnvironment(BaseEnvironment):
 
         Args:
             name: Registered environment name.
-            configuration: Scoped configuration dict (see ``build_pysim_config``).
-                Expected keys: wind, current, numerical_damping, ship_model,
+            configuration: Scoped configuration dict (see `build_pysim_config`).
+                Expected keys: wind, current, ship_model,
                 dynamics_model, reward_name, reward_weights.
         """
 
         super().__init__(name, configuration)
 
+        # Legacy callers (and `build_default_environment` without a framework
+        # config) may instantiate this environment with an empty configuration
+        # purely as a registry placeholder.  Skip the underlying PySimEnv
+        # construction in that case rather than failing on missing keys.
+        if not self.configuration:
+            return
+
         # Ship_pos and target_pos should eventually be generated by the framework.
-        ship_pos = [2245, -47]
-        target_pos = [-1559, 11990]
+        ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
+        target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
         # Wrap the environment in a Monitor and a DummyVecEnv
-        # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
+        # self.env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
         single_pysim_env1 = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
+                             overall_contour=self.configuration["overall_contour"],
+                             depth_contour=self.configuration["depth_contour"],
+                             trajectory=self.configuration["trajectory"],
                              dynamics_model=self.configuration["dynamics_model"],
                              ship_model=self.configuration["ship_model"],
                              wind=self.configuration["wind"],
                              current=self.configuration["current"],
-                             numerical_damping=self.configuration["numerical_damping"],
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
         single_pysim_env2 = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
+                             overall_contour=self.configuration["overall_contour"],
+                             depth_contour=self.configuration["depth_contour"],
+                             trajectory=self.configuration["trajectory"],
                              dynamics_model=self.configuration["dynamics_model"],
                              ship_model=self.configuration["ship_model"],
                              wind=self.configuration["wind"],
                              current=self.configuration["current"],
-                             numerical_damping=self.configuration["numerical_damping"],
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
-        self._env = MultiSimEnv(sub_environments=[single_pysim_env1, single_pysim_env2])
+        self.env = MultiSimEnv(sub_environments=[single_pysim_env1, single_pysim_env2])
+
+
+class PySimColavEnvironment(BaseEnvironment):
+    """
+    Class for a single PySimColav environment (one COLREGs scenario type).
+    """
+
+    ENVIRONMENT_NAME = "PySimColavEnv"
+
+    def __init__(self, name, configuration):
+        """
+        Create the default PySimColav environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Scoped configuration dict (see `build_colav_config`).
+                Expected keys: wind, current, ship_model, dynamics_model,
+                enable_obstacles.
+        """
+        super().__init__(name, configuration)
+
+        # Legacy callers (and `build_default_environment` without a framework
+        # config) may instantiate this environment with an empty configuration
+        # purely as a registry placeholder.  Skip the underlying PySimColavEnv
+        # construction in that case rather than failing on missing keys.
+        if not self.configuration:
+            return
+
+        ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
+        target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
+
+        self.env = PySimColavEnv(
+            time_step=1.0,
+            max_steps=1500,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            overall_contour=self.configuration["overall_contour"],
+            depth_contour=self.configuration["depth_contour"],
+            trajectory=self.configuration["trajectory"],
+            dynamics_model=self.configuration["dynamics_model"],
+            ship_model=self.configuration["ship_model"],
+            wind=self.configuration["wind"],
+            current=self.configuration["current"],
+            enable_obstacles=self.configuration.get("enable_obstacles", True),
+        )
+
+
+class MultiPolicyColavEnvironment(BaseEnvironment):
+    """
+    Single PySimColavEnv with scenario one-hot encoding enabled, for use
+    with MultiPolicySingleAgent.  The environment appends a one-hot vector
+    to the observation indicating the active scenario type, allowing the
+    agent to route each timestep to the correct policy.
+    """
+
+    ENVIRONMENT_NAME = "MultiPolicyColavEnv"
+
+    def __init__(self, name, configuration):
+        """
+        Create the MultiPolicyColav environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Scoped configuration dict (see
+                `build_multi_policy_colav_config`). Expected keys: wind,
+                current, ship_model, dynamics_model, enable_obstacles.
+                eval/eval_scenario/eval_obstacle_count/
+                include_scenario_one_hot/minimal_path_render remain
+                hardcoded below pending a future rework.
+        """
+        super().__init__(name, configuration)
+
+        # Legacy callers (and `build_default_environment` without a framework
+        # config) may instantiate this environment with an empty configuration
+        # purely as a registry placeholder.  Skip the underlying PySimColavEnv
+        # construction in that case rather than failing on missing keys.
+        if not self.configuration:
+            return
+
+        ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
+        target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
+
+        self.env = PySimColavEnv(
+            time_step=1.0,
+            max_steps=1500,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            overall_contour=self.configuration["overall_contour"],
+            depth_contour=self.configuration["depth_contour"],
+            trajectory=self.configuration["trajectory"],
+            dynamics_model=self.configuration["dynamics_model"],
+            ship_model=self.configuration["ship_model"],
+            wind=self.configuration["wind"],
+            current=self.configuration["current"],
+            enable_obstacles=self.configuration.get("enable_obstacles", True),
+            evaluate=False,
+            eval_scenario="crossing-right",
+            eval_obstacle_count=1,
+            include_scenario_one_hot=True,
+            minimal_path_render=True
+        )
 
 
 class FhSimEnvironment(BaseEnvironment):
@@ -356,23 +497,38 @@ class FhSimEnvironment(BaseEnvironment):
 
         Args:
             name: Registered environment name.
-            configuration: Scoped configuration dict (see ``build_fhsim_config``).
+            configuration: Scoped configuration dict (see `build_fhsim_config`).
                 Expected keys: ship_model, scenario.
         """
 
         super().__init__(name, configuration)
 
+        # Registry placeholder instantiation with no config - nothing to build.
+        if not self.configuration:
+            return
+
         # Ship_pos and target_pos should eventually be generated by the framework.
-        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
-        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+        ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
+        target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
         # Wrap the environment in a Monitor and a DummyVecEnv
-        # self._env = DummyVecEnv([lambda: Monitor(FhSimEnv(render_mode='human', max_steps=1200, verbose=True,
+        # self.env = DummyVecEnv([lambda: Monitor(FhSimEnv(render_mode='human', max_steps=1200, verbose=True,
         #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
-        self._env = FhSimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
-                             ship_model=self.configuration["ship_model"],
-                             scenario=self.configuration["scenario"])
+        dynamics_model = self.configuration["dynamics_model"]
+        if dynamics_model != Model.FH_TABULAR:
+            logging.warning(
+                f"Using FhSimEnv with a {dynamics_model} dynamics model is not recommended, "
+                f"use {Model.FH_TABULAR} instead."
+            )
+
+        self.env = PySimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
+                            overall_contour=self.configuration["overall_contour"],
+                            depth_contour=self.configuration["depth_contour"],
+                            trajectory=self.configuration["trajectory"],
+                            ship_model=self.configuration["ship_model"],
+                            scenario=self.configuration["scenario"],
+                            dynamics_model=dynamics_model)
 
 
 
@@ -406,17 +562,24 @@ class FhSimSyncEnvironment(BaseEnvironment):
 
         super().__init__(name, configuration)
 
+        # Registry placeholder instantiation with no config - nothing to build.
+        if not self.configuration:
+            return
+
         # ship_pos and target_pos remain framework-side concerns (they feed
         # observation construction and reward), even though the *actual*
         # vessel state lives in the remote simSync.
-        ship_pos = list(DEFAULT_FRAMEWORK_SHIP_POS)
-        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
+        ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
+        target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
-        self._env = FhSimSyncEnv(
+        self.env = FhSimSyncEnv(
             time_step=2.0,
             max_steps=135000,
             start_pos=ship_pos,
             target_pos=target_pos,
+            overall_contour=self.configuration["overall_contour"],
+            depth_contour=self.configuration["depth_contour"],
+            trajectory=self.configuration["trajectory"],
             ship_model=self.configuration["ship_model"],
             remote_ip=self.configuration.get("remote_ip", "127.0.0.1"),
             remote_port=self.configuration.get("remote_port", 5000),
@@ -443,7 +606,7 @@ class AirSimEnvironment(BaseEnvironment):
         Args:
             name: Registered environment name.
             configuration: Scoped AirSim configuration dict
-                (see ``build_airsim_config``). All AirSim-specific keys with
+                (see `build_airsim_config`). All AirSim-specific keys with
                 their defaults live in that builder function.
 
         Raises:
@@ -460,13 +623,13 @@ class AirSimEnvironment(BaseEnvironment):
         # training_mode=True  -> disables UE5 rendering + uses fast frame-stepping.
         # training_mode=False -> restores UE5 rendering + uses real-time stepping.
         cfg = configuration if isinstance(configuration, dict) else {}
-        training_mode = cfg.get("training_mode", True)
-        no_rendering_mode = bool(cfg.get("no_rendering_mode", False))
-        use_pause = cfg.get("use_pause_stepping", training_mode)
+        training_mode = get_validated_bool(cfg, "training_mode", True)
+        no_rendering_mode = get_validated_bool(cfg, "no_rendering_mode", False)
+        use_pause = get_validated_bool(cfg, "use_pause_stepping", training_mode)
         max_steps = int(cfg.get("max_steps", 14000))
         ip = cfg.get("ip", "")
         port = int(cfg.get("port", 41451))
-        use_airsim = bool(cfg.get("use_airsim", True))
+        use_airsim = get_validated_bool(cfg, "use_airsim", True)
         timeout = float(cfg.get("timeout", 10.0))
         max_retries = int(cfg.get("max_retries", 3))
         health_check_interval = float(cfg.get("health_check_interval", 30.0))
@@ -475,34 +638,34 @@ class AirSimEnvironment(BaseEnvironment):
         load_world_on_start = cfg.get("load_world_on_start", None)
         capture_live_start_pose = cfg.get("capture_live_start_pose", None)
         simulation_speed = float(cfg.get("simulation_speed", DEFAULT_AIRSIM_SIMULATION_SPEED))
-        draw_calibration_reference = bool(cfg.get("draw_calibration_reference", True))
+        draw_calibration_reference = get_validated_bool(cfg, "draw_calibration_reference", True)
         episode_log_path = str(cfg.get("episode_log_path", ""))
-        normalize_reward = bool(cfg.get("normalize_reward", True))
+        normalize_reward = get_validated_bool(cfg, "normalize_reward", True)
         reward_normalization_scale = float(cfg.get("reward_normalization_scale", 5.0))
         reset_mode = str(cfg.get("reset_mode", "rewind_pose"))
         progress_log_interval_steps = int(cfg.get("progress_log_interval_steps", 0))
-        log_pause_watchdog_warnings = bool(cfg.get("log_pause_watchdog_warnings", False))
-        use_sim_time_stepping = bool(cfg.get("use_sim_time_stepping", False))
+        log_pause_watchdog_warnings = get_validated_bool(cfg, "log_pause_watchdog_warnings", False)
+        use_sim_time_stepping = get_validated_bool(cfg, "use_sim_time_stepping", False)
         sim_time_per_action = float(cfg.get("sim_time_per_action", cfg.get("time_step", 0.1)))
         frames_per_step = int(cfg.get("frames_per_step", 8))
         time_step = float(cfg.get("time_step", 0.1))
         physics_update_timeout = float(cfg.get("physics_update_timeout", 1.0))
         state_poll_interval = float(cfg.get("state_poll_interval", 0.005))
         latency_warning_threshold = cfg.get("latency_warning_threshold", None)
-        curriculum_enabled = bool(cfg.get("curriculum_enabled", False))
+        curriculum_enabled = get_validated_bool(cfg, "curriculum_enabled", False)
         curriculum_window_size = int(cfg.get("curriculum_window_size", 8))
         curriculum_target_checkpoint = cfg.get("curriculum_target_checkpoint", None)
         curriculum_frontier_increment = int(cfg.get("curriculum_frontier_increment", 4))
         curriculum_window_increment = int(cfg.get("curriculum_window_increment", 6))
         curriculum_success_patience = int(cfg.get("curriculum_success_patience", 2))
         curriculum_randomization_scale = float(cfg.get("curriculum_randomization_scale", 0.0))
-        guidance_assist_enabled = bool(cfg.get("guidance_assist_enabled", False))
+        guidance_assist_enabled = get_validated_bool(cfg, "guidance_assist_enabled", False)
         guidance_residual_steering_scale = float(cfg.get("guidance_residual_steering_scale", 0.45))
         guidance_residual_throttle_scale = float(cfg.get("guidance_residual_throttle_scale", 0.55))
         control_interface = str(cfg.get("control_interface", "car_physics"))
         observation_profile = str(cfg.get("observation_profile", "ppo_route_relative_car"))
 
-        self._env = AirSimEnv(
+        self.env = AirSimEnv(
             ship_pos=ship_pos,
             target_pos=target_pos,
             max_steps=max_steps,
@@ -559,7 +722,7 @@ class AirSimEnvironment(BaseEnvironment):
         # Action repeat wrapper can be set dynamically or statically (e.g., repeat=4)
         repeat_steps = int(cfg.get("action_repeat", 1))
         if repeat_steps > 1:
-            self._env = ActionRepeatWrapper(self._env, repeat=repeat_steps)
+            self.env = ActionRepeatWrapper(self.env, repeat=repeat_steps)
 
 
 class LunarEnvironment(BaseEnvironment):
@@ -581,38 +744,7 @@ class LunarEnvironment(BaseEnvironment):
 
         super().__init__(name, configuration)
 
-        self._env = LunarLander(continuous=True)
-
-
-class PySimPolarEnvironment(BaseEnvironment):
-    """
-    Wrapper for the polar-coordinate Python Simulator environment.
-    """
-
-    ENVIRONMENT_NAME = "PySimPolarEnv"
-
-    def __init__(self, name, configuration):
-        """
-        Create the default PySim polar environment wrapper.
-
-        Args:
-            name: Registered environment name.
-            configuration: Optional runtime configuration forwarded by the
-                environment factory.
-        """
-
-        super().__init__(name, configuration)
-
-        # Ship_pos and target_pos should eventually be generated by the framework.
-        ship_pos = list(DEFAULT_PYSIM_POLAR_SHIP_POS)
-        target_pos = list(DEFAULT_FRAMEWORK_TARGET_POS)
-
-        # Wrap the environment in a Monitor and a DummyVecEnv
-        # self._env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
-        #                                                   ship_pos=ship_pos, target_pos=target_pos))])
-
-        self._env = PySimPolarEnv(ship_pos=ship_pos, target_pos=target_pos, max_steps=2000, verbose=False)
-
+        self.env = LunarLander(continuous=True)
 
 
 # ---------------------------------------------------------------------------
@@ -643,17 +775,71 @@ def build_pysim_config(framework_config: dict, extra: dict | None = None) -> dic
     """
 
     cfg = {
-        "wind":               framework_config["wind"],
-        "current":            framework_config["current"],
-        "numerical_damping":  framework_config["numerical_damping"],
-        "ship_model":         framework_config["ship_model"],
-        "dynamics_model":     framework_config["dynamics_model"],
-        "reward_name":        framework_config.get("reward_name", "default"),
-        "reward_weights":     framework_config.get("reward_weights", None),
+        "wind":                 framework_config["wind"],
+        "current":              framework_config["current"],
+        "ship_model":           framework_config["ship_model"],
+        "dynamics_model":       framework_config["dynamics_model"],
+        "start_pos":            framework_config["start_pos"],
+        "target_pos":           framework_config["target_pos"],
+        "overall_contour":      framework_config["overall_contour"],
+        "depth_contour":        framework_config["depth_contour"],
+        "trajectory":           framework_config["trajectory"],
+        "ua_surrogate_config":  framework_config["ua_surrogate_config"],
+        "reward_weights":       framework_config.get("reward_weights", None),
+        "reward_name":          framework_config.get("reward_name", "default"),
     }
     if extra:
         cfg.update(extra)
     return cfg
+
+
+def build_colav_config(framework_config: dict, extra: dict | None = None) -> dict:
+    """
+    Extract PySimColav-relevant keys from *framework_config*.
+
+    Args:
+        framework_config: Full resolved framework configuration dict.
+        extra: Optional overrides merged on top.
+
+    Returns:
+        A dict containing only the keys consumed by PySimColavEnvironment.
+    """
+
+    cfg = {
+        "wind":                framework_config["wind"],
+        "current":             framework_config["current"],
+        "ship_model":          framework_config["ship_model"],
+        "dynamics_model":      framework_config["dynamics_model"],
+        "start_pos":           framework_config["start_pos"],
+        "target_pos":          framework_config["target_pos"],
+        "overall_contour":     framework_config["overall_contour"],
+        "depth_contour":       framework_config["depth_contour"],
+        "trajectory":          framework_config["trajectory"],
+        "enable_obstacles":    framework_config.get("enable_obstacles", True),
+    }
+    if extra:
+        cfg.update(extra)
+    return cfg
+
+
+def build_multi_policy_colav_config(framework_config: dict, extra: dict | None = None) -> dict:
+    """
+    Extract MultiPolicyColav-relevant keys from *framework_config*.
+
+    Currently identical to `build_colav_config`; the eval/scenario-related
+    fields (eval, eval_scenario, eval_obstacle_count, include_scenario_one_hot,
+    minimal_path_render) remain hardcoded in MultiPolicyColavEnvironment
+    pending a future rework, so they are not sourced from framework_config yet.
+
+    Args:
+        framework_config: Full resolved framework configuration dict.
+        extra: Optional overrides merged on top.
+
+    Returns:
+        A dict containing only the keys consumed by MultiPolicyColavEnvironment.
+    """
+
+    return build_colav_config(framework_config, extra)
 
 
 def build_fhsim_config(framework_config: dict) -> dict:
@@ -668,8 +854,14 @@ def build_fhsim_config(framework_config: dict) -> dict:
     """
 
     return {
-        "ship_model": framework_config["ship_model"],
-        "scenario":   framework_config["scenario"],
+        "ship_model":       framework_config["ship_model"],
+        "scenario":         framework_config["scenario"],
+        "dynamics_model":   framework_config["dynamics_model"],
+        "start_pos":        framework_config["start_pos"],
+        "target_pos":       framework_config["target_pos"],
+        "overall_contour":  framework_config["overall_contour"],
+        "depth_contour":    framework_config["depth_contour"],
+        "trajectory":       framework_config["trajectory"],
     }
 
 
@@ -705,8 +897,8 @@ def build_airsim_config(framework_config: dict, training_mode: bool = True) -> d
     """
     Extract AirSim-relevant keys from *framework_config*.
 
-    AirSim configuration lives under the ``airsim`` sub-key (populated by
-    ``get_airsim_config()``).  Any key not present falls back to the
+    AirSim configuration lives under the `airsim` sub-key (populated by
+    `get_airsim_config()`).  Any key not present falls back to the
     AirSimEnvironment constructor defaults.
 
     Args:
@@ -716,7 +908,7 @@ def build_airsim_config(framework_config: dict, training_mode: bool = True) -> d
 
     Returns:
         A dict containing only the keys consumed by AirSimEnvironment, with
-        ``training_mode`` always explicitly set.
+        `training_mode` always explicitly set.
     """
 
     # Fall back to the flat framework_config if no nested "airsim" sub-key
@@ -734,13 +926,13 @@ def _pick_airsim_fallback(configuration) -> str:
 
     Args:
         configuration: The raw configuration passed to the failed AirSim call.
-            Used only to retrieve ``env_type``; may be ``None``.
+            Used only to retrieve `env_type`; may be `None`.
 
     Returns:
         Canonical environment name to use as a fallback.
 
     Side-effects:
-        Calls ``sys.exit(1)`` if AirSimEnv is the *only* configured environment
+        Calls `sys.exit(1)` if AirSimEnv is the *only* configured environment
         and no fallback is available.
     """
 
@@ -749,7 +941,7 @@ def _pick_airsim_fallback(configuration) -> str:
     if configuration and isinstance(configuration, dict):
         config = configuration
     else:
-        from fw.config import get_config_parameters  # local import — last resort only
+        from fw.configuration.config import get_config_parameters  # local import — last resort only
         config = get_config_parameters()
 
     env_types = config.get("env_type", [])
@@ -777,8 +969,8 @@ def get(environment_name: str, configuration=None):
 
     This is the single public entry-point for obtaining environments.  For
     every environment other than AirSim it delegates directly to
-    ``_Factory.get``.  For AirSim it additionally intercepts
-    ``ImportError`` and ``ConnectionError`` and transparently re-routes the
+    `_Factory.get`.  For AirSim it additionally intercepts
+    `ImportError` and `ConnectionError` and transparently re-routes the
     call to the configured fallback environment so that callers always
     receive an instance whose Python type exactly matches the environment
     that is actually running.
@@ -792,7 +984,7 @@ def get(environment_name: str, configuration=None):
         BaseEnvironment: A fully constructed environment instance.
 
     Raises:
-        EnvironmentRegistryError: Propagated from ``_Factory.get`` for any
+        EnvironmentRegistryError: Propagated from `_Factory.get` for any
             non-AirSim environment, or for AirSim when the resolved fallback
             is also unavailable.
     """
@@ -807,10 +999,10 @@ def get(environment_name: str, configuration=None):
         # `configuration` here is an AirSim-scoped dict (from build_airsim_config),
         # *not* the full framework config.  Passing it to build_default_environment
         # for a PySim-family fallback would cause a KeyError on keys such as
-        # "wind", "current", and "numerical_damping" that the AirSim config does
-        # not carry.  Load the full framework config instead so the fallback
+        # "wind", and "current" that the AirSim config does not carry.
+        # Load the full framework config instead so the fallback
         # environment receives the keys it actually needs.
-        from fw.config import get_config_parameters as _get_fw_config  # local to avoid circular import
+        from fw.configuration.config import get_config_parameters as _get_fw_config  # local to avoid circular import
         fallback_framework_config = _get_fw_config()
         fallback_name = _pick_airsim_fallback(fallback_framework_config)
         return build_default_environment(fallback_name, framework_config=fallback_framework_config)
@@ -821,8 +1013,9 @@ fh_sim_env_name = "FhSimEnv"
 sync_sim_env_name = "FhSimSyncEnv"
 airsim_env_name = "AirSimEnv"
 lunar_env_name = "LunarLander"
-py_sim_polar_env_name = "PySimPolarEnv"
 multi_sim_env_name = "MultiSimEnv"
+py_sim_colav_env_name = "PySimColavEnv"
+multi_policy_colav_env_name = "MultiPolicyColavEnv"
 
 _ENVIRONMENT_NAME_ALIASES = {
     py_sim_env_name.lower(): py_sim_env_name,
@@ -835,11 +1028,14 @@ _ENVIRONMENT_NAME_ALIASES = {
     "airsim": airsim_env_name,
     lunar_env_name.lower(): lunar_env_name,
     "lunar": lunar_env_name,
-    py_sim_polar_env_name.lower(): py_sim_polar_env_name,
-    "pysimpolar": py_sim_polar_env_name,
-    "polar": py_sim_polar_env_name,
     multi_sim_env_name.lower(): multi_sim_env_name,
     "multipysim": multi_sim_env_name,
+    py_sim_colav_env_name.lower(): py_sim_colav_env_name,
+    "pysimcolav": py_sim_colav_env_name,
+    "colav": py_sim_colav_env_name,
+    multi_policy_colav_env_name.lower(): multi_policy_colav_env_name,
+    "multipolicycolav": multi_policy_colav_env_name,
+    "mpcolav": multi_policy_colav_env_name,
 }
 
 
@@ -908,11 +1104,11 @@ def build_default_environment(environment_name, framework_config=None):
 
     Args:
         environment_name: Canonical environment name returned by
-            ``resolve_environment_name``.
+            `resolve_environment_name`.
         framework_config: The already-resolved framework configuration dict
-            (from ``get_config_parameters()``).  Required for all non-Lunar,
-            non-Polar environments; pass ``None`` only when those environments
-            are requested without a live config (rare / test scenarios).
+            (from `get_config_parameters()`).  Required for all non-Lunar;
+            pass `None` only when those environments are requested without
+            a live config (rare / test scenarios).
 
     Returns:
         A registered environment instance ready for training or visualization.
@@ -934,7 +1130,15 @@ def build_default_environment(environment_name, framework_config=None):
         cfg = build_fhsimsync_config(framework_config) if framework_config else {}
         return get(environment_name, configuration=cfg)
 
-    # LunarLander and PySimPolarEnv need no framework-level config keys.
+    if environment_name == py_sim_colav_env_name:
+        cfg = build_colav_config(framework_config) if framework_config else {}
+        return get(environment_name, configuration=cfg)
+
+    if environment_name == multi_policy_colav_env_name:
+        cfg = build_multi_policy_colav_config(framework_config) if framework_config else {}
+        return get(environment_name, configuration=cfg)
+
+    # LunarLander needs no framework-level config keys.
     return get(environment_name, configuration={})
 
 
@@ -942,21 +1146,21 @@ def initialize_all_environments():
     """
     Trigger registration of all supported environment classes.
 
-    Because registration is now driven purely by the ``ENVIRONMENT_NAME``
+    Because registration is now driven purely by the `ENVIRONMENT_NAME`
     class attribute (set at class-definition time), this function no longer
-    needs to construct any instances.  Subclassing ``BaseEnvironment``
-    automatically calls ``_Factory.register`` via ``__init_subclass__``, so
+    needs to construct any instances.  Subclassing `BaseEnvironment`
+    automatically calls `_Factory.register` via `__init_subclass__`, so
     by the time this function runs all classes defined in this module are
     already registered.
 
-    The function is kept as an explicit call-site in ``main.py`` to make the
+    The function is kept as an explicit call-site in `main.py` to make the
     registration step visible and to allow future pre-flight checks (e.g.
     verifying that expected environment names are present in the registry).
     """
 
     expected = {
         py_sim_env_name, fh_sim_env_name, sync_sim_env_name, lunar_env_name,
-        py_sim_polar_env_name, multi_sim_env_name,
+        multi_sim_env_name, py_sim_colav_env_name, multi_policy_colav_env_name,
     }
     missing = expected - set(_Factory._environment_classes)
     if missing:

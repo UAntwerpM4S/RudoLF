@@ -84,12 +84,22 @@ class ShipEpisodeData:
     ukc_measurements: np.ndarray = field(default_factory=lambda: np.array([]))
     reward: float = 0.0
     collision_events: list[CollisionEvent] = field(default_factory=list)
+    # Terminal info reported by the env at episode end (COLAV-specific).
+    collision: bool = False
+    collision_type: str | None = None
+    collision_side: str | None = None
+    colreg_violations: int = 0
+    # Scenario classification diagnostics: one record per encounter captured
+    # at encounter entry. Each record is {"gt": str, "pred": str} using the
+    # 5-way extended label space (path-following / head-on / overtaking /
+    # crossing-right / crossing-left). Empty list when no encounters occurred.
+    scenario_encounters: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Validate episode metadata and normalize the path array shape.
 
         Ensures the ship identifier and episode index are valid, and coerces an
-        empty path into a consistent shape of ``(0, 2)``.
+        empty path into a consistent shape of `(0, 2)`.
 
         Raises:
             ValueError: If ship_id is empty, episode is negative, or path has an
@@ -257,17 +267,20 @@ class CollisionAnnotator:
             dist = float(dists[t])
             is_collision = dist < self.collision_threshold
 
-            ep_a.collision_events.append(CollisionEvent(
+            event_a = CollisionEvent(
                 timestep=int(t),
                 ship_a=ep_a.ship_id,
                 ship_b=ep_b.ship_id,
                 distance=dist,
                 is_collision=is_collision,
-            ))
-            ep_b.collision_events.append(CollisionEvent(
+            )
+            event_b = CollisionEvent(
                 timestep=int(t),
-                ship_a=ep_b.ship_id,
-                ship_b=ep_a.ship_id,
+                ship_a=ep_a.ship_id,
+                ship_b=ep_b.ship_id,
                 distance=dist,
                 is_collision=is_collision,
-            ))
+            )
+
+            ep_a.collision_events.append(event_a)
+            ep_b.collision_events.append(event_b)

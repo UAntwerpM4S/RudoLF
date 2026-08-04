@@ -5,14 +5,14 @@ import tempfile
 import numpy as np
 
 from typing import Optional, Tuple, Union
-from fw.stop_condition import StopCondition
+from fw.configuration.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
 from fw.environments.multi_sim_env import MultiSimEnv
-from fw.profile_applier import SimulatorApplier
-from fw.config_profile import VesselProfile
+from fw.configuration.profile_applier import SimulatorApplier
+from fw.configuration.config_profile import VesselProfile
 
 
 class MultiPPOAgent(BasePPOAgent):
@@ -266,8 +266,8 @@ class MultiPPOAgent(BasePPOAgent):
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
         best_policy_files = [
-            f"Best_{env.type_name}_{i+1}_PPO_policy" if self.num_envs > 1
-            else f"Best_{env.type_name}_PPO_policy"
+            f"Best_{env.training_name}_{i+1}_PPO_policy" if self.num_envs > 1
+            else f"Best_{env.training_name}_PPO_policy"
             for i, env in enumerate(self.env.sub_environments.values())
         ]
 
@@ -424,11 +424,17 @@ class MultiPPOAgent(BasePPOAgent):
                     agent.policy = PPOPolicy.build_policy_from_state(saved_variables, self.device)
                     # Rebind optimizer to the newly-loaded network's parameters.
                     # Without this, agent.optimizer still references the old (GC'd) network
-                    # and subsequent train() calls silently update dead weights.
-                    # agent.optimizer = torch.optim.Adam(
-                    #     agent.policy.network.parameters(), lr=agent.learning_rate
-                    # )
+                    # and subsequent train() calls silently update dead weights while the
+                    # active policy never actually learns further. This part is NOT optional
+                    # (unlike the Adam-momentum restore below) - see SinglePPOAgent.load_policy
+                    # for the equivalent, already-correct rebind.
+                    agent.optimizer = torch.optim.Adam(
+                        agent.policy.network.parameters(), lr=agent.learning_rate
+                    )
                     #
+                    # Restoring Adam momentum from a saved optimizer_state_dict is left
+                    # disabled for now, same scope as SinglePPOAgent/save_policy above -
+                    # deliberately deferred, not required for correct training to resume.
                     # if "optimizer_state_dict" in saved_variables:
                     #     try:
                     #         agent.optimizer.load_state_dict(saved_variables["optimizer_state_dict"])

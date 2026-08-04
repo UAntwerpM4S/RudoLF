@@ -7,13 +7,17 @@ settings:
 - Visualization dispatch to either modular framework-model replay or
   AirSimEnv inference.
 
-It is intended to be called directly (``python -m fw.main_with_airsim``) or via
-delegation from ``fw.main`` when ``fw.config.CONFIG_PARAMETERS['env_type']`` is
-set to ``"AirSimEnv"``.
+It is intended to be called directly (`python -m fw.main_with_airsim`) or via
+delegation from `fw.main` when `fw.config.CONFIG_PARAMETERS['env_type']` is
+set to "AirSimEnv".
 """
 
 if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     import os
+
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+
     import logging
     import multiprocessing
 
@@ -75,12 +79,12 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         merge_runtime_settings,
     )
     from fw.common.tools.path_utils import resolve_path_relative_to_src
-    from fw.env_factory import (
+    from fw.configuration.env_factory import (
         airsim_env_name,
     )
-    from fw.config import get_config_parameters
-    from fw.profile_applier import apply_profile
-    from fw.config_profile import ProfileRegistry
+    from fw.configuration.config import get_config_parameters
+    from fw.configuration.profile_applier import apply_profile
+    from fw.configuration.config_profile import ProfileRegistry
 
     # AirSim runtime only controls AirSim-specific behavior.
     # The selected framework environment is handled by fw.main / fw.config.
@@ -209,8 +213,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
         ip = airsim_runtime_cfg.get("ip", "")
         port = int(airsim_runtime_cfg.get("port", 41451))
-        simulation_speed = float(airsim_runtime_cfg["simulation_speed"])
-        save_slot = str(airsim_runtime_cfg["save_slot"])
+        simulation_speed = float(airsim_runtime_cfg.get("simulation_speed", 1.0))
+        save_slot = str(airsim_runtime_cfg.get("save_slot", ""))
 
         max_steps = int(visualization_cfg.get("max_steps", 14000))
         episodes = int(visualization_cfg.get("episodes", 1))
@@ -285,11 +289,11 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
         Args:
             env_wrappers: Iterable of framework environment wrappers exposing
-                ``gym_env``.
+                `gym_env`.
 
         Returns:
             bool: True if at least one wrapped environment has type
-            ``AirSimEnv``.
+            `AirSimEnv`.
         """
 
         return any(getattr(env.gym_env, "type_name", "") == airsim_env_name for env in env_wrappers)
@@ -330,9 +334,9 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # -------------------------------------------------------------------------
 
     # Ensure all environments are registered once
-    from fw.trainer import Trainer
-    from fw.config import PPO_POLICY_NAME
-    from fw.env_factory import (
+    from fw.scheduling.trainer import Trainer
+    from fw.configuration.config import PPO_POLICY_NAME
+    from fw.configuration.env_factory import (
         get as get_environment,
         initialize_all_environments,
     )
@@ -348,9 +352,9 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         else int(visualization_cfg.get("max_steps", 14000))
     )
     effective_simulation_speed = (
-        float(effective_training_cfg.get("simulation_speed", airsim_runtime_cfg["simulation_speed"]))
+        float(effective_training_cfg.get("simulation_speed", airsim_runtime_cfg.get("simulation_speed", 1.0)))
         if is_training
-        else float(airsim_runtime_cfg["simulation_speed"])
+        else float(airsim_runtime_cfg.get("simulation_speed", 1.0))
     )
     airsim_env_cfg.update({
         "training_mode": is_training,

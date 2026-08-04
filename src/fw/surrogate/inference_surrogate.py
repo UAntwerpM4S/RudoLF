@@ -10,12 +10,18 @@ class SurrogatePredictor:
     """
 
     def __init__(self, checkpoint, device=None):
-        """Initialize the instance.
+        """
+        Load a trained `SurrogateMLP` and its normalization stats.
 
         Args:
-            checkpoint: Description.
-            device: Description.
+            checkpoint: Path to a checkpoint saved by `train_surrogate.py`
+                (via `utils.save_checkpoint`), containing the model
+                state dict, architecture args, and `x_mean`/`x_std`/
+                `y_mean`/`y_std` normalization stats.
+            device: Device to load the model onto; defaults to CUDA if
+                available, else CPU.
         """
+
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         ckpt = torch.load(checkpoint, map_location=self.device, weights_only=False)
 
@@ -39,45 +45,69 @@ class SurrogatePredictor:
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model.eval()
 
-    def _normalize_x(self, X):
-        """ normalize x.
+    def _normalize_x(self, x_vals):
+        """
+        Normalize raw input features using the loaded x_mean/x_std.
 
         Args:
-            X: Description.
-        """
-        return (X - self.x_mean) / self.x_std
+            x_vals: Raw input array, shape `(N, input_dim)`.
 
-    def _unnormalize_y(self, Ynorm):
-        """ unnormalize y.
+        Returns:
+            Normalized array, same shape as `x_vals`.
+        """
+
+        return (x_vals - self.x_mean) / self.x_std
+
+    def _unnormalize_y(self, y_norm):
+        """
+        Convert normalized model outputs back to raw units.
 
         Args:
-            Ynorm: Description.
-        """
-        return Ynorm * self.y_std + self.y_mean
+            y_norm: Normalized model output, shape `(N, output_dim)`.
 
-    def predict(self, X):
+        Returns:
+            Un-normalized predictions, same shape as `y_norm`.
         """
-        X: np.ndarray (N, input_dim) raw unnormalized input data
-        Returns: np.ndarray (N, output_dim) UNnormalized predictions
-        """
-        if X.ndim == 1:
-            X = X.reshape(1, -1)
 
-        Xn = self._normalize_x(X.astype(np.float32))
+        return y_norm * self.y_std + self.y_mean
+
+    def predict(self, x_vals):
+        """
+        Predict outputs for one or more raw input rows.
+
+        Args:
+            x_vals: Raw unnormalized input, `np.ndarray` of shape
+                `(N, input_dim)` or `(input_dim,)` for a single sample.
+
+        Returns:
+            `np.ndarray` of shape `(N, output_dim)` with un-normalized
+            predictions.
+        """
+
+        if x_vals.ndim == 1:
+            x_vals = x_vals.reshape(1, -1)
+
+        x_n = self._normalize_x(x_vals.astype(np.float32))
 
         with torch.no_grad():
-            X_tensor = torch.from_numpy(Xn).to(self.device)
-            pred_norm = self.model(X_tensor).cpu().numpy()
+            x_tensor = torch.from_numpy(x_n).to(self.device)
+            pred_norm = self.model(x_tensor).cpu().numpy()
 
         # UNNORMALIZE OUTPUTS
         pred_raw = self._unnormalize_y(pred_norm)
         return pred_raw
 
-    def predict_single(self, X):
-        """Predict single.
+    def predict_single(self, x_vals):
+        """
+        Predict outputs for a single raw input row.
 
         Args:
-            X: Description.
-        """
-        return self.predict(np.array(X))[0]
+            x_vals: Raw unnormalized input for one sample (e.g. a list
+                or 1-D array of length `input_dim`).
 
+        Returns:
+            `np.ndarray` of shape `(output_dim,)` with un-normalized
+            predictions.
+        """
+
+        return self.predict(np.array(x_vals))[0]

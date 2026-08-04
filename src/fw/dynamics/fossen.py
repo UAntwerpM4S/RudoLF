@@ -1,4 +1,5 @@
 from typing import Tuple
+from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 
@@ -83,68 +84,52 @@ class Fossen(DynamicsBase):
         self.N_rr = self.ship_spec.N_rr_coeff * mass * length ** 2.0  # Quadratic damping
 
         # Rudder coefficients
-        self.Y_rudder = 0.1 * mass  # Sway force from rudder
-        self.N_rudder = 0.001 * mass * length  # Yaw moment from rudder
+        self.Y_rudder = self.ship_spec.Y_rudder_coeff * mass  # Sway force from rudder
+        self.N_rudder = self.ship_spec.N_rudder_coeff * mass * length  # Yaw moment from rudder
 
         # Propeller/thrust coefficient
-        self.X_thrust = 0.05 * mass  # Surge force from thrust
+        self.X_thrust = self.ship_spec.X_thrust_coeff * mass  # Surge force from thrust
 
         # Cross-flow drag coefficients
         self.Y_uv = self.ship_spec.Y_uv_coeff * mass
         self.N_uv = self.ship_spec.N_uv_coeff * mass * length
 
-
-    def accelerations(self, u: float, v: float, r: float,
-                      rudder_angle: float, thrust: float) -> Tuple[float, float, float]:
+    def _compute_accelerations(
+        self,
+        state: VesselState,
+        rudder_angle: float,
+        thrust: float,
+    ) -> Tuple[float, float, float]:
         """
         Compute body-fixed accelerations from state and control inputs.
 
-        Computes the surge, sway, and yaw accelerations using a nonlinear
-        3-DOF maneuvering model. Rudder effectiveness is scaled by forward
-        speed to reflect reduced control authority at low speeds, with a
-        lower bound to preserve basic maneuverability.
-
         Args:
-            u: Body-fixed surge velocity in meters per second (m/s).
-            v: Body-fixed sway velocity in meters per second (m/s).
-            r: Body-fixed yaw rate in radians per second (rad/s).
-            rudder_angle: Rudder deflection angle in radians, positive to
-                starboard.
-            thrust: Normalized thrust command (dimensionless), positive in
-                the forward direction.
+            state:        Current vessel state.
+            rudder_angle: Rudder deflection angle [rad], positive to starboard.
+            thrust:       Normalized thrust command (dimensionless), positive forward.
 
         Returns:
-            A tuple `(du, dv, dr)` where:
-                - du: Surge acceleration (m/s²).
-                - dv: Sway acceleration (m/s²).
-                - dr: Yaw acceleration (rad/s²).
-
-        Notes:
-            - Coriolis and centripetal effects are included explicitly.
-            - Rudder forces contribute both sway force and yaw moment.
-            - The model assumes thrust acts purely in surge.
-            - This formulation is suitable for control and reinforcement
-              learning, but not for detailed seakeeping analysis.
+            Tuple (du, dv, dr) — surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
 
         # --- CORIOLIS-CENTRIPETAL MATRIX ---
-        coriolis_surge = self.m22 * v * r
-        coriolis_sway = -self.m11 * u * r
-        coriolis_yaw = (self.m22 - self.m11) * u * v
+        coriolis_surge = self.m22 * state.v * state.r
+        coriolis_sway = -self.m11 * state.u * state.r
+        coriolis_yaw = (self.m22 - self.m11) * state.u * state.v
 
         # --- HYDRODYNAMIC DAMPING FORCES ---
-        d_surge = self.X_u * u + self.X_uu * u * abs(u)
-        d_sway = (self.Y_v * v +
-                  self.Y_vv * v * abs(v) +
-                  self.Y_uv * u * v)
-        d_yaw = (self.N_r * r +
-                 self.N_rr * r * abs(r) +
-                 self.N_uv * u * v)
+        d_surge = self.X_u * state.u + self.X_uu * state.u * abs(state.u)
+        d_sway = (self.Y_v * state.v +
+                  self.Y_vv * state.v * abs(state.v) +
+                  self.Y_uv * state.u * state.v)
+        d_yaw = (self.N_r * state.r +
+                 self.N_rr * state.r * abs(state.r) +
+                 self.N_uv * state.u * state.v)
 
         # --- CONTROL FORCES ---
         # Speed-dependent rudder effectiveness
         # At low speeds, rudder is less effective
-        speed_factor = max(u / RUDDER_SPEED_FACTOR_DENOMINATOR, MIN_RUDDER_EFFECTIVENESS)
+        speed_factor = max(state.u / RUDDER_SPEED_FACTOR_DENOMINATOR, MIN_RUDDER_EFFECTIVENESS)
 
         # Rudder effectiveness
         f_rudder_sway = self.Y_rudder * rudder_angle * speed_factor
@@ -156,14 +141,9 @@ class Fossen(DynamicsBase):
         # Thrust force
         f_thrust = self.X_thrust * thrust
 
-        # --- COMBINE ALL FORCES/MOMENTS ---
-        total_surge_force = (f_thrust + d_surge + coriolis_surge)
-        total_sway_force = (f_rudder_sway + d_sway + coriolis_sway)
-        total_yaw_moment = (m_rudder_yaw + d_yaw + coriolis_yaw)
-
         # --- CALCULATE ACCELERATIONS ---
-        du = total_surge_force / self.m11
-        dv = total_sway_force / self.m22
-        dr = total_yaw_moment / self.m33
+        du = (f_thrust + d_surge + coriolis_surge) / self.m11
+        dv = (f_rudder_sway + d_sway + coriolis_sway) / self.m22
+        dr = (m_rudder_yaw + d_yaw + coriolis_yaw) / self.m33
 
         return du, dv, dr

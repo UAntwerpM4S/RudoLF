@@ -20,7 +20,7 @@ class CoordTransform:
     Bidirectional coordinate transform between framework and AirSim frames.
 
     The transform is defined by an anchor pair
-    (``framework_origin`` <-> ``airsim_origin``) plus scale, rotation, and
+    (`framework_origin` <-> `airsim_origin`) plus scale, rotation, and
     optional axis mirrors. Any point is transformed by computing its delta from
     the framework origin, optionally mirroring that delta, rotating and
     scaling it, and then adding the AirSim origin.
@@ -32,9 +32,9 @@ class CoordTransform:
 
         Args:
             calibration: Dictionary containing the calibration parameters.
-                Expected keys: ``"scale"``, ``"rotation"``,
-                ``"framework_origin"``, ``"airsim_origin"``.
-                Optional keys: ``"mirror_x"`` and ``"mirror_y"``.
+                Expected keys: "scale", "rotation",
+                "framework_origin", "airsim_origin".
+                Optional keys: "mirror_x" and "mirror_y".
                 Legacy calibration files with a non-AirSim origin key are also
                 accepted automatically.
         """
@@ -71,7 +71,7 @@ class CoordTransform:
         self, framework_x: float, framework_y: float, z: float = 0.0
     ) -> Tuple[float, float, float]:
         """
-        Convert a framework position to AirSim ``(x, y, z)``.
+        Convert a framework position to AirSim `(x, y, z)`.
         """
 
         dx = framework_x - self._framework_origin[0]

@@ -20,7 +20,7 @@ Profiles can be serialized to/from JSON and stored as named presets in the
 
 Typical usage
 -------------
->>> from fw.config_profile import (
+>>> from fw.configuration.config_profile import (
 ...     VesselProfile, ActuatorConfig, ThrustConfig, ThrustMode,
 ...     ScenarioConfig, ModelConfig, RunMode, ProfileRegistry,
 ... )
@@ -186,13 +186,14 @@ class ModelConfig:
 
     Attributes:
         ship_model: Which :class:`~fw.ships.ship_factory.ShipModel` preset
-            to load.
+            to load.  *None* means no override — the framework's own default
+            is used.
         dynamics_model: Which :class:`~fw.dynamics.dynamics_model.Model`
-            family to use inside the simulator.
+            family to use inside the simulator.  *None* means no override.
     """
 
-    ship_model: ShipModel = ShipModel.MYZAKO_37
-    dynamics_model: Model = Model.FOSSEN
+    ship_model: Optional[ShipModel] = None
+    dynamics_model: Optional[Model] = None
 
 
 # ---------------------------------------------------------------------------
@@ -373,8 +374,8 @@ class VesselProfile:
                 "enable_rudder_angle_scaling": self.transfer.enable_rudder_angle_scaling,
             },
             "model": {
-                "ship_model": self.model.ship_model.name,
-                "dynamics_model": self.model.dynamics_model.name,
+                "ship_model": self.model.ship_model.name if self.model.ship_model is not None else None,
+                "dynamics_model": self.model.dynamics_model.name if self.model.dynamics_model is not None else None,
             },
         }
 
@@ -417,8 +418,16 @@ class VesselProfile:
                 **_filter_fields(TransferConfig, d.get("transfer", {}))
             ),
             model=ModelConfig(
-                ship_model=ShipModel[model_d.get("ship_model", ModelConfig().ship_model.name)],
-                dynamics_model=Model[model_d.get("dynamics_model", ModelConfig().dynamics_model.name)],
+                ship_model=(
+                    ShipModel[model_d["ship_model"]]
+                    if model_d.get("ship_model") is not None
+                    else None
+                ),
+                dynamics_model=(
+                    Model[model_d["dynamics_model"]]
+                    if model_d.get("dynamics_model") is not None
+                    else None
+                ),
             ),
         )
 
@@ -463,8 +472,8 @@ class VesselProfile:
         lines = [f"VesselProfile '{self.name}' [{self.run_mode.name}]"]
         if self.description:
             lines.append(f"  description  : {self.description}")
-        lines.append(f"  ship_model   : {self.model.ship_model.name}")
-        lines.append(f"  dynamics     : {self.model.dynamics_model.name}")
+        lines.append(f"  ship_model   : {self.model.ship_model.name if self.model.ship_model is not None else '(config default)'}")
+        lines.append(f"  dynamics     : {self.model.dynamics_model.name if self.model.dynamics_model is not None else '(config default)'}")
 
         if self.scenario.initial_speed is not None:
             lines.append(f"  initial_speed: {self.scenario.initial_speed} m/s")
@@ -584,63 +593,27 @@ class ProfileRegistry:
 
 ProfileRegistry.register(VesselProfile(
     name="default_profile",
-    description="Standard profile with Fossen dynamics.",
+    description="Default configuration profile.",
     run_mode=RunMode.TRAIN,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
-    ),
     actuator=ActuatorConfig(enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))
 
 ProfileRegistry.register(VesselProfile(
-    name="myzako_pysim_to_fhsim_transfer_profile",
-    description=(
-        "Run a PySim-trained policy inside FhSim with rudder angle scaling."
-    ),
-    run_mode=RunMode.TRANSFER,
+    name="fh_simulator_profile",
+    description="Configuration profile for the FH simulator.",
+    run_mode=RunMode.TRAIN,
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
+        dynamics_model=Model.FH_TABULAR,
     ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
-    transfer=TransferConfig(enable_rudder_angle_scaling=True),
+    actuator=ActuatorConfig(max_rudder_angle_deg=75.0, enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))
 
 ProfileRegistry.register(VesselProfile(
-    name="tripoli_pysim_to_fhsim_transfer_profile",
-    description=(
-        "Run a PySim-trained policy inside FhSim with rudder angle scaling."
-    ),
-    run_mode=RunMode.TRANSFER,
-    model=ModelConfig(
-        ship_model=ShipModel.TRIPOLI,
-        dynamics_model=Model.UGENT_SURROGATE,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
-    transfer=TransferConfig(enable_rudder_angle_scaling=True),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="fhsim_visualization_profile",
-    description=(
-        "Visualize an FhSim-trained policy."
-    ),
-    run_mode=RunMode.INFERENCE,
-    model=ModelConfig(
-        ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
-    ),
-    actuator=ActuatorConfig(enable_smoothing=False),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=0.8),
-))
-
-ProfileRegistry.register(VesselProfile(
-    name="ugent_surrogate_training_profile",
-    description="Training profile for UGent's surrogate model.",
+    name="ugent_surrogate_profile",
+    description="Configuration profile for UGent's surrogate model.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
         ship_model=ShipModel.TRIPOLI,
@@ -652,13 +625,43 @@ ProfileRegistry.register(VesselProfile(
 ))
 
 ProfileRegistry.register(VesselProfile(
-    name="uantwerp_training_profile",
-    description="Training profile for UAntwerp's surrogate model.",
+    name="uantwerp_surrogate_profile",
+    description="Configuration profile for UAntwerp's surrogate model.",
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
-        ship_model=ShipModel.UANTWERP,
+        ship_model=ShipModel.MYZAKO_37,
         dynamics_model=Model.UANTWERP,
+    ),
+    actuator=ActuatorConfig(max_rudder_angle_deg=75.0, enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
+))
+
+ProfileRegistry.register(VesselProfile(
+    name="myzako_pysim_to_fhsim_transfer_profile",
+    description=(
+        "Run a PySim-trained policy inside FhSim with rudder angle scaling."
+    ),
+    run_mode=RunMode.TRANSFER,
+    model=ModelConfig(
+        ship_model=ShipModel.MYZAKO_37,
+        dynamics_model=Model.FH_TABULAR,
     ),
     actuator=ActuatorConfig(enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FREE),
+    transfer=TransferConfig(enable_rudder_angle_scaling=True),
+))
+
+ProfileRegistry.register(VesselProfile(
+    name="tripoli_pysim_to_fhsim_transfer_profile",
+    description=(
+        "Run a PySim-trained policy inside FhSim with rudder angle scaling."
+    ),
+    run_mode=RunMode.TRANSFER,
+    model=ModelConfig(
+        ship_model=ShipModel.TRIPOLI,
+        dynamics_model=Model.FH_TABULAR,
+    ),
+    actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
+    transfer=TransferConfig(enable_rudder_angle_scaling=True),
 ))

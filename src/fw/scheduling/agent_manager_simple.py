@@ -5,17 +5,17 @@ import matplotlib.patches as patches
 
 from pathlib import Path
 from contextlib import contextmanager
-from fw.config_profile import VesselProfile
 from fw.environments.base_env import BaseEnv
 from fw.environments.multi_sim_env import MultiSimEnv
-from fw.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
-from fw.profile_applier import apply_profile, ActionAdapter, SimulatorApplier
+from fw.configuration.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
+from fw.configuration.profile_applier import apply_profile, ActionAdapter, SimulatorApplier
 from airsim.communication.airsim_bridge import AirSimBridge
+from fw.configuration.config_profile import VesselProfile
+from fw.configuration.stop_condition import StopCondition
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
-from fw.stop_condition import StopCondition
 
 MIN_GRID_POS = -11700
 MAX_GRID_POS = 14500
@@ -270,7 +270,7 @@ class AgentManagerSimple:
         policy_file_name = None
 
         if policy_strategy == PolicyStrategy.REUSE_CURRENT_POLICY and self._agent:
-            policy_file_name = f'{self.get_env().type_name}_{self._agent_type}_policy'
+            policy_file_name = f'{self.get_env().training_name}_{self._agent_type}_policy'
             self._agent.save_policy(policy_file_name)
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
             policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
@@ -297,7 +297,7 @@ class AgentManagerSimple:
                 print(f"Reusing {policy_file_name}.")
                 try:
                     self._agent.load_policy(policy_file_name)
-                except ValueError as e:
+                except (ValueError, RuntimeError) as e:
                     print(f"[Fallback] Incompatible model: {e}")
                     print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
             else:
@@ -308,10 +308,13 @@ class AgentManagerSimple:
     @contextmanager
     def rendering(self, env):
         """
-        Render.
+        Temporarily force an environment's render_mode to 'human' for the
+        duration of the `with` block, restoring its previous value afterward.
 
         Args:
-            env: Description.
+            env: The environment instance to toggle render_mode on. If it
+                 has no `render_mode` attribute, this is a no-op (the block
+                 still runs, just without forcing rendering on).
         """
 
         if hasattr(env, "render_mode"):
@@ -346,8 +349,9 @@ class AgentManagerSimple:
         )
 
         # Cleanup the environment
-        if hasattr(self.get_env(), "fh_sim"):
-            self.get_env().fh_sim.dispose()
+        fh_sim = getattr(self.get_env(), "fh_sim", None)
+        if fh_sim is not None:
+            fh_sim.dispose()
 
 
     def visualize_trained_agent(
@@ -425,26 +429,26 @@ class AgentManagerSimple:
                             state, reward, terminated, truncated, _ = env.step(action)
                             done = terminated or truncated
 
+                            # Include every reward, including the terminal transition
+                            steps += 1
+                            episode_reward += (reward - episode_reward) / steps
+
+                            # Store the new position (also the terminal one)
+                            path_positions.append(np.copy(env.ship_pos))
+
                             if not done:
-                                # Store current position
-                                path_positions.append(np.copy(env.ship_pos))
-
-                                # Calculate the average episode reward
-                                episode_reward += reward if steps == 0 else (reward - episode_reward) / steps
-                                steps += 1
-
                                 # Uncomment for animated evaluation
                                 if live_animation:
                                     env.render()
 
                                 # Bridge ship position and heading to UE5 via coordinate transform
-                                if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sims'):
+                                if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
                                     ax, ay, _ = coord_transform.framework_to_airsim(
                                         float(env.ship_pos[0][0]),
                                         float(env.ship_pos[0][1])
                                     )
                                     ayaw = coord_transform.framework_heading_to_airsim_yaw(
-                                        float(env.phys_sims[0].state.heading)
+                                        float(env.phys_sim.state.heading)
                                     )
                                     airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
                             else:
@@ -472,8 +476,9 @@ class AgentManagerSimple:
                 )
 
                 # Cleanup the environment
-                if hasattr(env, "fh_sim"):
-                    env.fh_sim.dispose()
+                fh_sim = getattr(env, "fh_sim", None)
+                if fh_sim is not None:
+                    fh_sim.dispose()
 
                 if return_summary:
                     env_name = getattr(env, "type_name", "environment")

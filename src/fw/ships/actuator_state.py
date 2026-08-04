@@ -9,8 +9,7 @@ class ActuatorState:
     This immutable data structure represents the current state of the
     vessel actuators (rudder and thrust) after considering rate limits,
     smoothing, and saturation. It is typically produced by the
-    `ActuatorModel.step()` or `ActuatorModel.apply_smoothing()` methods
-    and used by the vessel dynamics or simulator.
+    `ActuatorModel.step()` method and used by the vessel dynamics or simulator.
 
     Attributes:
         rudder_angle: Current rudder deflection angle in radians [rad].

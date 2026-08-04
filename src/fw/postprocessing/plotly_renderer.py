@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from fw.ship_episode_data import ShipData
-from fw.metrics_computer import ShipMetrics
-from fw.output_helpers import SHIP_COLORS, normalized_time_axis, resample_to_common_time
+from fw.postprocessing.ship_episode_data import ShipData
+from fw.postprocessing.metrics_computer import ShipMetrics
+from fw.postprocessing.output_helpers import SHIP_COLORS, normalized_time_axis, resample_to_common_time
 
 
 # ---------------------------------------------------------------------------

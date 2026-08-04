@@ -1,9 +1,13 @@
+from copy import deepcopy
 from enum import Enum, auto
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
-from fw.profile_applier import apply_profile
-from fw.config_profile import ProfileRegistry
-from airsim.config.airsim_config import get_airsim_config  # re-export
+from fw.configuration.profile_applier import apply_profile
+from fw.configuration.config_profile import ProfileRegistry
+from fw.common.default_positions import (
+    DEFAULT_FRAMEWORK_SHIP_POS,
+    DEFAULT_FRAMEWORK_TARGET_POS,
+)
 
 
 class VisualizationMode(Enum):
@@ -38,6 +42,7 @@ class PolicyStrategy(Enum):
 PPO_POLICY_NAME = "PPO"
 PPO2_POLICY_NAME = "PPO2"
 MULTI_PPO_POLICY_NAME = "MPPO"
+MULTI_POLICY_SINGLE_NAME = "MPSA"  # Multi-Policy Single Agent
 
 AIRSIM_SESSION_TELEMETRY_FILENAME_TEMPLATE = "{session_type}_session.csv"
 AIRSIM_BRIDGE_LOG_FILENAME = "airsim_telemetry.csv"
@@ -109,6 +114,24 @@ DEFAULT_HYPERPARAMETERS = {
         'device': "cpu",
         'model_dir': "models"
     },
+    MULTI_POLICY_SINGLE_NAME: {
+        'learning_rate': 3e-4,
+        'gamma': 0.99,
+        'gae_lambda': 0.95,
+        'entropy_coef': 0.025,
+        'value_loss_coef': 0.1,
+        'max_grad_norm': 0.5,
+        'clip_range': 0.2,
+        'eval_frequency': 10,
+        'num_envs': 12,
+        'num_epochs': 8,
+        'normalize': False,
+        'max_nbr_iterations': 5000,
+        'batch_size': 2048,
+        'device': "cpu",
+        'model_dir': "models",
+        'steps_per_policy_update': 8192,
+    },
 }
 
 AIRSIM_HYPERPARAMETER_OVERRIDES = {
@@ -121,7 +144,8 @@ AIRSIM_HYPERPARAMETER_OVERRIDES = {
 }
 
 CONFIG_PARAMETERS = {
-    # Valid env_type values: "PySimEnv", "FhSimEnv", "AirSimEnv", "PySimPolarEnv", "LunarLander"
+    # Valid env_type values: "PySimEnv", "FhSimEnv", "MultiSimEnv",
+    # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander"
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
     'env_type': ["PySimEnv"],
@@ -132,15 +156,19 @@ CONFIG_PARAMETERS = {
     'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'wind': False,
     'current': False,
-    'numerical_damping': False,
     'visualize_best_trained': False,
-    'viz_mode': VisualizationMode.COMPLEX,  # Either "simple" or "complex"
+    'viz_mode': VisualizationMode.COMPLEX,
+    'start_pos': DEFAULT_FRAMEWORK_SHIP_POS,    # (2245.0, -47.0)
+    'target_pos': DEFAULT_FRAMEWORK_TARGET_POS, # (-1559.0, 11990.0)
+    'overall_contour': "env_Sche_no_scale.csv",
+    'depth_contour': "env_Sche_250cm_no_scale.csv",
+    'trajectory': "trajectory_points_no_scale.csv",
     'scenario': "DDShip_scenario1_nowindnocurrent",
+    'ua_surrogate_config': {"wcu_enabled": False,
+                            "file_name": "checkpoints/best_surrogate_clean.pth"},
     'ship_model': ShipModel.MYZAKO_37,
     'dynamics_model': Model.FOSSEN,
     'live_animation': False,
-    # AirSim settings are now in airsim.config.airsim_config
-    # Use get_airsim_config() to access them.
 
     # Evaluate reward configurations
     'reward_configs': [
@@ -148,48 +176,24 @@ CONFIG_PARAMETERS = {
             "type": "PySimEnv",
             "reward_name": "default",
             "reward_weights": {
-                "forward": -0.25,
+                "forward": -1.25,
                 "heading_alignment": -0.5,
                 "cross_track": -0.05,
                 "rudder_change": -0.4,
                 "rudder_angle": -0.05,
-                "thrust_change": -0.1,
+                "thrust_change": 0.0,
             },
         },
         {
             "type": "PySimEnv",
             "reward_name": "default",
             "reward_weights": {
-                "forward": -0.25,
+                "forward": -1.25,
                 "heading_alignment": -0.5,
                 "cross_track": -0.05,
                 "rudder_change": -0.4,
                 "rudder_angle": -0.05,
-                "thrust_change": -0.2,
-            },
-        },
-        {
-            "type": "PySimEnv",
-            "reward_name": "default",
-            "reward_weights": {
-                "forward": -0.25,
-                "heading_alignment": -0.5,
-                "cross_track": -0.05,
-                "rudder_change": -0.4,
-                "rudder_angle": -0.05,
-                "thrust_change": -0.4,
-            },
-        },
-        {
-            "type": "PySimEnv",
-            "reward_name": "default",
-            "reward_weights": {
-                "forward": -0.25,
-                "heading_alignment": -0.5,
-                "cross_track": -0.05,
-                "rudder_change": -0.4,
-                "rudder_angle": -0.05,
-                "thrust_change": -0.6,
+                "thrust_change": 0.0,
             },
         },
     ],
@@ -223,7 +227,7 @@ def load_config_parameters() -> dict:
     in tests that want to control the profile step explicitly).
     """
 
-    return CONFIG_PARAMETERS.copy()
+    return deepcopy(CONFIG_PARAMETERS)
 
 
 def get_config_parameters() -> dict:

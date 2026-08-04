@@ -34,7 +34,7 @@ class AsyncTelemetryExporter:
             filename: Output CSV filename.
             metadata: Optional metadata lines written at the top of the file.
             export_dir: Optional export directory. When omitted, the workspace
-                ``exports`` directory is used.
+                `exports` directory is used.
         """
 
         src_dir = Path(__file__).resolve().parents[1]
@@ -160,7 +160,7 @@ class AsyncTelemetryExporter:
 
         Args:
             signum: Received signal number.
-            frame: Current stack frame supplied by ``signal.signal``.
+            frame: Current stack frame supplied by `signal.signal`.
         """
 
         self.stop()

@@ -6,7 +6,7 @@ import numpy as np
 import gymnasium as gym
 
 from typing import Optional, Tuple
-from fw.stop_condition import StopCondition
+from fw.configuration.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
@@ -147,11 +147,17 @@ class PPO2Agent(BaseAgent):
             deterministic (boolean): Whether the action should be deterministic or not.
 
         Returns:
-            Tuple: A tuple (action, None), where action is the predicted action. Log-probabilities are not returned.
+            Tuple[np.ndarray, None, None]: (action, log_prob, value). SB3 does not
+            expose per-step log-probabilities or value estimates at inference time;
+            both are None. All callers must unpack exactly three values.
         """
 
         action, _ = self.ppo.predict(state, deterministic=deterministic)
-        return action, None
+        # Return (action, log_prob, value). SB3 does not expose per-step
+        # log-probabilities or value estimates at inference time; both are
+        # returned as None so callers that unpack three values (e.g.
+        # agent_manager_simple, episode_collector) work without modification.
+        return action, None, None
 
 
     def learn(

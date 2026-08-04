@@ -8,24 +8,22 @@ from enum import Enum
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any
-from fw.env_factory import (
+from fw.configuration.env_factory import (
     resolve_environment_name,
     py_sim_env_name,
     fh_sim_env_name,
     airsim_env_name,
     lunar_env_name,
-    py_sim_polar_env_name,
     PySimEnvironment,
     FhSimEnvironment,
     AirSimEnvironment,
     LunarEnvironment,
-    PySimPolarEnvironment, FhSimSyncEnvironment, sync_sim_env_name,
+    FhSimSyncEnvironment, sync_sim_env_name,
 )
-from fw.agent_manager import AgentManager
-from fw.agent_manager_simple import AgentManagerSimple
-from fw.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
-from fw.config_profile import VesselProfile
-
+from fw.scheduling.agent_manager import AgentManager
+from fw.scheduling.agent_manager_simple import AgentManagerSimple
+from fw.configuration.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
+from fw.configuration.config_profile import VesselProfile
 
 # logging.basicConfig(level=logging.INFO)  # Configure logging once, possibly in main script.
 
@@ -77,28 +75,52 @@ def find_existing_filename(class_name: str, directory: str = ".") -> str:
 
     Tries different naming styles (snake_case, lowercase, kebab-case) until it finds a match.
 
+    Search order, for each naming style:
+      1. `directory` (defaults to the caller's current working directory -
+         kept for backward compatibility with any existing callers/cwd-based
+         layouts, e.g. running scripts from a repo root).
+      2. `<directory>/fw/` (also cwd-relative, same backward-compat reason -
+         predates the fw.configuration/fw.scheduling package split).
+      3. The directory this module (`trainer.py`) itself lives in - i.e.
+         `fw/scheduling/`, now that trainer.py has moved there. Scheduler
+         classes (`simple_scheduler.py`, `pipeline_scheduler.py`, ...) are
+         siblings of trainer.py in that same folder, so this makes
+         resolution independent of wherever `main.py`/`main_pipeline.py`
+         happens to be launched from.
+
     Args:
         class_name (str): The name of the class to search for.
-        directory (str, optional): The directory to search in. Defaults to the current directory.
+        directory (str, optional): The directory to search in. Defaults to
+            the current directory (see search order above).
 
     Returns:
-        str: The relative path to the matching file.
+        str: The filename that matched (no directory prefix - the caller
+            only ever uses `Path(...).stem`, and always imports via the
+            fixed `fw.scheduling.` package path regardless of which
+            directory the match was actually found in).
 
     Raises:
         FileNotFoundError: If no matching file is found using any style.
     """
 
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+
     for style in FilenameStyle:
         filename = class_name_to_filename(class_name, style)
-        file_path = os.path.join(directory, filename)
-        if os.path.isfile(file_path):
-            return filename  # Match found in the given directory
-        elif os.path.isfile(f"fw/{file_path}"):
-            return f"fw/{filename}"  # Match found in the 'fw/' subdirectory
+
+        candidates = [
+            os.path.join(directory, filename),
+            os.path.join(directory, "fw", filename),
+            os.path.join(module_dir, filename),
+        ]
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                return filename  # Match found - caller resolves the module path itself
 
     raise FileNotFoundError(
-        f"No file found for class '{class_name}' in {directory}. "
-        f"Tried styles: {[class_name_to_filename(class_name, s) for s in FilenameStyle]}"
+        f"No file found for class '{class_name}' in '{directory}' or "
+        f"'{module_dir}'. Tried styles: "
+        f"{[class_name_to_filename(class_name, s) for s in FilenameStyle]}"
     )
 
 
@@ -109,7 +131,8 @@ class Trainer:
     Responsible for creating the agent manager, initializing the scheduler, and managing the training loop.
     """
 
-    def __init__(self, agent_type: str, envs, profile: VesselProfile, scheduler_type: str):
+    def __init__(self, agent_type: str, envs, profile: VesselProfile, scheduler_type: str,
+                 config: dict = None):
         """
         Initializes the Trainer.
 
@@ -118,6 +141,11 @@ class Trainer:
             envs (Gym.Env): List of environments for the agent to train in.
             profile (VesselProfile): Profile that will be used for training or visualization.
             scheduler_type (str): The name of the scheduler class to use.
+            config (dict, optional): Pre-built configuration dict from
+                :func:`~fw.config.get_config_parameters`.  When *None* (default)
+                the Trainer calls `get_config_parameters()` itself.  Callers
+                that have already built the config (e.g. `main.py`) should
+                pass it here to avoid applying the profile a second time.
 
         Raises:
             RuntimeError: If the scheduler class cannot be found or initialized.
@@ -127,7 +155,7 @@ class Trainer:
         self._agent_type = agent_type
         self._envs = envs
         self._profile = profile
-        self._config = get_config_parameters()
+        self._config = config if config is not None else get_config_parameters()
         self._hyperparameter_env_name = self._resolve_hyperparameter_env_name()
 
         if self._config["viz_mode"] == VisualizationMode.SIMPLE:
@@ -146,7 +174,7 @@ class Trainer:
         # Dynamically load the scheduler based on its name
         try:
             scheduler_file = Path(find_existing_filename(scheduler_type))
-            scheduler_module = importlib.import_module(f"fw.{scheduler_file.stem}")
+            scheduler_module = importlib.import_module(f"fw.scheduling.{scheduler_file.stem}")
             scheduler_class = getattr(scheduler_module, scheduler_type)
             scheduler = scheduler_class(self._agent_mgr, self._envs)
         except ModuleNotFoundError:
@@ -189,8 +217,16 @@ class Trainer:
         Args:
             configuration (dict, optional): Additional configuration parameters
                 for training, such as number of steps per environment.
-            show_plots (bool, optional): Show interactive visualization windows.
-                If False, only save outputs without opening matplotlib windows.
+            show_plots (bool, optional): Whether to run the automatic
+                post-training evaluation/visualization at all. When False,
+                the entire step - episode rollout, metrics computation,
+                figure saving, and any interactive window - is skipped
+                entirely, not just the interactive window. Running a full
+                evaluation episode costs real time and clutters logs for a
+                step nobody's going to look at (e.g. an intermediate stage
+                of a multi-stage run). Defaults to True, matching existing
+                behavior exactly - nothing changes for existing callers
+                that never pass this.
 
         Returns:
             dict: Training metrics collected during execution.
@@ -198,8 +234,11 @@ class Trainer:
 
         metrics = self._scheduler.execute(configuration)
 
+        if not show_plots:
+            return metrics
+
         last_env = self._envs[-1] if self._envs else None
-        env_type = last_env.gym_env.type_name if last_env else None
+        env_type = str(last_env) if last_env else None
         env_metrics = metrics.get(env_type) if env_type else None
 
         if env_metrics and env_metrics.get("status") == "success":
@@ -233,11 +272,14 @@ class Trainer:
         show_plots: bool = True,
     ):
         """
-        Visualize.
+        Run the trained agent(s) and render/collect evaluation results.
 
         Args:
-            envs: Description.
-            airsim_bridge: Description.
+            envs: Iterable of trained environment wrappers (each exposing a
+                  `.gym_env` and `.agent_mgr`) to visualize/evaluate, or None
+                  to skip visualization entirely.
+            airsim_bridge: Optional AirSim coordinate-transform bridge used to
+                  mirror ship pose into UE5 during evaluation; ignored if None.
             collect_evaluation_summary: Whether to return final evaluation metrics.
             show_plots: Whether to show interactive matplotlib windows.
         """
@@ -253,16 +295,14 @@ class Trainer:
                         sim_name = (
                             f"{gym_env.dynamics_model.name}-based simulator"
                             if hasattr(sim, "_dynamics")
-                            else f"{getattr(sim, '_engine')} simulator"
-                            if hasattr(sim, "_engine")
                             else None
                         )
 
                         if sim_name:
                             print(f"Visualization of {gym_env.ship_model.name} in a {sim_name}.")
 
-                    policy_name = f"Best_{gym_env.type_name}" if self._config[
-                        "visualize_best_trained"] else gym_env.type_name
+                    policy_name = f"Best_{gym_env.training_name}" if self._config[
+                        "visualize_best_trained"] else gym_env.training_name
 
                     self._agent_mgr.set_environment(
                         env=gym_env,
@@ -280,7 +320,13 @@ class Trainer:
                     if collect_evaluation_summary and env_summary is not None:
                         if isinstance(env_summary, dict):
                             if gym_env.type_name in env_summary:
-                                summaries[gym_env.type_name] = env_summary[gym_env.type_name]
+                                # env_summary's own keys come from the underlying gym
+                                # implementation (e.g. an agent's internal per-class
+                                # bookkeeping), so this lookup intentionally stays on
+                                # type_name. What we STORE it under must be the logical
+                                # training identity so trainer.train()'s str(wrapper)
+                                # lookup (env_type) can find it.
+                                summaries[gym_env.training_name] = env_summary[gym_env.type_name]
                             else:
                                 # For composite envs (e.g. MultiSimEnv), collect summaries for all
                                 # sub-environments whose keys appear in env_summary.
@@ -292,7 +338,7 @@ class Trainer:
                                         if name in env_summary
                                     }
                                     if matched:
-                                        summaries[gym_env.type_name] = matched
+                                        summaries[gym_env.training_name] = matched
                                     else:
                                         print(
                                             f"visualize(): env_summary dict has no key for "
@@ -307,9 +353,9 @@ class Trainer:
                                         f"{list(env_summary.keys())}. Skipping summary for this env."
                                     )
                         else:
-                            summaries[gym_env.type_name] = env_summary
+                            summaries[gym_env.training_name] = env_summary
                 except RuntimeError as e:
-                    print(f"Could not visualize {gym_env.type_name}. {e}")
+                    print(f"Could not visualize {gym_env.training_name}. {e}")
         else:
             print("No data found to visualize.")
 
@@ -338,8 +384,6 @@ class Trainer:
             return AirSimEnvironment(canonical_name, config)
         if canonical_name == lunar_env_name:
             return LunarEnvironment(canonical_name, config)
-        if canonical_name == py_sim_polar_env_name:
-            return PySimPolarEnvironment(canonical_name, config)
         raise ValueError(f"Unsupported environment '{canonical_name}' for reward evaluation")
     
 

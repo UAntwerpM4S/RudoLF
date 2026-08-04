@@ -3,8 +3,8 @@ import time
 import logging
 import traceback
 
-from fw.config import PolicyStrategy
-from fw.base_scheduler import BaseScheduler
+from fw.configuration.config import PolicyStrategy
+from fw.scheduling.base_scheduler import BaseScheduler
 
 
 class SimpleScheduler(BaseScheduler):
@@ -19,9 +19,19 @@ class SimpleScheduler(BaseScheduler):
         Args:
             agent_mgr: The AgentManager instance responsible for training and policy management.
             envs (list): List of environments used for training.
+
+        Raises:
+            RuntimeError: If the provided environment list is empty. Unlike
+                `PipelineScheduler`, this scheduler trains over a fixed,
+                pre-built list, so a non-empty `envs` is a real precondition
+                here - checked in this class rather than in `BaseScheduler`,
+                since it isn't a precondition for every scheduler.
         """
 
         super().__init__(agent_mgr, envs)
+
+        if not self.envs:
+            raise RuntimeError("Environments list cannot be empty.")
 
         self.current_env = None
         self._previous_env_name = None
@@ -74,8 +84,6 @@ class SimpleScheduler(BaseScheduler):
             sim_name = (
                 f"{gym_env.dynamics_model.name}-based simulator"
                 if hasattr(sim, "_dynamics")
-                else f"{getattr(sim, '_engine')} simulator"
-                if hasattr(sim, "_engine")
                 else None
             )
 
@@ -168,16 +176,15 @@ class SimpleScheduler(BaseScheduler):
 
                 # Save policy if reusing it later
                 self._previous_env_name = (
-                    self.current_env.gym_env.type_name
+                    self.current_env.gym_env.training_name
                     if policy_strategy != PolicyStrategy.RESET_POLICY
                     else None
                 )
 
                 if self._previous_env_name:
                     try:
-                        env_name = self.current_env.gym_env.type_name
+                        env_name = self.current_env.gym_env.training_name
                         save_name = f"{env_name}_{self.agent_mgr.agent_type}_policy"
-                        #self.agent_mgr.agent.save_policy(save_name)
 
                         reward_weights = getattr(self.current_env.gym_env, "reward_weights", None)
                         weight_suffix = self._format_reward_weight_suffix(reward_weights)

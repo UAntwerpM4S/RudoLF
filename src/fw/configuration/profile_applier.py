@@ -1,5 +1,5 @@
 """
-profile_applier.py – Apply a :class:`~fw.profile.VesselProfile` to the framework.
+profile_applier.py – Apply a :class:`~fw.config_profile.VesselProfile` to the framework.
 
 Translates a :class:`VesselProfile` into side effects on existing framework
 objects so that no call-sites outside this module need to be rewritten:
@@ -9,7 +9,13 @@ objects so that no call-sites outside this module need to be rewritten:
   scaling flag, and initial speed
 * :class:`~fw.simulators.base_simulator.BaseSimulator`  – actuator-limit
   overrides
-* Raw `[rudder, thrust]` action arrays  – rudder scaling, fixed-thrust
+* Raw `[rudder, thrust]` action arrays  – fixed-thrust substitution only
+  (see :class:`ActionAdapter` below). Rudder-angle *scaling* is NOT applied
+  here to the raw action array — it's a boolean flag
+  (`enable_rudder_angle_scaling`) set on `BaseEnv` by :class:`EnvApplier`,
+  which is threaded down through `ShipSimulator` into the dynamics model's
+  own `step()` (currently consumed only by `FhTabularModel`; see that
+  class's docstring for the actual scaling formula).
 
 Typical usage
 -------------
@@ -20,10 +26,9 @@ Typical usage
 
     profile = ProfileRegistry.get("inference_pysim")
 
-    # 1. Patch CONFIG_PARAMETERS at startup
+    # 1. Get CONFIG_PARAMETERS at startup
     from fw.config import get_config_parameters
     cfg = get_config_parameters()
-    apply_profile(profile, config=cfg)
 
     # 2. Configure smoothing and initial speed after the env is built
     env = build_default_environment("PySimEnv")
@@ -42,7 +47,7 @@ import warnings
 import numpy as np
 
 from typing import Any, Dict, Optional
-from fw.config_profile import ThrustMode, VesselProfile
+from fw.configuration.config_profile import ThrustMode, VesselProfile
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +101,7 @@ def apply_profile(
         SimulatorApplier.apply(profile, simulator)
 
     if action is not None:
-        return ActionAdapter.transform(profile, action, simulator=simulator)
+        return ActionAdapter.transform(profile, action)
 
     return None
 
@@ -116,12 +121,13 @@ class ConfigApplier:
         Patch ship_model and dynamics_model into *config* from *profile*.
         """
 
-        config["ship_model"] = profile.model.ship_model
-        config["dynamics_model"] = profile.model.dynamics_model
-        logger.debug(
-            "ConfigApplier: set ship_model=%s, dynamics_model=%s",
-            config["ship_model"], config["dynamics_model"],
-        )
+        if profile.model.ship_model is not None:
+            config["ship_model"] = profile.model.ship_model
+            logger.debug("ConfigApplier: set ship_model=%s", config["ship_model"])
+
+        if profile.model.dynamics_model is not None:
+            config["dynamics_model"] = profile.model.dynamics_model
+            logger.debug("ConfigApplier: set dynamics_model=%s", config["dynamics_model"])
 
 
 # ---------------------------------------------------------------------------
@@ -233,10 +239,9 @@ class SimulatorApplier:
         """
         Override actuator limits on the simulator's :class:`ShipSpecifications`.
 
-        :class:`~fw.ships.ship_specs.ShipSpecifications` is a frozen dataclass;
-        `object.__setattr__` is used to write the new values in-place.  The
-        updated specs object is then propagated to the actuator model so both
-        stay in sync.
+        :class:`~fw.ships.ship_specs.ShipSpecifications` is a mutable dataclass;
+        fields are assigned directly.  The updated specs object is then
+        propagated to the actuator model so both stay in sync.
         """
 
         specs = (

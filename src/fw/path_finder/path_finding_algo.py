@@ -46,8 +46,7 @@ def apf(ship_pos, target_pos, obstacle, step_size=1.0, max_iterations=1000):
 
     path = [ship_pos]
     poly = Polygon(obstacle)
-    print(poly[0])
-    
+
     for _ in range(max_iterations):
         # Calculate attractive force
         attractive = attractive_force(ship_pos, target_pos)

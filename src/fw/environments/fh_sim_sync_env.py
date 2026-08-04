@@ -33,6 +33,9 @@ class FhSimSyncEnv(PySimEnv):
                  verbose: Optional[bool] = None,
                  start_pos: Optional[np.ndarray] = None,
                  target_pos: Optional[np.ndarray] = None,
+                 overall_contour: Optional[str] = None,
+                 depth_contour: Optional[str] = None,
+                 trajectory: Optional[str] = None,
                  ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
                  remote_ip: str = "127.0.0.1", remote_port: int = 5000,
                  local_ip: str  = "127.0.0.1", local_port: int  = 5001,
@@ -74,6 +77,9 @@ class FhSimSyncEnv(PySimEnv):
             verbose=verbose,
             start_pos=start_pos,
             target_pos=target_pos,
+            overall_contour=overall_contour,
+            depth_contour=depth_contour,
+            trajectory=trajectory,
             ship_model=ship_model,
         )
 
@@ -81,12 +87,17 @@ class FhSimSyncEnv(PySimEnv):
         self._fh_sim.initial_vessel_state = self.phys_sim.state
 
 
-    def create_simulator(self):
+    def create_simulator(self, ua_surrogate_config=None):
         """
         Create and return the FhSimWrapper bound to the realtime bridge.
 
         FhSimWrapper is unchanged — it duck-types on .ship_interface and
         .math_model.simulateSeconds(), both of which SimSyncBridge provides.
+
+        Args:
+            ua_surrogate_config: Accepted for API compatibility with
+                PySimEnv.create_simulator(); unused by this subclass since
+                SimSyncBridge owns the dynamics model.
         """
 
         if self._fh_sim is None:
@@ -157,12 +168,16 @@ class FhSimSyncEnv(PySimEnv):
         self._fh_sim.reset()
 
 
-    def get_keel_clearance(self) -> float:
+    def get_keel_clearance(self, pos: Optional[np.ndarray] = None) -> float:
         """
         Query under-keel clearance from the live ship interface.
 
         Works identically to FhSimEnv: the IShip interface exposed by
         evSyncState is the same managed type, so getKeelClearance() exists.
+
+        Args:
+            pos (np.array, optional): Unused. Retained for API
+                compatibility with PySimEnv.get_keel_clearance().
         """
 
         if self._fh_sim is None:

@@ -5,8 +5,8 @@ Usage:
     python -m airsim.train.train_airsim
 
 This entrypoint now reads its AirSim environment configuration from
-``airsim/config/runtime_settings.json`` so standalone AirSim training stays in
-sync with ``fw.main_with_airsim``.
+`airsim/config/runtime_settings.json` so standalone AirSim training stays in
+sync with `fw.main_with_airsim`.
 """
 
 from __future__ import annotations
@@ -297,7 +297,7 @@ def _build_training_stop_condition(
     _, _, training_cfg = _resolve_effective_training_settings(runtime_settings)
     max_policy_updates = int(training_cfg.get("max_policy_updates", 1500))
 
-    from fw.stop_condition import Criterion, StopCondition
+    from fw.configuration.stop_condition import Criterion, StopCondition
 
     return StopCondition(
         stop_criterion=Criterion.NBR_POLICY_UPDATES,
@@ -346,7 +346,7 @@ def _run_training_with_transfer(
 
     import torch.optim as optim
 
-    from fw.config import PPO_POLICY_NAME, get_hyperparameters
+    from fw.configuration.config import PPO_POLICY_NAME, get_hyperparameters
     from fw.policies.single_ppo_agent import SinglePPOAgent
     from airsim.train.transfer_learning import (
         TransferIncompatibilityError,
@@ -403,11 +403,11 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
     Run AirSim PPO training from runtime settings and return trainer metrics.
     """
 
-    from fw.trainer import Trainer
-    from fw.profile_applier import apply_profile
-    from fw.config_profile import ProfileRegistry
-    from fw.config import PPO_POLICY_NAME, get_config_parameters
-    from fw.env_factory import airsim_env_name, get as get_environment
+    from fw.scheduling.trainer import Trainer
+    from fw.configuration.profile_applier import apply_profile
+    from fw.configuration.config_profile import ProfileRegistry
+    from fw.configuration.config import PPO_POLICY_NAME, get_config_parameters
+    from fw.configuration.env_factory import airsim_env_name, get as get_environment
 
     repo_root = Path(__file__).resolve().parents[2]
     env_config = _build_training_env_config(runtime_settings)
@@ -479,11 +479,11 @@ def run_visualization(runtime_settings: dict[str, Any] | None = None):
     Run AirSim visualization from runtime settings and return trainer instance.
     """
 
-    from fw.trainer import Trainer
-    from fw.profile_applier import apply_profile
-    from fw.config_profile import ProfileRegistry
-    from fw.config import PPO_POLICY_NAME, get_config_parameters
-    from fw.env_factory import airsim_env_name, get as get_environment
+    from fw.scheduling.trainer import Trainer
+    from fw.configuration.profile_applier import apply_profile
+    from fw.configuration.config_profile import ProfileRegistry
+    from fw.configuration.config import PPO_POLICY_NAME, get_config_parameters
+    from fw.configuration.env_factory import airsim_env_name, get as get_environment
 
     env_config = _build_visualize_env_config(runtime_settings)
     env = get_environment(airsim_env_name, configuration=env_config)

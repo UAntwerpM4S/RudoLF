@@ -1,8 +1,10 @@
 import copy
+import logging
 import numpy as np
 
 from fw.ships.ship_factory import ShipModel
 from fw.ships.vessel_state import VesselState
+from fw.ships.actuator_state import ActuatorState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.simulators.base_simulator import BaseSimulator
 
@@ -27,25 +29,23 @@ class FhSimWrapper(BaseSimulator):
         line must be updated.
 
     Velocity frame:
-        getShipVelocityOverGround() returns velocities in the earth-fixed
-        (NED/ENU) frame. VesselState expects body-fixed surge (u) and sway (v).
-        The transformation is:
-            u =  vx * cos(ψ) + vy * sin(ψ)
-            v = -vx * sin(ψ) + vy * cos(ψ)
-        where ψ is the vessel heading [rad] and (vx, vy) are earth-fixed
-        velocity components. Without this rotation the observation vector
-        contains earth-fixed velocities mislabeled as body-fixed, which
-        becomes significant in the presence of wind or current.
+        getShipVelocityOverGround() values are used directly as body-fixed
+        surge (u) and sway (v) - no earth-to-body rotation by heading is
+        applied. This mirrors FhTabularModel's documented empirical finding
+        that this FH engine call returns velocities already expressed in the
+        body-fixed frame despite its name.
 
     Sway sign:
         The FH engine returns y-velocity with positive = port (opposite to the
         body-fixed convention where positive = starboard), so vy is negated.
-        This is consistent with the earth ->body rotation above.
     """
 
     def __init__(self, specs: ShipSpecifications, fh_engine, dt: float):
         """
         Initialize the FH Simulator wrapper.
+
+        .. deprecated::
+            FhSimWrapper is deprecated; use ShipSimulator instead.
 
         Args:
             specs: ShipSpecifications defining vessel and actuator limits.
@@ -55,6 +55,11 @@ class FhSimWrapper(BaseSimulator):
         Raises:
             ValueError: If dt <= 0 (enforced by BaseSimulator).
         """
+
+        logging.warning(
+            "FhSimWrapper is deprecated and will be removed in a future version; "
+            "use ShipSimulator instead."
+        )
 
         super().__init__(specs, dt)
 
@@ -123,7 +128,9 @@ class FhSimWrapper(BaseSimulator):
         """
 
         # Step 1: smooth the policy action
-        actuator = self._actuators.apply_smoothing(action, enable_smoothing)
+        thrust = (self._specs.min_thrust + 0.5 * (action[1] + 1.0) *
+                  (self._specs.max_thrust - self._specs.min_thrust))
+        actuator = ActuatorState(action[0], thrust)
 
         if self._engine.ship_model == ShipModel.TRIPOLI:
             for rudder in self._engine.ship_interface.getAzipodControls():
@@ -162,17 +169,17 @@ class FhSimWrapper(BaseSimulator):
         heading_deg           = self._engine.ship_interface.getShipHeading()
         yaw_rate_deg_per_s    = self._engine.ship_interface.getShipYawRate()
 
-        heading_rad = np.radians(heading_deg)
-        yaw_rate    = np.radians(yaw_rate_deg_per_s)
+        heading_rad = float(np.radians(heading_deg))
+        yaw_rate    = float(np.radians(yaw_rate_deg_per_s))
 
         # Step 5: store VesselState
         self._state = VesselState(
             terminated=False,
             truncated=False,
-            x=np.float32(new_ship_pos.x),
-            y=np.float32(new_ship_pos.y),
-            heading=np.float32((heading_rad + np.pi) % (2.0 * np.pi) - np.pi),
-            u=np.float32(velocity_over_ground.x),
-            v=np.float32(-velocity_over_ground.y),
-            r=np.float32(yaw_rate),
+            x=new_ship_pos.x,
+            y=new_ship_pos.y,
+            heading=(heading_rad + np.pi) % (2.0 * np.pi) - np.pi,
+            u=velocity_over_ground.x,
+            v=-velocity_over_ground.y,
+            r=yaw_rate,
         )

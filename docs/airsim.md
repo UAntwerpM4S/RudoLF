@@ -266,7 +266,7 @@ This file controls framework-level behavior. For AirSim, three things matter:
 | `action`   | `str`                | `"train"` or `"visualize"`                   | High-level mode for all environments.                                                                                            |
 | `profile`  | `str`                | `"default_profile"`                          | VesselProfile key loaded from `ProfileRegistry`. Controls speed envelope and scenario parameters threaded into `SinglePPOAgent`. |
 
-Valid `env_type` values: `"PySimEnv"`, `"FhSimEnv"`, `"AirSimEnv"`, `"PySimPolarEnv"`, `"LunarLander"`.
+Valid `env_type` values: `"PySimEnv"`, `"FhSimEnv"`, `"AirSimEnv"`, `"PySimColavEnv"`, `"LunarLander"`.
 
 Example — AirSim training only:
 

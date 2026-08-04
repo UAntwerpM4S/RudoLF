@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from types import SimpleNamespace
 
-from fw.stop_condition import StopCondition
+from fw.configuration.stop_condition import StopCondition
 from fw.policies.single_ppo_agent import SinglePPOAgent
 
 
@@ -41,6 +41,8 @@ class _DummyEnv:
     """
 
     type_name = "PySimEnv"
+    training_name = type_name
+
     observation_space = gym.spaces.Box(
         low=-1.0,
         high=1.0,
@@ -69,7 +71,7 @@ def test_learn_reraises_keyboard_interrupt_and_skips_final_checkpoint(tmp_path, 
     """
 
     import fw.policies.single_ppo_agent as single_ppo_agent_module
-    from fw.profile_applier import SimulatorApplier, ActionAdapter
+    from fw.configuration.profile_applier import SimulatorApplier, ActionAdapter
 
     agent = SinglePPOAgent(environment=_DummyEnv(), model_dir=str(tmp_path))
     save_calls = []
@@ -108,7 +110,7 @@ def test_learn_raises_after_repeated_untrainable_airsim_batches(tmp_path, monkey
     """
 
     import fw.policies.single_ppo_agent as single_ppo_agent_module
-    from fw.profile_applier import SimulatorApplier, ActionAdapter
+    from fw.configuration.profile_applier import SimulatorApplier, ActionAdapter
 
     agent = SinglePPOAgent(environment=_DummyAirSimEnv(), model_dir=str(tmp_path))
     fake_logger = SimpleNamespace(

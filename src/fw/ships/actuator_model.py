@@ -7,7 +7,7 @@ from fw.ships.actuator_command import ActuatorCommand
 
 class ActuatorModel:
     """
-    Models actuator dynamics with rate limiting, smoothing, and jitter suppression.
+    Models actuator dynamics with rate limiting and jitter suppression.
 
     This class simulates the dynamic response of vessel actuators (rudder
     and thrust) to commanded inputs. It supports:
@@ -15,13 +15,16 @@ class ActuatorModel:
         - Rate-limited updates to prevent unrealistically fast changes.
         - Jitter suppression to ignore small actuator errors below a
           threshold.
-        - Optional exponential smoothing for reinforcement learning or
-          controller stability.
+        - An `enable_smoothing` toggle that switches the above (rate
+          limiting + jitter suppression + saturation) on or off; when
+          disabled, actuators jump directly to the commanded value
+          (clipped to physical limits only). Note: despite the toggle's
+          name, this is rate-limiting, not exponential/low-pass smoothing
+          - no smoothing filter is applied anywhere in this class.
 
     Attributes:
         _rudder: Current rudder angle [rad].
         _thrust: Current thrust command (normalized or physical units).
-        _initialized: Flag indicating whether smoothing has been initialized.
     """
 
     def __init__(self, specifications: ShipSpecifications):
@@ -37,8 +40,6 @@ class ActuatorModel:
 
         self._rudder = 0.0  # Current rudder angle [rad]
         self._thrust = 0.0  # Current thrust [-]
-
-        self._initialized = False
 
     @property
     def current_actuator_state(self):
@@ -56,51 +57,11 @@ class ActuatorModel:
         """
         Reset actuators to neutral position.
 
-        Sets rudder and thrust to zero and marks the model as
-        uninitialized for smoothing purposes.
+        Sets rudder and thrust to zero.
         """
 
         self._rudder = 0.0
         self._thrust = 0.0
-
-        self._initialized = False
-
-    def apply_smoothing(self, action: np.ndarray, enable: bool, alpha: float = 0.3) -> ActuatorState:
-        """
-        Apply exponential smoothing to an input action.
-
-        Args:
-            action: Normalized action vector [rudder, thrust], shape (2,).
-            enable: Enable or disable smoothing.
-            alpha: Smoothing factor (0 = no update, 1 = instantaneous).
-
-        Returns:
-            ActuatorState reflecting the smoothed rudder and thrust.
-
-        Raises:
-            ValueError: If action does not have shape (2,).
-
-        Notes:
-            - Absolute value is applied to thrust to enforce forward direction.
-            - Smoothing is implemented as an exponential moving average.
-            - If smoothing is disabled or model is uninitialized, the
-              action is applied directly.
-        """
-
-        if action.shape != (2,):
-            raise ValueError(f"Action must have shape (2,), got {action.shape}")
-
-        if not self._initialized or not enable:
-            self._rudder = action[0]
-            self._thrust = abs(action[1])
-        else:
-            self._rudder = alpha * action[0] + (1 - alpha) * self._rudder
-            self._thrust = alpha * abs(action[1]) + (1 - alpha) * self._thrust
-
-        self._initialized = True
-
-        return ActuatorState(self._rudder, self._thrust)
-
 
     def step(self, action: ActuatorCommand, dt: float, enable_smoothing: bool) -> ActuatorState:
         """

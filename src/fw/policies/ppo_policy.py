@@ -4,7 +4,7 @@ import zipfile
 import tempfile
 import numpy as np
 
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Union
 from fw.policies.actor_critic_network import ActorCriticNetwork
 from fw.common.tools.ppo_utils import normalize_policy_zip_path
 
@@ -29,8 +29,6 @@ def get_device(device: str = "auto") -> torch.device:
         device = torch.device("cuda")
     else:
         device = torch.device(device)
-
- 
 
     # If CUDA is requested but not available, fallback to CPU
     if device.type == torch.device("cuda").type and not torch.cuda.is_available():
@@ -139,6 +137,12 @@ class PPOPolicy:
                 "output_dim": model_state_dict["actor_mean.weight"].shape[0],
                 "device": device.type,
             }
+
+        # Filter to only the keys accepted by the current constructor, so
+        # checkpoints saved with extra metadata fields don't break loading.
+        allowed_keys = {"input_dim", "output_dim", "device"}
+        data = {k: v for k, v in data.items() if k in allowed_keys}
+
         return data
 
 
@@ -288,7 +292,6 @@ class PPOPolicy:
         return action, log_prob, value.squeeze(-1)  # Return action, log_prob, and value (squeezed)
 
 
-    from typing import Union
     def predict(self, state: Union[np.ndarray, torch.Tensor], deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Predict an action for a given state.
