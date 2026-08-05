@@ -3,6 +3,7 @@ import numpy as np
 
 from typing import Optional
 from fw.ships.ship_factory import ShipModel
+from fw.dynamics.dynamics_model import Model
 from fw.environments.py_sim_env import PySimEnv
 from fw.simulators.fh_sim_wrapper import FhSimWrapper
 from fw.simulators.sync_sim_bridge import SimSyncBridge
@@ -33,6 +34,8 @@ class FhSimSyncEnv(PySimEnv):
                  verbose: Optional[bool] = None,
                  start_pos: Optional[np.ndarray] = None,
                  target_pos: Optional[np.ndarray] = None,
+                 scenario: Optional[str] = "DDShip_scenario1_nowindnocurrent",
+                 dynamics_model: Optional[Model] = Model.FH_TABULAR,
                  overall_contour: Optional[str] = None,
                  depth_contour: Optional[str] = None,
                  trajectory: Optional[str] = None,
@@ -49,6 +52,8 @@ class FhSimSyncEnv(PySimEnv):
             ship_model: Same as FhSimEnv. start_pos / target_pos affect the
                 reward/observation construction, not the actual sim state
                 (which is owned by the remote simSync).
+            scenario: Same as FhSimEnv. start_pos / target_pos affect
+            dynamics_model: Same as FhSimEnv. start_pos / target_pos affect
             remote_ip, remote_port: simSync host endpoint to connect to.
             local_ip, local_port: local UDP endpoint to bind to.
             connect_timeout: Max seconds to wait for the first state event
@@ -63,7 +68,7 @@ class FhSimSyncEnv(PySimEnv):
 
         # Construct bridge BEFORE super().__init__() so create_simulator()
         # (called from PySimEnv.__init__) has self._fh_sim available.
-        self._fh_sim = SimSyncBridge(
+        sim_sync_bridge = SimSyncBridge(
             remote_ip=remote_ip, remote_port=remote_port,
             local_ip=local_ip,   local_port=local_port,
             connect_timeout=connect_timeout,
@@ -77,141 +82,11 @@ class FhSimSyncEnv(PySimEnv):
             verbose=verbose,
             start_pos=start_pos,
             target_pos=target_pos,
+            scenario=scenario,
+            dynamics_model=dynamics_model,
             overall_contour=overall_contour,
             depth_contour=depth_contour,
             trajectory=trajectory,
             ship_model=ship_model,
+            sim_sync_bridge=sim_sync_bridge,
         )
-
-        # Parity with FhSimEnv. SimSyncBridge stores but ignores this.
-        self._fh_sim.initial_vessel_state = self.phys_sim.state
-
-
-    def create_simulator(self, ua_surrogate_config=None):
-        """
-        Create and return the FhSimWrapper bound to the realtime bridge.
-
-        FhSimWrapper is unchanged — it duck-types on .ship_interface and
-        .math_model.simulateSeconds(), both of which SimSyncBridge provides.
-
-        Args:
-            ua_surrogate_config: Accepted for API compatibility with
-                PySimEnv.create_simulator(); unused by this subclass since
-                SimSyncBridge owns the dynamics model.
-        """
-
-        if self._fh_sim is None:
-            raise RuntimeError(
-                "SimSyncBridge is not available. SimSyncEnv requires a "
-                "reachable simSync instance."
-            )
-
-        return FhSimWrapper(self.ship.specifications, self._fh_sim, self.time_step)
-
-
-    def __deepcopy__(self, memo):
-        """
-        Deep copy this instance, sharing the bridge reference.
-
-        The SimSyncBridge holds a SyncApp with .NET event handlers and an
-        open UDP connection — non-picklable, and copying it would give two
-        objects fighting over one connection. Share the original reference.
-        """
-
-        new_instance = self.__class__.__new__(self.__class__)
-        for key, value in self.__dict__.items():
-            if key == '_fh_sim':
-                setattr(new_instance, key, value)
-            else:
-                setattr(new_instance, key, copy.deepcopy(value, memo))
-        return new_instance
-
-
-    @property
-    def fh_sim(self):
-        """
-        The realtime bridge. Named `fh_sim` for API parity with FhSimEnv —
-        agent code that calls `env.fh_sim` works against either env.
-        """
-
-        return self._fh_sim
-
-
-    def randomize(self, randomization_scale: Optional[float] = None):
-        """
-        No-op for SimSyncEnv.
-
-        The running simSync owns the world state — we can't randomize it
-        from here. Initial conditions, wind, current are set in simSync's
-        own configuration before it starts.
-        """
-
-        pass
-
-
-    def env_specific_reset(self):
-        """
-        Reset hook called by PySimEnv.reset().
-
-        First call: connects to simSync and waits for the first state event,
-        so phys_sim.state is valid immediately after reset() returns.
-        Subsequent calls: no-op — realtime has no episode boundary to reset
-        to. If the agent's reward logic terminates an episode, the loop ends
-        but the sim keeps running.
-        """
-
-        if self._fh_sim is None:
-            raise RuntimeError(
-                "SimSyncBridge is not available — cannot reset."
-            )
-
-        self._fh_sim.reset()
-
-
-    def get_keel_clearance(self, pos: Optional[np.ndarray] = None) -> float:
-        """
-        Query under-keel clearance from the live ship interface.
-
-        Works identically to FhSimEnv: the IShip interface exposed by
-        evSyncState is the same managed type, so getKeelClearance() exists.
-
-        Args:
-            pos (np.array, optional): Unused. Retained for API
-                compatibility with PySimEnv.get_keel_clearance().
-        """
-
-        if self._fh_sim is None:
-            raise RuntimeError(
-                "SimSyncBridge is not available — cannot query keel clearance."
-            )
-
-        return self._fh_sim.ship_interface.getKeelClearance()
-
-
-    def _has_enough_keel_clearance(self, depth_threshold: float = 0.5) -> bool:
-        """
-        Check whether the vessel has sufficient keel clearance.
-
-        Args:
-            depth_threshold: Minimum acceptable keel clearance in metres.
-        """
-
-        if self._fh_sim is None:
-            raise RuntimeError(
-                "SimSyncBridge is not available — cannot query keel clearance."
-            )
-
-        return self._fh_sim.ship_interface.getKeelClearance() >= depth_threshold
-
-
-    def close(self):
-        """
-        Disconnect from simSync and release event subscriptions.
-
-        Safe to call multiple times. Idempotent on the bridge side.
-        """
-
-        if self._fh_sim is not None:
-            self._fh_sim.dispose()
-        if hasattr(super(), 'close'):
-            super().close()

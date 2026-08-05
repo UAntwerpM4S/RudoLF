@@ -28,6 +28,7 @@ from fw.environments.base_env import BaseEnv
 from fw.reward.reward import Reward
 
 from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
+from fw.simulators.sync_sim_bridge import SimSyncBridge
 from fw.dynamics.fh_tabular_model import FhTabularModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.dynamics.ugent_surrogate import UGentSurrogate
@@ -155,6 +156,7 @@ class PySimEnv(BaseEnv):
             reward_weights: Optional[Dict[str, float]] = None,
             # FH Simulator configuration (only used when dynamics_model == Model.FH_TABULAR)
             scenario: Optional[str] = "DDShip_scenario1_nowindnocurrent",
+            sim_sync_bridge: Optional[SimSyncBridge] = None,
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -184,6 +186,7 @@ class PySimEnv(BaseEnv):
             reward_weights: optional per-component reward weights.
             scenario: FH Simulator scenario name. Only used when
                 dynamics_model == Model.FH_TABULAR; ignored otherwise.
+            sim_sync_bridge: SimSyncBridge instance managing the FH SimSync
         """
 
         # ---------------------------------------------------------------
@@ -194,18 +197,21 @@ class PySimEnv(BaseEnv):
         # ---------------------------------------------------------------
         self._fh_sim = None
         if dynamics_model == Model.FH_TABULAR:
-            try:
-                fh_bridge_module = importlib.import_module('fw.simulators.fh_sim_bridge')
-                fh_bridge_class = getattr(fh_bridge_module, "FhSimBridge")
-                self._fh_sim = fh_bridge_class(ship_model, scenario)
-            except ModuleNotFoundError as e:
-                raise RuntimeError(
-                    "FH Simulator bridge module 'fw.simulators.fh_sim_bridge' could not be "
-                    "imported. Ensure the FH Simulator package is installed and the "
-                    "SIMEXE_REPO_FOLDER environment variable is set correctly. "
-                    "Use a non-FH_TABULAR dynamics_model for pure-Python simulation "
-                    "without external dependencies."
-                ) from e
+            if sim_sync_bridge is not None:
+                self._fh_sim = sim_sync_bridge
+            else:
+                try:
+                    fh_bridge_module = importlib.import_module('fw.simulators.fh_sim_bridge')
+                    fh_bridge_class = getattr(fh_bridge_module, "FhSimBridge")
+                    self._fh_sim = fh_bridge_class(ship_model, scenario)
+                except ModuleNotFoundError as e:
+                    raise RuntimeError(
+                        "FH Simulator bridge module 'fw.simulators.fh_sim_bridge' could not be "
+                        "imported. Ensure the FH Simulator package is installed and the "
+                        "SIMEXE_REPO_FOLDER environment variable is set correctly. "
+                        "Use a non-FH_TABULAR dynamics_model for pure-Python simulation "
+                        "without external dependencies."
+                    ) from e
 
         super().__init__(render_mode)
 

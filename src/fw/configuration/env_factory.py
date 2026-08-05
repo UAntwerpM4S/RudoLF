@@ -577,6 +577,8 @@ class FhSimSyncEnvironment(BaseEnvironment):
             max_steps=135000,
             start_pos=ship_pos,
             target_pos=target_pos,
+            scenario=self.configuration["scenario"],
+            dynamics_model=self.configuration["dynamics_model"],
             overall_contour=self.configuration["overall_contour"],
             depth_contour=self.configuration["depth_contour"],
             trajectory=self.configuration["trajectory"],
@@ -881,6 +883,8 @@ def build_fhsimsync_config(framework_config: dict) -> dict:
 
     cfg = {
         "ship_model":       framework_config["ship_model"],
+        "scenario":         framework_config["scenario"],
+        "dynamics_model":   framework_config["dynamics_model"],
         "start_pos":        framework_config["start_pos"],
         "target_pos":       framework_config["target_pos"],
         "overall_contour":  framework_config["overall_contour"],
