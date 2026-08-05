@@ -880,7 +880,12 @@ def build_fhsimsync_config(framework_config: dict) -> dict:
     """
 
     cfg = {
-        "ship_model": framework_config["ship_model"],
+        "ship_model":       framework_config["ship_model"],
+        "start_pos":        framework_config["start_pos"],
+        "target_pos":       framework_config["target_pos"],
+        "overall_contour":  framework_config["overall_contour"],
+        "depth_contour":    framework_config["depth_contour"],
+        "trajectory":       framework_config["trajectory"],
     }
     # Forward optional UDP / timing overrides when explicitly set in config.
     for optional_key in (
