@@ -19,6 +19,7 @@ from fw.dynamics.dynamics_model import Model
 from fw.configuration.config import PolicyStrategy
 from fw.configuration.stop_condition import Criterion
 from fw.configuration.config_profile import ProfileRegistry
+from fw.common.tools.config_utils import get_validated_bool
 from fw.configuration.env_factory import resolve_environment_name, EnvironmentRegistryError
 from fw.scheduling.run_spec import PipelineBlock, PipelineSpec, StopConditionSpec, TransferSpec
 
@@ -134,7 +135,7 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
     `resolve_environment_name`; `profile` is registered; `ship_model` /
     `dynamics_model`, if given, are valid enum members; `action` is one
     of the supported actions; `reward_configs` is present if and only if
-    `action == "evaluate_reward"`; `stop_condition` and `transfer` are
+    `action` == "evaluate_reward"; `stop_condition` and `transfer` are
     delegated to `_parse_stop_condition`/`_parse_transfer`; `on_failure`,
     if given, is a valid failure mode.
 
@@ -212,9 +213,9 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
         dynamics_model=dynamics_model,
         profile_overrides=raw_block.get("profile_overrides", {}) or {},
         action=action,
-        wind=bool(raw_block.get("wind", False)),
-        current=bool(raw_block.get("current", False)),
-        show_plots=bool(raw_block.get("show_plots", False)),
+        wind=get_validated_bool(raw_block, "wind", False),
+        current=get_validated_bool(raw_block, "current", False),
+        show_plots=get_validated_bool(raw_block, "show_plots", False),
         stop_condition=stop_condition,
         hyperparameter_overrides=raw_block.get("hyperparameter_overrides", {}) or {},
         reward_configs=reward_configs,

@@ -11,12 +11,13 @@ sync with `fw.main_with_airsim`.
 
 from __future__ import annotations
 
+import os
 import logging
 import multiprocessing
-import os
-from pathlib import Path
-from typing import Any
 
+from typing import Any
+from pathlib import Path
+from fw.common.tools.config_utils import get_validated_bool
 from airsim.config.airsim_config import get_runtime_settings, merge_runtime_settings
 
 
@@ -157,8 +158,8 @@ def _resolve_effective_training_settings(
     if profile_name in _TRAINING_SPEED_PROFILES:
         effective_training_cfg.update(_TRAINING_SPEED_PROFILES[profile_name])
 
-    if bool(effective_training_cfg.get("use_pause_stepping", False)) and bool(
-        effective_training_cfg.get("use_sim_time_stepping", False)
+    if get_validated_bool(effective_training_cfg, "use_pause_stepping", False) and get_validated_bool(
+        effective_training_cfg, "use_sim_time_stepping", False
     ):
         effective_training_cfg["time_step"] = float(
             effective_training_cfg.get(
@@ -193,9 +194,9 @@ def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -
     env_config.update(
         {
             "training_mode": True,
-            "no_rendering_mode": bool(training_cfg.get("no_rendering_mode", True)),
-            "use_pause_stepping": bool(training_cfg.get("use_pause_stepping", True)),
-            "use_sim_time_stepping": bool(training_cfg.get("use_sim_time_stepping", False)),
+            "no_rendering_mode": get_validated_bool(training_cfg, "no_rendering_mode", True),
+            "use_pause_stepping": get_validated_bool(training_cfg, "use_pause_stepping", True),
+            "use_sim_time_stepping": get_validated_bool(training_cfg, "use_sim_time_stepping", False),
             "sim_time_per_action": float(
                 training_cfg.get(
                     "sim_time_per_action",
@@ -206,8 +207,8 @@ def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -
             "time_step": float(training_cfg.get("time_step", 0.1)),
             "physics_update_timeout": float(training_cfg.get("physics_update_timeout", 1.0)),
             "state_poll_interval": float(training_cfg.get("state_poll_interval", 0.005)),
-            "draw_calibration_reference": bool(
-                training_cfg.get("draw_calibration_reference", False)
+            "draw_calibration_reference": get_validated_bool(
+                training_cfg, "draw_calibration_reference", False
             ),
             "simulation_speed": float(
                 training_cfg.get(
@@ -216,14 +217,14 @@ def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -
                 )
             ),
             "save_slot": str(airsim_cfg.get("save_slot", "simulator_1")),
-            "load_world_on_start": bool(
-                training_cfg.get("load_world_on_start", True)
+            "load_world_on_start": get_validated_bool(
+                training_cfg, "load_world_on_start", True
             ),
-            "capture_live_start_pose": bool(
-                training_cfg.get("capture_live_start_pose", True)
+            "capture_live_start_pose": get_validated_bool(
+                training_cfg, "capture_live_start_pose", True
             ),
             "episode_log_path": episode_log_path,
-            "normalize_reward": bool(training_cfg.get("normalize_reward", True)),
+            "normalize_reward": get_validated_bool(training_cfg, "normalize_reward", True),
             "reward_normalization_scale": float(
                 training_cfg.get("reward_normalization_scale", 5.0)
             ),
@@ -231,11 +232,11 @@ def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -
             "progress_log_interval_steps": int(
                 training_cfg.get("progress_log_interval_steps", 0)
             ),
-            "log_pause_watchdog_warnings": bool(
-                training_cfg.get("log_pause_watchdog_warnings", False)
+            "log_pause_watchdog_warnings": get_validated_bool(
+                training_cfg, "log_pause_watchdog_warnings", False
             ),
             "max_steps": int(training_cfg.get("max_steps", 60000)),
-            "curriculum_enabled": bool(training_cfg.get("curriculum_enabled", False)),
+            "curriculum_enabled": get_validated_bool(training_cfg, "curriculum_enabled", False),
             "curriculum_window_size": int(training_cfg.get("curriculum_window_size", 8)),
             "curriculum_target_checkpoint": training_cfg.get(
                 "curriculum_target_checkpoint"
@@ -252,8 +253,8 @@ def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -
             "curriculum_randomization_scale": float(
                 training_cfg.get("curriculum_randomization_scale", 0.0)
             ),
-            "guidance_assist_enabled": bool(
-                training_cfg.get("guidance_assist_enabled", False)
+            "guidance_assist_enabled": get_validated_bool(
+                training_cfg, "guidance_assist_enabled", False
             ),
             "guidance_residual_steering_scale": float(
                 training_cfg.get("guidance_residual_steering_scale", 0.50)
@@ -261,8 +262,8 @@ def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -
             "guidance_residual_throttle_scale": float(
                 training_cfg.get("guidance_residual_throttle_scale", 0.60)
             ),
-            "steering_dynamics_enabled": bool(
-                training_cfg.get("steering_dynamics_enabled", True)
+            "steering_dynamics_enabled": get_validated_bool(
+                training_cfg, "steering_dynamics_enabled", True
             ),
             "steering_smoothing_alpha": float(
                 training_cfg.get("steering_smoothing_alpha", 0.65)
@@ -319,8 +320,8 @@ def _build_visualize_env_config(runtime_settings: dict[str, Any] | None = None) 
         **airsim_cfg,
         "training_mode": False,
         "use_pause_stepping": False,
-        "draw_calibration_reference": bool(
-            visualization_cfg.get("draw_calibration_reference", True)
+        "draw_calibration_reference": get_validated_bool(
+            visualization_cfg, "draw_calibration_reference", True
         ),
         "simulation_speed": 1.0,
         "max_steps": int(visualization_cfg.get("max_steps", 14000)),
@@ -363,7 +364,7 @@ def _run_training_with_transfer(
 
     obs_dim = int(env.gym_env.observation_space.shape[0])
     act_dim = int(env.gym_env.action_space.shape[0])
-    freeze = bool(tl_cfg.get("freeze_shared_layers", True))
+    freeze = get_validated_bool(tl_cfg, "freeze_shared_layers", True)
     print("\n" + "=" * 60)
     print("  TRANSFER LEARNING — loading 2D policy weights")
     print("=" * 60)
@@ -443,7 +444,7 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
         runtime_settings if runtime_settings is not None else get_runtime_settings()
     )
     tl_cfg = dict(runtime.get("transfer_learning", {}))
-    if bool(tl_cfg.get("enabled", False)):
+    if get_validated_bool(tl_cfg, "enabled", False):
         try:
             return _run_training_with_transfer(env, tl_cfg, stop_condition, repo_root, profile)
         finally:

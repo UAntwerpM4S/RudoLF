@@ -13,14 +13,14 @@ def data_path(*relative):
 
 def get_device(prefer_gpu: bool = True) -> torch.device:
     """
-    Return the torch device to use.
+    Select the torch device to use for surrogate training/inference.
 
     Args:
-        prefer_gpu: If True (default) and a CUDA device is available,
-            return it; otherwise fall back to CPU.
+        prefer_gpu: If True, use CUDA when available; otherwise always use CPU.
 
     Returns:
-        `torch.device("cuda")` or `torch.device("cpu")`.
+        torch.device: "cuda" when `prefer_gpu` is True and CUDA is
+            available, otherwise "cpu".
     """
 
     if prefer_gpu and torch.cuda.is_available():
@@ -29,12 +29,12 @@ def get_device(prefer_gpu: bool = True) -> torch.device:
 
 def save_checkpoint(state: dict, path: Path):
     """
-    Save a checkpoint dict to disk, creating parent directories as needed.
+    Save a training checkpoint to disk, creating parent directories as needed.
 
     Args:
-        state: Checkpoint payload to save (e.g. model/optimizer state).
-        path: Destination file path; its parent directories are created
-            if they don't already exist.
+        state: Checkpoint payload (e.g. model/optimizer state dicts,
+            normalization stats, architecture parameters) to serialize.
+        path: Destination file path for the checkpoint.
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -43,14 +43,15 @@ def save_checkpoint(state: dict, path: Path):
 
 def load_checkpoint(path: Path, device: torch.device):
     """
-    Load a checkpoint dict previously saved by `save_checkpoint`.
+    Load a previously saved training checkpoint from disk.
 
     Args:
         path: Path to the checkpoint file.
-        device: Device to map the loaded tensors onto.
+        device: Torch device to map the loaded tensors onto.
 
     Returns:
-        The deserialized checkpoint object (as passed to `torch.save`).
+        The deserialized checkpoint payload (same structure passed to
+        `save_checkpoint`).
 
     Raises:
         FileNotFoundError: If `path` does not exist.

@@ -24,15 +24,18 @@ class SurrogateMLP(nn.Module):
         dropout: float = 0.0,
     ):
         """
-        Initialize the instance.
+        Build the MLP layer stack.
 
         Args:
-            input_dim: Description.
-            output_dim: Description.
-            hidden_sizes: Description.
-            activation: Description.
-            use_batch_norm: Description.
-            dropout: Description.
+            input_dim: Number of input features.
+            output_dim: Number of regression output targets.
+            hidden_sizes: Width of each hidden layer, in order.
+            activation: Activation module class applied after each hidden
+                `Linear` layer (and after `BatchNorm1d`, when enabled).
+            use_batch_norm: Whether to insert `BatchNorm1d` after each
+                hidden `Linear` layer, before the activation.
+            dropout: Dropout probability applied after each hidden layer's
+                activation. `0.0` disables dropout.
         """
 
         super().__init__()
@@ -56,10 +59,13 @@ class SurrogateMLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward.
+        Run the MLP forward pass.
 
         Args:
-            x: Description.
+            x: Input tensor of shape `(N, input_dim)`.
+
+        Returns:
+            torch.Tensor: Output tensor of shape `(N, output_dim)`.
         """
 
         return self.net(x)
