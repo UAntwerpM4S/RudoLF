@@ -38,8 +38,8 @@ def get_validated_bool(mapping: Mapping, key: str, default: bool) -> bool:
     non-bool values instead of silently coercing them.
 
     Guards against the `bool("false") == True` foot-gun: a JSON config file
-    that (incorrectly) quotes a boolean as a string, e.g. `"use_airsim":
-    "false"`, would otherwise be silently truthy if passed through
+    that (incorrectly) quotes a boolean as a string, e.g. "use_airsim":
+    "false", would otherwise be silently truthy if passed through
     `bool(mapping.get(key, default))`.
 
     Args:

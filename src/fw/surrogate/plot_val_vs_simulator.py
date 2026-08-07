@@ -47,7 +47,8 @@ OUTPUT_KEYS   = ["delta_surge","delta_sway",  "delta_yaw_rate"]
 # ──────────────────────────────────────────────────────────────────────────────
 print("Loading validation split …")
 val       = np.load(VAL_NPZ)
-X_val     = val["X"]          # (N, 8)  – normalized inputs expected by predictor
+X_val     = val["X"]          # (N, input_dim) – normalized inputs expected by predictor;
+                              # input_dim is 31 for the csv_to_npz_no_xy.py pipeline (see train_surrogate.py)
 Y_sim     = val["Y"]          # (N, 3)  – raw simulator deltas (ground truth)
 
 N = X_val.shape[0]
@@ -70,33 +71,42 @@ residuals = Y_pred - Y_sim       # (N, 3)
 
 def rmse(a, b):
     """
-    Root mean squared error.
+    Root mean squared error between two arrays.
 
     Args:
-        a: Description.
-        b: Description.
+        a: First array.
+        b: Second array, same shape as `a`.
+
+    Returns:
+        float: RMSE of `a - b`.
     """
 
     return float(np.sqrt(np.mean((a - b) ** 2)))
 
 def mae(a, b):
     """
-    Mean absolute error.
+    Mean absolute error between two arrays.
 
     Args:
-        a: Description.
-        b: Description.
+        a: First array.
+        b: Second array, same shape as `a`.
+
+    Returns:
+        float: MAE of `a - b`.
     """
 
     return float(np.mean(np.abs(a - b)))
 
 def r2(true, pred):
     """
-    R squared.
+    Coefficient of determination (R²) of predictions against ground truth.
 
     Args:
-        true: Description.
-        pred: Description.
+        true: Ground-truth values.
+        pred: Predicted values, same shape as `true`.
+
+    Returns:
+        float: R², or NaN if `true` has zero variance.
     """
 
     ss_res = np.sum((true - pred) ** 2)

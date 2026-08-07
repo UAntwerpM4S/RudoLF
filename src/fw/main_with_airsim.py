@@ -79,6 +79,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         merge_runtime_settings,
     )
     from fw.common.tools.path_utils import resolve_path_relative_to_src
+    from fw.common.tools.config_utils import get_validated_bool
     from fw.configuration.env_factory import (
         airsim_env_name,
     )
@@ -155,8 +156,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             f"[main_with_airsim] Unknown training.speed_profile '{profile_name}'. "
             "Using explicit training settings."
         )
-    if bool(effective_training_cfg.get("use_pause_stepping", False)) and bool(
-        effective_training_cfg.get("use_sim_time_stepping", False)
+    if get_validated_bool(effective_training_cfg, "use_pause_stepping", False) and get_validated_bool(
+        effective_training_cfg, "use_sim_time_stepping", False
     ):
         effective_training_cfg["time_step"] = float(
             effective_training_cfg.get(
@@ -169,8 +170,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             f"{float(effective_training_cfg['time_step']):.3f}s simulated time per RL action"
         )
 
-    if bool(effective_training_cfg.get("use_pause_stepping", False)):
-        if bool(effective_training_cfg.get("use_sim_time_stepping", False)):
+    if get_validated_bool(effective_training_cfg, "use_pause_stepping", False):
+        if get_validated_bool(effective_training_cfg, "use_sim_time_stepping", False):
             print(
                 "[main_with_airsim] Step mode: simContinueForTime("
                 f"{float(effective_training_cfg.get('sim_time_per_action', effective_training_cfg.get('time_step', 0.1))):.3f}s)"
@@ -186,8 +187,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # step must remain a train step even though runpy executes this module with
     # __name__ == "__main__".
     if not _action_was_explicit and (
-        bool(visualization_cfg.get("model_visualise", False))
-        or bool(visualization_cfg.get("inference_visualise", False))
+        get_validated_bool(visualization_cfg, "model_visualise", False)
+        or get_validated_bool(visualization_cfg, "inference_visualise", False)
     ):
         action = "visualize"
 
@@ -200,8 +201,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             False when caller should continue with generic trainer.visualize.
         """
 
-        model_visualise = bool(visualization_cfg.get("model_visualise", False))
-        inference_visualise = bool(visualization_cfg.get("inference_visualise", False))
+        model_visualise = get_validated_bool(visualization_cfg, "model_visualise", False)
+        inference_visualise = get_validated_bool(visualization_cfg, "inference_visualise", False)
 
         if not (model_visualise or inference_visualise):
             return False
@@ -220,7 +221,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         episodes = int(visualization_cfg.get("episodes", 1))
         device = str(visualization_cfg.get("device", "cpu"))
         log_every = int(visualization_cfg.get("log_every", 50))
-        draw_ref = bool(visualization_cfg.get("draw_calibration_reference", True))
+        draw_ref = get_validated_bool(visualization_cfg, "draw_calibration_reference", True)
 
         if model_visualise:
             import airsim.inference.run_visualise_models as run_visualise_models_module
@@ -244,24 +245,24 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 log_every=log_every,
                 save_slot=save_slot,
                 simulation_speed=simulation_speed,
-                mirror_controls_in_ue5=bool(visualization_cfg.get("mirror_controls_in_ue5", False)),
-                animate_steering_in_ue5=bool(visualization_cfg.get("animate_steering_in_ue5", True)),
-                animate_throttle_in_ue5=bool(visualization_cfg.get("animate_throttle_in_ue5", True)),
+                mirror_controls_in_ue5=get_validated_bool(visualization_cfg, "mirror_controls_in_ue5", False),
+                animate_steering_in_ue5=get_validated_bool(visualization_cfg, "animate_steering_in_ue5", True),
+                animate_throttle_in_ue5=get_validated_bool(visualization_cfg, "animate_throttle_in_ue5", True),
                 render_interpolation_steps=int(visualization_cfg.get("render_interpolation_steps", 8)),
                 steering_visual_gain=float(visualization_cfg.get("steering_visual_gain", 0.35)),
                 throttle_visual_gain=float(
                     visualization_cfg.get("throttle_visual_gain", DEFAULT_THROTTLE_VISUAL_GAIN)
                 ),
-                use_kinematics_in_ue5=bool(visualization_cfg.get("use_kinematics_in_ue5", False)),
+                use_kinematics_in_ue5=get_validated_bool(visualization_cfg, "use_kinematics_in_ue5", False),
                 min_render_hz=float(visualization_cfg.get("min_render_hz", 90.0)),
                 max_translation_step=float(visualization_cfg.get("max_translation_step", 0.15)),
                 max_yaw_step_deg=float(visualization_cfg.get("max_yaw_step_deg", 1.5)),
-                lock_path_in_ue5=bool(visualization_cfg.get("lock_path_in_ue5", False)),
+                lock_path_in_ue5=get_validated_bool(visualization_cfg, "lock_path_in_ue5", False),
                 vehicle_object_name=str(visualization_cfg.get("vehicle_object_name", "")),
                 min_log_interval_s=float(visualization_cfg.get("min_log_interval_s", 0.25)),
                 bridge_telemetry_hz=float(visualization_cfg.get("bridge_telemetry_hz", 12.0)),
                 startup_settle_s=float(visualization_cfg.get("startup_settle_s", 0.4)),
-                verbose=bool(visualization_cfg.get("verbose", _verbose_airsim)),
+                verbose=get_validated_bool(visualization_cfg, "verbose", _verbose_airsim),
             )
             return True
 
@@ -277,7 +278,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 num_episodes=episodes,
                 device=device,
                 draw_calibration_reference=draw_ref,
-                verbose=bool(visualization_cfg.get("verbose", _verbose_airsim)),
+                verbose=get_validated_bool(visualization_cfg, "verbose", _verbose_airsim),
             )
             return True
 
@@ -358,33 +359,32 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     )
     airsim_env_cfg.update({
         "training_mode": is_training,
-        "draw_calibration_reference": bool(
-            effective_training_cfg.get(
-                "draw_calibration_reference",
-                visualization_cfg.get("draw_calibration_reference", True),
-            )
+        "draw_calibration_reference": get_validated_bool(
+            effective_training_cfg,
+            "draw_calibration_reference",
+            get_validated_bool(visualization_cfg, "draw_calibration_reference", True),
         ),
-        "no_rendering_mode": bool(effective_training_cfg.get("no_rendering_mode", False)),
+        "no_rendering_mode": get_validated_bool(effective_training_cfg, "no_rendering_mode", False),
         "load_world_on_start": effective_training_cfg.get("load_world_on_start", None),
         "capture_live_start_pose": effective_training_cfg.get("capture_live_start_pose", None),
         "episode_log_path": str(effective_training_cfg.get("episode_log_path", "")),
-        "normalize_reward": bool(effective_training_cfg.get("normalize_reward", True)),
+        "normalize_reward": get_validated_bool(effective_training_cfg, "normalize_reward", True),
         "reward_normalization_scale": float(
             effective_training_cfg.get("reward_normalization_scale", 5.0)
         ),
         "reset_mode": str(effective_training_cfg.get("reset_mode", "rewind_pose")),
         "progress_log_interval_steps": int(effective_training_cfg.get("progress_log_interval_steps", 0)),
-        "log_pause_watchdog_warnings": bool(effective_training_cfg.get("log_pause_watchdog_warnings", False)),
-        "use_sim_time_stepping": bool(effective_training_cfg.get("use_sim_time_stepping", False)),
+        "log_pause_watchdog_warnings": get_validated_bool(effective_training_cfg, "log_pause_watchdog_warnings", False),
+        "use_sim_time_stepping": get_validated_bool(effective_training_cfg, "use_sim_time_stepping", False),
         "sim_time_per_action": float(effective_training_cfg.get("sim_time_per_action", effective_training_cfg.get("time_step", 0.1))),
-        "use_pause_stepping": bool(effective_training_cfg.get("use_pause_stepping", is_training)),
+        "use_pause_stepping": get_validated_bool(effective_training_cfg, "use_pause_stepping", is_training),
         "simulation_speed": effective_simulation_speed,
         "max_steps": effective_max_steps,
         "frames_per_step": int(effective_training_cfg.get("frames_per_step", 8)),
         "time_step": float(effective_training_cfg.get("time_step", 0.1)),
         "physics_update_timeout": float(effective_training_cfg.get("physics_update_timeout", 1.0)),
         "state_poll_interval": float(effective_training_cfg.get("state_poll_interval", 0.005)),
-        "guidance_assist_enabled": bool(effective_training_cfg.get("guidance_assist_enabled", False)),
+        "guidance_assist_enabled": get_validated_bool(effective_training_cfg, "guidance_assist_enabled", False),
         "guidance_residual_steering_scale": float(
             effective_training_cfg.get("guidance_residual_steering_scale", 0.50)
         ),
@@ -432,7 +432,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     from airsim.config.airsim_config import get_airsim_config, AirSimConfig
     airsim_cfg = get_airsim_config()
     airsim_bridge = None
-    if airsim_cfg.get("use_airsim", False) and not _is_airsim_selected(envs):
+    if get_validated_bool(airsim_cfg, "use_airsim", False) and not _is_airsim_selected(envs):
         from airsim.communication.airsim_bridge import AirSimBridge
         bridge_cfg = AirSimConfig(
             ip=airsim_cfg.get("ip", ""),
