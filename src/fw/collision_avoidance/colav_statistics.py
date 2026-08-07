@@ -24,26 +24,6 @@ def plot_min_distance_stats(
     include_banks: bool = False,
 ) -> None:
     """
-    Plots minimum-distance encounter statistics.
-
-    Generates:
-
-    * A histogram and kernel density estimate (KDE) of minimum encounter
-      distances.
-    * Per-scenario boxplots of the same distances.
-
-    Only successfully resolved, non-collision encounters are included.
-
-    Args:
-        env: Collision-avoidance environment.
-        pdf_save_path: Output path for the PDF plot.
-        boxplot_save_path: Output path for the boxplot figure.
-        include_banks: Whether to include bank clearance when computing the
-            minimum distance.
-    """
-
-    print(f"banks included: {include_banks}")
-    """
     Plot encounter-level min-distance statistics.
 
     Generates two images:
@@ -62,7 +42,16 @@ def plot_min_distance_stats(
     did not end in collision. Unresolved encounters (e.g. episode timed
     out / terminated mid-encounter) are excluded to avoid skewing the
     distribution with partial samples.
+
+    Args:
+        env: Collision-avoidance environment.
+        pdf_save_path: Output path for the PDF plot.
+        boxplot_save_path: Output path for the boxplot figure.
+        include_banks: Whether to include bank clearance when computing the
+            minimum distance.
     """
+
+    # print(f"banks included: {include_banks}")
 
     # Make sure any encounter still active at call time is finalized.
     # Calling here means we're outside the env's normal step/reset loop,

@@ -281,7 +281,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._seg_tangents: Optional[np.ndarray] = None
         self._seg_lengths: Optional[np.ndarray] = None
 
-        # Call parent (PySimEnv) init
+        # Call parent (PySimBaseEnv) init
         super().__init__(
             render_mode=render_mode,
             time_step=time_step,

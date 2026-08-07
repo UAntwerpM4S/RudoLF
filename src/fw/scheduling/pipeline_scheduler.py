@@ -167,11 +167,11 @@ class PipelineScheduler(BaseScheduler):
         Build this block's environment and run its `action`.
 
         Resolves the block's profile and applies it to the framework
-        config, gym env, and simulator; for `action == "evaluate_reward"`
+        config, gym env, and simulator; for `action` == "evaluate_reward"
         delegates entirely to `_run_evaluate_reward`. Otherwise resolves
         the transfer/hyperparameters, calls `agent_mgr.set_environment`,
-        then either visualizes (`action == "visualize"`) or trains and
-        checkpoints (`action == "train"`) - only running the post-train
+        then either visualizes (`action` == "visualize") or trains and
+        checkpoints (`action` == "train") - only running the post-train
         evaluation rollout when `block.show_plots` is set.
 
         Args:
@@ -181,7 +181,7 @@ class PipelineScheduler(BaseScheduler):
                 `transfer.from_block` references.
 
         Returns:
-            Dict with at least `"duration"`; also `"evaluation_summary"`
+            Dict with at least "duration"; also "evaluation_summary"
             when a post-train evaluation rollout ran.
         """
 
@@ -261,7 +261,7 @@ class PipelineScheduler(BaseScheduler):
         Policy is saved via `agent_mgr.agent.save_policy` under a name
         derived from the env's `training_name` and the agent type. The
         profile JSON is written alongside it in the agent's `model_dir`
-        (or `"models"` if unset); a failure to write the profile JSON is
+        (or "models" if unset); a failure to write the profile JSON is
         logged as a warning rather than raised, since the policy file
         itself is already saved by that point.
 
@@ -288,10 +288,10 @@ class PipelineScheduler(BaseScheduler):
 
     def _run_evaluate_reward(self, block: PipelineBlock, env, profile, framework_config: dict) -> Dict[str, Any]:
         """
-        Run an `action == "evaluate_reward"` block via a scoped `Trainer`.
+        Run an `action` == "evaluate_reward" block via a scoped `Trainer`.
 
         Builds a fresh, block-scoped `Trainer`/`AgentManager` pair (using
-        `agent_mgr.agent_type` and a `"SimpleScheduler"` internally, since
+        `agent_mgr.agent_type` and a "SimpleScheduler" internally, since
         `Trainer.evaluate_reward` doesn't use the scheduler it's built
         with) rather than reusing `self.agent_mgr`. As a result, these
         blocks don't participate in this run's transfer chain and don't
@@ -300,7 +300,7 @@ class PipelineScheduler(BaseScheduler):
         `{block.name}_reward_evaluation_results.csv`.
 
         Args:
-            block: The block to run; must have `action == "evaluate_reward"`
+            block: The block to run; must have `action` == "evaluate_reward"
                 and a non-empty `reward_configs`.
             env: The block's environment wrapper, passed to `Trainer`.
             profile: The profile to train with.
@@ -308,7 +308,7 @@ class PipelineScheduler(BaseScheduler):
                 `Trainer` so the profile isn't applied a second time.
 
         Returns:
-            Dict with `"duration"` (evaluation results themselves are
+            Dict with "duration" (evaluation results themselves are
             written to the CSV file, not returned).
         """
 
