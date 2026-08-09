@@ -1,6 +1,7 @@
 import sys
 import types
 import logging
+import importlib
 import numpy as np
 
 from typing import Any
@@ -14,6 +15,7 @@ from fw.environments.multi_sim_env import MultiSimEnv
 from fw.environments.py_sim_colav_env import PySimColavEnv
 from fw.environments.action_repeat_wrapper import ActionRepeatWrapper
 from fw.common.tools.config_utils import normalize_configuration, get_validated_bool
+from fw.simulators.sync_sim_bridge import SimSyncBridge
 
 from airsim.config.airsim_config import (
     DEFAULT_AIRSIM_SAVE_SLOT,
@@ -23,7 +25,41 @@ from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_SHIP_POS,
     DEFAULT_FRAMEWORK_TARGET_POS,
 )
-from fw.environments.fh_sim_sync_env import FhSimSyncEnv
+
+
+def _create_fh_sim_bridge(ship_model, scenario: str):
+    """
+    Construct an FhSimBridge instance for the local FH math model.
+
+    Import is deferred (rather than a top-level import) because the FH
+    Simulator bridge module - and the external FH Simulator SDK it wraps -
+    may not be present on every machine this framework runs on. This
+    mirrors the fail-fast guard that used to live inside PySimEnv itself.
+
+    Args:
+        ship_model: ShipModel to construct the bridge for.
+        scenario: FH Simulator scenario name.
+
+    Returns:
+        FhSimBridge: A newly constructed bridge instance.
+
+    Raises:
+        RuntimeError: If the 'fw.simulators.fh_sim_bridge' module cannot be
+            imported (FH Simulator SDK not installed / not configured).
+    """
+
+    try:
+        fh_bridge_module = importlib.import_module('fw.simulators.fh_sim_bridge')
+        fh_bridge_class = getattr(fh_bridge_module, "FhSimBridge")
+        return fh_bridge_class(ship_model, scenario)
+    except ModuleNotFoundError as e:
+        raise RuntimeError(
+            "FH Simulator bridge module 'fw.simulators.fh_sim_bridge' could not be "
+            "imported. Ensure the FH Simulator package is installed and the "
+            "SIMEXE_REPO_FOLDER environment variable is set correctly. "
+            "Use a non-FH_TABULAR dynamics_model for pure-Python simulation "
+            "without external dependencies."
+        ) from e
 
 
 class EnvironmentRegistryError(Exception):
@@ -522,15 +558,26 @@ class FhSimEnvironment(BaseEnvironment):
                 f"use {Model.FH_TABULAR} instead."
             )
 
+        # Bridge construction lives here (not in PySimEnv): FhSimEnvironment
+        # is the caller that knows it wants the local FH math model bridge.
+        fh_bridge = _create_fh_sim_bridge(
+            ship_model=self.configuration["ship_model"],
+            scenario=self.configuration["scenario"],
+        )
+
         self.env = PySimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
                             overall_contour=self.configuration["overall_contour"],
                             depth_contour=self.configuration["depth_contour"],
                             trajectory=self.configuration["trajectory"],
                             ship_model=self.configuration["ship_model"],
                             scenario=self.configuration["scenario"],
-                            dynamics_model=dynamics_model)
-
-
+                            dynamics_model=dynamics_model,
+                            wind=self.configuration["wind"],
+                            current=self.configuration["current"],
+                            ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
+                            reward_name=self.configuration.get("reward_name", "default"),
+                            reward_weights=self.configuration.get("reward_weights", None),
+                            fh_bridge=fh_bridge)
 
 
 class FhSimSyncEnvironment(BaseEnvironment):
@@ -572,7 +619,21 @@ class FhSimSyncEnvironment(BaseEnvironment):
         ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
         target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
-        self.env = FhSimSyncEnv(
+        # Bridge construction lives here (not in PySimEnv): FhSimSyncEnvironment
+        # is the caller that knows it wants the realtime UDP simSync bridge.
+        # ship_model must match whatever ship is already loaded in the
+        # running simSync instance - see SimSyncBridge.__init__ docstring.
+        fh_bridge = SimSyncBridge(
+            ship_model=self.configuration["ship_model"],
+            remote_ip=self.configuration.get("remote_ip", "127.0.0.1"),
+            remote_port=self.configuration.get("remote_port", 5000),
+            local_ip=self.configuration.get("local_ip", "127.0.0.1"),
+            local_port=self.configuration.get("local_port", 5001),
+            connect_timeout=self.configuration.get("connect_timeout", 10.0),
+            step_timeout_per_tick=self.configuration.get("step_timeout_per_tick", 1.0),
+        )
+
+        self.env = PySimEnv(
             time_step=2.0,
             max_steps=135000,
             start_pos=ship_pos,
@@ -583,12 +644,12 @@ class FhSimSyncEnvironment(BaseEnvironment):
             depth_contour=self.configuration["depth_contour"],
             trajectory=self.configuration["trajectory"],
             ship_model=self.configuration["ship_model"],
-            remote_ip=self.configuration.get("remote_ip", "127.0.0.1"),
-            remote_port=self.configuration.get("remote_port", 5000),
-            local_ip=self.configuration.get("local_ip", "127.0.0.1"),
-            local_port=self.configuration.get("local_port", 5001),
-            connect_timeout=self.configuration.get("connect_timeout", 10.0),
-            step_timeout_per_tick=self.configuration.get("step_timeout_per_tick", 1.0),
+            wind=self.configuration.get("wind", False),
+            current=self.configuration.get("current", False),
+            ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
+            reward_name=self.configuration.get("reward_name", "default"),
+            reward_weights=self.configuration.get("reward_weights", None),
+            fh_bridge=fh_bridge,
         )
 
 class AirSimEnvironment(BaseEnvironment):
@@ -856,14 +917,19 @@ def build_fhsim_config(framework_config: dict) -> dict:
     """
 
     return {
-        "ship_model":       framework_config["ship_model"],
-        "scenario":         framework_config["scenario"],
-        "dynamics_model":   framework_config["dynamics_model"],
-        "start_pos":        framework_config["start_pos"],
-        "target_pos":       framework_config["target_pos"],
-        "overall_contour":  framework_config["overall_contour"],
-        "depth_contour":    framework_config["depth_contour"],
-        "trajectory":       framework_config["trajectory"],
+        "ship_model":           framework_config["ship_model"],
+        "scenario":             framework_config["scenario"],
+        "dynamics_model":       framework_config["dynamics_model"],
+        "start_pos":            framework_config["start_pos"],
+        "target_pos":           framework_config["target_pos"],
+        "overall_contour":      framework_config["overall_contour"],
+        "depth_contour":        framework_config["depth_contour"],
+        "trajectory":           framework_config["trajectory"],
+        "wind":                 framework_config.get("wind", False),
+        "current":              framework_config.get("current", False),
+        "ua_surrogate_config":  framework_config.get("ua_surrogate_config", {}),
+        "reward_weights":       framework_config.get("reward_weights", None),
+        "reward_name":          framework_config.get("reward_name", "default"),
     }
 
 
@@ -876,20 +942,27 @@ def build_fhsimsync_config(framework_config: dict) -> dict:
 
     Returns:
         A dict containing the required keys consumed by FhSimSyncEnvironment
-        (ship_model, scenario) plus any optional UDP connection overrides
-        (remote_ip, remote_port, local_ip, local_port, connect_timeout,
-        step_timeout_per_tick) when present in the framework config.
+        (ship_model, scenario) plus wind/current/reward/UA-surrogate keys
+        (same as build_pysim_config) and any optional UDP connection
+        overrides (remote_ip, remote_port, local_ip, local_port,
+        connect_timeout, step_timeout_per_tick) when present in the
+        framework config.
     """
 
     cfg = {
-        "ship_model":       framework_config["ship_model"],
-        "scenario":         framework_config["scenario"],
-        "dynamics_model":   framework_config["dynamics_model"],
-        "start_pos":        framework_config["start_pos"],
-        "target_pos":       framework_config["target_pos"],
-        "overall_contour":  framework_config["overall_contour"],
-        "depth_contour":    framework_config["depth_contour"],
-        "trajectory":       framework_config["trajectory"],
+        "ship_model":           framework_config["ship_model"],
+        "scenario":             framework_config["scenario"],
+        "dynamics_model":       framework_config["dynamics_model"],
+        "start_pos":            framework_config["start_pos"],
+        "target_pos":           framework_config["target_pos"],
+        "overall_contour":      framework_config["overall_contour"],
+        "depth_contour":        framework_config["depth_contour"],
+        "trajectory":           framework_config["trajectory"],
+        "wind":                 framework_config.get("wind", False),
+        "current":              framework_config.get("current", False),
+        "ua_surrogate_config":  framework_config.get("ua_surrogate_config", {}),
+        "reward_weights":       framework_config.get("reward_weights", None),
+        "reward_name":          framework_config.get("reward_name", "default"),
     }
     # Forward optional UDP / timing overrides when explicitly set in config.
     for optional_key in (

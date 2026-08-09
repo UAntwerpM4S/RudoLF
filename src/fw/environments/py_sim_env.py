@@ -3,7 +3,6 @@ import copy
 import math
 import shapely
 import logging
-import importlib
 import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
@@ -28,7 +27,6 @@ from fw.environments.base_env import BaseEnv
 from fw.reward.reward import Reward
 
 from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
-from fw.simulators.sync_sim_bridge import SimSyncBridge
 from fw.dynamics.fh_tabular_model import FhTabularModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.dynamics.ugent_surrogate import UGentSurrogate
@@ -121,18 +119,26 @@ class PySimEnv(BaseEnv):
     Supports both pure-Python dynamics models (Fossen, Nomoto,
     UGentSurrogate, UAntwerpSurrogate) and the external FH Simulator engine
     (Model.FH_TABULAR). When dynamics_model == Model.FH_TABULAR, the
-    environment is backed by an FhSimBridge instance (self._fh_sim /
-    self.fh_sim) that manages the FH Simulator math model; interaction in
-    that mode is limited to setting normalized rudder and thrust commands
-    in [-1, 1] via the SimAPI Python layer. For all other dynamics models,
-    self._fh_sim is None and the environment behaves exactly as before.
+    environment is backed by an externally-constructed FH engine bridge
+    (self._fh_sim / self.fh_sim) that manages the FH Simulator math model;
+    interaction in that mode is limited to setting normalized rudder and
+    thrust commands in [-1, 1] via the SimAPI Python layer. For all other
+    dynamics models, self._fh_sim is None and the environment behaves
+    exactly as before.
+
+    PySimEnv itself is agnostic to which concrete bridge implementation is
+    used: any object exposing the same duck-typed interface as FhSimBridge
+    (ship_model, ship_interface, math_model, initial_vessel_state, reset(),
+    dispose()) is accepted via the `fh_bridge` constructor argument. This
+    currently includes:
+        - FhSimBridge (fw.simulators.fh_sim_bridge): local FH math model.
+        - SimSyncBridge (fw.simulators.sync_sim_bridge): realtime UDP
+          connection to a running simSync instance.
 
     Attributes:
-        _fh_sim: FhSimBridge instance managing the FH Simulator math model
-            when dynamics_model == Model.FH_TABULAR; None otherwise. Is
-            None despite FH_TABULAR being selected only if the
-            fh_sim_bridge module cannot be imported, in which case
-            instantiation fails during __init__ with a RuntimeError.
+        _fh_sim: Externally-constructed FH engine bridge (FhSimBridge,
+            SimSyncBridge, or any duck-typed equivalent) when
+            dynamics_model == Model.FH_TABULAR; None otherwise.
     """
 
     def __init__(
@@ -156,7 +162,7 @@ class PySimEnv(BaseEnv):
             reward_weights: Optional[Dict[str, float]] = None,
             # FH Simulator configuration (only used when dynamics_model == Model.FH_TABULAR)
             scenario: Optional[str] = "DDShip_scenario1_nowindnocurrent",
-            sim_sync_bridge: Optional[SimSyncBridge] = None,
+            fh_bridge: Optional[object] = None,
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -184,34 +190,41 @@ class PySimEnv(BaseEnv):
             ua_surrogate_config: optional configuration for the UA surrogate model.
             reward_name: name of reward profile (combination of components).
             reward_weights: optional per-component reward weights.
-            scenario: FH Simulator scenario name. Only used when
-                dynamics_model == Model.FH_TABULAR; ignored otherwise.
-            sim_sync_bridge: SimSyncBridge instance managing the FH SimSync
+            scenario: FH Simulator scenario name. Retained for record-keeping
+                (self.scenario) only; PySimEnv no longer uses it to construct
+                a bridge. Only meaningful when dynamics_model == Model.FH_TABULAR.
+            fh_bridge: Externally-constructed FH engine bridge instance
+                (e.g. FhSimBridge or SimSyncBridge) to drive the environment
+                when dynamics_model == Model.FH_TABULAR. Required in that
+                case - PySimEnv does not construct a bridge itself. Ignored
+                for all other dynamics models.
+
+        Raises:
+            RuntimeError: If dynamics_model == Model.FH_TABULAR and no
+                fh_bridge was provided.
         """
 
         # ---------------------------------------------------------------
         # FH Simulator bridge setup (only when dynamics_model is FH_TABULAR).
-        # Done first, before any other initialization, so that a missing FH
-        # Simulator installation fails fast instead of after doing
-        # potentially expensive setup work (mirrors prior FhSimEnv behavior).
+        # Done first, before any other initialization, so a missing bridge
+        # fails fast instead of after doing potentially expensive setup work.
+        # PySimEnv is intentionally agnostic here: it accepts whatever
+        # duck-typed bridge object the caller (env_factory) constructed -
+        # it does not know about FhSimBridge or SimSyncBridge specifically.
         # ---------------------------------------------------------------
         self._fh_sim = None
         if dynamics_model == Model.FH_TABULAR:
-            if sim_sync_bridge is not None:
-                self._fh_sim = sim_sync_bridge
-            else:
-                try:
-                    fh_bridge_module = importlib.import_module('fw.simulators.fh_sim_bridge')
-                    fh_bridge_class = getattr(fh_bridge_module, "FhSimBridge")
-                    self._fh_sim = fh_bridge_class(ship_model, scenario)
-                except ModuleNotFoundError as e:
-                    raise RuntimeError(
-                        "FH Simulator bridge module 'fw.simulators.fh_sim_bridge' could not be "
-                        "imported. Ensure the FH Simulator package is installed and the "
-                        "SIMEXE_REPO_FOLDER environment variable is set correctly. "
-                        "Use a non-FH_TABULAR dynamics_model for pure-Python simulation "
-                        "without external dependencies."
-                    ) from e
+            if fh_bridge is None:
+                raise RuntimeError(
+                    "Model.FH_TABULAR requires an externally constructed FH engine "
+                    "bridge passed via `fh_bridge`. Construct one via "
+                    "fw.simulators.fh_sim_bridge.FhSimBridge(...) (local math model) "
+                    "or fw.simulators.sync_sim_bridge.SimSyncBridge(...) (realtime "
+                    "simSync connection) before creating PySimEnv, or use a "
+                    "non-FH_TABULAR dynamics_model for pure-Python simulation "
+                    "without external dependencies."
+                )
+            self._fh_sim = fh_bridge
 
         super().__init__(render_mode)
 
