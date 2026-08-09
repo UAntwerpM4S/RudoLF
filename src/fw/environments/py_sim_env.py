@@ -452,11 +452,13 @@ class PySimEnv(BaseEnv):
     @property
     def fh_sim(self):
         """
-        The FH Simulator bridge instance.
+        The FH engine bridge instance driving this environment.
 
         Returns:
-            FhSimBridge: Active bridge to the FH Simulator math model, or
-            None if dynamics_model is not Model.FH_TABULAR.
+            The externally-constructed bridge (FhSimBridge, SimSyncBridge,
+            or any duck-typed equivalent) passed in via `fh_bridge` at
+            construction time, or None if dynamics_model is not
+            Model.FH_TABULAR.
         """
 
         return self._fh_sim
