@@ -16,6 +16,7 @@ from fw.environments.py_sim_colav_env import PySimColavEnv
 from fw.environments.action_repeat_wrapper import ActionRepeatWrapper
 from fw.common.tools.config_utils import normalize_configuration, get_validated_bool
 from fw.simulators.sync_sim_bridge import SimSyncBridge
+from fw.simulators.fh_sim_bridge import FhSimBridge
 
 from airsim.config.airsim_config import (
     DEFAULT_AIRSIM_SAVE_SLOT,
@@ -25,41 +26,6 @@ from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_SHIP_POS,
     DEFAULT_FRAMEWORK_TARGET_POS,
 )
-
-
-def _create_fh_sim_bridge(ship_model, scenario: str):
-    """
-    Construct an FhSimBridge instance for the local FH math model.
-
-    Import is deferred (rather than a top-level import) because the FH
-    Simulator bridge module - and the external FH Simulator SDK it wraps -
-    may not be present on every machine this framework runs on. This
-    mirrors the fail-fast guard that used to live inside PySimEnv itself.
-
-    Args:
-        ship_model: ShipModel to construct the bridge for.
-        scenario: FH Simulator scenario name.
-
-    Returns:
-        FhSimBridge: A newly constructed bridge instance.
-
-    Raises:
-        RuntimeError: If the 'fw.simulators.fh_sim_bridge' module cannot be
-            imported (FH Simulator SDK not installed / not configured).
-    """
-
-    try:
-        fh_bridge_module = importlib.import_module('fw.simulators.fh_sim_bridge')
-        fh_bridge_class = getattr(fh_bridge_module, "FhSimBridge")
-        return fh_bridge_class(ship_model, scenario)
-    except ModuleNotFoundError as e:
-        raise RuntimeError(
-            "FH Simulator bridge module 'fw.simulators.fh_sim_bridge' could not be "
-            "imported. Ensure the FH Simulator package is installed and the "
-            "SIMEXE_REPO_FOLDER environment variable is set correctly. "
-            "Use a non-FH_TABULAR dynamics_model for pure-Python simulation "
-            "without external dependencies."
-        ) from e
 
 
 class EnvironmentRegistryError(Exception):
@@ -558,9 +524,7 @@ class FhSimEnvironment(BaseEnvironment):
                 f"use {Model.FH_TABULAR} instead."
             )
 
-        # Bridge construction lives here (not in PySimEnv): FhSimEnvironment
-        # is the caller that knows it wants the local FH math model bridge.
-        fh_bridge = _create_fh_sim_bridge(
+        fh_bridge = FhSimBridge(
             ship_model=self.configuration["ship_model"],
             scenario=self.configuration["scenario"],
         )
@@ -619,10 +583,6 @@ class FhSimSyncEnvironment(BaseEnvironment):
         ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
         target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
-        # Bridge construction lives here (not in PySimEnv): FhSimSyncEnvironment
-        # is the caller that knows it wants the realtime UDP simSync bridge.
-        # ship_model must match whatever ship is already loaded in the
-        # running simSync instance - see SimSyncBridge.__init__ docstring.
         fh_bridge = SimSyncBridge(
             ship_model=self.configuration["ship_model"],
             remote_ip=self.configuration.get("remote_ip", "127.0.0.1"),
