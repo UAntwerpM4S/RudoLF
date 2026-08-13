@@ -339,53 +339,7 @@ class FhSimBridge:
 
             self._math_model.SimulateRewindTo(time_point)
 
-    
-    def print_other_ships(self):
-        """
-        Inspect and print information about other ships in the simulation.
 
-        Iterates over the math model's other-ship interfaces starting at
-        index 0 and prints each one's name, position, dimensions, heading,
-        and velocity over ground. Stops at the first index that returns
-        None (the SimAPI returns nullptr / None past the end of the array).
-
-        Raises:
-            RuntimeError: If the math model is not initialised.
-        """
-
-        if self._math_model is None:
-            raise RuntimeError(
-                "Math model is not initialised. Call reset() first."
-            )
-
-        index = 0
-        while True:
-            other_ship = self._math_model.getOtherShipInterface(index)
-            if other_ship is None:
-                break
-
-            name = other_ship.getName()
-            position = other_ship.getShipPosition()
-            dimensions = other_ship.getDimensions()
-            heading = other_ship.getShipHeading()
-            velocity = other_ship.getShipVelocityOverGround()
-
-            print(f"Other ship [{index}]:")
-            print(f"  name:       {name}")
-            print(f"  position:   x={position.x:.2f}, y={position.y:.2f}")
-            print(f"  dimensions: LPP={dimensions.LPP:.2f}, "
-                  f"LoA={dimensions.LoA:.2f}, "
-                  f"Beam={dimensions.Beam:.2f}, "
-                  f"Draft={dimensions.Draft:.2f}")
-            print(f"  heading:    {heading:.2f} deg")
-            print(f"  velocity:   surge={velocity.x:.2f}, sway={velocity.y:.2f}")
-
-            index += 1
-
-        if index == 0:
-            print("No other ships in the simulation.")
-
-    
     def dispose(self):
         """
         Terminate and dispose the math model, releasing all SimAPI resources.
