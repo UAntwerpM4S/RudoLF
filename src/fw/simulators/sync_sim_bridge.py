@@ -135,7 +135,7 @@ class SimSyncBridge:
     """
 
     def __init__(self,
-                 ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
+                 ship_model: Optional[ShipModel] = ShipModel.MYZAKO_37,
                  remote_ip: str = "127.0.0.1", remote_port: int = 5000,
                  local_ip: str = "127.0.0.1",  local_port: int = 5001,
                  connect_timeout: float = 10.0,
