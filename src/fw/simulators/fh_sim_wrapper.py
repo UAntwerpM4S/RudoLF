@@ -161,7 +161,6 @@ class FhSimWrapper(BaseSimulator):
 
         # Step 3: advance FH physics
         self._engine.math_model.simulateSeconds(self.dt)
-        self._engine.print_other_ships()
 
         # Step 4: read updated state from FH engine
         new_ship_pos          = self._engine.ship_interface.getShipPosition()
