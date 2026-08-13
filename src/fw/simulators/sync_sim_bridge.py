@@ -2,6 +2,10 @@ import os
 import logging
 import threading
 
+from typing import Optional
+from fw.ships.ship_factory import ShipModel
+
+
 try:
     _simexe_path = os.environ["SIMEXE_REPO_FOLDER"]
 except KeyError:
@@ -125,11 +129,13 @@ class SimSyncBridge:
     Realtime counterpart of FhSimBridge.
 
     Connects to a running simSync instance over UDP and exposes the same
-    interface as FhSimBridge (ship_interface, math_model, reset, dispose),
-    so FhSimWrapper can be reused unchanged.
+    interface as FhSimBridge (ship_model, ship_interface, math_model,
+    initial_vessel_state, reset, dispose), so FhTabularModel (via
+    ShipSimulator) can drive either bridge unchanged.
     """
 
     def __init__(self,
+                 ship_model: Optional[ShipModel] = ShipModel.MYZAKO_37,
                  remote_ip: str = "127.0.0.1", remote_port: int = 5000,
                  local_ip: str = "127.0.0.1",  local_port: int = 5001,
                  connect_timeout: float = 10.0,
@@ -138,6 +144,15 @@ class SimSyncBridge:
         Initialize the realtime simSync bridge.
 
         Args:
+            ship_model: Ship model of the vessel already running in the
+                remote simSync instance. Required for API parity with
+                FhSimBridge.ship_model - FhTabularModel.step() branches on
+                this (e.g. ShipModel.TRIPOLI uses azipod controls instead
+                of rudder/propeller controls) regardless of which bridge
+                is in use, so it must be set correctly here to match
+                whatever ship the running simSync instance actually has
+                loaded. This does not configure or change the remote
+                simulator's ship in any way; simSync already owns that.
             remote_ip: IP address of the remote simSync instance.
             remote_port: UDP port of the remote simSync instance.
             local_ip: Local IP address used for the UDP connection.
@@ -148,6 +163,7 @@ class SimSyncBridge:
                 realtime state update while advancing simulation time.
         """
 
+        self._ship_model = ship_model
         self._remote = (remote_ip, remote_port)
         self._local  = (local_ip, local_port)
         self._connect_timeout = connect_timeout
@@ -171,6 +187,18 @@ class SimSyncBridge:
         self.initialize_math_model = True
 
     # ---- Public surface mirroring FhSimBridge -------------------------------
+
+    @property
+    def ship_model(self):
+        """
+        Model type of the ship already running in the remote simSync instance.
+
+        Returns:
+            ShipModel: Ship model enum value (e.g. ShipModel.MYZAKO_DEFAULT,
+                ShipModel.TRIPOLI), as provided at construction time.
+        """
+
+        return self._ship_model
 
     @property
     def initial_vessel_state(self):
