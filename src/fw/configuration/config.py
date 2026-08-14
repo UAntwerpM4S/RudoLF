@@ -148,12 +148,12 @@ CONFIG_PARAMETERS = {
     # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander"
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
-    'env_type': ["PySimEnv"],
-    'profile': "default_profile",       # Possible options: "default_profile",
+    'env_type': ["FhSimSyncEnv"],
+    'profile': "fh_simulator_profile",       # Possible options: "default_profile",
                                         # "myzako_pysim_to_fhsim_transfer_profile",
                                         # "tripoli_pysim_to_fhsim_transfer_profile",
                                         # "ugent_surrogate_training_profile", ...
-    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'action': "visualize",  # Valid action values: "train", "visualize", "evaluate_reward"
     'wind': False,
     'current': False,
     'visualize_best_trained': False,
@@ -167,7 +167,7 @@ CONFIG_PARAMETERS = {
     'ua_surrogate_config': {"wcu_enabled": False,
                             "file_name": "checkpoints/best_surrogate_clean.pth"},
     'ship_model': ShipModel.MYZAKO_37,
-    'dynamics_model': Model.FOSSEN,
+    'dynamics_model': Model.FH_TABULAR,
     'live_animation': False,
 
     # Evaluate reward configurations
