@@ -9,9 +9,12 @@ maximum.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from stable_baselines3.common.callbacks import BaseCallback
+
+logger = logging.getLogger(__name__)
 
 
 class StrictSuccessStoppingCallback(BaseCallback):
@@ -136,22 +139,22 @@ class StrictSuccessStoppingCallback(BaseCallback):
                 self._consecutive_successes = 0
 
             if self.verbose > 0:
-                print(
-                    "[StrictSuccessStoppingCallback] "
-                    f"env={env_index} strict_success={strict_success} "
-                    f"cte_max={self._episode_max_abs_cte.get(env_index, 0.0):.3f}m "
-                    f"avg_reward={average_episode_reward:.4f} "
-                    f"consecutive={self._consecutive_successes}/{self.required_consecutive_episodes}"
+                logger.info(
+                    "[StrictSuccessStoppingCallback] env=%s strict_success=%s "
+                    "cte_max=%.3fm avg_reward=%.4f consecutive=%d/%d",
+                    env_index, strict_success,
+                    self._episode_max_abs_cte.get(env_index, 0.0),
+                    average_episode_reward, self._consecutive_successes,
+                    self.required_consecutive_episodes
                 )
 
             self._reset_episode_trackers(env_index)
 
             if self._consecutive_successes >= self.required_consecutive_episodes:
                 if self.verbose > 0:
-                    print(
-                        "[StrictSuccessStoppingCallback] "
-                        f"Stopping training after {self._consecutive_successes} "
-                        "consecutive strict-success episodes."
+                    logger.info(
+                        "[StrictSuccessStoppingCallback] Stopping training after %d "
+                        "consecutive strict-success episodes.", self._consecutive_successes
                     )
                 return False
 

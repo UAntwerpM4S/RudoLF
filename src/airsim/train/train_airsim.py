@@ -20,6 +20,8 @@ from pathlib import Path
 from fw.common.tools.config_utils import get_validated_bool
 from airsim.config.airsim_config import get_runtime_settings, merge_runtime_settings
 
+logger = logging.getLogger(__name__)
+
 
 _TRAINING_SPEED_PROFILES = {
     "normal": {
@@ -188,7 +190,7 @@ def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -
         try:
             _emit_training_log_summary(Path(episode_log_path), route_csv)
         except Exception as exc:
-            print(f"[train_airsim] Skipping training log analysis: {exc}")
+            logger.warning("Skipping training log analysis: %s", exc)
 
     env_config = dict(airsim_cfg)
     env_config.update(
@@ -394,6 +396,7 @@ def _run_training_with_transfer(
             f"  Check that source_policy_path exists and action dims match.\n"
             f"{'!'*60}\n"
         )
+        logger.error("Transfer learning FAILED, falling back to random-weight training: %s", exc)
 
     agent.learn(stop_condition=stop_condition)
     return {}
@@ -426,9 +429,9 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
     # has already been (or will be) trained by fw.main's standard batch; we
     # must not run it a second time with an AirSim-only stop-condition dict.
     if env.gym_env.type_name != airsim_env_name:
-        print(
-            f"[train_airsim] AirSimEnv requested but env_factory returned "
-            f"'{env.gym_env.type_name}' (UE5 unavailable). Skipping AirSim training."
+        logger.warning(
+            "AirSimEnv requested but env_factory returned '%s' (UE5 unavailable). "
+            "Skipping AirSim training.", env.gym_env.type_name
         )
         return {}
 
@@ -534,10 +537,30 @@ if __name__ == "__main__":
     logging.getLogger("sim").setLevel(logging.INFO if verbose else logging.ERROR)
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
     logging.getLogger("asyncio").addFilter(_AsyncioWin995Filter())
+
+    # Additionally write a per-run log file, matching the other entry points.
+    # Console verbosity stays governed by FW_AIRSIM_VERBOSE (see main_with_airsim.py
+    # for the same pattern); the file handler always captures at least INFO.
+    from fw.common.tools.path_utils import resolve_path_relative_to_src as _resolve_log_dir
+    from fw.configuration.config import PPO_POLICY_NAME as _PPO_POLICY_NAME
+    from datetime import datetime, timezone as _timezone
+
+    _log_dir = _resolve_log_dir("logs", Path(__file__).resolve().parents[2])
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    _log_ts = datetime.now(_timezone.utc).strftime("%Y%m%d_%H%M%S")
+    _log_file_path = _log_dir / f"AirSimEnv_{_PPO_POLICY_NAME}_{action}_{_log_ts}.log"
+    _file_handler = logging.FileHandler(_log_file_path, encoding="utf-8")
+    _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    _file_handler.setLevel(logging.INFO)
+    logging.getLogger().addHandler(_file_handler)
+    logging.getLogger().setLevel(min(logging.getLogger().level, logging.INFO))
+    logger = logging.getLogger("airsim.train.train_airsim")
+    logger.info("Logging to file: %s", _log_file_path)
+
     multiprocessing.set_start_method("spawn", force=True)
 
     if action == "train":
         metrics = run_training()
-        print(f"\nTraining metrics: {metrics}")
+        logger.info("Training metrics: %s", metrics)
     else:
         run_visualization()

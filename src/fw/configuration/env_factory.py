@@ -26,6 +26,8 @@ from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_TARGET_POS,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class EnvironmentRegistryError(Exception):
     """ General environment registry error """
@@ -71,10 +73,10 @@ class _Factory:
             cls._environment_classes[environment_name]
         except KeyError:  # good, no existing class, no clash.
             cls._environment_classes[environment_name] = environment_class
-            print(f"Successfully registered new environment class {environment_name}.")
+            logger.debug("Successfully registered new environment class %s.", environment_name)
         else:
             registered_names = ', '.join([f"'{name}'" for name in cls._environment_classes.keys()])
-            print(f"Environment name '{environment_name}' not unique. Already registered: {registered_names}")
+            logger.error("Environment name '%s' not unique. Already registered: %s", environment_name, registered_names)
 
             raise EnvironmentRegistryError(f"An environment class called '{environment_name}' is already defined. "
                                            f"Class names must be unique.")
@@ -518,9 +520,9 @@ class FhSimEnvironment(BaseEnvironment):
 
         dynamics_model = self.configuration["dynamics_model"]
         if dynamics_model != Model.FH_TABULAR:
-            logging.warning(
-                f"Using FhSimEnv with a {dynamics_model} dynamics model is not recommended, "
-                f"use {Model.FH_TABULAR} instead."
+            logger.warning(
+                "Using FhSimEnv with a %s dynamics model is not recommended, "
+                "use %s instead.", dynamics_model, Model.FH_TABULAR
             )
 
         fh_bridge = FhSimBridge(
@@ -995,12 +997,12 @@ def _pick_airsim_fallback(configuration) -> str:
     ]
 
     if not other_envs:
-        print("[env_factory] Only AirSimEnv was selected in config.py. Exiting.")
+        logger.error("Only AirSimEnv was selected in config.py. Exiting.")
         sys.exit(1)
 
     fallback_raw = other_envs[0]
     fallback_name = resolve_environment_name(fallback_raw)
-    print(f"[env_factory] Falling back to {fallback_name}.")
+    logger.warning("Falling back to %s.", fallback_name)
     return fallback_name
 
 
@@ -1036,7 +1038,7 @@ def get(environment_name: str, configuration=None):
     try:
         return _Factory.get(environment_name, configuration)
     except (ImportError, ConnectionError) as exc:
-        print(f"[env_factory] AirSim environment unavailable (reason: {exc}).")
+        logger.warning("AirSim environment unavailable (reason: %s).", exc)
         # `configuration` here is an AirSim-scoped dict (from build_airsim_config),
         # *not* the full framework config.  Passing it to build_default_environment
         # for a PySim-family fallback would cause a KeyError on keys such as

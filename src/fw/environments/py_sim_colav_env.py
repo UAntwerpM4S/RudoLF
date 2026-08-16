@@ -6,6 +6,7 @@ COLREG-aware reward shaping for the polar/rangefinder approach.
 """
 
 import math
+import logging
 import matplotlib
 import numpy as np
 import gymnasium as gym
@@ -13,7 +14,7 @@ import gymnasium as gym
 try:
     matplotlib.use('TkAgg')
 except ImportError:
-    print("Warning: 'TkAgg' backend not available. Falling back to 'Agg'.")
+    logging.getLogger(__name__).warning("'TkAgg' backend not available. Falling back to 'Agg'.")
     matplotlib.use('Agg')
 
 from typing import Optional, Tuple

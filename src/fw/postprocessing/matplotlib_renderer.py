@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -9,6 +10,8 @@ from shapely import Polygon, MultiPolygon
 from fw.postprocessing.ship_episode_data import ShipData
 from fw.postprocessing.metrics_computer import ShipMetrics
 from fw.postprocessing.output_helpers import SHIP_COLORS, shade_color, normalized_time_axis, resample_to_common_time
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +84,7 @@ class MatplotlibRenderer:
         # Metrics rows: cross-track error, rudder, UKC, velocity, thrust
         n_rows = 5
         if n_ships == 0:
-            print("[MatplotlibRenderer] No episode data to render — skipping.")
+            logger.warning("No episode data to render — skipping.")
             return
 
         try:
@@ -129,7 +132,7 @@ class MatplotlibRenderer:
             base, ext = (save_path.rsplit('.', 1) + ["png"])[:2]
             traj_path = f"{base}_trajectory.{ext}"
             plt.savefig(traj_path, bbox_inches="tight", dpi=300)
-            print(f"Trajectory figure saved to '{traj_path}'")
+            logger.info("Trajectory figure saved to '%s'", traj_path)
 
             # --- Metrics figure (separate window) ---
             fig_metrics, axes = plt.subplots(
@@ -191,7 +194,7 @@ class MatplotlibRenderer:
             plt.tight_layout()
             metrics_path = f"{base}_metrics.{ext}"
             plt.savefig(metrics_path, bbox_inches="tight", dpi=300)
-            print(f"Metrics figure saved to '{metrics_path}'")
+            logger.info("Metrics figure saved to '%s'", metrics_path)
 
             # If interactive display requested, block here so both windows stay open
             if show_plots:

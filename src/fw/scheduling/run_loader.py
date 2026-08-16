@@ -22,6 +22,7 @@ from fw.configuration.config_profile import ProfileRegistry
 from fw.common.tools.config_utils import get_validated_bool
 from fw.configuration.env_factory import resolve_environment_name, EnvironmentRegistryError
 from fw.scheduling.run_spec import PipelineBlock, PipelineSpec, StopConditionSpec, TransferSpec
+from fw.common.tools.logging_config import resolve_log_level
 
 _VALID_ACTIONS = {"train", "visualize", "evaluate_reward"}
 _VALID_FAILURE_MODES = {"continue", "abort"}
@@ -97,6 +98,12 @@ def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
     on_block_failure = raw.get("on_block_failure", "continue")
     _validate_choice("on_block_failure", on_block_failure, _VALID_FAILURE_MODES, f"[{source}]")
 
+    log_level = raw.get("log_level", "INFO")
+    try:
+        resolve_log_level(log_level, where=f"[{source}] 'log_level'")
+    except ValueError as exc:
+        raise PipelineSpecError(str(exc)) from exc
+
     raw_blocks = raw.get("blocks")
     if not raw_blocks:
         raise PipelineSpecError(f"[{source}] 'blocks' must be a non-empty list.")
@@ -124,7 +131,7 @@ def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
                 f"{sorted(earlier_names) or '(none)'}."
             )
 
-    return PipelineSpec(blocks=blocks, on_block_failure=on_block_failure)
+    return PipelineSpec(blocks=blocks, on_block_failure=on_block_failure, log_level=log_level)
 
 
 def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], source: str) -> PipelineBlock:

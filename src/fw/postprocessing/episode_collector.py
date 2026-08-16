@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+import logging
 import numpy as np
 
 from typing import Optional
@@ -10,6 +11,8 @@ from fw.configuration.config_profile import VesselProfile
 from fw.postprocessing.output_helpers import compute_heading_error
 from fw.configuration.profile_applier import SimulatorApplier, ActionAdapter
 from fw.postprocessing.ship_episode_data import RunData, ShipData, ShipEpisodeData
+
+logger = logging.getLogger(__name__)
 
 
 class ShipDataExtractor:
@@ -431,27 +434,28 @@ class EpisodeCollector:
                 _dbuf = list(_dist_buffer)
                 _col_type = _col_info.get("collision_type", "unknown")
                 _n = len(_vbuf)
-                print(
-                    f"\n[VALUE_DIAG] Episode {episode} — collision! type={_col_type}, "
-                    f"steps_in_buffer={_n}"
+                logger.info(
+                    "[VALUE_DIAG] Episode %s \u2014 collision! type=%s, steps_in_buffer=%d",
+                    episode, _col_type, _n
                 )
                 if _vbuf:
-                    # Print step | value | dist side-by-side for readability
+                    # Log step | value | dist side-by-side for readability
                     _offset = max(0, 100 - _n)
                     header = f"  {'step':>5}  {'value':>9}  {'min_dist':>10}"
-                    print(header)
+                    _rows = [header]
                     for i, (v, d) in enumerate(zip(_vbuf, _dbuf)):
                         _d_str = f"{d:10.1f}" if d < float("inf") else "       inf"
-                        print(f"  {_offset + i:>5}  {v:>9.3f}  {_d_str}")
-                    print(
-                        f"  --- value: min={min(_vbuf):.3f}  max={max(_vbuf):.3f}  "
-                        f"final={_vbuf[-1]:.3f}  mean_last10={float(np.mean(_vbuf[-10:])):.3f}"
+                        _rows.append(f"  {_offset + i:>5}  {v:>9.3f}  {_d_str}")
+                    logger.info("[VALUE_DIAG]\n%s", "\n".join(_rows))
+                    logger.info(
+                        "[VALUE_DIAG]   --- value: min=%.3f  max=%.3f  final=%.3f  mean_last10=%.3f",
+                        min(_vbuf), max(_vbuf), _vbuf[-1], float(np.mean(_vbuf[-10:]))
                     )
                     _finite_dists = [d for d in _dbuf if d < float("inf")]
                     if _finite_dists:
-                        print(
-                            f"  --- dist:  min={min(_finite_dists):.1f}m  "
-                            f"final={_dbuf[-1]:.1f}m"
+                        logger.info(
+                            "[VALUE_DIAG]   --- dist:  min=%.1fm  final=%.1fm",
+                            min(_finite_dists), _dbuf[-1]
                         )
 
         # Attach terminal info per ship (env-reported collision / COLREG data).
@@ -470,7 +474,7 @@ class EpisodeCollector:
             # Copy each dict so downstream mutation can't affect env state.
             acc["scenario_encounters"] = [dict(enc) for enc in encounters]
 
-        print(f"Episode {episode + 1} finished after {steps} steps")
+        logger.info("Episode %d finished after %d steps", episode + 1, steps)
 
         return {
             sid: self._accumulator_to_episode_data(acc)

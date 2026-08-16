@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 
 from pathlib import Path
 from typing import Tuple, Optional, Dict
@@ -7,6 +8,8 @@ from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.dynamics.wcu_lookup import WcuLookup, EnvironmentData
 from fw.surrogate.inference_surrogate import SurrogatePredictor
+
+logger = logging.getLogger(__name__)
 
 # Time step the surrogate was trained on [s]
 _SURROGATE_DT = 0.1
@@ -70,9 +73,9 @@ class UAntwerpSurrogate(DynamicsBase):
         self.ukc = self.default_ukc
 
         if self.wcu_enabled and self.wcu_lookup is None:
-            print(
-                f"Ship data file {SHIP_DATA_FILE} not found, "
-                f"falling back to default UKC value of {WATER_DEPTH_M}"
+            logger.warning(
+                "Ship data file %s not found, falling back to default UKC value of %s",
+                SHIP_DATA_FILE, WATER_DEPTH_M
             )
 
     def get_ukc(self, pos: Optional[np.ndarray]):

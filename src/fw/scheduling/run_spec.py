@@ -139,7 +139,12 @@ class PipelineSpec:
             raises - "continue" (log and move to the next block, matching
             `SimpleScheduler`'s original behavior) or "abort" (stop the
             whole run). Overridable per block via `PipelineBlock.on_failure`.
+        log_level: Run-level log level - one of "DEBUG", "INFO", "WARNING",
+            "ERROR", "CRITICAL". Applied once, process-wide, via
+            `fw.common.tools.logging_config.setup_logging` before any block
+            runs. Defaults to "INFO".
     """
 
     blocks: List[PipelineBlock] = field(default_factory=list)
     on_block_failure: str = "continue"
+    log_level: str = "INFO"

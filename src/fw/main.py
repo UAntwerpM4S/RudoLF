@@ -13,16 +13,33 @@ if __name__ == "__main__" or __name__ == "fw.main":
     import runpy
     import logging
     import multiprocessing
+    from pathlib import Path
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    from fw.configuration.config import get_config_parameters
+    from fw.common.tools.logging_config import setup_logging, update_log_file_agent_type
+
+    framework_config = get_config_parameters()
+
+    action = str(framework_config.get("action", "train")).strip().lower()
+    if action not in {"train", "visualize", "evaluate_reward"}:
+        action = "train"
+
+    configured_env_names_for_log = framework_config.get("env_type", "PySimEnv")
+    if isinstance(configured_env_names_for_log, list):
+        env_name_for_log = "+".join(str(n) for n in configured_env_names_for_log) or "run"
+    else:
+        env_name_for_log = str(configured_env_names_for_log)
+
+    log_path = setup_logging(
+        run_type=action,
+        env_name=env_name_for_log,
+        agent_type="na",
+        src_dir=Path(__file__).resolve().parents[1],
+        level=framework_config.get("log_level", "INFO"),
     )
-    # Suppress all airsim loggers by default; they are re-enabled once a live
-    # connection is confirmed (see visualize / train blocks below).
-    logging.getLogger("airsim").setLevel(logging.CRITICAL)
-    logging.getLogger("sim").setLevel(logging.CRITICAL)
-
+    logger = logging.getLogger("fw.main")
+    if log_path is not None:
+        logger.info("Logging to file: %s", log_path)
 
     multiprocessing.set_start_method("spawn", force=True)
 
@@ -30,7 +47,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
     from fw.configuration.profile_applier import apply_profile
     from fw.configuration.config_profile import ProfileRegistry
     from fw.configuration.stop_condition import StopCondition, Criterion
-    from fw.configuration.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, MULTI_POLICY_SINGLE_NAME, get_config_parameters
+    from fw.configuration.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, MULTI_POLICY_SINGLE_NAME
     from fw.configuration.env_factory import (
         build_default_environment,
         resolve_environment_name,
@@ -46,8 +63,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
         initialize_all_environments
     )
 
-    framework_config = get_config_parameters()
-
     # retrieve the profile object here only for the later apply_profile(env/sim) calls.
     profile_name = framework_config.get("profile", "default_profile")
     profile = ProfileRegistry.get(profile_name)
@@ -56,10 +71,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
     configured_env_names = resolve_environment_names(
         framework_config.get("env_type", py_sim_env_name)
     )
-    action = str(framework_config.get("action", "train")).strip().lower()
-    if action not in {"train", "visualize", "evaluate_reward"}:
-        print(f"[main] Unknown action '{action}'. Falling back to 'train'.")
-        action = "train"
+    _raw_action = str(framework_config.get("action", "train")).strip().lower()
+    if _raw_action not in {"train", "visualize", "evaluate_reward"}:
+        logger.warning("Unknown action '%s'. Falling back to 'train'.", framework_config.get("action"))
 
     def _run_airsim_extension(selected_action: str) -> bool:
         """
@@ -82,15 +96,15 @@ if __name__ == "__main__" or __name__ == "fw.main":
         except SystemExit as ex:
             if ex.code in (None, 0):
                 return True
-            print(
-                "[main] AirSim extension exited with an error; "
+            logger.warning(
+                "AirSim extension exited with an error; "
                 "falling back to the default framework entrypoint."
             )
             return False
         except (ConnectionError, OSError) as ex:
-            print(
-                f"[main] AirSim extension failed to connect to UE5 ({ex}); "
-                "falling back to the default framework entrypoint."
+            logger.warning(
+                "AirSim extension failed to connect to UE5 (%s); "
+                "falling back to the default framework entrypoint.", ex
             )
             return False
         finally:
@@ -147,7 +161,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
     }
 
     if action != "evaluate_reward" and not configured_env_names:
-        print(f"[main] No environments configured for {action}. Exiting.")
+        logger.error("No environments configured for %s. Exiting.", action)
         raise SystemExit(1)
 
     initialize_all_environments()
@@ -203,13 +217,16 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 apply_profile(profile, simulator=sim)
 
         agent_type = _select_agent_type(envs)
+        renamed_log_path = update_log_file_agent_type(agent_type)
+        if renamed_log_path is not None:
+            logger.info("Log file renamed to: %s", renamed_log_path)
         std_trainer = Trainer(agent_type, envs, profile, "SimpleScheduler", config=framework_config)
         if action == "visualize":
             std_trainer.visualize(envs, airsim_bridge=None)
         else:
             metrics = std_trainer.train(configuration)
             if action == "evaluate_reward":
-                print(f"Training metrics (grouped): {metrics}")
+                logger.info("Training metrics (grouped): %s", metrics)
             else:
                 filtered_metrics = {
                     fields: {
@@ -219,7 +236,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
                     for fields, env_metrics in metrics.items()
                 }
 
-                print(f"Training metrics (grouped): {filtered_metrics}")
+                logger.info("Training metrics (grouped): %s", filtered_metrics)
         return True
 
     # Both visualize and train now follow env_type order exactly (for airsim),
@@ -228,7 +245,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     if action == "evaluate_reward":
         if not reward_configs:
-            print("[main] action='evaluate_reward' requires 'reward_configs' in configuration.")
+            logger.error("action='evaluate_reward' requires 'reward_configs' in configuration.")
             raise SystemExit(1)
 
         try:
@@ -236,19 +253,22 @@ if __name__ == "__main__" or __name__ == "fw.main":
             first_env_name = resolve_environment_name(first_env_type)
             dummy_env = build_default_environment(first_env_name, framework_config)
             eval_policy_name = MULTI_PPO_POLICY_NAME if first_env_name == multi_sim_env_name else PPO_POLICY_NAME
+            renamed_log_path = update_log_file_agent_type(eval_policy_name)
+            if renamed_log_path is not None:
+                logger.info("Log file renamed to: %s", renamed_log_path)
             trainer = Trainer(eval_policy_name, [dummy_env], profile, "SimpleScheduler", config=framework_config)
 
-            print(f"[main] Starting reward evaluation for {len(reward_configs)} configurations...")
+            logger.info("Starting reward evaluation for %d configurations...", len(reward_configs))
             results = trainer.evaluate_reward(reward_configs, configuration, verbose=True)
 
             results_file = str(framework_config.get("reward_results_file", "reward_evaluation_results.csv"))
             trainer.export_evaluation_results(results, results_file)
-            print(f"[main] Reward evaluation complete. Results exported to '{results_file}'.")
+            logger.info("Reward evaluation complete. Results exported to '%s'.", results_file)
             executed_any_step = True
             # evaluate_reward is a standalone mode; avoid running standard train/visualize afterward.
             raise SystemExit(0)
         except Exception as exc:
-            print(f"[main] Reward evaluation failed: {exc}")
+            logger.exception("Reward evaluation failed: %s", exc)
             raise SystemExit(1)
 
     standard_envs = []
@@ -271,5 +291,5 @@ if __name__ == "__main__" or __name__ == "fw.main":
         executed_any_step = True
 
     if not executed_any_step:
-        print("[main] No environments remaining after AirSim fallback. Exiting.")
+        logger.error("No environments remaining after AirSim fallback. Exiting.")
         raise SystemExit(1)

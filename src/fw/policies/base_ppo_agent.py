@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 
 from typing import Optional
 from abc import abstractmethod
@@ -6,6 +7,8 @@ from fw.policies.base_agent import BaseAgent
 from fw.environments.base_env import BaseEnv
 from fw.configuration.profile_applier import ActionAdapter
 from fw.configuration.config_profile import VesselProfile
+
+logger = logging.getLogger(__name__)
 
 
 class BasePPOAgent(BaseAgent):
@@ -420,7 +423,7 @@ class BasePPOAgent(BaseAgent):
             safeguard += 1
 
         if safeguard >= self.max_nbr_iterations:
-            print(f"[Warning] Safeguard triggered at {safeguard} steps (max_nbr_iterations={self.max_nbr_iterations}).")
+            logger.warning("[Warning] Safeguard triggered at %d steps (max_nbr_iterations=%d).", safeguard, self.max_nbr_iterations)
 
         # Process episode data with proper trimming
         episode_data = []

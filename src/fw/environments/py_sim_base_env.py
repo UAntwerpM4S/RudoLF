@@ -1,5 +1,6 @@
 import os
 import math
+import logging
 import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
@@ -11,7 +12,7 @@ import numpy as np
 try:
     matplotlib.use('TkAgg')  # Try using the interactive backend
 except ImportError:
-    print("Warning: 'TkAgg' backend not available. Falling back to 'Agg'.")
+    logging.getLogger(__name__).warning("'TkAgg' backend not available. Falling back to 'Agg'.")
     matplotlib.use('Agg')  # Use non-interactive backend as fallback
 
 from shapely.geometry import Point, Polygon
@@ -26,6 +27,8 @@ from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.dynamics_model import Model
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.nomoto import Nomoto
+
+logger = logging.getLogger(__name__)
 
 
 # -----------------------
@@ -503,8 +506,8 @@ class PySimBaseEnv(BaseEnv):
                 samples.append((x, y))
 
         if len(samples) < nbr_samples:
-            print(f"Warning: Only generated {len(samples)} points out of requested {nbr_samples} "
-                  f"(polygon may be thin or max_tries reached).")
+            logger.warning("Only generated %d points out of requested %d "
+                            "(polygon may be thin or max_tries reached).", len(samples), nbr_samples)
 
         return np.array(samples, dtype=np.float32)
 
@@ -1080,7 +1083,7 @@ class PySimBaseEnv(BaseEnv):
         # Reached checkpoint circle
         if self.segment_point_distance(self.previous_ship_pos, self.ship_pos, current_checkpoint["pos"]) <= current_checkpoint['radius']:
             if self.checkpoint_index == len(self.checkpoints) - 1:
-                print(f"{self.env_name} - target REACHED at distance {checkpoint_distance:.2f}")
+                logger.info("%s - target REACHED at distance %.2f", self.env_name, checkpoint_distance)
             self.checkpoint_index += 1
             self.step_count = 0
 
@@ -1412,14 +1415,14 @@ class PySimBaseEnv(BaseEnv):
         path_points = [self.ship_pos] + [cp['pos'] for cp in self.checkpoints] + [self.target_pos]
 
         if getattr(self, "minimal_path_render", False):
-            print("minimal path render")
+            logger.debug("minimal path render")
             # Faint single-line path only — no checkpoint circles, no perp lines.
             xs = [p[0] for p in path_points]
             ys = [p[1] for p in path_points]
             self.ax.plot(xs, ys, color='green', alpha=0.2,
                          linewidth=1.0, label='Path')
         else:
-            print("no minimal path render")
+            logger.debug("no minimal path render")
             for i in range(len(path_points) - 1):
                 start_point = path_points[i]
                 end_point = path_points[i + 1]

@@ -406,7 +406,7 @@ def run_inference(
 
         try:
             for ep in range(num_episodes):
-                print(f"\nEpisode {ep + 1}/{num_episodes} [AirSimEnv]")
+                logger.info("Episode %d/%d [AirSimEnv]", ep + 1, num_episodes)
                 traj_x, traj_y, total_reward, outcome = _run_episode_airsim_env(
                     env,
                     policy,
@@ -417,9 +417,9 @@ def run_inference(
                 )
 
                 steps_run = len(traj_x) - 1
-                print(
-                    f"   Finished: {steps_run} steps | outcome={outcome} | "
-                    f"reward={total_reward:+.1f}"
+                logger.info(
+                    "   Finished: %d steps | outcome=%s | reward=%+.1f",
+                    steps_run, outcome, total_reward
                 )
 
                 # End-of-episode: draw the full trail persistently, then flush
@@ -447,7 +447,7 @@ def run_inference(
         finally:
             if env is not None:
                 env.close()
-            print("\nInference complete; AirSim connection closed.")
+            logger.info("Inference complete; AirSim connection closed.")
 
         # Persist step rows first so summary/plot code can reuse telemetry CSVs.
         session_exporter.save()
@@ -487,7 +487,7 @@ def run_inference(
             title=f"2D vs 3D Trajectory - {resolved_model_path.name}",
         )
         if comparison_plot is not None:
-            print(f"2D vs 3D trajectory plot saved to '{comparison_plot}'.")
+            logger.info("2D vs 3D trajectory plot saved to '%s'.", comparison_plot)
             session_exporter.update_metadata(
                 {
                     "comparison_plot": comparison_plot.name,
@@ -495,7 +495,7 @@ def run_inference(
             )
             session_exporter.save()
         else:
-            print("2D vs 3D trajectory plot skipped (missing telemetry or matplotlib).")
+            logger.warning("2D vs 3D trajectory plot skipped (missing telemetry or matplotlib).")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -588,13 +588,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    )
+    from fw.common.tools.logging_config import setup_logging
 
     args = _build_parser().parse_args()
     args.model = str(resolve_model_path(args.model, _SRC_DIR))
+
+    log_path = setup_logging(
+        run_type="inference",
+        env_name="airsim",
+        agent_type=Path(args.model).stem,
+        src_dir=_SRC_DIR,
+        level=logging.INFO if args.verbose else logging.WARNING,
+    )
+    logger.info("Logging to file: %s", log_path)
 
     run_inference(
         model_path=args.model,

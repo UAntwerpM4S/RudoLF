@@ -2,6 +2,7 @@ import os
 import copy
 import torch
 import warnings
+import logging
 import numpy as np
 import gymnasium as gym
 
@@ -12,6 +13,8 @@ from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, Ev
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3 import PPO
+
+logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
 
 
@@ -174,7 +177,7 @@ class PPO2Agent(BaseAgent):
             The agent is saved both during training (if performance improves) and after training is completed.
         """
 
-        print(f"Starting training for {self.total_time_steps} time steps...")
+        logger.info("Starting training for %d time steps...", self.total_time_steps)
 
         stop_callback = StopTrainingOnRewardThreshold(
             reward_threshold=self.reward_threshold,
@@ -203,7 +206,7 @@ class PPO2Agent(BaseAgent):
         final_model_path = f"final_ppo_{self.total_time_steps}"
         self.save_policy(final_model_path)
 
-        print(f"Training completed! Final agent saved to {final_model_path}")
+        logger.info("Training completed! Final agent saved to %s", final_model_path)
 
 
     def load_policy(self, policy_file_name: str) -> None:

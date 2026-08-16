@@ -8,6 +8,8 @@ from fw.ships.actuator_state import ActuatorState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.simulators.base_simulator import BaseSimulator
 
+logger = logging.getLogger(__name__)
+
 
 class FhSimWrapper(BaseSimulator):
     """
@@ -56,7 +58,7 @@ class FhSimWrapper(BaseSimulator):
             ValueError: If dt <= 0 (enforced by BaseSimulator).
         """
 
-        logging.warning(
+        logger.warning(
             "FhSimWrapper is deprecated and will be removed in a future version; "
             "use ShipSimulator instead."
         )

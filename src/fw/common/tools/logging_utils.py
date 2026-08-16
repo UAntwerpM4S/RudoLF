@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import os
 import csv
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def dump_metrics_to_csv(model_dir, csv_filename, training_metrics):
@@ -23,7 +26,7 @@ def dump_metrics_to_csv(model_dir, csv_filename, training_metrics):
     """
 
     if not training_metrics:
-        print("Warning: No training metrics to write.")
+        logger.warning("No training metrics to write.")
         return
 
     filepath = os.path.join(model_dir, csv_filename)
