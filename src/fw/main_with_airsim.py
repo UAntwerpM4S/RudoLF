@@ -214,7 +214,29 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         get_validated_bool(visualization_cfg, "model_visualise", False)
         or get_validated_bool(visualization_cfg, "inference_visualise", False)
     ):
-        action = "visualize"
+        if action != "visualize":
+            action = "visualize"
+            # The log file was created above with the pre-promotion action
+            # ("train") baked into its filename; rename it now so the
+            # filename accurately reflects what this run actually did.
+            _new_log_file_path = _log_dir / f"AirSimEnv_{_PPO_POLICY_NAME}_{action}_{_log_ts}.log"
+            _root_logger = logging.getLogger()
+            _old_file_handler = next(
+                (h for h in _root_logger.handlers if isinstance(h, logging.FileHandler)), None
+            )
+            if _old_file_handler is not None and _new_log_file_path != _log_file_path:
+                _root_logger.removeHandler(_old_file_handler)
+                _old_file_handler.close()
+                try:
+                    _log_file_path.rename(_new_log_file_path)
+                    _log_file_path = _new_log_file_path
+                except OSError:
+                    pass  # Keep logging to the original filename rather than losing the log.
+                _new_file_handler = logging.FileHandler(_log_file_path, encoding="utf-8")
+                _new_file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+                _new_file_handler.setLevel(_file_level)
+                _root_logger.addHandler(_new_file_handler)
+                logger.info("Log file renamed to: %s", _log_file_path)
 
     def _run_airsim_visualization_from_runtime() -> bool:
         """

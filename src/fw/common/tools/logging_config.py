@@ -176,12 +176,20 @@ def update_log_file_agent_type(agent_type: str) -> Optional[Path]:
     the agent type - PPO/MPPO/MPSA - depends on which environments end up
     configured, and is only known once that resolution has happened).
 
-    No-op (returns None) if setup_logging() wasn't called with
-    to_file=True in this process, or if no FileHandler is currently
-    attached to the root logger.
-
     Safe to call more than once (e.g. once per batch in a multi-batch
-    run); each call renames from whatever the file's current name is.
+    run); each call renames from whatever the file's current name is. In
+    a run with multiple standard batches using different agent types, the
+    final filename reflects the *last* batch's agent type - the file's
+    *contents* always cover the full run regardless.
+
+    A failure here (e.g. filesystem issue) is logged as a warning and
+    never propagates - a purely cosmetic filename update must not be able
+    to crash an otherwise-successful training/visualize run.
+
+    Returns:
+        The new log file path if a rename actually happened. None if no
+        file-backed run is active, the filename already matches (nothing
+        to rename), or the update failed.
     """
 
     global _active_run_context
@@ -196,27 +204,35 @@ def update_log_file_agent_type(agent_type: str) -> Optional[Path]:
         return None
 
     ctx = _active_run_context
-    new_path = ctx["dir"] / f"{ctx['env_name']}_{agent_type}_{ctx['run_type']}_{ctx['file_timestamp']}.log"
+    target_path = ctx["dir"] / f"{ctx['env_name']}_{agent_type}_{ctx['run_type']}_{ctx['file_timestamp']}.log"
     old_path = Path(file_handler.baseFilename)
 
-    if new_path == old_path:
-        return old_path
-
-    root_logger.removeHandler(file_handler)
-    file_handler.close()
+    if target_path == old_path:
+        return None
 
     try:
-        old_path.rename(new_path)
-    except OSError:
-        # Rename failed (e.g. cross-device, permissions) - keep logging to
-        # the original file rather than losing the run's log entirely.
-        new_path = old_path
+        root_logger.removeHandler(file_handler)
+        file_handler.close()
 
-    new_handler = logging.FileHandler(new_path, encoding="utf-8")
-    new_handler.setFormatter(logging.Formatter(_FILE_FORMAT))
-    root_logger.addHandler(new_handler)
+        final_path = target_path
+        try:
+            old_path.rename(target_path)
+        except OSError:
+            # Rename failed (e.g. cross-device, permissions) - keep
+            # logging to the original file rather than losing the run's
+            # log entirely.
+            final_path = old_path
 
-    return new_path
+        new_handler = logging.FileHandler(final_path, encoding="utf-8")
+        new_handler.setFormatter(logging.Formatter(_FILE_FORMAT))
+        root_logger.addHandler(new_handler)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Could not update log filename for agent_type=%s: %s", agent_type, exc
+        )
+        return None
+
+    return final_path if final_path != old_path else None
 
 
 def configure_worker_logging(level: "int | str" = logging.INFO) -> None:
