@@ -10,11 +10,11 @@ without rewriting the runner.
 from __future__ import annotations
 
 import time
+import numpy as np
+
 from abc import ABC
 from pathlib import Path
 from typing import Any, Callable, Optional
-
-import numpy as np
 
 from airsim.communication.airsim_bridge import AirSimBridge
 from airsim.communication.control_mapping import (
@@ -29,9 +29,9 @@ from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_SHIP_POS,
     DEFAULT_FRAMEWORK_TARGET_POS,
 )
+from fw.policies.ppo_policy import PPOPolicy
 from fw.environments.fh_sim_env import FhSimEnv
 from fw.environments.py_sim_env import PySimEnv
-from fw.policies.ppo_policy import PPOPolicy
 
 _DEFAULT_SHIP_POS = list(DEFAULT_FRAMEWORK_SHIP_POS)
 _DEFAULT_TARGET_POS = list(DEFAULT_FRAMEWORK_TARGET_POS)

@@ -6,10 +6,10 @@ runs a single update cycle, and saves the resulting figure to disk.
 This is useful for CI pipelines or servers without a display.
 """
 
+import os
+import sys
 import matplotlib
 matplotlib.use('Agg')
-import sys
-import os
 
 # Add src to path just in case
 sys.path.append(os.getcwd())

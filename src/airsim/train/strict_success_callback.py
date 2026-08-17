@@ -10,8 +10,8 @@ maximum.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
+from typing import Any
 from stable_baselines3.common.callbacks import BaseCallback
 
 logger = logging.getLogger(__name__)

@@ -33,13 +33,14 @@ Example::
 
 from __future__ import annotations
 
-import math
-import socket
-import time
-import logging
-import csv
-import os
 import io
+import os
+import csv
+import math
+import time
+import socket
+import logging
+
 from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime, timezone
 from collections import deque
