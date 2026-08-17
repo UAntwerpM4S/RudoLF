@@ -22,6 +22,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     import multiprocessing
 
     from pathlib import Path
+    from fw.common.tools.logging_utils import create_logfile_handler
+    from fw.common.airsim.classes.asyncio_win995_filter import AsyncioWin995Filter
 
     # AirSim runtime only controls AirSim-specific behavior.
     # The selected framework environment is handled by fw.main / fw.config.
@@ -32,32 +34,6 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     action = str(os.environ.get("FW_MAIN_ACTION_OVERRIDE", "train")).strip().lower()
     if action not in {"train", "visualize"}:
         action = "train"
-
-    class _AsyncioWin995Filter(logging.Filter):
-        """
-        Suppress the noisy Windows asyncio self-pipe shutdown traceback.
-        """
-
-        def filter(self, record: logging.LogRecord) -> bool:
-            """
-            Return False for the known benign WinError 995 shutdown record.
-            """
-
-            ex = record.exc_info[1] if record.exc_info else None
-            message = record.getMessage().lower()
-            if (
-                "event loop self pipe" in message
-                and (
-                    (
-                        isinstance(ex, ConnectionResetError)
-                        and getattr(ex, "winerror", None) == 995
-                    )
-                    or "winerror 995" in message
-                    or "connectionreseterror" in message
-                )
-            ):
-                return False
-            return True
 
     _verbose_airsim = str(os.environ.get("FW_AIRSIM_VERBOSE", "0")).strip().lower() in {
         "1",
@@ -76,7 +52,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     logging.getLogger("airsim").setLevel(_airsim_log_level)
     logging.getLogger("sim").setLevel(_sim_log_level)
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
-    logging.getLogger("asyncio").addFilter(_AsyncioWin995Filter())
+    logging.getLogger("asyncio").addFilter(AsyncioWin995Filter())
 
     # Additionally write a per-run log file, matching the other entry
     # points. Console verbosity above stays governed by FW_AIRSIM_VERBOSE
@@ -88,19 +64,16 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     from datetime import datetime, timezone as _timezone
 
     _file_level = min(_airsim_log_level, logging.INFO)
-    _log_dir = _resolve_log_dir("logs", Path(__file__).resolve().parents[1])
-    _log_dir.mkdir(parents=True, exist_ok=True)
     _log_ts = datetime.now(_timezone.utc).strftime("%Y%m%d_%H%M%S")
+    _log_dir = _resolve_log_dir("logs", Path(__file__).resolve().parents[1])
     _log_file_path = _log_dir / f"AirSimEnv_{_PPO_POLICY_NAME}_{action}_{_log_ts}.log"
-    _file_handler = logging.FileHandler(_log_file_path, encoding="utf-8")
-    _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
-    _file_handler.setLevel(_file_level)
-    logging.getLogger().addHandler(_file_handler)
-    logging.getLogger().setLevel(min(logging.getLogger().level, _file_level))
+
+    root_logger = logging.getLogger()
+    root_logger.addHandler(create_logfile_handler(_log_file_path, _file_level))
+    root_logger.setLevel(min(root_logger.level, _file_level))
+
     logger = logging.getLogger("fw.main_with_airsim")
     logger.info("Logging to file: %s", _log_file_path)
-
-
     multiprocessing.set_start_method("spawn", force=True)
 
     from airsim.config.airsim_config import (
@@ -117,6 +90,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     from fw.configuration.config import get_config_parameters
     from fw.configuration.profile_applier import apply_profile
     from fw.configuration.config_profile import ProfileRegistry
+    from airsim.train.train_airsim import TRAINING_SPEED_PROFILES
 
     runtime_settings = get_default_runtime_settings()
 
@@ -130,50 +104,10 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     training_cfg = runtime_settings.get("training", {}) if isinstance(runtime_settings, dict) else {}
     airsim_runtime_cfg = runtime_settings.get("airsim", {}) if isinstance(runtime_settings, dict) else {}
 
-    training_speed_profiles = {
-        "normal": {
-            "simulation_speed": 1.0,
-            "use_pause_stepping": False,
-            "frames_per_step": 1,
-            "time_step": 0.1,
-            "physics_update_timeout": 1.0,
-            "state_poll_interval": 0.01,
-        },
-        "safe": {
-            "simulation_speed": 20.0,
-            "use_pause_stepping": True,
-            "use_sim_time_stepping": True,
-            "sim_time_per_action": 0.05,
-            "frames_per_step": 8,
-            "time_step": 0.05,
-            "physics_update_timeout": 1.2,
-            "state_poll_interval": 0.003,
-        },
-        "fast": {
-            "simulation_speed": 40.0,
-            "use_pause_stepping": True,
-            "use_sim_time_stepping": True,
-            "sim_time_per_action": 0.1,
-            "frames_per_step": 10,
-            "time_step": 0.1,
-            "physics_update_timeout": 1.0,
-            "state_poll_interval": 0.003,
-        },
-        "turbo": {
-            "simulation_speed": 80.0,
-            "use_pause_stepping": True,
-            "use_sim_time_stepping": True,
-            "sim_time_per_action": 0.1,
-            "frames_per_step": 12,
-            "time_step": 0.1,
-            "physics_update_timeout": 1.2,
-            "state_poll_interval": 0.002,
-        },
-    }
     profile_name = str(training_cfg.get("speed_profile", "custom")).strip().lower()
     effective_training_cfg = dict(training_cfg)
-    if profile_name in training_speed_profiles:
-        effective_training_cfg.update(training_speed_profiles[profile_name])
+    if profile_name in TRAINING_SPEED_PROFILES:
+        effective_training_cfg.update(TRAINING_SPEED_PROFILES[profile_name])
         logger.info("Training speed profile: %s", profile_name)
     elif profile_name != "custom":
         logger.warning(

@@ -18,12 +18,14 @@ import multiprocessing
 from typing import Any
 from pathlib import Path
 from fw.common.tools.config_utils import get_validated_bool
+from fw.common.tools.logging_utils import create_logfile_handler
+from fw.common.airsim.classes.asyncio_win995_filter import AsyncioWin995Filter
 from airsim.config.airsim_config import get_runtime_settings, merge_runtime_settings
 
 logger = logging.getLogger(__name__)
 
 
-_TRAINING_SPEED_PROFILES = {
+TRAINING_SPEED_PROFILES = {
     "normal": {
         "simulation_speed": 1.0,
         "use_pause_stepping": False,
@@ -63,33 +65,6 @@ _TRAINING_SPEED_PROFILES = {
         "state_poll_interval": 0.002,
     },
 }
-
-
-class _AsyncioWin995Filter(logging.Filter):
-    """
-    Suppress the noisy Windows asyncio self-pipe shutdown traceback.
-    """
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        """
-        Return False for the known benign WinError 995 shutdown record.
-        """
-
-        exc = record.exc_info[1] if record.exc_info else None
-        message = record.getMessage().lower()
-        if (
-            "event loop self pipe" in message
-            and (
-                (
-                    isinstance(exc, ConnectionResetError)
-                    and getattr(exc, "winerror", None) == 995
-                )
-                or "winerror 995" in message
-                or "connectionreseterror" in message
-            )
-        ):
-            return False
-        return True
 
 
 def _resolve_repo_relative_path(value: str, repo_root: Path) -> str:
@@ -157,8 +132,8 @@ def _resolve_effective_training_settings(
 
     profile_name = str(training_cfg.get("speed_profile", "custom")).strip().lower()
     effective_training_cfg = dict(training_cfg)
-    if profile_name in _TRAINING_SPEED_PROFILES:
-        effective_training_cfg.update(_TRAINING_SPEED_PROFILES[profile_name])
+    if profile_name in TRAINING_SPEED_PROFILES:
+        effective_training_cfg.update(TRAINING_SPEED_PROFILES[profile_name])
 
     if get_validated_bool(effective_training_cfg, "use_pause_stepping", False) and get_validated_bool(
         effective_training_cfg, "use_sim_time_stepping", False
@@ -536,7 +511,7 @@ if __name__ == "__main__":
     )
     logging.getLogger("sim").setLevel(logging.INFO if verbose else logging.ERROR)
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
-    logging.getLogger("asyncio").addFilter(_AsyncioWin995Filter())
+    logging.getLogger("asyncio").addFilter(AsyncioWin995Filter())
 
     # Additionally write a per-run log file, matching the other entry points.
     # Console verbosity stays governed by FW_AIRSIM_VERBOSE (see main_with_airsim.py
@@ -545,18 +520,16 @@ if __name__ == "__main__":
     from fw.configuration.config import PPO_POLICY_NAME as _PPO_POLICY_NAME
     from datetime import datetime, timezone as _timezone
 
-    _log_dir = _resolve_log_dir("logs", Path(__file__).resolve().parents[2])
-    _log_dir.mkdir(parents=True, exist_ok=True)
     _log_ts = datetime.now(_timezone.utc).strftime("%Y%m%d_%H%M%S")
+    _log_dir = _resolve_log_dir("logs", Path(__file__).resolve().parents[2])
     _log_file_path = _log_dir / f"AirSimEnv_{_PPO_POLICY_NAME}_{action}_{_log_ts}.log"
-    _file_handler = logging.FileHandler(_log_file_path, encoding="utf-8")
-    _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
-    _file_handler.setLevel(logging.INFO)
-    logging.getLogger().addHandler(_file_handler)
-    logging.getLogger().setLevel(min(logging.getLogger().level, logging.INFO))
+
+    root_logger = logging.getLogger()
+    root_logger.addHandler(create_logfile_handler(_log_file_path, logging.INFO))
+    root_logger.setLevel(min(root_logger.level, logging.INFO))
+
     logger = logging.getLogger("airsim.train.train_airsim")
     logger.info("Logging to file: %s", _log_file_path)
-
     multiprocessing.set_start_method("spawn", force=True)
 
     if action == "train":
