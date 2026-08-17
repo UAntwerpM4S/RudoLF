@@ -13,6 +13,7 @@ Class hierarchy:
 """
 
 import math
+import logging
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -21,7 +22,7 @@ import numpy as np
 try:
     matplotlib.use('TkAgg')
 except ImportError:
-    print("Warning: 'TkAgg' backend not available. Falling back to 'Agg'.")
+    logging.getLogger(__name__).warning("'TkAgg' backend not available. Falling back to 'Agg'.")
     matplotlib.use('Agg')
 
 from shapely.geometry import Point
@@ -31,6 +32,8 @@ from fw.dynamics.dynamics_model import Model
 from fw.environments.py_sim_base_env import PySimBaseEnv
 from fw.collision_avoidance.scenario_builder import ScenarioBuilder
 from fw.collision_avoidance.scenario_classifier import ScenarioClassifier
+
+logger = logging.getLogger(__name__)
 
 
 # -----------------------
@@ -495,7 +498,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
         truncated = False
 
         if self.phys_sim.state.terminated and self.phys_sim.state.truncated:
-            print("condition triggered")
+            logger.debug("Both terminated and truncated set simultaneously.")
 
         # Bank-collision diagnostic: fires whenever the ship is out of open
         # water, regardless of which side (env vs phys_sim) terminated first.
@@ -509,7 +512,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
                 if collision_entity_collision:
                     terminated = True
 
-            bank_collision = not self._ship_in_open_water(self.ship_pos)
+            bank_collision = not self.ship_in_open_water(self.ship_pos)
             if bank_collision:
                 terminated = True
 

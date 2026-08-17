@@ -35,7 +35,7 @@ def create_checkpoints_from_simple_path(points, max_distance):
 
         if segment_length > max_distance:
             # Calculate how many intermediate points we need
-            num_segments = int(np.ceil(segment_length / max_distance))
+            num_segments = int(np.ceil(float(segment_length) / max_distance))
 
             # Create evenly spaced intermediate points
             for j in range(1, num_segments):

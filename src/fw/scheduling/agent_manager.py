@@ -1,5 +1,6 @@
 import os
 import math
+import logging
 
 from pathlib import Path
 from fw.configuration.stop_condition import StopCondition
@@ -22,6 +23,8 @@ from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
 from fw.collision_avoidance.scenario_classifier import SCENARIO_LABELS, NUM_SCENARIOS
 from fw.configuration.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy, MULTI_POLICY_SINGLE_NAME
+
+logger = logging.getLogger(__name__)
 
 
 class AgentManager:
@@ -109,7 +112,7 @@ class AgentManager:
 
         return SinglePPOAgent(self._profile, environment=target_env, **self._hyperparameters)
 
-    def _build_multi_agent(self, env):
+    def _build_multi_agent(self, env: BaseEnv):
         """
         Create a `MultiPPOAgent` composed of multiple `SinglePPOAgent` instances.
 
@@ -267,15 +270,15 @@ class AgentManager:
                 full_policy_file_name = os.path.join(self.agent.model_dir, full_policy_file_name)
 
             if Path(full_policy_file_name).exists():
-                print(f"Reusing {policy_file_name}.")
+                logger.info("Reusing %s.", policy_file_name)
                 try:
                     self._agent.load_policy(policy_file_name)
                 except (ValueError, RuntimeError) as e:
-                    print(f"[Fallback] Incompatible model: {e}")
-                    print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
+                    logger.warning("[Fallback] Incompatible model: %s", e)
+                    logger.warning("[Fallback] Reverting to RESET_POLICY for %s.", self._agent_type)
             else:
-                print(f"[Fallback] The policy file {policy_file_name} does not exist.")
-                print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
+                logger.warning("[Fallback] The policy file %s does not exist.", policy_file_name)
+                logger.warning("[Fallback] Reverting to RESET_POLICY for %s.", self._agent_type)
 
     def train(self, stop_condition: StopCondition) -> None:
         """
@@ -402,34 +405,34 @@ class AgentManager:
                     "mHE": m.mHE,
                 }
                 training_name = getattr(ship_env, "training_name", sid)
-                print(f"\n{training_name} evaluation completed!")
-                print(f"Average reward: {m.avg_reward:.2f}")
-                print(f"Best episode reward: {m.best_reward:.2f}")
-                print(f"Worst episode reward: {m.worst_reward:.2f}")
-                print(f"Mean Surge Velocity (mu): {m.mu:.2f}")
-                print(f"Maximum Surge Velocity (Mu): {m.Mu:.2f}")
-                print(f"Mean Track Error Integral (mTEI): {m.mTEI:.2f}")
-                print(f"Maximum Track Error (MTE): {m.MTE:.2f}")
-                print(f"Mean Rudder Angle (mRA): {m.mRA:.3f}")
-                print(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
-                print(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
-                print(f"Variance of Rudder Angle (vRA): {m.vRA:.4f}")
-                print(f"Steering Sign-Change Frequency (sCF): {m.sCF:.4f}")
-                print(f"Mean Thrust (mT): {m.mT:.3f}")
-                print(f"Maximum Thrust (MT): {m.MT:.3f}")
-                print(f"Mean Thrust Change (mTC): {m.mTC:.4f}")
-                print(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
-                print("Collision rate per policy (over valid-outcome encounters: collided OR resolved):")
+                logger.info("%s evaluation completed!", training_name)
+                logger.info(f"Average reward: {m.avg_reward:.2f}")
+                logger.info(f"Best episode reward: {m.best_reward:.2f}")
+                logger.info(f"Worst episode reward: {m.worst_reward:.2f}")
+                logger.info(f"Mean Surge Velocity (mu): {m.mu:.2f}")
+                logger.info(f"Maximum Surge Velocity (Mu): {m.Mu:.2f}")
+                logger.info(f"Mean Track Error Integral (mTEI): {m.mTEI:.2f}")
+                logger.info(f"Maximum Track Error (MTE): {m.MTE:.2f}")
+                logger.info(f"Mean Rudder Angle (mRA): {m.mRA:.3f}")
+                logger.info(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
+                logger.info(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
+                logger.info(f"Variance of Rudder Angle (vRA): {m.vRA:.4f}")
+                logger.info(f"Steering Sign-Change Frequency (sCF): {m.sCF:.4f}")
+                logger.info(f"Mean Thrust (mT): {m.mT:.3f}")
+                logger.info(f"Maximum Thrust (MT): {m.MT:.3f}")
+                logger.info(f"Mean Thrust Change (mTC): {m.mTC:.4f}")
+                logger.info(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
+                logger.info("Collision rate per policy (over valid-outcome encounters: collided OR resolved):")
                 for policy in sorted(m.total_encounters_per_policy):
                     enc_n = m.encounters_per_policy.get(policy, 0)
                     total_n = m.total_encounters_per_policy[policy]
                     col_n = m.collisions_per_policy.get(policy, 0)
                     rate = (col_n / enc_n * 100) if enc_n else 0.0
-                    print(
+                    logger.info(
                         f"  {policy:<16s} {rate:6.2f}% "
                         f"({col_n}/{enc_n} valid; {total_n} total starts)"
                     )
-                print("Encounter outcome breakdown per policy (all encounter starts):")
+                logger.info("Encounter outcome breakdown per policy (all encounter starts):")
                 cat_order = (
                     "collided",
                     "resolved",
@@ -441,14 +444,14 @@ class AgentManager:
                     buckets = m.encounter_outcomes_per_policy.get(policy, {})
                     total_n = m.total_encounters_per_policy[policy]
                     parts = [f"{cat}={buckets.get(cat, 0)}" for cat in cat_order]
-                    print(f"  {policy:<16s} total={total_n}  " + "  ".join(parts))
-                print("CRI per policy (mean / median / max over valid encounters):")
+                    logger.info(f"  {policy:<16s} total={total_n}  " + "  ".join(parts))
+                logger.info("CRI per policy (mean / median / max over valid encounters):")
                 for policy in sorted(m.total_encounters_per_policy):
                     n_valid = m.valid_encounters_per_policy.get(policy, 0)
                     mean_cri = m.mean_cri_per_policy.get(policy, 0.0)
                     median_cri = m.median_cri_per_policy.get(policy, 0.0)
                     max_cri = m.max_cri_per_policy.get(policy, 0.0)
-                    print(
+                    logger.info(
                         f"  {policy:<16s} mean={mean_cri:.3f}  "
                         f"median={median_cri:.3f}  max={max_cri:.3f}  "
                         f"(n={n_valid})"
@@ -465,53 +468,53 @@ class AgentManager:
                 theoretical = cri_omega1 * math.exp(cri_alpha1 * enc_r / max(cri_D, 1e-12))
                 m.baseline_cri_theoretical = theoretical
                 n_baseline = m.baseline_cri_sample_count
-                print(
+                logger.info(
                     "Baseline CRI (lowest-achievable reference, across all policies):"
                 )
-                print(
+                logger.info(
                     f"  empirical: mean(per-encounter min CRI)={m.baseline_cri_empirical_mean:.3f}  "
                     f"min(observed)={m.baseline_cri_empirical_min:.3f}  (n={n_baseline})"
                 )
-                print(
+                logger.info(
                     f"  theoretical: CRI at DCPA=encounter_range ({enc_r:.0f}m), "
                     f"TCPA parting = {theoretical:.3f}"
                 )
-                print("Cross-track error per policy [m] (mean / median / max over valid encounters):")
+                logger.info("Cross-track error per policy [m] (mean / median / max over valid encounters):")
                 for policy in sorted(m.total_encounters_per_policy):
                     n_valid = m.valid_encounters_per_policy.get(policy, 0)
                     mean_cte = m.mean_cte_per_policy.get(policy, 0.0)
                     median_cte = m.median_cte_per_policy.get(policy, 0.0)
                     max_cte = m.max_cte_per_policy.get(policy, 0.0)
-                    print(
+                    logger.info(
                         f"  {policy:<16s} mean={mean_cte:.2f}m  "
                         f"median={median_cte:.2f}m  max={max_cte:.2f}m  "
                         f"(n={n_valid})"
                     )
-                print("Time to first action per policy [s] (|rudder| > 10 deg, over valid encounters):")
+                logger.info("Time to first action per policy [s] (|rudder| > 10 deg, over valid encounters):")
                 for policy in sorted(m.total_encounters_per_policy):
                     n_reactive = m.reactive_encounters_per_policy.get(policy, 0)
                     n_non_reactive = m.non_reactive_encounters_per_policy.get(policy, 0)
                     mean_tfa = m.mean_tfa_per_policy.get(policy, 0.0)
                     median_tfa = m.median_tfa_per_policy.get(policy, 0.0)
-                    print(
+                    logger.info(
                         f"  {policy:<16s} mean={mean_tfa:.2f}s  "
                         f"median={median_tfa:.2f}s  "
                         f"(n_reactive={n_reactive}, n_non_reactive={n_non_reactive})"
                     )
                 n_ep = m.num_episodes
                 out_rate = (m.collisions_outside_encounters / n_ep * 100) if n_ep else 0.0
-                print(f"  outside-encounter {out_rate:6.2f}% ({m.collisions_outside_encounters}/{n_ep} episodes)")
+                logger.info(f"  outside-encounter {out_rate:6.2f}% ({m.collisions_outside_encounters}/{n_ep} episodes)")
                 in_enc = m.collision_count - m.collisions_outside_encounters
                 total_denom = m.num_encounters + n_ep
                 cr_pct = (m.collision_count / total_denom * 100) if total_denom else 0.0
-                print(
+                logger.info(
                     f"Total collision rate (CR): {cr_pct:.2f}% "
                     f"({m.collision_count} = {in_enc} in {m.num_encounters} encounters "
                     f"+ {m.collisions_outside_encounters} outside / {n_ep} episodes)"
                 )
-                print(f"Collision per type: {m.collision_type_count}")
-                print(f"Collision per side: {m.collision_side_count}")
-                print(f"COLREG violation count: {m.colreg_violation_count}")
+                logger.info(f"Collision per type: {m.collision_type_count}")
+                logger.info(f"Collision per side: {m.collision_side_count}")
+                logger.info(f"COLREG violation count: {m.colreg_violation_count}")
 
                 # Scenario classification diagnostics - per encounter
                 # (one record captured at encounter entry).
@@ -519,16 +522,16 @@ class AgentManager:
                     m.encounter_misclassification_count / m.num_encounters * 100
                     if m.num_encounters else 0.0
                 )
-                print(
+                logger.info(
                     f"Scenario misclassification - "
                     f"{m.encounter_misclassification_count}/{m.num_encounters} encounters "
                     f"({enc_rate:.2f}%)"
                 )
                 if m.encounter_confusion:
-                    print("Encounter confusion (gt -> pred: count):")
+                    logger.info("Encounter confusion (gt -> pred: count):")
                     for (gt, pred), cnt in sorted(m.encounter_confusion.items()):
                         tag = "" if gt == pred else "  [MISMATCH]"
-                        print(f"  {gt} -> {pred}: {cnt}{tag}")
+                        logger.info(f"  {gt} -> {pred}: {cnt}{tag}")
 
             save_dir = self.agent.model_dir or "."
             if not save_dir:

@@ -60,7 +60,6 @@ from __future__ import annotations
 import os
 import time
 import logging
-import traceback
 
 from typing import Any, Dict, Optional, Tuple
 from fw.scheduling.base_scheduler import BaseScheduler
@@ -136,26 +135,24 @@ class PipelineScheduler(BaseScheduler):
         completed_block_names = set()
 
         for block in blocks:
-            print(f"\n[PipelineScheduler] === Block '{block.name}' ({block.env_type}) ===")
+            logger.info("=== Block '%s' (%s) ===", block.name, block.env_type)
             try:
                 result = self._run_block(block, completed_block_names)
                 metrics[block.name] = {"status": "success", **result}
                 if block.action == "train":
                     completed_block_names.add(block.name)
             except Exception as exc:  # noqa: BLE001 - deliberately broad, mirrors SimpleScheduler
-                traceback.print_exc()
-                logger.error("[PipelineScheduler] Block '%s' failed: %s", block.name, exc)
+                logger.exception("[PipelineScheduler] Block '%s' failed: %s", block.name, exc)
                 metrics[block.name] = {"status": "failure", "error": str(exc)}
 
                 failure_mode = block.on_failure or self._on_block_failure
                 if failure_mode == "abort":
-                    print(
-                        f"[PipelineScheduler] Aborting pipeline after failure "
-                        f"in block '{block.name}'."
+                    logger.warning(
+                        "Aborting pipeline after failure in block '%s'.", block.name
                     )
                     break
 
-        print("[PipelineScheduler] Pipeline complete.")
+        logger.info("Pipeline complete.")
         return metrics
 
     # ------------------------------------------------------------------
@@ -198,9 +195,9 @@ class PipelineScheduler(BaseScheduler):
         if sim is not None:
             apply_profile(profile, simulator=sim)
 
-        print(
-            f"[PipelineScheduler] ship={profile.model.ship_model} "
-            f"dynamics={profile.model.dynamics_model} action={block.action}"
+        logger.info(
+            "ship=%s dynamics=%s action=%s",
+            profile.model.ship_model, profile.model.dynamics_model, block.action
         )
 
         if block.action == "evaluate_reward":

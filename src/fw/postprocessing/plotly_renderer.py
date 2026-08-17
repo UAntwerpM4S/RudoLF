@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import numpy as np
+import logging
 
 from fw.postprocessing.ship_episode_data import ShipData
 from fw.postprocessing.metrics_computer import ShipMetrics
 from fw.postprocessing.output_helpers import SHIP_COLORS, normalized_time_axis, resample_to_common_time
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -61,14 +64,14 @@ class PlotlyRenderer:
             import plotly.graph_objects as go
             from plotly.subplots import make_subplots
         except ImportError:
-            print("Plotly not installed. Run: pip install plotly")
+            logger.error("Plotly not installed. Run: pip install plotly")
             return
 
         ship_ids = list(ship_data.keys())
         n_ships = len(ship_ids)
 
         if n_ships == 0:
-            print("[PlotlyRenderer] No ship data to render — skipping.")
+            logger.warning("No ship data to render — skipping.")
             return
 
         # 4 rows: trajectory, cross-track error, rudder, UKC
@@ -167,4 +170,4 @@ class PlotlyRenderer:
         )
 
         fig.write_html(save_path)
-        print(f"Interactive dashboard saved to '{save_path}'")
+        logger.info("Interactive dashboard saved to '%s'", save_path)

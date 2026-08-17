@@ -1,10 +1,11 @@
 import os
 import time
 import logging
-import traceback
 
 from fw.configuration.config import PolicyStrategy
 from fw.scheduling.base_scheduler import BaseScheduler
+
+logger = logging.getLogger(__name__)
 
 
 class SimpleScheduler(BaseScheduler):
@@ -88,7 +89,7 @@ class SimpleScheduler(BaseScheduler):
             )
 
             if sim_name:
-                print(f"Setting up a {sim_name} for a {gym_env.ship_model.name} ship.")
+                logger.info("Setting up a %s for a %s ship.", sim_name, gym_env.ship_model.name)
 
         # Set the desired environment and prepare policy according to the strategy
         self.agent_mgr.set_environment(
@@ -97,7 +98,7 @@ class SimpleScheduler(BaseScheduler):
             other_env_name=other_policy_name
         )
 
-        print(f"[Scheduler] Switched to environment: {self.current_env}")
+        logger.info("[Scheduler] Switched to environment: %s", self.current_env)
 
 
     def execute(self, configuration=None):
@@ -130,7 +131,7 @@ class SimpleScheduler(BaseScheduler):
                 # Switch to the next environment
                 self._switch_environment(i, policy_strategy, self._previous_env_name)
 
-                logging.info(f"Training agent '{getattr(self.agent_mgr, 'agent', 'Unknown')}' in environment '{self.current_env}'.")
+                logger.info("Training agent '%s' in environment '%s'.", getattr(self.agent_mgr, 'agent', 'Unknown'), self.current_env)
 
                 env_key = str(self.current_env)
                 if env_key in configuration:
@@ -140,25 +141,25 @@ class SimpleScheduler(BaseScheduler):
                     # Single-entry dict whose key no longer matches the active env.
                     original_key = next(iter(configuration))
                     stop_condition = configuration[original_key]
-                    print(
-                        f"[Scheduler] No stop condition for '{env_key}'; "
-                        f"reusing the one configured for '{original_key}'."
+                    logger.info(
+                        "[Scheduler] No stop condition for '%s'; "
+                        "reusing the one configured for '%s'.", env_key, original_key
                     )
                 elif configuration:
                     # Multiple entries but no exact match — pick the first and warn.
                     original_key = next(iter(configuration))
                     stop_condition = configuration[original_key]
-                    logging.warning(
-                        f"No stop condition found for '{env_key}' "
-                        f"(keys: {list(configuration.keys())}). "
-                        f"Falling back to stop condition for '{original_key}'."
+                    logger.warning(
+                        "No stop condition found for '%s' (keys: %s). "
+                        "Falling back to stop condition for '%s'.",
+                        env_key, list(configuration.keys()), original_key
                     )
                 else:
                     raise ValueError(
                         f"No stop condition for '{env_key}' and configuration is empty."
                     )
 
-                print(f"[Scheduler] Training to reach {stop_condition} in {self.current_env}.")
+                logger.info("[Scheduler] Training to reach %s in %s.", stop_condition, self.current_env)
 
                 # Reset the patience counter so it doesn't carry over
                 # from the previous environment and trigger a premature stop.
@@ -167,7 +168,7 @@ class SimpleScheduler(BaseScheduler):
 
                 # Indicate if starting from scratch
                 if not self._previous_env_name:
-                    print(f"Starting to train a new {self.agent_mgr.agent_type} policy.")
+                    logger.info("Starting to train a new %s policy.", self.agent_mgr.agent_type)
 
                 # Train the agent
                 start_time = time.time()
@@ -204,11 +205,11 @@ class SimpleScheduler(BaseScheduler):
                             try:
                                 with open(profile_path, "w", encoding="utf-8") as _fp:
                                     _fp.write(profile.to_json())
-                                logging.debug(
+                                logger.debug(
                                     "[Scheduler] Profile written to '%s'.", profile_path
                                 )
                             except OSError as _pe:
-                                logging.warning(
+                                logger.warning(
                                     "[Scheduler] Could not save profile JSON (%s).", _pe
                                 )
                     except Exception as e:
@@ -219,10 +220,9 @@ class SimpleScheduler(BaseScheduler):
                 metrics[str(self.current_env)] = {"status": "success", "duration": duration}
 
             except Exception as e:
-                traceback.print_exc()
-                logging.error(f"Training failed for agent '{getattr(self.agent_mgr, 'agent', 'Unknown')}' in '{self.current_env}': {e}")
+                logger.exception("Training failed for agent '%s' in '%s': %s", getattr(self.agent_mgr, 'agent', 'Unknown'), self.current_env, e)
                 metrics[str(self.current_env)] = {"status": "failure", "error": str(e)}
 
-        print("[Scheduler] Training complete!")
+        logger.info("[Scheduler] Training complete!")
 
         return metrics

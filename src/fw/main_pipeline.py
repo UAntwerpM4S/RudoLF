@@ -49,14 +49,17 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     import argparse
     import multiprocessing
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    )
+    from pathlib import Path
+    from fw.common.tools.logging_config import setup_logging
+    from fw.configuration.config import PPO_POLICY_NAME
+
+    # Provisional console-only setup, in case spec loading itself fails
+    # (spec.log_level, needed for the real setup, isn't known yet).
+    setup_logging(run_type="pipeline", to_file=False)
+    logger = logging.getLogger("fw.main_pipeline")
 
     multiprocessing.set_start_method("spawn", force=True)
 
-    from fw.configuration.config import PPO_POLICY_NAME
     from fw.scheduling.agent_manager import AgentManager
     from fw.configuration.config_profile import ProfileRegistry
     from fw.scheduling.pipeline_scheduler import PipelineScheduler
@@ -70,8 +73,22 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     try:
         spec = load_pipeline_spec(args.spec)
     except PipelineSpecError as exc:
-        print(f"[main_pipeline] Invalid pipeline spec: {exc}")
+        logger.error("Invalid pipeline spec: %s", exc)
         raise SystemExit(1)
+
+    log_path = setup_logging(
+        run_type="pipeline",
+        env_name=Path(args.spec).stem,
+        # main_pipeline.py runs a single agent_type for the whole pipeline
+        # (see module docstring "Scope" section: mixing agent types across
+        # blocks isn't supported), so it's safe to embed here directly
+        # rather than resolve it per-block like fw.main does.
+        agent_type=PPO_POLICY_NAME,
+        src_dir=Path(__file__).resolve().parents[1],
+        level=spec.log_level,
+    )
+    if log_path is not None:
+        logger.info("Logging to file: %s", log_path)
 
     # Pre-flight check: reject any AirSim block *before* running anything,
     # not just when that block's turn comes up in the loop below. Without
@@ -83,10 +100,11 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     # block, before `initialize_all_environments()`.
     for block in spec.blocks:
         if resolve_environment_name(block.env_type) == airsim_env_name:
-            print(
-                f"[main_pipeline] Block '{block.name}' uses AirSimEnv, which is not "
-                f"supported by main_pipeline.py (see pipeline_env.py's rejection of "
-                f"AirSim). Use fw.main for AirSim training, or exclude this block."
+            logger.error(
+                "Block '%s' uses AirSimEnv, which is not supported by "
+                "main_pipeline.py (see pipeline_env.py's rejection of AirSim). "
+                "Use fw.main for AirSim training, or exclude this block.",
+                block.name,
             )
             raise SystemExit(1)
 
@@ -106,7 +124,7 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     scheduler = PipelineScheduler(agent_mgr, spec.blocks, on_block_failure=spec.on_block_failure)
     metrics = scheduler.execute()
 
-    print(f"\n[main_pipeline] Pipeline metrics: {metrics}")
+    logger.info("Pipeline metrics: %s", metrics)
 
     if any(m.get("status") == "failure" for m in metrics.values()):
         raise SystemExit(1)

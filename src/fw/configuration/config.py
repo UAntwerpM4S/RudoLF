@@ -154,6 +154,7 @@ CONFIG_PARAMETERS = {
                                         # "tripoli_pysim_to_fhsim_transfer_profile",
                                         # "ugent_surrogate_training_profile", ...
     'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     'wind': False,
     'current': False,
     'visualize_best_trained': False,

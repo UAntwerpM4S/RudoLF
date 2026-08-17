@@ -1,4 +1,5 @@
 import os
+import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -16,6 +17,8 @@ from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.base_agent import BaseAgent
 from fw.policies.ppo2_agent import PPO2Agent
+
+logger = logging.getLogger(__name__)
 
 MIN_GRID_POS = -11700
 MAX_GRID_POS = 14500
@@ -129,7 +132,7 @@ class AgentManagerSimple:
 
             # Save the figure
             plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
-            print("\nPath visualization saved as 'trajectory.png'.")
+            logger.info("Path visualization saved as 'trajectory.png'.")
 
             if show_plots:
                 plt.show()
@@ -220,7 +223,7 @@ class AgentManagerSimple:
         return SinglePPOAgent(self._profile, environment=target_env, **self._hyperparameters)
 
 
-    def _build_multi_agent(self, env):
+    def _build_multi_agent(self, env: BaseEnv):
         """
         Create a `MultiPPOAgent` composed of multiple `SinglePPOAgent` instances.
 
@@ -294,15 +297,15 @@ class AgentManagerSimple:
                 full_policy_file_name = os.path.join(self.agent.model_dir, full_policy_file_name)
 
             if Path(full_policy_file_name).exists():
-                print(f"Reusing {policy_file_name}.")
+                logger.info("Reusing %s.", policy_file_name)
                 try:
                     self._agent.load_policy(policy_file_name)
                 except (ValueError, RuntimeError) as e:
-                    print(f"[Fallback] Incompatible model: {e}")
-                    print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
+                    logger.warning("[Fallback] Incompatible model: %s", e)
+                    logger.warning("[Fallback] Reverting to RESET_POLICY for %s.", self._agent_type)
             else:
-                print(f"[Fallback] The policy file {policy_file_name} does not exist.")
-                print(f"[Fallback] Reverting to RESET_POLICY for {self._agent_type}.")
+                logger.warning("[Fallback] The policy file %s does not exist.", policy_file_name)
+                logger.warning("[Fallback] Reverting to RESET_POLICY for %s.", self._agent_type)
 
 
     @contextmanager
@@ -384,7 +387,7 @@ class AgentManagerSimple:
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
-        print(f"\nRunning {num_episodes} episodes...")
+        logger.info("Running %d episodes...", num_episodes)
 
         self.agent.set_policy_eval()
         env = self.get_env()
@@ -452,7 +455,7 @@ class AgentManagerSimple:
                                     )
                                     airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
                             else:
-                                print(f"Episode {episode + 1} finished after {steps} steps with reward {episode_reward:.2f}")
+                                logger.info("Episode %d finished after %d steps with reward %.2f", episode + 1, steps, episode_reward)
                                 break
 
                         all_paths.append(np.array(path_positions))
@@ -463,9 +466,9 @@ class AgentManagerSimple:
 
                 # Print summary statistics
                 avg_reward = np.mean(total_rewards)
-                print(f"\nEvaluation completed! Average reward: {avg_reward:.2f}")
-                print(f"Best episode reward: {max(total_rewards):.2f}")
-                print(f"Worst episode reward: {min(total_rewards):.2f}")
+                logger.info("Evaluation completed! Average reward: %.2f", avg_reward)
+                logger.info("Best episode reward: %.2f", max(total_rewards))
+                logger.info("Worst episode reward: %.2f", min(total_rewards))
 
                 self.render(
                     env,

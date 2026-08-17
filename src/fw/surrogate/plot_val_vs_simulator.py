@@ -97,7 +97,7 @@ def mae(a, b):
 
     return float(np.mean(np.abs(a - b)))
 
-def r2(true, pred):
+def r2(true: np.ndarray, pred: np.ndarray) -> float:
     """
     Coefficient of determination (R²) of predictions against ground truth.
 
@@ -109,8 +109,9 @@ def r2(true, pred):
         float: R², or NaN if `true` has zero variance.
     """
 
-    ss_res = np.sum((true - pred) ** 2)
-    ss_tot = np.sum((true - np.mean(true)) ** 2)
+    ss_res = float(np.sum((true - pred) ** 2))
+    ss_tot = float(np.sum((true - np.mean(true)) ** 2))
+
     return 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
 metrics = []
@@ -170,9 +171,9 @@ for row, i in enumerate(range(3)):
     idx   = np.arange(0, N, SUBSAMPLE)
     ax_sc.scatter(y_t[idx], y_p[idx],
                   s=6, alpha=ALPHA_SCATTER, color=COLOR_PRED, linewidths=0)
-    lims = [min(y_t.min(), y_p.min()), max(y_t.max(), y_p.max())]
+    lims = (min(y_t.min(), y_p.min()), max(y_t.max(), y_p.max()))
     pad  = (lims[1] - lims[0]) * 0.05
-    lims = [lims[0] - pad, lims[1] + pad]
+    lims = (lims[0] - pad, lims[1] + pad)
     ax_sc.plot(lims, lims, "k--", linewidth=0.9, label="Ideal (y = x)")
     ax_sc.set_xlim(lims); ax_sc.set_ylim(lims)
     ax_sc.set_xlabel(f"Simulator  [{unit}]")

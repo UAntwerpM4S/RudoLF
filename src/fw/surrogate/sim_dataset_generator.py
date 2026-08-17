@@ -113,8 +113,8 @@ def collect_supervised_dataset(
         traj = [env.ship_pos.copy()]
 
         for _ in range(steps_per_episode):
-            if env._ship_in_open_water(env.ship_pos):
-                env._update_ship_dynamics(action)
+            if env.ship_in_open_water(env.ship_pos):
+                # env._update_ship_dynamics(action)
                 traj.append(env.ship_pos.copy())
             else:
                 break
@@ -122,7 +122,7 @@ def collect_supervised_dataset(
         traj = np.array(traj)  # shape (T, 2)
         trajectories.append(traj)
 
-        if env._ship_in_open_water(env.ship_pos):
+        if env.ship_in_open_water(env.ship_pos):
             # Calculate delta X and delta Y
             delta_x = env.state[0] - initial_pos[0]
             delta_y = env.state[1] - initial_pos[1]

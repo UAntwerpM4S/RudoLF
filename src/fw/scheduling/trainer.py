@@ -2,6 +2,7 @@ import os
 import re
 import csv
 import copy
+import logging
 import importlib
 
 from enum import Enum
@@ -25,7 +26,7 @@ from fw.scheduling.agent_manager_simple import AgentManagerSimple
 from fw.configuration.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
 from fw.configuration.config_profile import VesselProfile
 
-# logging.basicConfig(level=logging.INFO)  # Configure logging once, possibly in main script.
+logger = logging.getLogger(__name__)
 
 
 class FilenameStyle(Enum):
@@ -244,7 +245,7 @@ class Trainer:
         if env_metrics and env_metrics.get("status") == "success":
             try:
                 if env_type == "AirSimEnv":
-                    print("Skipping automatic post-training visualization for AirSimEnv.")
+                    logger.info("Skipping automatic post-training visualization for AirSimEnv.")
                 else:
                     summaries = self.visualize(
                         [last_env],
@@ -257,9 +258,9 @@ class Trainer:
                             or next(iter(summaries.values()))
                         )
             except AttributeError as e:
-                print(e)
+                logger.warning(e)
         else:
-            print(f"No successful training found for environment '{env_type}' to visualize.")
+            logger.warning("No successful training found for environment '%s' to visualize.", env_type)
 
         return metrics
     
@@ -299,7 +300,7 @@ class Trainer:
                         )
 
                         if sim_name:
-                            print(f"Visualization of {gym_env.ship_model.name} in a {sim_name}.")
+                            logger.info("Visualization of %s in a %s.", gym_env.ship_model.name, sim_name)
 
                     policy_name = f"Best_{gym_env.training_name}" if self._config[
                         "visualize_best_trained"] else gym_env.training_name
@@ -340,24 +341,24 @@ class Trainer:
                                     if matched:
                                         summaries[gym_env.training_name] = matched
                                     else:
-                                        print(
-                                            f"visualize(): env_summary dict has no key for "
-                                            f"'{gym_env.type_name}' or its sub-environments "
-                                            f"({list(sub_envs.keys())}). Available keys: "
-                                            f"{list(env_summary.keys())}. Skipping summary for this env."
+                                        logger.warning(
+                                            "visualize(): env_summary dict has no key for "
+                                            "'%s' or its sub-environments (%s). Available keys: "
+                                            "%s. Skipping summary for this env.",
+                                            gym_env.type_name, list(sub_envs.keys()), list(env_summary.keys()),
                                         )
                                 else:
-                                    print(
-                                        f"visualize(): env_summary dict has no key for "
-                                        f"'{gym_env.type_name}'. Available keys: "
-                                        f"{list(env_summary.keys())}. Skipping summary for this env."
+                                    logger.warning(
+                                        "visualize(): env_summary dict has no key for "
+                                        "'%s'. Available keys: %s. Skipping summary for this env.",
+                                        gym_env.type_name, list(env_summary.keys()),
                                     )
                         else:
                             summaries[gym_env.training_name] = env_summary
                 except RuntimeError as e:
-                    print(f"Could not visualize {gym_env.training_name}. {e}")
+                    logger.warning("Could not visualize %s. %s", gym_env.training_name, e)
         else:
-            print("No data found to visualize.")
+            logger.warning("No data found to visualize.")
 
         if collect_evaluation_summary:
             return summaries
@@ -500,6 +501,7 @@ class Trainer:
             except Exception as e:
                 if verbose:
                     print(f"    Training failed: {e}")
+                logger.error("Reward evaluation config %d failed: %s", config_idx, e)
 
                 # Keep a consistent shape on failure so downstream code can continue.
                 return config_idx, {
@@ -713,7 +715,7 @@ class Trainer:
         """
 
         if not results:
-            print("No results to export.")
+            logger.warning("No results to export.")
             return
 
         try:
@@ -813,5 +815,6 @@ class Trainer:
                     ])
 
             print(f"Results exported to {filepath}")
+            logger.info("Results exported to %s", filepath)
         except Exception as e:
-            print(f"Failed to export results: {e}")
+            logger.error("Failed to export results: %s", e)
