@@ -502,7 +502,7 @@ class PySimBaseEnv(BaseEnv):
             x = rng.uniform(minx, maxx)
             y = rng.uniform(miny, maxy)
 
-            if self._ship_in_open_water(np.array([x, y])):
+            if self.ship_in_open_water(np.array([x, y])):
                 samples.append((x, y))
 
         if len(samples) < nbr_samples:
@@ -528,7 +528,7 @@ class PySimBaseEnv(BaseEnv):
 
         return True
 
-    def _ship_in_open_water(self, ship_position: np.ndarray) -> bool:
+    def ship_in_open_water(self, ship_position: np.ndarray) -> bool:
         """
         Check if the ship is inside the polygon bounds and has keel clearance.
 
@@ -1100,7 +1100,7 @@ class PySimBaseEnv(BaseEnv):
         # Early termination conditions
         termination_conditions = [
             cross_track_error > CROSS_TRACK_TERMINATION_MULTIPLIER * CHECKPOINTS_DISTANCE,
-            not self._ship_in_open_water(self.ship_pos),
+            not self.ship_in_open_water(self.ship_pos),
             heading_change > HEADING_CHANGE_THRESHOLD,
         ]
 
@@ -1142,7 +1142,7 @@ class PySimBaseEnv(BaseEnv):
         return np.linalg.norm(c - closest)
 
     @staticmethod
-    def _segments_intersect(prev_point: np.ndarray, curr_point: np.ndarray, line_start: np.ndarray, line_end: np.ndarray) -> float:
+    def _segments_intersect(prev_point: np.ndarray, curr_point: np.ndarray, line_start: np.ndarray, line_end: np.ndarray) -> bool:
         """
         Return True if segment prev — curr intersects the infinite line through
         line_seg_start — line_seg_end.

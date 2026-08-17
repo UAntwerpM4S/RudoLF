@@ -321,6 +321,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         get as get_environment,
         initialize_all_environments,
     )
+    from airsim.config.airsim_config import get_airsim_config, AirSimConfig
 
     initialize_all_environments()
 
@@ -408,7 +409,6 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     trainer = Trainer(PPO_POLICY_NAME, envs, _airsim_profile, "SimpleScheduler")
 
     # Optionally create AirSim bridge for simultaneous vehicle control
-    from airsim.config.airsim_config import get_airsim_config, AirSimConfig
     airsim_cfg = get_airsim_config()
     airsim_bridge = None
     if get_validated_bool(airsim_cfg, "use_airsim", False) and not _is_airsim_selected(envs):

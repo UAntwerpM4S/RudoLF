@@ -502,7 +502,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         # Simulation loop
         for step in range(steps_per_episode):
             # Check termination conditions
-            is_in_open_water = env._ship_in_open_water(curr_ship_pos)
+            is_in_open_water = env.ship_in_open_water(curr_ship_pos)
             has_sufficient_keel_clearance = _ship_interface.getKeelClearance() >= MIN_KEEL_CLEARANCE
 
             if not (is_in_open_water and has_sufficient_keel_clearance):
@@ -586,7 +586,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
 
         # Final validation
         final_keel_clearance = _ship_interface.getKeelClearance()
-        final_is_open_water = env._ship_in_open_water(curr_ship_pos)
+        final_is_open_water = env.ship_in_open_water(curr_ship_pos)
 
         if not final_is_open_water or final_keel_clearance < 1.0:
             error_msg = "Ship not in open water!"
@@ -595,8 +595,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             return sim_setup
 
         # Store results if simulation succeeded
-        sim_setup.output.x_input = input_states
-        sim_setup.output.y_output = output_states
+        sim_setup.output.x_input = np.array(input_states, dtype=np.float64)
+        sim_setup.output.y_output = np.array(output_states, dtype=np.float64)
 
     except SimException as e:
         # Handle simulator-specific exceptions

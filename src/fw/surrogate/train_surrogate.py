@@ -300,5 +300,6 @@ def main(argv=None):
 
 if __name__ == "__main__":
     from fw.common.tools.logging_config import setup_logging
+
     setup_logging(run_type="train_surrogate", env_name="surrogate", to_file=False)
     main()

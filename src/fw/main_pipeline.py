@@ -48,8 +48,8 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     import logging
     import argparse
     import multiprocessing
-    from pathlib import Path
 
+    from pathlib import Path
     from fw.common.tools.logging_config import setup_logging
     from fw.configuration.config import PPO_POLICY_NAME
 

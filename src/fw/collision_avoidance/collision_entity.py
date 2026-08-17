@@ -5,6 +5,7 @@ from shapely.geometry import Point, Polygon
 
 EPSILON = 1e-9
 
+
 class CollisionEntity:
     """
     Represents a collision entity in the simulation.

@@ -112,7 +112,7 @@ class AgentManager:
 
         return SinglePPOAgent(self._profile, environment=target_env, **self._hyperparameters)
 
-    def _build_multi_agent(self, env):
+    def _build_multi_agent(self, env: BaseEnv):
         """
         Create a `MultiPPOAgent` composed of multiple `SinglePPOAgent` instances.
 

@@ -4,7 +4,6 @@ import numpy as np
 from typing import Optional
 from fw.collision_avoidance.collision_entity import CollisionEntity
 
-
 EPSILON = 1e-9
 
 

@@ -274,7 +274,7 @@ class BasePPOAgent(BaseAgent):
         """
 
         # Welford's algorithm for running stats
-        batch_mean = np.mean(rewards)
+        batch_mean = float(np.mean(rewards))
         batch_var = np.var(rewards)
         batch_count = len(rewards)
 

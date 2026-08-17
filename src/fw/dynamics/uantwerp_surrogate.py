@@ -1,5 +1,5 @@
-import numpy as np
 import logging
+import numpy as np
 
 from pathlib import Path
 from typing import Tuple, Optional, Dict

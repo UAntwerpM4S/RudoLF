@@ -13,8 +13,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
     import runpy
     import logging
     import multiprocessing
-    from pathlib import Path
 
+    from pathlib import Path
     from fw.configuration.config import get_config_parameters
     from fw.common.tools.logging_config import setup_logging, update_log_file_agent_type
 
@@ -217,9 +217,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 apply_profile(profile, simulator=sim)
 
         agent_type = _select_agent_type(envs)
-        renamed_log_path = update_log_file_agent_type(agent_type)
-        if renamed_log_path is not None:
-            logger.info("Log file renamed to: %s", renamed_log_path)
+        updated_log_path = update_log_file_agent_type(agent_type)
+        if updated_log_path is not None:
+            logger.info("Log file renamed to: %s", updated_log_path)
         std_trainer = Trainer(agent_type, envs, profile, "SimpleScheduler", config=framework_config)
         if action == "visualize":
             std_trainer.visualize(envs, airsim_bridge=None)

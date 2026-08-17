@@ -512,7 +512,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
                 if collision_entity_collision:
                     terminated = True
 
-            bank_collision = not self._ship_in_open_water(self.ship_pos)
+            bank_collision = not self.ship_in_open_water(self.ship_pos)
             if bank_collision:
                 terminated = True
 

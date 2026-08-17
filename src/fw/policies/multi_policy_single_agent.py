@@ -657,13 +657,12 @@ class MultiPolicySingleAgent(BasePPOAgent):
             # Determine bootstrap value at end of segment
             # ----------------------------------------------------------
             is_last_segment = (i == len(segments) - 1)
+            next_value = 0.0
 
             if is_last_segment:
                 # Last segment: bootstrap depends on true episode termination
                 last_terminated = bool(episode["terminations"][end - 1])
-                if last_terminated:
-                    next_value = 0.0
-                else:
+                if not last_terminated:
                     # Truncation or safeguard: bootstrap with this policy's
                     # value estimate of the state after the segment
                     next_state = episode["next_states"][end - 1]

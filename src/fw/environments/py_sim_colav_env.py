@@ -553,7 +553,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             if min_dist < d_ramp_start:
                 distance_penalty_peak = self.distance_penalty_peak
                 a = -2.6
-                ramp_t = (min_dist - distance_penalty_peak) / max(d_ramp_start - distance_penalty_peak, EPSILON)
+                ramp_t = ((min_dist - distance_penalty_peak) /
+                          max(float(d_ramp_start - distance_penalty_peak), EPSILON))
                 ramp_t = float(np.clip(ramp_t, 0.0, 1.0))
                 exp_t = (np.exp(a * ramp_t) - 1.0) / (np.exp(a) - 1.0)
                 ramp_penalty = ramp_max_penalty * (1.0 - exp_t)

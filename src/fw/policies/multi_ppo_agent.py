@@ -5,15 +5,15 @@ import tempfile
 import logging
 import numpy as np
 
-from typing import Optional, Tuple, Union
-from fw.configuration.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.configuration.stop_condition import StopCondition
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
-from fw.environments.multi_sim_env import MultiSimEnv
 from fw.configuration.profile_applier import SimulatorApplier
 from fw.configuration.config_profile import VesselProfile
+from fw.environments.multi_sim_env import MultiSimEnv
+from typing import Optional, Tuple, Union, Any
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +172,7 @@ class MultiPPOAgent(BasePPOAgent):
         """
 
         # Step all environments
+        infos: list[dict[str, Any]]
         next_states, next_rewards, next_terminations, truncations, infos = self.env.step(actions)
 
         if infos and all(

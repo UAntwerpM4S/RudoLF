@@ -26,6 +26,7 @@ CSV column layout (16 columns, matching collect_supervised_dataset output):
 
 from __future__ import annotations
 
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -167,7 +168,6 @@ class WcuLookup:
         valid   = coord_valid & env_valid
         n_dropped = int((~valid).sum())
         if n_dropped:
-            import warnings
             warnings.warn(
                 f"UKCLookup: dropped {n_dropped} row(s) with NaN/inf "
                 f"coordinates or environmental values in '{csv_file}'."
