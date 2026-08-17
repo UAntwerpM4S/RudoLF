@@ -14,13 +14,13 @@ Framework-driven replay for modular framework-model visualization lives in
 
 from __future__ import annotations
 
-import argparse
-import logging
 import sys
+import torch
+import logging
+import argparse
+
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
-import torch
 
 _SRC_DIR = Path(__file__).resolve().parent.parent.parent
 if str(_SRC_DIR) not in sys.path:
@@ -36,10 +36,9 @@ from fw.common.airsim.tools.trajectory_analysis import (  # noqa: E402
     format_performance_summary,
     render_side_by_side_trajectory_plot,
 )
-from fw.configuration.config import AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME  # noqa: E402
-from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 from fw.policies.ppo_policy import PPOPolicy  # noqa: E402
-
+from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
+from fw.configuration.config import AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

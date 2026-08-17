@@ -6,11 +6,11 @@ ship and vehicle paths via dead reckoning, and displays them in a
 continuously updating matplotlib window.
 """
 
+import os
+import csv
+import math
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-import math
-import csv
-import os
 
 # Configuration
 DT = 0.1  # Simulation time step

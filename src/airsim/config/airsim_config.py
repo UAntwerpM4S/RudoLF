@@ -18,11 +18,12 @@ Example::
 from __future__ import annotations
 
 import json
-import ipaddress
 import logging
+import ipaddress
+
 from pathlib import Path
-from dataclasses import asdict, dataclass
 from typing import Any, Dict
+from dataclasses import asdict, dataclass
 
 logger = logging.getLogger(__name__)
 

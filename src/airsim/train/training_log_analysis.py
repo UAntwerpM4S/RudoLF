@@ -7,10 +7,10 @@ from __future__ import annotations
 import csv
 import statistics
 
-from collections import Counter, defaultdict
-from dataclasses import dataclass
 from pathlib import Path
 from typing import DefaultDict
+from dataclasses import dataclass
+from collections import Counter, defaultdict
 
 
 @dataclass(frozen=True)

@@ -40,13 +40,12 @@ re-explores in the new environment.
 
 from __future__ import annotations
 
+import torch
 import logging
-from dataclasses import dataclass
+
 from pathlib import Path
 from typing import List, Tuple
-
-import torch
-
+from dataclasses import dataclass
 from fw.policies.ppo_policy import PPOPolicy, get_device
 
 logger = logging.getLogger(__name__)
