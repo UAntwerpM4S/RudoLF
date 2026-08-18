@@ -289,6 +289,12 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             # model_visualise nor inference_visualise was set in runtime_settings.
             # Fall through to the generic trainer.visualize path below.
         except ConnectionError as exc:
+            print(f"[main_with_airsim] {exc}")
+            print(
+                "[main_with_airsim] UE5-dependent AirSim visualisation was requested, "
+                "but UE5 is not reachable. Start UE5 in Play mode or disable the "
+                "AirSim visualisation flags in runtime_settings.json."
+            )
             logger.error(
                 "%s. UE5-dependent AirSim visualisation was requested, but UE5 is "
                 "not reachable. Start UE5 in Play mode or disable the AirSim "
