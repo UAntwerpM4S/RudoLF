@@ -14,7 +14,7 @@ import numpy as np
 try:
     matplotlib.use('TkAgg')  # Try using the interactive backend
 except ImportError:
-    print("Warning: 'TkAgg' backend not available. Falling back to 'Agg'.")
+    logging.getLogger(__name__).warning("'TkAgg' backend not available. Falling back to 'Agg'.")
     matplotlib.use('Agg')  # Use non-interactive backend as fallback
 
 from shapely import LineString
@@ -33,6 +33,8 @@ from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.dynamics_model import Model
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.nomoto import Nomoto
+
+logger = logging.getLogger(__name__)
 
 
 # -----------------------
@@ -617,12 +619,12 @@ class PySimEnv(BaseEnv):
             x = rng.uniform(minx, maxx)
             y = rng.uniform(miny, maxy)
 
-            if self._ship_in_open_water(np.array([x, y])):
+            if self.ship_in_open_water(np.array([x, y])):
                 samples.append((x, y))
 
         if len(samples) < nbr_samples:
-            print(f"Warning: Only generated {len(samples)} points out of requested {nbr_samples} "
-                  f"(polygon may be thin or max_tries reached).")
+            logger.warning("Only generated %d points out of requested %d "
+                            "(polygon may be thin or max_tries reached).", len(samples), nbr_samples)
 
         return np.array(samples, dtype=np.float32)
 
@@ -807,7 +809,7 @@ class PySimEnv(BaseEnv):
 
         return True
 
-    def _ship_in_open_water(self, ship_position: np.ndarray) -> bool:
+    def ship_in_open_water(self, ship_position: np.ndarray) -> bool:
         """
         Check if the ship is inside the polygon bounds and has keel clearance.
 
@@ -1397,7 +1399,7 @@ class PySimEnv(BaseEnv):
         # Reached checkpoint circle
         if self.segment_point_distance(self.previous_ship_pos, self.ship_pos, current_checkpoint["pos"]) <= current_checkpoint['radius']:
             if self.checkpoint_index == len(self.checkpoints) - 1:
-                print(f"{self.env_name} - target REACHED at distance {checkpoint_distance:.2f}")
+                logger.info("%s - target REACHED at distance %.2f", self.env_name, checkpoint_distance)
             self.checkpoint_index += 1
             self.step_count = 0
 
@@ -1414,7 +1416,7 @@ class PySimEnv(BaseEnv):
         # Early termination conditions
         termination_conditions = [
             cross_track_error > CROSS_TRACK_TERMINATION_MULTIPLIER * CHECKPOINTS_DISTANCE,
-            not self._ship_in_open_water(self.ship_pos),
+            not self.ship_in_open_water(self.ship_pos),
             heading_change > HEADING_CHANGE_THRESHOLD,
         ]
 
@@ -1646,10 +1648,9 @@ class PySimEnv(BaseEnv):
         # Clamp to range
         clamped = max(min_value, min(value, max_value))
         if clamped != value:
-            logging.getLogger(__name__).debug(
+            logger.debug(
                 "Value %s clamped to [%s, %s]", value, min_value, max_value
             )
-            print(f"Value {value} clamped to [{min_value}, {max_value}]")
 
         # Normalize value and half_value to [0, 1]
         x = (clamped - min_value) / (max_value - min_value)

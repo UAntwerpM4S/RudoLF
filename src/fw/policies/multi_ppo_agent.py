@@ -2,17 +2,20 @@ import os
 import torch
 import zipfile
 import tempfile
+import logging
 import numpy as np
 
-from typing import Optional, Tuple, Union
-from fw.configuration.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.configuration.stop_condition import StopCondition
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
-from fw.environments.multi_sim_env import MultiSimEnv
 from fw.configuration.profile_applier import SimulatorApplier
 from fw.configuration.config_profile import VesselProfile
+from fw.environments.multi_sim_env import MultiSimEnv
+from typing import Optional, Tuple, Union, Any
+
+logger = logging.getLogger(__name__)
 
 
 class MultiPPOAgent(BasePPOAgent):
@@ -169,6 +172,7 @@ class MultiPPOAgent(BasePPOAgent):
         """
 
         # Step all environments
+        infos: list[dict[str, Any]]
         next_states, next_rewards, next_terminations, truncations, infos = self.env.step(actions)
 
         if infos and all(
@@ -258,7 +262,7 @@ class MultiPPOAgent(BasePPOAgent):
             - Best policies are tracked per agent.
         """
 
-        print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
+        logger.info("Starting training with %d parallel environments on a '%s' device", self.num_envs, self.device)
 
         last_save_index = 0
         best_rewards = [float('-inf')] * len(self.agents)
@@ -298,7 +302,7 @@ class MultiPPOAgent(BasePPOAgent):
                 episode = episode_by_env.get(agent_id)
 
                 if episode is None:
-                    print(f"[Warning] Iteration {iteration}: no trajectory for agent {agent_id} — skipping update.")
+                    logger.warning("[Warning] Iteration %d: no trajectory for agent %s — skipping update.", iteration, agent_id)
                     mean_rewards.append(float('nan'))
                     mean_losses.append(float('nan'))
                     training_metrics[f"agent{agent_id}"].append({
@@ -333,7 +337,7 @@ class MultiPPOAgent(BasePPOAgent):
 
                 # Log evaluation results periodically
                 if iteration % self.eval_frequency == 0:
-                    print(f"Iteration {iteration} | agent {agent_id} | average reward: {mean_reward:.3f}, loss: {loss:.3f}")
+                    logger.info("Iteration %d | agent %s | average reward: %.3f, loss: %.3f", iteration, agent_id, mean_reward, loss)
 
             # Periodic checkpoint (all agents in one zip)
             if iteration > 0 and iteration % self.eval_frequency == 0:
@@ -354,7 +358,7 @@ class MultiPPOAgent(BasePPOAgent):
             )
 
             if should_stop:
-                print(f"Stopping: {reason}")
+                logger.info("Stopping: %s", reason)
                 last_save_index = iteration
                 break
 
@@ -367,7 +371,7 @@ class MultiPPOAgent(BasePPOAgent):
         for sub_env in self.env.sub_environments.values():
             sub_env.close()
 
-        print("Training completed!")
+        logger.info("Training completed!")
 
 
     def load_policy(self, policy_file_name: str) -> None:

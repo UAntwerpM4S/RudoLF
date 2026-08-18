@@ -25,7 +25,7 @@ def repulsive_force(ship_pos, obstacle, repulsive_strength=10.0, obstacle_radius
 
     if distance_to_obstacle < obstacle_radius:
         direction = np.array(ship_pos) - closest_point_coords
-        repulsion_magnitude = repulsive_strength / (distance_to_obstacle + 1e-6)  # Avoid division by zero
+        repulsion_magnitude = repulsive_strength / (float(distance_to_obstacle) + 1e-6)  # Avoid division by zero
         repulsing_force = repulsion_magnitude * direction / np.linalg.norm(direction)
         return repulsing_force, closest_point_coords
     return np.zeros(2), None

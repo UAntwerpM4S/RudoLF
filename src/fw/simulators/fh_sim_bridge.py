@@ -6,6 +6,8 @@ import numpy as np
 from typing import Optional
 from fw.ships.ship_factory import ShipModel
 
+_logger = logging.getLogger(__name__)
+
 # Define paths for simulation environment
 try:
     simexe_path = os.environ['SIMEXE_REPO_FOLDER']
@@ -94,7 +96,7 @@ class FhSimBridge:
                 )
 
             if not os.path.exists(self.exercise_path):
-                print(f"[FhSimBridge] Exercise file not found: '{self.exercise_path}'")
+                _logger.warning("[FhSimBridge] Exercise file not found: '%s'", self.exercise_path)
                 self.exercise_path_exists = False
 
         self.initialize_math_model = True
@@ -246,7 +248,6 @@ class FhSimBridge:
                 self.math_model_initialized = True
                 self.initialize_math_model = False
                 self._logger.info("Math model initialised successfully.")
-                print("Math model initialized!")
             else:
                 self._math_model = None
                 raise RuntimeError(

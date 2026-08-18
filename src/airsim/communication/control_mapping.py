@@ -4,12 +4,10 @@ Helpers for mapping policy actions to UE5 CarControls.
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
+from typing import Any
 from fw.ships.ship_specs import ShipSpecifications
-
 
 _ACTION_BOUNDS_TOLERANCE = 1e-4
 

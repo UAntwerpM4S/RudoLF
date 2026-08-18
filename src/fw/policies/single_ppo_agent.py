@@ -1,6 +1,7 @@
 import os
 import copy
 import time
+import logging
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -20,6 +21,8 @@ from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 from fw.common.tools.logging_utils import dump_metrics_to_csv
 from fw.configuration.profile_applier import SimulatorApplier
 from fw.configuration.config_profile import VesselProfile
+
+logger = logging.getLogger(__name__)
 
 
 class SinglePPOAgent(BasePPOAgent):
@@ -145,7 +148,7 @@ class SinglePPOAgent(BasePPOAgent):
                                       dtype=torch.float32).to(self.device)
 
         if all_advantages.numel() <= 1:
-            print(f"[Warning] Very short trajectory detected. Length: {all_advantages.numel()}")
+            logger.warning("[Warning] Very short trajectory detected. Length: %d", all_advantages.numel())
             return float('nan')
 
         for name, tensor in (
@@ -154,7 +157,7 @@ class SinglePPOAgent(BasePPOAgent):
             ("returns", all_returns),
         ):
             if torch.isnan(tensor).any() or torch.isinf(tensor).any():
-                print(f"[Alert] NaN/Inf detected in {name} before PPO update — skipping batch.")
+                logger.warning("[Alert] NaN/Inf detected in %s before PPO update — skipping batch.", name)
                 return float('nan')
 
         # Normalizing a near-constant tensor produces NaN/inf gradients.
@@ -206,8 +209,8 @@ class SinglePPOAgent(BasePPOAgent):
                 loss = policy_loss + (self.value_loss_coef * value_loss) - (self.entropy_coef * entropy_loss)
 
                 if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"[Alert] NaN/Inf loss detected (policy={policy_loss.item():.4f}, "
-                          f"value={value_loss.item():.4f}) — skipping update step.")
+                    logger.warning("[Alert] NaN/Inf loss detected (policy=%.4f, "
+                                   "value=%.4f) — skipping update step.", policy_loss.item(), value_loss.item())
                     continue
 
                 # Optimize
@@ -217,8 +220,8 @@ class SinglePPOAgent(BasePPOAgent):
                     self.policy.network.parameters(), self.max_grad_norm
                 )
                 if float(grad_norm) > 1000.0:
-                    print(f"[Alert] Exploding gradient: norm={float(grad_norm):.2f} "
-                          f"(clip={self.max_grad_norm:.2f}). Clipping applied.")
+                    logger.warning("[Alert] Exploding gradient: norm=%.2f "
+                                   "(clip=%.2f). Clipping applied.", float(grad_norm), self.max_grad_norm)
                 self.optimizer.step()
 
                 loss_per_epoch.append(loss.item())
@@ -477,7 +480,7 @@ class SinglePPOAgent(BasePPOAgent):
             - Cleans up vectorized environments after training.
         """
 
-        print(f"Starting training with {self.num_envs} parallel environments on a '{self.device}' device")
+        logger.info("Starting training with %d parallel environments on a '%s' device", self.num_envs, self.device)
 
         project_src_dir = Path(__file__).resolve().parents[2]
         is_airsim_env = self._is_airsim_env()
@@ -503,10 +506,10 @@ class SinglePPOAgent(BasePPOAgent):
                 src_dir=project_src_dir,
             )
         )
-        print(f"Iteration log: {iteration_logger.path}")
+        logger.info("Iteration log: %s", iteration_logger.path)
         if training_session is not None:
-            print(f"Run log: {training_session.run_log_path}")
-            print(f"Metadata: {training_session.metadata_path}")
+            logger.info("Run log: %s", training_session.run_log_path)
+            logger.info("Metadata: %s", training_session.metadata_path)
 
         last_save_index = 0
         training_metrics = []
@@ -548,9 +551,9 @@ class SinglePPOAgent(BasePPOAgent):
 
                 if skipped_count > 0:
                     skipped_short_rollouts += skipped_count
-                    print(
-                        "[Warning] Skipping "
-                        f"{skipped_count} too-short trajectory batch(es) before PPO update."
+                    logger.warning(
+                        "[Warning] Skipping %d too-short trajectory batch(es) before PPO update.",
+                        skipped_count,
                     )
 
                 if not batch_data:
@@ -560,11 +563,11 @@ class SinglePPOAgent(BasePPOAgent):
                             consecutive_untrainable_airsim_batches == 1
                             or consecutive_untrainable_airsim_batches % 5 == 0
                         ):
-                            print(
+                            logger.warning(
                                 "[Warning] AirSim produced no trainable rollout batch. "
-                                "Consecutive empty batches: "
-                                f"{consecutive_untrainable_airsim_batches}/"
-                                f"{self.MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES}."
+                                "Consecutive empty batches: %d/%d.",
+                                consecutive_untrainable_airsim_batches,
+                                self.MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES,
                             )
                         if (
                             consecutive_untrainable_airsim_batches
@@ -614,14 +617,14 @@ class SinglePPOAgent(BasePPOAgent):
 
                 if should_stop:
                     stop_reason = str(reason)
-                    print(f"Stopping: {reason}")
+                    logger.info("Stopping: %s", reason)
                     last_save_index = iteration
                     last_completed_iteration = iteration
                     completed_successfully = True
                     break
 
                 if iteration % self.eval_frequency == 0:
-                    print(f"Iteration {iteration}, Average Reward: {mean_reward:.3f}, Loss: {loss:.3f}")
+                    logger.info("Iteration %d, Average Reward: %.3f, Loss: %.3f", iteration, mean_reward, loss)
 
                     if iteration > 0:
                         self.save_policy(f"ppo_checkpoint_{iteration}")
@@ -635,14 +638,14 @@ class SinglePPOAgent(BasePPOAgent):
             interrupted = True
             stop_reason = "Interrupted by user"
             keyboard_interrupt = exc
-            print("Training interrupted by user. Saving logs and plots...")
+            logger.warning("Training interrupted by user. Saving logs and plots...")
 
             try:
                 _interrupt_checkpoint = f"ppo_interrupt_{max(last_completed_iteration, 0)}"
                 self.save_policy(_interrupt_checkpoint)
-                print(f"Interrupt checkpoint saved: {_interrupt_checkpoint}")
+                logger.info("Interrupt checkpoint saved: %s", _interrupt_checkpoint)
             except Exception as _save_err:
-                print(f"Warning: could not save interrupt checkpoint: {_save_err}")
+                logger.warning("Could not save interrupt checkpoint: %s", _save_err)
         finally:
             if training_session is not None:
                 training_session.log_run_events(self._drain_env_run_events())
@@ -678,21 +681,21 @@ class SinglePPOAgent(BasePPOAgent):
                 self._vec_env = None
 
         if skipped_short_rollouts > 0:
-            print(
-                "[Training summary] Skipped "
-                f"{skipped_short_rollouts} too-short rollout batch(es)."
+            logger.info(
+                "[Training summary] Skipped %d too-short rollout batch(es).",
+                skipped_short_rollouts,
             )
 
         if training_session is not None:
-            print(f"Route plot: {training_session.route_plot_path}")
-            print(f"Training metrics plot: {training_session.training_metrics_plot_path}")
+            logger.info("Route plot: %s", training_session.route_plot_path)
+            logger.info("Training metrics plot: %s", training_session.training_metrics_plot_path)
 
         if interrupted:
-            print("Training interrupted; logs saved.")
+            logger.warning("Training interrupted; logs saved.")
             if keyboard_interrupt is not None:
                 raise keyboard_interrupt
         else:
-            print("Training completed!")
+            logger.info("Training completed!")
 
 
     def load_policy(self, policy_file_name: str) -> None:

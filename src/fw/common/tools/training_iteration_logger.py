@@ -5,11 +5,14 @@ Helpers for writing live per-iteration training metrics to CSV.
 from __future__ import annotations
 
 import csv
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fw.common.tools.path_utils import resolve_path_relative_to_src
+
+logger = logging.getLogger(__name__)
 
 try:
     import psutil as _psutil
@@ -94,9 +97,9 @@ class TrainingIterationLogger:
 
         rss_mb = self._sample_rss_mb()
         if self._prev_rss_mb > 0.0 and rss_mb > self._prev_rss_mb * _MEMORY_GROWTH_ALERT_RATIO:
-            print(
-                f"[Alert] Memory growth: {self._prev_rss_mb:.1f} MB → {rss_mb:.1f} MB "
-                f"(+{rss_mb - self._prev_rss_mb:.1f} MB) at iteration {iteration}."
+            logger.warning(
+                "[Alert] Memory growth: %.1f MB \u2192 %.1f MB (+%.1f MB) at iteration %d.",
+                self._prev_rss_mb, rss_mb, rss_mb - self._prev_rss_mb, iteration
             )
         self._prev_rss_mb = rss_mb
 

@@ -1,6 +1,9 @@
 import torch
+import logging
 
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def data_path(*relative):
@@ -39,7 +42,7 @@ def save_checkpoint(state: dict, path: Path):
 
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(state, path)
-    print(f"Checkpoint saved: {path}")
+    logger.info("Checkpoint saved: %s", path)
 
 def load_checkpoint(path: Path, device: torch.device):
     """

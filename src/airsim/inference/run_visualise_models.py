@@ -4,15 +4,16 @@ Modular model visualisation runner for UE5.
 
 from __future__ import annotations
 
-import argparse
-import logging
-import math
 import sys
+import math
 import time
+import logging
+import argparse
+import numpy as np
+
 from pathlib import Path
 from types import SimpleNamespace
 
-import numpy as np
 
 _SRC_DIR = Path(__file__).resolve().parent.parent.parent
 if str(_SRC_DIR) not in sys.path:
@@ -41,8 +42,8 @@ from fw.common.airsim.tools.trajectory_analysis import (  # noqa: E402
     format_performance_summary,
     render_side_by_side_trajectory_plot,
 )
-from fw.configuration.config import AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME  # noqa: E402
 from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
+from fw.configuration.config import AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -425,7 +426,7 @@ class VisualiseModelsRunner:
                     bridge.set_controls(neutral_controls)
 
                 for episode in range(num_episodes):
-                    print(f"\n-- Visualisation episode {episode + 1}/{num_episodes} --")
+                    logger.info("-- Visualisation episode %d/%d --", episode + 1, num_episodes)
                     obs, _ = env.reset()
                     previous_trail_point = None
                     trail_points_history: list = []
@@ -636,9 +637,9 @@ class VisualiseModelsRunner:
                             logger.debug("Episode-end flush failed: %s", exc)
 
                     end_x, end_y, _ = self._extract_pose(env)
-                    print(
-                        f"   Finished: {step} steps | reward={total_reward:+.1f} | "
-                        f"end=({end_x:.1f}, {end_y:.1f})"
+                    logger.info(
+                        "   Finished: %d steps | reward=%+.1f | end=(%.1f, %.1f)",
+                        step, total_reward, end_x, end_y
                     )
                     session_exporter.update_metadata(
                         {
@@ -662,8 +663,8 @@ class VisualiseModelsRunner:
                     self.adapter.cleanup_environment(env)
                 if bridge is not None:
                     bridge.disconnect()
-                print(f"Exports saved to '{session_exporter.export_dir}'.")
-                print("\nVisualisation complete - AirSim connection closed.")
+                logger.info("Exports saved to '%s'.", session_exporter.export_dir)
+                logger.info("Visualisation complete - AirSim connection closed.")
 
             # Reuse persisted telemetry for BI metrics and comparison plots.
             session_exporter.save()
@@ -702,7 +703,7 @@ class VisualiseModelsRunner:
                 title=f"2D vs 3D Trajectory - {resolved_model_path.name}",
             )
             if comparison_plot is not None:
-                print(f"2D vs 3D trajectory plot saved to '{comparison_plot}'.")
+                logger.info("2D vs 3D trajectory plot saved to '%s'.", comparison_plot)
                 session_exporter.update_metadata(
                     {
                         "comparison_plot": comparison_plot.name,
@@ -710,7 +711,7 @@ class VisualiseModelsRunner:
                 )
                 session_exporter.save()
             else:
-                print("2D vs 3D trajectory plot skipped (missing telemetry or matplotlib).")
+                logger.warning("2D vs 3D trajectory plot skipped (missing telemetry or matplotlib).")
 
 
 def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) -> None:
@@ -788,12 +789,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    )
+    from fw.common.tools.logging_config import setup_logging
 
     args = _build_parser().parse_args()
+
+    log_path = setup_logging(
+        run_type="visualize",
+        env_name="airsim",
+        agent_type=Path(args.model).stem,
+        src_dir=_SRC_DIR,
+        level=logging.INFO if args.verbose else logging.WARNING,
+    )
+    logger.info("Logging to file: %s", log_path)
+
     run_visualise_models(
         model_path=args.model,
         model_family=args.model_family,

@@ -22,33 +22,18 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     import multiprocessing
 
     from pathlib import Path
+    from fw.common.tools.logging_utils import create_logfile_handler
+    from fw.common.airsim.classes.asyncio_win995_filter import AsyncioWin995Filter
 
-
-    class _AsyncioWin995Filter(logging.Filter):
-        """
-        Suppress the noisy Windows asyncio self-pipe shutdown traceback.
-        """
-
-        def filter(self, record: logging.LogRecord) -> bool:
-            """
-            Return False for the known benign WinError 995 shutdown record.
-            """
-
-            ex = record.exc_info[1] if record.exc_info else None
-            message = record.getMessage().lower()
-            if (
-                "event loop self pipe" in message
-                and (
-                    (
-                        isinstance(ex, ConnectionResetError)
-                        and getattr(ex, "winerror", None) == 995
-                    )
-                    or "winerror 995" in message
-                    or "connectionreseterror" in message
-                )
-            ):
-                return False
-            return True
+    # AirSim runtime only controls AirSim-specific behavior.
+    # The selected framework environment is handled by fw.main / fw.config.
+    # Resolved early (before logging setup) purely so the per-run log
+    # filename below can embed the actual run_type instead of a placeholder.
+    _action_was_explicit = "FW_MAIN_ACTION_OVERRIDE" in os.environ
+    _SRC_DIR = Path(__file__).resolve().parents[1]
+    action = str(os.environ.get("FW_MAIN_ACTION_OVERRIDE", "train")).strip().lower()
+    if action not in {"train", "visualize"}:
+        action = "train"
 
     _verbose_airsim = str(os.environ.get("FW_AIRSIM_VERBOSE", "0")).strip().lower() in {
         "1",
@@ -67,9 +52,28 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     logging.getLogger("airsim").setLevel(_airsim_log_level)
     logging.getLogger("sim").setLevel(_sim_log_level)
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
-    logging.getLogger("asyncio").addFilter(_AsyncioWin995Filter())
+    logging.getLogger("asyncio").addFilter(AsyncioWin995Filter())
 
+    # Additionally write a per-run log file, matching the other entry
+    # points. Console verbosity above stays governed by FW_AIRSIM_VERBOSE
+    # (deliberately separate, since AirSim/UE5 logs are noisy); the file
+    # handler always captures at least INFO so a run can be reconstructed
+    # afterward regardless of what was shown on screen.
+    from fw.common.tools.path_utils import resolve_path_relative_to_src as _resolve_log_dir
+    from fw.configuration.config import PPO_POLICY_NAME as _PPO_POLICY_NAME
+    from datetime import datetime, timezone as _timezone
 
+    _file_level = min(_airsim_log_level, logging.INFO)
+    _log_ts = datetime.now(_timezone.utc).strftime("%Y%m%d_%H%M%S")
+    _log_dir = _resolve_log_dir("logs", Path(__file__).resolve().parents[1])
+    _log_file_path = _log_dir / f"AirSimEnv_{_PPO_POLICY_NAME}_{action}_{_log_ts}.log"
+
+    root_logger = logging.getLogger()
+    root_logger.addHandler(create_logfile_handler(_log_file_path, _file_level))
+    root_logger.setLevel(min(root_logger.level, _file_level))
+
+    logger = logging.getLogger("fw.main_with_airsim")
+    logger.info("Logging to file: %s", _log_file_path)
     multiprocessing.set_start_method("spawn", force=True)
 
     from airsim.config.airsim_config import (
@@ -86,75 +90,29 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     from fw.configuration.config import get_config_parameters
     from fw.configuration.profile_applier import apply_profile
     from fw.configuration.config_profile import ProfileRegistry
+    from airsim.train.train_airsim import TRAINING_SPEED_PROFILES
 
-    # AirSim runtime only controls AirSim-specific behavior.
-    # The selected framework environment is handled by fw.main / fw.config.
-    _action_was_explicit = "FW_MAIN_ACTION_OVERRIDE" in os.environ
-    _SRC_DIR = Path(__file__).resolve().parents[1]
-    action = str(os.environ.get("FW_MAIN_ACTION_OVERRIDE", "train")).strip().lower()
-    if action not in {"train", "visualize"}:
-        action = "train"
     runtime_settings = get_default_runtime_settings()
 
     # Visualization flags switch the AirSim entrypoint into visualize mode.
     try:
         runtime_settings = merge_runtime_settings(get_runtime_settings())
     except Exception as exc:
-        print(f"[main] Could not load runtime settings ({exc}). Using built-in defaults.")
+        logger.warning("Could not load runtime settings (%s). Using built-in defaults.", exc)
 
     visualization_cfg = runtime_settings.get("visualization", {}) if isinstance(runtime_settings, dict) else {}
     training_cfg = runtime_settings.get("training", {}) if isinstance(runtime_settings, dict) else {}
     airsim_runtime_cfg = runtime_settings.get("airsim", {}) if isinstance(runtime_settings, dict) else {}
 
-    training_speed_profiles = {
-        "normal": {
-            "simulation_speed": 1.0,
-            "use_pause_stepping": False,
-            "frames_per_step": 1,
-            "time_step": 0.1,
-            "physics_update_timeout": 1.0,
-            "state_poll_interval": 0.01,
-        },
-        "safe": {
-            "simulation_speed": 20.0,
-            "use_pause_stepping": True,
-            "use_sim_time_stepping": True,
-            "sim_time_per_action": 0.05,
-            "frames_per_step": 8,
-            "time_step": 0.05,
-            "physics_update_timeout": 1.2,
-            "state_poll_interval": 0.003,
-        },
-        "fast": {
-            "simulation_speed": 40.0,
-            "use_pause_stepping": True,
-            "use_sim_time_stepping": True,
-            "sim_time_per_action": 0.1,
-            "frames_per_step": 10,
-            "time_step": 0.1,
-            "physics_update_timeout": 1.0,
-            "state_poll_interval": 0.003,
-        },
-        "turbo": {
-            "simulation_speed": 80.0,
-            "use_pause_stepping": True,
-            "use_sim_time_stepping": True,
-            "sim_time_per_action": 0.1,
-            "frames_per_step": 12,
-            "time_step": 0.1,
-            "physics_update_timeout": 1.2,
-            "state_poll_interval": 0.002,
-        },
-    }
     profile_name = str(training_cfg.get("speed_profile", "custom")).strip().lower()
     effective_training_cfg = dict(training_cfg)
-    if profile_name in training_speed_profiles:
-        effective_training_cfg.update(training_speed_profiles[profile_name])
-        print(f"[main_with_airsim] Training speed profile: {profile_name}")
+    if profile_name in TRAINING_SPEED_PROFILES:
+        effective_training_cfg.update(TRAINING_SPEED_PROFILES[profile_name])
+        logger.info("Training speed profile: %s", profile_name)
     elif profile_name != "custom":
-        print(
-            f"[main_with_airsim] Unknown training.speed_profile '{profile_name}'. "
-            "Using explicit training settings."
+        logger.warning(
+            "Unknown training.speed_profile '%s'. Using explicit training settings.",
+            profile_name,
         )
     if get_validated_bool(effective_training_cfg, "use_pause_stepping", False) and get_validated_bool(
         effective_training_cfg, "use_sim_time_stepping", False
@@ -165,21 +123,21 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 effective_training_cfg.get("time_step", 0.1),
             )
         )
-        print(
-            "[main_with_airsim] MDP step: "
-            f"{float(effective_training_cfg['time_step']):.3f}s simulated time per RL action"
+        logger.info(
+            "MDP step: %.3fs simulated time per RL action",
+            float(effective_training_cfg['time_step']),
         )
 
     if get_validated_bool(effective_training_cfg, "use_pause_stepping", False):
         if get_validated_bool(effective_training_cfg, "use_sim_time_stepping", False):
-            print(
-                "[main_with_airsim] Step mode: simContinueForTime("
-                f"{float(effective_training_cfg.get('sim_time_per_action', effective_training_cfg.get('time_step', 0.1))):.3f}s)"
+            logger.info(
+                "Step mode: simContinueForTime(%.3fs)",
+                float(effective_training_cfg.get('sim_time_per_action', effective_training_cfg.get('time_step', 0.1))),
             )
         else:
-            print(
-                "[main_with_airsim] Step mode: simContinueForFrames("
-                f"{int(effective_training_cfg.get('frames_per_step', 1))})"
+            logger.info(
+                "Step mode: simContinueForFrames(%d)",
+                int(effective_training_cfg.get('frames_per_step', 1)),
             )
     # Runtime visualization flags may promote the AirSim entrypoint into
     # visualize mode only when fw.main did not pass an explicit action override.
@@ -190,7 +148,29 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         get_validated_bool(visualization_cfg, "model_visualise", False)
         or get_validated_bool(visualization_cfg, "inference_visualise", False)
     ):
-        action = "visualize"
+        if action != "visualize":
+            action = "visualize"
+            # The log file was created above with the pre-promotion action
+            # ("train") baked into its filename; rename it now so the
+            # filename accurately reflects what this run actually did.
+            _new_log_file_path = _log_dir / f"AirSimEnv_{_PPO_POLICY_NAME}_{action}_{_log_ts}.log"
+            _root_logger = logging.getLogger()
+            _old_file_handler = next(
+                (h for h in _root_logger.handlers if isinstance(h, logging.FileHandler)), None
+            )
+            if _old_file_handler is not None and _new_log_file_path != _log_file_path:
+                _root_logger.removeHandler(_old_file_handler)
+                _old_file_handler.close()
+                try:
+                    _log_file_path.rename(_new_log_file_path)
+                    _log_file_path = _new_log_file_path
+                except OSError:
+                    pass  # Keep logging to the original filename rather than losing the log.
+                _new_file_handler = logging.FileHandler(_log_file_path, encoding="utf-8")
+                _new_file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+                _new_file_handler.setLevel(_file_level)
+                _root_logger.addHandler(_new_file_handler)
+                logger.info("Log file renamed to: %s", _log_file_path)
 
     def _run_airsim_visualization_from_runtime() -> bool:
         """
@@ -208,8 +188,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             return False
 
         if model_visualise and inference_visualise:
-            print("[main] Both model_visualise and inference_visualise are true. "
-                  "Running model_visualise and skipping inference_visualise.")
+            logger.warning("Both model_visualise and inference_visualise are true. "
+                            "Running model_visualise and skipping inference_visualise.")
             inference_visualise = False
 
         ip = airsim_runtime_cfg.get("ip", "")
@@ -315,6 +295,12 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 "but UE5 is not reachable. Start UE5 in Play mode or disable the "
                 "AirSim visualisation flags in runtime_settings.json."
             )
+            logger.error(
+                "%s. UE5-dependent AirSim visualisation was requested, but UE5 is "
+                "not reachable. Start UE5 in Play mode or disable the AirSim "
+                "visualisation flags in runtime_settings.json.",
+                exc,
+            )
             raise SystemExit(1)
 
     if action == "train":
@@ -322,7 +308,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
         metrics = run_training(runtime_settings)
         if metrics:
-            print(f"Training metrics: {metrics}")
+            logger.info("Training metrics: %s", metrics)
 
         raise SystemExit(0)
 
@@ -341,6 +327,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         get as get_environment,
         initialize_all_environments,
     )
+    from airsim.config.airsim_config import get_airsim_config, AirSimConfig
 
     initialize_all_environments()
 
@@ -404,10 +391,9 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # AirSim resolved to a framework fallback environment (e.g. PySimEnv).
     # This prevents duplicate training/visualization of a non-Airsim env.
     if _action_was_explicit and not _is_airsim_selected(envs):
-        print(
-            "[main_with_airsim] AirSimEnv requested via fw.main, "
-            "but UE5 is unavailable and env_factory returned a fallback env. "
-            "Skipping this AirSim step."
+        logger.warning(
+            "AirSimEnv requested via fw.main, but UE5 is unavailable and "
+            "env_factory returned a fallback env. Skipping this AirSim step."
         )
         raise SystemExit(1)
 
@@ -429,7 +415,6 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     trainer = Trainer(PPO_POLICY_NAME, envs, _airsim_profile, "SimpleScheduler")
 
     # Optionally create AirSim bridge for simultaneous vehicle control
-    from airsim.config.airsim_config import get_airsim_config, AirSimConfig
     airsim_cfg = get_airsim_config()
     airsim_bridge = None
     if get_validated_bool(airsim_cfg, "use_airsim", False) and not _is_airsim_selected(envs):
@@ -443,7 +428,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             airsim_bridge = temp_bridge
             logging.getLogger("airsim").setLevel(_airsim_log_level)
         else:
-            print("[main] AirSim bridge not connected - running without.")
+            logger.warning("AirSim bridge not connected - running without.")
     elif _is_airsim_selected(envs):
         logging.getLogger("airsim").setLevel(_airsim_log_level)
     trainer.visualize(envs, airsim_bridge=airsim_bridge)

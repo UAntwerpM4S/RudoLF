@@ -30,6 +30,7 @@ import gymnasium as gym
 import numpy as np
 import zipfile
 import tempfile
+import logging
 
 from collections import deque
 from fw.configuration.stop_condition import StopCondition
@@ -39,6 +40,8 @@ from typing import Optional, Tuple, Union, List, Dict
 from fw.common.tools.logging_utils import dump_metrics_to_csv
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
+
+logger = logging.getLogger(__name__)
 
 
 class CollapseWatchdog:
@@ -654,13 +657,12 @@ class MultiPolicySingleAgent(BasePPOAgent):
             # Determine bootstrap value at end of segment
             # ----------------------------------------------------------
             is_last_segment = (i == len(segments) - 1)
+            next_value = 0.0
 
             if is_last_segment:
                 # Last segment: bootstrap depends on true episode termination
                 last_terminated = bool(episode["terminations"][end - 1])
-                if last_terminated:
-                    next_value = 0.0
-                else:
+                if not last_terminated:
                     # Truncation or safeguard: bootstrap with this policy's
                     # value estimate of the state after the segment
                     next_state = episode["next_states"][end - 1]
@@ -847,9 +849,9 @@ class MultiPolicySingleAgent(BasePPOAgent):
             stop_condition (Optional[StopCondition]): Stopping criterion.
         """
 
-        print(
-            f"Starting multi-policy training with {self.num_policies} policies, "
-            f"{self.num_envs} parallel env(s) on '{self.device}'"
+        logger.info(
+            "Starting multi-policy training with %d policies, %d parallel env(s) on '%s'",
+            self.num_policies, self.num_envs, self.device
         )
 
         last_save_index = 0
@@ -981,13 +983,14 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         self._pending_steps[pid] = 0
                         self.watchdog.record_rollback(pid, iteration)
                         rollback_triggered = True
-                        print(
-                            f"[watchdog] iter {iteration}: collapse detected for "
-                            f"'{self.policy_labels[pid]}' "
-                            f"(peak smoothed={self.watchdog._best_smoothed[pid]:.3f}, "
-                            f"rollback {self.watchdog._rollback_count[pid]}/"
-                            f"{self.watchdog.max_rollbacks}). "
-                            f"Rolled back to best rolling-mean snapshot."
+                        logger.warning(
+                            "[watchdog] iter %d: collapse detected for '%s' "
+                            "(peak smoothed=%.3f, rollback %d/%d). "
+                            "Rolled back to best rolling-mean snapshot.",
+                            iteration, self.policy_labels[pid],
+                            self.watchdog._best_smoothed[pid],
+                            self.watchdog._rollback_count[pid],
+                            self.watchdog.max_rollbacks,
                         )
 
                 # Annotate the most recent metrics record with watchdog state
@@ -1017,7 +1020,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         f"{label}: r={r:.3f}, loss: p={pl:.3f}, v={vl:.3f}, e={eb:.3f}, "
                         f"steps={n}, pending={pending}{upd}"
                     )
-                print(f"[Iter {iteration}] " + " | ".join(parts))
+                logger.info("[Iter %d] %s", iteration, " | ".join(parts))
 
             # Periodic checkpoint (all policies in one ZIP)
             if iteration > 0 and iteration % self.eval_frequency == 0:
@@ -1031,7 +1034,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
             )
 
             if should_stop:
-                print(f"Stopping: {reason}")
+                logger.info("Stopping: %s", reason)
                 last_save_index = iteration
                 break
 
@@ -1048,7 +1051,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
             self._vec_env.close()
             self._vec_env = None
 
-        print("Multi-policy training completed!")
+        logger.info("Multi-policy training completed!")
 
     # ------------------------------------------------------------------
     # Save / load
@@ -1209,13 +1212,13 @@ class MultiPolicySingleAgent(BasePPOAgent):
             zip_path = full_path if full_path.endswith(".zip") else full_path + ".zip"
 
             if not os.path.exists(zip_path):
-                print(f"[pretrained] No file at {zip_path}, slot {pid} left unchanged.")
+                logger.warning("[pretrained] No file at %s, slot %d left unchanged.", zip_path, pid)
                 continue
 
             self.load_individual_policy(pid, full_path, frozen=frozen)
             label = self.policy_labels[pid]
             state = "frozen" if frozen else "trainable"
-            print(f"[pretrained] Loaded '{file_stem}' into slot {pid} ({label}) [{state}]")
+            logger.info("[pretrained] Loaded '%s' into slot %d (%s) [%s]", file_stem, pid, label, state)
 
     def _save_single_policy(self, policy_id: int, policy_file_name: str) -> None:
         """

@@ -40,13 +40,15 @@ re-explores in the new environment.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import torch
+import logging
+
 from pathlib import Path
 from typing import List, Tuple
-
-import torch
-
+from dataclasses import dataclass
 from fw.policies.ppo_policy import PPOPolicy, get_device
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +320,7 @@ def build_transfer_policy(
     source_policy = PPOPolicy.load(str(source_zip_path), device="cpu")
 
     report = compare_network_topology(source_policy, target_input_dim, target_output_dim)
-    print(report.format())
+    logger.info("\n%s", report.format())
     validate_transfer_compatibility(report)
 
     target_policy = PPOPolicy(target_input_dim, target_output_dim, device=resolved_device.type)
@@ -327,11 +329,13 @@ def build_transfer_policy(
     n_trainable = sum(p.numel() for p in target_policy.network.parameters() if p.requires_grad)
     n_total = sum(p.numel() for p in target_policy.network.parameters())
     frozen_note = "backbone frozen, mapping+heads trainable" if freeze_shared else "full network"
-    print(
-        f"[TransferLearning] Source device : cpu (weight extraction)"
-        f"\n[TransferLearning] Target device : {resolved_device}"
-        f"\n[TransferLearning] Transferred {len(transferred)} layer(s): {transferred}"
-        f"\n[TransferLearning] Trainable: {n_trainable:,} / {n_total:,} params ({frozen_note})"
+    logger.info(
+        "[TransferLearning] Source device : cpu (weight extraction)\n"
+        "[TransferLearning] Target device : %s\n"
+        "[TransferLearning] Transferred %d layer(s): %s\n"
+        "[TransferLearning] Trainable: %s / %s params (%s)",
+        resolved_device, len(transferred), transferred,
+        f"{n_trainable:,}", f"{n_total:,}", frozen_note
     )
 
     return target_policy

@@ -10,18 +10,19 @@ inference, and reporting all use the same state contract.
 
 from __future__ import annotations
 
-import copy
-import logging
-import math
 import os
+import copy
+import math
 import time
+import logging
+import numpy as np
+import gymnasium as gym
+
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
 
-import gymnasium as gym
-import numpy as np
 try:
     from msgpackrpc.error import TransportError as _MsgpackTransportError
 except Exception:  # pragma: no cover - optional dependency fallback
@@ -880,11 +881,11 @@ class AirSimEnv(BaseEnv):
             if self.curriculum_enabled:
                 result_tag = "PASS" if curriculum_success else "FAIL"
                 streak_after = self._curriculum_success_streak + (1 if curriculum_success else 0)
-                print(
-                    f"[Curriculum] Episode {result_tag} | "
-                    f"checkpoints passed: {self.checkpoint_index}/{len(self.checkpoints) - 1} | "
-                    f"frontier: {self._curriculum_frontier_index} | "
-                    f"streak: {streak_after}/{self.curriculum_success_patience}"
+                logger.info(
+                    "[Curriculum] Episode %s | checkpoints passed: %d/%d | "
+                    "frontier: %d | streak: %d/%d",
+                    result_tag, self.checkpoint_index, len(self.checkpoints) - 1,
+                    self._curriculum_frontier_index, streak_after, self.curriculum_success_patience
                 )
             self._update_curriculum_after_episode(success=curriculum_success)
 
@@ -2282,10 +2283,11 @@ class AirSimEnv(BaseEnv):
         new_window_size = self.curriculum_window_size
         new_window_end = min(new_frontier, len(self.checkpoints) - 2)
         new_window_start = max(0, new_window_end - new_window_size + 1)
-        print(
-            f"[Curriculum] Frontier advanced: {old_frontier} → {new_frontier} | "
-            f"window: {old_window_size} → {new_window_size} checkpoints | "
-            f"start range: [{new_window_start}–{new_window_end}]"
+        logger.info(
+            "[Curriculum] Frontier advanced: %d \u2192 %d | window: %d \u2192 %d checkpoints | "
+            "start range: [%d\u2013%d]",
+            old_frontier, new_frontier, old_window_size, new_window_size,
+            new_window_start, new_window_end
         )
 
     def _airsim_yaw_rate_to_framework(self, yaw_rate: float) -> float:

@@ -8,6 +8,7 @@ Output (3-D): [delta_surge, delta_sway, delta_yaw_rate]
 
 import torch
 import argparse
+import logging
 import numpy as np
 import torch.nn.functional as F
 
@@ -16,6 +17,8 @@ from torch.utils.data import DataLoader
 from fw.surrogate.dataset import ShipDynamicsDataset
 from fw.surrogate.models.mlp_surrogate import SurrogateMLP
 from fw.surrogate.utils import load_checkpoint, data_path, get_device, save_checkpoint
+
+logger = logging.getLogger(__name__)
 
 
 def evaluate(
@@ -175,9 +178,8 @@ def main(argv=None):
     input_dim  = next(iter(train_loader))[0].shape[1]
     output_dim = next(iter(train_loader))[1].shape[1]
 
-    print(f"Model: input_dim={input_dim}, output_dim={output_dim}, "
-          f"hidden={args.hidden_sizes}, dropout={args.dropout}, "
-          f"batchnorm={args.batchnorm}")
+    logger.info("Model: input_dim=%d, output_dim=%d, hidden=%s, dropout=%s, batchnorm=%s",
+                input_dim, output_dim, args.hidden_sizes, args.dropout, args.batchnorm)
 
     model = SurrogateMLP(
         input_dim=input_dim,
@@ -231,14 +233,10 @@ def main(argv=None):
 
         mae_str = ", ".join(f"{v:.6f}" for v in val_mae)
 
-        print(
-            f"Epoch {epoch:03d} – "
-            f"train: {train_epoch_loss:.6f}  "
-            f"val: {val_loss:.6f}  "
-            f"MAE=[{mae_str}]"
+        logger.info(
+            "Epoch %03d - train: %.6f  val: %.6f  MAE=[%s]",
+            epoch, train_epoch_loss, val_loss, mae_str
         )
-
-        print(f"Epoch {epoch:03d} – train: {train_epoch_loss:.6f}  val: {val_loss:.6f}")
 
         scheduler.step(val_loss)
 
@@ -262,14 +260,14 @@ def main(argv=None):
                 "y_mean": y_mean,
                 "y_std":  y_std,
             }, ckpt_path)
-            print(f"  ✔ new best (val_loss={val_loss:.6f}) saved to {ckpt_path}")
+            logger.info("  \u2714 new best (val_loss=%.6f) saved to %s", val_loss, ckpt_path)
         else:
             no_improve += 1
 
         if no_improve >= args.patience:
-            print(
-                f"Early stopping: no improvement in {args.patience} epochs "
-                f"(best epoch {best_epoch}, best val_loss {best_val:.6f})"
+            logger.info(
+                "Early stopping: no improvement in %d epochs "
+                "(best epoch %d, best val_loss %.6f)", args.patience, best_epoch, best_val
             )
             break
 
@@ -301,4 +299,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    from fw.common.tools.logging_config import setup_logging
+
+    setup_logging(run_type="train_surrogate", env_name="surrogate", to_file=False)
     main()

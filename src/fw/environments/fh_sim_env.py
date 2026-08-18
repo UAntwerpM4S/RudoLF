@@ -10,6 +10,8 @@ from fw.environments.py_sim_env import PySimEnv
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.dynamics.fh_tabular_model import FhTabularModel
 
+logger = logging.getLogger(__name__)
+
 
 class FhSimEnv(PySimEnv):
     """
@@ -64,7 +66,7 @@ class FhSimEnv(PySimEnv):
                 pure-Python simulation without external dependencies.
         """
 
-        logging.warning(
+        logger.warning(
             "FhSimEnv is deprecated and will be removed in a future version; "
             "use PySimEnv instead."
         )
