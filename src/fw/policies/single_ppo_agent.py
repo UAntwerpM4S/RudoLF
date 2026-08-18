@@ -226,11 +226,8 @@ class SinglePPOAgent(BasePPOAgent):
 
                 loss_per_epoch.append(loss.item())
 
-        # Return mean loss over all valid updates
-        if not loss_per_epoch:
-            return float("nan")
-
-        return float(np.mean(loss_per_epoch))
+        # Return mean loss over all updates
+        return np.mean(loss_per_epoch)
 
     @classmethod
     def filter_trainable_episodes(cls, batch_data):
