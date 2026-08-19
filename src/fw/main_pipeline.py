@@ -30,6 +30,17 @@ Scope, explicitly out for now:
     time (see run_loader.py) - AgentManager.set_environment round-trips
     every strategy through a saved policy file regardless, so it never
     behaves differently from REUSE_OTHER_POLICY pointed at the same block.
+  - transfer.from_block must reference an earlier "train" block - rejected
+    at load time (see run_loader.py) if it names a "visualize" or
+    "evaluate_reward" block instead, since only "train" blocks save a
+    policy checkpoint.
+  - transfer.independent is only valid on "train" blocks - rejected at
+    load time (see run_loader.py) on "visualize"/"evaluate_reward" blocks,
+    since the implicit previous-train-block chaining it opts out of never
+    applies to those actions in the first place. A "train" block with no
+    transfer at all implicitly chains from the previous "train" block by
+    default (see pipeline_scheduler.py's module docstring); set
+    "independent": true to opt a block out of that.
   - stop_condition.criterion "AUTO_CONVERGE" is rejected at load time (see
     run_loader.py) - StopCondition.__init__ raises NotImplementedError for
     it immediately, so this catches it before any block runs rather than

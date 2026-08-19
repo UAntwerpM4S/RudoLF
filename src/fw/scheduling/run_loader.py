@@ -116,19 +116,32 @@ def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
         blocks.append(block)
 
     # Second pass: transfer.from_block must point at a *strictly earlier*
-    # block, so a run-time lookup by name can never fail on a forward or
-    # self reference.
+    # "train" block, so a run-time lookup by name can never fail on a
+    # forward/self reference, and never fail with the confusing
+    # "has not completed successfully yet" message for a block that
+    # completed fine but was never going to have a checkpoint to reuse
+    # (only "train" blocks save one - see PipelineScheduler.execute's
+    # completed_block_names, which only ever collects "train" block names).
     for i, block in enumerate(blocks):
         ref = block.transfer.from_block
         if ref is None:
             continue
-        earlier_names = {b.name for b in blocks[:i]}
-        if ref not in earlier_names:
+        earlier_blocks_by_name = {b.name: b for b in blocks[:i]}
+        if ref not in earlier_blocks_by_name:
             raise PipelineSpecError(
                 f"[{source}] Block '{block.name}' (position {i}) has "
                 f"transfer.from_block='{ref}', which must name an earlier "
                 f"block in the same file. Earlier blocks: "
-                f"{sorted(earlier_names) or '(none)'}."
+                f"{sorted(earlier_blocks_by_name) or '(none)'}."
+            )
+        ref_action = earlier_blocks_by_name[ref].action
+        if ref_action != "train":
+            raise PipelineSpecError(
+                f"[{source}] Block '{block.name}' (position {i}) has "
+                f"transfer.from_block='{ref}', but '{ref}' has "
+                f"action='{ref_action}', not 'train' - only 'train' blocks "
+                f"save a policy checkpoint, so there is nothing for "
+                f"'{block.name}' to reuse from it."
             )
 
     return PipelineSpec(blocks=blocks, on_block_failure=on_block_failure, log_level=log_level)
@@ -206,7 +219,7 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
         )
 
     stop_condition = _parse_stop_condition(raw_block.get("stop_condition", {}), where, name)
-    transfer = _parse_transfer(raw_block.get("transfer", {}), where, name)
+    transfer = _parse_transfer(raw_block.get("transfer", {}), action, where, name)
 
     on_failure = raw_block.get("on_failure")
     if on_failure is not None:
@@ -270,7 +283,7 @@ def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopCon
     )
 
 
-def _parse_transfer(raw: Dict[str, Any], where: str, name: str) -> TransferSpec:
+def _parse_transfer(raw: Dict[str, Any], action: str, where: str, name: str) -> TransferSpec:
     """
     Validate a raw `transfer` dict and build its `TransferSpec`.
 
@@ -278,10 +291,22 @@ def _parse_transfer(raw: Dict[str, Any], where: str, name: str) -> TransferSpec:
     `fw.configuration.config.PolicyStrategy`; "REUSE_CURRENT_POLICY" is
     rejected even though it is a valid enum member (see
     `_UNSUPPORTED_POLICY_STRATEGIES` for why). `from_block` and
-    `external_training_name` are mutually exclusive.
+    `external_training_name` are mutually exclusive. `independent`, if
+    `True`, is mutually exclusive with all three of the above - it marks
+    the block as explicitly opting out of the scheduler's implicit
+    previous-train-block chaining, so combining it with an explicit
+    transfer choice would be a contradiction in the run file. `independent`
+    is also only meaningful for `action == "train"` blocks - the implicit
+    chaining it opts out of only ever applies to "train" blocks in the
+    first place (see `PipelineScheduler._resolve_transfer`), so setting it
+    on a "visualize" or "evaluate_reward" block is rejected rather than
+    silently ignored or silently forcing that block to RESET_POLICY.
 
     Args:
         raw: The block's raw `transfer` dict (may be empty).
+        action: The owning block's already-validated `action` (one of
+            `_VALID_ACTIONS`), used to reject `independent` on any action
+            other than "train".
         where: Location string used in error messages.
         name: The owning block's name, used in error messages.
 
@@ -290,7 +315,9 @@ def _parse_transfer(raw: Dict[str, Any], where: str, name: str) -> TransferSpec:
 
     Raises:
         PipelineSpecError: If `policy_strategy` is unknown/unsupported,
-            or both `from_block` and `external_training_name` are set.
+            both `from_block` and `external_training_name` are set,
+            `independent` is combined with any other transfer field, or
+            `independent` is set on a non-"train" block.
     """
 
     policy_strategy = raw.get("policy_strategy")
@@ -316,10 +343,33 @@ def _parse_transfer(raw: Dict[str, Any], where: str, name: str) -> TransferSpec:
             f"'external_training_name' - use only one."
         )
 
+    independent = raw.get("independent", False)
+    if not isinstance(independent, bool):
+        raise PipelineSpecError(
+            f"{where} ('{name}'): transfer.independent must be a boolean."
+        )
+    if independent and (policy_strategy or from_block or external_training_name):
+        raise PipelineSpecError(
+            f"{where} ('{name}'): transfer.independent cannot be combined "
+            f"with 'policy_strategy', 'from_block', or "
+            f"'external_training_name' - set only 'independent': true, or "
+            f"remove it and use one of the other fields instead."
+        )
+    if independent and action != "train":
+        raise PipelineSpecError(
+            f"{where} ('{name}'): transfer.independent is only valid on "
+            f"'train' blocks (got action='{action}'). It exists to opt a "
+            f"'train' block out of the scheduler's implicit "
+            f"previous-train-block chaining default, which never applies "
+            f"to '{action}' blocks in the first place - remove "
+            f"'independent' here."
+        )
+
     return TransferSpec(
         policy_strategy=policy_strategy,
         from_block=from_block,
         external_training_name=external_training_name,
+        independent=independent,
     )
 
 

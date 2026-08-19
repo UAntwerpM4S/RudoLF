@@ -44,14 +44,22 @@ class TransferSpec:
 
     Exactly one of `from_block` / `external_training_name` should be set
     when a transfer is desired; `policy_strategy`, if given, always wins
-    over the inferred choice. All three may be left unset, in which case
-    the block starts from a fresh (RESET_POLICY) policy.
+    over the inferred choice.
+
+    Chaining default: for a "train" block, if none of `policy_strategy`,
+    `from_block`, `external_training_name`, or `independent` is set, the
+    scheduler now implicitly reuses the policy of the most recently
+    completed "train" block *in this same run* (i.e. behaves as if
+    `from_block` pointed at that block). If no earlier "train" block has
+    completed yet (e.g. this is the first block), it still starts from a
+    fresh (RESET_POLICY) policy - there is nothing to chain from. Set
+    `independent=True` to opt a block out of this implicit chaining
+    explicitly.
 
     Attributes:
         policy_strategy: Explicit override - one of "RESET_POLICY",
             "REUSE_CURRENT_POLICY", "REUSE_OTHER_POLICY". When omitted,
-            the scheduler infers RESET_POLICY if neither `from_block` nor
-            `external_training_name` is set, otherwise REUSE_OTHER_POLICY.
+            the scheduler infers a strategy per the chaining rules above.
         from_block: Name of an earlier block *in this same run* whose
             trained policy should be loaded as the starting point. Only
             valid for same-process, auto-chained runs.
@@ -61,11 +69,20 @@ class TransferSpec:
             `{external_training_name}_{agent_type}_policy.zip` inside the
             configured `model_dir`). Use this to chain across separate
             script runs instead of within one process.
+        independent: When `True`, forces this "train" block to start from
+            a fresh (RESET_POLICY) policy and explicitly opts out of the
+            implicit previous-train-block chaining described above.
+            Mutually exclusive with `policy_strategy`, `from_block`, and
+            `external_training_name` - set only this field to mark a
+            block as independent. Only valid on "train" blocks, since the
+            chaining it opts out of never applies to "visualize" or
+            "evaluate_reward" blocks in the first place.
     """
 
     policy_strategy: Optional[str] = None
     from_block: Optional[str] = None
     external_training_name: Optional[str] = None
+    independent: bool = False
 
 
 @dataclass
