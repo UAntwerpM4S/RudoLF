@@ -37,7 +37,7 @@ class MyzakoShip:
         per variant; the actuator and kinematic limits below are shared across
         all variants:
 
-            - Maximum rudder angle : 46.5 deg  (≈ 0.812 rad)
+            - Maximum rudder angle : 75.0 deg  (≈ 1.309 rad)
             - Maximum rudder rate  : 6.0 deg/s (≈ 0.105 rad/s)
             - Rudder jitter threshold : 0.6 deg
             - Thrust               : min 0.1, max 1.0 (normalized)
@@ -58,7 +58,7 @@ class MyzakoShip:
         """
 
         default_actuator_envelope = dict(
-            max_rudder_angle=np.radians(46.5),
+            max_rudder_angle=np.radians(75.0),
             max_rudder_rate=np.radians(6.0),
             min_thrust=0.1,
             max_thrust=1.0,
