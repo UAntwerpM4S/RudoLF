@@ -46,6 +46,17 @@ Design notes / things that are NOT obvious from the block spec alone
   `Trainer.visualize()` resolves its policy purely from
   `gym_env.training_name` and has no way to honor a block's own
   `transfer` - here, transfer resolution is identical for every action.
+* By default, a "train" block with no explicit `transfer` implicitly
+  chains off the most recently completed "train" block earlier in the
+  same `execute()` call (tracked as a local `last_train_block` variable,
+  scoped per call exactly like `completed_block_names` - never stored on
+  `self`, so back-to-back `execute()` calls on one scheduler instance
+  don't leak chaining state between runs), rather than starting fresh.
+  The first "train" block in a run is the exception - there is nothing
+  to chain from, so it still starts from a fresh (RESET_POLICY) policy.
+  Set `transfer.independent=True` on a block to opt out of this chaining
+  explicitly and force RESET_POLICY regardless. See `TransferSpec` and
+  `_resolve_transfer` for the exact rules.
 * This scheduler currently assumes ONE `agent_type` for the entire run
   (whatever the `AgentManager` was constructed with). Mixing agent types
   within a single pipeline (e.g. a `MultiSimEnv` block needing MPPO
@@ -63,6 +74,7 @@ import logging
 
 from typing import Any, Dict, Optional, Tuple
 from fw.scheduling.base_scheduler import BaseScheduler
+from fw.common.tools.fh_sim_utils import fh_sim_cleanup
 from fw.configuration.profile_applier import apply_profile
 from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.scheduling.run_spec import PipelineBlock, StopConditionSpec, TransferSpec
@@ -134,13 +146,22 @@ class PipelineScheduler(BaseScheduler):
         metrics: Dict[str, Any] = {}
         completed_block_names = set()
 
+        # Name of the most recently completed "train" block so far in
+        # *this* execute() call - scoped locally (like completed_block_names)
+        # rather than stored on self, so back-to-back execute() calls on the
+        # same scheduler instance never leak chaining state between runs.
+        # `None` until the first train block completes, which is exactly
+        # when there is nothing yet to chain from.
+        last_train_block: Optional[str] = None
+
         for block in blocks:
             logger.info("=== Block '%s' (%s) ===", block.name, block.env_type)
             try:
-                result = self._run_block(block, completed_block_names)
+                result = self._run_block(block, completed_block_names, last_train_block)
                 metrics[block.name] = {"status": "success", **result}
                 if block.action == "train":
                     completed_block_names.add(block.name)
+                    last_train_block = block.name
             except Exception as exc:  # noqa: BLE001 - deliberately broad, mirrors SimpleScheduler
                 logger.exception("[PipelineScheduler] Block '%s' failed: %s", block.name, exc)
                 metrics[block.name] = {"status": "failure", "error": str(exc)}
@@ -159,7 +180,9 @@ class PipelineScheduler(BaseScheduler):
     # Per-block execution
     # ------------------------------------------------------------------
 
-    def _run_block(self, block: PipelineBlock, completed_block_names: set) -> Dict[str, Any]:
+    def _run_block(
+            self, block: PipelineBlock, completed_block_names: set, last_train_block: Optional[str]
+    ) -> Dict[str, Any]:
         """
         Build this block's environment and run its `action`.
 
@@ -173,9 +196,14 @@ class PipelineScheduler(BaseScheduler):
 
         Args:
             block: The block to run.
-            completed_block_names: Names of blocks already run earlier in
-                this scheduler's execution, used to validate
-                `transfer.from_block` references.
+            completed_block_names: Names of "train" blocks that have
+                completed successfully so far in this run (populated only
+                for `action == "train"` - see `execute()`), used to
+                validate `transfer.from_block` references.
+            last_train_block: Name of the most recently completed "train"
+                block so far in this run, or `None` if none has completed
+                yet. Passed through to `_resolve_transfer` for the
+                implicit-chaining default (see its docstring).
 
         Returns:
             Dict with at least "duration"; also "evaluation_summary"
@@ -203,7 +231,7 @@ class PipelineScheduler(BaseScheduler):
         if block.action == "evaluate_reward":
             return self._run_evaluate_reward(block, env, profile, framework_config)
 
-        policy_strategy, other_env_name = self._resolve_transfer(block, completed_block_names)
+        policy_strategy, other_env_name = self._resolve_transfer(block, completed_block_names, last_train_block)
         hyperparameters = self._resolve_hyperparameters(block, canonical_name)
 
         self.agent_mgr.set_environment(
@@ -226,10 +254,13 @@ class PipelineScheduler(BaseScheduler):
         else:  # "train"
             stop_condition = self._build_stop_condition(block.stop_condition)
             stop_condition.reset()
-            self.agent_mgr.train(stop_condition=stop_condition)
-            self._save_checkpoint(block, env, profile)
 
             if not block.show_plots:
+                # No visualize step follows - train() is the last thing
+                # touching this environment, so it performs the (only)
+                # dispose itself.
+                self.agent_mgr.train(stop_condition=stop_condition, dispose_env=True)
+                self._save_checkpoint(block, env, profile)
                 # Mirrors Trainer.train()'s show_plots semantics exactly:
                 # False means skip the ENTIRE post-training evaluation step
                 # (episode rollout, metrics computation, figure saving) -
@@ -238,14 +269,31 @@ class PipelineScheduler(BaseScheduler):
                 # an intermediate block nobody's going to look at.
                 return {"duration": time.time() - start}
 
-            # The agent already resident in self.agent_mgr is the one that
-            # was just trained, so no reload from disk is needed here.
-            summary = self.agent_mgr.visualize_trained_agent(
-                num_episodes=1,
-                live_animation=framework_config.get("live_animation", False),
-                return_summary=True,
-                show_plots=block.show_plots,
-            )
+            # visualize_trained_agent() runs immediately below on this same
+            # environment, so train() defers its dispose (dispose_env=False)
+            # to avoid tearing down and then immediately reinitializing the
+            # native FH math model. This outer fh_sim_cleanup is the safety
+            # net: if anything between train() and visualize_trained_agent()
+            # (e.g. _save_checkpoint(), whose agent.save_policy() call is
+            # not exception-guarded) raises, visualize_trained_agent() never
+            # runs and never performs its own dispose - this wrapper's exit
+            # still disposes in that case. FhSimBridge.dispose() /
+            # SimSyncBridge.dispose() are documented idempotent, so on the
+            # normal path this is a harmless no-op after
+            # visualize_trained_agent()'s own dispose already ran.
+            with fh_sim_cleanup(self.agent_mgr.get_env):
+                self.agent_mgr.train(stop_condition=stop_condition, dispose_env=False)
+                self._save_checkpoint(block, env, profile)
+
+                # The agent already resident in self.agent_mgr is the one
+                # that was just trained, so no reload from disk is needed
+                # here.
+                summary = self.agent_mgr.visualize_trained_agent(
+                    num_episodes=1,
+                    live_animation=framework_config.get("live_animation", False),
+                    return_summary=True,
+                    show_plots=block.show_plots,
+                )
             duration = time.time() - start
             return {"duration": duration, "evaluation_summary": summary}
 
@@ -357,7 +405,7 @@ class PipelineScheduler(BaseScheduler):
 
     @staticmethod
     def _resolve_transfer(
-            block: PipelineBlock, completed_block_names: set
+            block: PipelineBlock, completed_block_names: set, last_train_block: Optional[str]
     ) -> Tuple[PolicyStrategy, Optional[str]]:
         """
         Resolve (policy_strategy, other_env_name) for this block.
@@ -369,18 +417,71 @@ class PipelineScheduler(BaseScheduler):
         matters.
 
         "No transfer given" means different things depending on the
-        action: for "train" it means start from a fresh (RESET_POLICY)
-        policy; for "visualize" it means "show me what this block's own
-        training produced" - i.e. self-reference by block.name.
+        action:
+        * "visualize" - "show me what this block's own training produced"
+          - i.e. self-reference by block.name.
+        * "train" - implicitly chain off `last_train_block` (the most
+          recently completed "train" block in this run so far), UNLESS
+          this is the first train block to run (`last_train_block is
+          None`), in which case there's nothing to chain from and it
+          starts fresh (RESET_POLICY). Set `transfer.independent=True` to
+          opt a "train" block out of this implicit chaining explicitly,
+          forcing RESET_POLICY regardless of `last_train_block`.
+
+        Args:
+            block: The block whose transfer is being resolved.
+            completed_block_names: Names of "train" blocks that have
+                completed successfully so far in this run, used to
+                validate an explicit `transfer.from_block` reference.
+            last_train_block: Name of the most recently completed "train"
+                block so far in this run, or `None` if none has completed
+                yet - used for the implicit-chaining default above.
+
+        Raises:
+            RuntimeError: If `transfer.independent` is combined with
+                `policy_strategy`, `from_block`, or
+                `external_training_name`. `run_loader._parse_transfer`
+                already rejects this for JSON-driven runs; this check
+                exists so a `PipelineBlock`/`TransferSpec` built directly
+                in Python (bypassing the loader) fails loudly here too,
+                instead of `independent` silently winning and the other
+                field(s) being silently ignored.
         """
 
         transfer: TransferSpec = block.transfer
+
+        if transfer.independent and (
+                transfer.policy_strategy or transfer.from_block or transfer.external_training_name
+        ):
+            raise RuntimeError(
+                f"Block '{block.name}': transfer.independent=True cannot be "
+                f"combined with 'policy_strategy', 'from_block', or "
+                f"'external_training_name'. Set only 'independent': True, "
+                f"or remove it and use one of the other fields instead."
+            )
+
+        if transfer.independent and block.action != "train":
+            # Defends the same rule run_loader._parse_transfer enforces at
+            # load time, for PipelineBlock/TransferSpec built directly in
+            # Python (bypassing the loader) - see that function's docstring
+            # for why "independent" only ever means something for "train".
+            raise RuntimeError(
+                f"Block '{block.name}': transfer.independent is only valid "
+                f"on 'train' blocks (got action='{block.action}')."
+            )
+
+        if transfer.independent:
+            return PolicyStrategy.RESET_POLICY, None
 
         if transfer.policy_strategy:
             strategy = PolicyStrategy[transfer.policy_strategy]
         elif transfer.from_block or transfer.external_training_name:
             strategy = PolicyStrategy.REUSE_OTHER_POLICY
         elif block.action == "visualize":
+            strategy = PolicyStrategy.REUSE_OTHER_POLICY
+        elif block.action == "train" and last_train_block is not None:
+            # Implicit chaining: reuse the previous train block's policy by
+            # default instead of starting fresh.
             strategy = PolicyStrategy.REUSE_OTHER_POLICY
         else:
             strategy = PolicyStrategy.RESET_POLICY
@@ -400,6 +501,24 @@ class PipelineScheduler(BaseScheduler):
             elif block.action == "visualize":
                 # Self-reference default described above.
                 other_env_name = block.name
+            elif block.action == "train":
+                # Implicit chaining default described above - but only
+                # when there's actually something to chain from. This
+                # branch is reachable even when `strategy` was set via an
+                # EXPLICIT `transfer.policy_strategy: "REUSE_OTHER_POLICY"`
+                # (see the strategy-selection block above, which doesn't
+                # check `last_train_block` for that explicit case) - so
+                # `last_train_block` is NOT guaranteed non-None here, and
+                # must be checked rather than assumed.
+                if last_train_block is None:
+                    raise RuntimeError(
+                        f"Block '{block.name}': policy_strategy is "
+                        f"REUSE_OTHER_POLICY but no 'from_block' or "
+                        f"'external_training_name' was given, and no "
+                        f"earlier 'train' block has completed yet in this "
+                        f"run to implicitly chain from."
+                    )
+                other_env_name = last_train_block
             else:
                 raise RuntimeError(
                     f"Block '{block.name}': policy_strategy is "

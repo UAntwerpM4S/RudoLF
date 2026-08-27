@@ -14,6 +14,7 @@ from fw.postprocessing.matplotlib_renderer import MatplotlibRenderer
 from fw.environments.base_env import BaseEnv
 from fw.environments.lunar_lander import LunarLander
 from fw.environments.multi_sim_env import MultiSimEnv
+from fw.common.tools.fh_sim_utils import fh_sim_cleanup
 from airsim.communication.airsim_bridge import AirSimBridge
 
 from fw.policies.base_agent import BaseAgent
@@ -280,13 +281,20 @@ class AgentManager:
                 logger.warning("[Fallback] The policy file %s does not exist.", policy_file_name)
                 logger.warning("[Fallback] Reverting to RESET_POLICY for %s.", self._agent_type)
 
-    def train(self, stop_condition: StopCondition) -> None:
+    def train(self, stop_condition: StopCondition, dispose_env: bool = True) -> None:
         """
         Train the agent in the assigned environment.
 
         Args:
             stop_condition (StopCondition): The condition that determines when
                 training should stop.
+            dispose_env (bool, optional): Whether to dispose the FH Simulator
+                bridge (if any) once training finishes. Defaults to True.
+                Callers that immediately follow this call with
+                `visualize_trained_agent()` on the same environment should
+                pass False here to avoid an unnecessary dispose + full
+                math-model reinitialization cycle; `visualize_trained_agent()`
+                always performs the (final) dispose itself.
 
         Raises:
             RuntimeError: If no agent has been created yet.
@@ -295,13 +303,11 @@ class AgentManager:
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
-        # Start training
-        self._agent.learn(stop_condition=stop_condition)
-
-        # Cleanup the environment
-        fh_sim = getattr(self.get_env(), "fh_sim", None)
-        if fh_sim is not None:
-            fh_sim.dispose()
+        # Start training. fh_sim_cleanup guarantees dispose() runs on the
+        # way out even if learn() raises (KeyboardInterrupt, training
+        # error, etc.) - not just on normal completion.
+        with fh_sim_cleanup(self.get_env, dispose=dispose_env):
+            self._agent.learn(stop_condition=stop_condition)
 
     @staticmethod
     def _get_ship_env(env, ship_id: str):
@@ -345,231 +351,227 @@ class AgentManager:
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
-        self.agent.set_policy_eval()
-        raw_env = self.get_env()
-        if hasattr(raw_env, "envs"):    # VecEnv wrapping
-            raw_env = raw_env.envs[0]
-        elif hasattr(raw_env, "env"):   # gym Wrapper
-            raw_env = raw_env.env
+        with fh_sim_cleanup(self.get_env):
+            self.agent.set_policy_eval()
+            raw_env = self.get_env()
+            if hasattr(raw_env, "envs"):    # VecEnv wrapping
+                raw_env = raw_env.envs[0]
+            elif hasattr(raw_env, "env"):   # gym Wrapper
+                raw_env = raw_env.env
 
-        # Flip on eval-time realism overrides (variable TS radii, lateral
-        # lane spawn, late head-on dodge). All overrides are opt-in via
-        # env attributes that default to no-op in training.
-        if hasattr(raw_env, "set_evaluation_parameters"):
-            raw_env.set_evaluation_parameters()
-        for sub in getattr(raw_env, "sub_environments", {}).values():
-            if hasattr(sub, "set_evaluation_parameters"):
-                sub.set_evaluation_parameters()
+            # Flip on eval-time realism overrides (variable TS radii, lateral
+            # lane spawn, late head-on dodge). All overrides are opt-in via
+            # env attributes that default to no-op in training.
+            if hasattr(raw_env, "set_evaluation_parameters"):
+                raw_env.set_evaluation_parameters()
+            for sub in getattr(raw_env, "sub_environments", {}).values():
+                if hasattr(sub, "set_evaluation_parameters"):
+                    sub.set_evaluation_parameters()
 
-        is_lunar_lander = isinstance(raw_env, LunarLander)
+            is_lunar_lander = isinstance(raw_env, LunarLander)
 
-        collector = EpisodeCollector(self._agent, raw_env, self._profile, airsim_bridge=airsim_bridge)
-        run_data = collector.collect(num_episodes=num_episodes, live_animation=live_animation if not is_lunar_lander else True)
+            collector = EpisodeCollector(self._agent, raw_env, self._profile, airsim_bridge=airsim_bridge)
+            run_data = collector.collect(num_episodes=num_episodes, live_animation=live_animation if not is_lunar_lander else True)
 
-        if not is_lunar_lander:
-            summaries = {}
-            # Diagnose empty collection early
-            total_steps = sum(
-                sum(len(ep.path) for ep in episodes)
-                for episodes in run_data.ships.values()
-            )
-            if total_steps == 0:
-                raise RuntimeError(
-                    f"EpisodeCollector collected 0 steps across all ships. "
-                    f"ship_ids={len(run_data.ships)}, env type={type(raw_env).__name__}. "
-                    f"Check that _get_ship_env returns the correct env object."
+            if not is_lunar_lander:
+                summaries = {}
+                # Diagnose empty collection early
+                total_steps = sum(
+                    sum(len(ep.path) for ep in episodes)
+                    for episodes in run_data.ships.values()
                 )
+                if total_steps == 0:
+                    raise RuntimeError(
+                        f"EpisodeCollector collected 0 steps across all ships. "
+                        f"ship_ids={len(run_data.ships)}, env type={type(raw_env).__name__}. "
+                        f"Check that _get_ship_env returns the correct env object."
+                    )
 
-            CollisionAnnotator().annotate(run_data)
-            metrics = MetricsComputer.compute(run_data)
+                CollisionAnnotator().annotate(run_data)
+                metrics = MetricsComputer.compute(run_data)
 
-            for sid, m in metrics.items():
-                ship_env = self._get_ship_env(raw_env, sid)
-                env_name = getattr(ship_env, "env_name", sid)
-                summaries[env_name] = {
-                    "average_reward": m.avg_reward,
-                    "best_episode_reward": m.best_reward,
-                    "worst_episode_reward": m.worst_reward,
-                    "mu": m.mu,
-                    "Mu": m.Mu,
-                    "mTEI": m.mTEI,
-                    "MTE": m.MTE,
-                    "mRA": m.mRA,
-                    "MRA": m.MRA,
-                    "mRAC": m.mRAC,
-                    "vRA": m.vRA,
-                    "sCF": m.sCF,
-                    "mT": m.mT,
-                    "MT": m.MT,
-                    "mTC": m.mTC,
-                    "mHE": m.mHE,
-                }
-                training_name = getattr(ship_env, "training_name", sid)
-                logger.info("%s evaluation completed!", training_name)
-                logger.info(f"Average reward: {m.avg_reward:.2f}")
-                logger.info(f"Best episode reward: {m.best_reward:.2f}")
-                logger.info(f"Worst episode reward: {m.worst_reward:.2f}")
-                logger.info(f"Mean Surge Velocity (mu): {m.mu:.2f}")
-                logger.info(f"Maximum Surge Velocity (Mu): {m.Mu:.2f}")
-                logger.info(f"Mean Track Error Integral (mTEI): {m.mTEI:.2f}")
-                logger.info(f"Maximum Track Error (MTE): {m.MTE:.2f}")
-                logger.info(f"Mean Rudder Angle (mRA): {m.mRA:.3f}")
-                logger.info(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
-                logger.info(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
-                logger.info(f"Variance of Rudder Angle (vRA): {m.vRA:.4f}")
-                logger.info(f"Steering Sign-Change Frequency (sCF): {m.sCF:.4f}")
-                logger.info(f"Mean Thrust (mT): {m.mT:.3f}")
-                logger.info(f"Maximum Thrust (MT): {m.MT:.3f}")
-                logger.info(f"Mean Thrust Change (mTC): {m.mTC:.4f}")
-                logger.info(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
-                logger.info("Collision rate per policy (over valid-outcome encounters: collided OR resolved):")
-                for policy in sorted(m.total_encounters_per_policy):
-                    enc_n = m.encounters_per_policy.get(policy, 0)
-                    total_n = m.total_encounters_per_policy[policy]
-                    col_n = m.collisions_per_policy.get(policy, 0)
-                    rate = (col_n / enc_n * 100) if enc_n else 0.0
+                for sid, m in metrics.items():
+                    ship_env = self._get_ship_env(raw_env, sid)
+                    env_name = getattr(ship_env, "env_name", sid)
+                    summaries[env_name] = {
+                        "average_reward": m.avg_reward,
+                        "best_episode_reward": m.best_reward,
+                        "worst_episode_reward": m.worst_reward,
+                        "mu": m.mu,
+                        "Mu": m.Mu,
+                        "mTEI": m.mTEI,
+                        "MTE": m.MTE,
+                        "mRA": m.mRA,
+                        "MRA": m.MRA,
+                        "mRAC": m.mRAC,
+                        "vRA": m.vRA,
+                        "sCF": m.sCF,
+                        "mT": m.mT,
+                        "MT": m.MT,
+                        "mTC": m.mTC,
+                        "mHE": m.mHE,
+                    }
+                    training_name = getattr(ship_env, "training_name", sid)
+                    logger.info("%s evaluation completed!", training_name)
+                    logger.info(f"Average reward: {m.avg_reward:.2f}")
+                    logger.info(f"Best episode reward: {m.best_reward:.2f}")
+                    logger.info(f"Worst episode reward: {m.worst_reward:.2f}")
+                    logger.info(f"Mean Surge Velocity (mu): {m.mu:.2f}")
+                    logger.info(f"Maximum Surge Velocity (Mu): {m.Mu:.2f}")
+                    logger.info(f"Mean Track Error Integral (mTEI): {m.mTEI:.2f}")
+                    logger.info(f"Maximum Track Error (MTE): {m.MTE:.2f}")
+                    logger.info(f"Mean Rudder Angle (mRA): {m.mRA:.3f}")
+                    logger.info(f"Maximum Rudder Angle (MRA): {m.MRA:.3f}")
+                    logger.info(f"Mean Rudder Angle Change (mRAC): {m.mRAC:.4f}")
+                    logger.info(f"Variance of Rudder Angle (vRA): {m.vRA:.4f}")
+                    logger.info(f"Steering Sign-Change Frequency (sCF): {m.sCF:.4f}")
+                    logger.info(f"Mean Thrust (mT): {m.mT:.3f}")
+                    logger.info(f"Maximum Thrust (MT): {m.MT:.3f}")
+                    logger.info(f"Mean Thrust Change (mTC): {m.mTC:.4f}")
+                    logger.info(f"Mean LOS Guidance Heading Error (mHE): {m.mHE:.3f} rad")
+                    logger.info("Collision rate per policy (over valid-outcome encounters: collided OR resolved):")
+                    for policy in sorted(m.total_encounters_per_policy):
+                        enc_n = m.encounters_per_policy.get(policy, 0)
+                        total_n = m.total_encounters_per_policy[policy]
+                        col_n = m.collisions_per_policy.get(policy, 0)
+                        rate = (col_n / enc_n * 100) if enc_n else 0.0
+                        logger.info(
+                            f"  {policy:<16s} {rate:6.2f}% "
+                            f"({col_n}/{enc_n} valid; {total_n} total starts)"
+                        )
+                    logger.info("Encounter outcome breakdown per policy (all encounter starts):")
+                    cat_order = (
+                        "collided",
+                        "resolved",
+                        "passed_not_tracked_lost",
+                        "tracked_lost_not_passed",
+                        "neither",
+                    )
+                    for policy in sorted(m.total_encounters_per_policy):
+                        buckets = m.encounter_outcomes_per_policy.get(policy, {})
+                        total_n = m.total_encounters_per_policy[policy]
+                        parts = [f"{cat}={buckets.get(cat, 0)}" for cat in cat_order]
+                        logger.info(f"  {policy:<16s} total={total_n}  " + "  ".join(parts))
+                    logger.info("CRI per policy (mean / median / max over valid encounters):")
+                    for policy in sorted(m.total_encounters_per_policy):
+                        n_valid = m.valid_encounters_per_policy.get(policy, 0)
+                        mean_cri = m.mean_cri_per_policy.get(policy, 0.0)
+                        median_cri = m.median_cri_per_policy.get(policy, 0.0)
+                        max_cri = m.max_cri_per_policy.get(policy, 0.0)
+                        logger.info(
+                            f"  {policy:<16s} mean={mean_cri:.3f}  "
+                            f"median={median_cri:.3f}  max={max_cri:.3f}  "
+                            f"(n={n_valid})"
+                        )
+                    # Baseline CRI floor - single global value, useful for
+                    # reading the per-policy CRI numbers against. Theoretical
+                    # baseline uses the CRI formula at DCPA=encounter_range,
+                    # TCPA<=0 (parting); the TCPA term collapses to 0 so only
+                    # the DCPA half remains.
+                    enc_r = float(getattr(ship_env, "encounter_range", 0.0))
+                    cri_D = float(getattr(ship_env, "cri_D", 1.0))
+                    cri_alpha1 = float(getattr(ship_env, "cri_alpha1", -1.0))
+                    cri_omega1 = float(getattr(ship_env, "cri_omega1", 0.5))
+                    theoretical = cri_omega1 * math.exp(cri_alpha1 * enc_r / max(cri_D, 1e-12))
+                    m.baseline_cri_theoretical = theoretical
+                    n_baseline = m.baseline_cri_sample_count
                     logger.info(
-                        f"  {policy:<16s} {rate:6.2f}% "
-                        f"({col_n}/{enc_n} valid; {total_n} total starts)"
+                        "Baseline CRI (lowest-achievable reference, across all policies):"
                     )
-                logger.info("Encounter outcome breakdown per policy (all encounter starts):")
-                cat_order = (
-                    "collided",
-                    "resolved",
-                    "passed_not_tracked_lost",
-                    "tracked_lost_not_passed",
-                    "neither",
-                )
-                for policy in sorted(m.total_encounters_per_policy):
-                    buckets = m.encounter_outcomes_per_policy.get(policy, {})
-                    total_n = m.total_encounters_per_policy[policy]
-                    parts = [f"{cat}={buckets.get(cat, 0)}" for cat in cat_order]
-                    logger.info(f"  {policy:<16s} total={total_n}  " + "  ".join(parts))
-                logger.info("CRI per policy (mean / median / max over valid encounters):")
-                for policy in sorted(m.total_encounters_per_policy):
-                    n_valid = m.valid_encounters_per_policy.get(policy, 0)
-                    mean_cri = m.mean_cri_per_policy.get(policy, 0.0)
-                    median_cri = m.median_cri_per_policy.get(policy, 0.0)
-                    max_cri = m.max_cri_per_policy.get(policy, 0.0)
                     logger.info(
-                        f"  {policy:<16s} mean={mean_cri:.3f}  "
-                        f"median={median_cri:.3f}  max={max_cri:.3f}  "
-                        f"(n={n_valid})"
+                        f"  empirical: mean(per-encounter min CRI)={m.baseline_cri_empirical_mean:.3f}  "
+                        f"min(observed)={m.baseline_cri_empirical_min:.3f}  (n={n_baseline})"
                     )
-                # Baseline CRI floor - single global value, useful for
-                # reading the per-policy CRI numbers against. Theoretical
-                # baseline uses the CRI formula at DCPA=encounter_range,
-                # TCPA<=0 (parting); the TCPA term collapses to 0 so only
-                # the DCPA half remains.
-                enc_r = float(getattr(ship_env, "encounter_range", 0.0))
-                cri_D = float(getattr(ship_env, "cri_D", 1.0))
-                cri_alpha1 = float(getattr(ship_env, "cri_alpha1", -1.0))
-                cri_omega1 = float(getattr(ship_env, "cri_omega1", 0.5))
-                theoretical = cri_omega1 * math.exp(cri_alpha1 * enc_r / max(cri_D, 1e-12))
-                m.baseline_cri_theoretical = theoretical
-                n_baseline = m.baseline_cri_sample_count
-                logger.info(
-                    "Baseline CRI (lowest-achievable reference, across all policies):"
-                )
-                logger.info(
-                    f"  empirical: mean(per-encounter min CRI)={m.baseline_cri_empirical_mean:.3f}  "
-                    f"min(observed)={m.baseline_cri_empirical_min:.3f}  (n={n_baseline})"
-                )
-                logger.info(
-                    f"  theoretical: CRI at DCPA=encounter_range ({enc_r:.0f}m), "
-                    f"TCPA parting = {theoretical:.3f}"
-                )
-                logger.info("Cross-track error per policy [m] (mean / median / max over valid encounters):")
-                for policy in sorted(m.total_encounters_per_policy):
-                    n_valid = m.valid_encounters_per_policy.get(policy, 0)
-                    mean_cte = m.mean_cte_per_policy.get(policy, 0.0)
-                    median_cte = m.median_cte_per_policy.get(policy, 0.0)
-                    max_cte = m.max_cte_per_policy.get(policy, 0.0)
                     logger.info(
-                        f"  {policy:<16s} mean={mean_cte:.2f}m  "
-                        f"median={median_cte:.2f}m  max={max_cte:.2f}m  "
-                        f"(n={n_valid})"
+                        f"  theoretical: CRI at DCPA=encounter_range ({enc_r:.0f}m), "
+                        f"TCPA parting = {theoretical:.3f}"
                     )
-                logger.info("Time to first action per policy [s] (|rudder| > 10 deg, over valid encounters):")
-                for policy in sorted(m.total_encounters_per_policy):
-                    n_reactive = m.reactive_encounters_per_policy.get(policy, 0)
-                    n_non_reactive = m.non_reactive_encounters_per_policy.get(policy, 0)
-                    mean_tfa = m.mean_tfa_per_policy.get(policy, 0.0)
-                    median_tfa = m.median_tfa_per_policy.get(policy, 0.0)
+                    logger.info("Cross-track error per policy [m] (mean / median / max over valid encounters):")
+                    for policy in sorted(m.total_encounters_per_policy):
+                        n_valid = m.valid_encounters_per_policy.get(policy, 0)
+                        mean_cte = m.mean_cte_per_policy.get(policy, 0.0)
+                        median_cte = m.median_cte_per_policy.get(policy, 0.0)
+                        max_cte = m.max_cte_per_policy.get(policy, 0.0)
+                        logger.info(
+                            f"  {policy:<16s} mean={mean_cte:.2f}m  "
+                            f"median={median_cte:.2f}m  max={max_cte:.2f}m  "
+                            f"(n={n_valid})"
+                        )
+                    logger.info("Time to first action per policy [s] (|rudder| > 10 deg, over valid encounters):")
+                    for policy in sorted(m.total_encounters_per_policy):
+                        n_reactive = m.reactive_encounters_per_policy.get(policy, 0)
+                        n_non_reactive = m.non_reactive_encounters_per_policy.get(policy, 0)
+                        mean_tfa = m.mean_tfa_per_policy.get(policy, 0.0)
+                        median_tfa = m.median_tfa_per_policy.get(policy, 0.0)
+                        logger.info(
+                            f"  {policy:<16s} mean={mean_tfa:.2f}s  "
+                            f"median={median_tfa:.2f}s  "
+                            f"(n_reactive={n_reactive}, n_non_reactive={n_non_reactive})"
+                        )
+                    n_ep = m.num_episodes
+                    out_rate = (m.collisions_outside_encounters / n_ep * 100) if n_ep else 0.0
+                    logger.info(f"  outside-encounter {out_rate:6.2f}% ({m.collisions_outside_encounters}/{n_ep} episodes)")
+                    in_enc = m.collision_count - m.collisions_outside_encounters
+                    total_denom = m.num_encounters + n_ep
+                    cr_pct = (m.collision_count / total_denom * 100) if total_denom else 0.0
                     logger.info(
-                        f"  {policy:<16s} mean={mean_tfa:.2f}s  "
-                        f"median={median_tfa:.2f}s  "
-                        f"(n_reactive={n_reactive}, n_non_reactive={n_non_reactive})"
+                        f"Total collision rate (CR): {cr_pct:.2f}% "
+                        f"({m.collision_count} = {in_enc} in {m.num_encounters} encounters "
+                        f"+ {m.collisions_outside_encounters} outside / {n_ep} episodes)"
                     )
-                n_ep = m.num_episodes
-                out_rate = (m.collisions_outside_encounters / n_ep * 100) if n_ep else 0.0
-                logger.info(f"  outside-encounter {out_rate:6.2f}% ({m.collisions_outside_encounters}/{n_ep} episodes)")
-                in_enc = m.collision_count - m.collisions_outside_encounters
-                total_denom = m.num_encounters + n_ep
-                cr_pct = (m.collision_count / total_denom * 100) if total_denom else 0.0
-                logger.info(
-                    f"Total collision rate (CR): {cr_pct:.2f}% "
-                    f"({m.collision_count} = {in_enc} in {m.num_encounters} encounters "
-                    f"+ {m.collisions_outside_encounters} outside / {n_ep} episodes)"
-                )
-                logger.info(f"Collision per type: {m.collision_type_count}")
-                logger.info(f"Collision per side: {m.collision_side_count}")
-                logger.info(f"COLREG violation count: {m.colreg_violation_count}")
+                    logger.info(f"Collision per type: {m.collision_type_count}")
+                    logger.info(f"Collision per side: {m.collision_side_count}")
+                    logger.info(f"COLREG violation count: {m.colreg_violation_count}")
 
-                # Scenario classification diagnostics - per encounter
-                # (one record captured at encounter entry).
-                enc_rate = (
-                    m.encounter_misclassification_count / m.num_encounters * 100
-                    if m.num_encounters else 0.0
-                )
-                logger.info(
-                    f"Scenario misclassification - "
-                    f"{m.encounter_misclassification_count}/{m.num_encounters} encounters "
-                    f"({enc_rate:.2f}%)"
-                )
-                if m.encounter_confusion:
-                    logger.info("Encounter confusion (gt -> pred: count):")
-                    for (gt, pred), cnt in sorted(m.encounter_confusion.items()):
-                        tag = "" if gt == pred else "  [MISMATCH]"
-                        logger.info(f"  {gt} -> {pred}: {cnt}{tag}")
-
-            save_dir = self.agent.model_dir or "."
-            if not save_dir:
-                save_dir = "models"
-            os.makedirs(save_dir, exist_ok=True)
-
-            for sid in metrics.keys():
-                ship_env = self._get_ship_env(raw_env, sid)
-                env_name = getattr(ship_env, "env_name", sid)
-                if hasattr(ship_env, "plot_min_distance_stats"):
-                    ship_env.plot_min_distance_stats(
-                        pdf_save_path=f"{save_dir}/{env_name}_min_distance_PDF.png",
-                        boxplot_save_path=f"{save_dir}/{env_name}_min_distance_boxplots.png",
+                    # Scenario classification diagnostics - per encounter
+                    # (one record captured at encounter entry).
+                    enc_rate = (
+                        m.encounter_misclassification_count / m.num_encounters * 100
+                        if m.num_encounters else 0.0
                     )
-                if hasattr(ship_env, "plot_scenario_confusion_matrix"):
-                    ship_env.plot_scenario_confusion_matrix(
-                        save_path=f"{save_dir}/{env_name}_scenario_confusion_matrix.png",
+                    logger.info(
+                        f"Scenario misclassification - "
+                        f"{m.encounter_misclassification_count}/{m.num_encounters} encounters "
+                        f"({enc_rate:.2f}%)"
                     )
+                    if m.encounter_confusion:
+                        logger.info("Encounter confusion (gt -> pred: count):")
+                        for (gt, pred), cnt in sorted(m.encounter_confusion.items()):
+                            tag = "" if gt == pred else "  [MISMATCH]"
+                            logger.info(f"  {gt} -> {pred}: {cnt}{tag}")
 
-            MatplotlibRenderer.render(
-                run_data.ships, metrics, raw_env,
-                save_path=f"{save_dir}/image.png",
-                show_plots=show_plots,
-            )
+                save_dir = self.agent.model_dir or "."
+                if not save_dir:
+                    save_dir = "models"
+                os.makedirs(save_dir, exist_ok=True)
 
-                # PlotlyRenderer.render(
-                #     run_data.ships, metrics,
-                # )
+                for sid in metrics.keys():
+                    ship_env = self._get_ship_env(raw_env, sid)
+                    env_name = getattr(ship_env, "env_name", sid)
+                    if hasattr(ship_env, "plot_min_distance_stats"):
+                        ship_env.plot_min_distance_stats(
+                            pdf_save_path=f"{save_dir}/{env_name}_min_distance_PDF.png",
+                            boxplot_save_path=f"{save_dir}/{env_name}_min_distance_boxplots.png",
+                        )
+                    if hasattr(ship_env, "plot_scenario_confusion_matrix"):
+                        ship_env.plot_scenario_confusion_matrix(
+                            save_path=f"{save_dir}/{env_name}_scenario_confusion_matrix.png",
+                        )
 
-            # Cleanup the environment
-            fh_sim = getattr(self.get_env(), "fh_sim", None)
-            if fh_sim is not None:
-                fh_sim.dispose()
+                MatplotlibRenderer.render(
+                    run_data.ships, metrics, raw_env,
+                    save_path=f"{save_dir}/image.png",
+                    show_plots=show_plots,
+                )
 
-            if return_summary:
-                return summaries
+                    # PlotlyRenderer.render(
+                    #     run_data.ships, metrics,
+                    # )
 
-        return None
+                if return_summary:
+                    return summaries
+
+            return None
 
     def get_env(self):
         """

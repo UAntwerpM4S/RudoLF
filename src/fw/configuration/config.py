@@ -157,6 +157,8 @@ CONFIG_PARAMETERS = {
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     'wind': False,
     'current': False,
+    'enable_ukc_check': True,
+    'enable_bank_collision_check': True,
     'visualize_best_trained': False,
     'viz_mode': VisualizationMode.COMPLEX,
     'start_pos': DEFAULT_FRAMEWORK_SHIP_POS,    # (2245.0, -47.0)

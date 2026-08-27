@@ -159,6 +159,8 @@ class PySimEnv(BaseEnv):
             wind: bool = False,
             current: bool = False,
             ua_surrogate_config: Optional[Dict] = None,
+            enable_bank_collision_check: bool = True,
+            enable_ukc_check: bool = True,
             #Reward configuration
             reward_name: str = "default",
             reward_weights: Optional[Dict[str, float]] = None,
@@ -238,6 +240,8 @@ class PySimEnv(BaseEnv):
         self.depth_contour = depth_contour if depth_contour is not None else "env_Sche_250cm_no_scale.csv"
         self.trajectory = trajectory if trajectory is not None else "trajectory_points_no_scale.csv"
         self.ship_model: ShipModel = ship_model if ship_model is not None else ShipModel.MYZAKO_DEFAULT
+        self.enable_bank_collision_check = bool(enable_bank_collision_check)
+        self.enable_ukc_check = bool(enable_ukc_check)
         self.max_steps = int(max_steps)
         self.time_step = float(time_step)
         self.dynamics_model: Model = dynamics_model if dynamics_model is not None else Model.FOSSEN
@@ -809,24 +813,33 @@ class PySimEnv(BaseEnv):
 
         return True
 
-    def ship_in_open_water(self, ship_position: np.ndarray) -> bool:
+    def ship_in_open_water(self,
+                           ship_position: np.ndarray,
+                           enable_bank_collision_check: bool = True,
+                           enable_ukc_check: bool = True) -> bool:
         """
         Check if the ship is inside the polygon bounds and has keel clearance.
 
         Args:
             ship_position: (x, y) coordinates
+            enable_bank_collision_check: enables bank collision checking
+            enable_ukc_check: enables ukc checking
 
         Returns:
             bool: True if ship is inside polygon and keel clearance check passes
         """
 
-        x, y = ship_position[0], ship_position[1]
-        min_x, min_y, max_x, max_y = self.polygon_shape.bounds
-        if not (min_x <= x <= max_x and min_y <= y <= max_y):
-            return False
+        if enable_bank_collision_check:
+            x, y = ship_position[0], ship_position[1]
+            min_x, min_y, max_x, max_y = self.polygon_shape.bounds
+            if not (min_x <= x <= max_x and min_y <= y <= max_y):
+                return False
 
-        contains = self.polygon_shape.contains(Point(ship_position))
-        deep_enough = self._has_enough_keel_clearance()
+            contains = self.polygon_shape.contains(Point(ship_position))
+        else:
+            contains = True
+
+        deep_enough = self._has_enough_keel_clearance() if enable_ukc_check else True
         return bool(contains and deep_enough)
 
     @staticmethod
@@ -1416,7 +1429,7 @@ class PySimEnv(BaseEnv):
         # Early termination conditions
         termination_conditions = [
             cross_track_error > CROSS_TRACK_TERMINATION_MULTIPLIER * CHECKPOINTS_DISTANCE,
-            not self.ship_in_open_water(self.ship_pos),
+            not self.ship_in_open_water(self.ship_pos, self.enable_bank_collision_check, self.enable_ukc_check),
             heading_change > HEADING_CHANGE_THRESHOLD,
         ]
 

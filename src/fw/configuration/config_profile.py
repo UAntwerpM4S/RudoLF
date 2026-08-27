@@ -612,6 +612,18 @@ ProfileRegistry.register(VesselProfile(
 ))
 
 ProfileRegistry.register(VesselProfile(
+    name="multi_policy_colav_profile",
+    description="Configuration profile for multi-policy COLAV.",
+    run_mode=RunMode.TRAIN,
+    model=ModelConfig(
+        ship_model=ShipModel.MYZAKO_37,
+        dynamics_model=Model.FOSSEN,
+    ),
+    actuator=ActuatorConfig(max_rudder_angle_deg=46.5, enable_smoothing=False),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
+))
+
+ProfileRegistry.register(VesselProfile(
     name="ugent_surrogate_profile",
     description="Configuration profile for UGent's surrogate model.",
     run_mode=RunMode.TRAIN,

@@ -429,8 +429,10 @@ class MatplotlibRenderer:
         for i, ep in enumerate(episodes):
             if ep.rudder_actions.size == 0:
                 continue
-            resampled = resample_to_common_time(ep.rudder_actions, cls.COMMON_TIME)
-            ax.plot(cls.COMMON_TIME * 100.0, resampled, color=colors[i], alpha=0.2)
+            # resampled = resample_to_common_time(ep.rudder_actions, cls.COMMON_TIME)
+            # ax.plot(cls.COMMON_TIME * 100.0, resampled, color=colors[i], alpha=0.2)
+            t = normalized_time_axis(len(ep.rudder_actions))
+            ax.plot(t, ep.rudder_actions, color=colors[i], alpha=0.2)
 
         ax.set_title(f"Rudder actions – {ship_id}")
         ax.set_xlabel("Episode progress [%]")
