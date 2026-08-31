@@ -157,6 +157,23 @@ def bundle_run_output(
         resolved_bundle_dir.mkdir(parents=True, exist_ok=True)
 
         def _as_dir_list(value: "str | Path | Iterable[str | Path]") -> list[Path]:
+            """
+            Convert one or more directory paths to a resolved, de-duplicated list.
+
+            A single string or `Path` is treated as a one-element collection.
+            Relative paths are resolved relative to `src_dir`. Duplicate paths
+            are removed while preserving their original order.
+
+            Args:
+                value: A directory path or an iterable of directory paths. Paths may
+                    be provided as strings or `Path` objects. Relative paths are
+                    resolved against `src_dir`.
+
+            Returns:
+                A list of resolved `Path` objects with duplicates removed while
+                preserving the order in which the paths were provided.
+            """
+
             if isinstance(value, (str, Path)):
                 value = [value]
             resolved = [resolve_path_relative_to_src(str(v), src_dir) for v in value]
