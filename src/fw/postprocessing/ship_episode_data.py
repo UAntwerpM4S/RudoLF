@@ -33,7 +33,8 @@ class CollisionEvent:
     is_collision: bool  # True if distance < hard collision threshold
 
     def __post_init__(self) -> None:
-        """Validate that the collision event fields are non-negative.
+        """
+        Validate that the collision event fields are non-negative.
 
         Raises:
             ValueError: If timestep or distance is negative.
@@ -96,7 +97,8 @@ class ShipEpisodeData:
     scenario_encounters: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        """Validate episode metadata and normalize the path array shape.
+        """
+        Validate episode metadata and normalize the path array shape.
 
         Ensures the ship identifier and episode index are valid, and coerces an
         empty path into a consistent shape of `(0, 2)`.
@@ -141,7 +143,8 @@ class RunData:
     num_episodes: int
 
     def __post_init__(self) -> None:
-        """Validate run metadata and ensure the ship collection is present.
+        """
+        Validate run metadata and ensure the ship collection is present.
 
         Raises:
             ValueError: If num_episodes is negative or ships is None.
