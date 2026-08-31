@@ -58,11 +58,19 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
 
     import logging
     import argparse
+    import dataclasses
     import multiprocessing
 
     from pathlib import Path
+    from datetime import datetime, timezone
     from fw.common.tools.logging_config import setup_logging
-    from fw.configuration.config import PPO_POLICY_NAME
+    from fw.common.tools.run_bundler import bundle_run_output
+    from fw.configuration.config import PPO_POLICY_NAME, get_hyperparameters
+
+    _SRC_DIR = Path(__file__).resolve().parents[1]
+    # Captured before any file (log, model, ...) is written, so mtime-based
+    # bundling below reliably picks up everything this run produces.
+    _RUN_STARTED = datetime.now(timezone.utc)
 
     # Provisional console-only setup, in case spec loading itself fails
     # (spec.log_level, needed for the real setup, isn't known yet).
@@ -133,9 +141,45 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     agent_mgr = AgentManager(PPO_POLICY_NAME, bootstrap_profile, {})
 
     scheduler = PipelineScheduler(agent_mgr, spec.blocks, on_block_failure=spec.on_block_failure)
-    metrics = scheduler.execute()
 
-    logger.info("Pipeline metrics: %s", metrics)
+    try:
+        metrics = scheduler.execute()
 
-    if any(m.get("status") == "failure" for m in metrics.values()):
-        raise SystemExit(1)
+        logger.info("Pipeline metrics: %s", metrics)
+
+        if any(m.get("status") == "failure" for m in metrics.values()):
+            raise SystemExit(1)
+    finally:
+        # One bundle for the whole pipeline run (not per block), regardless
+        # of whether it succeeded - see run_bundler.py's module docstring.
+        # model_dir can in principle differ per block via
+        # hyperparameter_overrides, so every block's resolved model_dir is
+        # scanned; bundle_run_output de-duplicates identical paths.
+        _pipeline_model_dirs = []
+        for _block in spec.blocks:
+            _block_hyperparameters = get_hyperparameters(
+                PPO_POLICY_NAME, env_name=resolve_environment_name(_block.env_type)
+            )
+            _block_hyperparameters.update(_block.hyperparameter_overrides)
+            _pipeline_model_dirs.append(_block_hyperparameters.get("model_dir", "models"))
+
+        if any(_block.action == "evaluate_reward" for _block in spec.blocks):
+            # Same CWD-relative-path issue as in main.py: any evaluate_reward
+            # block's Trainer.export_evaluation_results() call (see
+            # pipeline_scheduler.py) writes relative to the current working
+            # directory rather than resolving against src_dir. Scanning
+            # both covers it regardless of launch directory; de-duplicated
+            # when CWD == src_dir.
+            _pipeline_model_dirs.append(str(Path.cwd() / "models"))
+
+        bundle_run_output(
+            run_started=_RUN_STARTED,
+            src_dir=_SRC_DIR,
+            model_dirs=_pipeline_model_dirs or "models",
+            log_dirs="logs",
+            input_files=[Path(args.spec)],
+            resolved_config=dataclasses.asdict(spec),
+            env_name=Path(args.spec).stem,
+            agent_type=PPO_POLICY_NAME,
+            run_type="pipeline",
+        )

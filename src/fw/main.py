@@ -15,8 +15,14 @@ if __name__ == "__main__" or __name__ == "fw.main":
     import multiprocessing
 
     from pathlib import Path
-    from fw.configuration.config import get_config_parameters
+    from datetime import datetime, timezone
+    import fw.configuration.config as config_module
+    from fw.common.tools.run_bundler import bundle_run_output
+    from fw.configuration.config import get_config_parameters, get_hyperparameters
     from fw.common.tools.logging_config import setup_logging, update_log_file_agent_type
+
+    _SRC_DIR = Path(__file__).resolve().parents[1]
+    _CONFIG_INPUT_FILE = Path(config_module.__file__)
 
     framework_config = get_config_parameters()
 
@@ -220,23 +226,43 @@ if __name__ == "__main__" or __name__ == "fw.main":
         updated_log_path = update_log_file_agent_type(agent_type)
         if updated_log_path is not None:
             logger.info("Log file renamed to: %s", updated_log_path)
-        std_trainer = Trainer(agent_type, envs, profile, "SimpleScheduler", config=framework_config)
-        if action == "visualize":
-            std_trainer.visualize(envs, airsim_bridge=None)
-        else:
-            metrics = std_trainer.train(configuration)
-            if action == "evaluate_reward":
-                logger.info("Training metrics (grouped): %s", metrics)
-            else:
-                filtered_metrics = {
-                    fields: {
-                        "status": env_metrics.get("status"),
-                        "duration": env_metrics.get("duration"),
-                    }
-                    for fields, env_metrics in metrics.items()
-                }
 
-                logger.info("Training metrics (grouped): %s", filtered_metrics)
+        batch_started = datetime.now(timezone.utc)
+        batch_env_name = "+".join(sorted({e.gym_env.training_name for e in envs})) or env_name_for_log
+
+        try:
+            std_trainer = Trainer(agent_type, envs, profile, "SimpleScheduler", config=framework_config)
+            if action == "visualize":
+                std_trainer.visualize(envs, airsim_bridge=None)
+            else:
+                metrics = std_trainer.train(configuration)
+                if action == "evaluate_reward":
+                    logger.info("Training metrics (grouped): %s", metrics)
+                else:
+                    filtered_metrics = {
+                        fields: {
+                            "status": env_metrics.get("status"),
+                            "duration": env_metrics.get("duration"),
+                        }
+                        for fields, env_metrics in metrics.items()
+                    }
+
+                    logger.info("Training metrics (grouped): %s", filtered_metrics)
+        finally:
+            # Bundle this batch's input/output regardless of whether it
+            # succeeded, so a failed run still leaves a debuggable bundle.
+            batch_hyperparameters = get_hyperparameters(agent_type)
+            bundle_run_output(
+                run_started=batch_started,
+                src_dir=_SRC_DIR,
+                model_dirs=batch_hyperparameters.get("model_dir", "models"),
+                log_dirs=batch_hyperparameters.get("log_dir", "logs"),
+                input_files=[_CONFIG_INPUT_FILE],
+                resolved_config=framework_config,
+                env_name=batch_env_name,
+                agent_type=agent_type,
+                run_type=action,
+            )
         return True
 
     # Both visualize and train now follow env_type order exactly (for airsim),
@@ -248,11 +274,17 @@ if __name__ == "__main__" or __name__ == "fw.main":
             logger.error("action='evaluate_reward' requires 'reward_configs' in configuration.")
             raise SystemExit(1)
 
+        eval_started = datetime.now(timezone.utc)
+        eval_env_name = "reward_eval"
+        eval_agent_type = PPO_POLICY_NAME
+
         try:
             first_env_type = reward_configs[0].get("type", py_sim_env_name)
             first_env_name = resolve_environment_name(first_env_type)
+            eval_env_name = first_env_name
             dummy_env = build_default_environment(first_env_name, framework_config)
             eval_policy_name = MULTI_PPO_POLICY_NAME if first_env_name == multi_sim_env_name else PPO_POLICY_NAME
+            eval_agent_type = eval_policy_name
             renamed_log_path = update_log_file_agent_type(eval_policy_name)
             if renamed_log_path is not None:
                 logger.info("Log file renamed to: %s", renamed_log_path)
@@ -270,6 +302,30 @@ if __name__ == "__main__" or __name__ == "fw.main":
         except Exception as exc:
             logger.exception("Reward evaluation failed: %s", exc)
             raise SystemExit(1)
+        finally:
+            # Bundle regardless of success/failure, same rationale as the
+            # standard batch path above.
+            eval_hyperparameters = get_hyperparameters(eval_agent_type)
+            eval_model_dirs = [eval_hyperparameters.get("model_dir", "models"), str(Path.cwd() / "models")]
+            # Trainer.export_evaluation_results() (called just above) writes
+            # its CSV to Path("models") relative to the current working
+            # directory rather than resolving it against src_dir like every
+            # other output path in the framework - see the note in
+            # trainer.py. Scanning both covers the CSV regardless of which
+            # directory the process was actually launched from; when CWD
+            # == src_dir (the common case) bundle_run_output de-duplicates
+            # the two into one.
+            bundle_run_output(
+                run_started=eval_started,
+                src_dir=_SRC_DIR,
+                model_dirs=eval_model_dirs,
+                log_dirs=eval_hyperparameters.get("log_dir", "logs"),
+                input_files=[_CONFIG_INPUT_FILE],
+                resolved_config=framework_config,
+                env_name=eval_env_name,
+                agent_type=eval_agent_type,
+                run_type=action,
+            )
 
     standard_envs = []
 

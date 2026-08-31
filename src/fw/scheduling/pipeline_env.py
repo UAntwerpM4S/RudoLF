@@ -91,7 +91,9 @@ _CONFIG_BUILDERS = {
 
 
 def _deep_merge(base: dict, overrides: dict) -> dict:
-    """Recursively merge *overrides* onto a copy of *base*."""
+    """
+    Recursively merge *overrides* onto a copy of *base*.
+    """
 
     result = dict(base)
     for key, value in overrides.items():

@@ -51,7 +51,7 @@ _UNSUPPORTED_POLICY_STRATEGIES = {"REUSE_CURRENT_POLICY"}
 
 
 class PipelineSpecError(ValueError):
-    """Raised when a pipeline run file fails validation."""
+    """ Raised when a pipeline run file fails validation. """
 
 
 def load_pipeline_spec(path: str) -> PipelineSpec:

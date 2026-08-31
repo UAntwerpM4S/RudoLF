@@ -80,7 +80,8 @@ class StopCondition:
 
 
     def reset(self) -> None:
-        """Reset the patience counter.
+        """
+        Reset the patience counter.
 
         The patience counter was never reset between environments in
         SimpleScheduler.execute, so later envs could satisfy the stop condition

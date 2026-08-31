@@ -258,7 +258,8 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
 
 
 def compute_ray_features(env: "PySimEnv", ship_pos: np.ndarray, heading_rad: float) -> np.ndarray:
-    """Cast 24 rays around the ship and return normalized proximity features.
+    """
+    Cast 24 rays around the ship and return normalized proximity features.
 
     Each ray is fired from *ship_pos* in the direction
     (ship heading + ray_angle_deg) expressed in the world frame.
@@ -286,6 +287,7 @@ def compute_ray_features(env: "PySimEnv", ship_pos: np.ndarray, heading_rad: flo
     Returns:
         features: float32 array of shape (NBR_RAY_FEATURES,) = (24,).
     """
+
     # Rotate the precomputed local-frame offsets into world frame using heading.
     # Convention: dx = sin(angle), dy = cos(angle) (North-referenced bearing).
     cos_h, sin_h = np.cos(heading_rad), np.sin(heading_rad)
@@ -327,6 +329,7 @@ def get_current_velocity(_ship_interface):
     getShipVelocityOverGround() and getShipVelocityThroughWater() return an object
     with .x (surge) and .y (sway) in body frame. Heading is east-zero, CCW (north=90°).
     """
+
     heading_deg = _ship_interface.getShipHeading()
     psi = np.radians(heading_deg)
 
