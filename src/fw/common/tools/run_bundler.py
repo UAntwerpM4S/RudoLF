@@ -119,6 +119,7 @@ def bundle_run_output(
     agent_type: str,
     run_type: str,
     bundle_dir: str = "run_archives",
+    additional_model_files: Iterable[Path] = (),
 ) -> Optional[Path]:
     """
     Create a ZIP bundle of this run's input and output files.
@@ -146,6 +147,16 @@ def bundle_run_output(
             "train", "visualize", "evaluate_reward", "pipeline".
         bundle_dir: Directory (relative to src_dir, or absolute) to write
             the bundle under. Defaults to "run_archives".
+        additional_model_files: Specific files to embed verbatim under
+            output/models/, regardless of mtime. Intended for cases like a
+            standalone "visualize" run, which only *reads* an existing
+            policy checkpoint rather than writing to model_dir - such a
+            file predates `run_started` and would otherwise be silently
+            missed by the mtime-based scan below. Paths that don't exist
+            are skipped with a warning, same as `input_files`. If a file
+            was already picked up by the mtime scan (e.g. it happens to
+            also have been touched during this run), it's written once,
+            not duplicated.
 
     Returns:
         Path to the created ZIP file, or None if bundling failed or
@@ -220,6 +231,7 @@ def bundle_run_output(
             # path from different dirs can't collide in the archive. With
             # a single model_dir (the common case) the layout stays flat.
             used_model_labels: set = set()
+            written_model_arcnames: set = set()
             for model_dir in resolved_model_dirs:
                 if len(resolved_model_dirs) > 1:
                     label = _unique_label(model_dir.name or "models", used_model_labels)
@@ -229,7 +241,26 @@ def bundle_run_output(
                 for file_path in _collect_changed_files(model_dir, since_ts):
                     arcname = f"{prefix}/{file_path.relative_to(model_dir).as_posix()}"
                     zf.write(file_path, arcname=arcname)
+                    written_model_arcnames.add(arcname)
                     wrote_anything = True
+
+            for extra_file in additional_model_files:
+                extra_path = Path(extra_file)
+                if not extra_path.is_file():
+                    logger.warning(
+                        "bundle_run_output: additional model file '%s' does not "
+                        "exist, skipping.",
+                        extra_path,
+                    )
+                    continue
+                arcname = f"output/models/{extra_path.name}"
+                if arcname in written_model_arcnames:
+                    # Already captured by the mtime scan above - don't write
+                    # the same archive path twice.
+                    continue
+                zf.write(extra_path, arcname=arcname)
+                written_model_arcnames.add(arcname)
+                wrote_anything = True
 
             used_log_labels: set = set()
             for log_dir in resolved_log_dirs:

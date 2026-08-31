@@ -13,13 +13,14 @@ if __name__ == "__main__" or __name__ == "fw.main":
     import runpy
     import logging
     import multiprocessing
+    import fw.configuration.config as config_module
 
     from pathlib import Path
     from datetime import datetime, timezone
-    import fw.configuration.config as config_module
-    from fw.common.tools.run_bundler import bundle_run_output
     from fw.configuration.config import get_config_parameters, get_hyperparameters
     from fw.common.tools.logging_config import setup_logging, update_log_file_agent_type
+    from fw.common.tools.path_utils import resolve_path_relative_to_src
+    from fw.common.tools.run_bundler import bundle_run_output
 
     _SRC_DIR = Path(__file__).resolve().parents[1]
     _CONFIG_INPUT_FILE = Path(config_module.__file__)
@@ -252,6 +253,27 @@ if __name__ == "__main__" or __name__ == "fw.main":
             # Bundle this batch's input/output regardless of whether it
             # succeeded, so a failed run still leaves a debuggable bundle.
             batch_hyperparameters = get_hyperparameters(agent_type)
+
+            policy_files = []
+            if action == "visualize":
+                # A standalone 'visualize' run (as opposed to the
+                # visualization that happens right after a 'train' action)
+                # only *reads* an existing policy checkpoint - it never
+                # writes to model_dir. That checkpoint therefore predates
+                # batch_started and would be silently skipped by
+                # bundle_run_output's mtime-based scan. Resolve its
+                # expected path explicitly (see run_bundler.py's module
+                # docstring for the "{training_name}_{agent_type}_policy.zip"
+                # naming convention) so the bundle still documents which
+                # policy was actually visualized.
+                resolved_model_dir = resolve_path_relative_to_src(
+                    str(batch_hyperparameters.get("model_dir", "models")), _SRC_DIR
+                )
+                policy_files = [
+                    resolved_model_dir / f"{training_name}_{agent_type}_policy.zip"
+                    for training_name in sorted({e.gym_env.training_name for e in envs})
+                ]
+
             bundle_run_output(
                 run_started=batch_started,
                 src_dir=_SRC_DIR,
@@ -262,6 +284,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 env_name=batch_env_name,
                 agent_type=agent_type,
                 run_type=action,
+                additional_model_files=policy_files,
             )
         return True
 

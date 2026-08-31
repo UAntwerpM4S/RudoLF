@@ -65,6 +65,7 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     from datetime import datetime, timezone
     from fw.common.tools.logging_config import setup_logging
     from fw.common.tools.run_bundler import bundle_run_output
+    from fw.common.tools.path_utils import resolve_path_relative_to_src
     from fw.configuration.config import PPO_POLICY_NAME, get_hyperparameters
 
     _SRC_DIR = Path(__file__).resolve().parents[1]
@@ -172,6 +173,32 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
             # when CWD == src_dir.
             _pipeline_model_dirs.append(str(Path.cwd() / "models"))
 
+        # A "visualize" block only *reads* an existing policy checkpoint -
+        # it never writes to model_dir - so that checkpoint predates
+        # _RUN_STARTED and would be silently skipped by bundle_run_output's
+        # mtime-based scan (same rationale as main.py's standalone
+        # 'visualize' action). Resolve the expected path per block (using
+        # each block's own env_type/hyperparameter_overrides) and pass it
+        # through explicitly. For a "visualize" block chained after a
+        # "train" block earlier in this same pipeline run, the checkpoint
+        # will typically already be caught by the mtime scan above;
+        # bundle_run_output dedupes so listing it again here is harmless.
+        _pipeline_policy_files = []
+        for _block in spec.blocks:
+            if _block.action != "visualize":
+                continue
+            _visualize_training_name = resolve_environment_name(_block.env_type)
+            _block_hyperparameters = get_hyperparameters(
+                PPO_POLICY_NAME, env_name=_visualize_training_name
+            )
+            _block_hyperparameters.update(_block.hyperparameter_overrides)
+            _block_model_dir = resolve_path_relative_to_src(
+                str(_block_hyperparameters.get("model_dir", "models")), _SRC_DIR
+            )
+            _pipeline_policy_files.append(
+                _block_model_dir / f"{_visualize_training_name}_{PPO_POLICY_NAME}_policy.zip"
+            )
+
         bundle_run_output(
             run_started=_RUN_STARTED,
             src_dir=_SRC_DIR,
@@ -182,4 +209,5 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
             env_name=Path(args.spec).stem,
             agent_type=PPO_POLICY_NAME,
             run_type="pipeline",
+            additional_model_files=_pipeline_policy_files,
         )
