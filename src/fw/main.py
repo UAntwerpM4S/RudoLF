@@ -1,12 +1,7 @@
 if __name__ == "__main__" or __name__ == "fw.main":
-    # MUST run before any import that pulls in torch/numpy, since both
-    # BLAS thread pools read these once at library load time. With
-    # SubprocVecEnv (num_envs=12) each child process inherits the env
-    # and respects the same single-thread setting, eliminating the
-    # 12-subproc x N-thread oversubscription that destabilizes PPO on
-    # CPUs with high core counts
     import os
 
+    # Limit BLAS threads before NumPy/Torch load to avoid subprocess oversubscription.
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
 
@@ -88,12 +83,11 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         Args:
             selected_action: Framework action to forward to the AirSim
-                entrypoint ("train" or "visualize" or "evaluate_reward").
+                entrypoint ("train", "visualize", or "evaluate_reward").
 
         Returns:
-            True when the AirSim step completed successfully. False when the
-            AirSim step failed and the caller should continue with remaining
-            framework steps.
+            True when the AirSim step completed successfully. False when
+            it failed and the caller should continue with remaining steps.
         """
 
         try:
@@ -178,8 +172,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
         Choose the correct agent type based on the environments.
 
         If any environment has `include_scenario_one_hot` enabled, use
-        MPSA (Multi-Policy Single Agent).  If any environment is a
-        MultiSimEnv, use MPPO.  Otherwise, default to single-policy PPO.
+        MPSA (Multi-Policy Single Agent). If any environment is a
+        MultiSimEnv, use MPPO. Otherwise, default to single-policy PPO.
 
         Args:
             envs: List of framework environment wrappers.
@@ -192,10 +186,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
             if getattr(sub_env.gym_env, "include_scenario_one_hot", False):
                 return MULTI_POLICY_SINGLE_NAME
 
-        # MultiSimEnv requires its own policy type; all other envs use PPO.
-        # training_name equals the wrapper's ENVIRONMENT_NAME (e.g. "MultiSimEnv").
-        # NOTE: type_name is NOT safe here - it reflects the underlying gym
-        # implementation class, which multiple wrapper environments can share.
         if any(e.gym_env.training_name == multi_sim_env_name for e in envs):
             return MULTI_PPO_POLICY_NAME
 
@@ -206,11 +196,11 @@ if __name__ == "__main__" or __name__ == "fw.main":
         Run one contiguous batch of framework environments.
 
         Args:
-            envs: Framework environment instances collected from the ordered
-                `env_type` sequence up to the next AirSim step boundary.
+            envs: Framework environment instances collected from the
+                ordered `env_type` sequence up to the next AirSim step.
 
         Returns:
-            True when a framework train/visualize step was executed, otherwise
+            True when a framework train/visualize step was executed,
             False when `envs` is empty.
         """
 
@@ -219,10 +209,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         batch_started = datetime.now(timezone.utc)
         batch_env_name = "+".join(sorted({e.gym_env.training_name for e in envs})) or env_name_for_log
-        # Valid from the start (matches a real DEFAULT_HYPERPARAMETERS key),
-        # so bundling in `finally` never fails just because `_select_agent_type`
-        # itself didn't get a chance to run - see the evaluate_reward branch
-        # below for the same pattern.
         agent_type = PPO_POLICY_NAME
 
         try:
@@ -255,13 +241,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
                     logger.info("Training metrics (grouped): %s", filtered_metrics)
         finally:
-            # Bundle this batch's input/output regardless of whether it
-            # succeeded, so a failed run still leaves a debuggable bundle.
-            # This prep is deliberately its own try/except: bundle_run_output()
-            # already can't raise, but building its arguments (hyperparameter
-            # lookup, path resolution, the visualize glob) happens in this
-            # frame, *before* that protection applies - a bug here must not
-            # crash or mask whatever actually happened in the try block above.
             try:
                 batch_hyperparameters = get_hyperparameters(agent_type)
                 model_dir_value = batch_hyperparameters.get("model_dir", "models")
@@ -270,14 +249,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 if action == "visualize":
                     batch_model_dir = resolve_path_relative_to_src(str(model_dir_value), _SRC_DIR)
                     if batch_model_dir.is_dir():
-                        # visualize() only loads an existing policy checkpoint -
-                        # it never (re)writes one - so it wouldn't show up in the
-                        # mtime-based scan on its own. Rather than reconstruct
-                        # the exact filename Trainer would load (which depends
-                        # on the "visualize_best_trained" config flag), include
-                        # every existing policy checkpoint for this agent_type -
-                        # broader than strictly necessary, but never misses the
-                        # one in use.
                         existing_policy_files = sorted(batch_model_dir.glob(f"*_{agent_type}_policy.zip"))
             except Exception as ex:
                 logger.warning("Could not prepare bundle metadata for this batch: %s", ex)
@@ -297,8 +268,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
             )
         return True
 
-    # Both visualize and train now follow env_type order exactly (for airsim),
-    # but standard environments are batched to preserve Trainer functionality.
     executed_any_step = False
 
     if action == "evaluate_reward":
@@ -329,24 +298,13 @@ if __name__ == "__main__" or __name__ == "fw.main":
             trainer.export_evaluation_results(results, results_file)
             logger.info("Reward evaluation complete. Results exported to '%s'.", results_file)
             executed_any_step = True
-            # evaluate_reward is a standalone mode; avoid running standard train/visualize afterward.
             raise SystemExit(0)
+
         except Exception as exc:
             logger.exception("Reward evaluation failed: %s", exc)
             raise SystemExit(1)
+
         finally:
-            # Bundle regardless of success/failure, same rationale as the
-            # standard batch path above. export_evaluation_results() writes
-            # its CSV to Path("models") relative to the current working
-            # directory rather than through resolve_path_relative_to_src
-            # like everything else, so scan both that and the normal
-            # resolved model_dir to make sure the CSV isn't missed when
-            # the process wasn't launched from the project root.
-            #
-            # This prep is its own try/except for the same reason as the
-            # standard-batch path above: it must not crash or mask the real
-            # evaluate_reward outcome above (including the SystemExit(0)/(1)
-            # already in flight).
             try:
                 eval_hyperparameters = get_hyperparameters(eval_agent_type)
                 model_dir_values = [
