@@ -41,7 +41,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         run_type=action,
         env_name=env_name_for_log,
         agent_type="na",
-        src_dir=Path(__file__).resolve().parents[1],
+        src_dir=_SRC_DIR,
         level=framework_config.get("log_level", "INFO"),
     )
     logger = logging.getLogger("fw.main")
@@ -217,21 +217,26 @@ if __name__ == "__main__" or __name__ == "fw.main":
         if not envs:
             return False
 
-        for sim_env in envs:
-            apply_profile(profile, env=sim_env.gym_env)
-            sim = getattr(sim_env.gym_env, "phys_sim", None) or getattr(sim_env.gym_env, "_phys_sim", None)
-            if sim is not None:
-                apply_profile(profile, simulator=sim)
-
-        agent_type = _select_agent_type(envs)
-        updated_log_path = update_log_file_agent_type(agent_type)
-        if updated_log_path is not None:
-            logger.info("Log file renamed to: %s", updated_log_path)
-
         batch_started = datetime.now(timezone.utc)
         batch_env_name = "+".join(sorted({e.gym_env.training_name for e in envs})) or env_name_for_log
+        # Valid from the start (matches a real DEFAULT_HYPERPARAMETERS key),
+        # so bundling in `finally` never fails just because `_select_agent_type`
+        # itself didn't get a chance to run - see the evaluate_reward branch
+        # below for the same pattern.
+        agent_type = PPO_POLICY_NAME
 
         try:
+            for sim_env in envs:
+                apply_profile(profile, env=sim_env.gym_env)
+                sim = getattr(sim_env.gym_env, "phys_sim", None) or getattr(sim_env.gym_env, "_phys_sim", None)
+                if sim is not None:
+                    apply_profile(profile, simulator=sim)
+
+            agent_type = _select_agent_type(envs)
+            updated_log_path = update_log_file_agent_type(agent_type)
+            if updated_log_path is not None:
+                logger.info("Log file renamed to: %s", updated_log_path)
+
             std_trainer = Trainer(agent_type, envs, profile, "SimpleScheduler", config=framework_config)
             if action == "visualize":
                 std_trainer.visualize(envs, airsim_bridge=None)
@@ -252,39 +257,43 @@ if __name__ == "__main__" or __name__ == "fw.main":
         finally:
             # Bundle this batch's input/output regardless of whether it
             # succeeded, so a failed run still leaves a debuggable bundle.
-            batch_hyperparameters = get_hyperparameters(agent_type)
-
-            policy_files = []
-            if action == "visualize":
-                # A standalone 'visualize' run (as opposed to the
-                # visualization that happens right after a 'train' action)
-                # only *reads* an existing policy checkpoint - it never
-                # writes to model_dir. That checkpoint therefore predates
-                # batch_started and would be silently skipped by
-                # bundle_run_output's mtime-based scan. Resolve its
-                # expected path explicitly (see run_bundler.py's module
-                # docstring for the "{training_name}_{agent_type}_policy.zip"
-                # naming convention) so the bundle still documents which
-                # policy was actually visualized.
-                resolved_model_dir = resolve_path_relative_to_src(
-                    str(batch_hyperparameters.get("model_dir", "models")), _SRC_DIR
-                )
-                policy_files = [
-                    resolved_model_dir / f"{training_name}_{agent_type}_policy.zip"
-                    for training_name in sorted({e.gym_env.training_name for e in envs})
-                ]
+            # This prep is deliberately its own try/except: bundle_run_output()
+            # already can't raise, but building its arguments (hyperparameter
+            # lookup, path resolution, the visualize glob) happens in this
+            # frame, *before* that protection applies - a bug here must not
+            # crash or mask whatever actually happened in the try block above.
+            try:
+                batch_hyperparameters = get_hyperparameters(agent_type)
+                model_dir_value = batch_hyperparameters.get("model_dir", "models")
+                log_dir_value = batch_hyperparameters.get("log_dir", "logs")
+                existing_policy_files = []
+                if action == "visualize":
+                    batch_model_dir = resolve_path_relative_to_src(str(model_dir_value), _SRC_DIR)
+                    if batch_model_dir.is_dir():
+                        # visualize() only loads an existing policy checkpoint -
+                        # it never (re)writes one - so it wouldn't show up in the
+                        # mtime-based scan on its own. Rather than reconstruct
+                        # the exact filename Trainer would load (which depends
+                        # on the "visualize_best_trained" config flag), include
+                        # every existing policy checkpoint for this agent_type -
+                        # broader than strictly necessary, but never misses the
+                        # one in use.
+                        existing_policy_files = sorted(batch_model_dir.glob(f"*_{agent_type}_policy.zip"))
+            except Exception as ex:
+                logger.warning("Could not prepare bundle metadata for this batch: %s", ex)
+                model_dir_value, log_dir_value, existing_policy_files = "models", "logs", []
 
             bundle_run_output(
                 run_started=batch_started,
                 src_dir=_SRC_DIR,
-                model_dirs=batch_hyperparameters.get("model_dir", "models"),
-                log_dirs=batch_hyperparameters.get("log_dir", "logs"),
+                model_dirs=model_dir_value,
+                log_dirs=log_dir_value,
                 input_files=[_CONFIG_INPUT_FILE],
                 resolved_config=framework_config,
+                additional_model_files=existing_policy_files,
                 env_name=batch_env_name,
                 agent_type=agent_type,
                 run_type=action,
-                additional_model_files=policy_files,
             )
         return True
 
@@ -327,22 +336,34 @@ if __name__ == "__main__" or __name__ == "fw.main":
             raise SystemExit(1)
         finally:
             # Bundle regardless of success/failure, same rationale as the
-            # standard batch path above.
-            eval_hyperparameters = get_hyperparameters(eval_agent_type)
-            eval_model_dirs = [eval_hyperparameters.get("model_dir", "models"), str(Path.cwd() / "models")]
-            # Trainer.export_evaluation_results() (called just above) writes
+            # standard batch path above. export_evaluation_results() writes
             # its CSV to Path("models") relative to the current working
-            # directory rather than resolving it against src_dir like every
-            # other output path in the framework - see the note in
-            # trainer.py. Scanning both covers the CSV regardless of which
-            # directory the process was actually launched from; when CWD
-            # == src_dir (the common case) bundle_run_output de-duplicates
-            # the two into one.
+            # directory rather than through resolve_path_relative_to_src
+            # like everything else, so scan both that and the normal
+            # resolved model_dir to make sure the CSV isn't missed when
+            # the process wasn't launched from the project root.
+            #
+            # This prep is its own try/except for the same reason as the
+            # standard-batch path above: it must not crash or mask the real
+            # evaluate_reward outcome above (including the SystemExit(0)/(1)
+            # already in flight).
+            try:
+                eval_hyperparameters = get_hyperparameters(eval_agent_type)
+                model_dir_values = [
+                    eval_hyperparameters.get("model_dir", "models"),
+                    str(Path.cwd() / "models"),
+                ]
+                log_dir_values = eval_hyperparameters.get("log_dir", "logs")
+            except Exception as exc:
+                logger.warning("Could not prepare bundle metadata for reward evaluation: %s", exc)
+                model_dir_values = ["models", str(Path.cwd() / "models")]
+                log_dir_values = "logs"
+
             bundle_run_output(
                 run_started=eval_started,
                 src_dir=_SRC_DIR,
-                model_dirs=eval_model_dirs,
-                log_dirs=eval_hyperparameters.get("log_dir", "logs"),
+                model_dirs=model_dir_values,
+                log_dirs=log_dir_values,
                 input_files=[_CONFIG_INPUT_FILE],
                 resolved_config=framework_config,
                 env_name=eval_env_name,
