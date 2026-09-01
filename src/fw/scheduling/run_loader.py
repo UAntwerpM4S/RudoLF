@@ -1,11 +1,5 @@
 """
-run_loader.py - Load and validate a JSON pipeline-run file into a PipelineSpec.
-
-Every field is checked against the framework's *actual* enums and registries
-(`ShipModel`, `Model`, `ProfileRegistry`, `PolicyStrategy`, `Criterion`,
-`env_factory`'s alias table) at load time, so a typo in the run file fails
-immediately with a clear message rather than surfacing as a confusing error
-deep inside training.
+Load and validate a JSON pipeline specification against framework enums and registries.
 """
 
 from __future__ import annotations
@@ -20,43 +14,25 @@ from fw.configuration.config import PolicyStrategy
 from fw.configuration.stop_condition import Criterion
 from fw.configuration.config_profile import ProfileRegistry
 from fw.common.tools.config_utils import get_validated_bool
+from fw.common.tools.logging_config import resolve_log_level
 from fw.configuration.env_factory import resolve_environment_name, EnvironmentRegistryError
 from fw.scheduling.run_spec import PipelineBlock, PipelineSpec, StopConditionSpec, TransferSpec
-from fw.common.tools.logging_config import resolve_log_level
 
 _VALID_ACTIONS = {"train", "visualize", "evaluate_reward"}
 _VALID_FAILURE_MODES = {"continue", "abort"}
 
-# StopCondition.__init__ raises NotImplementedError for this immediately -
-# but only when that block's StopCondition is actually built, at
-# *execution* time, potentially after earlier blocks already ran for a
-# long time. Reject it here instead, at *load* time, for the whole plan.
+# Reject criteria known to fail later during execution.
 _UNIMPLEMENTED_CRITERIA = {"AUTO_CONVERGE"}
-
-# PipelineScheduler reuses ONE shared AgentManager across every block in a
-# run (see pipeline_scheduler.py's module docstring) - it does NOT build a
-# fresh Trainer/AgentManager per block, so there *is* an in-memory "current"
-# agent carried across blocks. That's not why REUSE_CURRENT_POLICY is
-# rejected here.
-#
-# It's rejected because AgentManager.set_environment saves-then-reloads a
-# policy *file* for BOTH REUSE_CURRENT_POLICY and REUSE_OTHER_POLICY (see
-# its source) - it never keeps the in-memory agent object across the
-# set_environment() call regardless of strategy. So REUSE_CURRENT_POLICY
-# would, in practice, behave exactly like REUSE_OTHER_POLICY pointed at the
-# current block's own env, just via a more confusing name. Rejected here
-# instead of silently accepted; see main_pipeline.py's docstring for the
-# same rationale.
 _UNSUPPORTED_POLICY_STRATEGIES = {"REUSE_CURRENT_POLICY"}
 
 
 class PipelineSpecError(ValueError):
-    """ Raised when a pipeline run file fails validation. """
+    """ Raised when a pipeline specification fails validation. """
 
 
 def load_pipeline_spec(path: str) -> PipelineSpec:
     """
-    Read and validate a pipeline run file.
+    Read and validate a pipeline specification file.
 
     Args:
         path: Path to a JSON file shaped like:
@@ -76,12 +52,7 @@ def load_pipeline_spec(path: str) -> PipelineSpec:
 
 def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
     """
-    Validate the top-level run file and parse every block in order.
-
-    Validates `on_block_failure` and that `blocks` is non-empty, parses
-    each raw block via `_parse_block` (rejecting duplicate names as it
-    goes), then makes a second pass ensuring every `transfer.from_block`
-    reference names a strictly earlier block in the same file.
+    Validate and parse the top-level pipeline specification.
 
     Args:
         raw: Parsed JSON content of the run file.
@@ -115,13 +86,6 @@ def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
         seen_names.add(block.name)
         blocks.append(block)
 
-    # Second pass: transfer.from_block must point at a *strictly earlier*
-    # "train" block, so a run-time lookup by name can never fail on a
-    # forward/self reference, and never fail with the confusing
-    # "has not completed successfully yet" message for a block that
-    # completed fine but was never going to have a checkpoint to reuse
-    # (only "train" blocks save one - see PipelineScheduler.execute's
-    # completed_block_names, which only ever collects "train" block names).
     for i, block in enumerate(blocks):
         ref = block.transfer.from_block
         if ref is None:
@@ -149,15 +113,7 @@ def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
 
 def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], source: str) -> PipelineBlock:
     """
-    Validate one raw block dict and build its `PipelineBlock`.
-
-    Checks: `name` is a non-empty, unique string; `env_type` resolves via
-    `resolve_environment_name`; `profile` is registered; `ship_model` /
-    `dynamics_model`, if given, are valid enum members; `action` is one
-    of the supported actions; `reward_configs` is present if and only if
-    `action` == "evaluate_reward"; `stop_condition` and `transfer` are
-    delegated to `_parse_stop_condition`/`_parse_transfer`; `on_failure`,
-    if given, is a valid failure mode.
+    Validate and parse one pipeline block.
 
     Args:
         raw_block: One entry from the run file's `blocks` list.
@@ -246,16 +202,10 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
 
 def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopConditionSpec:
     """
-    Validate a raw `stop_condition` dict and build its `StopConditionSpec`.
-
-    `criterion` defaults to "NBR_POLICY_UPDATES" and must name a member
-    of `fw.configuration.stop_condition.Criterion`; "AUTO_CONVERGE" is
-    rejected here even though it is a valid enum member, since
-    `StopCondition.__init__` raises `NotImplementedError` for it (see
-    `_UNIMPLEMENTED_CRITERIA`).
+    Validate and parse a stop-condition specification.
 
     Args:
-        raw: The block's raw `stop_condition` dict (may be empty).
+        raw: The block's raw `stop_condition` dict (can be empty).
         where: Location string used in error messages.
         name: The owning block's name, used in error messages.
 
@@ -285,25 +235,10 @@ def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopCon
 
 def _parse_transfer(raw: Dict[str, Any], action: str, where: str, name: str) -> TransferSpec:
     """
-    Validate a raw `transfer` dict and build its `TransferSpec`.
-
-    `policy_strategy`, if given, must name a member of
-    `fw.configuration.config.PolicyStrategy`; "REUSE_CURRENT_POLICY" is
-    rejected even though it is a valid enum member (see
-    `_UNSUPPORTED_POLICY_STRATEGIES` for why). `from_block` and
-    `external_training_name` are mutually exclusive. `independent`, if
-    `True`, is mutually exclusive with all three of the above - it marks
-    the block as explicitly opting out of the scheduler's implicit
-    previous-train-block chaining, so combining it with an explicit
-    transfer choice would be a contradiction in the run file. `independent`
-    is also only meaningful for `action == "train"` blocks - the implicit
-    chaining it opts out of only ever applies to "train" blocks in the
-    first place (see `PipelineScheduler._resolve_transfer`), so setting it
-    on a "visualize" or "evaluate_reward" block is rejected rather than
-    silently ignored or silently forcing that block to RESET_POLICY.
+    Validate and parse a transfer specification.
 
     Args:
-        raw: The block's raw `transfer` dict (may be empty).
+        raw: The block's raw `transfer` dict (can be empty).
         action: The owning block's already-validated `action` (one of
             `_VALID_ACTIONS`), used to reject `independent` on any action
             other than "train".
@@ -375,7 +310,7 @@ def _parse_transfer(raw: Dict[str, Any], action: str, where: str, name: str) -> 
 
 def _validate_choice(field_name: str, value: Any, valid: Set[str], where: str) -> None:
     """
-    Raise if `value` is not one of `valid`.
+    Raise if value is not one of the allowed choices.
 
     Args:
         field_name: Name of the field being validated, used in the
@@ -396,7 +331,7 @@ def _validate_choice(field_name: str, value: Any, valid: Set[str], where: str) -
 
 def _validate_enum_member(field_name: str, value: str, enum_cls, where: str, block_name: str) -> None:
     """
-    Raise if `value` does not name a member of `enum_cls`.
+    Raise if value does not name a member of enum_cls.
 
     Args:
         field_name: Name of the field being validated, used in the

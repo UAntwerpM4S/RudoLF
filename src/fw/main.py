@@ -1,23 +1,19 @@
 if __name__ == "__main__" or __name__ == "fw.main":
-    # MUST run before any import that pulls in torch/numpy, since both
-    # BLAS thread pools read these once at library load time. With
-    # SubprocVecEnv (num_envs=12) each child process inherits the env
-    # and respects the same single-thread setting, eliminating the
-    # 12-subproc x N-thread oversubscription that destabilizes PPO on
-    # CPUs with high core counts
     import os
 
+    # Limit BLAS threads before NumPy/Torch load to avoid subprocess oversubscription.
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
 
     import runpy
     import logging
     import multiprocessing
+    import fw.configuration.config as config_module
 
     from pathlib import Path
     from datetime import datetime, timezone
-    import fw.configuration.config as config_module
     from fw.common.tools.run_bundler import bundle_run_output
+    from fw.common.tools.path_utils import resolve_path_relative_to_src
     from fw.configuration.config import get_config_parameters, get_hyperparameters
     from fw.common.tools.logging_config import setup_logging, update_log_file_agent_type
 
@@ -40,7 +36,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         run_type=action,
         env_name=env_name_for_log,
         agent_type="na",
-        src_dir=Path(__file__).resolve().parents[1],
+        src_dir=_SRC_DIR,
         level=framework_config.get("log_level", "INFO"),
     )
     logger = logging.getLogger("fw.main")
@@ -87,12 +83,11 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
         Args:
             selected_action: Framework action to forward to the AirSim
-                entrypoint ("train" or "visualize" or "evaluate_reward").
+                entrypoint ("train", "visualize", or "evaluate_reward").
 
         Returns:
-            True when the AirSim step completed successfully. False when the
-            AirSim step failed and the caller should continue with remaining
-            framework steps.
+            True when the AirSim step completed successfully. False when
+            it failed and the caller should continue with remaining steps.
         """
 
         try:
@@ -177,8 +172,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
         Choose the correct agent type based on the environments.
 
         If any environment has `include_scenario_one_hot` enabled, use
-        MPSA (Multi-Policy Single Agent).  If any environment is a
-        MultiSimEnv, use MPPO.  Otherwise, default to single-policy PPO.
+        MPSA (Multi-Policy Single Agent). If any environment is a
+        MultiSimEnv, use MPPO. Otherwise, default to single-policy PPO.
 
         Args:
             envs: List of framework environment wrappers.
@@ -191,10 +186,6 @@ if __name__ == "__main__" or __name__ == "fw.main":
             if getattr(sub_env.gym_env, "include_scenario_one_hot", False):
                 return MULTI_POLICY_SINGLE_NAME
 
-        # MultiSimEnv requires its own policy type; all other envs use PPO.
-        # training_name equals the wrapper's ENVIRONMENT_NAME (e.g. "MultiSimEnv").
-        # NOTE: type_name is NOT safe here - it reflects the underlying gym
-        # implementation class, which multiple wrapper environments can share.
         if any(e.gym_env.training_name == multi_sim_env_name for e in envs):
             return MULTI_PPO_POLICY_NAME
 
@@ -205,32 +196,33 @@ if __name__ == "__main__" or __name__ == "fw.main":
         Run one contiguous batch of framework environments.
 
         Args:
-            envs: Framework environment instances collected from the ordered
-                `env_type` sequence up to the next AirSim step boundary.
+            envs: Framework environment instances collected from the
+                ordered `env_type` sequence up to the next AirSim step.
 
         Returns:
-            True when a framework train/visualize step was executed, otherwise
+            True when a framework train/visualize step was executed,
             False when `envs` is empty.
         """
 
         if not envs:
             return False
 
-        for sim_env in envs:
-            apply_profile(profile, env=sim_env.gym_env)
-            sim = getattr(sim_env.gym_env, "phys_sim", None) or getattr(sim_env.gym_env, "_phys_sim", None)
-            if sim is not None:
-                apply_profile(profile, simulator=sim)
-
-        agent_type = _select_agent_type(envs)
-        updated_log_path = update_log_file_agent_type(agent_type)
-        if updated_log_path is not None:
-            logger.info("Log file renamed to: %s", updated_log_path)
-
         batch_started = datetime.now(timezone.utc)
         batch_env_name = "+".join(sorted({e.gym_env.training_name for e in envs})) or env_name_for_log
+        agent_type = PPO_POLICY_NAME
 
         try:
+            for sim_env in envs:
+                apply_profile(profile, env=sim_env.gym_env)
+                sim = getattr(sim_env.gym_env, "phys_sim", None) or getattr(sim_env.gym_env, "_phys_sim", None)
+                if sim is not None:
+                    apply_profile(profile, simulator=sim)
+
+            agent_type = _select_agent_type(envs)
+            updated_log_path = update_log_file_agent_type(agent_type)
+            if updated_log_path is not None:
+                logger.info("Log file renamed to: %s", updated_log_path)
+
             std_trainer = Trainer(agent_type, envs, profile, "SimpleScheduler", config=framework_config)
             if action == "visualize":
                 std_trainer.visualize(envs, airsim_bridge=None)
@@ -249,24 +241,33 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
                     logger.info("Training metrics (grouped): %s", filtered_metrics)
         finally:
-            # Bundle this batch's input/output regardless of whether it
-            # succeeded, so a failed run still leaves a debuggable bundle.
-            batch_hyperparameters = get_hyperparameters(agent_type)
+            try:
+                batch_hyperparameters = get_hyperparameters(agent_type)
+                model_dir_value = batch_hyperparameters.get("model_dir", "models")
+                log_dir_value = batch_hyperparameters.get("log_dir", "logs")
+                existing_policy_files = []
+                if action == "visualize":
+                    batch_model_dir = resolve_path_relative_to_src(str(model_dir_value), _SRC_DIR)
+                    if batch_model_dir.is_dir():
+                        existing_policy_files = sorted(batch_model_dir.glob(f"*_{agent_type}_policy.zip"))
+            except Exception as ex:
+                logger.warning("Could not prepare bundle metadata for this batch: %s", ex)
+                model_dir_value, log_dir_value, existing_policy_files = "models", "logs", []
+
             bundle_run_output(
                 run_started=batch_started,
                 src_dir=_SRC_DIR,
-                model_dirs=batch_hyperparameters.get("model_dir", "models"),
-                log_dirs=batch_hyperparameters.get("log_dir", "logs"),
+                model_dirs=model_dir_value,
+                log_dirs=log_dir_value,
                 input_files=[_CONFIG_INPUT_FILE],
                 resolved_config=framework_config,
+                additional_model_files=existing_policy_files,
                 env_name=batch_env_name,
                 agent_type=agent_type,
                 run_type=action,
             )
         return True
 
-    # Both visualize and train now follow env_type order exactly (for airsim),
-    # but standard environments are batched to preserve Trainer functionality.
     executed_any_step = False
 
     if action == "evaluate_reward":
@@ -297,29 +298,30 @@ if __name__ == "__main__" or __name__ == "fw.main":
             trainer.export_evaluation_results(results, results_file)
             logger.info("Reward evaluation complete. Results exported to '%s'.", results_file)
             executed_any_step = True
-            # evaluate_reward is a standalone mode; avoid running standard train/visualize afterward.
             raise SystemExit(0)
+
         except Exception as exc:
             logger.exception("Reward evaluation failed: %s", exc)
             raise SystemExit(1)
+
         finally:
-            # Bundle regardless of success/failure, same rationale as the
-            # standard batch path above.
-            eval_hyperparameters = get_hyperparameters(eval_agent_type)
-            eval_model_dirs = [eval_hyperparameters.get("model_dir", "models"), str(Path.cwd() / "models")]
-            # Trainer.export_evaluation_results() (called just above) writes
-            # its CSV to Path("models") relative to the current working
-            # directory rather than resolving it against src_dir like every
-            # other output path in the framework - see the note in
-            # trainer.py. Scanning both covers the CSV regardless of which
-            # directory the process was actually launched from; when CWD
-            # == src_dir (the common case) bundle_run_output de-duplicates
-            # the two into one.
+            try:
+                eval_hyperparameters = get_hyperparameters(eval_agent_type)
+                model_dir_values = [
+                    eval_hyperparameters.get("model_dir", "models"),
+                    str(Path.cwd() / "models"),
+                ]
+                log_dir_values = eval_hyperparameters.get("log_dir", "logs")
+            except Exception as exc:
+                logger.warning("Could not prepare bundle metadata for reward evaluation: %s", exc)
+                model_dir_values = ["models", str(Path.cwd() / "models")]
+                log_dir_values = "logs"
+
             bundle_run_output(
                 run_started=eval_started,
                 src_dir=_SRC_DIR,
-                model_dirs=eval_model_dirs,
-                log_dirs=eval_hyperparameters.get("log_dir", "logs"),
+                model_dirs=model_dir_values,
+                log_dirs=log_dir_values,
                 input_files=[_CONFIG_INPUT_FILE],
                 resolved_config=framework_config,
                 env_name=eval_env_name,
