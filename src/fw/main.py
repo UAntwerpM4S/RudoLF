@@ -12,10 +12,10 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     from pathlib import Path
     from datetime import datetime, timezone
+    from fw.common.tools.run_bundler import bundle_run_output
+    from fw.common.tools.path_utils import resolve_path_relative_to_src
     from fw.configuration.config import get_config_parameters, get_hyperparameters
     from fw.common.tools.logging_config import setup_logging, update_log_file_agent_type
-    from fw.common.tools.path_utils import resolve_path_relative_to_src
-    from fw.common.tools.run_bundler import bundle_run_output
 
     _SRC_DIR = Path(__file__).resolve().parents[1]
     _CONFIG_INPUT_FILE = Path(config_module.__file__)
