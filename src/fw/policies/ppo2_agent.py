@@ -6,9 +6,10 @@ import logging
 import numpy as np
 import gymnasium as gym
 
+from pathlib import Path
 from typing import Optional, Tuple
-from fw.configuration.stop_condition import StopCondition
 from fw.policies.base_agent import BaseAgent
+from fw.configuration.stop_condition import StopCondition
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
@@ -16,6 +17,8 @@ from stable_baselines3 import PPO
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
+
+_SRC_DIR = Path(__file__).resolve().parents[2]
 
 
 class PPO2Agent(BaseAgent):
@@ -75,8 +78,8 @@ class PPO2Agent(BaseAgent):
         self.log_interval = log_interval
         self.n_steps = n_steps
         self.reward_threshold = reward_threshold
-        self.log_dir = log_dir
-        self.tensorboard_log = tensorboard_log
+        self.log_dir = str(_SRC_DIR / log_dir)
+        self.tensorboard_log = str(_SRC_DIR / tensorboard_log)
         self.verbose = verbose
 
         if self.num_envs > 1:
