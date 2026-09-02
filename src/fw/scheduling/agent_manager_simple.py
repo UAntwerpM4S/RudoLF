@@ -8,6 +8,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from fw.environments.base_env import BaseEnv
 from fw.environments.multi_sim_env import MultiSimEnv
+from fw.common.tools.fh_sim_utils import fh_sim_cleanup
 from fw.configuration.config import PPO_POLICY_NAME, PPO2_POLICY_NAME, MULTI_PPO_POLICY_NAME, PolicyStrategy
 from fw.configuration.profile_applier import apply_profile, ActionAdapter, SimulatorApplier
 from airsim.communication.airsim_bridge import AirSimBridge
@@ -332,12 +333,19 @@ class AgentManagerSimple:
             yield
 
 
-    def train(self, stop_condition: StopCondition) -> None:
+    def train(self, stop_condition: StopCondition, dispose_env: bool = True) -> None:
         """
         Train the agent in the assigned environment.
 
         Args:
             stop_condition (StopCondition): The condition that determines when training should stop.
+            dispose_env (bool, optional): Whether to dispose the FH Simulator
+                bridge (if any) once training finishes. Defaults to True.
+                Callers that immediately follow this call with
+                `visualize_trained_agent()` on the same environment should
+                pass False here to avoid an unnecessary dispose + full
+                math-model reinitialization cycle; `visualize_trained_agent()`
+                always performs the (final) dispose itself.
 
         Raises:
             RuntimeError: If no agent is created.
@@ -346,15 +354,13 @@ class AgentManagerSimple:
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
-        # Start training
-        self._agent.learn(
-            stop_condition=stop_condition,
-        )
-
-        # Cleanup the environment
-        fh_sim = getattr(self.get_env(), "fh_sim", None)
-        if fh_sim is not None:
-            fh_sim.dispose()
+        # Start training. fh_sim_cleanup guarantees dispose() runs on the
+        # way out even if learn() raises (KeyboardInterrupt, training
+        # error, etc.) - not just on normal completion.
+        with fh_sim_cleanup(self.get_env, dispose=dispose_env):
+            self._agent.learn(
+                stop_condition=stop_condition,
+            )
 
 
     def visualize_trained_agent(
@@ -389,129 +395,125 @@ class AgentManagerSimple:
 
         logger.info("Running %d episodes...", num_episodes)
 
-        self.agent.set_policy_eval()
         env = self.get_env()
+        with fh_sim_cleanup(lambda: env):
+            self.agent.set_policy_eval()
 
-        # Prepare framework->AirSim coordinate transform if bridge is active
-        coord_transform = None
-        if airsim_bridge and airsim_bridge.is_connected:
-            from airsim.communication.coord_transform import CoordTransform
-            coord_transform = CoordTransform()
+            # Prepare framework->AirSim coordinate transform if bridge is active
+            coord_transform = None
+            if airsim_bridge and airsim_bridge.is_connected:
+                from airsim.communication.coord_transform import CoordTransform
+                coord_transform = CoordTransform()
 
-        with self.rendering(env):
-            if hasattr(env, "ship_pos"):
-                # Store results for each episode
-                all_paths = []
-                total_rewards = []
-                start_pos = None
+            with self.rendering(env):
+                if hasattr(env, "ship_pos"):
+                    # Store results for each episode
+                    all_paths = []
+                    total_rewards = []
+                    start_pos = None
 
-                try:
-                    for episode in range(num_episodes):
-                        state, _ = env.reset()
-
-                        if self._profile is not None:
-                            _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
-                            SimulatorApplier.apply(self._profile, _rollout_sim)
-
-                        start_pos = np.copy(env.ship_pos)
-                        episode_reward = 0
-                        done = False
-                        steps = 0
-
-                        # Store positions for this episode
-                        path_positions = [np.copy(env.ship_pos)]
-
-                        while not done:
-                            # Select action
-                            action, _, _ = self._agent.predict(state=state, deterministic=True)
+                    try:
+                        for episode in range(num_episodes):
+                            state, _ = env.reset()
 
                             if self._profile is not None:
-                                action = ActionAdapter.transform(self._profile, action)
+                                _rollout_sim = getattr(env, "phys_sim", None) or getattr(env, "_phys_sim", None)
+                                SimulatorApplier.apply(self._profile, _rollout_sim)
 
-                            # Take step in environment
-                            state, reward, terminated, truncated, _ = env.step(action)
-                            done = terminated or truncated
+                            start_pos = np.copy(env.ship_pos)
+                            episode_reward = 0
+                            done = False
+                            steps = 0
 
-                            # Include every reward, including the terminal transition
-                            steps += 1
-                            episode_reward += (reward - episode_reward) / steps
+                            # Store positions for this episode
+                            path_positions = [np.copy(env.ship_pos)]
 
-                            # Store the new position (also the terminal one)
-                            path_positions.append(np.copy(env.ship_pos))
+                            while not done:
+                                # Select action
+                                action, _, _ = self._agent.predict(state=state, deterministic=True)
 
-                            if not done:
-                                # Uncomment for animated evaluation
-                                if live_animation:
-                                    env.render()
+                                if self._profile is not None:
+                                    action = ActionAdapter.transform(self._profile, action)
 
-                                # Bridge ship position and heading to UE5 via coordinate transform
-                                if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
-                                    ax, ay, _ = coord_transform.framework_to_airsim(
-                                        float(env.ship_pos[0][0]),
-                                        float(env.ship_pos[0][1])
-                                    )
-                                    ayaw = coord_transform.framework_heading_to_airsim_yaw(
-                                        float(env.phys_sim.state.heading)
-                                    )
-                                    airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
-                            else:
-                                logger.info("Episode %d finished after %d steps with reward %.2f", episode + 1, steps, episode_reward)
-                                break
+                                # Take step in environment
+                                state, reward, terminated, truncated, _ = env.step(action)
+                                done = terminated or truncated
 
-                        all_paths.append(np.array(path_positions))
-                        total_rewards.append(episode_reward)
-                finally:
-                    if airsim_bridge is not None:
-                        airsim_bridge.disconnect()
+                                # Include every reward, including the terminal transition
+                                steps += 1
+                                episode_reward += (reward - episode_reward) / steps
 
-                # Print summary statistics
-                avg_reward = np.mean(total_rewards)
-                logger.info("Evaluation completed! Average reward: %.2f", avg_reward)
-                logger.info("Best episode reward: %.2f", max(total_rewards))
-                logger.info("Worst episode reward: %.2f", min(total_rewards))
+                                # Store the new position (also the terminal one)
+                                path_positions.append(np.copy(env.ship_pos))
 
-                self.render(
-                    env,
-                    start_pos,
-                    all_paths,
-                    total_rewards,
-                    show_plots=show_plots,
-                )
+                                if not done:
+                                    # Uncomment for animated evaluation
+                                    if live_animation:
+                                        env.render()
 
-                # Cleanup the environment
-                fh_sim = getattr(env, "fh_sim", None)
-                if fh_sim is not None:
-                    fh_sim.dispose()
+                                    # Bridge ship position and heading to UE5 via coordinate transform
+                                    if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
+                                        ax, ay, _ = coord_transform.framework_to_airsim(
+                                            float(env.ship_pos[0][0]),
+                                            float(env.ship_pos[0][1])
+                                        )
+                                        ayaw = coord_transform.framework_heading_to_airsim_yaw(
+                                            float(env.phys_sim.state.heading)
+                                        )
+                                        airsim_bridge.set_pose(ax, ay, 0.0, ayaw)
+                                else:
+                                    logger.info("Episode %d finished after %d steps with reward %.2f", episode + 1, steps, episode_reward)
+                                    break
 
-                if return_summary:
-                    env_name = getattr(env, "type_name", "environment")
-                    return {
-                        env_name: {
-                            "average_reward": float(avg_reward),
-                            "best_episode_reward": float(max(total_rewards)),
-                            "worst_episode_reward": float(min(total_rewards)),
+                            all_paths.append(np.array(path_positions))
+                            total_rewards.append(episode_reward)
+                    finally:
+                        if airsim_bridge is not None:
+                            airsim_bridge.disconnect()
+
+                    # Print summary statistics
+                    avg_reward = np.mean(total_rewards)
+                    logger.info("Evaluation completed! Average reward: %.2f", avg_reward)
+                    logger.info("Best episode reward: %.2f", max(total_rewards))
+                    logger.info("Worst episode reward: %.2f", min(total_rewards))
+
+                    self.render(
+                        env,
+                        start_pos,
+                        all_paths,
+                        total_rewards,
+                        show_plots=show_plots,
+                    )
+
+                    if return_summary:
+                        env_name = getattr(env, "type_name", "environment")
+                        return {
+                            env_name: {
+                                "average_reward": float(avg_reward),
+                                "best_episode_reward": float(max(total_rewards)),
+                                "worst_episode_reward": float(min(total_rewards)),
+                            }
                         }
-                    }
-            else:
-                # Reset the environment
-                obs, _ = env.reset()
+                else:
+                    # Reset the environment
+                    obs, _ = env.reset()
 
-                # Render the environment before starting the loop
-                env.render()
-
-                # Run the agent in the environment
-                done = False
-                while not done:
-                    # The agent chooses an action based on the current observation
-                    prediction = self._agent.predict(state=obs, deterministic=True)
-                    action = prediction[0]
-                    obs, _, terminated, truncated, _ = env.step(action)
-                    done = terminated or truncated
-
-                    # Render the environment each step to visualize the agent's action
+                    # Render the environment before starting the loop
                     env.render()
 
-            return None
+                    # Run the agent in the environment
+                    done = False
+                    while not done:
+                        # The agent chooses an action based on the current observation
+                        prediction = self._agent.predict(state=obs, deterministic=True)
+                        action = prediction[0]
+                        obs, _, terminated, truncated, _ = env.step(action)
+                        done = terminated or truncated
+
+                        # Render the environment each step to visualize the agent's action
+                        env.render()
+
+                return None
 
 
     def get_env(self):
