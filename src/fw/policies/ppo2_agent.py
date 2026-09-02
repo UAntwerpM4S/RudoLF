@@ -85,7 +85,8 @@ class PPO2Agent(BaseAgent):
         if self.num_envs > 1:
             train_env = SubprocVecEnv([self.make_env(i) for i in range(self.num_envs)])
         else:
-            train_env = DummyVecEnv([lambda: Monitor(self.create_env(), "logs/env_0")])
+            logging_dir = str(_SRC_DIR / "logs/env_0")
+            train_env = DummyVecEnv([lambda: Monitor(self.create_env(), logging_dir)])
 
         policy_kwargs = dict(
             net_arch=[256, 256, 128],
@@ -125,7 +126,8 @@ class PPO2Agent(BaseAgent):
                 A monitored Gym environment instance for the given worker rank.
             """
 
-            return Monitor(self.create_env(), f"logs/env_{rank}")
+            logging_dir = str(_SRC_DIR / f"logs/env_{rank}")
+            return Monitor(self.create_env(), logging_dir)
 
         return _init
 
@@ -188,7 +190,8 @@ class PPO2Agent(BaseAgent):
             verbose=int(self.verbose),
         )
 
-        eval_env = Monitor(self.create_env(), "logs/eval_env")
+        logging_dir = str(_SRC_DIR / "logs/eval_env")
+        eval_env = Monitor(self.create_env(), logging_dir)
 
         eval_callback = EvalCallback(
             eval_env,
