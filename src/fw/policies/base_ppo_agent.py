@@ -264,7 +264,8 @@ class BasePPOAgent(BaseAgent):
 
 
     def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
-        """Normalize rewards using running statistics (Welford's algorithm).
+        """
+        Normalize rewards using running statistics (Welford's algorithm).
 
         Args:
             rewards: Raw rewards array of shape (batch_size,).

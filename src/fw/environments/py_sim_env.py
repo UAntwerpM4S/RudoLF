@@ -663,7 +663,8 @@ class PySimEnv(BaseEnv):
             end_point: Tuple[float, float],
             max_distance: float = 200.0,
     ) -> float:
-        """Return the distance from *origin* to the nearest river-boundary
+        """
+        Return the distance from *origin* to the nearest river-boundary
         intersection along the ray `origin -> end_point`.
 
         The ray is defined by the two points; only the portion within
@@ -683,6 +684,7 @@ class PySimEnv(BaseEnv):
             float: Distance to the nearest boundary intersection in metres,
                    clipped to [0, max_distance].
         """
+
         ray = LineString([origin, end_point])
         hit = self.polygon_shape.boundary.intersection(ray)
 
@@ -712,7 +714,8 @@ class PySimEnv(BaseEnv):
             end_points: np.ndarray,
             max_distance: float = 200.0,
     ) -> np.ndarray:
-        """Vectorised version of :meth:`ray_cast_distance` for multiple rays.
+        """
+        Vectorised version of :meth:`ray_cast_distance` for multiple rays.
 
         Fires *N* rays simultaneously from a common *origin* and returns all
         distances in a single call.
@@ -742,6 +745,7 @@ class PySimEnv(BaseEnv):
                         [0, max_distance].  Index *i* corresponds to the ray
                         toward `end_points[i]`.
         """
+
         # Cache the boundary object to avoid re-extracting it every call.
         if self._boundary_cache is None:
             self._boundary_cache = self.polygon_shape.boundary
