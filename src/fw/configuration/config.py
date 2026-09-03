@@ -148,7 +148,7 @@ CONFIG_PARAMETERS = {
     # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander"
     # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
     # to train or visualize across multiple environments simultaneously.
-    'env_type': ["PySimEnv"],
+    'env_type': ["FhSimEnv"],
     'profile': "default_profile",       # Possible options: "default_profile",
                                         # "myzako_pysim_to_fhsim_transfer_profile",
                                         # "tripoli_pysim_to_fhsim_transfer_profile",
@@ -166,11 +166,11 @@ CONFIG_PARAMETERS = {
     'overall_contour': "env_Sche_no_scale.csv",
     'depth_contour': "env_Sche_250cm_no_scale.csv",
     'trajectory': "trajectory_points_no_scale.csv",
-    'scenario': "DDShip_scenario1_nowindnocurrent",
+    'scenario': "DDShip_Tripoli_scenario_nowindnocurrent",
     'ua_surrogate_config': {"wcu_enabled": False,
                             "file_name": "checkpoints/best_surrogate_clean.pth"},
-    'ship_model': ShipModel.MYZAKO_37,
-    'dynamics_model': Model.FOSSEN,
+    'ship_model': ShipModel.TRIPOLI,
+    'dynamics_model': Model.FH_TABULAR,
     'live_animation': False,
 
     # Evaluate reward configurations

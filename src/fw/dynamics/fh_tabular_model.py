@@ -89,10 +89,8 @@ class FhTabularModel(DynamicsBase):
         # --- Set controls ---
         if self._engine.ship_model == ShipModel.TRIPOLI:
             for rudder in self._engine.ship_interface.getAzipodControls():
-                # rudder_angle is in radians; convert to degrees.
-                val_deg = np.degrees(rudder_angle)
-                rudder.setDesiredDirection(float(-val_deg))
-                rudder.setEngineLeverValue(float(thrust))
+                rudder.setDesiredDirection(float(0.0))
+                rudder.setEngineLeverValue(float(1.0)) # thrust))
         else:
             for rudder in self._engine.ship_interface.getRudderControls():
                 if enable_rudder_angle_scaling:

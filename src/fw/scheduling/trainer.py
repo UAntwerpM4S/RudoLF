@@ -247,16 +247,17 @@ class Trainer:
                 if env_type == "AirSimEnv":
                     logger.info("Skipping automatic post-training visualization for AirSimEnv.")
                 else:
-                    summaries = self.visualize(
-                        [last_env],
-                        collect_evaluation_summary=True,
-                        show_plots=show_plots,
-                    )
-                    if summaries:
-                        env_metrics["evaluation_summary"] = (
-                            summaries.get(env_type)
-                            or next(iter(summaries.values()))
-                        )
+                    pass
+                    # summaries = self.visualize(
+                    #     [last_env],
+                    #     collect_evaluation_summary=True,
+                    #     show_plots=show_plots,
+                    # )
+                    # if summaries:
+                    #     env_metrics["evaluation_summary"] = (
+                    #         summaries.get(env_type)
+                    #         or next(iter(summaries.values()))
+                    #     )
             except AttributeError as e:
                 logger.warning(e)
         else:

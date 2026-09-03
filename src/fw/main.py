@@ -132,7 +132,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=3.80,
             patience=4,
-            max_time_steps=1300,
+            max_time_steps=1,
         ),
         sync_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
