@@ -89,8 +89,8 @@ class FhTabularModel(DynamicsBase):
         # --- Set controls ---
         if self._engine.ship_model == ShipModel.TRIPOLI:
             for rudder in self._engine.ship_interface.getAzipodControls():
-                rudder.setDesiredDirection(float(0.0))
-                rudder.setEngineLeverValue(float(1.0)) # thrust))
+                rudder.setDesiredDirection(float(-10.0))           # -20 turning right
+                rudder.setEngineLeverValue(float(1.0))             # +20 turning left
         else:
             for rudder in self._engine.ship_interface.getRudderControls():
                 if enable_rudder_angle_scaling:
@@ -100,11 +100,11 @@ class FhTabularModel(DynamicsBase):
                     val = np.degrees(rudder_angle) / framework_max_deg
                 else:
                     val = np.degrees(rudder_angle) / rudder.getMaximumAngle()
-                rudder.setControlValue(float(-val))   # negated: framework -> FH sign convention
-
+                rudder.setControlValue(float(-1.0))   # -1 turning left
+                                                      # +1 turning right
             for propeller in self._engine.ship_interface.getPropellerControls():
                 propeller.engage()
-                propeller.setEngineLeverValue(float(thrust))
+                propeller.setEngineLeverValue(float(1.0))
 
         # --- Advance FH physics ---
         self._engine.math_model.simulateSeconds(dt)
