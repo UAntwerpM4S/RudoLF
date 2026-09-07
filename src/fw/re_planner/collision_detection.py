@@ -17,7 +17,7 @@ class CollisionDetector:
     - dcpa
     """
 
-    def __init__(self, min_distance: float = 40.0, time_horizon: float = 50.0):
+    def __init__(self, min_distance: float = 140.0, time_horizon: float = 500.0):
         self.min_distance = float(min_distance)
         self.time_horizon = float(time_horizon)
 
@@ -94,7 +94,9 @@ class CollisionDetector:
         for entity in obstacles:
             obstacle_pos = np.asarray(entity.get_position(), dtype=float)
             obstacle_vel = np.asarray(entity.get_velocity(), dtype=float)
+            obstacle_heading = float(entity.get_heading())
             obstacle_type = str(entity.get_entity_type()).lower()
+            print(f"TS speed: {np.linalg.norm(obstacle_vel):.2f} m/s, OS speed: {ship_speed:.2f} m/s,")
 
             if obstacle_type == "static":
                 dcpa, cpa_point, tcpa = self._cpa_static_obstacle(
@@ -103,9 +105,9 @@ class CollisionDetector:
                     ship_speed=ship_speed,
                 )
             else:
-                dcpa, cpa_point, tcpa = self._cpa_moving_obstacle_analytic(
+                dcpa, cpa_point, tcpa = self._cpa_moving_obstacle(
                     obstacle_pos=obstacle_pos,
-                    obstacle_vel=obstacle_vel,
+                    obstacle_velocity=obstacle_vel,
                     ship_trajectory=remaining_path,
                     ship_speed=ship_speed,
                 )
@@ -234,6 +236,224 @@ class CollisionDetector:
     # ------------------------------------------------------------------
     # Moving obstacle
     # ------------------------------------------------------------------
+
+    def _cpa_moving_obstacle(
+        self,
+        obstacle_pos: np.ndarray,
+        obstacle_velocity: np.ndarray,
+        ship_trajectory: np.ndarray,
+        ship_speed: float,
+    ) -> Tuple[float, np.ndarray, float]:
+        """
+        Calculate DCPA and TCPA for an obstacle moving with a constant
+        two-dimensional velocity vector.
+
+        Coordinate convention:
+            x positive = East
+            y positive = North
+
+        Args:
+            obstacle_pos:
+                Current obstacle position [x, y].
+
+            obstacle_velocity:
+                Constant obstacle velocity [vx, vy].
+
+                Examples:
+                    [5, 0]   -> East
+                    [0, 5]   -> North
+                    [-5, 0]  -> West
+                    [0, -5]  -> South
+
+            ship_trajectory:
+                Piecewise-linear ship trajectory with shape (N, 2).
+
+            ship_speed:
+                Constant scalar speed of the ship.
+
+        Returns:
+            min_dist:
+                Minimum distance between the ship and obstacle.
+
+            cpa_point:
+                Obstacle position at CPA.
+
+            tcpa:
+                Time from the current instant to CPA.
+        """
+        pts = np.asarray(ship_trajectory, dtype=float)
+        obstacle_pos = np.asarray(
+            obstacle_pos,
+            dtype=float,
+        ).reshape(-1)
+
+        obstacle_velocity = np.asarray(
+            obstacle_velocity,
+            dtype=float,
+        ).reshape(-1)
+
+        ship_speed = float(
+            np.asarray(ship_speed, dtype=float).squeeze()
+        )
+
+        if len(pts) == 0:
+            raise ValueError(
+                "ship_trajectory must contain at least one point."
+            )
+
+        if obstacle_pos.size != 2:
+            raise ValueError(
+                "obstacle_pos must contain exactly two values [x, y]. "
+                f"Received shape {np.shape(obstacle_pos)}."
+            )
+
+        if obstacle_velocity.size != 2:
+            raise ValueError(
+                "obstacle_velocity must contain exactly two values [vx, vy]. "
+                f"Received shape {np.shape(obstacle_velocity)}."
+            )
+
+        if pts.ndim != 2 or pts.shape[1] != 2:
+            raise ValueError(
+                "ship_trajectory must have shape (N, 2). "
+                f"Received shape {pts.shape}."
+            )
+
+        if ship_speed < 0.0:
+            raise ValueError("ship_speed cannot be negative.")
+
+        min_dist = np.inf
+        best_tcpa = 0.0
+        best_obstacle_point = obstacle_pos.copy()
+
+        def evaluate_interval(
+            ship_start: np.ndarray,
+            ship_velocity: np.ndarray,
+            interval_start: float,
+            interval_duration: float,
+        ) -> None:
+            """
+            Calculate the minimum distance during one interval in which
+            both the ship and obstacle have constant velocities.
+            """
+            nonlocal min_dist, best_tcpa, best_obstacle_point
+
+            if interval_duration < 0.0:
+                return
+
+            # Obstacle position when the current ship segment begins.
+            obstacle_start = (
+                obstacle_pos
+                + obstacle_velocity * interval_start
+            )
+
+            # Relative state: ship relative to obstacle.
+            relative_position = ship_start - obstacle_start
+            relative_velocity = ship_velocity - obstacle_velocity
+
+            relative_speed_sq = float(
+                relative_velocity @ relative_velocity
+            )
+
+            if relative_speed_sq <= 1e-12:
+                # No relative movement: distance is constant.
+                local_tcpa = 0.0
+            else:
+                # Unconstrained CPA time for this segment.
+                local_tcpa = -float(
+                    relative_position @ relative_velocity
+                ) / relative_speed_sq
+
+                # CPA must occur while the ship is on this segment.
+                local_tcpa = float(
+                    np.clip(
+                        local_tcpa,
+                        0.0,
+                        interval_duration,
+                    )
+                )
+
+            absolute_tcpa = interval_start + local_tcpa
+
+            ship_cpa = (
+                ship_start
+                + ship_velocity * local_tcpa
+            )
+
+            obstacle_cpa = (
+                obstacle_start
+                + obstacle_velocity * local_tcpa
+            )
+
+            distance = float(
+                np.linalg.norm(ship_cpa - obstacle_cpa)
+            )
+
+            if distance < min_dist:
+                min_dist = distance
+                best_tcpa = absolute_tcpa
+                best_obstacle_point = obstacle_cpa.copy()
+
+        # The ship is stationary if it has no path or its speed is zero.
+        if len(pts) == 1 or ship_speed <= 1e-12:
+            evaluate_interval(
+                ship_start=pts[0],
+                ship_velocity=np.zeros(2),
+                interval_start=0.0,
+                interval_duration=self.time_horizon,
+            )
+
+            return min_dist, best_obstacle_point, best_tcpa
+
+        current_time = 0.0
+
+        for i in range(len(pts) - 1):
+            if current_time >= self.time_horizon:
+                break
+
+            p0 = pts[i]
+            p1 = pts[i + 1]
+
+            segment = p1 - p0
+            segment_length = float(np.linalg.norm(segment))
+
+            # Skip consecutive identical trajectory points.
+            if segment_length <= 1e-12:
+                continue
+
+            segment_direction = segment / segment_length
+
+            # Ship velocity vector on this trajectory segment.
+            ship_velocity = ship_speed * segment_direction
+
+            segment_duration = segment_length / ship_speed
+
+            # Only analyze the part inside the prediction horizon.
+            available_duration = min(
+                segment_duration,
+                self.time_horizon - current_time,
+            )
+
+            evaluate_interval(
+                ship_start=p0,
+                ship_velocity=ship_velocity,
+                interval_start=current_time,
+                interval_duration=available_duration,
+            )
+
+            current_time += segment_duration
+
+        # If the ship reaches its destination before the time horizon,
+        # assume it remains stationary at the final trajectory point.
+        if current_time < self.time_horizon:
+            evaluate_interval(
+                ship_start=pts[-1],
+                ship_velocity=np.zeros(2),
+                interval_start=current_time,
+                interval_duration=self.time_horizon - current_time,
+            )
+
+        return min_dist, best_obstacle_point, best_tcpa
 
     def _cpa_moving_obstacle_analytic(
         self,

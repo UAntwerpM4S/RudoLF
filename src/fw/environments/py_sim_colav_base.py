@@ -19,6 +19,8 @@ from fw.collision_avoidance.scenario_classifier import ScenarioClassifier
 
 import math
 
+import copy
+
 from fw.environments.py_sim_env import PySimEnv
 
 try:
@@ -95,11 +97,11 @@ class PySimColavBaseEnv(PySimEnv):
             encounter_range: float = 500.0,
             eval: bool = False,
             # Scenario type configuration
-            scenario_types: Optional[list] = ["static"],
+            scenario_types: Optional[list] = ["crossing-right"],
             scenario_probs: Optional[list] = [1.0],
             scenario_obstacle_level: Optional[str] = "episode",
             # Obstacle population configuration
-            obstacle_population: Optional[list] = [3],
+            obstacle_population: Optional[list] = [1],
             obstacle_weights: Optional[list] = [1],
             # Classifier behavior:
             #   True  → classifier is locked to the builder's ground-truth
@@ -144,7 +146,7 @@ class PySimColavBaseEnv(PySimEnv):
             "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
         self.scenario_probs = scenario_probs if scenario_probs is not None else [
-            0.0, 1, 0.0, 0.0, 0.0, 0.0
+            0.0, 0.0, 0.0, 0.0, 1.0, 0.0
         ]
         self.scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "episode"
 
@@ -291,6 +293,9 @@ class PySimColavBaseEnv(PySimEnv):
         # Render helpers
         self._collision_entity_patches = []
         self._collision_entity_render_key = None
+
+        # Copy of the checkpoints of the initial path; when the RRT update the path, the collision entities follow the original path
+        self.collision_entity_checkpoints = copy.deepcopy(self.checkpoints)
 
     # -------------------------
     # Utility & Math
@@ -696,6 +701,9 @@ class PySimColavBaseEnv(PySimEnv):
             self._sync_collision_entity_views()
 
     def _advance_entity_along_checkpoints(self, entity, dt: float) -> None:
+
+        checkpoints = self.collision_entity_checkpoints
+
         remaining_dist = float(entity.path_speed) * float(dt)
         path_direction = int(getattr(entity, "path_direction", 1))
         path_offset = float(getattr(entity, "path_offset", 0.0))
@@ -703,7 +711,8 @@ class PySimColavBaseEnv(PySimEnv):
         while remaining_dist > EPSILON and not getattr(entity, "route_finished", False):
             next_idx = int(getattr(entity, "next_checkpoint_index", -1))
 
-            if next_idx < 0 or next_idx >= len(self.checkpoints):
+
+            if next_idx < 0 or next_idx >= len(checkpoints):
                 entity.route_finished = True
                 entity.set_speed(0.0)
                 return
@@ -713,16 +722,16 @@ class PySimColavBaseEnv(PySimEnv):
                     entity.route_finished = True
                     entity.set_speed(0.0)
                     return
-                cp_a = np.asarray(self.checkpoints[next_idx - 1]["pos"], dtype=np.float32)
-                cp_b = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
+                cp_a = np.asarray(checkpoints[next_idx - 1]["pos"], dtype=np.float32)
+                cp_b = np.asarray(checkpoints[next_idx]["pos"], dtype=np.float32)
                 travel_dir = cp_b - cp_a
             else:
-                if next_idx >= len(self.checkpoints) - 1:
+                if next_idx >= len(checkpoints) - 1:
                     entity.route_finished = True
                     entity.set_speed(0.0)
                     return
-                cp_a = np.asarray(self.checkpoints[next_idx + 1]["pos"], dtype=np.float32)
-                cp_b = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
+                cp_a = np.asarray(checkpoints[next_idx + 1]["pos"], dtype=np.float32)
+                cp_b = np.asarray(checkpoints[next_idx]["pos"], dtype=np.float32)
                 travel_dir = cp_b - cp_a
 
             travel_norm = float(np.linalg.norm(travel_dir))
@@ -733,7 +742,7 @@ class PySimColavBaseEnv(PySimEnv):
 
             travel_dir = travel_dir / travel_norm
             starboard = np.array([travel_dir[1], -travel_dir[0]], dtype=np.float32)
-            target_center = np.asarray(self.checkpoints[next_idx]["pos"], dtype=np.float32)
+            target_center = np.asarray(checkpoints[next_idx]["pos"], dtype=np.float32)
             target = target_center + path_offset * starboard
 
             pos = entity.get_position()
@@ -745,7 +754,7 @@ class PySimColavBaseEnv(PySimEnv):
                 entity.path_segment_index += path_direction
                 entity.next_checkpoint_index += path_direction
 
-                if entity.next_checkpoint_index < 0 or entity.next_checkpoint_index >= len(self.checkpoints):
+                if entity.next_checkpoint_index < 0 or entity.next_checkpoint_index >= len(checkpoints):
                     entity.route_finished = True
                     entity.set_speed(0.0)
                     return
@@ -764,7 +773,7 @@ class PySimColavBaseEnv(PySimEnv):
                 entity.path_segment_index += path_direction
                 entity.next_checkpoint_index += path_direction
 
-                if entity.next_checkpoint_index < 0 or entity.next_checkpoint_index >= len(self.checkpoints):
+                if entity.next_checkpoint_index < 0 or entity.next_checkpoint_index >= len(checkpoints):
                     entity.route_finished = True
                     entity.set_speed(0.0)
                     return

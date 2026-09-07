@@ -49,13 +49,13 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             encounter_range: float = 500.0,
             eval: bool = True,
             # replanner parameters
-            danger_distance: float = 15.0,
-            time_horizon: float = 100.0,
+            danger_distance: float = 50.0,
+            time_horizon: float = 500.0,
             ships_inside_observation: int = 3,
             detection_radius: float = 1000.0,
             rrt_replan_cooldown_steps: int = 0,
             # Scenario configuration (passed to base)
-            scenario_types: Optional[list] = ["static"],
+            scenario_types: Optional[list] = ["overtaking"],
             scenario_probs: Optional[list] = [1.0],
             obstacle_population: Optional[list] = [1],
             obstacle_weights: Optional[list] = [1],
@@ -98,6 +98,9 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
         # Override base lateral max specifically for this planner subclass
         self.static_ship_lateral_max = 0.0
 
+        # Save the closest point of approach for visualization
+        self.cpa_points = []
+
     def _calculate_colav_reward(self) -> Tuple[float, bool]:
         """Replanner-specific reward.
 
@@ -127,6 +130,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
         detected = detected[:self.ships_inside_observation]
 
         if detected:
+            print(f"Detected {len(detected)} ship(s) inside detection radius {self.detection_radius}.")
             obstacles_entities = [entity for _, entity in detected]
             remaining_path = np.asarray(
                 [cp["pos"] for cp in self.checkpoints[max(0, int(self.checkpoint_index) - 1):]],
@@ -145,6 +149,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
                 velocities,
             )
             if any(collision_detected):
+                self.cpa_points.append(cpa_point)
                 print(f"Collision predicted with {len(obstacles_entities)} obstacle(s). Triggering replanner. Details: entities={obstacles_entities}, collision_detected={collision_detected}, cpa_point={cpa_point}, tcpa={tcpa}, dcpa={dcpa}")
                 self._maybe_replan_rrt(
                     obstacles_entities=obstacles_entities,

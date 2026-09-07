@@ -668,7 +668,7 @@ class ScenarioBuilder:
                 return []
             seg_lengths = np.maximum(env._seg_lengths[seg_indices], EPSILON)
             probs = seg_lengths / seg_lengths.sum()
-            seg_idx = int(seg_indices[int(env._rng.choice(len(seg_indices), p=probs))])
+            seg_idx = 30    #I CHANGE FOR TEST
 
         t_spawn = float(env._rng.uniform(t_min, t_max))
 

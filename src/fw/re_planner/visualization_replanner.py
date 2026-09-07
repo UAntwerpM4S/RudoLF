@@ -30,6 +30,9 @@ class RRTCollisionVisualizer:
         
         # Extract collision entities from the environment
         self.collision_entities = getattr(env, 'collision_entities', [])
+
+        # Extract cpa points
+        self.cpa_points = getattr(env, 'cpa_points', [])
         
         # Get replanner (try both replanner types)
         self.replanner = getattr(env, 'replanner', None)
@@ -67,14 +70,13 @@ class RRTCollisionVisualizer:
         if not self.collision_entities:
             return
         
-        for entity in self.collision_entities:
+        for index, entity in enumerate(self.collision_entities):
             # Get entity position and properties
             try:
-                position = entity.get_position()
-                if position is None or len(position) < 2:
+                cpa_point = self.cpa_points[index]
+                if cpa_point is None:
                     continue
-                
-                spawn_pos = np.array(position[:2])
+
                 radius = float(getattr(entity, 'radius', 0.0))
                 is_dynamic = bool(getattr(entity, 'is_dynamic', False))
                 
@@ -82,12 +84,17 @@ class RRTCollisionVisualizer:
                 continue
             
             edge_color = "tab:red"
+
+            cpa_point = np.asarray(
+                self.cpa_points[index],
+                dtype=float,
+            ).reshape(-1)
             
             # Draw obstacle spawn circle
             circle_label = self._get_circle_label(is_dynamic)
             ax.add_patch(
                 patches.Circle(
-                    (spawn_pos[0], spawn_pos[1]),
+                    (cpa_point[0], cpa_point[1]),
                     radius,
                     fill=True,
                     color=edge_color,
@@ -102,7 +109,7 @@ class RRTCollisionVisualizer:
             if self.replanner is not None:
                 self._plot_rrt_overlays(
                     ax=ax,
-                    spawn_pos=spawn_pos,
+                    cpa_point=cpa_point,
                     radius=radius,
                 )
             
@@ -169,123 +176,110 @@ class RRTCollisionVisualizer:
     def _build_cte_reference_lines(self, episodes: list[Any]) -> list[dict[str, object]]:
         """
         Build vertical reference lines for the CTE plot.
-
+    
         The result is expressed in episode-progress percent so the renderer
         can use it directly on the normalized cross-track error axis.
-
-        The method first tries to use the obstacle index recorded by the last
-        replanning event. If that metadata is not available, it falls back to
-        the obstacle entity that is closest to the trajectory.
+    
+        The method uses CPA (Closest Point of Approach) points stored in the
+        environment for each obstacle. For each CPA point, it computes the
+        entry/exit points around the danger radius and the exact CPA location.
         """
         if not episodes:
             return []
-
+    
         replanner = getattr(self.env, "replanner", None)
         if replanner is None:
             return []
-
+    
+        cpa_points = getattr(self.env, "cpa_points", None)
+        if cpa_points is None or not cpa_points:
+            return []
+    
         collision_entities = getattr(self.env, "collision_entities", []) or []
         if not collision_entities:
             return []
-
+    
         reference_episode = None
         for ep in episodes:
             path = getattr(ep, "path", None)
             if path is not None and np.asarray(path).ndim == 2 and len(path) >= 2:
                 reference_episode = ep
                 break
-
+    
         if reference_episode is None:
             return []
-
+    
         path = np.asarray(reference_episode.path, dtype=float)
         if path.ndim != 2 or path.shape[0] < 2 or path.shape[1] < 2:
             return []
-
-        replan_info = getattr(self.env, "_last_rrt_replan_info", None) or {}
-        collision_idx = replan_info.get("collision_obstacle_index")
-
-        obstacle = None
-        if collision_idx is not None and 0 <= int(collision_idx) < len(collision_entities):
-            obstacle = collision_entities[int(collision_idx)]
-        else:
-            path_xy = path[:, :2]
-            best_distance = np.inf
-            for entity in collision_entities:
-                try:
-                    entity_pos = np.asarray(entity.get_position(), dtype=float)
-                except (AttributeError, TypeError, ValueError):
-                    continue
-                if entity_pos.ndim != 1 or entity_pos.size < 2:
-                    continue
-                distance = float(np.min(np.linalg.norm(path_xy - entity_pos[:2], axis=1)))
-                if distance < best_distance:
-                    best_distance = distance
-                    obstacle = entity
-
-        if obstacle is None:
-            return []
-
-        try:
-            obstacle_pos = np.asarray(obstacle.get_position(), dtype=float)
-        except (AttributeError, TypeError, ValueError):
-            return []
-
-        if obstacle_pos.ndim != 1 or obstacle_pos.size < 2:
-            return []
-
-        obstacle_radius = float(getattr(obstacle, "radius", 0.0))
-        danger_radius = float(getattr(replanner, "danger_radius", 0.0))
-        inner_margin = float(getattr(replanner, "inner_margin", 0.0))
-        outer_margin = float(getattr(replanner, "outer_margin", 0.0))
-        search_outer = obstacle_radius + danger_radius + inner_margin + outer_margin
-
-        distances = np.linalg.norm(path[:, :2] - obstacle_pos[:2], axis=1)
-        inside_outer = distances <= search_outer
-        if not np.any(inside_outer):
-            return []
-
-        entry_idx = int(np.argmax(inside_outer))
-        exit_idx = int(len(inside_outer) - 1 - np.argmax(inside_outer[::-1]))
-        cpa_idx = int(np.argmin(distances))
-
+    
+        path_xy = path[:, :2]
         path_length = path.shape[0]
         if path_length < 2:
             return []
-
+    
         def _to_percent(index: int) -> float:
             return 100.0 * float(np.clip(index, 0, path_length - 1)) / float(path_length - 1)
-
-        return [
-            {
+    
+        danger_radius = float(getattr(replanner, "danger_radius", 0.0))
+        inner_margin = float(getattr(replanner, "inner_margin", 0.0))
+        outer_margin = float(getattr(replanner, "outer_margin", 0.0))
+        search_outer = danger_radius + inner_margin + outer_margin
+    
+        reference_lines = []
+    
+        # Process each CPA point (one per obstacle)
+        for obs_idx, cpa_point in enumerate(cpa_points):
+            try:
+                cpa_pos = np.asarray(cpa_point, dtype=float)
+            except (TypeError, ValueError):
+                continue
+    
+            # Compute distances from all path points to the CPA point
+            distances = np.linalg.norm(path_xy - cpa_pos[:2], axis=1)
+            inside_outer = distances <= search_outer
+            
+            if not np.any(inside_outer):
+                continue
+    
+            # Find entry, exit, and closest point indices
+            entry_idx = int(np.argmax(inside_outer))
+            exit_idx = int(len(inside_outer) - 1 - np.argmax(inside_outer[::-1]))
+            cpa_idx = int(np.argmin(distances))
+    
+            # Add reference lines for this obstacle
+            reference_lines.append({
                 "x": _to_percent(entry_idx),
                 "color": "tab:orange",
                 "linestyle": "--",
                 "linewidth": 1.2,
                 "alpha": 0.85,
-                "label": "Enter and exit outer margin",
-            },
-            {
+                "label": f"Enter/exit outer margin (obstacle {obs_idx})",
+            })
+    
+            reference_lines.append({
                 "x": _to_percent(exit_idx),
                 "color": "tab:orange",
                 "linestyle": "--",
                 "linewidth": 1.2,
                 "alpha": 0.85,
-            },
-            {
+            })
+    
+            reference_lines.append({
                 "x": _to_percent(cpa_idx),
                 "color": "red",
                 "linestyle": "-",
                 "linewidth": 1.4,
                 "alpha": 0.9,
-                "label": "CPA",
-            },
-        ]
+                "label": f"CPA (obstacle {obs_idx})",
+            })
     
-    def _plot_rrt_overlays(
+        return reference_lines
+    
+    def _plot_rrt_overlays( #take the point of collision as input
         self,
         ax: plt.Axes,
-        spawn_pos: np.ndarray,
+        cpa_point: np.ndarray,
         radius: float,
     ) -> None:
         """
@@ -294,7 +288,10 @@ class RRTCollisionVisualizer:
         Ensures each unique obstacle location is only drawn once by tracking
         a set of (x, y, radius) keys.
         """
-        obstacle_center = np.asarray(spawn_pos[:2], dtype=float)
+        obstacle_center = np.asarray(
+            [cpa_point[0], cpa_point[1]],
+            dtype=float,
+        )
         effective_danger_radius = float(radius) + float(self.replanner.danger_radius)
         
         # For search radii, check if planner has margin attributes
