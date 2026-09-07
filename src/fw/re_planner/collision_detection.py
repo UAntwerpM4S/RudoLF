@@ -31,7 +31,7 @@ class CollisionDetector:
         ship_position: Union[np.ndarray, list],
         ship_trajectory: Union[np.ndarray, list],
         ship_velocity: Union[np.ndarray, list],
-    ) -> Tuple[list, list, list, list]:
+    ) -> Tuple[list, list, list, list, list]:
         """
         Predict whether the ship will come within min_distance of the obstacle
         within time_horizon.
@@ -43,9 +43,9 @@ class CollisionDetector:
             ship_velocity: Current ship velocity vector (magnitude used as speed).
 
         Returns:
-            (collision_detected, cpa_point, tcpa, dcpa)
+            (collision_detected, cpa_point, tcpa, dcpa, relative_heading)
         """
-        dcpas, cpa_points, tcpas = self._calculate_dcpa_tcpa(
+        dcpas, cpa_points, tcpas, relative_headings = self._calculate_dcpa_tcpa(
             obstacle=obstacle,
             ship_position=ship_position,
             ship_trajectory=ship_trajectory,
@@ -62,7 +62,7 @@ class CollisionDetector:
             else:
                 collisions_detected.append(False)
 
-        return collisions_detected, cpa_points, tcpas, dcpas
+        return collisions_detected, cpa_points, tcpas, dcpas, relative_headings
 
     # ------------------------------------------------------------------
     # Internal dispatch
@@ -74,7 +74,7 @@ class CollisionDetector:
         ship_position,
         ship_trajectory,
         ship_velocity,
-    ) -> Tuple[list, list, list]:
+    ) -> Tuple[list, list, list, list]:
 
         obstacles = self._normalize_obstacles(obstacle)
         ship_position = np.asarray(ship_position, dtype=float)
@@ -84,6 +84,7 @@ class CollisionDetector:
         cpa_points = []
         tcpas = []
         dcpas = []
+        relative_headings = []
 
         remaining_path = self._build_remaining_path_from_ship_position(ship_position, ship_trajectory)
 
@@ -99,13 +100,13 @@ class CollisionDetector:
             print(f"TS speed: {np.linalg.norm(obstacle_vel):.2f} m/s, OS speed: {ship_speed:.2f} m/s,")
 
             if obstacle_type == "static":
-                dcpa, cpa_point, tcpa = self._cpa_static_obstacle(
+                dcpa, cpa_point, tcpa, relative_heading = self._cpa_static_obstacle(
                     obstacle_pos=obstacle_pos,
                     ship_trajectory=remaining_path,
                     ship_speed=ship_speed,
                 )
             else:
-                dcpa, cpa_point, tcpa = self._cpa_moving_obstacle(
+                dcpa, cpa_point, tcpa, relative_heading = self._cpa_moving_obstacle(
                     obstacle_pos=obstacle_pos,
                     obstacle_velocity=obstacle_vel,
                     ship_trajectory=remaining_path,
@@ -115,8 +116,9 @@ class CollisionDetector:
             cpa_points.append(cpa_point)
             tcpas.append(tcpa)
             dcpas.append(dcpa)
+            relative_headings.append(relative_heading)
 
-        return dcpas, cpa_points, tcpas
+        return dcpas, cpa_points, tcpas, relative_headings
 
     def _normalize_obstacles(self, obstacle: Union[object, list, tuple]) -> list:
         """
@@ -189,7 +191,7 @@ class CollisionDetector:
         obstacle_pos: np.ndarray,
         ship_trajectory: np.ndarray,
         ship_speed: float,
-    ) -> Tuple[float, np.ndarray, float]:
+    ) -> Tuple[float, np.ndarray, float, float]:
         """
         Exact DCPA/TCPA for a static obstacle along the remaining path.
         """
@@ -231,7 +233,7 @@ class CollisionDetector:
 
         tcpa = min(best_path_dist / ship_speed, self.time_horizon)
         cpa_point = obstacle_pos.copy()
-        return min_dist, cpa_point, tcpa
+        return min_dist, cpa_point, tcpa, 180.0
 
     # ------------------------------------------------------------------
     # Moving obstacle
@@ -243,7 +245,7 @@ class CollisionDetector:
         obstacle_velocity: np.ndarray,
         ship_trajectory: np.ndarray,
         ship_speed: float,
-    ) -> Tuple[float, np.ndarray, float]:
+    ) -> Tuple[float, np.ndarray, float, float]:
         """
         Calculate DCPA and TCPA for an obstacle moving with a constant
         two-dimensional velocity vector.
@@ -403,7 +405,7 @@ class CollisionDetector:
                 interval_duration=self.time_horizon,
             )
 
-            return min_dist, best_obstacle_point, best_tcpa
+            return min_dist, best_obstacle_point, best_tcpa, 0.0
 
         current_time = 0.0
 
@@ -453,79 +455,191 @@ class CollisionDetector:
                 interval_duration=self.time_horizon - current_time,
             )
 
-        return min_dist, best_obstacle_point, best_tcpa
+        relative_heading = self._calculate_relative_heading(
+        target_ship_velocity=obstacle_velocity,
+        ship_trajectory=pts,
+        cpa_point=best_obstacle_point,
+        )
 
-    def _cpa_moving_obstacle_analytic(
+        return min_dist, best_obstacle_point, best_tcpa, relative_heading
+
+    def _calculate_relative_heading(
         self,
-        obstacle_pos: np.ndarray,
-        obstacle_vel: np.ndarray,
+        target_ship_velocity: np.ndarray,
         ship_trajectory: np.ndarray,
-        ship_speed: float,
-    ) -> Tuple[Optional[float], Optional[np.ndarray], Optional[float]]:
+        cpa_point: np.ndarray,
+    ) -> float:
         """
-        Analytical CPA for a moving obstacle against a piecewise-linear ship path.
+        Calculate the relative heading between the OS and TS at CPA.
+
+        The OS heading is obtained from the trajectory segment closest to
+        cpa_point. The CPA point does not need to lie exactly on the segment.
+
+        If cpa_point is at the junction of two trajectory segments, the
+        outgoing segment is used.
+
+        Relative-heading convention:
+            0 degrees   -> overtaking / same direction
+            90 degrees  -> right crossing
+            180 degrees -> head-on
+            270 degrees -> left crossing
+
+        The angle is measured clockwise from the OS heading to the TS heading.
+
+        Args:
+            target_ship_velocity:
+                Constant TS velocity vector [vx, vy].
+
+            ship_trajectory:
+                Piecewise-linear OS trajectory with shape (N, 2).
+
+            cpa_point:
+                TS position at CPA [x, y].
+
+        Returns:
+            Relative heading in degrees in the range [0, 360).
+
+            Returns np.nan if the TS is stationary or if the OS trajectory
+            does not contain a valid segment.
         """
-        trajectory_times = self._build_trajectory_times(ship_trajectory, ship_speed)
-        max_time = min(self.time_horizon, trajectory_times[-1])
+        target_ship_velocity = np.asarray(
+            target_ship_velocity,
+            dtype=float,
+        ).reshape(-1)
 
-        min_dist_sq = np.inf
-        best_t = None
-        best_cpa = None
+        ship_trajectory = np.asarray(
+            ship_trajectory,
+            dtype=float,
+        )
 
-        pts = ship_trajectory
+        cpa_point = np.asarray(
+            cpa_point,
+            dtype=float,
+        ).reshape(-1)
 
-        for i in range(len(pts) - 1):
-            t_i = trajectory_times[i]
-            t_next = trajectory_times[i + 1]
+        if target_ship_velocity.size != 2:
+            raise ValueError(
+                "target_ship_velocity must contain exactly two values [vx, vy]. "
+                f"Received shape {target_ship_velocity.shape}."
+            )
 
-            if t_i > max_time:
-                break
+        if (
+            ship_trajectory.ndim != 2
+            or ship_trajectory.shape[1] != 2
+        ):
+            raise ValueError(
+                "ship_trajectory must have shape (N, 2). "
+                f"Received shape {ship_trajectory.shape}."
+            )
 
-            t_exit = min(t_next, max_time)
-            seg_time = t_exit - t_i
-            if seg_time <= 0.0:
+        if cpa_point.size != 2:
+            raise ValueError(
+                "cpa_point must contain exactly two values [x, y]. "
+                f"Received shape {cpa_point.shape}."
+            )
+
+        if np.linalg.norm(target_ship_velocity) <= 1e-12:
+            # The TS heading is undefined.
+            return float("nan")
+
+        if len(ship_trajectory) < 2:
+            # The OS trajectory has no segment from which to determine
+            # its heading.
+            return float("nan")
+
+        closest_segment_direction = None
+        minimum_distance = np.inf
+        comparison_tolerance = 1e-10
+
+        for i in range(len(ship_trajectory) - 1):
+            segment_start = ship_trajectory[i]
+            segment_end = ship_trajectory[i + 1]
+
+            segment = segment_end - segment_start
+            segment_length_squared = float(segment @ segment)
+
+            # Ignore consecutive identical trajectory points.
+            if segment_length_squared <= 1e-12:
                 continue
 
-            full_seg_time = t_next - t_i
-            frac = seg_time / full_seg_time if full_seg_time > 0.0 else 1.0
+            # Project cpa_point onto the infinite line containing the segment.
+            projection_parameter = float(
+                (cpa_point - segment_start) @ segment
+                / segment_length_squared
+            )
 
-            p0 = pts[i]
-            p1 = pts[i] + (pts[i + 1] - pts[i]) * frac
+            # Restrict the projection to the finite trajectory segment.
+            projection_parameter = float(
+                np.clip(projection_parameter, 0.0, 1.0)
+            )
 
-            v_ship = (p1 - p0) / seg_time if seg_time > 0.0 else np.zeros_like(p0)
-            obs_at_ti = obstacle_pos + obstacle_vel * t_i
-            r0 = p0 - obs_at_ti
-            v_rel = v_ship - obstacle_vel
+            closest_point_on_segment = (
+                segment_start
+                + projection_parameter * segment
+            )
 
-            # Lower-bound pruning
-            r0_norm = float(np.linalg.norm(r0))
-            v_rel_norm = float(np.linalg.norm(v_rel))
-            lb = max(0.0, r0_norm - v_rel_norm * seg_time)
+            distance_to_segment = float(
+                np.linalg.norm(
+                    cpa_point - closest_point_on_segment
+                )
+            )
 
-            if lb * lb >= min_dist_sq:
-                continue
+            is_closer = (
+                distance_to_segment
+                < minimum_distance - comparison_tolerance
+            )
 
-            vv = float(v_rel @ v_rel)
-            if vv < 1e-12:
-                tau_star = 0.0
-            else:
-                tau_star = float(np.clip(-(r0 @ v_rel) / vv, 0.0, seg_time))
+            is_equal_distance = np.isclose(
+                distance_to_segment,
+                minimum_distance,
+                rtol=0.0,
+                atol=comparison_tolerance,
+            )
 
-            r_tau = r0 + v_rel * tau_star
-            d_sq = float(r_tau @ r_tau)
+            # In case of equal distance, select the later segment.
+            # Therefore, at a junction, the outgoing segment is used.
+            if is_closer or is_equal_distance:
+                minimum_distance = distance_to_segment
+                closest_segment_direction = (
+                    segment / np.sqrt(segment_length_squared)
+                )
 
-            if d_sq < min_dist_sq:
-                min_dist_sq = d_sq
-                best_t = t_i + tau_star
+        if closest_segment_direction is None:
+            # All trajectory points are identical.
+            return float("nan")
 
-                ship_pt = p0 + v_ship * tau_star
-                obs_pt = obs_at_ti + obstacle_vel * tau_star
-                best_cpa = (ship_pt + obs_pt) / 2.0
+        os_direction = closest_segment_direction
+        ts_direction = (
+            target_ship_velocity
+            / np.linalg.norm(target_ship_velocity)
+        )
 
-        if best_t is None:
-            return None, None, None
+        dot_product = float(
+            np.clip(os_direction @ ts_direction, -1.0, 1.0)
+        )
 
-        return float(np.sqrt(min_dist_sq)), best_cpa, float(best_t)
+        cross_product = float(
+            os_direction[0] * ts_direction[1]
+            - os_direction[1] * ts_direction[0]
+        )
+
+        # Negative cross product converts the standard counterclockwise
+        # mathematical angle into a clockwise angle.
+        relative_heading = np.degrees(
+            np.arctan2(
+                -cross_product,
+                dot_product,
+            )
+        ) % 360.0
+
+        if np.isclose(relative_heading, 360.0, atol=1e-10):
+            relative_heading = 0.0
+
+        relative_heading = float(relative_heading) + 180.0
+        if relative_heading >= 360.0:
+            relative_heading -= 360.0
+
+        return float(relative_heading)
 
     # ------------------------------------------------------------------
     # Helpers

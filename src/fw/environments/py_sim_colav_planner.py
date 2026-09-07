@@ -55,7 +55,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             detection_radius: float = 1000.0,
             rrt_replan_cooldown_steps: int = 0,
             # Scenario configuration (passed to base)
-            scenario_types: Optional[list] = ["overtaking"],
+            scenario_types: Optional[list] = ["head-on"],
             scenario_probs: Optional[list] = [1.0],
             obstacle_population: Optional[list] = [1],
             obstacle_weights: Optional[list] = [1],
@@ -130,7 +130,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
         detected = detected[:self.ships_inside_observation]
 
         if detected:
-            print(f"Detected {len(detected)} ship(s) inside detection radius {self.detection_radius}.")
+            print(f"Detected {len(detected)} ship(s) inside detection range.")
             obstacles_entities = [entity for _, entity in detected]
             remaining_path = np.asarray(
                 [cp["pos"] for cp in self.checkpoints[max(0, int(self.checkpoint_index) - 1):]],
@@ -142,7 +142,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
                 dtype=np.float32,
             )
 
-            collision_detected, cpa_point, tcpa, dcpa = self.collision_detector.predict_collision(
+            collision_detected, cpa_point, tcpa, dcpa, relative_heading = self.collision_detector.predict_collision(
                 obstacles_entities,
                 self.ship_pos,
                 remaining_path,
@@ -150,12 +150,13 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             )
             if any(collision_detected):
                 self.cpa_points.append(cpa_point)
-                print(f"Collision predicted with {len(obstacles_entities)} obstacle(s). Triggering replanner. Details: entities={obstacles_entities}, collision_detected={collision_detected}, cpa_point={cpa_point}, tcpa={tcpa}, dcpa={dcpa}")
+                #print(f"Collision predicted with {len(obstacles_entities)} obstacle(s). Triggering replanner. Details: entities={obstacles_entities}, collision_detected={collision_detected}, cpa_point={cpa_point}, tcpa={tcpa}, dcpa={dcpa}, relative_heading={relative_heading}")
                 self._maybe_replan_rrt(
                     obstacles_entities=obstacles_entities,
                     collision_detected=collision_detected,
                     cpa_point=cpa_point,
                     tcpa=tcpa,
+                    relative_heading=relative_heading,
                 )
         obs = super()._get_obs()
 
@@ -340,6 +341,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
         collision_detected: List[bool],
         cpa_point: List,
         tcpa: List,
+        relative_heading: List,
     ) -> None:
         """Trigger RRT replanning when a predicted collision is detected."""
 
@@ -367,6 +369,16 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
 
         best_idx = min(collision_indices, key=_tcpa_sort_key)
         obstacle = obstacles_entities[best_idx]
+
+        heading = relative_heading[best_idx]
+        print(f"relative heading: {heading}")
+
+        if heading > 340 or heading <= 120:
+            print("Head-on  or crossing right collision detected. Triggering replanner with half circle.")
+        elif heading > 120 and heading <= 240:
+            print("Overtaking or static collision detected. Triggering replanner with full circle.")
+        else:
+            print("Crossing left collision detected. No triggering replanner.")
 
         center_candidate = cpa_point[best_idx]
         if center_candidate is None:
