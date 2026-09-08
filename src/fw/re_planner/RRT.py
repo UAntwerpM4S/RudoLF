@@ -34,7 +34,7 @@ import time
 from typing import List, Optional, Tuple
 
 import numpy as np
-from scipy.spatial import KDTree
+from scipy.spatial import cKDTree
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +140,18 @@ class RRTStarReplanner:
     smoothing_iterations : int
         Number of random shortcut attempts used to simplify/smooth the local
         RRT* path. Default 200.
+    full_circle : bool
+        If True, the whole sampling annulus is available. If False, the
+        points in Sector 3 (backward-left relative to the directed vector
+        ``entry_wp -> obstacle_center``) are forbidden. Edges are validated
+        only at their endpoints. Default True.
+    spatial_index_rebuild_interval : int
+        Number of newly inserted nodes retained in the exact recent-node
+        buffer before rebuilding the spatial index. Larger values reduce
+        rebuild cost; the default 128 is a balanced setting. Default 128.
+    direct_path_fastpath : bool
+        Return immediately when the direct entry-to-exit segment satisfies
+        every clearance, sector, and boundary-turn constraint. Default True.
     """
 
     def __init__(
@@ -153,9 +165,12 @@ class RRTStarReplanner:
         goal_bias: float = 0.1,
         goal_tolerance: float = 2.0,
         seed: Optional[int] = None,
-        max_turn_angle_deg: Optional[float] = 5,
+        max_turn_angle_deg: Optional[float] = 5.0,
         smooth_rrt_path: bool = None,
         smoothing_iterations: int = 3,
+        full_circle: bool = True,
+        spatial_index_rebuild_interval: int = 128,
+        direct_path_fastpath: bool = False,
     ):
         if danger_radius <= 0:
             raise ValueError("danger_radius must be positive.")
@@ -165,6 +180,8 @@ class RRTStarReplanner:
             raise ValueError("max_turn_angle_deg must be in (0, 180].")
         if smoothing_iterations < 0:
             raise ValueError("smoothing_iterations must be non-negative.")
+        if spatial_index_rebuild_interval < 1:
+            raise ValueError("spatial_index_rebuild_interval must be at least 1.")
 
         self.danger_radius = float(danger_radius)
         self.inner_margin = float(inner_margin)
@@ -180,6 +197,9 @@ class RRTStarReplanner:
         self.max_turn_angle_deg = float(max_turn_angle_deg) if max_turn_angle_deg is not None else None
         self.smooth_rrt_path = bool(smooth_rrt_path)
         self.smoothing_iterations = int(smoothing_iterations)
+        self.full_circle = bool(full_circle)
+        self.spatial_index_rebuild_interval = int(spatial_index_rebuild_interval)
+        self.direct_path_fastpath = bool(direct_path_fastpath)
 
         # Rewiring neighbourhood radius (RRT* asymptotically optimal formula).
         # Will be updated at runtime once we know the dimension.
@@ -490,7 +510,15 @@ class RRTStarReplanner:
         The two fixed boundary turns are always checked:
             point_before -> start -> first RRT node
             last RRT node -> goal -> point_after
+
+        If ``full_circle`` is False, every newly sampled or generated point
+        must remain outside Sector 3 (backward-left relative to the directed
+        vector ``start -> obstacle_center``). Only points are checked; the
+        interior of an edge is not checked against the sector.
         """
+        if not self.full_circle and dim != 2:
+            raise ValueError("full_circle=False is supported only for 2-D paths.")
+
         # Rewire radius: RRT* formula gamma*(log n / n)^(1/d), simplified to a
         # fixed multiple of step_size that works well in practice.
         rewire_r = self.step_size * 3.5
@@ -499,20 +527,66 @@ class RRTStarReplanner:
         # Example: search_outer = 500 -> check band starts at 450.
         turn_check_band_start = 0.9 * search_outer
 
-        # Tree
+        # Tree.  Rebuilding a KD-tree after every insertion dominated the
+        # original runtime (quadratic work for a long planning attempt).
+        # Keep a frozen cKDTree plus a small, exact linear buffer of recently
+        # inserted nodes instead.  Queries use both sets, so this is exact --
+        # the rebuild interval changes speed only, never feasibility.
         nodes: List[Node] = [Node(pos=start.copy(), cost=0.0)]
         goal_node: Optional[Node] = None
         refinement_budget = 0
 
-        # KD-tree (rebuilt lazily each iteration after insert)
-        kd: Optional[KDTree] = None
-        kd_dirty = True
+        kd: Optional[cKDTree] = None
+        indexed_count = 0
+        # At most `interval + 1` nodes can be added between loop-start
+        # rebuilds (a newly connected goal may add the extra one).
+        recent_positions = np.empty((self.spatial_index_rebuild_interval + 1, dim))
+        recent_indices = np.empty(self.spatial_index_rebuild_interval + 1, dtype=int)
+        recent_count = 0
 
         def rebuild_kd():
-            nonlocal kd, kd_dirty
+            nonlocal kd, indexed_count, recent_count
             positions = np.array([n.pos for n in nodes])
-            kd = KDTree(positions)
-            kd_dirty = False
+            kd = cKDTree(positions)
+            indexed_count = len(nodes)
+            recent_count = 0
+
+        def append_to_spatial_buffer(node_index: int) -> None:
+            nonlocal recent_count
+            recent_positions[recent_count] = nodes[node_index].pos
+            recent_indices[recent_count] = node_index
+            recent_count += 1
+
+        def nearest_node(point: np.ndarray) -> Node:
+            """Exact nearest node across the frozen tree and recent buffer."""
+            assert kd is not None
+            best_dist, best_idx = kd.query(point)
+            if recent_count:
+                delta = recent_positions[:recent_count] - point
+                dist_sq = np.einsum("ij,ij->i", delta, delta)
+                local_idx = int(np.argmin(dist_sq))
+                if float(dist_sq[local_idx]) < best_dist * best_dist:
+                    best_idx = int(recent_indices[local_idx])
+            return nodes[int(best_idx)]
+
+        def nearby_nodes(point: np.ndarray, radius: float) -> List[Node]:
+            """Exact radius neighbours across the frozen tree and buffer."""
+            assert kd is not None
+            indices = kd.query_ball_point(point, radius)
+            result = [nodes[int(i)] for i in indices]
+            radius_sq = radius * radius
+            if recent_count:
+                delta = recent_positions[:recent_count] - point
+                dist_sq = np.einsum("ij,ij->i", delta, delta)
+                result.extend(
+                    nodes[int(idx)]
+                    for idx in recent_indices[:recent_count][dist_sq <= radius_sq]
+                )
+            return result
+
+        # Build once for the start node.  Afterwards it is rebuilt only when
+        # the recent-node buffer reaches the configured bounded size.
+        rebuild_kd()
 
         def _prev_pos(node: Node) -> np.ndarray:
             return node.parent.pos if node.parent is not None else point_before
@@ -538,6 +612,32 @@ class RRTStarReplanner:
                 return self._turn_angle_ok(prev_pos, mid_pos, new_pos)
             return True
 
+        if self.full_circle:
+            def _sector_point_ok(
+                point: np.ndarray,
+                *,
+                print_result: bool = False,
+            ) -> bool:
+                return True
+        else:
+            def _sector_point_ok(
+                point: np.ndarray,
+                *,
+                print_result: bool = False,
+            ) -> bool:
+                return self._point_in_allowed_sector(
+                    point,
+                    start,
+                    obstacle_center,
+                    print_result=print_result,
+                )
+
+            # The goal is part of the generated path. If it is in Sector 3,
+            # no valid point-only solution can connect to it.
+            if not _sector_point_ok(goal, print_result=True):
+                print("RRT* goal is in prohibited Sector 3; no solution possible.")
+                return None, 0
+
         def _children_turns_ok_after_reparent(
             node: Node,
             new_parent_pos: np.ndarray,
@@ -556,6 +656,18 @@ class RRTStarReplanner:
                 for child in node.children
             )
 
+        # The straight segment is the globally shortest possible solution.
+        # Testing it up front avoids all sampling/indexing work for the common
+        # case where the local trajectory can safely stay direct.
+        if self.direct_path_fastpath:
+            direct_ok = (
+                self._edge_free(start, goal, obstacle_center, search_inner)
+                and self._turn_angle_ok(point_before, start, goal)
+                and self._turn_angle_ok(start, goal, point_after)
+            )
+            if direct_ok:
+                return [start.copy(), goal.copy()], 0
+
         iters = 0
         for iters in range(1, self.max_iter + 1):
 
@@ -565,27 +677,34 @@ class RRTStarReplanner:
                     break
                 refinement_budget -= 1
 
+            if len(nodes) - indexed_count >= self.spatial_index_rebuild_interval:
+                rebuild_kd()
+
             # 1. Sample from search_inner to search_outer annulus
+            # Do not spend roughly one quarter of the samples in a region
+            # that is guaranteed to be rejected in restricted-circle mode.
+            # Goal samples are safe here because an invalid goal was handled
+            # above.
             q_rand = self._sample(goal, obstacle_center, dim, search_inner, search_outer)
+            while not _sector_point_ok(q_rand):
+                q_rand = self._sample(goal, obstacle_center, dim, search_inner, search_outer)
 
             # 2. Nearest node in tree
-            if kd_dirty:
-                rebuild_kd()
-            dist_to_nn, nn_idx = kd.query(q_rand)
-            q_near = nodes[nn_idx]
+            q_near = nearest_node(q_rand)
 
             # 3. Steer toward q_rand
             q_new_pos = self._steer(q_near.pos, q_rand)
+
+            # Reject every newly generated node inside prohibited Sector 3.
+            if not _sector_point_ok(q_new_pos):
+                continue
 
             # 4. Collision check on the edge (q_near -> q_new)
             if not self._edge_free(q_near.pos, q_new_pos, obstacle_center, search_inner):
                 continue
 
             # 5. Find nodes within rewiring radius
-            if kd_dirty:
-                rebuild_kd()
-            neighbour_idxs = kd.query_ball_point(q_new_pos, rewire_r)
-            neighbours = [nodes[i] for i in neighbour_idxs]
+            neighbours = nearby_nodes(q_new_pos, rewire_r)
 
             # 6. Choose best parent.
             #
@@ -624,7 +743,7 @@ class RRTStarReplanner:
             q_new = Node(pos=q_new_pos, parent=best_parent, cost=best_cost)
             best_parent.children.append(q_new)
             nodes.append(q_new)
-            kd_dirty = True
+            append_to_spatial_buffer(len(nodes) - 1)
 
             # 8. Rewire neighbours through q_new
             for nb in neighbours:
@@ -677,7 +796,7 @@ class RRTStarReplanner:
                     gn = Node(pos=goal.copy(), parent=q_new, cost=goal_cost)
                     q_new.children.append(gn)
                     nodes.append(gn)
-                    kd_dirty = True
+                    append_to_spatial_buffer(len(nodes) - 1)
                     goal_node = gn
                     refinement_budget = self.refinement_iter
 
@@ -777,6 +896,115 @@ class RRTStarReplanner:
         closest = a + t_star * d
         return bool(np.linalg.norm(closest - obstacle_center) > search_inner)
 
+    @staticmethod
+    def _point_in_allowed_sector(
+        point: np.ndarray,
+        entry_waypoint: np.ndarray,
+        obstacle_center: np.ndarray,
+        *,
+        print_result: bool = False,
+    ) -> bool:
+        """
+        Classify a point into one of four sectors around the obstacle center.
+
+        Motion direction:
+            entry_waypoint -> obstacle_center
+
+        Sector numbering, proceeding anti-clockwise:
+            Sector 1: forward-right
+            Sector 2: forward-left
+            Sector 3: backward-left  <-- prohibited
+            Sector 4: backward-right
+
+        Points on either dividing line are allowed.
+
+        A single Cartesian convention is used throughout the planner:
+            positive X points right;
+            positive Y points up.
+        """
+        point = np.asarray(point, dtype=float)
+        entry_waypoint = np.asarray(entry_waypoint, dtype=float)
+        obstacle_center = np.asarray(obstacle_center, dtype=float)
+
+        if (
+            point.shape != (2,)
+            or entry_waypoint.shape != (2,)
+            or obstacle_center.shape != (2,)
+        ):
+            raise ValueError("The sector check requires 2-D points.")
+
+        # Motion direction: entry waypoint -> obstacle center
+        direction = obstacle_center - entry_waypoint
+        direction_norm = float(np.linalg.norm(direction))
+
+        if direction_norm < 1e-12:
+            raise ValueError(
+                "entry_waypoint must differ from obstacle_center."
+            )
+
+        forward_unit = direction / direction_norm
+
+        # Fixed Cartesian Y-up convention. Rotating a vector 90 degrees
+        # anti-clockwise produces its left-facing perpendicular.
+        left_unit = np.array([
+            -forward_unit[1],
+            forward_unit[0],
+        ])
+
+        relative_point = point - obstacle_center
+
+        forward_component = float(relative_point @ forward_unit)
+        left_component = float(relative_point @ left_unit)
+
+        tolerance = 1e-10 * max(
+            1.0,
+            float(np.linalg.norm(relative_point)),
+        )
+
+        # Points on either dividing line are allowed.
+        if (
+            abs(forward_component) <= tolerance
+            or abs(left_component) <= tolerance
+        ):
+            sector = 0
+            sector_description = "boundary"
+            is_allowed = True
+
+        elif forward_component > 0.0 and left_component < 0.0:
+            sector = 1
+            sector_description = "forward-right"
+            is_allowed = True
+
+        elif forward_component > 0.0 and left_component > 0.0:
+            sector = 2
+            sector_description = "forward-left"
+            is_allowed = True
+
+        elif forward_component < 0.0 and left_component > 0.0:
+            sector = 3
+            sector_description = "backward-left"
+            is_allowed = False  # Sector 3 is prohibited
+
+        else:
+            sector = 4
+            sector_description = "backward-right"
+            is_allowed = True
+
+        if print_result:
+            print(
+                f"Point: {point}\n"
+                f"Entry waypoint: {entry_waypoint}\n"
+                f"Obstacle center: {obstacle_center}\n"
+                f"Coordinate system: Cartesian Y-up\n"
+                f"Motion direction: {forward_unit}\n"
+                f"Forward component: {forward_component:.6f}\n"
+                f"Left component: {left_component:.6f}\n"
+                f"Sector: {sector} ({sector_description})\n"
+                f"Allowed: {is_allowed}"
+            )
+
+        return is_allowed
+
     def _turn_angle_ok(
         self,
         prev_pos: np.ndarray,
@@ -838,6 +1066,10 @@ class RRTStarReplanner:
         interval. A shortcut is accepted only if:
           - the replacement edge stays outside search_inner, and
           - the turn-angle constraint is still valid at the shortcut endpoints.
+
+        Sector validation is point-only. Because smoothing reuses existing
+        validated path points, it does not perform a sector check on the
+        interior of the replacement segment.
         """
         if len(rrt_path) <= 2 or self.smoothing_iterations <= 0:
             return [p.copy() for p in rrt_path]

@@ -97,7 +97,7 @@ class CollisionDetector:
             obstacle_vel = np.asarray(entity.get_velocity(), dtype=float)
             obstacle_heading = float(entity.get_heading())
             obstacle_type = str(entity.get_entity_type()).lower()
-            print(f"TS speed: {np.linalg.norm(obstacle_vel):.2f} m/s, OS speed: {ship_speed:.2f} m/s,")
+            #print(f"TS speed: {np.linalg.norm(obstacle_vel):.2f} m/s, OS speed: {ship_speed:.2f} m/s,")
 
             if obstacle_type == "static":
                 dcpa, cpa_point, tcpa, relative_heading = self._cpa_static_obstacle(

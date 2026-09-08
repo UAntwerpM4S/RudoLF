@@ -55,7 +55,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             detection_radius: float = 1000.0,
             rrt_replan_cooldown_steps: int = 0,
             # Scenario configuration (passed to base)
-            scenario_types: Optional[list] = ["head-on"],
+            scenario_types: Optional[list] = ["crossing-right"],
             scenario_probs: Optional[list] = [1.0],
             obstacle_population: Optional[list] = [1],
             obstacle_weights: Optional[list] = [1],
@@ -65,7 +65,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
         self.ships_inside_observation = int(ships_inside_observation)
         self.detection_radius = float(detection_radius)
         self.collision_detector = CollisionDetector(float(danger_distance), float(time_horizon))
-        self.replanner = RRTStarReplanner(danger_radius=float(danger_distance))
+        self.replanner = RRTStarReplanner(danger_radius=float(danger_distance), full_circle=False)
         self.rrt_replan_cooldown_steps = int(rrt_replan_cooldown_steps)
         self._last_rrt_replan_step = -10 ** 9
         self._last_rrt_replan_info: Dict = {}
@@ -130,7 +130,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
         detected = detected[:self.ships_inside_observation]
 
         if detected:
-            print(f"Detected {len(detected)} ship(s) inside detection range.")
+            #print(f"Detected {len(detected)} ship(s) inside detection range.")
             obstacles_entities = [entity for _, entity in detected]
             remaining_path = np.asarray(
                 [cp["pos"] for cp in self.checkpoints[max(0, int(self.checkpoint_index) - 1):]],
@@ -375,10 +375,13 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
 
         if heading > 340 or heading <= 120:
             print("Head-on  or crossing right collision detected. Triggering replanner with half circle.")
+            self.replanner.full_circle = False
         elif heading > 120 and heading <= 240:
             print("Overtaking or static collision detected. Triggering replanner with full circle.")
+            self.replanner.full_circle = True
         else:
             print("Crossing left collision detected. No triggering replanner.")
+            return
 
         center_candidate = cpa_point[best_idx]
         if center_candidate is None:
@@ -405,6 +408,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
         try:
             print("REPLANNING")
             start_time = time.time()
+            
             replanned = self.replanner.replan(
                 obstacle_center=obstacle_center,
                 ship_trajectory=trajectory,
