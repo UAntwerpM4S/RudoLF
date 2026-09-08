@@ -8,13 +8,6 @@ import gymnasium as gym
 import tkinter as tk
 import numpy as np
 
-# First try interactive backend
-try:
-    matplotlib.use('TkAgg')  # Try using the interactive backend
-except ImportError:
-    logging.getLogger(__name__).warning("'TkAgg' backend not available. Falling back to 'Agg'.")
-    matplotlib.use('Agg')  # Use non-interactive backend as fallback
-
 from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
 from fw.environments.tools import create_checkpoints_from_simple_path
@@ -1475,10 +1468,11 @@ class PySimBaseEnv(BaseEnv):
         if self.initialize_plots and not hasattr(self, 'ship_plot'):
             self._initialize_rendering()
             self._draw_fixed_landmarks()
+            plt.show(block=False)
+            plt.pause(0.001)
             self.fig.canvas.draw()
             self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
             self.fig.canvas.mpl_connect('draw_event', self._on_draw)
-            plt.show(block=False)
 
         canvas = self.fig.canvas
 

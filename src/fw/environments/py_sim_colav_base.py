@@ -19,12 +19,6 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
-try:
-    matplotlib.use('TkAgg')
-except ImportError:
-    logging.getLogger(__name__).warning("'TkAgg' backend not available. Falling back to 'Agg'.")
-    matplotlib.use('Agg')
-
 from shapely.geometry import Point
 from typing import Optional, Tuple, Dict
 from fw.ships.ship_factory import ShipModel
@@ -1189,10 +1183,11 @@ class PySimColavBaseEnv(PySimBaseEnv):
             self._initialize_rendering()
             self._draw_fixed_landmarks()
             self._draw_collision_entities()
+            plt.show(block=False)
+            plt.pause(0.001)
             self.fig.canvas.draw()
             self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
             self.fig.canvas.mpl_connect('draw_event', self._on_draw)
-            plt.show(block=False)
 
         canvas = self.fig.canvas
 
