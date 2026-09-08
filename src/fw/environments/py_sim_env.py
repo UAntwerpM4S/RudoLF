@@ -10,6 +10,8 @@ import gymnasium as gym
 import tkinter as tk
 import numpy as np
 
+matplotlib.rcParams['figure.raise_window'] = False
+
 from shapely import LineString
 from typing import Dict, List, Optional, Tuple
 from shapely.geometry import Point, Polygon, MultiPoint, GeometryCollection
@@ -1841,7 +1843,7 @@ class PySimEnv(BaseEnv):
             _safe(self.fig.canvas.draw)
 
         # Flush pending GUI events without breaking the simulation
-        _safe(canvas.flush_events)
+        _safe(lambda: self.fig.canvas.start_event_loop(0.0001))
 
     def close(self) -> None:
         """

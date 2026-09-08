@@ -19,6 +19,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
+matplotlib.rcParams['figure.raise_window'] = False
+
 from shapely.geometry import Point
 from typing import Optional, Tuple, Dict
 from fw.ships.ship_factory import ShipModel
@@ -1325,7 +1327,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
                 self.fig.canvas.draw()
         except (RuntimeError, AttributeError, TypeError, ValueError):
             _safe(self.fig.canvas.draw)
-        _safe(canvas.flush_events)
+        _safe(lambda: self.fig.canvas.start_event_loop(0.0001))
 
     def _render_subclass(self, heading: float) -> None:
         """
