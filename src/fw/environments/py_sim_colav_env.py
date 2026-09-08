@@ -11,12 +11,6 @@ import matplotlib
 import numpy as np
 import gymnasium as gym
 
-try:
-    matplotlib.use('TkAgg')
-except ImportError:
-    logging.getLogger(__name__).warning("'TkAgg' backend not available. Falling back to 'Agg'.")
-    matplotlib.use('Agg')
-
 from typing import Optional, Tuple
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
