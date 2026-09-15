@@ -64,7 +64,7 @@ class ShipDynamicsDataset(Dataset):
     ANGLE_COLS = [COL_HEADING, COL_WIND_DIR, COL_CURRENT_DIR]
 
     @classmethod
-    def _select_and_encode(cls, x_raw: np.ndarray) -> np.ndarray:
+    def select_and_encode(cls, x_raw: np.ndarray) -> np.ndarray:
         """
         Select `INPUT_COLS` from a raw 37-wide X block and sin/cos-encode
         the angular columns.
@@ -145,7 +145,7 @@ class ShipDynamicsDataset(Dataset):
             raise FileNotFoundError(f"Dataset not found: {path}")
 
         data = np.load(path)
-        self.X = self._select_and_encode(data["X"].astype(np.float32))
+        self.X = self.select_and_encode(data["X"].astype(np.float32))
         self.Y = data["Y"].astype(np.float32)
 
         self.normalize = normalize
@@ -212,7 +212,7 @@ class ShipDynamicsDataset(Dataset):
 
         path = Path(path)
         data = np.load(path)
-        x_vals = ShipDynamicsDataset._select_and_encode(data["X"].astype(np.float32))
+        x_vals = ShipDynamicsDataset.select_and_encode(data["X"].astype(np.float32))
         y_vals = data["Y"].astype(np.float32)
 
         x_mean = x_vals.mean(axis=0, keepdims=True)

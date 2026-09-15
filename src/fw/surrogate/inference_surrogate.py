@@ -103,7 +103,7 @@ class SurrogatePredictor:
         if x_vals.ndim == 1:
             x_vals = x_vals.reshape(1, -1)
 
-        x_selected = ShipDynamicsDataset._select_and_encode(x_vals.astype(np.float32))
+        x_selected = ShipDynamicsDataset.select_and_encode(x_vals.astype(np.float32))
         x_n = self._normalize_x(x_selected)
 
         with torch.no_grad():

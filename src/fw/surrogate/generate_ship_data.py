@@ -23,7 +23,7 @@ def split_and_save(x_vals, y_vals, episode_ids, save_prefix, train=0.8, val=0.1)
 
     Splitting is done on unique `episode_ids`, not on individual rows: all
     rows belonging to one simulation rollout are assigned to the same
-    split. Splitting by row instead (the previous behaviour) leaks
+    split. Splitting by row instead (the previous behavior) leaks
     temporally-correlated, near-duplicate rows from the same episode
     across the train/val/test boundary, which makes validation/test
     metrics optimistically biased and doesn't test generalization to

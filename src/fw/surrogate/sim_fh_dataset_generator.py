@@ -335,7 +335,7 @@ def get_current_velocity(_ship_interface):
     heading_deg = _ship_interface.getShipHeading()
     psi = np.radians(heading_deg)
 
-    R = np.array([
+    r = np.array([
         [np.cos(psi), -np.sin(psi)],
         [np.sin(psi),  np.cos(psi)]
     ])
@@ -343,8 +343,8 @@ def get_current_velocity(_ship_interface):
     vog = _ship_interface.getShipVelocityOverGround()
     vtw = _ship_interface.getShipVelocityThroughWater()
 
-    vog_earth = R @ np.array([vog.x, vog.y])
-    vtw_earth = R @ np.array([vtw.x, vtw.y])
+    vog_earth = r @ np.array([vog.x, vog.y])
+    vtw_earth = r @ np.array([vtw.x, vtw.y])
 
     current = vog_earth - vtw_earth
 
