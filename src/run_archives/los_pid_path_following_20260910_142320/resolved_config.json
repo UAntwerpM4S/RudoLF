@@ -1,0 +1,98 @@
+{
+  "framework_config": {
+    "env_type": [
+      "PySimEnv"
+    ],
+    "profile": "default_profile",
+    "action": "visualize",
+    "log_level": "INFO",
+    "wind": false,
+    "current": false,
+    "enable_ukc_check": true,
+    "enable_bank_collision_check": true,
+    "visualize_best_trained": false,
+    "viz_mode": "VisualizationMode.COMPLEX",
+    "start_pos": [
+      2245.0,
+      -47.0
+    ],
+    "target_pos": [
+      -1559.0,
+      11990.0
+    ],
+    "overall_contour": "env_Sche_no_scale.csv",
+    "depth_contour": "env_Sche_250cm_no_scale.csv",
+    "trajectory": "trajectory_points_no_scale.csv",
+    "scenario": "DDShip_scenario1_nowindnocurrent",
+    "ua_surrogate_config": {
+      "wcu_enabled": false,
+      "file_name": "checkpoints/best_surrogate_clean.pth"
+    },
+    "ship_model": "ShipModel.MYZAKO_37",
+    "dynamics_model": "Model.FOSSEN",
+    "live_animation": true,
+    "reward_configs": [
+      {
+        "type": "PySimEnv",
+        "reward_name": "default",
+        "reward_weights": {
+          "forward": -1.25,
+          "heading_alignment": -0.5,
+          "cross_track": -0.05,
+          "rudder_change": -0.4,
+          "rudder_angle": -0.05,
+          "thrust_change": 0.0
+        }
+      },
+      {
+        "type": "PySimEnv",
+        "reward_name": "default",
+        "reward_weights": {
+          "forward": -1.25,
+          "heading_alignment": -0.5,
+          "cross_track": -0.05,
+          "rudder_change": -0.4,
+          "rudder_angle": -0.05,
+          "thrust_change": 0.0
+        }
+      }
+    ]
+  },
+  "classical_control_config": {
+    "ship_model": "MYZAKO_37",
+    "dynamics_model": "FOSSEN",
+    "start_pos": [
+      2245.0,
+      -47.0
+    ],
+    "target_pos": [
+      -1559.0,
+      11990.0
+    ],
+    "overall_contour": "env_Sche_no_scale.csv",
+    "depth_contour": "env_Sche_250cm_no_scale.csv",
+    "trajectory": "trajectory_points_no_scale.csv",
+    "wind": false,
+    "current": false,
+    "profile": "default_profile"
+  },
+  "controller_config": {
+    "duration": 3900.0,
+    "dt": 0.5,
+    "lookahead": 324.0,
+    "lookahead_source": "3x_configured_ship_length",
+    "configured_ship_length_m": 108.0,
+    "switch_distance": 35.0,
+    "target_speed": 4.0,
+    "heading_pid": {
+      "kp": 1.5,
+      "ki": 0.0,
+      "kd": 20.0
+    },
+    "surge_pid": {
+      "kp": 0.8,
+      "ki": 0.01,
+      "kd": 0.0
+    }
+  }
+}

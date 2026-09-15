@@ -1,0 +1,165 @@
+{
+  "framework_config": {
+    "env_type": [
+      "PySimEnv"
+    ],
+    "profile": "default_profile",
+    "action": "path_following",
+    "log_level": "INFO",
+    "wind": false,
+    "current": false,
+    "enable_ukc_check": true,
+    "enable_bank_collision_check": true,
+    "visualize_best_trained": false,
+    "viz_mode": "VisualizationMode.COMPLEX",
+    "start_pos": [
+      2245.0,
+      -47.0
+    ],
+    "target_pos": [
+      -1559.0,
+      11990.0
+    ],
+    "overall_contour": "env_Sche_no_scale.csv",
+    "depth_contour": "env_Sche_250cm_no_scale.csv",
+    "trajectory": "trajectory_points_no_scale.csv",
+    "scenario": "DDShip_scenario1_nowindnocurrent",
+    "ua_surrogate_config": {
+      "wcu_enabled": false,
+      "file_name": "checkpoints/best_surrogate_clean.pth"
+    },
+    "ship_model": "ShipModel.MYZAKO_37",
+    "dynamics_model": "Model.FOSSEN",
+    "live_animation": true,
+    "path_following_controller": "pid",
+    "path_following_guidance": "vector_field",
+    "path_following_simplify_path": true,
+    "path_following_simplification_tolerance_m": 50.0,
+    "path_following_controller_parameters": {
+      "pid": {
+        "heading_kp": 0.9,
+        "heading_ki": 0.0,
+        "heading_kd": 0.0,
+        "yaw_rate_damping": 10.0,
+        "nomoto_feedforward_enabled": true,
+        "nomoto_feedforward_gain": 0.05,
+        "desired_yaw_time_constant": 10.0,
+        "desired_heading_rate_limit_deg_s": 5.0,
+        "heading_reference_filter_alpha": 0.6,
+        "integral_limit": 1.0
+      },
+      "vector_field": {
+        "delta": 100,
+        "theta_base": 1.0,
+        "theta_gain": 0.4,
+        "theta_error_scale": 1,
+        "theta_max": 6.0
+      },
+      "feedback_linearization": {
+        "heading_kp": 0.8,
+        "heading_kd": 1.8,
+        "model_gain_epsilon": 1e-06
+      },
+      "sliding_mode": {
+        "lambda": 0.4,
+        "eta": 0.8,
+        "boundary_layer": 0.08
+      }
+    },
+    "reward_configs": [
+      {
+        "type": "PySimEnv",
+        "reward_name": "default",
+        "reward_weights": {
+          "forward": -1.25,
+          "heading_alignment": -0.5,
+          "cross_track": -0.05,
+          "rudder_change": -0.4,
+          "rudder_angle": -0.05,
+          "thrust_change": 0.0
+        }
+      },
+      {
+        "type": "PySimEnv",
+        "reward_name": "default",
+        "reward_weights": {
+          "forward": -1.25,
+          "heading_alignment": -0.5,
+          "cross_track": -0.05,
+          "rudder_change": -0.4,
+          "rudder_angle": -0.05,
+          "thrust_change": 0.0
+        }
+      }
+    ]
+  },
+  "classical_control_config": {
+    "ship_model": "MYZAKO_37",
+    "dynamics_model": "FOSSEN",
+    "start_pos": [
+      2245.0,
+      -47.0
+    ],
+    "target_pos": [
+      -1559.0,
+      11990.0
+    ],
+    "overall_contour": "env_Sche_no_scale.csv",
+    "depth_contour": "env_Sche_250cm_no_scale.csv",
+    "trajectory": "trajectory_points_no_scale.csv",
+    "wind": false,
+    "current": false,
+    "profile": "default_profile"
+  },
+  "controller_config": {
+    "duration": 3900.0,
+    "dt": 0.5,
+    "lookahead": 324.0,
+    "lookahead_source": "3x_configured_ship_length",
+    "configured_ship_length_m": 108.0,
+    "switch_distance": 35.0,
+    "target_speed": 4.0,
+    "controller": "pid",
+    "guidance": "vector_field",
+    "vector_field": {
+      "delta": 100,
+      "theta_base": 1.0,
+      "theta_gain": 0.4,
+      "theta_error_scale": 1,
+      "theta_max": 6.0
+    },
+    "path_simplification": {
+      "enabled": true,
+      "tolerance_m": 50.0,
+      "raw_waypoint_count": 78,
+      "simplified_waypoint_count": 14
+    },
+    "heading_pid": {
+      "kp": 0.9,
+      "ki": 0.0,
+      "kd": 0.0,
+      "yaw_rate_damping": 10.0,
+      "nomoto_feedforward_enabled": true,
+      "nomoto_feedforward_gain": 0.05,
+      "desired_yaw_time_constant": 10.0,
+      "desired_heading_rate_limit_deg_s": 5.0,
+      "heading_reference_filter_alpha": 0.6,
+      "integral_limit": 1.0
+    },
+    "feedback_linearization": {
+      "heading_kp": 0.8,
+      "heading_kd": 1.8,
+      "model_gain_epsilon": 1e-06
+    },
+    "sliding_mode": {
+      "lambda": 0.4,
+      "eta": 0.8,
+      "boundary_layer": 0.08
+    },
+    "surge_pid": {
+      "kp": 0.8,
+      "ki": 0.01,
+      "kd": 0.0
+    }
+  }
+}

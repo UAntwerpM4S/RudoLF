@@ -1,6 +1,8 @@
 import os
+import sys
 import math
 import logging
+import matplotlib
 
 from pathlib import Path
 from fw.configuration.stop_condition import StopCondition
@@ -9,6 +11,7 @@ from fw.configuration.profile_applier import apply_profile
 from fw.postprocessing.metrics_computer import MetricsComputer
 from fw.postprocessing.episode_collector import EpisodeCollector
 from fw.postprocessing.ship_episode_data import CollisionAnnotator
+from fw.postprocessing.animation_renderer import AnimationRenderer
 from fw.postprocessing.matplotlib_renderer import MatplotlibRenderer
 
 from fw.environments.base_env import BaseEnv
@@ -371,7 +374,21 @@ class AgentManager:
             is_lunar_lander = isinstance(raw_env, LunarLander)
 
             collector = EpisodeCollector(self._agent, raw_env, self._profile, airsim_bridge=airsim_bridge)
-            run_data = collector.collect(num_episodes=num_episodes, live_animation=live_animation if not is_lunar_lander else True)
+            live_window_animation = live_animation if not is_lunar_lander else True
+            backend_name = matplotlib.get_backend().lower()
+            save_animation_gif = bool(
+                live_animation
+                and sys.platform == "darwin"
+                and not is_lunar_lander
+                and any(name in backend_name for name in ("macosx", "tk", "webagg"))
+            )
+            if save_animation_gif:
+                logger.info(
+                    "macOS live window animation requested; collecting without live GUI "
+                    "and exporting an animation GIF instead."
+                )
+                live_window_animation = False
+            run_data = collector.collect(num_episodes=num_episodes, live_animation=live_window_animation)
 
             if not is_lunar_lander:
                 summaries = {}
@@ -558,10 +575,17 @@ class AgentManager:
                             save_path=f"{save_dir}/{env_name}_scenario_confusion_matrix.png",
                         )
 
+                if save_animation_gif:
+                    AnimationRenderer.render_gif(
+                        run_data.ships,
+                        raw_env,
+                        save_path=f"{save_dir}/live_animation.gif",
+                    )
+
                 MatplotlibRenderer.render(
                     run_data.ships, metrics, raw_env,
                     save_path=f"{save_dir}/image.png",
-                    show_plots=show_plots,
+                    show_plots=False if save_animation_gif else show_plots,
                 )
 
                     # PlotlyRenderer.render(

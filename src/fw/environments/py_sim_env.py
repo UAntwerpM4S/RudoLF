@@ -1,13 +1,35 @@
 import os
+import sys
 import copy
 import math
 import shapely
 import logging
+
+# Keep Matplotlib from falling back to a temporary cache directory on machines
+# where the home config directory is not writable. This must be set before
+# importing pyplot.
+_MPLCONFIGDIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", ".matplotlib")
+)
+os.environ.setdefault("MPLCONFIGDIR", _MPLCONFIGDIR)
+try:
+    os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+except OSError:
+    pass
+
 import matplotlib
+matplotlib.rcParams["toolbar"] = "None"
+if sys.platform == "darwin" and "MPLBACKEND" not in os.environ:
+    try:
+        matplotlib.use("QtAgg")
+    except ImportError:
+        try:
+            matplotlib.use("TkAgg")
+        except ImportError:
+            pass
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import gymnasium as gym
-import tkinter as tk
 import numpy as np
 
 matplotlib.rcParams['figure.raise_window'] = False
@@ -1687,20 +1709,19 @@ class PySimEnv(BaseEnv):
 
         self.initialize_plots = False
 
-        # Create temporary Tk root to determine screen size when possible
-        try:
-            root = tk.Tk()
-            screen_width = root.winfo_screenwidth()
-            screen_height = root.winfo_screenheight()
-            root.destroy()
-        except tk.TclError:
-            screen_width, screen_height = MAX_FIG_WIDTH, MAX_FIG_HEIGHT
+        # Do not create a temporary tk.Tk() here. On macOS, mixing Tk with
+        # Matplotlib GUI backends (including QtAgg) can crash the Tcl runtime
+        # with "called Tcl_FindHashEntry on deleted table". A fixed maximum
+        # render size is more reliable than probing screen dimensions through
+        # Tk.
+        screen_width, screen_height = MAX_FIG_WIDTH, MAX_FIG_HEIGHT
 
         fig_width = min(MAX_FIG_WIDTH, screen_width)
         fig_height = min(MAX_FIG_HEIGHT, screen_height)
         dpi = DPI
 
         self.fig, self.ax = plt.subplots(figsize=(fig_width / dpi, fig_height / dpi), dpi=dpi)
+        logger.info("Initializing live render window with Matplotlib backend '%s'.", plt.get_backend())
 
         # Try to set window geometry when backend supports it; ignore errors
         try:
@@ -1726,6 +1747,7 @@ class PySimEnv(BaseEnv):
         self.ax.set_ylim(MIN_GRID_POS, MAX_GRID_POS)
         self.ax.set_title("Ship Navigation in a Path Following Environment")
         self.ax.legend()
+        self._render_frame = 0
 
     def _draw_fixed_landmarks(self) -> None:
         """
@@ -1775,7 +1797,8 @@ class PySimEnv(BaseEnv):
             event (matplotlib.backend_bases.DrawEvent): The matplotlib draw event.
         """
 
-        if event.canvas is self.fig.canvas:
+        backend_name = plt.get_backend().lower()
+        if event.canvas is self.fig.canvas and not any(name in backend_name for name in ("macosx", "tk")):
             # noinspection PyUnresolvedReferences
             self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
 
@@ -1791,11 +1814,14 @@ class PySimEnv(BaseEnv):
         if self.initialize_plots and not hasattr(self, 'ship_plot'):
             self._initialize_rendering()
             self._draw_fixed_landmarks()
-            plt.show(block=False)
-            plt.pause(0.001)
             self.fig.canvas.draw()
-            # noinspection PyUnresolvedReferences
-            self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+            backend_name = plt.get_backend().lower()
+            if not any(name in backend_name for name in ("macosx", "tk")):
+                # noinspection PyUnresolvedReferences
+                self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+            plt.show(block=False)
+            self.fig.canvas.flush_events()
+            plt.pause(0.05)
             self.fig.canvas.mpl_connect('draw_event', self._on_draw)
 
         canvas = self.fig.canvas
@@ -1819,7 +1845,10 @@ class PySimEnv(BaseEnv):
                 pass
 
         # Restore background for blit optimization when available
-        if hasattr(self, 'background'):
+        backend_name = plt.get_backend().lower()
+        use_blit = not any(name in backend_name for name in ("macosx", "tk", "webagg"))
+
+        if use_blit and hasattr(self, 'background'):
             # noinspection PyUnresolvedReferences
             _safe(lambda: canvas.restore_region(self.background))
 
@@ -1832,18 +1861,24 @@ class PySimEnv(BaseEnv):
 
         # Try blitting for efficient updates; otherwise draw everything
         try:
-            if hasattr(self.fig.canvas, 'blit'):
+            if use_blit and hasattr(self.fig.canvas, 'blit'):
                 self.ax.draw_artist(self.ship_plot)
                 self.ax.draw_artist(self.heading_line)
                 self.fig.canvas.blit(self.ax.bbox)
             else:
-                self.fig.canvas.draw()
+                self._render_frame = getattr(self, "_render_frame", 0) + 1
+                if self._render_frame == 1 or self._render_frame % 10 == 0:
+                    self.fig.canvas.draw()
         except (RuntimeError, AttributeError, TypeError, ValueError):
             # Fallback to safe full redraw
             _safe(self.fig.canvas.draw)
 
-        # Flush pending GUI events without breaking the simulation
-        _safe(lambda: self.fig.canvas.start_event_loop(0.0001))
+        # Flush pending GUI events. The macOS backend can fail to visibly
+        # update with a near-zero start_event_loop timeout, especially from
+        # PyCharm, so prefer the standard draw/flush/pause path.
+        _safe(self.fig.canvas.flush_events)
+        if getattr(self, "_render_frame", 0) == 1 or self._render_frame % 10 == 0:
+            _safe(lambda: plt.pause(0.01))
 
     def close(self) -> None:
         """
