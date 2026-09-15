@@ -47,8 +47,13 @@ OUTPUT_KEYS   = ["delta_surge","delta_sway",  "delta_yaw_rate"]
 # ──────────────────────────────────────────────────────────────────────────────
 print("Loading validation split …")
 val       = np.load(VAL_NPZ)
-X_val     = val["X"]          # (N, input_dim) – normalized inputs expected by predictor;
-                              # input_dim is 31 for the csv_to_npz_no_xy.py pipeline (see train_surrogate.py)
+# Pass RAW columns straight through — SurrogatePredictor.predict() now
+# applies ShipDynamicsDataset._select_and_encode() internally (column
+# selection + sin/cos angle encoding), the same function used at training
+# time. This used to hardcode its own `[:, 2:]` slice here, independently
+# of dataset.py's logic and already stale by the time it was found —
+# never hand-duplicate this selection again; let SurrogatePredictor do it.
+X_val     = val["X"].astype(np.float32)          # (N, 37) raw input columns
 Y_sim     = val["Y"]          # (N, 3)  – raw simulator deltas (ground truth)
 
 N = X_val.shape[0]
@@ -61,7 +66,9 @@ print("Running surrogate inference …")
 from fw.surrogate.inference_surrogate import SurrogatePredictor   # noqa: E402
 
 predictor = SurrogatePredictor(str(CKPT_PATH))
-Y_pred    = np.vstack([predictor.predict_single(X_val[i]) for i in range(N)])
+Y_pred    = predictor.predict(X_val)   # batched — avoids one Python-level
+                                        # model call per row on what can be
+                                        # a 100k+ row validation split
 print(f"  Predictions shape: {Y_pred.shape}")
 
 # ──────────────────────────────────────────────────────────────────────────────
