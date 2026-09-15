@@ -194,12 +194,12 @@ def plot_xy_points_and_trajectories(env: PySimEnv, xy: np.ndarray, trajectories:
         plt.close('all')
 
 
-def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int]:
+def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Load the supervised dataset from CSV instead of running simulations.
 
-    CSV column layout (16 columns, matching collect_supervised_dataset output):
-        X – inputs (13 columns)
+    CSV column layout (41 columns, matching collect_supervised_dataset output):
+        X – inputs (37 columns)
           col  0: x                (m, world-frame position)
           col  1: y                (m, world-frame position)
           col  2: heading          (rad, normalized to [-pi, pi])
@@ -213,37 +213,39 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
           col 10: current direction(rad)
           col 11: rudder_action    (normalized [-1, 1])
           col 12: thrust_action    (normalized [-1, 1])
-
-    # commented out for now
-    # start
-          col  9: ray_0            (proximity at 0°,  0=far, 1=close)
-          col 10: ray_15           (proximity at 15°)
+          col 13: ray_0            (proximity at 0°,  0=far, 1=close)
+          col 14: ray_15           (proximity at 15°)
                …
-          col 32: ray_345          (proximity at 345°)
-    # end
+          col 36: ray_345          (proximity at 345°)
 
         Y – one-step delta outputs (3 columns)
-          col 13: delta_surge      (m/s)
-          col 14: delta_sway       (m/s)
-          col 15: delta_yaw_rate   (rad/s)
+          col 37: delta_surge      (m/s)
+          col 38: delta_sway       (m/s)
+          col 39: delta_yaw_rate   (rad/s)
+
+        episode_id – grouping key (1 column)
+          col 40: episode_id       (int, stored as float; identifies which
+                                     simulation rollout a row came from —
+                                     use this for episode-level, not
+                                     row-level, train/val/test splitting)
 
     Returns:
-        Tuple of (x_inputs, y_outputs, counter)
+        Tuple of (x_inputs, y_outputs, episode_ids, counter)
     """
 
     data = np.loadtxt(file_name, delimiter=",")
 
-    expected_cols = 16
+    expected_cols = 41
     if data.ndim != 2 or data.shape[1] != expected_cols:
         raise ValueError(
             f"Expected CSV with {expected_cols} columns, got shape {data.shape}. "
             "Re-generate the dataset or check the file path."
         )
 
-    x_values = data[:, 0:13].astype(np.float32)   # x, y, heading, surge, sway, yaw_rate, UKC, wind speed
-                                                  # wind direction, current speed, current direction, rudder, thrust
-                                                  # commented out: ray*24
-    y_values = data[:, 13:16].astype(np.float32)  # delta_surge, delta_sway, delta_yaw_rate
+    x_values = data[:, 0:37].astype(np.float32)   # x, y, heading, surge, sway, yaw_rate, UKC, wind speed, wind direction
+                                                  # current speed, current direction, rudder, thrust, ray*24
+    y_values = data[:, 37:40].astype(np.float32)  # delta_surge, delta_sway, delta_yaw_rate
+    episode_ids = data[:, 40].astype(np.int64)     # originating simulation/episode index
     counter = x_values.shape[0]
 
     # Reconstruct start positions and dummy trajectories for the diagnostic plot.
@@ -254,7 +256,7 @@ def load_supervised_dataset(file_name: str) -> Tuple[np.ndarray, np.ndarray, int
     trajectories = [np.vstack([start_xy[i], start_xy[i]]) for i in range(counter)]
     plot_xy_points_and_trajectories(env, start_xy, trajectories)
 
-    return x_values, y_values, counter
+    return x_values, y_values, episode_ids, counter
 
 
 def compute_ray_features(env: "PySimEnv", ship_pos: np.ndarray, heading_rad: float) -> np.ndarray:
@@ -333,7 +335,7 @@ def get_current_velocity(_ship_interface):
     heading_deg = _ship_interface.getShipHeading()
     psi = np.radians(heading_deg)
 
-    R = np.array([
+    r = np.array([
         [np.cos(psi), -np.sin(psi)],
         [np.sin(psi),  np.cos(psi)]
     ])
@@ -341,8 +343,8 @@ def get_current_velocity(_ship_interface):
     vog = _ship_interface.getShipVelocityOverGround()
     vtw = _ship_interface.getShipVelocityThroughWater()
 
-    vog_earth = R @ np.array([vog.x, vog.y])
-    vtw_earth = R @ np.array([vtw.x, vtw.y])
+    vog_earth = r @ np.array([vog.x, vog.y])
+    vtw_earth = r @ np.array([vtw.x, vtw.y])
 
     current = vog_earth - vtw_earth
 
@@ -418,7 +420,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         # Set initial conditions with explicit parameter names
         ship_config.setInitialPosition(sim_setup.x_pos, sim_setup.y_pos)
         ship_config.setInitialPropellerRps(float(5.5*action[1]))
-        ship_config.setInitialRudderAngle(float(75.0*action[0]))
+        ship_config.setInitialRudderAngle(float(35.0*action[0]))
         ship_config.setInitialHeading(rng.uniform(low=[0.0], high=[360.0])[0])
         ship_config.setInitialSurgeVelocity(float(rng.uniform(low=[0.0], high=[6.0])[0]))
         ship_config.setInitialSwayVelocity(float(rng.uniform(low=[-2.0], high=[2.0])[0]))
@@ -476,11 +478,11 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         )
 
         # Compute initial ray-cast proximity features (24-D)
-        # initial_ray_features = compute_ray_features(
-        #     env,
-        #     np.array([initial_position.x, initial_position.y]),
-        #     float(input_state[2]),
-        # )
+        initial_ray_features = compute_ray_features(
+            env,
+            np.array([initial_position.x, initial_position.y]),
+            float(input_state[2]),
+        )
 
         # Generate random action and duration
         duration = sim_setup.horizon_seconds # rng.uniform(low=[5.0 * sim_setup.dt], high=[sim_setup.horizon_seconds])[0]
@@ -494,13 +496,11 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         input_states = []
         output_states = []
         traj = [curr_ship_pos.copy()]
-        # ray_features = initial_ray_features  # will be refreshed each step
+        ray_features = initial_ray_features  # will be refreshed each step
 
         # Get controls once for efficiency
-        propellers = _ship_interface.getPropellerControls()
-        rudders = _ship_interface.getRudderControls()
+        propellers = _ship_interface.getAzipodControls()
         has_propellers = len(propellers) > 0
-        has_rudders = len(rudders) > 0
 
         # Simulation loop
         for step in range(steps_per_episode):
@@ -511,21 +511,17 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             if not (is_in_open_water and has_sufficient_keel_clearance):
                 break
 
-            input_states.append(np.concatenate([input_state.copy(), action.copy()], axis=0)) # , ray_features.copy()
+            input_states.append(np.concatenate([input_state.copy(), action.copy(), ray_features.copy()], axis=0))
 
             # Apply controls with safety checks
-            if has_rudders:
-                # Rudder control (sign inversion is intentional)
-                rudder_value = float(-1.0 * action[0])
-                for rudder in rudders:
-                    rudder.setControlValue(rudder_value)
-
             if has_propellers:
                 # Propeller / thrust control
-                propeller_value = float(action[1])
+                propeller_rudder_value = float(action[0]*35.0)
+                propeller_thrust_value = float(action[1])
+
                 for propeller in propellers:
-                    propeller.engage()
-                    propeller.setEngineLeverValue(propeller_value)
+                    propeller.setDesiredDirection(propeller_rudder_value)
+                    propeller.setEngineLeverValue(propeller_thrust_value)
 
             # Step simulation
             _math_model.simulateSeconds(sim_setup.dt)
@@ -578,11 +574,11 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             )
 
             # Update ray-cast features for the new position/heading
-            # ray_features = compute_ray_features(
-            #     env,
-            #     np.array([pos.x, pos.y]),
-            #     float(input_state[2]),
-            # )
+            ray_features = compute_ray_features(
+                env,
+                np.array([pos.x, pos.y]),
+                float(input_state[2]),
+            )
 
         # Store trajectory
         sim_setup.output.trajectory = np.array(traj, dtype=np.float32)
@@ -684,15 +680,21 @@ def collect_supervised_dataset(
         dt: float = 0.1,
         workers: int = 4,
         output_file: str = "ship_dynamics_dataset.csv",
-) -> Tuple[np.ndarray, np.ndarray, int]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Collect supervised dataset by running multiple simulations.
 
-    CSV column layout (36 columns):
-        X (13): x, y, heading, surge, sway, yaw_rate, UKC, wind speed, wind direction,
+    CSV column layout (41 columns):
+        X (37): x, y, heading, surge, sway, yaw_rate, UKC, wind speed, wind direction,
                 current speed, current direction, rudder_action, thrust_action,
-                commented out: ray_0, ray_15, ray_30, …, ray_345   (24 proximity features)
+                ray_0, ray_15, ray_30, …, ray_345   (24 proximity features)
         Y  (3): delta_surge, delta_sway, delta_yaw_rate
+        episode_id (1): index of the originating simulation/episode. All
+            rows from a single episode are temporally correlated (adjacent
+            timesteps of the same rollout), so downstream train/val/test
+            splitting MUST group by episode_id rather than splitting rows
+            independently, or validation/test metrics will be leaked and
+            optimistically biased. See generate_ship_data.split_and_save.
 
     Args:
         nbr_samples: Number of samples to generate
@@ -702,7 +704,7 @@ def collect_supervised_dataset(
         output_file: Output CSV file path
 
     Returns:
-        Tuple of (x_inputs, y_outputs, successful_count)
+        Tuple of (x_inputs, y_outputs, episode_ids, successful_count)
     """
 
     # Input validation
@@ -726,7 +728,7 @@ def collect_supervised_dataset(
     output_path.mkdir(parents=True, exist_ok=True)
 
     exercise_path = Path(
-        simexe_path) / 'database' / 'areas' / 'ScheldeSaeftinge_23_002' / 'invoer' / 'tra' / 'DDShip_scenario3_windcurrent_myzako_37.tab'
+        simexe_path) / 'database' / 'areas' / 'ScheldeSaeftinge_23_002' / 'invoer' / 'tra' / 'DDShip_Tripoli_scenario_windcurrent.tab'
 
     # Create array of SimSetup test items
     env = PySimEnv(render_mode=None, time_step=dt, wind=False, current=False)
@@ -734,6 +736,7 @@ def collect_supervised_dataset(
     setups = []
     x_inputs = []
     y_outputs = []
+    episode_ids = []  # one entry per row, tagging which episode/simulation it came from
 
     xy = env.sample_point_in_river(nbr_samples)
     x0 = xy[:, 0]
@@ -789,12 +792,33 @@ def collect_supervised_dataset(
                         for i in range(len(sim_setup.output.x_input)):
                             x_inputs.append(sim_setup.output.x_input[i])
                             y_outputs.append(sim_setup.output.y_output[i])
+                            # `index` uniquely identifies this episode/simulation;
+                            # every row from it gets the same episode_id so
+                            # downstream splitting can group them together.
+                            episode_ids.append(index)
                         trajectories.append(sim_setup.output.trajectory)
                         print(f"Simulation {index} succeeded: {sim_setup.output.status}")
                         counter += 1
                     else:
-                        error_info = sim_setup.output.info.get('error', 'Unknown error')
-                        print(f"Simulation {index} failed: {error_info}")
+                        # NOTE: `info["error"]` is only ever set by the two
+                        # explicit checks that write it directly (e.g. "Ship
+                        # not in open water!"). `_handle_exception` (for
+                        # SimException / generic exceptions) writes to
+                        # `info["message"]` instead -- a different key -- so
+                        # reading only `info["error"]` silently swallowed the
+                        # real exception text for those failures and for
+                        # TIMEOUTs (which set no info at all). Always show
+                        # the actual status, and fall back through both keys
+                        # before giving up on a real message.
+                        status = sim_setup.output.status or "FAILED"
+                        detail = (
+                            sim_setup.output.info.get("error")
+                            or sim_setup.output.info.get("message")
+                        )
+                        if detail:
+                            print(f"Simulation {index} failed [{status}]: {detail}")
+                        else:
+                            print(f"Simulation {index} failed [{status}]")
                 except Exception as exc:
                     print(f"Simulation {index} generated an exception: {exc}")
 
@@ -802,33 +826,40 @@ def collect_supervised_dataset(
 
     if counter == 0:
         print("Warning: No successful simulations!")
-        return np.array([]), np.array([]), 0
+        return np.array([]), np.array([]), np.array([]), 0
 
     x_values = np.vstack(x_inputs).astype(np.float32)
     y_values = np.vstack(y_outputs).astype(np.float32)
+    episode_ids = np.array(episode_ids, dtype=np.int64)
 
-    # Shuffle rows to break temporal correlation between consecutive steps from
-    # the same episode, so train/val splits by row index are unbiased.
+    # Shuffle rows (keeping X/Y/episode_id aligned). NOTE: this only
+    # randomizes row ORDER within the file — it does NOT make row-level
+    # train/val/test splitting valid, since consecutive rows from the same
+    # episode remain highly correlated wherever they land. Split by
+    # episode_id downstream (see generate_ship_data.split_and_save), not by
+    # row index.
     rng = np.random.default_rng()
     perm = rng.permutation(len(x_values))
     x_values = x_values[perm]
     y_values = y_values[perm]
+    episode_ids = episode_ids[perm]
 
-    store_data = np.hstack([x_values, y_values])
-    # CSV column layout (36 columns):
-    #   X (13): x, y, heading, surge, sway, yaw_rate, UKC, wind speed, wind direction,
+    store_data = np.hstack([x_values, y_values, episode_ids.reshape(-1, 1).astype(np.float32)])
+    # CSV column layout (41 columns):
+    #   X (37): x, y, heading, surge, sway, yaw_rate, UKC, wind speed, wind direction,
     #                 current speed, current direction, rudder_action, thrust_action,
-    #                 commented out: ray_0, ray_15, …, ray_345  (24 proximity features)
+    #                 ray_0, ray_15, …, ray_345  (24 proximity features)
     #   Y  (3): delta_surge, delta_sway, delta_yaw_rate
+    #   episode_id (1): originating simulation/episode index (int stored as float)
     np.savetxt(output_file, store_data, delimiter=",", fmt="%.8f")
     plot_xy_points_and_trajectories(env, xy, trajectories)
 
-    return x_values, y_values, counter
+    return x_values, y_values, episode_ids, counter
 
 
 # Example: Generate dataset
 if __name__ == "__main__":
-    x_vals, y_vals, successful_count = collect_supervised_dataset(
+    x_vals, y_vals, ep_ids, successful_count = collect_supervised_dataset(
         nbr_samples=10000,
         horizon_seconds=5.0,
         dt=0.1,
@@ -837,12 +868,14 @@ if __name__ == "__main__":
 
     print(f"Dataset generation complete. Successful samples: {successful_count}")
     print("Dataset shapes:")
-    print(f"X: {x_vals.shape}")  # [N, 13] -> (x, y, heading, surge, sway, yaw_rate, UKC, wind speed,
-                                 # wind direction, current speed, current direction, rudder, thrust)
-                                 # commented out: ray×24)
+    print(f"X: {x_vals.shape}")  # [N, 37] -> (x, y, heading, surge, sway, yaw_rate, UKC, wind speed,
+                                 # wind direction, current speed, current direction, rudder, thrust, ray*24)
     print(f"Y: {y_vals.shape}")  # [N, 3] -> (delta_surge, delta_sway, delta_yaw_rate)
+    print(f"episode_ids: {ep_ids.shape}")  # [N] -> originating episode index per row
 
     if successful_count > 0:
         np.save("ship_dynamics_inputs.npy", x_vals)
         np.save("ship_dynamics_outputs.npy", y_vals)
-        print("Dataset saved to ship_dynamics_inputs.npy and ship_dynamics_outputs.npy")
+        np.save("ship_dynamics_episode_ids.npy", ep_ids)
+        print("Dataset saved to ship_dynamics_inputs.npy, ship_dynamics_outputs.npy "
+              "and ship_dynamics_episode_ids.npy")

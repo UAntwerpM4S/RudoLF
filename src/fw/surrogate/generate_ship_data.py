@@ -17,28 +17,59 @@ from fw.surrogate.sim_fh_dataset_generator import collect_supervised_dataset
 # ================================================================
 # TRAIN/VAL/TEST SPLITTING
 # ================================================================
-def split_and_save(x_vals, y_vals, save_prefix, train=0.8, val=0.1):
+def split_and_save(x_vals, y_vals, episode_ids, save_prefix, train=0.8, val=0.1):
     """
-    Split dataset into train/val/test and save as .npz.
+    Split dataset into train/val/test BY EPISODE and save as .npz.
+
+    Splitting is done on unique `episode_ids`, not on individual rows: all
+    rows belonging to one simulation rollout are assigned to the same
+    split. Splitting by row instead (the previous behavior) leaks
+    temporally-correlated, near-duplicate rows from the same episode
+    across the train/val/test boundary, which makes validation/test
+    metrics optimistically biased and doesn't test generalization to
+    genuinely unseen trajectories.
+
+    Because episodes have variable length (a rollout can terminate early,
+    e.g. leaving open water or insufficient keel clearance), the
+    resulting ROW counts per split will only approximately match
+    `train`/`val`/`1-train-val` — the fractions are exact in terms of
+    episode count, not row count.
+
+    Args:
+        x_vals: Input array, shape (N, 37).
+        y_vals: Output array, shape (N, 3).
+        episode_ids: Per-row episode index, shape (N,), aligned with
+            x_vals/y_vals.
+        save_prefix: Path prefix for the three output .npz files.
+        train: Fraction of EPISODES assigned to the train split.
+        val: Fraction of EPISODES assigned to the val split (remainder
+            goes to test).
     """
 
-    num = x_vals.shape[0]
-    idx = np.random.permutation(num)
+    unique_episodes = np.unique(episode_ids)
+    num_episodes = len(unique_episodes)
 
-    n_train = int(train * num)
-    n_val = int(val * num)
+    perm = np.random.permutation(num_episodes)
+    shuffled_episodes = unique_episodes[perm]
 
-    idx_train = idx[:n_train]
-    idx_val = idx[n_train:n_train + n_val]
-    idx_test = idx[n_train + n_val:]
+    n_train = int(train * num_episodes)
+    n_val = int(val * num_episodes)
 
-    np.savez(save_prefix + "_train.npz", X=x_vals[idx_train], Y=y_vals[idx_train])
-    np.savez(save_prefix + "_val.npz", X=x_vals[idx_val], Y=y_vals[idx_val])
-    np.savez(save_prefix + "_test.npz", X=x_vals[idx_test], Y=y_vals[idx_test])
+    train_episodes = shuffled_episodes[:n_train]
+    val_episodes = shuffled_episodes[n_train:n_train + n_val]
+    test_episodes = shuffled_episodes[n_train + n_val:]
 
-    print(f"Saved: {save_prefix}_train.npz  ({len(idx_train)} samples)")
-    print(f"Saved: {save_prefix}_val.npz    ({len(idx_val)} samples)")
-    print(f"Saved: {save_prefix}_test.npz   ({len(idx_test)} samples)")
+    train_mask = np.isin(episode_ids, train_episodes)
+    val_mask = np.isin(episode_ids, val_episodes)
+    test_mask = np.isin(episode_ids, test_episodes)
+
+    np.savez(save_prefix + "_train.npz", X=x_vals[train_mask], Y=y_vals[train_mask])
+    np.savez(save_prefix + "_val.npz", X=x_vals[val_mask], Y=y_vals[val_mask])
+    np.savez(save_prefix + "_test.npz", X=x_vals[test_mask], Y=y_vals[test_mask])
+
+    print(f"Saved: {save_prefix}_train.npz  ({train_mask.sum()} rows from {len(train_episodes)} episodes)")
+    print(f"Saved: {save_prefix}_val.npz    ({val_mask.sum()} rows from {len(val_episodes)} episodes)")
+    print(f"Saved: {save_prefix}_test.npz   ({test_mask.sum()} rows from {len(test_episodes)} episodes)")
 
 
 # ================================================================
@@ -79,8 +110,16 @@ def main():
 
     parser.add_argument("--workers",
                         type=int,
-                        default=None,
-                        help="Number of parallel workers (parallel mode)")
+                        default=4,
+                        help="Number of parallel simulation worker processes. "
+                             "Kept at collect_supervised_dataset's own conservative "
+                             "default (4) rather than defaulting to all CPU cores: "
+                             "each simulation is a heavy per-process physics/math-model "
+                             "run, and oversubscribing cores tends to cause simulations "
+                             "to exceed sim_config.timeout_seconds and fail with TIMEOUT "
+                             "under load. Raise this deliberately once you've confirmed "
+                             "your machine can sustain more concurrent simulations "
+                             "within the timeout.")
 
     parser.add_argument("--split",
                         action="store_true",
@@ -96,10 +135,11 @@ def main():
     if args.mode == "one_step":
         print(f"[one_step] Generating {args.samples} samples (max. horizon={args.horizon}s)...")
 
-        x_values, y_values, nbr_samples = collect_supervised_dataset(
+        x_values, y_values, episode_ids, nbr_samples = collect_supervised_dataset(
             nbr_samples=args.samples,
             horizon_seconds=args.horizon,
             output_file=args.save,
+            workers=args.workers,
         )
 
     elif args.mode in ("vectorized", "parallel"):
@@ -123,7 +163,7 @@ def main():
     # ============================================================
     if args.split:
         prefix = os.path.splitext(args.save)[0]
-        split_and_save(x_values, y_values, prefix)
+        split_and_save(x_values, y_values, episode_ids, prefix)
 
 
 if __name__ == "__main__":

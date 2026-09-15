@@ -2,8 +2,16 @@
 """
 Training script for the ship dynamics surrogate MLP.
 
-Input  (8-D): [x, y, heading, surge, sway, yaw_rate, rudder_action, thrust_action]
+Input  (38-D, see ShipDynamicsDataset._select_and_encode / INPUT_COLS):
+    heading (sin/cos), surge, sway, yaw_rate, UKC, wind_speed,
+    wind_direction (sin/cos), current_speed, current_direction (sin/cos),
+    rudder_action, thrust_action, ray_0..ray_345 (24 proximity features).
+    x, y (world position) are intentionally excluded.
 Output (3-D): [delta_surge, delta_sway, delta_yaw_rate]
+
+input_dim/output_dim are inferred from the data at runtime (see main()),
+so this docstring is descriptive only — it is not read by the code and
+must be kept in sync with ShipDynamicsDataset by hand.
 """
 
 import torch
@@ -46,6 +54,17 @@ def evaluate(
     """
 
     model.eval()
+
+    if len(loader.dataset) == 0:
+        raise ValueError(
+            "evaluate() was given an empty loader (0 samples). This usually "
+            "means your episode-level train/val/test split produced a split "
+            "with too few episodes for its fraction to round up to >=1 "
+            "(int(fraction * num_episodes) == 0) -- common when smoke-testing "
+            "with a small --samples count and a low simulation success rate. "
+            "Generate more episodes, or adjust the split fractions, rather "
+            "than silently dividing by zero below."
+        )
 
     total_loss = 0.0
     total_samples = 0
@@ -146,7 +165,7 @@ def main(argv=None):
     """
 
     parser = argparse.ArgumentParser(
-        description="Train MLP surrogate: 8 inputs -> 3 outputs"
+        description="Train MLP surrogate: 38 inputs (incl. 24 ray features) -> 3 outputs"
     )
     parser.add_argument("--train-file", default=data_path("ship_dynamics_dataset_train.npz"))
     parser.add_argument("--val-file", default=data_path("ship_dynamics_dataset_val.npz"))
@@ -156,8 +175,11 @@ def main(argv=None):
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--patience", type=int, default=25)  # early stopping patience
-    parser.add_argument("--dropout", type=float, default=0.05)
-    parser.add_argument("--hidden-sizes", nargs="+", type=int, default=[128, 128])
+    parser.add_argument("--dropout", type=float, default=0.1)
+    # Wider/deeper than the pre-ray-encoding default: input dim grew from 8
+    # to 38 once UKC/wind/current/rudder/thrust/rays were added and angles
+    # were sin/cos encoded, so the old [128, 128] network is undersized.
+    parser.add_argument("--hidden-sizes", nargs="+", type=int, default=[256, 256, 128])
     parser.add_argument("--batchnorm", action="store_true")
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--seed", type=int, default=42)

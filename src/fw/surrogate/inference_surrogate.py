@@ -1,12 +1,25 @@
 import torch
 import numpy as np
 
+from fw.surrogate.dataset import ShipDynamicsDataset
 from fw.surrogate.models.mlp_surrogate import SurrogateMLP
 
 
 class SurrogatePredictor:
     """
     Loads trained surrogate model and returns UNNORMALIZED predictions.
+
+    `predict` / `predict_single` take RAW rows straight from the dataset's
+    "X" arrays (shape `(N, ShipDynamicsDataset.RAW_INPUT_DIM)`, i.e. 37
+    columns: x, y, heading, surge, ..., ray_345). Column selection and
+    angle sin/cos encoding are applied internally via
+    `ShipDynamicsDataset._select_and_encode`, the same function used at
+    training time -- callers should never pre-slice or pre-encode the
+    input themselves, or they risk silently drifting out of sync with
+    whatever `ShipDynamicsDataset` currently does (this previously
+    happened: this class used to normalize whatever it was given with no
+    selection/encoding at all, and a separate caller had its own stale
+    hardcoded slice -- see plot_val_vs_simulator.py history).
     """
 
     def __init__(self, checkpoint, device=None):
@@ -73,11 +86,14 @@ class SurrogatePredictor:
 
     def predict(self, x_vals):
         """
-        Predict outputs for one or more raw input rows.
+        Predict outputs for one or more RAW input rows.
 
         Args:
-            x_vals: Raw unnormalized input, `np.ndarray` of shape
-                `(N, input_dim)` or `(input_dim,)` for a single sample.
+            x_vals: Raw, unnormalized, un-selected input straight from a
+                dataset "X" array -- `np.ndarray` of shape
+                `(N, ShipDynamicsDataset.RAW_INPUT_DIM)` (37 columns), or
+                `(RAW_INPUT_DIM,)` for a single sample. Do NOT pre-slice
+                or pre-encode; that happens inside this method.
 
         Returns:
             `np.ndarray` of shape `(N, output_dim)` with un-normalized
@@ -87,7 +103,8 @@ class SurrogatePredictor:
         if x_vals.ndim == 1:
             x_vals = x_vals.reshape(1, -1)
 
-        x_n = self._normalize_x(x_vals.astype(np.float32))
+        x_selected = ShipDynamicsDataset.select_and_encode(x_vals.astype(np.float32))
+        x_n = self._normalize_x(x_selected)
 
         with torch.no_grad():
             x_tensor = torch.from_numpy(x_n).to(self.device)
@@ -99,11 +116,12 @@ class SurrogatePredictor:
 
     def predict_single(self, x_vals):
         """
-        Predict outputs for a single raw input row.
+        Predict outputs for a single RAW input row.
 
         Args:
-            x_vals: Raw unnormalized input for one sample (e.g. a list
-                or 1-D array of length `input_dim`).
+            x_vals: Raw unnormalized, un-selected input for one sample
+                (a list or 1-D array of length
+                `ShipDynamicsDataset.RAW_INPUT_DIM`, i.e. 37).
 
         Returns:
             `np.ndarray` of shape `(output_dim,)` with un-normalized
