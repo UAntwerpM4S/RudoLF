@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 import shutil
@@ -10,12 +11,12 @@ import multiprocessing
 
 from pathlib import Path
 from functools import partial
-from typing import Optional, Tuple
 from matplotlib import pyplot as plt
 from multiprocessing.pool import Pool
 from dataclasses import dataclass, field
 from fw.environments.py_sim_env import PySimEnv
 from concurrent.futures import ThreadPoolExecutor
+from typing import Iterable, Optional, Tuple, Union
 
 # Constants for magic numbers
 DEFAULT_MATH_MODEL_FREQUENCY = 10.0  # Hz
@@ -23,10 +24,24 @@ MIN_KEEL_CLEARANCE = 2.0
 TIMEOUT_SECONDS = 60.0
 CACHE_CLEAR_INTERVAL = 100        # Clear C:\cache every N process spawns
 CACHE_FOLDER = Path(r"C:\cache")  # Windows crash-dump folder to periodically wipe
+
+# Shared environment-input XMLs: fixed paths read by every simexe process
+# (all workers, all invocations). Both the 3D current field and the 2D tide
+# field are driven by the SAME tidal offset, so their <timeStart> values must
+# be kept identical -- they are randomized together, in one call, to one
+# common value. CURRENT_TIME_START_RANGE is the inclusive [low, high] range
+# (seconds) to randomize <timeStart> within once per CHUNK of `workers`
+# concurrent simulations -- see randomize_current_time_start() and the
+# chunked execution loop in collect_supervised_dataset().
+CURRENT_XML_PATH = Path(r"C:\Users\wadaems\Work\Development\simexe\database\areas\ScheldeSaeftinge_23_002\invoer\sne\Duplex_005_-01h00HWdyn_HwPros20190324_1704_3Dt.current.v30.xml")
+TIDE_XML_PATH = Path(r"C:\Users\wadaems\Work\Development\simexe\database\areas\ScheldeSaeftinge_23_002\invoer\tide\Duplex_005_-01h00HWdyn_HwPros20190324_1704_2Dt.tide.v30.xml")
+# Every path in this tuple gets the SAME <timeStart> value written to it.
+TIME_START_XML_PATHS = (CURRENT_XML_PATH, TIDE_XML_PATH)
+CURRENT_TIME_START_RANGE = (-21840, 24960)  # 21600 = 6 x 3600 = 6 hours
 # Ray-cast proximity sensor constants
-RAY_MAX_DISTANCE = 200.0                                    # metres; beyond this the feature is 0
+RAY_MAX_DISTANCE = 200.0                                   # metres; beyond this the feature is 0
 RAY_ANGLES_DEG = np.arange(0, 360, 15)                     # 24 rays: 0°, 15°, 30°, …, 345°
-NBR_RAY_FEATURES = len(RAY_ANGLES_DEG)                      # 24
+NBR_RAY_FEATURES = len(RAY_ANGLES_DEG)                     # 24
 _RAY_ANGLES_RAD = np.radians(RAY_ANGLES_DEG)               # precomputed; shape (24,)
 _RAY_SIN = np.sin(_RAY_ANGLES_RAD)                         # x-components of unit direction vectors
 _RAY_COS = np.cos(_RAY_ANGLES_RAD)                         # y-components of unit direction vectors
@@ -75,6 +90,111 @@ def clear_cache_folder(cache_path: Path = CACHE_FOLDER) -> None:
 
     print(f"Cache folder '{cache_path}' cleared — {deleted} item(s) removed"
           + (f", {skipped} skipped (locked)" if skipped else "."))
+
+
+_TIME_START_PATTERN = re.compile(rb"(<timeStart>)(.*?)(</timeStart>)", re.DOTALL)
+
+
+def randomize_current_time_start(
+        xml_paths: Union[Path, str, Iterable[Union[Path, str]]] = TIME_START_XML_PATHS,
+        time_range: Tuple[int, int] = CURRENT_TIME_START_RANGE,
+        rng: Optional[np.random.Generator] = None,
+) -> int:
+    """
+    Overwrite <timeStart> in the shared environment-input XMLs (3D current
+    field and 2D tide field) with ONE new random value, so every simexe
+    process launched from this batch (all of them read the same fixed
+    paths) picks up the same randomized tidal offset, and so the current
+    field and the water levels describe the same moment of the tidal cycle.
+
+    Must be called exactly ONCE per chunk of concurrent simulations, after
+    every process of the PREVIOUS chunk has finished and before any process
+    of the next one is started (see the chunked execution loop in
+    collect_supervised_dataset) -- simexe processes only read these files,
+    they don't get the value passed any other way, and since every process
+    (this run's workers AND any other independently-started process) reads
+    the identical fixed paths, writing them again while workers from the
+    current chunk are still running would change the value out from under
+    them mid-chunk, silently making some of that chunk's episodes use a
+    different tidal offset than others.
+
+    This does a surgical byte-level substitution of ONLY the digits between
+    "<timeStart>" and "</timeStart>" -- it does NOT parse/reserialize the
+    XML (no ElementTree), so each file is byte-for-byte identical apart
+    from that one value: same declaration, same quoting, same namespace
+    declarations (used or not), same whitespace/indentation, same line
+    endings. Each write is atomic (temp file + os.replace) so a simexe
+    process reading a file at an unlucky moment can never see a
+    partially written/corrupt version -- os.replace is a single
+    filesystem-level rename on both Windows and POSIX.
+
+    All files are read and validated BEFORE any of them is written, so a
+    missing path or a missing <timeStart> fails with nothing modified,
+    rather than leaving the current XML on a new value and the tide XML on
+    the previous one. (There is no cross-file atomicity on either platform,
+    so the renames themselves still happen one after the other; that window
+    is microseconds, and no simexe process of this batch exists yet.)
+
+    Args:
+        xml_paths: Path (or iterable of paths) to the environment-input XML
+            files that must all receive the same <timeStart>. Defaults to
+            TIME_START_XML_PATHS = (CURRENT_XML_PATH, TIDE_XML_PATH). A
+            single path is also accepted for backwards compatibility.
+        time_range: Inclusive (low, high) range in seconds to draw
+            <timeStart> from.
+        rng: Optional numpy Generator (for reproducible tests); defaults to
+            a fresh `np.random.default_rng()`.
+
+    Returns:
+        The new <timeStart> value that was written to every file, for logging.
+
+    Raises:
+        FileNotFoundError: If any path does not exist. This is treated as
+            fail-fast rather than silently skipping randomization and
+            running the whole batch against a stale/previous value.
+        ValueError: If `xml_paths` is empty, or if any file contains no
+            "<timeStart>...</timeStart>".
+    """
+
+    # Accept a single path as well as an iterable of paths.
+    if isinstance(xml_paths, (str, Path)):
+        xml_paths = (xml_paths,)
+    paths = [Path(p) for p in xml_paths]
+    if not paths:
+        raise ValueError("xml_paths is empty: nothing to randomize.")
+
+    rng = rng or np.random.default_rng()
+    low, high = time_range
+    new_time_start = int(rng.integers(low, high, endpoint=True))
+    replacement = str(new_time_start).encode("ascii")
+
+    # Read and validate every file first; nothing is written until all of
+    # them are known good.
+    # Binary mode: no text-mode newline translation (Python would otherwise
+    # normalize \r\n <-> \n on read/write depending on platform), so every
+    # byte outside the substituted digits is guaranteed untouched.
+    updated = []
+    for path in paths:
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Environment-input XML not found: {path}. This file is read "
+                "directly by simexe (not passed as a parameter), so it must "
+                "exist at this fixed path before any simulation is started."
+            )
+        new_raw, n_subs = _TIME_START_PATTERN.subn(
+            lambda m: m.group(1) + replacement + m.group(3),
+            path.read_bytes(), count=1,
+        )
+        if n_subs == 0:
+            raise ValueError(f'"<timeStart>...</timeStart>" not found in {path}')
+        updated.append(new_raw)
+
+    for path, new_raw in zip(paths, updated):
+        tmp_path = path.with_name(path.name + f".tmp{os.getpid()}")
+        tmp_path.write_bytes(new_raw)
+        os.replace(tmp_path, path)  # atomic on Windows and POSIX
+
+    return new_time_start
 
 
 try:
@@ -421,7 +541,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         ship_config.setInitialPosition(sim_setup.x_pos, sim_setup.y_pos)
         ship_config.setInitialPropellerRps(float(5.5*action[1]))
         ship_config.setInitialRudderAngle(float(35.0*action[0]))
-        ship_config.setInitialHeading(rng.uniform(low=[0.0], high=[360.0])[0])
+        ship_config.setInitialHeading(rng.uniform(low=[0.0], high=[359.0])[0])
         ship_config.setInitialSurgeVelocity(float(rng.uniform(low=[0.0], high=[6.0])[0]))
         ship_config.setInitialSwayVelocity(float(rng.uniform(low=[-2.0], high=[2.0])[0]))
         ship_config.setInitialYawVelocity(float(rng.uniform(low=[-1.5], high=[1.5])[0]))
@@ -442,12 +562,24 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         print(f"Math model initialized! Starting simulation at {pos_info}")
 
         _math_model.enableBridge()
+        environment = _math_model.getEnvironmentInterface()
+
+        wind_field_control = environment.getWindFieldControl()
+        wind_field_transform = wind_field_control.getFieldTransform()
+        wind_field_transform.Rotation = rng.uniform(low=[0.0], high=[359.0])[0]
+        wind_field_transform.Offset = 0.0                       # sigma = 7.8 corresponds to 80% between 0 and 10
+        wind_field_transform.Scale = float(np.clip(np.abs(rng.normal(loc=0.0, scale=7.8)), 0.0, 25.0))
+        wind_field_control.setFieldTransform(wind_field_transform)
+
         _math_model.simulateSeconds(initialization_time)  # initialize velocities
 
         # -----------------------------
         # Retrieve ship interface
         # -----------------------------
         _ship_interface = _math_model.getShipInterface(0)
+
+        wind_state = _ship_interface.getWindState()
+        print(f"Wind direction: {str(wind_state.Direction)} - wind speed: {str(wind_state.Speed)}")
 
         # Get initial state
         initial_position = _ship_interface.getShipPosition()
@@ -766,61 +898,91 @@ def collect_supervised_dataset(
             # Prepare test execution function with fixed sim_config + shared pool
             execute_with_param = partial(run_in_process, sim_config=sim_config, pool=pool)
 
-            # Submit all tasks to the executor
-            future_to_test = {
-                executor.submit(execute_with_param, setup): (i, setup)
-                for i, setup in enumerate(setups)
-            }
+            # Simulations are executed in CHUNKS of `num_workers`, with the
+            # shared current/tide XMLs re-randomized before each chunk, so
+            # every wave of concurrent simexe processes sees a different
+            # tidal offset instead of the whole run sharing one.
+            #
+            # The chunk boundary is a hard barrier: every future of chunk N
+            # must have completed before <timeStart> is rewritten for chunk
+            # N+1. simexe processes read these fixed paths themselves and
+            # are not handed the value any other way, so rewriting the files
+            # while a process of the previous chunk is still starting up
+            # would silently give that episode a different tidal offset than
+            # the rest of its chunk. This costs some throughput -- the pool
+            # idles while the slowest simulation of a chunk finishes (and a
+            # TIMEOUT_SECONDS straggler stalls its whole chunk) -- which is
+            # the unavoidable price of the offset living in a shared file
+            # rather than in each simulation's own inputs.
+            for chunk_start in range(0, len(setups), num_workers):
+                chunk = setups[chunk_start:chunk_start + num_workers]
+                chunk_end = chunk_start + len(chunk) - 1
 
-            # Process results as they complete
-            for future in concurrent.futures.as_completed(future_to_test):
-                spawn_counter += 1
-                index, _ = future_to_test[future]
+                new_time_start = randomize_current_time_start()
+                print(f"timeStart randomized to {new_time_start}s for simulations "
+                      f"{chunk_start}-{chunk_end} in:")
+                for _xml_path in TIME_START_XML_PATHS:
+                    print(f"  - {_xml_path}")
 
-                # Periodically wipe C:\cache to reclaim space consumed by crash dumps
-                # from Python subprocesses that terminated unexpectedly.
-                if spawn_counter % CACHE_CLEAR_INTERVAL == 0:
-                    print(f"[Cache cleanup] {spawn_counter} processes spawned — clearing {CACHE_FOLDER} …")
-                    clear_cache_folder(CACHE_FOLDER)
+                # Submit this chunk's tasks. `chunk_start + i` keeps the
+                # episode index global across chunks, so episode_id still
+                # identifies the simulation uniquely over the whole run.
+                future_to_test = {
+                    executor.submit(execute_with_param, setup): (chunk_start + i, setup)
+                    for i, setup in enumerate(chunk)
+                }
 
-                try:
-                    # Get the completed test result
-                    sim_setup = future.result()
+                # Process results as they complete. as_completed() over this
+                # chunk's futures only returns once all of them are done,
+                # which is exactly the barrier described above.
+                for future in concurrent.futures.as_completed(future_to_test):
+                    spawn_counter += 1
+                    index, _ = future_to_test[future]
 
-                    if sim_setup.output.status == "PASSED":
-                        # Update test config with results
-                        for i in range(len(sim_setup.output.x_input)):
-                            x_inputs.append(sim_setup.output.x_input[i])
-                            y_outputs.append(sim_setup.output.y_output[i])
-                            # `index` uniquely identifies this episode/simulation;
-                            # every row from it gets the same episode_id so
-                            # downstream splitting can group them together.
-                            episode_ids.append(index)
-                        trajectories.append(sim_setup.output.trajectory)
-                        print(f"Simulation {index} succeeded: {sim_setup.output.status}")
-                        counter += 1
-                    else:
-                        # NOTE: `info["error"]` is only ever set by the two
-                        # explicit checks that write it directly (e.g. "Ship
-                        # not in open water!"). `_handle_exception` (for
-                        # SimException / generic exceptions) writes to
-                        # `info["message"]` instead -- a different key -- so
-                        # reading only `info["error"]` silently swallowed the
-                        # real exception text for those failures and for
-                        # TIMEOUTs (which set no info at all). Always show
-                        # the actual status, and fall back through both keys
-                        # before giving up on a real message.
-                        status = sim_setup.output.status or "FAILED"
-                        detail = (
-                            sim_setup.output.info.get("error")
-                            or sim_setup.output.info.get("message")
-                        )
-                        if detail:
-                            print(f"Simulation {index} failed [{status}]: {detail}")
+                    # Periodically wipe C:\cache to reclaim space consumed by crash dumps
+                    # from Python subprocesses that terminated unexpectedly.
+                    if spawn_counter % CACHE_CLEAR_INTERVAL == 0:
+                        print(f"[Cache cleanup] {spawn_counter} processes spawned — clearing {CACHE_FOLDER} …")
+                        clear_cache_folder(CACHE_FOLDER)
+
+                    try:
+                        # Get the completed test result
+                        sim_setup = future.result()
+
+                        if sim_setup.output.status == "PASSED":
+                            # Update test config with results
+                            for i in range(len(sim_setup.output.x_input)):
+                                x_inputs.append(sim_setup.output.x_input[i])
+                                y_outputs.append(sim_setup.output.y_output[i])
+                                # `index` uniquely identifies this episode/simulation;
+                                # every row from it gets the same episode_id so
+                                # downstream splitting can group them together.
+                                episode_ids.append(index)
+                            trajectories.append(sim_setup.output.trajectory)
+                            print(f"Simulation {index} succeeded: {sim_setup.output.status}")
+                            counter += 1
                         else:
-                            print(f"Simulation {index} failed [{status}]")
-                except Exception as exc:
-                    print(f"Simulation {index} generated an exception: {exc}")
+                            # NOTE: `info["error"]` is only ever set by the two
+                            # explicit checks that write it directly (e.g. "Ship
+                            # not in open water!"). `_handle_exception` (for
+                            # SimException / generic exceptions) writes to
+                            # `info["message"]` instead -- a different key -- so
+                            # reading only `info["error"]` silently swallowed the
+                            # real exception text for those failures and for
+                            # TIMEOUTs (which set no info at all). Always show
+                            # the actual status, and fall back through both keys
+                            # before giving up on a real message.
+                            status = sim_setup.output.status or "FAILED"
+                            detail = (
+                                sim_setup.output.info.get("error")
+                                or sim_setup.output.info.get("message")
+                            )
+                            if detail:
+                                print(f"Simulation {index} failed [{status}]: {detail}")
+                            else:
+                                print(f"Simulation {index} failed [{status}]")
+                    except Exception as exc:
+                        print(f"Simulation {index} generated an exception: {exc}")
 
     print(f"Successful simulations: {counter}")
 
