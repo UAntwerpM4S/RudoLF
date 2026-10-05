@@ -28,8 +28,7 @@ class Nomoto(DynamicsBase):
 
     Coordinate frame and assumptions:
         - Body-fixed reference frame located at the vessel center of gravity (CG)
-        - Axes: x forward, y to PORT, z up;
-          r counter-clockwise positive; positive rudder turns to starboard (r < 0)
+        - Axes: x forward, y starboard, z downward (right-handed)
         - Motion restricted to the horizontal plane (3-DOF)
         - No environmental disturbances (wind, waves, current)
         - Hydrodynamic coefficients are heuristic and weakly scaled
@@ -90,18 +89,10 @@ class Nomoto(DynamicsBase):
             Tuple (du, dv, dr) — surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
 
-        # The control gains below were written for "positive rudder turns to
-        # port" (k_r > 0 gives r > 0). The framework convention is the
-        # opposite (positive = starboard, r < 0), so the rudder input is
-        # mirrored here. The model's behaviour is otherwise unchanged: a
-        # starboard command now produces exactly the mirror image of what a
-        # port command produced before.
-        delta = -rudder_angle
-
         # Simplified dynamics
         du = self.k_t * (thrust * 60.0) + self.xu * state.u
-        dv = self.k_v * np.sin(delta) + self.yv * state.v
-        dr = (self.k_r * delta + self.nr * state.r + self.yv_r * state.v +
+        dv = self.k_v * np.sin(rudder_angle) + self.yv * state.v
+        dr = (self.k_r * rudder_angle + self.nr * state.r + self.yv_r * state.v +
               (state.v * state.u) / self.l)
 
         return du, dv, dr

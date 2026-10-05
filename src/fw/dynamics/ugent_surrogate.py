@@ -21,10 +21,7 @@ class UGentSurrogate(DynamicsBase):
 
     Coordinate frame and assumptions:
         - Body-fixed reference frame located at the vessel center of gravity.
-        - Axes: x forward, y to PORT, z up;
-          r counter-clockwise positive. The equations below already follow it:
-          positive (starboard) rudder gives a sway force to port at the stern
-          and r < 0, i.e. a turn to starboard.
+        - Axes: x forward, y starboard, z downward.
         - Motion is restricted to the horizontal plane (3-DOF).
         - Environmental forces (wind, current) are not included.
         - Coefficients are heuristic and scale with vessel mass and length.

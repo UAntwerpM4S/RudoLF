@@ -7,6 +7,7 @@ from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.simulators.base_simulator import BaseSimulator
 from fw.dynamics.fh_tabular_model import FhTabularModel
+from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 from fw.dynamics.environmental_model import EnvironmentModel
 
 
@@ -23,9 +24,7 @@ class ShipSimulator(BaseSimulator):
         - A unified interface compatible with RL or control loops.
 
     The simulator computes the vessel state in earth-fixed coordinates
-    using body-fixed velocities and yaw rate, in the frame convention
-    documented in fw.dynamics.dynamics_model.DynamicsBase (body y to port,
-    yaw rate and heading counter-clockwise positive). Integration uses a
+    using body-fixed velocities and yaw rate. Integration uses a
     midpoint approximation for improved accuracy.
 
     Dynamics model contract
@@ -121,11 +120,9 @@ class ShipSimulator(BaseSimulator):
         u, v, r = self._dynamics.step(state, actuator.rudder_angle, actuator.thrust,
                                       time_step, enable_rudder_angle_scaling)
 
-        # Add environmental accelerations only for models that do not already
-        # include them (DynamicsBase.handles_environment). The previous
-        # isinstance check missed the UAntwerpSurrogateTripoli* classes (they
-        # subclass DynamicsBase directly), so wind/current were counted twice.
-        if not getattr(self._dynamics, "handles_environment", False):
+        # Add environmental accelerations, except for FhTabularModel and UAntwerpSurrogate,
+        # as they already add environmental effects internally.
+        if not isinstance(self._dynamics, (FhTabularModel, UAntwerpSurrogate)):
             ax_env, ay_env = self._env.accelerations(state.heading)
             u += ax_env * time_step
             v += ay_env * time_step
@@ -135,9 +132,7 @@ class ShipSimulator(BaseSimulator):
         v = np.clip(v, *self._specs.sway_limits)
         r = np.clip(r, *self._specs.yaw_rate_limits)
 
-        # Midpoint heading for improved position integration accuracy.
-        # Body -> world rotation for body y to PORT (v port-positive) and
-        # heading counter-clockwise from East.
+        # Midpoint heading for improved position integration accuracy
         psi_mid = state.heading + 0.5 * r * time_step
         dx = u * np.cos(psi_mid) - v * np.sin(psi_mid)
         dy = u * np.sin(psi_mid) + v * np.cos(psi_mid)

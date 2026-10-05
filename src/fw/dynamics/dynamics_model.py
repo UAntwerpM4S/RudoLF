@@ -49,14 +49,7 @@ class DynamicsBase:
         This only reproduces the surrogate's intended behavior when dt
         equals the surrogate's training step size, which the subclass
         enforces explicitly.
-
-    `handles_environment`: True for models whose own dynamics already include
-    wind/current effects (engine-backed and surrogate models). ShipSimulator
-    then does NOT add EnvironmentModel accelerations on top. Physics-based
-    models keep the default False.
     """
-
-    handles_environment: bool = False
 
     def _compute_accelerations(
         self,
