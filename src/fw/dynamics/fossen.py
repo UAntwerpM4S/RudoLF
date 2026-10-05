@@ -26,7 +26,8 @@ class Fossen(DynamicsBase):
 
     Coordinate frame and assumptions:
         - Body-fixed reference frame located at the vessel center of gravity.
-        - Axes: x forward, y starboard, z downward.
+        - Axes: x forward, y to PORT, z up;
+          r counter-clockwise positive; positive rudder turns to starboard (r < 0).
         - Motion is restricted to the horizontal plane (3-DOF).
         - Environmental forces (wind, current) are not included.
         - Coefficients are heuristic and scale with vessel mass and length.
@@ -127,16 +128,23 @@ class Fossen(DynamicsBase):
                  self.N_uv * state.u * state.v)
 
         # --- CONTROL FORCES ---
+        # The rudder coefficients (Y_rudder_coeff, N_rudder_coeff > 0 by
+        # default) were written for "positive rudder turns to port". The
+        # framework convention is the opposite (positive = starboard, r < 0),
+        # so the rudder input is mirrored. A starboard command now produces
+        # exactly the mirror image of what a port command produced before.
+        delta = -rudder_angle
+
         # Speed-dependent rudder effectiveness
         # At low speeds, rudder is less effective
         speed_factor = max(state.u / RUDDER_SPEED_FACTOR_DENOMINATOR, MIN_RUDDER_EFFECTIVENESS)
 
         # Rudder effectiveness
-        f_rudder_sway = self.Y_rudder * rudder_angle * speed_factor
+        f_rudder_sway = self.Y_rudder * delta * speed_factor
 
         # IMPORTANT: Add direct sway force from rudder (helps initial turn)
         # Ships create sideways force when rudder is applied
-        m_rudder_yaw = self.N_rudder * rudder_angle * speed_factor
+        m_rudder_yaw = self.N_rudder * delta * speed_factor
 
         # Thrust force
         f_thrust = self.X_thrust * thrust

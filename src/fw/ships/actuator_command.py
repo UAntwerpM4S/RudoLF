@@ -19,8 +19,9 @@ class ActuatorCommand:
     """
     Rudder deflection angle in radians.
 
-    Positive values correspond to a deflection to starboard, following
-    the body-fixed coordinate convention.
+    Positive values correspond to a deflection to starboard, i.e. a
+    command that turns the bow to starboard (yaw rate r < 0 in the
+    framework convention).
     """
 
     thrust: float         # normalized [-]

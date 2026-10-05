@@ -55,6 +55,11 @@ class MyzakoShip:
 
             TRIPOLI:
                 Length 110 m, mass 6.16 × 10⁶ kg, heuristic coefficients.
+                Maximum rudder (azipod) angle 35.0 deg instead of 75.0 deg:
+                the FH Tripoli datasets and the UAntwerp Tripoli surrogates use
+                rudder_action = angle / 35 deg, so a full RL rudder command
+                (action = ±1) must map to ±35 deg to stay inside the trained
+                range (and to command ±35 deg to the FH azipods).
         """
 
         default_actuator_envelope = dict(
@@ -115,6 +120,11 @@ class MyzakoShip:
             Y_uv_coeff = -0.005
             N_uv_coeff = -0.0005
             actuator_envelope = dict(default_actuator_envelope)
+            # Must equal the 35 deg rudder normalization of the Tripoli
+            # datasets/surrogates (FH_MYZAKO_MAX_RUDDER_ANGLE = 35.0 in the
+            # uantwerp_surrogate_tripoli_* modules, 35.0*action[0] in
+            # sim_fh_dataset_generator.py).
+            actuator_envelope["max_rudder_angle"] = np.radians(35.0)
         else:
             mass = 3.86e6
             length = 110.0

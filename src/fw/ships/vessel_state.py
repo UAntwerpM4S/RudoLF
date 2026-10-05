@@ -10,18 +10,22 @@ class VesselState:
     body-fixed velocities, providing all information needed for
     simulation, control, or reinforcement learning.
 
-    Coordinate frames and conventions:
+    Coordinate frames and conventions (framework-wide, see
+    fw.dynamics.dynamics_model.DynamicsBase):
         - Earth-fixed (inertial) frame: x points east, y points north.
-        - Body-fixed frame: x points forward, y points starboard.
-        - Heading (yaw) is measured from the earth-fixed x-axis.
+        - Body-fixed frame: x points forward, y points to PORT, z up
+          (right-handed).
+        - Heading (yaw) is measured from the earth-fixed x-axis (east),
+          counter-clockwise positive.
 
     Attributes:
         x: Vessel position along the earth-fixed x-axis [m].
         y: Vessel position along the earth-fixed y-axis [m].
         heading: Vessel heading (yaw) relative to the earth-fixed frame [rad].
         u: Surge velocity along the vessel's x-axis (forward) [m/s].
-        v: Sway velocity along the vessel's y-axis (starboard) [m/s].
-        r: Yaw rate (rotation about the z-axis) [rad/s].
+        v: Sway velocity along the vessel's y-axis, port positive [m/s].
+        r: Yaw rate about the z-axis, counter-clockwise (bow to port)
+           positive, r = d(heading)/dt [rad/s].
     """
 
     terminated: bool
@@ -48,7 +52,8 @@ class VesselState:
 
     heading: float
     """
-    Vessel heading (yaw) relative to earth-fixed frame [rad].
+    Vessel heading (yaw) relative to earth-fixed frame [rad]: 0 = east,
+    counter-clockwise positive.
     """
 
     u: float
@@ -58,10 +63,11 @@ class VesselState:
 
     v: float
     """
-    Sway velocity along body-fixed y-axis (starboard) [m/s].
+    Sway velocity along body-fixed y-axis, port positive [m/s].
     """
 
     r: float
     """
-    Yaw rate (rotation about body-fixed z-axis) [rad/s].
+    Yaw rate (rotation about body-fixed z-axis) [rad/s], counter-clockwise
+    (bow to port) positive.
     """

@@ -22,8 +22,9 @@ class FhTabularModel(DynamicsBase):
 
     Coordinate convention:
         u  =  velocity_over_ground.x          (surge, forward positive)
-        v  = -velocity_over_ground.y          (sway,  starboard positive)
-        r  =  radians(getShipYawRate())       (yaw rate, bow-to-starboard positive)
+        v  =  velocity_over_ground.y          (sway, PORT positive)
+        r  =  radians(getShipYawRate())       (yaw rate, counter-clockwise /
+                                               bow-to-port positive)
 
     Note: getShipVelocityOverGround() returns velocities already expressed
     in the body-fixed frame despite its name (confirmed empirically — the
@@ -44,9 +45,12 @@ class FhTabularModel(DynamicsBase):
         self.ship_spec: ShipSpecifications = ship_spec
         self._engine = fh_engine
 
+    # The FH engine computes wind/current itself.
+    handles_environment = True
+
     def step(
         self,
-        state: VesselState,
+        state: VesselState | None,
         rudder_angle: float,
         thrust: float,
         dt: float,
@@ -82,7 +86,7 @@ class FhTabularModel(DynamicsBase):
             Tuple (u, v, r) read directly from the FH engine after advancing
             by dt seconds:
                 u = velocity_over_ground.x          [m/s]
-                v = -velocity_over_ground.y         [m/s]
+                v = velocity_over_ground.y          [m/s]
                 r = radians(getShipYawRate())       [rad/s]
         """
 
@@ -102,7 +106,7 @@ class FhTabularModel(DynamicsBase):
                     val = np.degrees(rudder_angle) / framework_max_deg
                 else:
                     val = np.degrees(rudder_angle) / rudder.getMaximumAngle()
-                rudder.setControlValue(float(-val))   # negated: framework -> FH sign convention
+                rudder.setControlValue(float(val))
 
             for propeller in self._engine.ship_interface.getPropellerControls():
                 propeller.engage()
@@ -115,4 +119,4 @@ class FhTabularModel(DynamicsBase):
         vel = self._engine.ship_interface.getShipVelocityOverGround()
         yaw_rate = np.radians(self._engine.ship_interface.getShipYawRate())
 
-        return float(vel.x), float(-vel.y), float(yaw_rate)
+        return float(vel.x), float(vel.y), float(yaw_rate)

@@ -43,6 +43,11 @@ class UAntwerpSurrogate(DynamicsBase):
     of `_SURROGATE_DT`, which is enforced by `step()`.
     """
 
+    # Engine/surrogate models already include wind/current effects:
+    # ShipSimulator must not add EnvironmentModel accelerations on top.
+    handles_environment = True
+
+
     def __init__(self,
                  ship_spec: ShipSpecifications,
                  ua_surrogate_config: Optional[Dict]=None):
