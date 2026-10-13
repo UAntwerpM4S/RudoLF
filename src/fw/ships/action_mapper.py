@@ -8,8 +8,8 @@ class ActionMapper:
     """
     Maps normalized control actions to physical actuator commands.
 
-    This utility class converts dimensionless control inputs; typically
-    originating from a controller or reinforcement-learning policy into
+    This utility class converts dimensionless control inputs - typically
+    originating from a controller or reinforcement-learning policy - into
     physically meaningful actuator commands for a vessel. The mapping
     enforces actuator limits defined in the ship specifications.
 
