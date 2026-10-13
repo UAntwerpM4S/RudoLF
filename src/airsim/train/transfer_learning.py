@@ -1,7 +1,7 @@
 """
 Transfer learning from 2D PPO policies to AirSimEnv (3D).
 
-Only used by AirSimEnv training — has no effect on 2D environment training.
+Only used by AirSimEnv training, has no effect on 2D environment training.
 
 Tasks implemented:
     T-054: Network topology comparison (2D vs 3D input dims, layers, neurons, activations).
@@ -12,16 +12,16 @@ Tasks implemented:
 
 Mapping layer strategy
 ----------------------
-The `ActorCriticNetwork` first layer `shared_network[0]: Linear(input_dim → 256)`
+The `ActorCriticNetwork` first layer `shared_network[0]: Linear(input_dim -> 256)`
 differs in shape between 2D (e.g. input_dim=10) and 3D (input_dim=18), so it is
-**not** transferred.  Instead, it is left randomly initialized and kept trainable —
+**not** transferred.  Instead, it is left randomly initialized and kept trainable,
 acting as the implicit mapping layer that learns to project the extra AirSim
 observation dimensions into the feature space that the pretrained deeper layers
 already understand.
 
 Freeze strategy
 ---------------
-When `freeze_shared=True`, only the backbone layer `shared_network[2]: 256→128`
+When `freeze_shared=True`, only the backbone layer `shared_network[2]: 256->128`
 is frozen so the pre-trained feature representation is preserved.  The actor and
 critic heads (`actor_mean`, `critic`) remain **trainable** so they can
 fine-tune to the new environment's reward structure and 3D physics. Freezing
@@ -61,7 +61,7 @@ class TransferIncompatibilityError(ValueError):
 
 
 # ---------------------------------------------------------------------------
-# T-054 — topology comparison
+# T-054 - topology comparison
 # ---------------------------------------------------------------------------
 
 
@@ -96,7 +96,7 @@ class TopologyReport:
 
         lines = [
             "=" * 58,
-            "  Transfer Learning — Network Topology Comparison",
+            "  Transfer Learning - Network Topology Comparison",
             "=" * 58,
             f"  Source input dim   : {self.source_input_dim}  (2D policy)",
             f"  Target input dim   : {self.target_input_dim}  (AirSimEnv)",
@@ -107,10 +107,10 @@ class TopologyReport:
             "  Transferable hidden layers (shared_network[2], actor, critic):",
         ]
         for i, (in_f, out_f) in enumerate(self.shared_layer_shapes):
-            lines.append(f"    [{i}] Linear({in_f} → {out_f})")
+            lines.append(f"    [{i}] Linear({in_f} -> {out_f})")
         lines += [
-            "  Mapping layer      : shared_network[0] — random-init, trainable",
-            f"                       Linear({self.target_input_dim} → 256)",
+            "  Mapping layer      : shared_network[0] - random-init, trainable",
+            f"                       Linear({self.target_input_dim} -> 256)",
             "=" * 58,
         ]
         return "\n".join(lines)
@@ -154,7 +154,7 @@ def compare_network_topology(
 
 
 # ---------------------------------------------------------------------------
-# T-055 — incompatibility reporting
+# T-055 - incompatibility reporting
 # ---------------------------------------------------------------------------
 
 
@@ -194,7 +194,7 @@ def validate_transfer_compatibility(report: TopologyReport) -> None:
 
 
 # ---------------------------------------------------------------------------
-# T-056 — weight loading with layer matching and freezing
+# T-056 - weight loading with layer matching and freezing
 # ---------------------------------------------------------------------------
 
 # NOTE: `actor_log_std` is intentionally NOT transferred. A converged 2D
@@ -231,7 +231,7 @@ def apply_transfer_weights(
 
     Only layers whose parameter tensors have identical shapes in source and
     target are transferred. The first layer `shared_network[0]` (the mapping
-    layer) is intentionally skipped because it differs in input dimension —
+    layer) is intentionally skipped because it differs in input dimension,
     it remains randomly initialized and trainable to adapt the extra 3D inputs.
 
     Args:
@@ -256,7 +256,7 @@ def apply_transfer_weights(
             continue
         if src_sd[key].shape != tgt_sd[key].shape:
             continue
-        # Move to target device before copying so CPU→CUDA transfers work correctly.
+        # Move to target device before copying so CPU->CUDA transfers work correctly.
         tgt_sd[key] = src_sd[key].to(tgt_sd[key].device).clone()
         transferred.append(key)
 
@@ -271,7 +271,7 @@ def apply_transfer_weights(
 
 
 # ---------------------------------------------------------------------------
-# T-057 — full pipeline: mapping layer + config integration
+# T-057 - full pipeline: mapping layer + config integration
 # ---------------------------------------------------------------------------
 
 
@@ -286,12 +286,12 @@ def build_transfer_policy(
     Build an AirSimEnv policy initialized from a pretrained 2D checkpoint.
 
     Pipeline:
-        1. Load the 2D source policy on CPU (weight extraction only — no GPU needed).
+        1. Load the 2D source policy on CPU (weight extraction only, no GPU needed).
         2. Compare topology and validate compatibility (raises on mismatch).
         3. Initialize a fresh target `PPOPolicy` on *target_device*.
         4. Transfer all matching hidden layers, moving tensors to *target_device* automatically.
-        5. The first linear layer `shared_network[0]: Linear(target_input_dim → 256)`
-           remains randomly initialized and trainable — this is the mapping layer
+        5. The first linear layer `shared_network[0]: Linear(target_input_dim -> 256)`
+           remains randomly initialized and trainable. This is the mapping layer
            that learns to project the extra 3D observation dimensions into the feature
            space that the pretrained deeper layers understand.
 

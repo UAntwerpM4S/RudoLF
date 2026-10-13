@@ -66,7 +66,7 @@ class DynamicsBase:
             thrust:       Normalized thrust command (dimensionless), positive forward.
 
         Returns:
-            Tuple (du, dv, dr) — surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
+            Tuple (du, dv, dr): surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
 
         raise NotImplementedError
@@ -114,7 +114,7 @@ class DynamicsBase:
                                          accept but ignore this flag.
 
         Returns:
-            Tuple (u, v, r) — un-clipped updated body-fixed velocities.
+            Tuple (u, v, r): un-clipped updated body-fixed velocities.
         """
 
         du, dv, dr = self._compute_accelerations(state, rudder_angle, thrust)

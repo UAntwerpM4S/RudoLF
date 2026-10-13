@@ -86,7 +86,7 @@ def _failure_info() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# StrictSuccessStoppingCallback — streak logic
+# StrictSuccessStoppingCallback - streak logic
 # ---------------------------------------------------------------------------
 
 
@@ -173,7 +173,7 @@ class TestStrictSuccessStreakLogic:
 
 
 # ---------------------------------------------------------------------------
-# StrictSuccessStoppingCallback — training stop
+# StrictSuccessStoppingCallback - training stop
 # ---------------------------------------------------------------------------
 
 
@@ -225,7 +225,7 @@ class TestStrictSuccessStopSignal:
 
 
 # ---------------------------------------------------------------------------
-# StrictSuccessStoppingCallback — failure modes
+# StrictSuccessStoppingCallback - failure modes
 # ---------------------------------------------------------------------------
 
 
@@ -306,7 +306,7 @@ class TestStrictSuccessFailureModes:
 
 
 # ---------------------------------------------------------------------------
-# StrictSuccessStoppingCallback — multi-env
+# StrictSuccessStoppingCallback - multi-env
 # ---------------------------------------------------------------------------
 
 

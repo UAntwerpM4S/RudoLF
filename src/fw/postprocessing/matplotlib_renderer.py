@@ -84,7 +84,7 @@ class MatplotlibRenderer:
         # Metrics rows: cross-track error, rudder, UKC, velocity, thrust
         n_rows = 5
         if n_ships == 0:
-            logger.warning("No episode data to render — skipping.")
+            logger.warning("No episode data to render - skipping.")
             return
 
         try:
@@ -331,7 +331,7 @@ class MatplotlibRenderer:
                 else:
                     end_color, end_marker, end_size = "red", "X", 130
             else:
-                # Non-collision endpoint — gray, smaller, less prominent.
+                # Non-collision endpoint, gray, smaller, less prominent.
                 end_color, end_marker, end_size = "dimgray", "o", 60
             ax.scatter(
                 *ep.path[-1], c=end_color, marker=end_marker,
@@ -393,7 +393,7 @@ class MatplotlibRenderer:
             # resample_to_common_time expects common_time in [0, 1]
             resampled = [resample_to_common_time(s, cls.COMMON_TIME) for s in all_signals]
             avg = np.mean(resampled, axis=0)
-            # Map COMMON_TIME [0, 1] → [0, 100] to match normalized_time_axis output
+            # Map COMMON_TIME [0, 1] -> [0, 100] to match normalized_time_axis output
             t_common = cls.COMMON_TIME * 100.0
             ax.plot(t_common, avg, color="black", alpha=0.7, lw=1.5, label="Average")
 

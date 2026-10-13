@@ -207,7 +207,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         Flip on the eval-only realism overrides for trained-model evaluation.
 
         Called by AgentManager.visualize_trained_agent before running episodes.
-        Overrides set here take effect on the next reset/spawn — they are read
+        Overrides set here take effect on the next reset/spawn. They are read
         by the scenario builder (lateral spawn) and the base env step loop
         (head-on dodge). Training runs leave these at their safe defaults
         (set in PySimColavBaseEnv.__init__) and are unaffected.

@@ -71,7 +71,7 @@ class PlotlyRenderer:
         n_ships = len(ship_ids)
 
         if n_ships == 0:
-            logger.warning("No ship data to render — skipping.")
+            logger.warning("No ship data to render - skipping.")
             return
 
         # 4 rows: trajectory, cross-track error, rudder, UKC

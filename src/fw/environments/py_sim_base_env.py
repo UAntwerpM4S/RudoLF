@@ -1139,8 +1139,8 @@ class PySimBaseEnv(BaseEnv):
     @staticmethod
     def _segments_intersect(prev_point: np.ndarray, curr_point: np.ndarray, line_start: np.ndarray, line_end: np.ndarray) -> bool:
         """
-        Return True if segment prev — curr intersects the infinite line through
-        line_seg_start — line_seg_end.
+        Return True if segment prev - curr intersects the infinite line through
+        line_seg_start - line_seg_end.
         """
 
         def _orientation(a, b, c):
@@ -1156,11 +1156,11 @@ class PySimBaseEnv(BaseEnv):
         o1 = _orientation(line_start, line_end, prev_point)
         o2 = _orientation(line_start, line_end, curr_point)
 
-        # If either point is on the line → intersection
+        # If either point is on the line -> intersection
         if abs(o1) <= EPSILON or abs(o2) <= EPSILON:
             return True
 
-        # If signs differ → segment crosses the line
+        # If signs differ -> segment crosses the line
         return (o1 > 0 > o2) or (o1 < 0 < o2)
 
     def _is_near_perpendicular_line(self, checkpoint: dict) -> bool:
@@ -1212,7 +1212,7 @@ class PySimBaseEnv(BaseEnv):
             # Coincident checkpoints: fall back to pointing directly at p_k_plus_1
             return math.atan2(y_k_plus_1 - y, x_k_plus_1 - x)
 
-        # Orthogonal projection of ship onto segment p_k_min_1 → p_k
+        # Orthogonal projection of ship onto segment p_k_min_1 -> p_k
         proj_scalar = (
                           (x - x_k_min_1) * (x_k - x_k_min_1) +
                           (y - y_k_min_1) * (y_k - y_k_min_1)
@@ -1411,7 +1411,7 @@ class PySimBaseEnv(BaseEnv):
 
         if getattr(self, "minimal_path_render", False):
             logger.debug("minimal path render")
-            # Faint single-line path only — no checkpoint circles, no perp lines.
+            # Faint single-line path only, no checkpoint circles, no perp lines.
             xs = [p[0] for p in path_points]
             ys = [p[1] for p in path_points]
             self.ax.plot(xs, ys, color='green', alpha=0.2,

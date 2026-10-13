@@ -1,8 +1,8 @@
 """
 Model compatibility error detection and error message quality tests.
 
-Covers R4 (incompatible model file — class hierarchy, immutability, dataclass contract)
-and R10 (actionable error messages — concrete dimension values in validation output).
+Covers R4 (incompatible model file: class hierarchy, immutability, dataclass contract)
+and R10 (actionable error messages, concrete dimension values in validation output).
 
 These tests complement test_transfer_learning.py by focusing on the error type
 contract and the exact dimension values present in error messages, rather than
@@ -44,7 +44,7 @@ def _make_report(**overrides) -> TopologyReport:
 
 class TestTransferIncompatibilityErrorContract:
     """
-    R4 — TransferIncompatibilityError must be a proper ValueError subclass.
+    R4 - TransferIncompatibilityError must be a proper ValueError subclass.
 
     Verifies the error-type hierarchy so callers that catch ValueError generically
     can still handle transfer failures without importing the specific exception type.
@@ -79,7 +79,7 @@ class TestTransferIncompatibilityErrorContract:
 
 class TestActionMismatchErrorMessageContent:
     """
-    R10 — Action-mismatch error messages must name both concrete output dimensions.
+    R10 - Action-mismatch error messages must name both concrete output dimensions.
     """
 
     def test_action_mismatch_message_names_source_output_dim(self):
@@ -121,7 +121,7 @@ class TestActionMismatchErrorMessageContent:
 
 class TestTargetSmallerErrorMessageContent:
     """
-    R10 — Target-smaller-than-source error messages must name both input dimensions.
+    R10 - Target-smaller-than-source error messages must name both input dimensions.
     """
 
     def test_target_smaller_message_names_source_input_dim(self):
@@ -165,12 +165,12 @@ class TestTargetSmallerErrorMessageContent:
 
 class TestTopologyReportDataclassContract:
     """
-    R4 — TopologyReport must be an immutable dataclass with correct computed fields.
+    R4 - TopologyReport must be an immutable dataclass with correct computed fields.
     """
 
     def test_topology_report_is_frozen(self):
         """
-        TopologyReport must be immutable — attribute assignment must raise an exception.
+        TopologyReport must be immutable, attribute assignment must raise an exception.
 
         Verifies:
             - Attempting to set a field on a constructed TopologyReport raises

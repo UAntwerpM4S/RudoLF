@@ -116,7 +116,7 @@ class ShipSimulator(BaseSimulator):
 
         state = self._state
 
-        # Advance dynamics — returns updated (u, v, r)
+        # Advance dynamics, returns updated (u, v, r)
         u, v, r = self._dynamics.step(state, actuator.rudder_angle, actuator.thrust,
                                       time_step, enable_rudder_angle_scaling)
 

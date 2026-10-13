@@ -70,10 +70,10 @@ class PySimColavBaseEnv(PySimBaseEnv):
         _calculate_colav_reward() -> (float, bool)
 
     Subclasses may override:
-        _on_entities_stepped()  — post-entity-step hook
-        _initialize_observation_space()  — extend observation space
-        _get_obs()  — extend observation vector
-        _on_episode_reset()  — additional per-episode reset logic
+        _on_entities_stepped() - post-entity-step hook
+        _initialize_observation_space() - extend observation space
+        _get_obs() - extend observation vector
+        _on_episode_reset() - additional per-episode reset logic
     """
 
     def __init__(
@@ -105,11 +105,11 @@ class PySimColavBaseEnv(PySimBaseEnv):
             obstacle_population: Optional[list] = None,
             obstacle_weights: Optional[list] = None,
             # Classifier behavior:
-            #   True  → classifier is locked to the builder's ground-truth
+            #   True  -> classifier is locked to the builder's ground-truth
             #           scenario label (at episode-level and on each step-level
             #           spawn). Geometric classification is still computed for
             #           metrics but is not used for reward/one-hot.
-            #   False → classifier runs pure geometric classification at both
+            #   False -> classifier runs pure geometric classification at both
             #           levels (so its misclassification rate can be measured
             #           against the builder's ground truth).
             ground_truth_classification: bool = True,
@@ -209,11 +209,11 @@ class PySimColavBaseEnv(PySimBaseEnv):
         # _all_encounters lists used by the confusion matrix; "min_dist" is
         # the closest center-to-center distance to any collision entity
         # observed *while the encounter was active*. Records are finalized
-        # on encounter end (tracked → None) or on episode reset / terminal
+        # on encounter end (tracked -> None) or on episode reset / terminal
         # step if mid-encounter.
         #
         # "resolved" is True only when the encounter ended via the normal
-        # classifier-driven tracked → None transition (TS left the forget
+        # classifier-driven tracked -> None transition (TS left the forget
         # range / was despawned by step-level cleanup) *and* the OS had
         # passed the TS during the encounter. Encounters cut off by episode
         # termination/truncation/reset are not resolved. Distributional
@@ -256,12 +256,12 @@ class PySimColavBaseEnv(PySimBaseEnv):
         # reset by step-level cleanup, or episode ends).
         #
         # The (gt, pred) pair is captured once at encounter entry and never
-        # re-evaluated during the encounter — this matches the
+        # re-evaluated during the encounter. This matches the
         # locking-during-encounter behavior applied to the 4-way classifier
         # label used for reward shaping.
         self._episode_encounters: list[dict] = []    # encounters in the current episode
         self._all_encounters: list[dict] = []        # accumulated across episodes
-        self._prev_tracked_ts: Optional[int] = None  # for None→tracked transition detection
+        self._prev_tracked_ts: Optional[int] = None  # for None -> tracked transition detection
 
         # Passing snapshot: list of dicts with OS/TS positions at the moment of passing
         self._passing_snapshots: list[dict] = []
@@ -561,7 +561,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
 
         obs = self._get_obs()
 
-        # Classification metrics — update after _get_obs() has re-run the
+        # Classification metrics, update after _get_obs() has re-run the
         # scenario classifier for this step.
         self._update_encounter_metrics()
 
@@ -622,20 +622,20 @@ class PySimColavBaseEnv(PySimBaseEnv):
 
         Called from `step()` after `_get_obs()` re-runs the classifier.
         Handles three transitions:
-          * terminal/truncated → finalize any active encounter (not resolved).
-          * None → tracked     → start an encounter: capture (gt, pred) at
+          * terminal/truncated -> finalize any active encounter (not resolved).
+          * None -> tracked     -> start an encounter: capture (gt, pred) at
                                  first sight and reset the per-encounter
                                  accumulators (min_dist, CRI, CTE,
                                  time-to-first-action, pass/collision flags).
-          * tracked → None     → finalize the encounter as resolved.
+          * tracked -> None     -> finalize the encounter as resolved.
         """
 
         # _get_obs() skips re-running the classifier on terminal steps,
-        # so the classifier state is stale — do not sample it. Still
+        # so the classifier state is stale, do not sample it. Still
         # finalize an in-progress encounter so its min_dist/collided flags
         # are written into the record before the episode ends.
         if self.phys_sim.state.terminated or self.phys_sim.state.truncated:
-            # Episode is ending mid-encounter — TS has not left the forget
+            # Episode is ending mid-encounter, TS has not left the forget
             # range, so the encounter is *not* resolved.
             self._finalize_active_encounter(resolved_normally=False)
             return
@@ -710,7 +710,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
 
         Args:
             resolved_normally: True if finalize was triggered by the normal
-                classifier-driven tracked → None transition (TS left forget
+                classifier-driven tracked -> None transition (TS left forget
                 range or was despawned by step-level cleanup). False when
                 the encounter was cut off by episode termination, truncation,
                 or reset. The record's `resolved` flag is set only when
@@ -1019,10 +1019,10 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._current_episode_min_dist = float("inf")
         self._current_episode_collided = False
 
-        # Finalize any encounter still active at reset (defensive — terminal
+        # Finalize any encounter still active at reset (defensive, terminal
         # steps already finalize via _update_encounter_metrics).
         # Reaching here mid-encounter means it was cut off by the episode
-        # ending without the TS leaving forget range → not resolved.
+        # ending without the TS leaving forget range -> not resolved.
         if hasattr(self, "_finalize_active_encounter"):
             self._finalize_active_encounter(resolved_normally=False)
 
@@ -1105,7 +1105,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
         # Mark every artist that we hand-draw via ax.draw_artist as
         # "animated". Without this, the next fig.canvas.draw() (e.g. on
         # collision-entity rebuild when the TS despawns) bakes the OS dot
-        # and trail into the cached background — and every subsequent
+        # and trail into the cached background, and every subsequent
         # blit restores that ghost at the despawn position. set_animated
         # tells matplotlib to skip these artists during full redraws so
         # the background contains only static landmarks.

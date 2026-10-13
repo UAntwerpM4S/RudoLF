@@ -51,7 +51,7 @@ class FhSimBridge:
         Initialize the FhSimBridge.
 
         Resolves all file paths and sets up instance logging. The math model
-        itself is not initialized here — it is initialized lazily on the first
+        itself is not initialized here, it is initialized lazily on the first
         call to reset().
 
         Args:
@@ -127,7 +127,7 @@ class FhSimBridge:
                 # Fallback to console if the log directory cannot be created.
                 self._logger.addHandler(logging.StreamHandler())
                 self._logger.warning(
-                    "Could not open log file '%s': %s — logging to console.", log_path, exc
+                    "Could not open log file '%s': %s - logging to console.", log_path, exc
                 )
 
 
@@ -176,7 +176,7 @@ class FhSimBridge:
         Return a short identifier string for this bridge.
 
         Returns:
-            str: "FH" — identifies the FH Simulator bridge in log output
+            str: "FH" identifies the FH Simulator bridge in log output
                 and debug representations.
         """
 

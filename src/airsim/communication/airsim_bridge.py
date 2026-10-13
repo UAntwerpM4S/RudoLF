@@ -379,7 +379,7 @@ class AirSimBridge:
             self._controls = None
             self._rendering_enabled = None
             logger.warning(
-                "Flushing CSV telemetry buffer before reconnect at %s — "
+                "Flushing CSV telemetry buffer before reconnect at %s - "
                 "a gap will exist in the output file from this point.",
                 datetime.now(timezone.utc).isoformat(),
             )

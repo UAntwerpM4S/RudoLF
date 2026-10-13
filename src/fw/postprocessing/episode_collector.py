@@ -230,9 +230,9 @@ class EpisodeCollector:
 
         Supported input types:
 
-        * `np.ndarray` of shape `(N, action_dim)` — one row per agent.
+        * `np.ndarray` of shape `(N, action_dim)`: one row per agent.
         * `tuple` of `N` individual action arrays.
-        * A single `np.ndarray` of shape `(action_dim,)` — scalar
+        * A single `np.ndarray` of shape `(action_dim,)`: scalar
           single-agent case.
 
         Args:

@@ -870,7 +870,7 @@ class AirSimEnv(BaseEnv):
             )
 
         if terminated or truncated:
-            # Curriculum advances only when the agent passes the frontier cleanly —
+            # Curriculum advances only when the agent passes the frontier cleanly,
             # offtrack counts as failure so the frontier does not advance on drift-past.
             curriculum_success = (
                 self.checkpoint_index > self._curriculum_frontier_index
@@ -946,7 +946,7 @@ class AirSimEnv(BaseEnv):
 
         if self.load_world_on_start and self.save_slot:
             try:
-                logger.info("Loading AirSim save slot '%s' — this may take up to 90 s ...", self.save_slot)
+                logger.info("Loading AirSim save slot '%s' - this may take up to 90 s ...", self.save_slot)
                 load_started_at = time.perf_counter()
                 self.bridge.load_world_save(save_slot=self.save_slot)
                 settled_pose = self._settle_after_world_load()

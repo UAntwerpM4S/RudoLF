@@ -146,7 +146,7 @@ class SimpleScheduler(BaseScheduler):
                         "reusing the one configured for '%s'.", env_key, original_key
                     )
                 elif configuration:
-                    # Multiple entries but no exact match — pick the first and warn.
+                    # Multiple entries but no exact match. Pick the first and warn.
                     original_key = next(iter(configuration))
                     stop_condition = configuration[original_key]
                     logger.warning(

@@ -86,7 +86,7 @@ class Nomoto(DynamicsBase):
             thrust:       Normalized thrust command (dimensionless), positive forward.
 
         Returns:
-            Tuple (du, dv, dr) — surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
+            Tuple (du, dv, dr): surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
 
         # Simplified dynamics

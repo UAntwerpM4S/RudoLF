@@ -169,6 +169,7 @@ CONFIG_PARAMETERS = {
     'scenario': "DDShip_scenario1_nowindnocurrent",
     'ua_surrogate_config': {"wcu_enabled": False,
                             "file_name": "checkpoints/best_surrogate_clean.pth"},
+    'ugent_surrogate_config': {"ukc_percent": 363},
     'ship_model': ShipModel.MYZAKO_37,
     'dynamics_model': Model.FOSSEN,
     'live_animation': False,
@@ -239,7 +240,7 @@ def get_config_parameters() -> dict:
 
     Resolves the profile name from the config, validates it, applies it to
     the config dict, and returns the result. This is the single authoritative
-    place where profile application onto the config happens — callers should
+    place where profile application onto the config happens. Callers should
     not re-apply the profile to the config dict after calling this function.
 
     Returns:

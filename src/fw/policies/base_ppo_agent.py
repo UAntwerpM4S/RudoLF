@@ -378,7 +378,7 @@ class BasePPOAgent(BaseAgent):
             # Replace actions for done environments with a neutral input BEFORE
             # stepping so the simulator receives a stable helm-zero signal for
             # ships that have already finished their episode.
-            # Profile transforms are NOT applied to neutral actions — the neutral
+            # Profile transforms are NOT applied to neutral actions. The neutral
             # signal must reach the simulator unmodified so it does not perturb
             # the joint physics state for still-running environments.
             effective_actions = []

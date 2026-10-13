@@ -388,7 +388,7 @@ class ScenarioClassifier:
           * near 0    -> overtaking (aligned courses)
           * near pi/2 -> crossing  (perpendicular courses; left/right
                                     disambiguated by which side of OS
-                                    the TS lies on — the one remaining
+                                    the TS lies on, the one remaining
                                     use of relative bearing)
 
         Bucket boundaries fall naturally at pi/4 and 3*pi/4 from taking the

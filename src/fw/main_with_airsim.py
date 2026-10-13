@@ -285,7 +285,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         try:
             if _run_airsim_visualization_from_runtime():
                 raise SystemExit(0)
-            # _run_airsim_visualization_from_runtime() returned False — neither
+            # _run_airsim_visualization_from_runtime() returned False, neither
             # model_visualise nor inference_visualise was set in runtime_settings.
             # Fall through to the generic trainer.visualize path below.
         except ConnectionError as exc:
@@ -316,7 +316,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     # Generic trainer-based visualize path.
     #
     # Reached when action == "visualize" AND neither model_visualise nor
-    # inference_visualise was enabled in runtime_settings — i.e. the caller
+    # inference_visualise was enabled in runtime_settings, i.e. the caller
     # wants a live AirSim episode rendered through the standard Trainer API.
     # -------------------------------------------------------------------------
 
