@@ -52,11 +52,11 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             danger_distance: float = 50.0,
             time_horizon: float = 500.0,
             ships_inside_observation: int = 3,
-            detection_radius: float = 1000.0,
+            detection_radius: float = 2000.0,
             rrt_replan_cooldown_steps: int = 0,
             # Scenario configuration (passed to base)
-            scenario_types: Optional[list] = ["crossing-right"],
-            scenario_probs: Optional[list] = [1.0],
+            scenario_types: Optional[list] = ["crossing-right", "head-on", "overtaking", "static"],
+            scenario_probs: Optional[list] = [0.25, 0.25, 0.25, 0.25],
             obstacle_population: Optional[list] = [1],
             obstacle_weights: Optional[list] = [1],
             scenario_obstacle_level: Optional[str] = "episode",
@@ -94,6 +94,12 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             obstacle_weights=obstacle_weights,
             scenario_obstacle_level=scenario_obstacle_level,
         )
+
+        self.original_path = np.asarray(
+            [checkpoint["pos"] for checkpoint in self.checkpoints],
+            dtype=np.float32,
+        ).copy()
+        self.draw_rrt_paths = True
 
         # Override base lateral max specifically for this planner subclass
         self.static_ship_lateral_max = 0.0
@@ -373,8 +379,11 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
         heading = relative_heading[best_idx]
         print(f"relative heading: {heading}")
 
+        # Detector convention:
+        #   0°/360°: head-on, 90°: crossing-right,
+        #   180°: overtaking/static, 270°: crossing-left.
         if heading > 340 or heading <= 120:
-            print("Head-on  or crossing right collision detected. Triggering replanner with half circle.")
+            print("Head-on or crossing right collision detected. Triggering replanner with half circle.")
             self.replanner.full_circle = False
         elif heading > 120 and heading <= 240:
             print("Overtaking or static collision detected. Triggering replanner with full circle.")

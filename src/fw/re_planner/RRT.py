@@ -535,6 +535,23 @@ class RRTStarReplanner:
         nodes: List[Node] = [Node(pos=start.copy(), cost=0.0)]
         goal_node: Optional[Node] = None
         refinement_budget = 0
+        debug = {
+            "samples": 0,
+            "sample_sector_rejects": 0,
+            "new_sector_rejects": 0,
+            "edge_rejects": 0,
+            "no_parent": 0,
+            "parent_edge_rejects": 0,
+            "parent_angle_rejects": 0,
+            "nodes_added": 0,
+            "rewires": 0,
+            "goal_candidates": 0,
+            "goal_angle_rejects": 0,
+            "goal_cost_rejects": 0,
+            "goal_connections": 0,
+            "min_goal_distance": math.inf,
+            "kd_rebuilds": 0,
+        }
 
         kd: Optional[cKDTree] = None
         indexed_count = 0
@@ -550,6 +567,7 @@ class RRTStarReplanner:
             kd = cKDTree(positions)
             indexed_count = len(nodes)
             recent_count = 0
+            debug["kd_rebuilds"] += 1
 
         def append_to_spatial_buffer(node_index: int) -> None:
             nonlocal recent_count
@@ -638,6 +656,20 @@ class RRTStarReplanner:
                 print("RRT* goal is in prohibited Sector 3; no solution possible.")
                 return None, 0
 
+        print(
+            "RRT* search: "
+            f"start_dist={np.linalg.norm(start - obstacle_center):.2f}, "
+            f"goal_dist={np.linalg.norm(goal - obstacle_center):.2f}, "
+            f"inner={search_inner:.2f}, outer={search_outer:.2f}, "
+            f"step={self.step_size:.2f}, goal_tol={self.goal_tolerance:.2f}, "
+            f"max_iter={self.max_iter}, full_circle={self.full_circle}"
+        )
+        print(
+            "RRT* boundaries: "
+            f"start={start}, goal={goal}, "
+            f"before={point_before}, after={point_after}"
+        )
+
         def _children_turns_ok_after_reparent(
             node: Node,
             new_parent_pos: np.ndarray,
@@ -686,7 +718,9 @@ class RRTStarReplanner:
             # Goal samples are safe here because an invalid goal was handled
             # above.
             q_rand = self._sample(goal, obstacle_center, dim, search_inner, search_outer)
+            debug["samples"] += 1
             while not _sector_point_ok(q_rand):
+                debug["sample_sector_rejects"] += 1
                 q_rand = self._sample(goal, obstacle_center, dim, search_inner, search_outer)
 
             # 2. Nearest node in tree
@@ -697,10 +731,12 @@ class RRTStarReplanner:
 
             # Reject every newly generated node inside prohibited Sector 3.
             if not _sector_point_ok(q_new_pos):
+                debug["new_sector_rejects"] += 1
                 continue
 
             # 4. Collision check on the edge (q_near -> q_new)
             if not self._edge_free(q_near.pos, q_new_pos, obstacle_center, search_inner):
+                debug["edge_rejects"] += 1
                 continue
 
             # 5. Find nodes within rewiring radius
@@ -712,31 +748,39 @@ class RRTStarReplanner:
             # outer 10% radius band. The root/start boundary is always checked
             # because it connects the replanned path to point_before.
             best_parent, best_cost = None, math.inf
-            if _guarded_turn_angle_ok(
+            q_near_angle_ok = _guarded_turn_angle_ok(
                 _prev_pos(q_near),
                 q_near.pos,
                 q_new_pos,
                 force=(q_near.parent is None),
-            ):
+            )
+            if q_near_angle_ok:
                 best_parent = q_near
                 best_cost = q_near.cost + np.linalg.norm(q_new_pos - q_near.pos)
+            else:
+                debug["parent_angle_rejects"] += 1
 
             for nb in neighbours:
                 c = nb.cost + np.linalg.norm(q_new_pos - nb.pos)
-                if (
-                    c < best_cost
-                    and self._edge_free(nb.pos, q_new_pos, obstacle_center, search_inner)
-                    and _guarded_turn_angle_ok(
-                        _prev_pos(nb),
-                        nb.pos,
-                        q_new_pos,
-                        force=(nb.parent is None),
-                    )
+                if c >= best_cost:
+                    continue
+                if not self._edge_free(nb.pos, q_new_pos, obstacle_center, search_inner):
+                    debug["parent_edge_rejects"] += 1
+                    continue
+                if not _guarded_turn_angle_ok(
+                    _prev_pos(nb),
+                    nb.pos,
+                    q_new_pos,
+                    force=(nb.parent is None),
                 ):
+                    debug["parent_angle_rejects"] += 1
+                    continue
+                if c < best_cost:
                     best_parent, best_cost = nb, c
 
             if best_parent is None:
                 # No candidate parent satisfies the required angle limit.
+                debug["no_parent"] += 1
                 continue
 
             # 7. Add new node
@@ -744,6 +788,7 @@ class RRTStarReplanner:
             best_parent.children.append(q_new)
             nodes.append(q_new)
             append_to_spatial_buffer(len(nodes) - 1)
+            debug["nodes_added"] += 1
 
             # 8. Rewire neighbours through q_new
             for nb in neighbours:
@@ -778,6 +823,7 @@ class RRTStarReplanner:
                     nb.parent = q_new
                     q_new.children.append(nb)
                     self._propagate_cost(nb, new_cost)
+                    debug["rewires"] += 1
 
             # 9. Goal check.
             #
@@ -785,13 +831,16 @@ class RRTStarReplanner:
             #   best_parent -> q_new -> goal      only if q_new is protected
             #   q_new -> goal -> point_after      always, fixed boundary
             dist_to_goal = float(np.linalg.norm(q_new_pos - goal))
+            debug["min_goal_distance"] = min(debug["min_goal_distance"], dist_to_goal)
             if dist_to_goal <= self.goal_tolerance:
+                debug["goal_candidates"] += 1
                 goal_cost = best_cost + dist_to_goal
-                if (
-                    (goal_node is None or goal_cost < goal_node.cost)
-                    and _guarded_turn_angle_ok(best_parent.pos, q_new_pos, goal)
+                cost_ok = goal_node is None or goal_cost < goal_node.cost
+                angle_ok = (
+                    _guarded_turn_angle_ok(best_parent.pos, q_new_pos, goal)
                     and self._turn_angle_ok(q_new_pos, goal, point_after)
-                ):
+                )
+                if cost_ok and angle_ok:
                     # Connect to goal
                     gn = Node(pos=goal.copy(), parent=q_new, cost=goal_cost)
                     q_new.children.append(gn)
@@ -799,8 +848,34 @@ class RRTStarReplanner:
                     append_to_spatial_buffer(len(nodes) - 1)
                     goal_node = gn
                     refinement_budget = self.refinement_iter
+                    debug["goal_connections"] += 1
+                elif not cost_ok:
+                    debug["goal_cost_rejects"] += 1
+                else:
+                    debug["goal_angle_rejects"] += 1
 
         if goal_node is None:
+            min_goal_distance = debug["min_goal_distance"]
+            min_goal_text = (
+                f"{min_goal_distance:.2f}"
+                if math.isfinite(min_goal_distance)
+                else "never evaluated"
+            )
+            print(
+                "RRT* failed: "
+                f"iterations={iters}, nodes={len(nodes)}, "
+                f"min_goal_distance={min_goal_text}, "
+                f"sample_sector_rejects={debug['sample_sector_rejects']}, "
+                f"new_sector_rejects={debug['new_sector_rejects']}, "
+                f"edge_rejects={debug['edge_rejects']}, "
+                f"parent_edge_rejects={debug['parent_edge_rejects']}, "
+                f"parent_angle_rejects={debug['parent_angle_rejects']}, "
+                f"no_parent={debug['no_parent']}, "
+                f"goal_candidates={debug['goal_candidates']}, "
+                f"goal_angle_rejects={debug['goal_angle_rejects']}, "
+                f"goal_cost_rejects={debug['goal_cost_rejects']}, "
+                f"kd_rebuilds={debug['kd_rebuilds']}"
+            )
             return None, iters
 
         path = self._extract_path(goal_node)

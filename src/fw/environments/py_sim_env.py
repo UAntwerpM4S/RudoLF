@@ -1,5 +1,6 @@
-import os
+import copy
 import math
+import os
 import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
@@ -448,6 +449,48 @@ class PySimEnv(BaseEnv):
             else:
                 self.target_pos = self.initial_ship_pos.copy()
 
+        # Keep an immutable episode-start snapshot.  Planners may replace the
+        # active route during an episode, but every reset must return to the
+        # route and map boundary loaded from disk.
+        self._initial_overall = self.overall.copy()
+        self._initial_checkpoints = copy.deepcopy(self.checkpoints)
+        self._initial_target_pos = self.target_pos.copy()
+
+    def _restore_initial_path(self) -> None:
+        """Restore the route and map boundary that were loaded at construction."""
+
+        overall = np.asarray(self._initial_overall, dtype=np.float32)
+        if overall.ndim != 2 or overall.shape[1] != 2 or len(overall) < 3:
+            raise ValueError(
+                "The cached initial overall boundary must be a 2D array with "
+                "at least three coordinate pairs."
+            )
+        if not np.all(np.isfinite(overall)):
+            raise ValueError("The cached initial overall boundary contains non-finite values.")
+
+        checkpoints = copy.deepcopy(self._initial_checkpoints)
+        if len(checkpoints) < 2:
+            raise ValueError("The cached initial path must contain at least two checkpoints.")
+        for checkpoint in checkpoints:
+            position = np.asarray(checkpoint.get("pos"), dtype=np.float32)
+            if position.shape != (2,) or not np.all(np.isfinite(position)):
+                raise ValueError("The cached initial path contains an invalid checkpoint position.")
+            checkpoint["pos"] = position
+
+        self.overall = overall.copy()
+        self.checkpoints = checkpoints
+        self.target_pos = self._initial_target_pos.copy()
+
+        if hasattr(self, "path"):
+            self.path = np.asarray(
+                [checkpoint["pos"] for checkpoint in self.checkpoints],
+                dtype=np.float32,
+            )
+        if hasattr(self, "scenario_builder"):
+            self.scenario_builder.cache_checkpoint_segments()
+        if hasattr(self, "collision_entity_checkpoints"):
+            self.collision_entity_checkpoints = copy.deepcopy(self.checkpoints)
+
     # -----------------------
     # Utility & math helpers
     # -----------------------
@@ -734,6 +777,8 @@ class PySimEnv(BaseEnv):
             self._rng = np.random.default_rng(seed)
 
         super().reset(seed=seed)
+
+        self._restore_initial_path()
 
         # Hook for environment-specific reset operations
         self.env_specific_reset()

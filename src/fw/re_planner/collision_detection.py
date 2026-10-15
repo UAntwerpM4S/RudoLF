@@ -109,6 +109,7 @@ class CollisionDetector:
                 dcpa, cpa_point, tcpa, relative_heading = self._cpa_moving_obstacle(
                     obstacle_pos=obstacle_pos,
                     obstacle_velocity=obstacle_vel,
+                    obstacle_heading=obstacle_heading,
                     ship_trajectory=remaining_path,
                     ship_speed=ship_speed,
                 )
@@ -243,6 +244,7 @@ class CollisionDetector:
         self,
         obstacle_pos: np.ndarray,
         obstacle_velocity: np.ndarray,
+        obstacle_heading: float,
         ship_trajectory: np.ndarray,
         ship_speed: float,
     ) -> Tuple[float, np.ndarray, float, float]:
@@ -456,9 +458,10 @@ class CollisionDetector:
             )
 
         relative_heading = self._calculate_relative_heading(
-        target_ship_velocity=obstacle_velocity,
-        ship_trajectory=pts,
-        cpa_point=best_obstacle_point,
+            target_ship_velocity=obstacle_velocity,
+            target_ship_heading=obstacle_heading,
+            ship_trajectory=pts,
+            cpa_point=best_obstacle_point,
         )
 
         return min_dist, best_obstacle_point, best_tcpa, relative_heading
@@ -466,6 +469,7 @@ class CollisionDetector:
     def _calculate_relative_heading(
         self,
         target_ship_velocity: np.ndarray,
+        target_ship_heading: float,
         ship_trajectory: np.ndarray,
         cpa_point: np.ndarray,
     ) -> float:
@@ -479,9 +483,9 @@ class CollisionDetector:
         outgoing segment is used.
 
         Relative-heading convention:
-            0 degrees   -> overtaking / same direction
+            0 degrees   -> head-on
             90 degrees  -> right crossing
-            180 degrees -> head-on
+            180 degrees -> overtaking / same direction
             270 degrees -> left crossing
 
         The angle is measured clockwise from the OS heading to the TS heading.
@@ -499,8 +503,8 @@ class CollisionDetector:
         Returns:
             Relative heading in degrees in the range [0, 360).
 
-            Returns np.nan if the TS is stationary or if the OS trajectory
-            does not contain a valid segment.
+            Returns np.nan if the TS has no valid heading or if the OS
+            trajectory does not contain a valid segment.
         """
         target_ship_velocity = np.asarray(
             target_ship_velocity,
@@ -538,9 +542,23 @@ class CollisionDetector:
                 f"Received shape {cpa_point.shape}."
             )
 
-        if np.linalg.norm(target_ship_velocity) <= 1e-12:
-            # The TS heading is undefined.
+        target_speed = float(np.linalg.norm(target_ship_velocity))
+        if not np.isfinite(target_speed):
             return float("nan")
+
+        if target_speed <= 1e-12:
+            # A dynamic entity can stop at the end of its route while it
+            # remains inside the detector range. Its last heading is still
+            # meaningful for encounter classification.
+            if not np.isfinite(target_ship_heading):
+                return float("nan")
+            target_ship_velocity = np.array(
+                [
+                    np.cos(target_ship_heading),
+                    np.sin(target_ship_heading),
+                ],
+                dtype=float,
+            )
 
         if len(ship_trajectory) < 2:
             # The OS trajectory has no segment from which to determine
@@ -611,7 +629,7 @@ class CollisionDetector:
         os_direction = closest_segment_direction
         ts_direction = (
             target_ship_velocity
-            / np.linalg.norm(target_ship_velocity)
+            / float(np.linalg.norm(target_ship_velocity))
         )
 
         dot_product = float(
@@ -624,7 +642,9 @@ class CollisionDetector:
         )
 
         # Negative cross product converts the standard counterclockwise
-        # mathematical angle into a clockwise angle.
+        # mathematical angle into a clockwise angle. The additional 180
+        # degrees is the planner's encounter-angle convention: head-on is
+        # centered at 0 degrees, while overtaking is centered at 180 degrees.
         relative_heading = np.degrees(
             np.arctan2(
                 -cross_product,
@@ -635,10 +655,7 @@ class CollisionDetector:
         if np.isclose(relative_heading, 360.0, atol=1e-10):
             relative_heading = 0.0
 
-        relative_heading = float(relative_heading) + 180.0
-        if relative_heading >= 360.0:
-            relative_heading -= 360.0
-
+        relative_heading = (float(relative_heading) + 180.0) % 360.0
         return float(relative_heading)
 
     # ------------------------------------------------------------------
