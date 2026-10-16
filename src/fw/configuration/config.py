@@ -167,8 +167,12 @@ CONFIG_PARAMETERS = {
     'depth_contour': "env_Sche_250cm_no_scale.csv",
     'trajectory': "trajectory_points_no_scale.csv",
     'scenario': "DDShip_scenario1_nowindnocurrent",
-    'ua_surrogate_config': {"wcu_enabled": False,
-                            "file_name": "checkpoints/best_surrogate_clean.pth"},
+    # UAntwerp surrogate (dynamics_model = Model.UANTWERP). "preset" selects
+    # ship, scenario, checkpoint and UKC lookup CSV (fw/surrogate/presets.py:
+    # "tripoli_clean", "tripoli_confined", "tripoli_full"). Optional
+    # overrides: "checkpoint", "lookup_csv". The preset's ship must equal
+    # 'ship_model' below.
+    'ua_surrogate_config': {"preset": "tripoli_confined"},
     'ugent_surrogate_config': {"ukc_percent": 363},
     'ship_model': ShipModel.MYZAKO_37,
     'dynamics_model': Model.FOSSEN,

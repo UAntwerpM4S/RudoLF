@@ -9,14 +9,14 @@ class SurrogateMLP(nn.Module):
     Configurable MLP for regression.
 
     Default architecture (tunable):
-      input_dim -> [Linear -> Activation -> (BatchNorm) -> Dropout] x N -> Linear(output_dim)
+      input_dim -> [Linear -> (BatchNorm) -> Activation -> (Dropout)] x N -> Linear(output_dim)
 
     Final layer has no activation (regression).
     """
 
     def __init__(
         self,
-        input_dim: int = 38,
+        input_dim: int,
         output_dim: int = 3,
         hidden_sizes: Sequence[int] = (256, 256, 128),
         activation: Type[nn.Module] = nn.ReLU,
@@ -27,7 +27,8 @@ class SurrogateMLP(nn.Module):
         Build the MLP layer stack.
 
         Args:
-            input_dim: Number of input features.
+            input_dim: Number of input features (required: it depends on the
+                scenario and env encoding, see schema.encoded_input_dim).
             output_dim: Number of regression output targets.
             hidden_sizes: Width of each hidden layer, in order.
             activation: Activation module class applied after each hidden

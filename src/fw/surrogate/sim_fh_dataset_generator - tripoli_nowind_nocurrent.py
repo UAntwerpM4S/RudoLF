@@ -73,7 +73,7 @@ def clear_cache_folder(cache_path: Path = CACHE_FOLDER) -> None:
             print(f"Warning: Could not remove cache item {item}: {exc}")
             skipped += 1
 
-    print(f"Cache folder '{cache_path}' cleared — {deleted} item(s) removed"
+    print(f"Cache folder '{cache_path}' cleared - {deleted} item(s) removed"
           + (f", {skipped} skipped (locked)" if skipped else "."))
 
 
@@ -718,7 +718,7 @@ def collect_supervised_dataset(
                 # Periodically wipe C:\cache to reclaim space consumed by crash dumps
                 # from Python subprocesses that terminated unexpectedly.
                 if spawn_counter % CACHE_CLEAR_INTERVAL == 0:
-                    print(f"[Cache cleanup] {spawn_counter} processes spawned — clearing {CACHE_FOLDER} …")
+                    print(f"[Cache cleanup] {spawn_counter} processes spawned - clearing {CACHE_FOLDER} …")
                     clear_cache_folder(CACHE_FOLDER)
 
                 try:

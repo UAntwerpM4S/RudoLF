@@ -203,7 +203,9 @@ class PySimEnv(BaseEnv):
             ship_model: optional ship model to use.
             wind: enable wind effects.
             current: enable current effects.
-            ua_surrogate_config: optional configuration for the UA surrogate model.
+            ua_surrogate_config: configuration for the UA surrogate model
+                (Model.UANTWERP), e.g. {"preset": "tripoli_confined"}; see
+                fw.dynamics.uantwerp_surrogate and fw.surrogate.presets.
             ugent_surrogate_config: optional configuration for the UGent surrogate
                 model, e.g. {"ukc_percent": 363}.
             reward_name: name of reward profile (combination of components).
@@ -435,7 +437,17 @@ class PySimEnv(BaseEnv):
             # Bound method, so deepcopy re-binds it to the copied env.
             self.dynamics.set_bank_distance_provider(self.bank_beam_distances)
         elif self.dynamics_model == Model.UANTWERP:
-            self.dynamics = UAntwerpSurrogate(self.ship.specifications, ua_surrogate_config)
+            # Rays are cast against this environment's own river polygon.
+            self.dynamics = UAntwerpSurrogate(self.ship.specifications, ua_surrogate_config,
+                                              ship_model=self.ship_model, ray_caster=self)
+            if self.wind or self.current:
+                # The surrogate gets zero wind/current (UAntwerpSurrogate.get_env), and
+                # ShipSimulator adds no environmental forces for UAntwerpSurrogate either.
+                logger.warning(
+                    "wind=%s/current=%s, but the UAntwerp surrogate (preset '%s') is fed zero "
+                    "wind and current and ShipSimulator adds none for it: this run sails in calm "
+                    "conditions.", self.wind, self.current, self.dynamics.preset.name,
+                )
         elif self.dynamics_model == Model.FH_TABULAR:
             # Explicit guard so any future code path that bypasses __init__
             # does not silently pass None to FhTabularModel.
@@ -1175,18 +1187,23 @@ class PySimEnv(BaseEnv):
         start_index = int(np.argmin(start_distances))
 
         if target_pos is None:
-            # Slice the path from following point to the end (forward, as before)
-            reduced_path = path[start_index+1:]
+            if start_index < len(path) - 1:
+                # Slice the path from following point to the end (forward, as before)
+                return path[start_index + 1:]
 
-            if len(reduced_path) == 0:
+            # start_pos is at (or beyond) the trajectory's last point: nothing
+            # lies ahead, so walk the trajectory backwards to its first point.
+            if len(path) < 2:
                 raise ValueError(
-                    f"_reduce_path produced an empty path. The start position "
-                    f"{np.asarray(start_pos).tolist()} is at or beyond the last point in the trajectory "
-                    f"(closest index {start_index} of {len(path) - 1}). "
-                    f"Check that start_pos lies near the beginning of the trajectory."
+                    f"_reduce_path: the trajectory has only one point, so no path "
+                    f"can be built from start_pos {np.asarray(start_pos).tolist()}."
                 )
-
-            return reduced_path
+            logger.info(
+                "_reduce_path: start_pos %s is closest to the trajectory's last point "
+                "(index %d); walking the trajectory backwards to its first point.",
+                np.asarray(start_pos).tolist(), start_index,
+            )
+            return path[:start_index][::-1].copy()
 
         target_pos = np.asarray(target_pos)
 
