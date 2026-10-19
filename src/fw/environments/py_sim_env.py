@@ -748,6 +748,7 @@ class PySimEnv(BaseEnv):
             cutoff_parts.append(segs[is_cutoff])
 
         def cat(parts):
+            """Concatenate the non-empty (n, 2, 2) segment arrays; an empty (0, 2, 2) array if there are none."""
             parts = [p for p in parts if len(p)]
             return np.concatenate(parts) if parts else np.zeros((0, 2, 2))
 

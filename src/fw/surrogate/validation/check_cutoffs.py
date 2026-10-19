@@ -50,6 +50,11 @@ def _print_runs(cutoff: np.ndarray) -> None:
 
 
 def _draw(ax, poly, cutoff, title, lines=()) -> None:
+    """
+    Plot the polygon rings (blue), the cut-off segments (red) and optional configured lines
+    (black dashed) on `ax`.
+    """
+
     for ring in [poly.exterior, *poly.interiors]:
         xy = np.asarray(ring.coords)
         ax.plot(xy[:, 0], xy[:, 1], color="tab:blue", linewidth=0.8)
@@ -63,6 +68,11 @@ def _draw(ax, poly, cutoff, title, lines=()) -> None:
 
 
 def main() -> None:
+    """
+    CLI entry point: classify the map cut-offs (explicit MAP_CUTOFF_LINES, or the bounding-box
+    heuristic per tolerance in TOLERANCES), print the runs and save cutoff_check.png.
+    """
+
     env = PySimEnv(render_mode=None, time_step=0.1, wind=False, current=False)
     poly = env.polygon_shape
     minx, miny, maxx, maxy = poly.bounds

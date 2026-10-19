@@ -54,6 +54,8 @@ class SurrogatePreset:
     default_ukc: float
 
     def __post_init__(self):
+        """Reject a lookup_csv for a scenario without a UKC input (ValueError)."""
+
         if self.lookup_csv is not None and not self.scenario.includes_ukc:
             raise ValueError(f"Preset '{self.name}': lookup_csv given, but scenario "
                              f"'{self.scenario.name}' has no UKC input.")

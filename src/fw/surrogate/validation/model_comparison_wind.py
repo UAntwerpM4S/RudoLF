@@ -234,11 +234,17 @@ def _wrap180(angle_deg: float) -> float:
 
 
 def _wrap360(angle_deg: float) -> float:
+    """Wrap an angle in degrees to [0, 360)."""
     return float(angle_deg) % 360.0
 
 
 @dataclass
 class TrackPoint:
+    """
+    One point of a model's path: time [s], position [m], heading [rad, PySimEnv convention]
+    and surge [m/s].
+    """
+
     t: float
     x: float
     y: float
@@ -275,16 +281,20 @@ def track_metrics(start: TrackPoint, point: TrackPoint) -> Dict[str, float]:
 
 
 def _rays_hit(ray_env: PySimEnv, x: float, y: float, heading_rad: float) -> bool:
+    """True if any ray at this pose sees a bank within RAY_MAX_DISTANCE (any feature > 0)."""
     features = compute_ray_features(ray_env, (float(x), float(y)), float(heading_rad))
     return bool(np.any(np.asarray(features) > 1e-6))
 
 
 def _fh_point(fh: FhSession, t: float) -> TrackPoint:
+    """FH's current state as a TrackPoint at time `t`."""
     x, y, h, u, _v, _r = fh.state()
     return TrackPoint(t=t, x=x, y=y, heading=h, u=u)
 
 
 def _check_current(fh: FhSession, where: str) -> Tuple[float, float]:
+    """FH's current (speed, direction); raises WindTestSetupError above MAX_CURRENT_SPEED."""
+
     speed, direction = fh.get_current()
     if speed > MAX_CURRENT_SPEED:
         raise WindTestSetupError(
@@ -311,10 +321,12 @@ def _check_current(fh: FhSession, where: str) -> Tuple[float, float]:
 # current), k = TRUE_WIND_SWAY_SIGN (None -> sway not corrected).
 
 def _vec(speed: float, dir_deg: float) -> np.ndarray:
+    """2-D vector of length `speed` at angle `dir_deg` [deg] (cos, sin components)."""
     return float(speed) * np.array([np.cos(np.radians(dir_deg)), np.sin(np.radians(dir_deg))])
 
 
 def _speed_dir(vec: np.ndarray) -> Tuple[float, float]:
+    """(length, angle [deg, 0-360)) of a 2-D vector; inverse of _vec."""
     return float(np.hypot(vec[0], vec[1])), _wrap360(np.degrees(np.arctan2(vec[1], vec[0])))
 
 
@@ -329,6 +341,7 @@ def _true_wind(fh: FhSession) -> Tuple[float, float, float, float]:
 
 
 def _sway_sign() -> float:
+    """TRUE_WIND_SWAY_SIGN as a float; 0.0 when it is None (sway not corrected)."""
     return 0.0 if TRUE_WIND_SWAY_SIGN is None else float(TRUE_WIND_SWAY_SIGN)
 
 
@@ -357,6 +370,8 @@ def _apparent_wind_for(state, w_world: np.ndarray) -> Tuple[float, float]:
 
 @dataclass
 class WindCalibration:
+    """Linear mapping from a target true wind to the FH wind-field transform, from calibrate_wind_field."""
+
     base_speed: float       # true wind speed at Scale=1, Rotation=0 [m/s]
     base_dir_deg: float     # its direction relative to the bow [deg, WindState convention]
     rotation_sign: float    # +1: increasing Rotation increases that direction; -1: decreases it
@@ -380,6 +395,11 @@ def derive_calibration(t_0: Tuple[float, float], t_90: Tuple[float, float],
     delta = _wrap180(t_90[1] - d0)
 
     def same(a, b):
+        """
+        True if two (speed, direction) true winds agree within CAL_STEADY_TOL_SPEED (relative) and
+        CAL_STEADY_TOL_DEG.
+        """
+
         return abs(a[0] - b[0]) <= CAL_STEADY_TOL_SPEED * max(a[0], 1e-6) and abs(_wrap180(a[1] - b[1])) <= CAL_STEADY_TOL_DEG
     if same(t_0, t_90) and same(t_0, t_scale2) and same(t_0, t_zero):
         raise WindTestSetupError(
@@ -485,6 +505,8 @@ def calibrate_wind_field(start_x: float, start_y: float, start_heading_deg: floa
         fh.close()
 
     def probe(rotation: float, scale: float):
+        """True wind (as _true_wind) of a fresh session with the given wind-field transform."""
+
         fh_probe = _wind_session(*common, rotation, scale, f"calibrate_wind_field R{rotation:g}/S{scale:g}")
         try:
             return _true_wind(fh_probe)
@@ -497,6 +519,7 @@ def calibrate_wind_field(start_x: float, start_y: float, start_heading_deg: floa
                    f"Rotation 0; rotation sign {cal.rotation_sign:+.0f}; Scale 0 leaves {tz[0]:.3f} m/s")
 
     def fmt(t):
+        """Text of a _true_wind tuple for the calibration log line."""
         return f"true {t[0]:.3f}@{t[1]:.1f} (apparent {t[2]:.3f}@{t[3]:.1f})"
 
     print(
@@ -530,6 +553,11 @@ class UkcSource:
     """
 
     def __init__(self, ua_models: dict):
+        """
+        Pick a UKC lookup for each UA model with a UKC input: the shared UKC_LOOKUP_CSV lookup if
+        set, otherwise the model's own wcu_lookup.
+        """
+
         self._shared = None
         if UKC_LOOKUP_CSV is not None:
             from fw.dynamics.wcu_lookup import WcuLookup
@@ -545,9 +573,15 @@ class UkcSource:
         self._models = ua_models
 
     def uses_ukc(self, label: str) -> bool:
+        """True if model `label` has a UKC lookup."""
         return label in self._lookups
 
     def ukc(self, label: str, x: float, y: float) -> Optional[float]:
+        """
+        UKC [m] for model `label` at (x, y), or None if it has no lookup or the shared lookup finds
+        no row within UKC_LOOKUP_MAX_DISTANCE.
+        """
+
         lookup = self._lookups.get(label)
         if lookup is None:
             return None
@@ -583,6 +617,8 @@ class UkcSource:
 
 @dataclass
 class RunResult:
+    """Result of one wind-test run (or the no-wind baseline): FH and every model on one start pose."""
+
     run_id: str
     target_wind_speed: float          # 0 for the no-wind baseline
     target_rel_dir_deg: float         # nan for the no-wind baseline
@@ -610,6 +646,20 @@ def run_case(
         ray_env: PySimEnv, cutoff_geom, non_fh_models: dict, ua_models: dict, ukc_source: UkcSource,
         is_baseline: bool = False, tf_models: Optional[dict] = None,
 ) -> RunResult:
+    """
+    Run FH with the given wind-field transform and every other model alongside it, from the same
+    start state, until FH has sailed TARGET_PATH_LENGTH (at most MAX_STEPS).
+
+    Each step, the UA_* models get the apparent wind (sampled when FH's 1 Hz WindState changes)
+    and UKC for their own state; with `tf_models`, a teacher-forced one-step check runs on FH's
+    state as well.
+
+    Raises:
+        WindTestSetupError: If the actual true wind is far from the target (not for the
+            baseline), FH reports a current above MAX_CURRENT_SPEED, or the start pose is not
+            in open water while REQUIRE_OPEN_WATER_START is set.
+    """
+
     fh = _wind_session(start_x, start_y, start_heading_deg, v_init, thrust, ship_spec,
                        exercise_path, rotation, scale, run_id)
     try:
@@ -806,6 +856,8 @@ ONESTEP_HEADER = ["target_wind_speed", "target_rel_dir_deg", "model", "n_steps",
 
 
 def onestep_rows(result: "RunResult") -> List[list]:
+    """Rows for the one-step CSV (ONESTEP_HEADER), one per model with teacher-forced statistics."""
+
     rows = []
     for label in MODEL_ORDER:
         st = result.onestep.get(label)
@@ -836,6 +888,7 @@ SUMMARY_HEADER = [
 
 
 def _metrics_at(pts: List[TrackPoint], n: int) -> Dict[str, float]:
+    """track_metrics of point `n` relative to the path's start."""
     return track_metrics(pts[0], pts[n])
 
 
@@ -892,6 +945,8 @@ def summary_rows(result: RunResult, base: Optional[RunResult]) -> List[list]:
 
 
 def write_trajectory_csv(path: Path, result: RunResult, base: Optional[RunResult]) -> None:
+    """Write every model's path (including the no-wind reference lines) with its track metrics."""
+
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["model", "step", "t", "x", "y", "heading", "u", "along", "lateral", "turn_deg"])
@@ -919,6 +974,8 @@ def write_env_csv(path: Path, result: RunResult) -> None:
 # --------------------------------------------------------------------------
 
 def _save(fig, png_path: Path) -> None:
+    """Save the figure as a PNG and close it; a failed save is printed, not raised."""
+
     try:
         fig.savefig(str(png_path), dpi=150)   # str(): Windows/Pillow Path quirk, see model_comparison.py
         print(f"Wrote {png_path}", flush=True)
@@ -929,6 +986,8 @@ def _save(fig, png_path: Path) -> None:
 
 
 def _grid(n: int):
+    """Figure with at most 4 columns of subplots for `n` panels: (fig, flat array of axes)."""
+
     ncols = min(4, n)
     nrows = -(-n // ncols)
     fig, axes = plt.subplots(nrows, ncols, figsize=(max(4.6 * ncols, 11.0), 4.8 * nrows), squeeze=False)
@@ -936,6 +995,8 @@ def _grid(n: int):
 
 
 def _legend_and_layout(fig, ax0, title: str) -> None:
+    """Shared legend below the panels (from `ax0`), figure title and layout."""
+
     handles, labels = ax0.get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=len(labels), frameon=False)
     fig.suptitle(title)
@@ -944,6 +1005,8 @@ def _legend_and_layout(fig, ax0, title: str) -> None:
 
 
 def _subplot_title(result: RunResult) -> str:
+    """Panel title: target and actual relative wind direction and speed, or 'no wind' for the baseline."""
+
     if result.is_baseline:
         return f"no wind (Scale=0)\ntrue wind {result.actual_wind_speed:.2f} m/s"
     return (f"rel. wind {result.target_rel_dir_deg:g}° (actual {result.actual_rel_dir_deg:.0f}°)\n"
@@ -951,12 +1014,18 @@ def _subplot_title(result: RunResult) -> str:
 
 
 def _line_kwargs(label: str) -> dict:
+    """Plot style for a model label (FH drawn thicker and on top)."""
     return dict(color=COLORS.get(label, "#000000"), linestyle=LINESTYLES.get(label, "-"),
                 linewidth=2.0 if label == "FH" else 1.4, label=label, zorder=3 if label == "FH" else 2)
 
 
 def plot_trajectories_for_speed(results: List[RunResult], base: Optional[RunResult],
                                 ray_env: Optional[PySimEnv], png_path: Path, title: str) -> None:
+    """
+    Save one panel per run with every model's x/y path (plus the river boundary when `ray_env`
+    is given). Skipped, with a message, if matplotlib is not available.
+    """
+
     if plt is None:
         print("plot: matplotlib not importable -- PNG skipped, CSVs written.", flush=True)
         return
@@ -992,6 +1061,11 @@ def plot_trajectories_for_speed(results: List[RunResult], base: Optional[RunResu
 
 def plot_lateral_for_speed(results: List[RunResult], base: Optional[RunResult],
                            png_path: Path, title: str) -> None:
+    """
+    Save one panel per run with every model's lateral deviation from the initial track over time.
+    Skipped if matplotlib is not available.
+    """
+
     if plt is None:
         return
     fig, axes = _grid(len(results))
@@ -1058,6 +1132,8 @@ figcaption { color: var(--text2); font-size: 13px; margin-top: 4px; max-width: 9
 
 
 def _fig_to_data_uri(fig) -> str:
+    """The figure as a PNG data URI (the figure is closed)."""
+
     import base64
     import io
     buf = io.BytesIO()
@@ -1067,6 +1143,8 @@ def _fig_to_data_uri(fig) -> str:
 
 
 def _png_to_data_uri(path: Path) -> Optional[str]:
+    """The PNG file at `path` as a data URI, or None if it does not exist."""
+
     import base64
     if not path.is_file():
         return None
@@ -1172,6 +1250,8 @@ def _onestep_section(out_dir: Path, d) -> str:
     m = o.merge(roll, on=key, how="left")
 
     def group(row):
+        """Group of a one-step row: 'no wind', 'from starboard', 'from port' or 'head / tail'."""
+
         if row["target_wind_speed"] == 0:
             return "no wind"
         rd = row["target_rel_dir_deg"]
@@ -1271,6 +1351,8 @@ def write_report(out_dir: Path = None) -> Path:
 
     # --- key tables ----------------------------------------------------------
     def mean_abs(col):
+        """Mean |col| per model, per target wind speed and over all speeds, as a DataFrame."""
+
         rows = []
         for m in models_present:
             sub = wind[wind["model"] == m]
@@ -1290,6 +1372,7 @@ def write_report(out_dir: Path = None) -> Path:
     fh_turn_max = float(fh["fh_wind_effect_turn_deg"].abs().max()) if not fh.empty else float("nan")
     ua = wind[wind["model"] == "UA_full"]
     def side_of(rd):
+        """Side group of a relative wind direction [deg]."""
         return "from starboard (45-135 deg)" if 0 < rd < 180 else ("from port (225-315 deg)" if rd > 180 else
                                                               "head / tail wind (0, 180 deg)")
     side_rows = []
@@ -1368,6 +1451,7 @@ def write_report(out_dir: Path = None) -> Path:
                               "mean |error| [m]")
 
     def kpi(v, label, fmt="{:.1f}"):
+        """HTML KPI tile for value `v`, formatted with `fmt` ("n/a" for None/NaN)."""
         return f'<div class="kpi"><div class="v">{"n/a" if v is None or (isinstance(v, float) and np.isnan(v)) else fmt.format(v)}</div><div class="l">{html.escape(label)}</div></div>'
 
     setup_rows = [
@@ -1527,6 +1611,11 @@ def diagnose_wind_transform(start_x: float, start_y: float, start_heading_deg: f
 
 
 def _report(res: RunResult) -> None:
+    """
+    Print a summary of one run: wind, FH's final lateral offset and turn, and any MAX_STEPS stop,
+    domain exit, bank hits or UKC lookup misses.
+    """
+
     fh_final = track_metrics(res.paths["FH"][0], res.paths["FH"][-1])
     print(f"{res.run_id}: true wind {res.actual_wind_speed:.2f} m/s @ rel {res.actual_rel_dir_deg:.1f} deg "
           f"(apparent {res.apparent_wind_speed:.2f} @ {res.apparent_rel_dir_deg:.1f}; true along path "
@@ -1557,6 +1646,24 @@ def generate_wind_trajectories(
         rel_dirs_deg=REL_WIND_DIRS_DEG,
         speed: float = WIND_TRAJECTORY_SPEED,
 ) -> None:
+    """
+    Run the wind comparison: calibrate the wind field, run the no-wind baseline and every
+    (wind speed, relative direction) case, and write CSVs, plots, run_meta.json and the report
+    to WIND_OUTPUT_DIR.
+
+    Args:
+        start_x: Start x [m].
+        start_y: Start y [m].
+        start_heading_deg: Start heading [deg].
+        exercise_path: Wind-only Tripoli .tab file; None = WIND_EXERCISE_PATH.
+        wind_speeds: Target true wind speeds [m/s].
+        rel_dirs_deg: Target wind directions relative to the bow [deg].
+        speed: Initial ship speed [m/s]; the thrust is min(1, speed / 6).
+
+    Raises:
+        ValueError: If no exercise path is given or configured.
+    """
+
     exercise_path = exercise_path if exercise_path is not None else WIND_EXERCISE_PATH
     if exercise_path is None:
         raise ValueError("generate_wind_trajectories: pass exercise_path (or set WIND_EXERCISE_PATH) "
@@ -1579,10 +1686,13 @@ class _ListHandler(logging.Handler):
     """Collects this module's warnings for the report."""
 
     def __init__(self):
+        """Collect messages of level WARNING and above."""
         super().__init__(level=logging.WARNING)
         self.messages: List[str] = []
 
     def emit(self, record):
+        """Store the message and echo it to stderr."""
+
         msg = record.getMessage()
         self.messages.append(msg)
         # Attaching this handler stops Python's last-resort console output for
@@ -1606,6 +1716,11 @@ def _clean_output_dir(out_dir: Path) -> None:
 
 def _generate(start_x, start_y, start_heading_deg, exercise_path, wind_speeds, rel_dirs_deg, speed,
               started, warn_handler) -> None:
+    """
+    Body of generate_wind_trajectories, run while `warn_handler` collects the warnings for
+    run_meta.json.
+    """
+
     import json
 
     ship_spec = create_ship(SHIP_MODEL).specifications

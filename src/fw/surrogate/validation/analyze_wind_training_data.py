@@ -46,10 +46,16 @@ LOW_CURRENT_LIMITS = (0.01, 0.05, 0.1, 0.2, 0.5)     # m/s
 
 
 def _wrap_deg(a):
+    """Wrap angle(s) in degrees to [-180, 180)."""
     return (a + 180.0) % 360.0 - 180.0
 
 
 def main():
+    """
+    CLI entry point: print the wind/current coverage reports (see module docstring) for the CSV
+    and write <csv stem>_wind_coverage.png next to it.
+    """
+
     ap = argparse.ArgumentParser()
     ap.add_argument("csv")
     args = ap.parse_args()

@@ -237,6 +237,8 @@ class UGentSurrogate(DynamicsBase):
 
     @staticmethod
     def _validate_distance(name: str, value: Optional[float]) -> float:
+        """Bank distance [m] as a float: None becomes inf (no bank); NaN raises ValueError."""
+
         if value is None:
             return math.inf
         value = float(value)

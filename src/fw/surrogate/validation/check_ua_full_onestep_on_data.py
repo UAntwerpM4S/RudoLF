@@ -56,6 +56,7 @@ LOW_CURRENT = 0.1          # m/s
 
 
 def _true_wind_speed(a):
+    """True wind speed [m/s] per row: apparent wind minus (u, -v), with sway v port positive."""
     # true = apparent - (u, -v) in (ahead, starboard) components: WindState angle
     # positive = from starboard, sway v PORT positive (dataset convention since
     # 2026-10-19; model_comparison_wind: TRUE_WIND_SWAY_SIGN = -1;
@@ -101,6 +102,11 @@ def _predict(predictor, x: np.ndarray) -> np.ndarray:
 
 
 def _report(name: str, a: np.ndarray, pred: np.ndarray) -> None:
+    """
+    Print one line of one-step metrics for the rows `a` and predictions `pred`: RMS error as a
+    percentage of the RMS FH signal per target, and the mean yaw-acceleration bias.
+    """
+
     n = len(a)
     if n < 50:
         print(f"{name:52s} n={n:>8,}  (too few rows)")
@@ -117,6 +123,11 @@ def _report(name: str, a: np.ndarray, pred: np.ndarray) -> None:
 
 
 def main():
+    """
+    CLI entry point: load the UA_full checkpoint and the dataset, predict a random sample and the
+    test-like rows, and print the metrics per subset (wind, current, thrust).
+    """
+
     ap = argparse.ArgumentParser()
     ap.add_argument("csv")
     ap.add_argument("--checkpoint", default="checkpoints/best_surrogate_tripoli_full.pth")

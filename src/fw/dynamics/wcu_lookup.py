@@ -165,22 +165,27 @@ class WcuLookup:
     # Read-only access to the loaded columns (None if not loaded).
     @property
     def ukc(self) -> np.ndarray:
+        """UKC values of the loaded rows."""
         return self._values["ukc"]
 
     @property
     def wind_speed(self) -> Optional[np.ndarray]:
+        """Wind speeds of the loaded rows, or None if that column was not loaded."""
         return self._values["wind_speed"]
 
     @property
     def wind_direction(self) -> Optional[np.ndarray]:
+        """Wind directions of the loaded rows, or None if that column was not loaded."""
         return self._values["wind_direction"]
 
     @property
     def current_speed(self) -> Optional[np.ndarray]:
+        """Current speeds of the loaded rows, or None if that column was not loaded."""
         return self._values["current_speed"]
 
     @property
     def current_direction(self) -> Optional[np.ndarray]:
+        """Current directions of the loaded rows, or None if that column was not loaded."""
         return self._values["current_direction"]
 
     def has(self, field: str) -> bool:
@@ -214,10 +219,13 @@ class WcuLookup:
         return idx, distance
 
     def _value(self, name: str, idx: int) -> Optional[float]:
+        """Value of column `name` at row `idx` as a float, or None if that column was not loaded."""
         arr = self._values[name]
         return None if arr is None else float(arr[idx])
 
     def _env_at(self, idx: int) -> EnvironmentData:
+        """EnvironmentData of row `idx`; all fields None when `idx` is the 'no row found' index (len(self))."""
+
         if idx >= len(self):
             return EnvironmentData(None, None, None, None, None)
         return EnvironmentData(*(self._value(name, idx) for name in _ENV_FIELDS))
@@ -311,5 +319,6 @@ class WcuLookup:
         return len(self.points)
 
     def __repr__(self) -> str:
+        """Short summary: number of points and the loaded columns."""
         loaded = [name for name, arr in self._values.items() if arr is not None]
         return f"WcuLookup(n_points={len(self.points)}, columns={loaded})"

@@ -38,6 +38,11 @@ MIN_ABS_ACTION = 0.1     # rows with a clearly non-zero rudder
 
 
 def main(argv=None):
+    """
+    CLI entry point: correlate the stored rudder_action with the yaw rate (and delta yaw rate)
+    in the dataset CSV and print which way a positive command turns the ship.
+    """
+
     ap = argparse.ArgumentParser(description="Sign of FH's turn for a positive rudder command.")
     ap.add_argument("csv")
     ap.add_argument("--negated", action="store_true",

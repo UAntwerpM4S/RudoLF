@@ -1363,9 +1363,11 @@ def collect_supervised_dataset(
 
     # Start points, away from the map cut-off edges.
     def uniform_sampler(k):
+        """`k` start points sampled uniformly inside the river polygon."""
         return env.sample_point_in_river(k)
 
     def bank_sampler(k):
+        """`k` start points within [band_min, band_max] m of a real bank."""
         return env.sample_point_near_bank(k, band_min, band_max)
 
     n_bank = int(round(bank_fraction * nbr_samples))
@@ -1596,6 +1598,11 @@ def collect_supervised_dataset(
     previous_sigint = None
 
     def _on_sigint(signum, frame):
+        """
+        First Ctrl+C: request a graceful stop after the current chunk and restore the previous
+        SIGINT handler, so a second Ctrl+C aborts without saving.
+        """
+
         stop_requested[0] = True
         signal.signal(signal.SIGINT, previous_sigint)
         print("\n[Stop] Ctrl+C received: finishing the current chunk, then saving what "
@@ -1609,6 +1616,8 @@ def collect_supervised_dataset(
     t_start = time.monotonic()
 
     def _check_stop() -> Optional[str]:
+        """Reason to stop early ("Ctrl+C" or the stop file), or None to continue."""
+
         if stop_requested[0]:
             return "Ctrl+C"
         if stop_path.exists():
@@ -1626,6 +1635,7 @@ def collect_supervised_dataset(
     pool_holder = [multiprocessing.Pool(num_workers, initializer=_ignore_sigint)]
 
     def execute_with_param(_setup):
+        """Run one simulation setup in the current worker pool (pool_holder[0], which may be replaced)."""
         return run_in_process(_setup, sim_config=sim_config, pool=pool_holder[0])
 
     try:

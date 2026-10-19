@@ -30,6 +30,17 @@ from fw.surrogate.utils import data_path
 
 
 def report(kind, names, tr, splits):
+    """
+    Print, per column, the train std and each split's mean shift, max |z| and out-of-range share,
+    sorted by severity.
+
+    Args:
+        kind: Section title (e.g. "INPUT FEATURES").
+        names: Column names, one per column of `tr`.
+        tr: Train array, shape (N, len(names)).
+        splits: {split name: array} to compare with train; empty splits are skipped.
+    """
+
     splits = {k: v for k, v in splits.items() if len(v)}  # empty splits reported in main()
     w = max(16, max(len(n) for n in names) + 2)
     mean = tr.mean(0)
@@ -65,6 +76,11 @@ def report(kind, names, tr, splits):
 
 
 def main(argv=None):
+    """
+    CLI entry point: load and encode the three splits, report NaN/inf values, then print the
+    input-feature and target reports.
+    """
+
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--train-file", default=data_path("ship_dynamics_dataset_train.npz"))
     p.add_argument("--val-file", default=data_path("ship_dynamics_dataset_val.npz"))

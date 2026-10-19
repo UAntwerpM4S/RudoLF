@@ -372,16 +372,20 @@ class SurgeClipCounter:
     """Counts, per model, the steps whose surge sits at the simulator's upper surge limit."""
 
     def __init__(self, ship_spec, labels):
+        """Start a zero count for each model label, with the simulator's surge limits for `ship_spec`."""
         self.limits = sim_surge_limits(ship_spec)
         self.counts = {label: 0 for label in labels}
 
     def update(self, label: str, u: float) -> None:
+        """Count one step for `label` if its surge `u` is at the simulator's upper surge limit."""
         # Upper limit only: at a lower limit of 0, a clipped surge cannot be
         # told apart from a ship that simply stopped.
         if u >= self.limits[1] - 1e-9:
             self.counts[label] += 1
 
     def report(self, run_id: str) -> None:
+        """Log a warning listing the models whose surge was clipped at the upper limit in run `run_id`."""
+
         clipped = {label: n for label, n in self.counts.items() if n}
         if clipped:
             logger.warning("%s: surge at the simulator's upper limit (%g m/s) in %s step(s) -- these models "
@@ -403,6 +407,8 @@ def tripoli_models_enabled() -> bool:
 
 
 def _note_tripoli_models_skipped() -> None:
+    """Log once that the Tripoli-only models are left out for a non-Tripoli SHIP_MODEL."""
+
     global _skip_warned
     if not _skip_warned:
         logger.warning("SHIP_MODEL=%s: %s are Tripoli models and are left out -- only FH and Fossen run.",
@@ -517,6 +523,7 @@ TRAJECTORY_LINESTYLES = {
 # --------------------------------------------------------------------------
 
 def _shapely_point(xy):
+    """shapely Point for an (x, y) pair."""
     from shapely.geometry import Point
     return Point(float(xy[0]), float(xy[1]))
 
@@ -658,6 +665,8 @@ def locate_point_at_distance(
     to_bank = -perp_into_water
 
     def measured_distance(pos: np.ndarray) -> float:
+        """Ray-cast distance [m] from `pos` toward the bank, capped at RAY_MAX_DISTANCE."""
+
         origin = (float(pos[0]), float(pos[1]))
         end = (float(pos[0] + to_bank[0] * RAY_MAX_DISTANCE),
                float(pos[1] + to_bank[1] * RAY_MAX_DISTANCE))
@@ -774,6 +783,11 @@ def _print_bank_ray_diagnostics(
     origin = (float(pos[0]), float(pos[1]))
 
     def _report(label: str, tag: str, feature: float, idx: int, ref_direction: np.ndarray) -> None:
+        """
+        Print one ray's feature, the distance it implies, its angular offset from `ref_direction` and
+        the ground-truth ray-cast distance along `ref_direction`.
+        """
+
         angle_deg = int(RAY_ANGLES_DEG[idx])
         ray_distance = RAY_MAX_DISTANCE * (1.0 - float(feature))
         angular_offset_deg = float(np.degrees(
@@ -884,6 +898,27 @@ class FhSession:
             wind_field: Optional[Tuple[float, float]] = None,
             rewind_enabled: Optional[bool] = None,
     ):
+        """
+        Create the FH bridge, set the initial state and controls, and reset it (see the class docstring).
+
+        Args:
+            x: Start x [m].
+            y: Start y [m].
+            heading_deg: Start heading [deg], framework convention.
+            v_init: Initial surge velocity [m/s].
+            thrust: Normalized thrust; sets the initial propeller RPS and is applied on every advance().
+            ship_spec: Ship specifications for FhTabularModel.
+            exercise_path: Exercise file for FhSimBridge; None = FhSimBridge's default exercise.
+            wind_field: Optional (rotation_deg, scale) wind-field transform, set before reset().
+            rewind_enabled: Passed to FhSimBridge; None = FhSimBridge's default.
+
+        Raises:
+            FileNotFoundError: If `exercise_path` is given but does not exist.
+            RuntimeError: If FhSimBridge lacks an initial-condition hook, or the exercise's ship lacks
+                the controls FhTabularModel.step() drives. On any failure in reset() the bridge is
+                disposed before the exception is re-raised.
+        """
+
         # rewind_enabled (added for model_comparison_wind.py): None keeps
         # FhSimBridge's default (rewind on). FhSession never rewinds (one
         # session per grid point), so False is safe; it configures FH exactly
@@ -1040,6 +1075,7 @@ class FhSession:
 
     @property
     def ship_interface(self):
+        """FH ship interface of the underlying bridge."""
         return self._bridge.ship_interface
 
     def close(self) -> None:
@@ -1069,6 +1105,8 @@ class FhSession:
         )
 
     def advance(self, dt: float) -> None:
+        """Apply the held controls (rudder RUDDER_ANGLE_RAD, fixed thrust) and advance FH by `dt` seconds."""
+
         # Applies the held control (rudder=0, RUDDER_ANGLE_RAD converted to
         # degrees; fixed thrust) and advances the FH engine by dt seconds,
         # via FhTabularModel.step() -- see class docstring. The returned
@@ -1084,13 +1122,16 @@ class FhSession:
         )
 
     def get_ukc(self) -> float:
+        """FH's current keel clearance (UKC) [m]."""
         return float(self.ship_interface.getKeelClearance())
 
     def get_wind(self) -> Tuple[float, float]:
+        """FH's WindState at the ship: (speed [m/s], direction [rad], wrapped with PySimEnv.normalize_angle)."""
         ws = self.ship_interface.getWindState()
         return float(ws.Speed), float(PySimEnv.normalize_angle(np.radians(ws.Direction)))
 
     def get_current(self) -> Tuple[float, float]:
+        """FH's current at the ship: (speed [m/s], direction [rad], wrapped with PySimEnv.normalize_angle)."""
         speed, direction_deg = get_current_velocity(self.ship_interface)
         return float(speed), float(PySimEnv.normalize_angle(np.radians(direction_deg)))
 
@@ -2116,6 +2157,8 @@ def diagnose_fh_position_sweep(
     ship_spec = ship.specifications
 
     def try_point(x: float, y: float, heading_deg: float, label: str) -> None:
+        """Try to start an FhSession at one pose and print whether it succeeded (with its first state)."""
+
         try:
             fh = FhSession(
                 x=float(x), y=float(y), heading_deg=float(heading_deg),

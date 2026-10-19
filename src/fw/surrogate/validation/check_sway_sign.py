@@ -54,6 +54,7 @@ MIN_ABS_SWAY = 1e-3   # m/s; steps with smaller sway carry no sign information
 
 
 def _unit(angle: float) -> np.ndarray:
+    """Unit vector (cos, sin) for a world-frame angle [rad]."""
     return np.array([np.cos(angle), np.sin(angle)])
 
 
@@ -63,6 +64,18 @@ def _slope(observed: np.ndarray, reported: np.ndarray) -> float:
 
 
 def check_pair(traj_path: Path, env_path: Path):
+    """
+    Compare FH's reported sway, surge and yaw rate with the motion seen in FH's own track.
+
+    Args:
+        traj_path: trajectory_*.csv of one run (FH rows: step, t, x, y, heading, u).
+        env_path: Matching env_*.csv (fh_sway, optionally fh_yaw_rate, per step).
+
+    Returns:
+        Dict with n, sway_slope, sway_corr, surge_slope and yaw_slope (NaN when there are
+        too few steps with a yaw rate), or None when the pair has too little usable data.
+    """
+
     traj = pd.read_csv(traj_path)
     fh = traj[traj["model"] == "FH"].sort_values("step")
     env = pd.read_csv(env_path).set_index("step")
@@ -114,6 +127,11 @@ def check_pair(traj_path: Path, env_path: Path):
 
 
 def main(argv=None):
+    """
+    CLI entry point: run check_pair on every trajectory/env CSV pair in the output folder and
+    print the step-weighted slopes with a verdict on the sway sign.
+    """
+
     ap = argparse.ArgumentParser(description="Sign of FH's sway, from existing comparison-test outputs.")
     ap.add_argument("out_dir", help="wind_trajectories or current_trajectories output folder")
     args = ap.parse_args(argv)

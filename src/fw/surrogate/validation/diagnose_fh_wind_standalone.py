@@ -51,6 +51,7 @@ OUTPUT_ROOT = Path.home() / "Desktop" / "testExercise" / "wind_diag"
 
 
 def _fmt_transform(tr) -> str:
+    """One-line text of an FH wind-field transform (Rotation, Scale, Offset)."""
     return f"R={tr.Rotation:g} S={tr.Scale:g} O={tr.Offset:g}"
 
 
@@ -118,6 +119,11 @@ def probe(tab: str, rotation: float, scale: float) -> str:
 
 
 def main() -> None:
+    """
+    Entry point: run every (exercise, rotation, scale) probe in its own spawned process and print
+    one result line per probe.
+    """
+
     if not SIMEXE:
         raise SystemExit("SIMEXE_REPO_FOLDER is not set.")
     jobs = [(tab, r, s) for tab in TABS for (r, s) in PROBES]

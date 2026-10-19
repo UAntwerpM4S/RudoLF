@@ -58,10 +58,16 @@ MIN_TURN_DEG = 0.05       # |heading change| below this = no clear turn
 
 
 def _wrap_deg(a: float) -> float:
+    """Wrap an angle in degrees to [-180, 180)."""
     return (a + 180.0) % 360.0 - 180.0
 
 
 def _controls(si, ship_model):
+    """
+    (steering controls, propeller controls) of FH's ship interface: azipods and no propellers
+    for the TRIPOLI, rudders and propellers otherwise.
+    """
+
     if ship_model == ShipModel.TRIPOLI:
         return list(si.getAzipodControls()), []
     return list(si.getRudderControls()), list(si.getPropellerControls())
@@ -119,6 +125,11 @@ def run_once(ship_model: ShipModel, initial_deg: float, x: float, y: float, head
 
 
 def main(argv=None):
+    """
+    CLI entry point: run the '+' and '-' initial-rudder-angle runs and print which sign
+    convention setInitialRudderAngle follows.
+    """
+
     ap = argparse.ArgumentParser(description="Sign of FH's setInitialRudderAngle.")
     ap.add_argument("--ship", choices=[m.name for m in ShipModel], default=ShipModel.MYZAKO_37.name)
     ap.add_argument("--x", type=float, default=-1559.0)

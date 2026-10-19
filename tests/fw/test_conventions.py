@@ -38,12 +38,15 @@ TOL = 1e-9
 
 
 def _close(a, b, tol=TOL):
+    """Assert that `a` and `b` are equal within `tol`."""
     assert np.allclose(a, b, atol=tol), f"{a} != {b}"
 
 
 # ---------------------------------------------------------------- heading frame
 
 def test_bow_and_starboard_frame():
+    """Heading 0 points East with starboard South; heading +90 deg points North with starboard East."""
+
     bow, stbd = _bow_and_starboard(0.0)
     _close(bow, [1.0, 0.0])            # heading 0 = East
     _close(stbd, [0.0, -1.0])          # starboard of an East-going ship = South
@@ -61,16 +64,28 @@ REC = dict(app_speed=10.0, app_dir=0.0, rec_heading=0.0, rec_u=0.0, rec_v=0.0)
 
 
 def _wind(heading, u=0.0, v=0.0, rec=REC):
+    """
+    Apparent wind (speed, direction) for a ship at `heading` with surge `u` and sway `v`, from
+    the recording `rec`.
+    """
+
     return apparent_wind_for_state(**rec, heading=heading, u=u, v=v)
 
 
 def test_wind_same_ship_unchanged():
+    """Re-expressing a wind for the recording ship itself returns it unchanged."""
+
     rec = dict(app_speed=7.0, app_dir=0.4, rec_heading=0.7, rec_u=4.0, rec_v=0.3)
     speed, direction = _wind(0.7, 4.0, 0.3, rec=rec)
     _close([speed, direction], [7.0, 0.4])
 
 
 def test_wind_at_rest_rotated_heading():
+    """
+    A ship at rest heading North sees the East wind from starboard (+90 deg); heading South,
+    from port (-90 deg).
+    """
+
     speed, direction = _wind(np.pi / 2)          # heading North: East is starboard
     _close([speed, direction], [10.0, np.pi / 2])
     speed, direction = _wind(-np.pi / 2)         # heading South: East is port
@@ -78,6 +93,11 @@ def test_wind_at_rest_rotated_heading():
 
 
 def test_wind_moving_into_and_away_from_wind():
+    """
+    Sailing at 3 m/s into the wind adds to the apparent speed (13 m/s from ahead); sailing away
+    from it subtracts (7 m/s from astern).
+    """
+
     speed, direction = _wind(0.0, u=3.0)         # into the wind: 10 + 3 from ahead
     _close([speed, direction], [13.0, 0.0])
     speed, direction = _wind(np.pi, u=3.0)       # heading West, wind from astern: 10 - 3
@@ -86,6 +106,11 @@ def test_wind_moving_into_and_away_from_wind():
 
 
 def test_wind_pure_sway():
+    """
+    In calm air, sway to port gives a wind from port (-90 deg) and sway to starboard a wind from
+    starboard (+90 deg).
+    """
+
     calm = dict(REC, app_speed=0.0)
     speed, direction = _wind(0.0, v=2.0, rec=calm)    # moving to PORT: wind from port
     _close([speed, direction], [2.0, -np.pi / 2])
@@ -94,6 +119,11 @@ def test_wind_pure_sway():
 
 
 def test_wind_recording_ship_motion_removed():
+    """
+    The recording ship's own surge and port-positive sway are removed before the wind is
+    re-expressed for another ship.
+    """
+
     # Recording ship heading North at 4 m/s, sway 1 m/s to port (= West), in
     # the same true wind from the East. Its apparent "from" vector in
     # (ahead, starboard): true (0, 10) + (u, -v) = (4, 9).
@@ -106,6 +136,8 @@ def test_wind_recording_ship_motion_removed():
 # ---------------------------------------------------------------- FH rudder / sway
 
 def test_fh_rudder_sign_values():
+    """fh_rudder_sign: +1 for the TRIPOLI, -1 for the MYZAKO_37, ValueError for an unknown ship."""
+
     assert fh_rudder_sign(ShipModel.TRIPOLI) == 1.0       # azipod: + turns to port
     assert fh_rudder_sign(ShipModel.MYZAKO_37) == -1.0    # rudder control: + turns to starboard
     try:
@@ -120,16 +152,29 @@ class _Recorder:
     """Mock FH control: records every value it is given."""
 
     def __init__(self, max_angle=35.0):
+        """Start with no recorded calls; `max_angle` is what getMaximumAngle returns."""
         self.calls = []
         self._max = max_angle
 
     def __getattr__(self, name):
+        """
+        Any control method: getMaximumAngle returns max_angle, every other call is recorded as
+        (name, args).
+        """
+
         if name == "getMaximumAngle":
             return lambda: self._max
         return lambda *a: self.calls.append((name, a))
 
 
 def _mock_engine(ship_model, vog=(5.0, 0.4), yaw_deg=1.5):
+    """
+    Mock FH engine for FhTabularModel with fixed velocity over ground and yaw rate [deg/s].
+
+    Returns:
+        (engine, recorder of the steering control).
+    """
+
     rudder, prop = _Recorder(), _Recorder()
     itf = SimpleNamespace(
         getAzipodControls=lambda: [rudder], getRudderControls=lambda: [rudder],
@@ -142,10 +187,16 @@ def _mock_engine(ship_model, vog=(5.0, 0.4), yaw_deg=1.5):
 
 
 def _sent(rudder, method):
+    """First argument of every recorded call of `method` on the recorder."""
     return [a[0] for name, a in rudder.calls if name == method]
 
 
 def test_fh_tabular_tripoli_rudder_and_sway():
+    """
+    TRIPOLI: the rudder goes to setDesiredDirection unchanged, in degrees; sway and yaw rate come
+    back with FH's signs.
+    """
+
     engine, rudder = _mock_engine(ShipModel.TRIPOLI)
     model = FhTabularModel(SimpleNamespace(max_rudder_angle=np.radians(35.0)), engine)
     u, v, r = model.step(None, np.radians(10.0), 0.5, 1.0)
@@ -154,6 +205,11 @@ def test_fh_tabular_tripoli_rudder_and_sway():
 
 
 def test_fh_tabular_myzako_rudder_both_scalings():
+    """
+    MYZAKO_37: setControlValue gets the negated rudder, normalized by the framework maximum, with
+    and without rudder angle scaling.
+    """
+
     for scaling, framework_max in ((False, 35.0), (True, 30.0)):
         engine, rudder = _mock_engine(ShipModel.MYZAKO_37)
         model = FhTabularModel(SimpleNamespace(max_rudder_angle=np.radians(framework_max)), engine)
@@ -164,12 +220,17 @@ def test_fh_tabular_myzako_rudder_both_scalings():
 # ---------------------------------------------------------------- dataset identity
 
 class _Npz(dict):
+    """dict standing in for a loaded .npz file (adds the `files` attribute)."""
+
     @property
     def files(self):
+        """Keys, like NpzFile.files."""
         return list(self)
 
 
 def _identity_npz(**override):
+    """Mock .npz with the metadata of a valid full_env identity; `override` replaces or adds keys."""
+
     ident = schema.DatasetIdentity(schema.FULL_ENV.name, schema.RAY_LAYOUT_VERSION, "TRIPOLI", 35.0)
     data = _Npz(schema.npz_metadata(ident))
     data.update({k: np.array(v) for k, v in override.items()})
@@ -177,6 +238,11 @@ def _identity_npz(**override):
 
 
 def test_npz_identity_sway_convention():
+    """
+    read_npz_identity accepts the current sway convention and rejects an .npz with an old or
+    missing sway_convention.
+    """
+
     assert schema.read_npz_identity(_identity_npz(), "ok.npz").sway_convention == schema.SWAY_CONVENTION
     for bad in (_identity_npz(**{schema.NPZ_SWAY_CONVENTION_KEY: "starboard_positive"}),
                 {k: v for k, v in _identity_npz().items() if k != schema.NPZ_SWAY_CONVENTION_KEY}):

@@ -190,6 +190,7 @@ TIMESTART_BACKUP_DIR_NAME = "timestart_backup"   # in CURRENT_OUTPUT_DIR; exists
 
 
 def _backup_dir() -> Path:
+    """Folder holding the <timeStart> XML backups while a run is active."""
     return CURRENT_OUTPUT_DIR / TIMESTART_BACKUP_DIR_NAME
 
 
@@ -215,6 +216,7 @@ def snapshot_xmls() -> Dict[Path, bytes]:
 
 
 def _time_start_text(raw: bytes) -> str:
+    """The <timeStart> value in the raw XML bytes, or "?" if not found."""
     m = _TIME_START_PATTERN.search(raw)
     return m.group(2).decode("ascii", errors="replace").strip() if m else "?"
 
@@ -327,6 +329,8 @@ def heading_for(toward_deg: float, rel_from_deg: float) -> float:
 
 @dataclass
 class CurrentLevel:
+    """One calibrated current level: the timeStart that gives it and the current at the start pose."""
+
     name: str                 # e.g. "c1.12" (current speed at the start pose)
     time_start: int
     speed: float              # current at the start pose [m/s]
@@ -396,6 +400,12 @@ def calibrate_current(start_x, start_y, start_heading_deg, v_init, thrust, ship_
 
 @dataclass
 class RunResult:
+    """
+    Result of one current-test run: FH and every model, one level and one relative direction.
+
+    The baseline ("_nocurrent") run of the same case has with_current=False.
+    """
+
     run_id: str
     level: str
     time_start: int
@@ -466,6 +476,11 @@ def run_case(run_id: str, level: CurrentLevel, rel_deg: float, heading_deg: floa
         tf_fh: list = []
 
         def keep_going():
+            """
+            Continue stepping: until n_steps if given, else until FH has sailed TARGET_PATH_LENGTH
+            (at most MAX_STEPS).
+            """
+
             if n_steps is not None:
                 return step_i < n_steps
             return fh_length < TARGET_PATH_LENGTH and step_i < MAX_STEPS
@@ -548,6 +563,8 @@ def run_case(run_id: str, level: CurrentLevel, rel_deg: float, heading_deg: floa
 
 
 def _all_paths(res: RunResult, base: Optional[RunResult]) -> Dict[str, List[TrackPoint]]:
+    """The run's own paths plus FH_nocurrent and UA_full_nocurrent from the baseline run, if given."""
+
     paths = dict(res.paths)
     if base is not None:
         paths["FH_nocurrent"] = base.paths["FH"]
@@ -575,6 +592,12 @@ SUMMARY_HEADER = [
 
 
 def summary_rows(res: RunResult, base: RunResult) -> List[list]:
+    """
+    Rows for current_summary.csv (SUMMARY_HEADER), one per model in the run: final track metrics,
+    errors versus FH, and the paired current effect (run minus its no-current baseline) versus
+    FH's own current effect.
+    """
+
     rows = []
     fh_path = res.paths["FH"]
     allp = _all_paths(res, base)
@@ -617,12 +640,16 @@ ONESTEP_HEADER = ["level", "target_rel_dir_deg", "with_current", "model", "n_ste
 
 
 def onestep_rows(res: RunResult) -> List[list]:
+    """Rows for the one-step CSV (ONESTEP_HEADER), one per model with teacher-forced statistics."""
+
     return [[res.level, res.target_rel_dir_deg, int(res.with_current), label, st["n"], st["T"],
              *st["bias"], *st["rms"], *st["fh_rms"]]
             for label in MODEL_ORDER if (st := res.onestep.get(label))]
 
 
 def write_trajectory_csv(path: Path, res: RunResult, base: RunResult) -> None:
+    """Write every model's path (including the no-current reference lines) with its track metrics."""
+
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["model", "step", "t", "x", "y", "heading", "u", "along", "lateral", "turn_deg"])
@@ -635,6 +662,8 @@ def write_trajectory_csv(path: Path, res: RunResult, base: RunResult) -> None:
 
 
 def write_env_csv(path: Path, res: RunResult) -> None:
+    """Write the run's per-step environment log; nothing is written if the log is empty."""
+
     if res.env_log:
         with open(path, "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=list(res.env_log[0].keys()))
@@ -647,6 +676,7 @@ def write_env_csv(path: Path, res: RunResult) -> None:
 # --------------------------------------------------------------------------
 
 def _dir_label(rel: float) -> str:
+    """Readable name for a relative current direction [deg] (e.g. "from starboard")."""
     names = {0: "head current", 90: "from starboard", 180: "following", 270: "from port"}
     return names.get(int(round(rel)) % 360, f"from {rel:g}°")
 
@@ -694,6 +724,8 @@ _INK, _INK2, _MUTED, _GRID, _BLUE, _GRAY = "#0b0b0b", "#52514e", "#8a8984", "#e6
 
 
 def _slide_style():
+    """Set matplotlib rcParams for the slide figures."""
+
     plt.rcParams.update({"font.size": 13, "axes.edgecolor": _MUTED, "axes.labelcolor": _INK2, "xtick.color": _INK2,
                          "ytick.color": _INK2, "axes.titlesize": 15, "axes.titleweight": "bold",
                          "axes.titlecolor": _INK, "axes.spines.top": False, "axes.spines.right": False})
@@ -790,6 +822,11 @@ def slide_example_paths(results: Dict[Tuple[str, float], RunResult], bases: Dict
 # --------------------------------------------------------------------------
 
 def _effect_plot(d, col: str, fcol: str, ylabel: str, title: str) -> str:
+    """
+    One panel per current level: the current effect `col` per model against FH's `fcol`, over the
+    relative current direction. Returns the figure as a PNG data URI.
+    """
+
     levels = sorted(d["level"].unique(), key=lambda s: float(s[1:]))
     fig, axes = plt.subplots(1, len(levels), figsize=(4.6 * len(levels), 3.8), squeeze=False, sharey=True)
     for ax, lv in zip(axes[0], levels):
@@ -833,6 +870,8 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
     models_present = [m for m in REPORT_MODELS if m in set(d["model"])]
 
     def mean_abs(col):
+        """Mean |col| per model, per current level and over all levels, as a DataFrame."""
+
         rows = []
         for m in models_present:
             sub = d[d["model"] == m]
@@ -853,6 +892,7 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
     ag = d[d["model"].isin(NO_CURRENT_MODELS)]
 
     def m_abs(df, col):
+        """Mean |col| of `df`, NaN for an empty frame."""
         return float(df[col].abs().mean()) if not df.empty else float("nan")
 
     fh_pos_eff = np.hypot(fh["fh_current_effect_along"], fh["fh_current_effect_lateral"])
@@ -901,6 +941,7 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
         o = o[o["with_current"] == 1]
         if not o.empty:
             def grp(rd):
+                """Side group of a relative current direction [deg] for the one-step table."""
                 return "from starboard" if 0 < rd < 180 else ("from port" if rd > 180 else "head / following")
             o["side"] = o["target_rel_dir_deg"].map(grp)
             rows = []
@@ -910,6 +951,11 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
                     if s.empty:
                         continue
                     def pct(k):   # runs where FH's own signal is ~0 are left out of the ratio
+                        """
+                        Mean RMS one-step error of component `k` as % of FH's RMS, over runs where FH's own signal
+                        exceeds ONESTEP_MIN_FH_RMS[k]; NaN if there are none.
+                        """
+
                         ok = s[f"fh_rms_{k}"] > ONESTEP_MIN_FH_RMS[k]
                         return 100 * float((s.loc[ok, f"rms_err_{k}"] / s.loc[ok, f"fh_rms_{k}"]).mean()) if ok.any() \
                             else float("nan")
@@ -936,10 +982,13 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
                             "current effect on heading [deg]\n(stbd +)", "Figure 3 - Current effect on heading")
 
     def kpi(v, label):
+        """HTML KPI tile for value `v` ("n/a" for None/NaN)."""
         txt = "n/a" if v is None or (isinstance(v, float) and np.isnan(v)) else f"{v:.1f}"
         return f'<div class="kpi"><div class="v">{txt}</div><div class="l">{html.escape(label)}</div></div>'
 
     def img(path: Path, alt: str) -> str:
+        """HTML figure embedding the PNG at `path` as a data URI; empty string if the file is missing."""
+
         if not path.is_file():
             return ""
         uri = "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
@@ -1012,6 +1061,11 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
 # --------------------------------------------------------------------------
 
 def _clean_output_dir(out_dir: Path) -> None:
+    """
+    Remove this script's own outputs from a previous run (only these patterns), so the report
+    never mixes runs.
+    """
+
     patterns = ("trajectory_*.csv", "env_*.csv", "current_paths_*.png", "slide_current_*.png", SUMMARY_NAME,
                 ONESTEP_NAME, CALIBRATION_NAME, RUN_META_NAME, REPORT_NAME)
     n = 0
@@ -1044,6 +1098,11 @@ def _check_fh_directions(lv: CurrentLevel, results: List[RunResult], bases: Dict
 
 
 def _print_run(res: RunResult) -> None:
+    """
+    Print a summary of one run: current, FH's final position and heading change, and any
+    domain exit, bank hits or MAX_STEPS stop.
+    """
+
     fh_final = track_metrics(res.paths["FH"][0], res.paths["FH"][-1])
     print(f"{res.run_id}: current {res.actual_current_speed:.2f} m/s from {res.actual_rel_dir_deg:.1f} deg rel. bow "
           f"(along path {res.current_speed_min:.2f}-{res.current_speed_max:.2f}), heading {res.heading_deg:.1f} deg, "
@@ -1095,6 +1154,12 @@ def generate_current_trajectories(start_x: float, start_y: float, start_heading_
 
 def _generate(start_x, start_y, start_heading_deg, exercise_path, exercise_path_nocurrent, rel_dirs_deg, speed,
               started, warn, calibrate_only) -> None:
+    """
+    Body of generate_current_trajectories: calibrate the current levels, run every (level,
+    direction) case with its no-current baseline, and write the CSVs, plots, run_meta.json and
+    report. With calibrate_only, stops after writing the calibration CSV.
+    """
+
     import pandas as pd
 
     ship_spec = create_ship(SHIP_MODEL).specifications
