@@ -1,0 +1,114 @@
+"""
+Named UAntwerp surrogate presets: which ship, scenario, checkpoint and UKC
+lookup data one surrogate slot uses.
+
+The surrogate dynamics model (fw.dynamics.uantwerp_surrogate) is configured
+with `ua_surrogate_config = {"preset": <name>, ...}` (see config.py). The
+preset says what is EXPECTED; the checkpoint says what the model actually is
+(scenario, ship, rudder scale, env encoding). They are compared when the
+surrogate is built, so a checkpoint of the wrong scenario or ship in a slot
+fails immediately instead of producing garbage.
+
+Adding a ship (e.g. Myzako) or a scenario variant = generating its dataset,
+training a checkpoint, and adding one entry to PRESETS. No code changes.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from fw.ships.ship_factory import ShipModel
+from fw.surrogate.schema import CONFINED_UKC, FULL_ENV, OPEN_WATER, ScenarioSchema
+
+# Relative lookup-CSV paths are resolved against this folder (where the
+# UKC lookup CSVs have always lived, next to the surrogate dynamics module).
+LOOKUP_CSV_DIR = Path(__file__).resolve().parent.parent / "dynamics"
+
+
+@dataclass(frozen=True)
+class SurrogatePreset:
+    """
+    One surrogate slot.
+
+    Attributes:
+        name: Preset name, used as ua_surrogate_config["preset"].
+        ship_model: Ship the checkpoint must have been trained for.
+        scenario: Scenario the checkpoint must have been trained for.
+        checkpoint: Default checkpoint path (relative to the working
+            directory, as before).
+        lookup_csv: Default CSV for the nearest-neighbor UKC lookup
+            (fw.dynamics.wcu_lookup.WcuLookup), relative to LOOKUP_CSV_DIR
+            unless absolute; None = no lookup. Only used when the scenario
+            has a UKC input.
+        default_ukc: UKC [m] used when no lookup is configured/available, or
+            the lookup finds nothing.
+    """
+
+    name: str
+    ship_model: ShipModel
+    scenario: ScenarioSchema
+    checkpoint: str
+    lookup_csv: Optional[str]
+    default_ukc: float
+
+    def __post_init__(self):
+        if self.lookup_csv is not None and not self.scenario.includes_ukc:
+            raise ValueError(f"Preset '{self.name}': lookup_csv given, but scenario "
+                             f"'{self.scenario.name}' has no UKC input.")
+
+
+# Water depth used as UKC fallback for the Tripoli presets with a UKC input
+# (the value the previous per-scenario classes used).
+_TRIPOLI_WATER_DEPTH_M = 18.5
+
+PRESETS = {p.name: p for p in (
+    SurrogatePreset(
+        name="tripoli_clean",
+        ship_model=ShipModel.TRIPOLI,
+        scenario=OPEN_WATER,
+        checkpoint="checkpoints/best_surrogate_tripoli_clean.pth",
+        lookup_csv=None,
+        default_ukc=0.0,        # UKC is not a model input; informational only
+    ),
+    SurrogatePreset(
+        name="tripoli_confined",
+        ship_model=ShipModel.TRIPOLI,
+        scenario=CONFINED_UKC,
+        checkpoint="checkpoints/best_surrogate_tripoli_confined.pth",
+        lookup_csv="ship_dynamics_dataset_tripoli_confined.csv",
+        default_ukc=_TRIPOLI_WATER_DEPTH_M,
+    ),
+    SurrogatePreset(
+        name="tripoli_full",
+        ship_model=ShipModel.TRIPOLI,
+        scenario=FULL_ENV,
+        checkpoint="checkpoints/best_surrogate_tripoli_full.pth",
+        lookup_csv="ship_dynamics_dataset_tripoli_full.csv",
+        default_ukc=_TRIPOLI_WATER_DEPTH_M,
+    ),
+)}
+
+
+def get_preset(name: str) -> SurrogatePreset:
+    """
+    Look up a preset by name.
+
+    Raises:
+        ValueError: If there is no such preset.
+    """
+
+    try:
+        return PRESETS[name]
+    except KeyError:
+        raise ValueError(f"Unknown UAntwerp surrogate preset {name!r}. Available: {sorted(PRESETS)}.") from None
+
+
+def resolve_lookup_csv(path: Optional[str]) -> Optional[Path]:
+    """Absolute path of a lookup CSV (relative paths against LOOKUP_CSV_DIR); None stays None."""
+
+    if path is None:
+        return None
+    p = Path(path)
+    return p if p.is_absolute() else LOOKUP_CSV_DIR / p

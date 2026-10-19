@@ -8,13 +8,13 @@ full CSV and, unless --no-split, train/val/test .npz files split by episode.
 
 Each .npz carries its identity (schema.DatasetIdentity):
   * scenario       - from the generator's row width (NBR_X_FEATURES): 37 =
-                     full_env, 33 = confined_ukc, 8 = open_water. NOTE: this
-                     script also needs the generator's STRAIGHT_FRACTION /
-                     straight_fraction support, which only the current
-                     wind/current generator has (until the generators are
-                     merged);
+                     full_env, 33 = confined_ukc, 8 = open_water. The
+                     generator is whatever is installed as
+                     sim_fh_dataset_generator.py; --straight-fraction only
+                     applies to the wind/current generators;
   * ray_layout     - ray_features.RAY_LAYOUT_VERSION;
   * ship_model     - --ship-model (default TRIPOLI);
+  * sway_convention - schema.SWAY_CONVENTION (sway positive to port);
   * rudder_max_deg - the generator's RUDDER_MAX_DEG (rudder_action = +-1 <->
                      +-RUDDER_MAX_DEG). Must equal the ship's maximum rudder
                      angle in fw.ships.ship_factory, otherwise generation is
@@ -23,21 +23,28 @@ Each .npz carries its identity (schema.DatasetIdentity):
 """
 
 import os
+import inspect
 import argparse
 import numpy as np
 
 # schema (numpy only), not dataset.py: data generation must not need torch.
 from fw.environments.ray_features import RAY_LAYOUT_VERSION
 from fw.ships.ship_factory import ShipModel, create_ship
-from fw.surrogate.schema import DatasetIdentity, npz_metadata, scenario_for_raw_width
+from fw.surrogate.schema import SWAY_CONVENTION, DatasetIdentity, npz_metadata, scenario_for_raw_width
+from fw.surrogate import sim_fh_dataset_generator as _generator
 from fw.surrogate.sim_fh_dataset_generator import (
     BANK_START_BAND,
     BANK_START_FRACTION,
     NBR_X_FEATURES,
     RUDDER_MAX_DEG,
-    STRAIGHT_FRACTION,
     collect_supervised_dataset,
 )
+
+# Only the wind/current generators have "straight" episodes; the others
+# (Tripoli confined, Myzako) neither define STRAIGHT_FRACTION nor accept
+# straight_fraction=. None = not supported by the installed generator.
+STRAIGHT_FRACTION = getattr(_generator, "STRAIGHT_FRACTION", None)
+_SUPPORTS_STRAIGHT = "straight_fraction" in inspect.signature(collect_supervised_dataset).parameters
 
 # The generator's raw row width identifies the scenario it generates.
 GENERATOR_SCENARIO = scenario_for_raw_width(NBR_X_FEATURES)
@@ -60,7 +67,8 @@ def dataset_identity(ship_model: ShipModel) -> DatasetIdentity:
             f"Wrong generator for this ship, or wrong --ship-model?"
         )
     return DatasetIdentity(scenario=GENERATOR_SCENARIO.name, ray_layout=RAY_LAYOUT_VERSION,
-                           ship_model=ship_model.name, rudder_max_deg=float(RUDDER_MAX_DEG))
+                           ship_model=ship_model.name, rudder_max_deg=float(RUDDER_MAX_DEG),
+                           sway_convention=SWAY_CONVENTION)
 
 
 # ================================================================
@@ -97,7 +105,7 @@ def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetId
             goes to test).
         seed: Optional seed for the episode shuffle, so the same data gives
             the same split. Each .npz also stores the per-row `episode_id`,
-            so the split can be inspected or reproduced afterwards, plus the
+            so the split can be inspected or reproduced afterward, plus the
             identity (`schema.npz_metadata`), which dataset.load_raw checks.
     """
 
@@ -123,10 +131,25 @@ def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetId
             print(f"WARNING: the {name} split has 0 episodes ({num_episodes} episodes in total). "
                   f"Training will fail on it -- generate more episodes or change the fractions.")
 
-    for name, mask in (("train", train_mask), ("val", val_mask), ("test", test_mask)):
-        np.savez(save_prefix + f"_{name}.npz",
-                 X=x_vals[mask], Y=y_vals[mask], episode_id=episode_ids[mask],
-                 **npz_metadata(identity))
+    # All three splits are first written to temporary files and only then
+    # renamed, so a crash while writing never leaves a truncated split or a
+    # mix of old and new splits behind. (The three renames themselves are not
+    # one atomic step, but they take microseconds and cannot run out of disk.)
+    pending = []
+    try:
+        for name, mask in (("train", train_mask), ("val", val_mask), ("test", test_mask)):
+            path = save_prefix + f"_{name}.npz"
+            tmp = f"{path}.tmp{os.getpid()}"
+            pending.append((tmp, path))
+            with open(tmp, "wb") as f:
+                np.savez(f, X=x_vals[mask], Y=y_vals[mask], episode_id=episode_ids[mask],
+                         **npz_metadata(identity))
+        for tmp, path in pending:
+            os.replace(tmp, path)
+    finally:
+        for tmp, _ in pending:
+            if os.path.exists(tmp):
+                os.remove(tmp)
 
     print(f"Saved: {save_prefix}_train.npz  ({train_mask.sum()} rows from {len(train_episodes)} episodes)")
     print(f"Saved: {save_prefix}_val.npz    ({val_mask.sum()} rows from {len(val_episodes)} episodes)")
@@ -197,7 +220,8 @@ def main():
                         default=STRAIGHT_FRACTION,
                         help="Fraction of ALL episodes run as 'straight' episodes (open water, "
                              "rudder ~0, constant forward thrust; taken from the uniform starts, "
-                             "so at most 1 - bank-fraction). 0 = none")
+                             "so at most 1 - bank-fraction). 0 = none. Only for generators "
+                             "that support it (the wind/current ones)")
 
     parser.add_argument("--ship-model",
                         choices=[m.name for m in ShipModel],
@@ -213,6 +237,11 @@ def main():
 
     args = parser.parse_args()
 
+    # nargs=2 guarantees exactly two values; unpacking makes that visible to the
+    # type checker (tuple(list) is inferred as a variable-length tuple).
+    bank_min, bank_max = args.bank_band
+    bank_band = (float(bank_min), float(bank_max))
+
     # Before the (long) generation run: refuse an inconsistent ship/generator.
     identity = dataset_identity(ShipModel[args.ship_model])
     print(f"Dataset identity: {identity}")
@@ -220,6 +249,12 @@ def main():
     # ============================================================
     # Generate
     # ============================================================
+
+    extra = {}
+    if _SUPPORTS_STRAIGHT:
+        extra["straight_fraction"] = args.straight_fraction
+    elif args.straight_fraction:
+        parser.error("--straight-fraction: the installed sim_fh_dataset_generator has no straight episodes.")
 
     print(f"Generating {args.samples} episodes (max. horizon={args.horizon}s)...")
 
@@ -230,8 +265,8 @@ def main():
         workers=args.workers,
         seed=args.seed,
         bank_fraction=args.bank_fraction,
-        bank_band=tuple(args.bank_band),
-        straight_fraction=args.straight_fraction,
+        bank_band=bank_band,
+        **extra,
     )
 
     if nbr_samples == 0:

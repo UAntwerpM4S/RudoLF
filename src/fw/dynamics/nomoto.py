@@ -28,11 +28,20 @@ class Nomoto(DynamicsBase):
 
     Coordinate frame and assumptions:
         - Body-fixed reference frame located at the vessel center of gravity (CG)
-        - Axes: x forward, y starboard, z downward (right-handed)
+        - Axes: the framework's (fw.ships.vessel_state, CONVENTIONS.md):
+          x forward, y to PORT, yaw counter-clockwise positive
         - Motion restricted to the horizontal plane (3-DOF)
         - No environmental disturbances (wind, waves, current)
         - Hydrodynamic coefficients are heuristic and weakly scaled
           to vessel dimensions rather than identified from experiments
+        - Ignores the ship specifications: every ship behaves the same
+
+    Known limitation (toy model): the turning DIRECTION follows the framework
+    convention (positive rudder -> turn to port), but the sway during a turn
+    does not follow real ship behaviour: it goes toward the inside of the
+    turn (k_v > 0) instead of the outside. Its effect is small (drift
+    ~0.5 deg; flipping k_v changes the turning rate by ~4 %, checked
+    2026-10-19), so it is left as is.
     """
 
     def __init__(self, ship_spec: ShipSpecifications):
@@ -82,7 +91,8 @@ class Nomoto(DynamicsBase):
 
         Args:
             state:        Current vessel state.
-            rudder_angle: Rudder deflection angle [rad], positive to starboard.
+            rudder_angle: Rudder command [rad]; positive = the ship turns to PORT
+                (framework convention, see DynamicsBase).
             thrust:       Normalized thrust command (dimensionless), positive forward.
 
         Returns:

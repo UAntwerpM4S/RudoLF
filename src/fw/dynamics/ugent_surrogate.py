@@ -14,7 +14,7 @@ Notes:
       frame has y to port, so v and r change sign at the boundary. Rudder
       angle = Z-drive azimuth, positive to starboard: the ship turns to port,
       same as Fossen.
-    - Validity: straight running and small manoeuvres (zigzag 10-25°), not
+    - Validity: straight running and small maneuvers (zigzag 10-25°), not
       steady turning. Bank effects validated for y' = 1-4 (Fig. 16-17).
 """
 
@@ -49,7 +49,7 @@ class TripoliParticulars:
     length_pp: float = 110.0          # m
     beam: float = 17.1                # m
     i_zz: float = 4651416900.21       # kg m²
-    x_g: float = 1.1874               # m, CoG forward of geometrical centre
+    x_g: float = 1.1874               # m, CoG forward of geometrical center
     d_prop: float = 1.6573            # m
     draft: float = 0.151 * LAMBDA     # m (report Table 1)
     n_propellers: int = 2             # twin Z-drive
@@ -258,7 +258,8 @@ class UGentSurrogate(DynamicsBase):
 
         Args:
             state:        Vessel state (framework frame: v, r positive to port).
-            rudder_angle: Z-drive azimuth [rad], positive to starboard.
+            rudder_angle: Z-drive azimuth [rad], positive to starboard, i.e. the ship
+                turns to PORT (framework convention, see DynamicsBase).
             thrust:       Propeller-rate command n / n_max, in [0, 1].
         """
         if self._bank_distance_provider is not None:

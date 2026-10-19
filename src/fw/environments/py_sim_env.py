@@ -440,13 +440,20 @@ class PySimEnv(BaseEnv):
             # Rays are cast against this environment's own river polygon.
             self.dynamics = UAntwerpSurrogate(self.ship.specifications, ua_surrogate_config,
                                               ship_model=self.ship_model, ray_caster=self)
-            if self.wind or self.current:
-                # The surrogate gets zero wind/current (UAntwerpSurrogate.get_env), and
-                # ShipSimulator adds no environmental forces for UAntwerpSurrogate either.
+            # ShipSimulator adds no environmental forces for UAntwerpSurrogate: wind and
+            # current come only from the surrogate itself (UAntwerpSurrogate.get_env).
+            if self.dynamics.scenario.includes_wind_current:
+                if not (self.wind and self.current):
+                    logger.warning(
+                        "wind=%s/current=%s, but the UAntwerp surrogate (preset '%s') always takes "
+                        "wind and current from its lookup CSV: these flags have no effect on it.",
+                        self.wind, self.current, self.dynamics.preset.name,
+                    )
+            elif self.wind or self.current:
                 logger.warning(
-                    "wind=%s/current=%s, but the UAntwerp surrogate (preset '%s') is fed zero "
-                    "wind and current and ShipSimulator adds none for it: this run sails in calm "
-                    "conditions.", self.wind, self.current, self.dynamics.preset.name,
+                    "wind=%s/current=%s, but the UAntwerp surrogate (preset '%s') has no wind/current "
+                    "inputs and ShipSimulator adds none for it: this run sails in calm conditions.",
+                    self.wind, self.current, self.dynamics.preset.name,
                 )
         elif self.dynamics_model == Model.FH_TABULAR:
             # Explicit guard so any future code path that bypasses __init__

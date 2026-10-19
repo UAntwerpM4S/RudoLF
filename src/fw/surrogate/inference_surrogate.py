@@ -12,13 +12,15 @@ import numpy as np
 
 from fw.environments.ray_features import RAY_LAYOUT_VERSION
 from fw.surrogate.schema import (
+    SWAY_CONVENTION,
     TARGET_NAMES,
     check_env_encoding,
     encoded_feature_names,
     get_scenario,
     select_and_encode,
 )
-from fw.surrogate.models.mlp_surrogate import SurrogateMLP
+from fw.surrogate.models.mlp_surrogate import SurrogateMLP, activation_from_name
+from fw.surrogate.utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,7 @@ REQUIRED_CHECKPOINT_KEYS = (
     "model_state_dict", "input_dim", "output_dim", "hidden_sizes", "use_batchnorm", "dropout",
     "x_mean", "x_std", "y_mean", "y_std", "target_names",
     "scenario", "ray_layout", "raw_input_dim", "input_cols", "angle_cols", "feature_names",
-    "env_encoding", "ship_model", "rudder_max_deg",
+    "env_encoding", "ship_model", "rudder_max_deg", "sway_convention",
 )
 
 
@@ -57,8 +59,8 @@ class SurrogatePredictor:
 
         Args:
             checkpoint: Path to a checkpoint saved by `train_surrogate.py`.
-            device: Device to load the model onto; defaults to CUDA if
-                available, else CPU.
+            device: Device to load the model onto; defaults to
+                utils.get_device() (CUDA if available, else CPU).
 
         Raises:
             ValueError: If a required key is missing, or the checkpoint's
@@ -66,15 +68,14 @@ class SurrogatePredictor:
         """
 
         self.checkpoint = str(checkpoint)
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or get_device()
         ckpt = torch.load(checkpoint, map_location=self.device, weights_only=False)
 
         missing = [k for k in REQUIRED_CHECKPOINT_KEYS if k not in ckpt]
         if missing:
             raise ValueError(
                 f"Checkpoint {checkpoint} has no {missing}: it was not written by the current "
-                f"train_surrogate.py. Retrain, or add the identity keys with "
-                f"fw/surrogate/legacy/upgrade_surrogate_files.py."
+                f"train_surrogate.py. Retrain it on a dataset from the current generator."
             )
 
         self.scenario = get_scenario(ckpt["scenario"])
@@ -95,10 +96,16 @@ class SurrogatePredictor:
             if stat.shape[1] != width:
                 raise ValueError(f"Checkpoint {checkpoint}: {name} has {stat.shape[1]} columns, expected {width}.")
 
+        # Checkpoints without "activation" were all trained with ReLU (it was
+        # hardcoded in train_surrogate.py before it was stored).
+        self.activation = str(ckpt.get("activation", "ReLU"))
         self.model = SurrogateMLP(
             input_dim=self.input_dim,
             output_dim=self.output_dim,
             hidden_sizes=tuple(ckpt["hidden_sizes"]),
+            activation=activation_from_name(self.activation),
+            # Older BatchNorm checkpoints still have hidden Linear biases.
+            hidden_bias="net.0.bias" in ckpt["model_state_dict"],
             use_batch_norm=ckpt["use_batchnorm"],
             dropout=ckpt["dropout"],
         ).to(self.device)
@@ -111,6 +118,7 @@ class SurrogatePredictor:
         names = list(encoded_feature_names(self.scenario, self.env_encoding))
         expected = {
             "ray_layout": RAY_LAYOUT_VERSION,
+            "sway_convention": SWAY_CONVENTION,
             "raw_input_dim": self.scenario.raw_input_dim,
             "input_cols": list(self.scenario.input_col_indices()),
             "angle_cols": list(self.scenario.angle_col_indices()),

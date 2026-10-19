@@ -15,11 +15,11 @@ Conventions
       ray_90  = starboard beam
       ray_180 = astern
       ray_270 = port beam
-  (relative bearing, as used on board; matches the starboard-positive sway
-  convention of the dataset.)
+  (relative bearing, as used on board. Note: sway in the framework and the
+  datasets is positive to PORT, see fw.ships.vessel_state.)
 * Feature value: (RAY_MAX_DISTANCE - d) / RAY_MAX_DISTANCE, with d the
   distance to the nearest river-polygon boundary along the ray, clipped to
-  [0, RAY_MAX_DISTANCE]: 1.0 = boundary at the ship centre, 0.0 = nothing
+  [0, RAY_MAX_DISTANCE]: 1.0 = boundary at the ship center, 0.0 = nothing
   within range.
 
 History: the previous (duplicated) implementation assumed a compass heading

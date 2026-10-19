@@ -61,8 +61,10 @@ class DynamicsBase:
         Compute body-fixed accelerations from state and control inputs.
 
         Args:
-            state:        Current vessel state.
-            rudder_angle: Rudder deflection angle [rad], positive to starboard.
+            state:        Current vessel state (v port positive, r counter-clockwise
+                          positive, see fw.ships.vessel_state).
+            rudder_angle: Rudder command [rad]; positive = the ship turns to PORT
+                          (framework convention, see fw.ships.vessel_state).
             thrust:       Normalized thrust command (dimensionless), positive forward.
 
         Returns:
@@ -101,7 +103,8 @@ class DynamicsBase:
 
         Args:
             state:                       Current vessel state.
-            rudder_angle:                Rudder deflection angle [rad], positive to starboard.
+            rudder_angle:                Rudder command [rad]; positive = the ship turns
+                                         to PORT (see fw.ships.vessel_state).
             thrust:                      Normalized thrust command (dimensionless),
                                          positive forward.
             dt:                          Integration time step [s].

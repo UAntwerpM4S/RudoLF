@@ -21,16 +21,26 @@ converted to the model's rudder_action with the rudder scale stored in the
 checkpoint (the generator's RUDDER_MAX_DEG for that data).
 
 Hooks used by the model-comparison tests (kept on purpose):
-  * `get_env(pos)`: the ONLY source of UKC/wind/current for the input row;
-    may be replaced by an instance attribute (one-argument function).
+  * `get_env(pos, state=None)`: the ONLY source of UKC/wind/current for the
+    input row; may be replaced by an instance attribute (a function of
+    `(pos, state=None)`; its values are used as given).
   * `_env`: the ray caster (only present for scenarios with rays); may be
     replaced by another PySimEnv-like object.
   * `ukc` / `get_ukc(pos)`: last UKC used.
   * `_compute_accelerations(state, rudder_angle, thrust)`.
 
-Wind/current: `get_env` returns zero wind and current (only the UKC comes
-from the lookup), as before. For a full_env checkpoint inside PySimEnv the
-model therefore always sees calm conditions.
+Environment from the lookup CSV (`get_env`, nearest dataset row):
+  * UKC: for scenarios with a UKC input.
+  * Current (full_env): the row's earth-fixed current, as stored.
+  * Wind (full_env): the CSV stores the APPARENT wind of the ship that
+    recorded the row (FH WindState: relative to its bow, positive = from
+    starboard). It is turned into the true wind with that ship's heading,
+    surge and sway, and back into the apparent wind for THIS ship's heading,
+    surge and sway -- the same conversion as the wind test
+    (model_comparison_wind._true_wind_world / _apparent_wind_for).
+  Without a lookup (or no row found): default UKC, zero wind and current.
+  The rows come from episodes with random tide times and wind fields, so the
+  looked-up wind/current can jump when the nearest row changes.
 """
 
 import logging
@@ -43,7 +53,7 @@ from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.dynamics.wcu_lookup import WcuLookup, EnvironmentData
 # The single shared ray implementation, also used by the dataset generator.
-from fw.environments.ray_features import compute_ray_features
+from fw.environments.ray_features import RAY_ANGLES_DEG, compute_ray_features, ray_world_angles
 from fw.surrogate.presets import get_preset, resolve_lookup_csv
 from fw.surrogate.schema import SURROGATE_DT
 
@@ -51,6 +61,49 @@ logger = logging.getLogger(__name__)
 
 # Keys accepted in ua_surrogate_config.
 CONFIG_KEYS = ("preset", "checkpoint", "lookup_csv")
+
+_RAY_IDX_BOW = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=float), 0.0))[0])
+_RAY_IDX_STBD = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=float), 90.0))[0])
+
+
+def _bow_and_starboard(heading_rad: float) -> Tuple[np.ndarray, np.ndarray]:
+    """World-frame unit vectors of the bow and starboard directions, from the
+    shared ray module (so no heading convention is assumed here)."""
+
+    angles = ray_world_angles(float(heading_rad))
+    bow, stbd = angles[_RAY_IDX_BOW], angles[_RAY_IDX_STBD]
+    return np.array([np.cos(bow), np.sin(bow)]), np.array([np.cos(stbd), np.sin(stbd)])
+
+
+def apparent_wind_for_state(app_speed: float, app_dir: float,
+                            rec_heading: float, rec_u: float, rec_v: float,
+                            heading: float, u: float, v: float) -> Tuple[float, float]:
+    """
+    Re-express an apparent wind measured on one ship for another ship.
+
+    Wind convention (FH WindState, as stored in the dataset): direction the
+    wind comes FROM, relative to the bow, positive = from starboard; as
+    (ahead, starboard) components apparent = true + (u, -v), because sway v
+    is positive to PORT (fw.ships.vessel_state, the dataset convention).
+
+    Args:
+        app_speed, app_dir: Apparent wind [m/s, rad] on the recording ship.
+        rec_heading, rec_u, rec_v: Heading [rad, PySimEnv convention], surge
+            and sway [m/s, port +] of the recording ship.
+        heading, u, v: The same for the ship the wind is wanted for.
+
+    Returns:
+        (speed [m/s], direction [rad] in [-pi, pi)) of the apparent wind on
+        the second ship.
+    """
+
+    rel = app_speed * np.array([np.cos(app_dir), np.sin(app_dir)]) - np.array([rec_u, -rec_v])
+    bow, stbd = _bow_and_starboard(rec_heading)
+    true_world = rel[0] * bow + rel[1] * stbd
+    bow, stbd = _bow_and_starboard(heading)
+    own = np.array([true_world @ bow + u, true_world @ stbd - v])
+    direction = float(np.arctan2(own[1], own[0]))
+    return float(np.hypot(own[0], own[1])), float((direction + np.pi) % (2.0 * np.pi) - np.pi)
 
 
 class UAntwerpSurrogate(DynamicsBase):
@@ -136,20 +189,35 @@ class UAntwerpSurrogate(DynamicsBase):
                 np.degrees(ship_spec.max_rudder_angle), self.rudder_max_deg, checkpoint,
             )
 
-        # UKC: nearest-neighbour lookup, only for scenarios with a UKC input.
+        # UKC (and, for full_env, wind/current): nearest-neighbor lookup in
+        # the dataset CSV, only for scenarios with a UKC input. The CSV has
+        # the scenario's raw column layout, so the positions come from the schema.
         self.default_ukc = float(self.preset.default_ukc)
         self.ukc = self.default_ukc
         self.wcu_lookup = None
         if self.scenario.includes_ukc:
             csv = resolve_lookup_csv(config.get("lookup_csv", self.preset.lookup_csv))
             if csv is not None and csv.exists():
-                self.wcu_lookup = WcuLookup(str(csv))
+                self.wcu_lookup = self._make_lookup(csv)
             elif csv is not None:
-                logger.warning("Ship data file %s not found, falling back to default UKC value of %s",
-                               csv, self.default_ukc)
+                logger.warning("Ship data file %s not found, falling back to default UKC value of %s%s",
+                               csv, self.default_ukc,
+                               " and zero wind/current" if self.scenario.includes_wind_current else "")
 
         if self.scenario.includes_rays:
             self._env = ray_caster
+
+    def _make_lookup(self, csv) -> WcuLookup:
+        """WcuLookup on `csv`, reading only the columns this scenario needs."""
+
+        sc = self.scenario
+        cols = dict(x_col=sc.col("x"), y_col=sc.col("y"), ukc_col=sc.col("ukc"),
+                    wind_speed_col=None, wind_dir_col=None, current_speed_col=None, current_dir_col=None)
+        if sc.includes_wind_current:
+            cols.update(wind_speed_col=sc.col("wind_speed"), wind_dir_col=sc.col("wind_direction"),
+                        current_speed_col=sc.col("current_speed"), current_dir_col=sc.col("current_direction"),
+                        heading_col=sc.col("heading"), surge_col=sc.col("surge"), sway_col=sc.col("sway"))
+        return WcuLookup(str(csv), **cols)
 
     def _ray_caster(self):
         """The ray caster, creating the default PySimEnv on first use."""
@@ -173,31 +241,45 @@ class UAntwerpSurrogate(DynamicsBase):
 
         return self.ukc
 
-    def get_env(self, pos: Optional[np.ndarray]) -> EnvironmentData:
+    def get_env(self, pos: Optional[np.ndarray], state: Optional[VesselState] = None) -> EnvironmentData:
         """
-        Environmental conditions at `pos`: UKC from the nearest-neighbour
-        lookup (or `default_ukc`), zero wind and current.
-
-        Uses `wcu_lookup.get_ukc()` only: the UKC column (6) is the same in
-        the confined_ukc and full_env CSV layouts, the wind/current columns
-        are not.
+        Environmental conditions at `pos` from the nearest lookup row (see
+        the module docstring); default UKC and zero wind/current without a
+        lookup or a row.
 
         Args:
             pos: World-frame position `[x, y]` in metres.
+            state: State of THIS ship (heading, surge, sway), needed to give
+                the full_env wind as this ship's apparent wind. None: the
+                wind fields are None (only UKC/current wanted, e.g. by
+                model_comparison_wind.UkcSource).
 
         Returns:
             Environmental conditions at the requested position.
         """
 
-        if self.wcu_lookup is None:
-            ukc = self.default_ukc
-        else:
-            looked_up_ukc = self.wcu_lookup.get_ukc(pos[0], pos[1])
-            ukc = looked_up_ukc if looked_up_ukc is not None else self.default_ukc
+        calm = 0.0 if state is not None or not self.scenario.includes_wind_current else None
+        sample = None if self.wcu_lookup is None else self.wcu_lookup.get_sample(pos[0], pos[1])
+        if sample is None or sample.env.ukc is None:
+            self.ukc = self.default_ukc
+            return EnvironmentData(ukc=self.ukc, wind_speed=calm, wind_direction=calm,
+                                   current_speed=0.0, current_direction=0.0)
 
-        self.ukc = ukc
-        return EnvironmentData(ukc=ukc, wind_speed=0.0, wind_direction=0.0,
-                               current_speed=0.0, current_direction=0.0)
+        self.ukc = sample.env.ukc
+        if not self.scenario.includes_wind_current:
+            return EnvironmentData(ukc=self.ukc, wind_speed=0.0, wind_direction=0.0,
+                                   current_speed=0.0, current_direction=0.0)
+
+        wind_speed = wind_dir = None
+        if state is not None:
+            wind_speed, wind_dir = apparent_wind_for_state(
+                sample.env.wind_speed, sample.env.wind_direction,
+                sample.heading, sample.surge, sample.sway,
+                float(state.heading), float(state.u), float(state.v),
+            )
+        return EnvironmentData(ukc=self.ukc, wind_speed=wind_speed, wind_direction=wind_dir,
+                               current_speed=sample.env.current_speed,
+                               current_direction=sample.env.current_direction)
 
     def step(
         self,
@@ -212,7 +294,8 @@ class UAntwerpSurrogate(DynamicsBase):
 
         Args:
             state:                       Current vessel state.
-            rudder_angle:                Rudder deflection angle [rad], positive to starboard.
+            rudder_angle:                Rudder command [rad]; positive = the ship turns to PORT
+                                         (framework convention, see DynamicsBase).
             thrust:                      Normalized thrust command in `[-1, 1]`.
             dt:                          Integration time step [s]; must equal SURROGATE_DT.
             enable_rudder_angle_scaling: Passed to the base implementation for interface
@@ -262,7 +345,7 @@ class UAntwerpSurrogate(DynamicsBase):
         }
 
         if self.scenario.includes_ukc or self.scenario.includes_wind_current:
-            env = self.get_env(np.array([state.x, state.y]))
+            env = self.get_env(np.array([state.x, state.y]), state)
             values.update(ukc=env.ukc,
                           wind_speed=env.wind_speed, wind_direction=env.wind_direction,
                           current_speed=env.current_speed, current_direction=env.current_direction)
@@ -291,7 +374,8 @@ class UAntwerpSurrogate(DynamicsBase):
 
         Args:
             state:        Current vessel state.
-            rudder_angle: Rudder deflection angle [rad], positive to starboard.
+            rudder_angle: Rudder command [rad]; positive = the ship turns to PORT
+                (framework convention, see DynamicsBase).
             thrust:       Normalized thrust command in `[-1, 1]`.
 
         Returns:

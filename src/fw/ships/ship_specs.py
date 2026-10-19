@@ -32,7 +32,7 @@ class ShipSpecifications:
     # Actuator limits
     max_rudder_angle: float
     """
-    Maximum rudder deflection angle [rad]. Positive to starboard.
+    Maximum rudder angle [rad] (magnitude; the command is symmetric, positive = turn to port).
     """
 
     max_rudder_rate: float

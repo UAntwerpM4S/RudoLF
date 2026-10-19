@@ -31,9 +31,10 @@ import numpy as np
 import torch.nn.functional as F
 
 from pathlib import Path
+from collections.abc import Sized
 from torch.utils.data import DataLoader
-from fw.surrogate.dataset import ShipDynamicsDataset, check_same_identity, compute_stats, read_identity
-from fw.surrogate.models.mlp_surrogate import SurrogateMLP
+from fw.surrogate.dataset import ShipDynamicsDataset, check_same_identity, read_identity
+from fw.surrogate.models.mlp_surrogate import ACTIVATIONS, SurrogateMLP, activation_from_name
 from fw.surrogate.schema import (
     DEFAULT_ENV_ENCODING,
     ENV_ENCODINGS,
@@ -48,6 +49,22 @@ from fw.surrogate.utils import load_checkpoint, data_path, get_device, save_chec
 logger = logging.getLogger(__name__)
 
 LOSS_LABELS = {"mse": "MSE", "l1": "MAE", "huber": "Huber"}
+
+
+def _num_samples(loader: DataLoader) -> int:
+    """
+    Number of samples in a map-style loader's dataset.
+
+    torch types `DataLoader.dataset` as `Dataset`, which deliberately does not
+    define `__len__` (iterable datasets have no length). ShipDynamicsDataset
+    does; the isinstance check narrows the type for the checker and fails
+    loudly if a dataset without a length is ever passed in.
+    """
+
+    dataset = loader.dataset
+    if not isinstance(dataset, Sized):
+        raise TypeError(f"{type(dataset).__name__} has no __len__; a map-style dataset is required.")
+    return len(dataset)
 
 
 def make_loss_fn(name: str = "mse", huber_delta: float = 1.0):
@@ -94,7 +111,7 @@ def evaluate(
         y_mean: Output normalization mean.
         y_std: Output normalization std.
         loss_fn: Criterion from `make_loss_fn`; defaults to MSE so existing
-            callers keep their behaviour. Pass the TRAINING criterion so that
+            callers keep their behavior. Pass the TRAINING criterion so that
             early stopping and the LR scheduler judge what is optimized.
 
     Returns:
@@ -106,7 +123,7 @@ def evaluate(
 
     model.eval()
 
-    if len(loader.dataset) == 0:
+    if _num_samples(loader) == 0:
         raise ValueError(
             "evaluate() was given an empty loader (0 samples). This usually "
             "means your episode-level train/val/test split produced a split "
@@ -181,10 +198,11 @@ def make_dataloaders(train_file, val_file, test_file, scenario, env_encoding, ba
                   x_mean, x_std, y_mean, y_std).
     """
 
-    x_mean, x_std, y_mean, y_std = compute_stats(train_file, scenario, env_encoding)
+    # The train split computes its own stats (loaded once); val/test reuse them.
+    train_ds = ShipDynamicsDataset(train_file, scenario, env_encoding, normalize=True)
+    x_mean, x_std, y_mean, y_std = train_ds.x_mean, train_ds.x_std, train_ds.y_mean, train_ds.y_std
 
     stats = dict(x_mean=x_mean, x_std=x_std, y_mean=y_mean, y_std=y_std, normalize=True)
-    train_ds = ShipDynamicsDataset(train_file, scenario, env_encoding, **stats)
     val_ds   = ShipDynamicsDataset(val_file,   scenario, env_encoding, **stats)
     test_ds  = ShipDynamicsDataset(test_file,  scenario, env_encoding, **stats)
 
@@ -235,7 +253,7 @@ def main(argv=None):
     parser.add_argument("--batch-size", type=int, default=128)  # 256)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=0)  # 1e-4)
-    parser.add_argument("--epochs", type=int, default=21)  # 300)
+    parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--patience", type=int, default=25)  # early stopping patience
     parser.add_argument("--loss", choices=sorted(LOSS_LABELS), default="l1",
                         help="Training/validation criterion on normalized targets: mse, "
@@ -247,6 +265,8 @@ def main(argv=None):
     parser.add_argument("--dropout", type=float, default=0.0)  # 0.05)
     parser.add_argument("--hidden-sizes", nargs="+", type=int, default=[128, 128])  # [128, 128])
     parser.add_argument("--batchnorm", action="store_true")
+    parser.add_argument("--activation", choices=sorted(ACTIVATIONS), default="ReLU",
+                        help="Hidden-layer activation; stored in the checkpoint")
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-workers", type=int, default=0)
@@ -289,17 +309,22 @@ def main(argv=None):
         seed=args.seed, drop_last=args.batchnorm, pin_memory=device.type == "cuda",
     )
 
+    # Checked before the peek below: on an empty split, next(iter(...)) would
+    # raise a bare StopIteration instead of a readable error.
+    n_train = _num_samples(train_loader)
+    if n_train == 0:
+        raise ValueError(f"Training split {args.train_file} contains 0 samples.")
+    if args.batchnorm and n_train < 2:
+        raise ValueError(
+            f"--batchnorm needs at least 2 training samples, got {n_train}."
+        )
+
     # Derive dims from data (guards against accidental mismatch with whatever
     # dataset schema is currently in train_file/val_file/test_file).
     # Peek once: each iter() on a DataLoader starts a fresh set of workers.
     x_peek, y_peek = next(iter(train_loader))
     input_dim, output_dim = x_peek.shape[1], y_peek.shape[1]
     del x_peek, y_peek
-
-    if args.batchnorm and len(train_loader.dataset) < 2:
-        raise ValueError(
-            f"--batchnorm needs at least 2 training samples, got {len(train_loader.dataset)}."
-        )
 
     # Separate, non-dropping, unshuffled loader over the TRAIN set for the
     # eval-mode train loss: the training loader may use drop_last (BatchNorm),
@@ -322,15 +347,17 @@ def main(argv=None):
         raise ValueError(f"Data gives input_dim={input_dim}, but scenario '{scenario.name}' with "
                          f"env_encoding={args.env_encoding!r} defines {len(feature_names)} features.")
 
-    logger.info("Model: scenario=%s, input_dim=%d (env_encoding=%s), output_dim=%d, hidden=%s, dropout=%s, batchnorm=%s, loss=%s",
-                scenario.name, input_dim, args.env_encoding, output_dim, args.hidden_sizes, args.dropout, args.batchnorm,
+    logger.info("Model: scenario=%s, input_dim=%d (env_encoding=%s), output_dim=%d, hidden=%s, activation=%s, "
+                "dropout=%s, batchnorm=%s, loss=%s",
+                scenario.name, input_dim, args.env_encoding, output_dim, args.hidden_sizes, args.activation,
+                args.dropout, args.batchnorm,
                 loss_label if args.loss != "huber" else f"Huber(delta={args.huber_delta})")
 
     model = SurrogateMLP(
         input_dim=input_dim,
         output_dim=output_dim,
         hidden_sizes=tuple(args.hidden_sizes),
-        activation=torch.nn.ReLU,
+        activation=activation_from_name(args.activation),
         use_batch_norm=args.batchnorm,
         dropout=args.dropout,
     ).to(device)
@@ -371,9 +398,10 @@ def main(argv=None):
             pred = model(x_vals)
 
             loss = loss_fn(pred, y_vals, reduction="mean")
-            if counter == 0:
+            if counter == 0 and logger.isEnabledFor(logging.DEBUG):
                 # per-target loss of the first batch (same criterion as training)
-                print(loss_fn(pred, y_vals, reduction="none").mean(dim=0))
+                logger.debug("Epoch %03d first-batch loss per target: %s", epoch,
+                             loss_fn(pred, y_vals, reduction="none").mean(dim=0).tolist())
             counter += 1
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
@@ -436,9 +464,11 @@ def main(argv=None):
                 "source_scenario":      source_scenario.name,
                 "ship_model":           data_identity.ship_model,
                 "rudder_max_deg":       data_identity.rudder_max_deg,
+                "sway_convention":      data_identity.sway_convention,
                 "ray_layout":           data_identity.ray_layout,
                 "raw_input_dim":        scenario.raw_input_dim,
                 "hidden_sizes":         args.hidden_sizes,
+                "activation":           args.activation,
                 "dropout":              args.dropout,
                 "use_batchnorm":        args.batchnorm,
                 "seed":                 args.seed,

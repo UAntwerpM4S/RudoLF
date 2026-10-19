@@ -12,9 +12,9 @@ class ActuatorState:
     `ActuatorModel.step()` method and used by the vessel dynamics or simulator.
 
     Attributes:
-        rudder_angle: Current rudder deflection angle in radians [rad].
-            Positive values correspond to starboard deflection in the
-            body-fixed frame.
+        rudder_angle: Current rudder command in radians [rad]. Positive =
+            the ship turns to PORT (framework convention, see
+            fw.dynamics.dynamics_model.DynamicsBase).
         thrust: Current propulsion thrust command (dimensionless or
             normalized). The interpretation (normalized vs. physical
             units) depends on the consuming dynamics model.
