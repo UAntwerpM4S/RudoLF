@@ -110,7 +110,7 @@ def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetId
             goes to test).
         seed: Optional seed for the episode shuffle, so the same data gives
             the same split. Each .npz also stores the per-row `episode_id`,
-            so the split can be inspected or reproduced afterwards, plus the
+            so the split can be inspected or reproduced afterward, plus the
             identity (`schema.npz_metadata`), which dataset.load_raw checks.
     """
 

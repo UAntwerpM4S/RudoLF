@@ -1931,7 +1931,7 @@ def collect_supervised_dataset(
     episode_meta = {}  # index -> (reason, start_x, start_y, start_type)
 
     def _record_episode(_index, _reason, _start_xy, _start_type, _x_ep=None, _y_ep=None, _traj_ep=None):
-        """Book-keeping for live and resumed episodes."""
+        """Bookkeeping for live and resumed episodes."""
         nonlocal counter
         termination_counts[_reason] = termination_counts.get(_reason, 0) + 1
         episode_meta[_index] = (_reason, float(_start_xy[0]), float(_start_xy[1]), _start_type)
