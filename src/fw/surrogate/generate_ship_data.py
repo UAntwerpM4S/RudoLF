@@ -6,68 +6,73 @@ CLI for generating the surrogate training data with the FH dataset
 generator (sim_fh_dataset_generator.collect_supervised_dataset): writes the
 full CSV and, unless --no-split, train/val/test .npz files split by episode.
 
+--ship-model (TRIPOLI / MYZAKO_37) and --configuration (full = ship-bank + UKC
++ wind + current, confined = ship-bank + UKC) select what is generated; see
+sim_fh_dataset_generator.SHIP_PROFILES / CONFIGURATIONS.
+
 Each .npz carries its identity (schema.DatasetIdentity):
-  * scenario       - from the generator's row width (NBR_X_FEATURES): 37 =
-                     full_env, 33 = confined_ukc, 8 = open_water. The
-                     generator is whatever is installed as
-                     sim_fh_dataset_generator.py; --straight-fraction only
-                     applies to the wind/current generators;
+  * scenario       - from the configuration's row width
+                     (sim_fh_dataset_generator.nbr_x_features): 37 =
+                     full_env (full), 33 = confined_ukc (confined);
   * ray_layout     - ray_features.RAY_LAYOUT_VERSION;
   * ship_model     - --ship-model (default TRIPOLI);
   * sway_convention - schema.SWAY_CONVENTION (sway positive to port);
-  * rudder_max_deg - the generator's RUDDER_MAX_DEG (rudder_action = +-1 <->
-                     +-RUDDER_MAX_DEG). Must equal the ship's maximum rudder
-                     angle in fw.ships.ship_factory, otherwise generation is
-                     refused (a mismatch means the wrong generator or the
-                     wrong --ship-model).
+  * rudder_max_deg - the run's rudder scale (rudder_action = +-1 <->
+                     +-rudder_max_deg): fixed for the TRIPOLI (35 deg), FH's own
+                     getMaximumAngle() for the MYZAKO_37 (probed once before
+                     the run). Must equal the ship's maximum rudder angle in
+                     fw.ships.ship_factory, otherwise generation is refused.
 """
 
 import os
-import inspect
 import argparse
 import numpy as np
 
+from typing import Optional
+
 # schema (numpy only), not dataset.py: data generation must not need torch.
 from fw.environments.ray_features import RAY_LAYOUT_VERSION
-from fw.ships.ship_factory import ShipModel, create_ship
+from fw.ships.ship_factory import ShipModel
 from fw.surrogate.schema import SWAY_CONVENTION, DatasetIdentity, npz_metadata, scenario_for_raw_width
-from fw.surrogate import sim_fh_dataset_generator as _generator
 from fw.surrogate.sim_fh_dataset_generator import (
     BANK_START_BAND,
     BANK_START_FRACTION,
-    NBR_X_FEATURES,
-    RUDDER_MAX_DEG,
+    CONFIGURATIONS,
+    DEFAULT_CONFIGURATION,
+    DEFAULT_SHIP_MODEL,
+    SHIP_PROFILES,
+    STRAIGHT_FRACTION,
+    check_ship_against_factory,
     collect_supervised_dataset,
+    nbr_x_features,
+    resolve_rudder_max_deg,
+    validate_start_settings,
 )
 
-# Only the wind/current generators have "straight" episodes; the others
-# (Tripoli confined, Myzako) neither define STRAIGHT_FRACTION nor accept
-# straight_fraction=. None = not supported by the installed generator.
-STRAIGHT_FRACTION = getattr(_generator, "STRAIGHT_FRACTION", None)
-_SUPPORTS_STRAIGHT = "straight_fraction" in inspect.signature(collect_supervised_dataset).parameters
 
-# The generator's raw row width identifies the scenario it generates.
-GENERATOR_SCENARIO = scenario_for_raw_width(NBR_X_FEATURES)
-
-
-def dataset_identity(ship_model: ShipModel) -> DatasetIdentity:
+def dataset_identity(ship_model: ShipModel, configuration: str = DEFAULT_CONFIGURATION,
+                     rudder_max_deg: Optional[float] = None) -> DatasetIdentity:
     """
-    Identity of the data the current generator produces for `ship_model`.
+    Identity of the data the generator produces for `ship_model` in `configuration`.
+
+    Args:
+        ship_model: Ship to simulate.
+        configuration: "full" / "confined".
+        rudder_max_deg: The run's rudder scale; None = resolve_rudder_max_deg
+            (probes FH for a ship whose scale is FH's own maximum).
 
     Raises:
-        ValueError: If the generator's RUDDER_MAX_DEG differs from the ship's
-            maximum rudder angle in ship_factory.
+        ValueError: If the ship has no generator profile, the configuration is
+            unknown, or the rudder scale differs from the ship's maximum rudder
+            angle in ship_factory.
     """
 
-    ship_max_deg = float(np.degrees(create_ship(ship_model).specifications.max_rudder_angle))
-    if not np.isclose(ship_max_deg, float(RUDDER_MAX_DEG)):
-        raise ValueError(
-            f"sim_fh_dataset_generator.RUDDER_MAX_DEG = {RUDDER_MAX_DEG} deg, but "
-            f"{ship_model.name}'s max rudder angle in ship_factory is {ship_max_deg:g} deg. "
-            f"Wrong generator for this ship, or wrong --ship-model?"
-        )
-    return DatasetIdentity(scenario=GENERATOR_SCENARIO.name, ray_layout=RAY_LAYOUT_VERSION,
-                           ship_model=ship_model.name, rudder_max_deg=float(RUDDER_MAX_DEG),
+    if rudder_max_deg is None:
+        rudder_max_deg = resolve_rudder_max_deg(ship_model, configuration)
+    check_ship_against_factory(ship_model, rudder_max_deg)
+    scenario = scenario_for_raw_width(nbr_x_features(configuration))
+    return DatasetIdentity(scenario=scenario.name, ray_layout=RAY_LAYOUT_VERSION,
+                           ship_model=ship_model.name, rudder_max_deg=float(rudder_max_deg),
                            sway_convention=SWAY_CONVENTION)
 
 
@@ -105,7 +110,7 @@ def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetId
             goes to test).
         seed: Optional seed for the episode shuffle, so the same data gives
             the same split. Each .npz also stores the per-row `episode_id`,
-            so the split can be inspected or reproduced afterward, plus the
+            so the split can be inspected or reproduced afterwards, plus the
             identity (`schema.npz_metadata`), which dataset.load_raw checks.
     """
 
@@ -220,14 +225,19 @@ def main():
                         default=STRAIGHT_FRACTION,
                         help="Fraction of ALL episodes run as 'straight' episodes (open water, "
                              "rudder ~0, constant forward thrust; taken from the uniform starts, "
-                             "so at most 1 - bank-fraction). 0 = none. Only for generators "
-                             "that support it (the wind/current ones)")
+                             "so at most 1 - bank-fraction). 0 = none")
 
     parser.add_argument("--ship-model",
-                        choices=[m.name for m in ShipModel],
-                        default=ShipModel.TRIPOLI.name,
-                        help="Ship simulated by the generator; stored in the .npz identity and "
-                             "checked against the generator's RUDDER_MAX_DEG")
+                        choices=[m.name for m in SHIP_PROFILES],
+                        default=DEFAULT_SHIP_MODEL.name,
+                        help="Ship to simulate (TRIPOLI: azipods, +-35 deg; MYZAKO_37: rudder + "
+                             "propeller, +-75 deg); stored in the .npz identity")
+
+    parser.add_argument("--configuration",
+                        choices=sorted(CONFIGURATIONS),
+                        default=DEFAULT_CONFIGURATION,
+                        help="full: ship-bank + UKC + wind + current (scenario full_env); "
+                             "confined: ship-bank + UKC (scenario confined_ukc)")
 
     parser.add_argument("--seed",
                         type=int,
@@ -242,21 +252,24 @@ def main():
     bank_min, bank_max = args.bank_band
     bank_band = (float(bank_min), float(bank_max))
 
-    # Before the (long) generation run: refuse an inconsistent ship/generator.
-    identity = dataset_identity(ShipModel[args.ship_model])
+    # Before the (long) generation run: the rudder scale (for the Myzako probed
+    # from FH) must match ship_factory.
+    ship_model = ShipModel[args.ship_model]
+    # Cheap checks first: the probe below starts FH and can take up to TIMEOUT_SECONDS.
+    try:
+        validate_start_settings(args.bank_fraction, bank_band, args.straight_fraction)
+    except ValueError as exc:
+        parser.error(str(exc))
+    rudder_max_deg = resolve_rudder_max_deg(ship_model, args.configuration)
+    identity = dataset_identity(ship_model, args.configuration, rudder_max_deg)
     print(f"Dataset identity: {identity}")
 
     # ============================================================
     # Generate
     # ============================================================
 
-    extra = {}
-    if _SUPPORTS_STRAIGHT:
-        extra["straight_fraction"] = args.straight_fraction
-    elif args.straight_fraction:
-        parser.error("--straight-fraction: the installed sim_fh_dataset_generator has no straight episodes.")
-
-    print(f"Generating {args.samples} episodes (max. horizon={args.horizon}s)...")
+    print(f"Generating {args.samples} episodes (max. horizon={args.horizon}s, {ship_model.name}, "
+          f"configuration '{args.configuration}')...")
 
     x_values, y_values, episode_ids, nbr_samples = collect_supervised_dataset(
         nbr_samples=args.samples,
@@ -266,7 +279,10 @@ def main():
         seed=args.seed,
         bank_fraction=args.bank_fraction,
         bank_band=bank_band,
-        **extra,
+        straight_fraction=args.straight_fraction,
+        ship_model=ship_model,
+        configuration=args.configuration,
+        rudder_max_deg=rudder_max_deg,
     )
 
     if nbr_samples == 0:

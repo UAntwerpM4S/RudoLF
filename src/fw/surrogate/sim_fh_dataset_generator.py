@@ -1,3 +1,36 @@
+"""
+FH dataset generator for the surrogate models -- every ship, every configuration.
+
+Simulates episodes in FH (simexe) and writes the supervised dataset (one row
+per time step: state + action + rays, then the one-step deltas and the
+episode_id; layout in load_supervised_dataset).
+
+Ships (SHIP_PROFILES, `ship_model=`):
+  TRIPOLI    azipods: setDesiredDirection(+-RUDDER deg) + setEngineLeverValue;
+             rudder scale 35 deg (fixed).
+  MYZAKO_37  classic rudder + propeller: rudder setControlValue(+-1, FH's own
+             maximum) and propeller engage() + setEngineLeverValue; rudder
+             scale = FH's own maximum (getMaximumAngle), probed once before
+             the run (probe_fh_rudder_max_deg) and checked in every episode.
+             It must equal the ship's max_rudder_angle in ship_factory.
+  The framework rudder command (positive = turn to PORT) is converted to FH's
+  sign with fh_tabular_model.fh_rudder_sign, for the initial rudder angle and
+  for every step.
+
+Configurations (CONFIGURATIONS, `configuration=`):
+  full       ship-bank + UKC + wind + current: random wind-field transform
+             per episode (with WIND_WARMUP_TIME), a random <timeStart> (tidal
+             offset) per chunk; 37 input columns (scenario full_env).
+  confined   ship-bank + UKC only: the nowindnocurrent exercise, no wind
+             field; FH reads the static tide (STATIC_TIDE_XML_PATH), the
+             tide/current XMLs with <timeStart> are neither read nor written;
+             33 input columns (scenario confined_ukc).
+
+"Straight" episodes (STRAIGHT_*) exist for both ships and both
+configurations; only the full configuration has a no-current exercise for
+STRAIGHT_NO_CURRENT_SHARE of them.
+"""
+
 import gc
 import os
 import re
@@ -6,6 +39,7 @@ import json
 import time
 import shutil
 import hashlib
+import tempfile
 import logging
 import traceback
 import numpy as np
@@ -27,6 +61,7 @@ from matplotlib import pyplot as plt
 from multiprocessing.pool import Pool
 from dataclasses import dataclass, field
 from shapely.geometry import LineString, MultiLineString, Point
+from fw.dynamics.fh_tabular_model import fh_rudder_sign
 from fw.environments.py_sim_env import PySimEnv
 from fw.environments.ray_features import (
     RAY_ANGLES_DEG,
@@ -36,7 +71,8 @@ from fw.environments.ray_features import (
     compute_ray_features,
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Iterable, Optional, Tuple, Union
+from fw.ships.ship_factory import ShipModel, create_ship
+from typing import Callable, Dict, Iterable, Optional, Tuple, Union
 
 DEFAULT_MATH_MODEL_FREQUENCY = 10.0  # Hz
 # Simulated before the first recorded state (whole math-model steps only).
@@ -46,7 +82,7 @@ INITIALIZATION_TIME = 1.0 / DEFAULT_MATH_MODEL_FREQUENCY  # s
 # 2026-10-13: 11.174 m/s @ 63.29 deg for every episode), and only about 1 s
 # later the episode's own transform. Without this warm-up the first rows of
 # every episode carried that default wind. Simulated after the settle, before
-# the first recorded state (whole math-model steps only).
+# the first recorded state (whole math-model steps only). Full configuration only.
 WIND_WARMUP_TIME = 1.0  # s
 
 # Episode stop limits (see stop_reason). Rows recorded before a limit is hit are kept.
@@ -65,7 +101,7 @@ BANK_START_FRACTION = 0.2
 BANK_START_BAND = (20.0, 135.0)  # m, from the ship center
 
 # Episode initial conditions and controls (all part of the run signature).
-RUDDER_MAX_DEG = 35.0                 # action[0] = +-1 -> +-35 deg azipod direction
+# The rudder scale (action[0] = +-1 <-> +-rudder_max_deg) is per ship: SHIP_PROFILES.
 _PROPELLER_RPS_SCALE = 5.5            # action[1] = +-1 -> initial propeller rps
 INIT_SURGE_RANGE = (0.0, 6.0)         # m/s
 INIT_SWAY_RANGE = (-2.0, 2.0)         # m/s
@@ -84,24 +120,25 @@ STRAIGHT_FRACTION = 0.25              # of ALL episodes (0 disables)
 STRAIGHT_RUDDER_MAX_DEG = 2.0         # rudder uniform in +-this ...
 STRAIGHT_RUDDER_ZERO_SHARE = 0.5      # ... except this share, which gets exactly 0
 STRAIGHT_THRUST_RANGE = (0.2, 1.0)    # constant thrust action, uniform
-# Initial surge = STRAIGHT_SURGE_PER_THRUST * thrust * U(STRAIGHT_SURGE_SPREAD),
-# clipped to INIT_SURGE_RANGE. 6.0 is the approximation model_comparison uses
-# (thrust = speed / 6; FH holds ~5.0 m/s at thrust 0.83). Only the start is
-# affected: the ship settles to FH's own steady speed during the episode.
-STRAIGHT_SURGE_PER_THRUST = 6.0       # m/s per unit thrust action
+# Initial surge = <ship's straight_surge_per_thrust> * thrust * U(STRAIGHT_SURGE_SPREAD),
+# clipped to INIT_SURGE_RANGE (straight_surge_per_thrust: see SHIP_PROFILES).
+# Only the start is affected: the ship settles to FH's own steady speed during
+# the episode.
 STRAIGHT_SURGE_SPREAD = (0.8, 1.1)
 STRAIGHT_INIT_SWAY_RANGE = (-0.1, 0.1)       # m/s
 STRAIGHT_INIT_YAW_RATE_RANGE = (-0.1, 0.1)   # FH units (deg/s)
 STRAIGHT_CALM_SHARE = 0.4             # share of straight episodes with wind Scale = 0
                                       # (with current: current-only data for a current test)
-STRAIGHT_NO_CURRENT_SHARE = 0.4       # share of straight episodes run with EXERCISE_NAME_NO_CURRENT
+STRAIGHT_NO_CURRENT_SHARE = 0.4       # share of straight episodes run with the ship's no-current
+                                      # exercise (full configuration only, see SHIP_PROFILES)
 STRAIGHT_HEADING_STEP_DEG = 5.0       # candidate headings for the free-stretch search
 STRAIGHT_LOOKAHEAD = 600.0            # m; search range for free water ahead (see straight_lookahead)
 # Heading of a straight episode: uniformly random among the headings with
 # enough free water for THIS episode, i.e. (initial surge + this margin for a
 # following current) * horizon * 1.1 -- not the longest stretch. Slow episodes
 # can then also cross the river, so the current (which runs mainly along the
-# river) is also met from the side, not only from ahead or astern.
+# river) is also met from the side, not only from ahead or astern. 0 in the
+# confined configuration (no current).
 STRAIGHT_CURRENT_MARGIN = 1.5         # m/s
 
 TIMEOUT_SECONDS = 60.0
@@ -126,26 +163,205 @@ except KeyError:
 # All simexe inputs are derived from SIMEXE_REPO_FOLDER, so the files written
 # here are always the ones simexe reads.
 AREA_INPUT_DIR = Path(simexe_path) / "database" / "areas" / "ScheldeSaeftinge_23_002" / "invoer"
-EXERCISE_NAME = "DDShip_Tripoli_scenario_windcurrent.tab"
-# Same exercise with the current disabled (tide / water levels still on): used
-# for STRAIGHT_NO_CURRENT_SHARE of the straight episodes, so wind-only data
-# exists (the wind test model_comparison_wind uses this exercise too).
-EXERCISE_NAME_NO_CURRENT = "DDShip_Tripoli_scenario_windnocurrent.tab"
+EXERCISE_DIR = AREA_INPUT_DIR / "tra"
 
 # Current and tide XMLs read by every simexe process. Both get the same random
-# <timeStart> (tidal offset) once per chunk; see randomize_current_time_start.
+# <timeStart> (tidal offset) once per chunk in the full configuration; see
+# randomize_current_time_start.
 CURRENT_XML_PATH = AREA_INPUT_DIR / "sne" / "Duplex_005_-01h00HWdyn_HwPros20190324_1704_3Dt.current.v30.xml"
 TIDE_XML_PATH = AREA_INPUT_DIR / "tide" / "Duplex_005_-01h00HWdyn_HwPros20190324_1704_2Dt.tide.v30.xml"
 TIME_START_XML_PATHS = (CURRENT_XML_PATH, TIDE_XML_PATH)
+# Static tide read by the exercises WITHOUT current (*nowindnocurrent*, used by the
+# confined configuration, and *windnocurrent*, used for the straight_nocur
+# episodes), as their math_model.log shows; they do not read the two XMLs above.
+# Never written by this module; fingerprinted in the run signature when used.
+STATIC_TIDE_XML_PATH = AREA_INPUT_DIR / "tide" / "Duplex_005_-01h00HWstat_HwPros20190324_1704_2Dt.tide.v30.xml"
 CURRENT_TIME_START_RANGE = (-21840, 24960)  # s; about -6.1 h ... +6.9 h
 # Rays: see fw.environments.ray_features (shared with the surrogate);
 # ray_0 = ahead, clockwise, origin = ship center.
-NBR_X_FEATURES = 11 + 2 + NBR_RAY_FEATURES   # state + action + rays = 37
+# Row width: see nbr_x_features (37 full, 33 confined).
 NBR_Y_FEATURES = 3                           # delta_surge, delta_sway, delta_yaw_rate
 
 # FH heading convention: "math" (0 = East, counter-clockwise; verified for the
 # Tripoli with check_fh_conventions.py) or "compass" (0 = North, clockwise).
 FH_HEADING_CONVENTION = "math"
+
+
+
+# ----------------------------------------------------------------------
+# Ships and configurations
+# ----------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ShipProfile:
+    """
+    Ship-specific settings of the generator.
+
+    Attributes:
+        rudder_max_deg: rudder_action = +-1 <-> +-this many degrees (initial
+            rudder angle; azipod direction); stored as the dataset's rudder
+            scale. None = FH's own rudder maximum (getMaximumAngle), read from
+            FH (see resolve_rudder_max_deg). Either way it must equal the ship's
+            max_rudder_angle in fw.ships.ship_factory.
+        steering: "azipod" (getAzipodControls: setDesiredDirection in degrees
+            and setEngineLeverValue) or "rudder" (getRudderControls:
+            setControlValue normalized to FH's own maximum; getPropellerControls:
+            engage() and setEngineLeverValue).
+        exercises: configuration -> (exercise, same exercise without current
+            or None), file names in EXERCISE_DIR.
+        straight_surge_per_thrust: Initial surge of a straight episode per
+            unit thrust action [m/s] (see STRAIGHT_SURGE_SPREAD).
+    """
+
+    rudder_max_deg: Optional[float]
+    steering: str
+    exercises: Dict[str, Tuple[str, Optional[str]]]
+    straight_surge_per_thrust: float
+
+
+SHIP_PROFILES: Dict[ShipModel, ShipProfile] = {
+    ShipModel.TRIPOLI: ShipProfile(
+        rudder_max_deg=35.0,
+        steering="azipod",
+        exercises={
+            # The no-current exercise has tide / water levels still on; the
+            # wind test model_comparison_wind uses it too.
+            "full": ("DDShip_Tripoli_scenario_windcurrent.tab", "DDShip_Tripoli_scenario_windnocurrent.tab"),
+            "confined": ("DDShip_Tripoli_scenario_nowindnocurrent.tab", None),
+        },
+        # The approximation model_comparison uses (thrust = speed / 6; FH holds
+        # ~5.0 m/s at thrust 0.83).
+        straight_surge_per_thrust=6.0,
+    ),
+    ShipModel.MYZAKO_37: ShipProfile(
+        # setControlValue(+-1) moves the rudder to +-FH's own maximum, so that is
+        # the scale (ship_factory: 75 deg; a difference is refused, see
+        # check_ship_against_factory).
+        rudder_max_deg=None,
+        steering="rudder",
+        exercises={
+            "full": ("DDShip_scenario3_windcurrent_myzako_37.tab", "DDShip_scenario2_windnocurrent_myzako_37.tab"),
+            "confined": ("DDShip_scenario1_nowindnocurrent_myzako_37.tab", None),
+        },
+        straight_surge_per_thrust=6.0,   # Tripoli value, not measured for the Myzako
+    ),
+}
+
+
+@dataclass(frozen=True)
+class ConfigurationProfile:
+    """
+    Settings of one environment configuration.
+
+    Attributes:
+        wind_current: Random wind-field transform per episode (and
+            WIND_WARMUP_TIME); wind and current are stored in every row (a
+            state of 11 values instead of 7).
+        randomize_time_start: A new random <timeStart> in TIME_START_XML_PATHS
+            per chunk (the XMLs must exist); otherwise they are not touched.
+    """
+
+    wind_current: bool
+    randomize_time_start: bool
+
+
+CONFIGURATIONS: Dict[str, ConfigurationProfile] = {
+    "full": ConfigurationProfile(wind_current=True, randomize_time_start=True),       # ship-bank + UKC + wind + current
+    "confined": ConfigurationProfile(wind_current=False, randomize_time_start=False),  # ship-bank + UKC
+}
+DEFAULT_SHIP_MODEL = ShipModel.TRIPOLI
+DEFAULT_CONFIGURATION = "full"
+
+
+def _as_ship_model(ship_model: Union[ShipModel, str]) -> ShipModel:
+    """ShipModel from a ShipModel or its name; ValueError for a ship without a profile."""
+
+    if isinstance(ship_model, str):
+        try:
+            ship_model = ShipModel[ship_model]
+        except KeyError:
+            raise ValueError(f"Unknown ship model {ship_model!r}.") from None
+    if ship_model not in SHIP_PROFILES:
+        raise ValueError(f"No generator profile for {ship_model!r}; supported: "
+                         f"{', '.join(m.name for m in SHIP_PROFILES)} (add one to SHIP_PROFILES).")
+    return ship_model
+
+
+def ship_profile(ship_model: Union[ShipModel, str]) -> ShipProfile:
+    """Generator settings of `ship_model` (ShipModel or name)."""
+
+    return SHIP_PROFILES[_as_ship_model(ship_model)]
+
+
+def configuration_profile(configuration: str) -> ConfigurationProfile:
+    """Settings of `configuration` ("full" / "confined"); ValueError for an unknown name."""
+
+    try:
+        return CONFIGURATIONS[configuration]
+    except KeyError:
+        raise ValueError(f"Unknown configuration {configuration!r}; choose from "
+                         f"{sorted(CONFIGURATIONS)}.") from None
+
+
+def ship_rudder_max_deg(ship_model: Union[ShipModel, str]) -> Optional[float]:
+    """
+    Fixed rudder scale of `ship_model` (rudder_action = +-1 <-> +-this many
+    degrees), or None if it is FH's own maximum (see resolve_rudder_max_deg).
+    """
+
+    value = ship_profile(ship_model).rudder_max_deg
+    return None if value is None else float(value)
+
+
+def nbr_x_features(configuration: str) -> int:
+    """Input columns of a row: state (11 full, 7 confined) + action (2) + rays."""
+
+    n_state = 11 if configuration_profile(configuration).wind_current else 7
+    return n_state + 2 + NBR_RAY_FEATURES
+
+
+def exercise_paths(ship_model: Union[ShipModel, str], configuration: str) -> Tuple[Path, Optional[Path]]:
+    """(exercise, no-current exercise or None) of a ship and configuration, in EXERCISE_DIR."""
+
+    configuration_profile(configuration)  # validates the name
+    main, no_current = ship_profile(ship_model).exercises[configuration]
+    return EXERCISE_DIR / main, (EXERCISE_DIR / no_current if no_current else None)
+
+
+def straight_current_margin(configuration: str) -> float:
+    """STRAIGHT_CURRENT_MARGIN with current (full configuration), 0 without."""
+
+    return STRAIGHT_CURRENT_MARGIN if configuration_profile(configuration).wind_current else 0.0
+
+
+def check_ship_against_factory(ship_model: Union[ShipModel, str],
+                               rudder_max_deg: Optional[float] = None) -> None:
+    """
+    Raise ValueError if the rudder scale differs from the ship's
+    max_rudder_angle in fw.ships.ship_factory (the dataset's rudder scale
+    would then not match the ship the surrogate is used with).
+
+    Args:
+        ship_model: Ship (ShipModel or name).
+        rudder_max_deg: The scale to check; None = the profile's fixed value
+            (ValueError for a ship whose scale comes from FH: resolve it first
+            with resolve_rudder_max_deg).
+    """
+
+    ship_model = _as_ship_model(ship_model)
+    value = rudder_max_deg if rudder_max_deg is not None else ship_rudder_max_deg(ship_model)
+    if value is None:
+        raise ValueError(f"{ship_model.name}: the rudder scale is FH's getMaximumAngle(); "
+                         f"resolve it first (resolve_rudder_max_deg).")
+    factory_deg = float(np.degrees(create_ship(ship_model).specifications.max_rudder_angle))
+    if not np.isclose(factory_deg, float(value)):
+        source = ("FH's getMaximumAngle()" if ship_rudder_max_deg(ship_model) is None
+                  else f"SHIP_PROFILES[{ship_model.name}].rudder_max_deg")
+        raise ValueError(
+            f"{ship_model.name}: rudder scale {float(value):g} deg ({source}), but ship_factory gives "
+            f"{factory_deg:g} deg. The dataset would not match the framework's ship: align "
+            f"fw.ships.ship_factory (max_rudder_angle of this ship) with {float(value):g} deg first.")
+
 
 SIM_AVAILABLE = False
 Config = Exercise = MathModel = SimException = None
@@ -383,6 +599,9 @@ class SimSetup:
     seed: Optional[int] = None  # per-episode RNG seed; None = non-reproducible
     episode_kind: str = "random"  # "random" (bank/uniform starts) or "straight" (see STRAIGHT_*;
                                   # start types "straight" and "straight_nocur")
+    ship_model: str = DEFAULT_SHIP_MODEL.name     # key of SHIP_PROFILES, by name
+    rudder_max_deg: float = 0.0                   # rudder scale of the run (resolve_rudder_max_deg)
+    configuration: str = DEFAULT_CONFIGURATION   # key of CONFIGURATIONS
     output: SimOutput = field(default_factory=SimOutput)
 
 
@@ -483,11 +702,15 @@ def plot_xy_points_and_trajectories(env: PySimEnv, xy: np.ndarray, trajectories:
             plt.switch_backend("Agg")
 
 
-def load_supervised_dataset(file_name: str, plot: bool = True) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+def load_supervised_dataset(file_name: str, plot: bool = True,
+                            configuration: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Load a dataset CSV written by collect_supervised_dataset.
 
-    CSV column layout (41 columns, matching collect_supervised_dataset output):
+    CSV column layout of the full configuration (41 columns). The confined
+    configuration has no cols 7-10 (wind/current): 37 columns, X = 33, with
+    rudder_action at col 7, the rays at cols 9-32, Y at cols 33-35 and
+    episode_id at col 36.
         X – inputs (37 columns)
           col  0: x                (m, world-frame position)
           col  1: y                (m, world-frame position)
@@ -524,6 +747,8 @@ def load_supervised_dataset(file_name: str, plot: bool = True) -> Tuple[np.ndarr
     Args:
         file_name: CSV path.
         plot: Also show a plot of the positions.
+        configuration: "full" or "confined"; None = whichever matches the
+            column count.
 
     Returns:
         (x_inputs, y_outputs, episode_ids, number_of_rows)
@@ -531,15 +756,22 @@ def load_supervised_dataset(file_name: str, plot: bool = True) -> Tuple[np.ndarr
 
     data = np.loadtxt(file_name, delimiter=",", ndmin=2)
 
-    expected_cols = NBR_X_FEATURES + NBR_Y_FEATURES + 1  # 41
+    if configuration is not None:
+        configuration_profile(configuration)   # ValueError for an unknown name
+    widths = {name: nbr_x_features(name) + NBR_Y_FEATURES + 1 for name in CONFIGURATIONS}
+    if configuration is None:
+        matching = [name for name, w in widths.items() if data.ndim == 2 and data.shape[1] == w]
+        configuration = matching[0] if matching else DEFAULT_CONFIGURATION
+    expected_cols = widths[configuration]
     if data.ndim != 2 or data.shape[1] != expected_cols:
         raise ValueError(
-            f"Expected CSV with {expected_cols} columns, got shape {data.shape}. "
+            f"Expected CSV with {expected_cols} columns ({configuration!r} configuration; "
+            f"known widths {widths}), got shape {data.shape}. "
             "Re-generate the dataset or check the file path."
         )
 
-    x_end = NBR_X_FEATURES
-    y_end = NBR_X_FEATURES + NBR_Y_FEATURES
+    x_end = nbr_x_features(configuration)
+    y_end = x_end + NBR_Y_FEATURES
     x_values = data[:, 0:x_end].astype(np.float32)
     y_values = data[:, x_end:y_end].astype(np.float32)
     episode_ids = np.rint(data[:, y_end]).astype(np.int64)
@@ -636,11 +868,14 @@ def _straight_heading(env: "PySimEnv", cutoff: Optional[MultiLineString], start:
     return float(PySimEnv.normalize_angle(cands[k])), float(free[k])
 
 
-def straight_lookahead(horizon_seconds: float) -> float:
-    """Free water wanted ahead of a straight episode: STRAIGHT_LOOKAHEAD, or more for long horizons."""
+def straight_lookahead(horizon_seconds: float, current_margin: float = STRAIGHT_CURRENT_MARGIN) -> float:
+    """
+    Free water wanted ahead of a straight episode: STRAIGHT_LOOKAHEAD, or more
+    for long horizons (`current_margin`: see straight_current_margin).
+    """
 
     return max(STRAIGHT_LOOKAHEAD,
-               1.1 * (INIT_SURGE_RANGE[1] + STRAIGHT_CURRENT_MARGIN) * float(horizon_seconds))
+               1.1 * (INIT_SURGE_RANGE[1] + current_margin) * float(horizon_seconds))
 
 
 def stop_reason(env: "PySimEnv", ship_pos: np.ndarray, ukc: float, ray_features: np.ndarray,
@@ -699,6 +934,186 @@ def get_current_velocity(_ship_interface):
     return current_speed, current_direction_deg
 
 
+def _probe_rudder_max_worker(sim_config: SimConfig, exercise_path: str, output_path: str,
+                             x: float, y: float) -> float:
+    """
+    In a worker process: initialize FH on `exercise_path` at (x, y) and
+    return the rudder controls' getMaximumAngle() [deg].
+
+    Raises:
+        RuntimeError: Initialization failed, the ship has no rudder controls,
+            or its rudders report different maxima.
+    """
+
+    t0 = time.monotonic()
+
+    def step(text: str) -> None:
+        """Progress line of the probe (flushed: the worker's output is the only trace)."""
+        print(f"[rudder probe {time.monotonic() - t0:6.1f} s] {text}", flush=True)
+
+    step("worker started, loading the simulator library")
+    if not SIM_AVAILABLE and sim_config.lib_path not in sys.path:
+        sys.path.append(sim_config.lib_path)
+    from sim import Config, Exercise, MathModel
+
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+    config = Config(sim_config.config_path)
+    config.SetOutputDir(str(output_path))
+    config.SetMathModelFrequency(DEFAULT_MATH_MODEL_FREQUENCY)
+    config.SetRewindEnabled(False)
+    config.ClearConnections()
+    exercise = Exercise(str(exercise_path), config)
+    ship_config = exercise.getShipConfig()
+    ship_config.setInitialPosition(float(x), float(y))
+    ship_config.setInitialPropellerRps(0.0)
+    ship_config.setInitialRudderAngle(0.0)
+    ship_config.setInitialHeading(0.0)
+    ship_config.setInitialSurgeVelocity(0.0)
+    ship_config.setInitialSwayVelocity(0.0)
+    ship_config.setInitialYawVelocity(0.0)
+
+    math_model = MathModel()
+    try:
+        step(f"MathModel.Initialize() on {Path(exercise_path).name} at ({x:.1f}, {y:.1f})")
+        if not math_model.Initialize(config, exercise):
+            raise RuntimeError(f"MathModel initialization failed for {exercise_path} at ({x:.1f}, {y:.1f}).")
+        step("initialized; enableBridge() + simulateSeconds(INITIALIZATION_TIME)")
+        math_model.enableBridge()
+        math_model.simulateSeconds(INITIALIZATION_TIME)   # as run_simulation, before reading controls
+        step("reading getRudderControls() / getMaximumAngle()")
+        rudders = list(math_model.getShipInterface(0).getRudderControls())
+        if not rudders:
+            raise RuntimeError(f"{Path(exercise_path).name}: the ship has no rudder controls.")
+        maxima = sorted({float(r.getMaximumAngle()) for r in rudders})
+        if len(maxima) != 1:
+            raise RuntimeError(f"{Path(exercise_path).name}: rudders report different maxima {maxima} deg.")
+        step(f"{len(rudders)} rudder(s), maximum {maxima[0]:g} deg")
+        return maxima[0]
+    finally:
+        for method in ("Terminate", "Dispose"):
+            step(f"math model {method}()")
+            try:
+                getattr(math_model, method)()
+            except Exception as exc:
+                print(f"Warning: Error during math model {method}() (rudder probe): {exc}", flush=True)
+        step("done")
+
+
+PROBE_ATTEMPTS = 3   # start points the rudder probe tries before giving up
+
+
+def default_sim_config() -> SimConfig:
+    """SimConfig for SIMEXE_REPO_FOLDER (library, config file, TIMEOUT_SECONDS)."""
+
+    return SimConfig(lib_path=str(Path(simexe_path) / 'exe' / 'installed'),
+                     config_path=str(Path(simexe_path) / 'config' / 'simXdrive.config.xml'),
+                     timeout_seconds=TIMEOUT_SECONDS)
+
+
+def probe_fh_rudder_max_deg(ship_model: Union[ShipModel, str], configuration: str,
+                            sim_config: Optional[SimConfig] = None,
+                            start_xy: Optional[Tuple[float, float]] = None) -> float:
+    """
+    FH's own rudder maximum (getMaximumAngle, deg) for the ship's exercise in
+    `configuration`, from one short FH session in a separate process (as the
+    episodes run).
+
+    Args:
+        ship_model: Ship with classic rudder controls (ShipModel or name).
+        configuration: "full" / "confined" (selects the exercise).
+        sim_config: Default: default_sim_config().
+        start_xy: Initial position; default: a random point in the river.
+
+    Raises:
+        FileNotFoundError: SIMEXE_REPO_FOLDER or a simexe input is missing
+            (checked before FH is started).
+        RuntimeError: The probe timed out, or failed at PROBE_ATTEMPTS start
+            points (the last error is chained).
+    """
+
+    ship_model = _as_ship_model(ship_model)
+    sim_config = sim_config or default_sim_config()
+    exercise_path, _ = exercise_paths(ship_model, configuration)
+    _check_simexe_setup(sim_config, exercise_path, time_start_xmls=False)
+    if start_xy is not None:
+        candidates = [tuple(float(v) for v in start_xy)]
+    else:
+        # Start points filtered like the episodes' (away from map cut-off edges).
+        env = PySimEnv(render_mode=None, time_step=0.1, wind=False, current=False)
+        cutoff = _cutoff_geometry(env) if CUTOFF_CLEARANCE > 0 else None
+        candidates = [tuple(float(v) for v in p)
+                      for p in _sample_points(env.sample_point_in_river, PROBE_ATTEMPTS, cutoff)]
+        if not candidates:
+            raise RuntimeError("Rudder probe: no start point could be sampled in the river.")
+    print(f"Probing FH's rudder maximum for {ship_model.name} ({exercise_path.name}) in a separate FH "
+          f"process; this takes as long as starting one episode (timeout {sim_config.timeout_seconds:g} s) ...",
+          flush=True)
+    last_error = None
+    for x, y in candidates:
+        scratch = Path(tempfile.mkdtemp(prefix="rudder_probe_"))
+        pool = multiprocessing.Pool(1, initializer=_ignore_sigint)
+        try:
+            res = pool.apply_async(_probe_rudder_max_worker,
+                                   args=[sim_config, str(exercise_path), str(scratch), x, y])
+            try:
+                value = float(res.get(sim_config.timeout_seconds))
+            except multiprocessing.TimeoutError:
+                raise RuntimeError(f"Rudder probe timed out after {sim_config.timeout_seconds:g} s "
+                                   f"({exercise_path.name}).") from None
+            except Exception as exc:   # e.g. Initialize() failed at this point: try the next one
+                last_error = exc
+                print(f"Rudder probe at ({x:.1f}, {y:.1f}) failed: {type(exc).__name__}: {exc}", flush=True)
+                continue
+        finally:
+            pool.terminate()
+            pool.join()
+            shutil.rmtree(scratch, ignore_errors=True)
+        print(f"FH rudder maximum (getMaximumAngle) of {ship_model.name} in {exercise_path.name}: {value:g} deg")
+        return value
+    raise RuntimeError(f"Rudder probe failed at {len(candidates)} start point(s) ({exercise_path.name}); "
+                       f"last error: {type(last_error).__name__}: {last_error}") from last_error
+
+
+def resolve_rudder_max_deg(ship_model: Union[ShipModel, str], configuration: str, **probe_kwargs) -> float:
+    """
+    Rudder scale of a run: the profile's fixed value, or FH's own maximum
+    (probe_fh_rudder_max_deg, `probe_kwargs` passed on) when it is None.
+    """
+
+    value = ship_rudder_max_deg(ship_model)
+    return value if value is not None else probe_fh_rudder_max_deg(ship_model, configuration, **probe_kwargs)
+
+
+def _fh_state(ship_interface, env: "PySimEnv", wind_current: bool) -> np.ndarray:
+    """
+    FH's current state as a row's state part, in the framework's conventions:
+    [x, y, heading, surge, sway, yaw_rate, UKC] and, with `wind_current`,
+    [wind speed, wind dir, current speed, current dir] after it.
+    """
+
+    pos = ship_interface.getShipPosition()
+    vog = ship_interface.getShipVelocityOverGround()
+    state = [
+        pos.x,
+        pos.y,
+        fh_heading_to_env_rad(ship_interface.getShipHeading()),
+        vog.x,                                    # surge
+        vog.y,                                    # sway, port positive (FH = framework)
+        np.radians(ship_interface.getShipYawRate()),
+        ship_interface.getKeelClearance(),
+    ]
+    if wind_current:
+        wind_state = ship_interface.getWindState()
+        current_speed, current_direction = get_current_velocity(ship_interface)
+        state += [
+            wind_state.Speed,
+            env.normalize_angle(np.radians(wind_state.Direction)),
+            current_speed,
+            env.normalize_angle(np.radians(current_direction)),
+        ]
+    return np.array(state, dtype=np.float64)
+
+
 def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
     """Run one episode in FH (inside a pool worker process) and return its rows."""
 
@@ -749,6 +1164,16 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         ship_config = exercise.getShipConfig()
         rng = np.random.default_rng(sim_setup.seed)
 
+        ship = ship_profile(sim_setup.ship_model)
+        conf = configuration_profile(sim_setup.configuration)
+        # Framework rudder sign (positive action = ship turns to port) -> FH's
+        # command sign: +1 azipod (Tripoli), -1 classic rudder (Myzako).
+        rudder_sign = fh_rudder_sign(ShipModel[sim_setup.ship_model])
+        current_margin = straight_current_margin(sim_setup.configuration)
+        rudder_max_deg = float(sim_setup.rudder_max_deg)   # rudder_action = +-1 <-> +-this [deg]
+        if not rudder_max_deg > 0:
+            raise ValueError(f"SimSetup.rudder_max_deg must be positive, got {sim_setup.rudder_max_deg}")
+
         # One constant (rudder, thrust) action per episode, by design: it is
         # applied at every step (and used for the initial rudder angle and rps).
         straight = sim_setup.episode_kind == "straight"
@@ -757,18 +1182,18 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             if rng.random() < STRAIGHT_RUDDER_ZERO_SHARE:
                 rudder_action = 0.0
             else:
-                rudder_action = rng.uniform(-1.0, 1.0) * STRAIGHT_RUDDER_MAX_DEG / RUDDER_MAX_DEG
+                rudder_action = rng.uniform(-1.0, 1.0) * STRAIGHT_RUDDER_MAX_DEG / rudder_max_deg
             thrust_action = rng.uniform(*STRAIGHT_THRUST_RANGE)
             action = np.array([rudder_action, thrust_action], dtype=np.float32)
-            init_surge = float(np.clip(STRAIGHT_SURGE_PER_THRUST * float(action[1])
+            init_surge = float(np.clip(ship.straight_surge_per_thrust * float(action[1])
                                        * rng.uniform(*STRAIGHT_SURGE_SPREAD), *INIT_SURGE_RANGE))
             init_sway = float(rng.uniform(*STRAIGHT_INIT_SWAY_RANGE))
             init_yaw_rate = float(rng.uniform(*STRAIGHT_INIT_YAW_RATE_RANGE))
             # Free water this episode needs: its own speed plus a following current.
-            needed_m = 1.1 * (init_surge + STRAIGHT_CURRENT_MARGIN) * float(sim_setup.horizon_seconds)
+            needed_m = 1.1 * (init_surge + current_margin) * float(sim_setup.horizon_seconds)
             heading_rad, free_m = _straight_heading(
                 env, cutoff, np.array([sim_setup.x_pos, sim_setup.y_pos], dtype=np.float64),
-                straight_lookahead(sim_setup.horizon_seconds), needed_m, rng)
+                straight_lookahead(sim_setup.horizon_seconds, current_margin), needed_m, rng)
             init_heading_fh = env_rad_to_fh_heading_deg(heading_rad)
             sim_setup.output.info["straight_free_m"] = free_m
         else:
@@ -781,7 +1206,9 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
 
         ship_config.setInitialPosition(sim_setup.x_pos, sim_setup.y_pos)
         ship_config.setInitialPropellerRps(float(_PROPELLER_RPS_SCALE * action[1]))
-        ship_config.setInitialRudderAngle(float(RUDDER_MAX_DEG * action[0]))
+        # FH's sign, as the per-step command below (on the Myzako it used to be the
+        # opposite, so every episode started with the rudder on the wrong side).
+        ship_config.setInitialRudderAngle(float(rudder_sign * rudder_max_deg * action[0]))
         ship_config.setInitialHeading(float(init_heading_fh))
         ship_config.setInitialSurgeVelocity(init_surge)
         ship_config.setInitialSwayVelocity(init_sway)
@@ -799,89 +1226,95 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
               f"[{sim_setup.x_pos:10.3f} {sim_setup.y_pos:10.3f}]")
 
         math_model.enableBridge()
-        environment = math_model.getEnvironmentInterface()
 
-        wind_field_control = environment.getWindFieldControl()
-        wind_field_transform = wind_field_control.getFieldTransform()
-        wind_field_transform.Rotation = float(rng.uniform(0.0, 360.0))
-        wind_field_transform.Offset = 0.0
-        # Half-normal scale factor of the wind field, clipped (straight
-        # episodes: STRAIGHT_CALM_SHARE of them without wind).
-        wind_scale = float(np.clip(np.abs(rng.normal(loc=0.0, scale=WIND_SCALE_SIGMA)),
-                                   0.0, WIND_SCALE_MAX))
-        if straight and rng.random() < STRAIGHT_CALM_SHARE:
-            wind_scale = 0.0
-        wind_field_transform.Scale = wind_scale
-        wind_field_control.setFieldTransform(wind_field_transform)
+        if conf.wind_current:
+            environment = math_model.getEnvironmentInterface()
+            wind_field_control = environment.getWindFieldControl()
+            wind_field_transform = wind_field_control.getFieldTransform()
+            wind_field_transform.Rotation = float(rng.uniform(0.0, 360.0))
+            wind_field_transform.Offset = 0.0
+            # Half-normal scale factor of the wind field, clipped (straight
+            # episodes: STRAIGHT_CALM_SHARE of them without wind).
+            wind_scale = float(np.clip(np.abs(rng.normal(loc=0.0, scale=WIND_SCALE_SIGMA)),
+                                       0.0, WIND_SCALE_MAX))
+            if straight and rng.random() < STRAIGHT_CALM_SHARE:
+                wind_scale = 0.0
+            wind_field_transform.Scale = wind_scale
+            wind_field_control.setFieldTransform(wind_field_transform)
 
         math_model.simulateSeconds(INITIALIZATION_TIME)  # initialize velocities
 
         ship_interface = math_model.getShipInterface(0)
 
-        # Wind warm-up (see WIND_WARMUP_TIME): the first recorded state must
-        # carry this episode's wind, not the exercise default. A lagging
-        # WindState is frozen (bit-identical), so exact equality detects it.
-        settled_wind = (ship_interface.getWindState().Speed, ship_interface.getWindState().Direction)
-        math_model.simulateSeconds(WIND_WARMUP_TIME)
-        warmed_wind = (ship_interface.getWindState().Speed, ship_interface.getWindState().Direction)
-        if warmed_wind == settled_wind:
-            error_msg = (f"WindState unchanged after WIND_WARMUP_TIME={WIND_WARMUP_TIME} s "
-                         f"({warmed_wind}): still the exercise default -- increase WIND_WARMUP_TIME.")
-            print(error_msg)
-            sim_setup.output.status = "FAILED"
-            sim_setup.output.info["error"] = error_msg
-            return sim_setup
+        if conf.wind_current:
+            # Wind warm-up (see WIND_WARMUP_TIME): the first recorded state must
+            # carry this episode's wind, not the exercise default. A lagging
+            # WindState is frozen (bit-identical), so exact equality detects it.
+            settled_wind = (ship_interface.getWindState().Speed, ship_interface.getWindState().Direction)
+            math_model.simulateSeconds(WIND_WARMUP_TIME)
+            warmed_wind = (ship_interface.getWindState().Speed, ship_interface.getWindState().Direction)
+            if warmed_wind == settled_wind:
+                error_msg = (f"WindState unchanged after WIND_WARMUP_TIME={WIND_WARMUP_TIME} s "
+                             f"({warmed_wind}): still the exercise default -- increase WIND_WARMUP_TIME.")
+                print(error_msg)
+                sim_setup.output.status = "FAILED"
+                sim_setup.output.info["error"] = error_msg
+                return sim_setup
 
-        initial_position = ship_interface.getShipPosition()
-        initial_heading = ship_interface.getShipHeading()
-        initial_vog = ship_interface.getShipVelocityOverGround()
-        initial_yaw_rate = ship_interface.getShipYawRate()
-        initial_ukc = ship_interface.getKeelClearance()
-        initial_wind_state = ship_interface.getWindState()
-        initial_current_speed, initial_current_direction = get_current_velocity(ship_interface)
-        print(f"Wind direction: {initial_wind_state.Direction} - wind speed: {initial_wind_state.Speed}")
-
-        # [x, y, heading, surge, sway, yaw_rate, UKC, wind speed, wind dir, current speed, current dir]
-        input_state = np.array(
-            [
-                initial_position.x,
-                initial_position.y,
-                fh_heading_to_env_rad(initial_heading),
-                initial_vog.x,
-                initial_vog.y,               # sway, port positive (FH = framework)
-                np.radians(initial_yaw_rate),
-                initial_ukc,
-                initial_wind_state.Speed,
-                env.normalize_angle(np.radians(initial_wind_state.Direction)),
-                initial_current_speed,
-                env.normalize_angle(np.radians(initial_current_direction)),
-            ],
-            dtype=np.float64,
-        )
+        # [x, y, heading, surge, sway, yaw_rate, UKC] (+ [wind speed, wind dir,
+        # current speed, current dir] in the full configuration)
+        input_state = _fh_state(ship_interface, env, conf.wind_current)
+        if conf.wind_current:
+            initial_wind_state = ship_interface.getWindState()
+            print(f"Wind direction: {initial_wind_state.Direction} - wind speed: {initial_wind_state.Speed}")
 
         initial_ray_features = compute_ray_features(
             env,
-            np.array([initial_position.x, initial_position.y]),
+            np.array([input_state[0], input_state[1]]),
             float(input_state[2]),
         )
 
         steps_per_episode = max(1, int(round(sim_setup.horizon_seconds / sim_setup.dt)))
 
-        curr_ship_pos = np.array([initial_position.x, initial_position.y], dtype=np.float32)
+        curr_ship_pos = np.array([input_state[0], input_state[1]], dtype=np.float32)
 
         input_states = []
         output_states = []
         traj = [curr_ship_pos.copy()]
         ray_features = initial_ray_features
 
-        propellers = ship_interface.getAzipodControls()
-        if len(propellers) == 0:
-            # Otherwise the recorded action would have no effect on the data.
-            error_msg = "Ship has no azipod controls: the action cannot be applied."
+        # Controls the action is applied to (see ShipProfile.steering). Missing
+        # controls fail the episode: the recorded action would have no effect.
+        if ship.steering == "azipod":
+            steering_controls = list(ship_interface.getAzipodControls())
+            thrust_controls = steering_controls
+            needed = {"azipod": steering_controls}
+        else:
+            steering_controls = list(ship_interface.getRudderControls())
+            thrust_controls = list(ship_interface.getPropellerControls())
+            needed = {"rudder": steering_controls, "propeller": thrust_controls}
+        missing = [name for name, controls in needed.items() if not controls]
+        if missing:
+            error_msg = (f"Ship has no {' / '.join(missing)} controls ({sim_setup.ship_model}, "
+                         f"steering '{ship.steering}'): the action cannot be applied. Does the "
+                         f"exercise match the ship?")
             print(error_msg)
             sim_setup.output.status = "FAILED"
             sim_setup.output.info["error"] = error_msg
             return sim_setup
+        if ship.steering == "rudder":
+            # setControlValue(+-1) moves the rudder to +-FH's OWN maximum: that must
+            # be the run's scale, or the stored rudder_action would mean other angles.
+            maxima = sorted({float(rudder.getMaximumAngle()) for rudder in steering_controls})
+            if len(maxima) != 1 or not np.isclose(maxima[0], rudder_max_deg):
+                error_msg = (f"FH's rudder maximum {maxima} deg differs from the run's rudder scale "
+                             f"{rudder_max_deg:g} deg (probed before the run): this episode's "
+                             f"rudder_action would mean other angles. Does {Path(sim_setup.exercise_path).name} "
+                             f"use another ship configuration?")
+                print(error_msg)
+                sim_setup.output.status = "FAILED"
+                sim_setup.output.info["error"] = error_msg
+                return sim_setup
 
         # A row is recorded only if its start and end state are within the stop
         # limits; the episode stops at the first violating step, earlier rows are kept.
@@ -890,54 +1323,40 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             termination = "start_" + termination
         else:
             termination = "horizon"
-            propeller_rudder_value = float(action[0] * RUDDER_MAX_DEG)
-            propeller_thrust_value = float(action[1])
+            if ship.steering == "azipod":
+                rudder_command = float(rudder_sign * action[0] * rudder_max_deg)   # direction [deg]
+            else:
+                rudder_command = float(rudder_sign * action[0])   # normalized to FH's own maximum
+            thrust_command = float(action[1])
             for step in range(steps_per_episode):
-                for propeller in propellers:
-                    propeller.setDesiredDirection(propeller_rudder_value)
-                    propeller.setEngineLeverValue(propeller_thrust_value)
+                if ship.steering == "azipod":
+                    for azipod in steering_controls:
+                        azipod.setDesiredDirection(rudder_command)
+                        azipod.setEngineLeverValue(thrust_command)
+                else:
+                    for rudder in steering_controls:
+                        rudder.setControlValue(rudder_command)
+                    for propeller in thrust_controls:
+                        propeller.engage()
+                        propeller.setEngineLeverValue(thrust_command)
 
                 math_model.simulateSeconds(sim_setup.dt)
 
-                pos = ship_interface.getShipPosition()
-                next_ship_pos = np.array([pos.x, pos.y], dtype=np.float32)
+                next_input_state = _fh_state(ship_interface, env, conf.wind_current)
+                next_ship_pos = np.array([next_input_state[0], next_input_state[1]], dtype=np.float32)
                 traj.append(next_ship_pos.copy())
 
-                current_vog = ship_interface.getShipVelocityOverGround()
-                current_heading = ship_interface.getShipHeading()
-                current_yaw_rate = ship_interface.getShipYawRate()
-                current_ukc = ship_interface.getKeelClearance()
-                current_wind_state = ship_interface.getWindState()
-                current_current_speed, current_current_direction = get_current_velocity(ship_interface)
-
-                new_surge = current_vog.x
-                new_sway = current_vog.y     # port positive (FH = framework)
-                new_yaw_rate = np.radians(current_yaw_rate)
-
-                next_input_state = np.array(
-                    [
-                        pos.x,
-                        pos.y,
-                        fh_heading_to_env_rad(current_heading),
-                        new_surge,
-                        new_sway,
-                        new_yaw_rate,
-                        current_ukc,
-                        current_wind_state.Speed,
-                        env.normalize_angle(np.radians(current_wind_state.Direction)),
-                        current_current_speed,
-                        env.normalize_angle(np.radians(current_current_direction)),
-                    ],
-                    dtype=np.float64,
-                )
+                new_surge = next_input_state[3]
+                new_sway = next_input_state[4]     # port positive (FH = framework)
+                new_yaw_rate = next_input_state[5]
 
                 next_ray_features = compute_ray_features(
                     env,
-                    np.array([pos.x, pos.y]),
+                    np.array([next_input_state[0], next_input_state[1]]),
                     float(next_input_state[2]),
                 )
 
-                reason = stop_reason(env, next_ship_pos, float(current_ukc), next_ray_features, cutoff)
+                reason = stop_reason(env, next_ship_pos, float(next_input_state[6]), next_ray_features, cutoff)
                 if reason is not None:
                     termination = reason
                     break
@@ -1043,8 +1462,11 @@ def _ignore_sigint():
 
 
 def _check_simexe_setup(sim_config: SimConfig, exercise_path: Path,
-                        extra_exercises: Iterable[Path] = ()) -> None:
-    """Fail fast if SIMEXE_REPO_FOLDER or a required simexe input is missing."""
+                        extra_exercises: Iterable[Path] = (), time_start_xmls: bool = True) -> None:
+    """
+    Fail fast if SIMEXE_REPO_FOLDER or a required simexe input is missing
+    (the current/tide XMLs only with `time_start_xmls`).
+    """
 
     if not simexe_path:
         raise FileNotFoundError("Environment variable SIMEXE_REPO_FOLDER is not set; it must "
@@ -1054,8 +1476,7 @@ def _check_simexe_setup(sim_config: SimConfig, exercise_path: Path,
         "simexe config": Path(sim_config.config_path),
         "exercise": Path(exercise_path),
         **{f"exercise ({Path(p).name})": Path(p) for p in extra_exercises},
-        "current XML": CURRENT_XML_PATH,
-        "tide XML": TIDE_XML_PATH,
+        **({"current XML": CURRENT_XML_PATH, "tide XML": TIDE_XML_PATH} if time_start_xmls else {}),
     }
     missing = [f"  {name}: {path}" for name, path in required.items() if not path.exists()]
     if missing:
@@ -1116,13 +1537,14 @@ def _atomic_savetxt(path: Union[str, Path], data: np.ndarray, **kwargs) -> None:
 
 
 def _write_checkpoint_shard(ckpt_dir: Path, indices: list, episode_meta: dict,
-                            episode_results: dict, n_chunks: int) -> Path:
+                            episode_results: dict, n_chunks: int, n_x_features: int) -> Path:
     """
     Write episodes *indices* (contiguous) to one shard.
 
     episode_meta: index -> (reason, start_x, start_y, start_type), all episodes.
     episode_results: index -> (x, y, trajectory), episodes with rows only.
     n_chunks: chunks these episodes took (to replay the tide RNG on resume).
+    n_x_features: row width (see nbr_x_features), for an empty x array.
     """
 
     idx = np.asarray(indices, dtype=np.int64)
@@ -1141,7 +1563,7 @@ def _write_checkpoint_shard(ckpt_dir: Path, indices: list, episode_meta: dict,
         passed_index=np.asarray(passed, dtype=np.int64),
         rows_per_passed=np.array([len(x) for x in x_parts], dtype=np.int64),
         # float32: same precision as the final CSV.
-        x=(np.vstack(x_parts) if x_parts else np.zeros((0, NBR_X_FEATURES))).astype(np.float32),
+        x=(np.vstack(x_parts) if x_parts else np.zeros((0, n_x_features))).astype(np.float32),
         y=(np.vstack(y_parts) if y_parts else np.zeros((0, NBR_Y_FEATURES))).astype(np.float32),
         traj_len=np.array([len(t) for t in t_parts], dtype=np.int64),
         traj=(np.vstack(t_parts) if t_parts else np.zeros((0, 2))).astype(np.float32),
@@ -1189,10 +1611,35 @@ def _load_checkpoint_shards(ckpt_dir: Path):
     return episodes, n_done, n_chunks
 
 
-def _empty_result() -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    """Empty result with the normal column shapes."""
+def validate_start_settings(bank_fraction: float, bank_band: Tuple[float, float],
+                            straight_fraction: float) -> Tuple[float, float]:
+    """
+    Check the start-point settings of collect_supervised_dataset (cheap: call
+    it before anything slow, such as the rudder probe).
 
-    return (np.zeros((0, NBR_X_FEATURES), dtype=np.float32),
+    Returns:
+        (band_min, band_max) as floats.
+
+    Raises:
+        ValueError: For an invalid fraction or bank band.
+    """
+
+    if not 0.0 <= bank_fraction <= 1.0:
+        raise ValueError(f"bank_fraction must be in [0, 1], got {bank_fraction}")
+    # Sum, not 1 - bank_fraction: 1.0 - 0.8 = 0.19999999999999996 would reject 0.8 + 0.2.
+    if not (straight_fraction >= 0.0 and bank_fraction + straight_fraction <= 1.0 + 1e-9):  # also rejects NaN
+        raise ValueError(f"straight_fraction must be in [0, 1 - bank_fraction] = [0, {1.0 - bank_fraction:g}] "
+                         f"(straight episodes use uniform starts), got {straight_fraction}")
+    band_min, band_max = (float(v) for v in bank_band)
+    if bank_fraction > 0 and not 0.0 <= band_min < band_max:
+        raise ValueError(f"bank_band must be (min, max) with 0 <= min < max, got {bank_band}")
+    return band_min, band_max
+
+
+def _empty_result(n_x_features: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """Empty result with the normal column shapes (`n_x_features`: see nbr_x_features)."""
+
+    return (np.zeros((0, n_x_features), dtype=np.float32),
             np.zeros((0, NBR_Y_FEATURES), dtype=np.float32),
             np.zeros((0,), dtype=np.int64), 0)
 
@@ -1219,16 +1666,20 @@ def collect_supervised_dataset(
         checkpoint_every: Optional[int] = CHECKPOINT_EVERY,
         resume: bool = True,
         show_plot: bool = False,
+        ship_model: Union[ShipModel, str] = DEFAULT_SHIP_MODEL,
+        configuration: str = DEFAULT_CONFIGURATION,
+        rudder_max_deg: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Generate the supervised dataset by simulating episodes in FH.
 
-    Writes a CSV with 41 columns (layout: see load_supervised_dataset). Rows of
-    one episode are correlated: split train/val/test by episode_id.
+    Writes a CSV with 41 columns (full) or 37 columns (confined) (layout: see
+    load_supervised_dataset). Rows of one episode are correlated: split
+    train/val/test by episode_id.
 
-    Episodes run in chunks of `workers`; each chunk gets one random tidal
-    offset. An episode stops at the first state outside the stop limits
-    (stop_reason); its earlier rows are kept.
+    Episodes run in chunks of `workers`; in the full configuration each chunk
+    gets one random tidal offset. An episode stops at the first state outside
+    the stop limits (stop_reason); its earlier rows are kept.
 
     Early stop (checked between chunks): create the stop file, or press
     Ctrl+C once; collected data is then saved as usual. A second Ctrl+C aborts
@@ -1260,6 +1711,13 @@ def collect_supervised_dataset(
         resume: False deletes an existing checkpoint and starts over.
         show_plot: Open the trajectory plot window at the end (blocks until
             closed); the PNG is always saved.
+        ship_model: Ship to simulate (ShipModel or name): a key of SHIP_PROFILES.
+        configuration: "full" (ship-bank + UKC + wind + current) or "confined"
+            (ship-bank + UKC); see CONFIGURATIONS.
+        rudder_max_deg: Rudder scale of the run (rudder_action = +-1 <-> +-this
+            many degrees). None = resolve_rudder_max_deg (for the Myzako: probe
+            FH's getMaximumAngle). A ship with a fixed scale only accepts that
+            value. Checked against ship_factory before the run.
 
     Returns:
         (x_inputs, y_outputs, episode_ids, number of episodes with rows)
@@ -1275,9 +1733,25 @@ def collect_supervised_dataset(
         raise ValueError("checkpoint_every must be positive, 0 or None")
     if workers is not None and workers < 0:
         raise ValueError("workers must be >= 0 or None (0/None = cpu_count()-1)")
+    ship_model = _as_ship_model(ship_model)
+    ship = ship_profile(ship_model)
+    conf = configuration_profile(configuration)
+    fh_rudder_sign(ship_model)           # raises for a ship without a measured FH rudder sign
+    fixed_rudder_max = ship_rudder_max_deg(ship_model)
+    if rudder_max_deg is not None and fixed_rudder_max is not None \
+            and not np.isclose(float(rudder_max_deg), fixed_rudder_max):
+        raise ValueError(f"{ship_model.name} has a fixed rudder scale of {fixed_rudder_max:g} deg, "
+                         f"got rudder_max_deg={rudder_max_deg}.")
+    if rudder_max_deg is not None and not float(rudder_max_deg) > 0:
+        raise ValueError(f"rudder_max_deg must be positive, got {rudder_max_deg}")
+    validate_start_settings(bank_fraction, bank_band, straight_fraction)   # before the (slow) probe
+    n_x = nbr_x_features(configuration)
+    current_margin = straight_current_margin(configuration)
     # simulateSeconds only advances whole math-model steps.
-    for name, seconds in (("dt", dt), ("INITIALIZATION_TIME", INITIALIZATION_TIME),
-                          ("WIND_WARMUP_TIME", WIND_WARMUP_TIME)):
+    timed = [("dt", dt), ("INITIALIZATION_TIME", INITIALIZATION_TIME)]
+    if conf.wind_current:
+        timed.append(("WIND_WARMUP_TIME", WIND_WARMUP_TIME))
+    for name, seconds in timed:
         steps = seconds * DEFAULT_MATH_MODEL_FREQUENCY
         if abs(steps - round(steps)) > 1e-9 or round(steps) < 1:
             raise ValueError(f"{name}={seconds} s must be a multiple of the math-model step "
@@ -1287,17 +1761,27 @@ def collect_supervised_dataset(
     out_dir = Path(output_file).resolve().parent
     out_stem = Path(output_file).stem
 
-    sim_config = SimConfig()
-    sim_config.lib_path = str(Path(simexe_path) / 'exe' / 'installed')
-    sim_config.config_path = str(Path(simexe_path) / 'config' / 'simXdrive.config.xml')
-    sim_config.timeout_seconds = TIMEOUT_SECONDS
+    sim_config = default_sim_config()
 
-    exercise_path = AREA_INPUT_DIR / "tra" / EXERCISE_NAME
-    exercise_path_no_current = AREA_INPUT_DIR / "tra" / EXERCISE_NAME_NO_CURRENT
-    uses_no_current = straight_fraction > 0 and STRAIGHT_NO_CURRENT_SHARE > 0
+    exercise_path, exercise_path_no_current = exercise_paths(ship_model, configuration)
+    uses_no_current = (exercise_path_no_current is not None and straight_fraction > 0
+                       and STRAIGHT_NO_CURRENT_SHARE > 0)
 
     _check_simexe_setup(sim_config, exercise_path,
-                        extra_exercises=(exercise_path_no_current,) if uses_no_current else ())
+                        extra_exercises=(exercise_path_no_current,) if uses_no_current else (),
+                        time_start_xmls=conf.randomize_time_start)
+
+    # Rudder scale of this run (probes FH for a ship whose scale is FH's own
+    # maximum), refused before the long run if it differs from ship_factory.
+    if rudder_max_deg is None:
+        rudder_max_deg = resolve_rudder_max_deg(ship_model, configuration, sim_config=sim_config)
+    rudder_max_deg = float(rudder_max_deg)
+    check_ship_against_factory(ship_model, rudder_max_deg)
+
+    print(f"Ship {ship_model.name} ({ship.steering}, rudder +-{rudder_max_deg:g} deg), "
+          f"configuration '{configuration}': exercise {exercise_path.name}"
+          + (f", no-current exercise {exercise_path_no_current.name}" if uses_no_current else ""))
+    uses_static_tide = (not conf.randomize_time_start) or uses_no_current
 
     output_path = out_dir / "_sim_scratch"
 
@@ -1331,15 +1815,7 @@ def collect_supervised_dataset(
     y_outputs = []
     episode_ids = []
 
-    if not 0.0 <= bank_fraction <= 1.0:
-        raise ValueError(f"bank_fraction must be in [0, 1], got {bank_fraction}")
-    # Sum, not 1 - bank_fraction: 1.0 - 0.8 = 0.19999999999999996 would reject 0.8 + 0.2.
-    if not (straight_fraction >= 0.0 and bank_fraction + straight_fraction <= 1.0 + 1e-9):  # also rejects NaN
-        raise ValueError(f"straight_fraction must be in [0, 1 - bank_fraction] = [0, {1.0 - bank_fraction:g}] "
-                         f"(straight episodes use uniform starts), got {straight_fraction}")
-    band_min, band_max = (float(v) for v in bank_band)
-    if bank_fraction > 0 and not 0.0 <= band_min < band_max:
-        raise ValueError(f"bank_band must be (min, max) with 0 <= min < max, got {bank_band}")
+    band_min, band_max = validate_start_settings(bank_fraction, bank_band, straight_fraction)
     if bank_fraction > 0 and band_min <= MIN_BANK_DISTANCE:
         print(f"Warning: bank_band starts at {band_min} m, at or below MIN_BANK_DISTANCE "
               f"({MIN_BANK_DISTANCE} m) -- such starts end immediately as start_bank.")
@@ -1398,8 +1874,9 @@ def collect_supervised_dataset(
     if n_straight > 0:
         straight_idx = kind_rng.choice(uniform_idx, n_straight, replace=False)
         start_types[straight_idx] = "straight"
-        # ... of which STRAIGHT_NO_CURRENT_SHARE without current (EXERCISE_NAME_NO_CURRENT).
-        n_no_current = int(round(STRAIGHT_NO_CURRENT_SHARE * n_straight))
+        # ... of which STRAIGHT_NO_CURRENT_SHARE without current (the ship's no-current
+        # exercise; only in a configuration that has one).
+        n_no_current = int(round(STRAIGHT_NO_CURRENT_SHARE * n_straight)) if uses_no_current else 0
         if n_no_current > 0:
             start_types[kind_rng.choice(straight_idx, n_no_current, replace=False)] = "straight_nocur"
     print(f"Start points: {int((start_types == 'uniform').sum())} uniform, {len(xy_bank)} near-bank "
@@ -1414,7 +1891,7 @@ def collect_supervised_dataset(
     if nbr_samples == 0:
         print("Warning: no start points could be sampled!")
         _warn_if_stale_csv(output_file)
-        return _empty_result()
+        return _empty_result(n_x)
     trajectories = []
     counter = 0
     spawn_counter = 0  # finished simulations, for the cache cleanup
@@ -1441,6 +1918,9 @@ def collect_supervised_dataset(
             horizon_seconds=horizon_seconds,
             seed=episode_seeds[i],
             episode_kind="straight" if start_types[i] in ("straight", "straight_nocur") else "random",
+            ship_model=ship_model.name,
+            rudder_max_deg=rudder_max_deg,
+            configuration=configuration,
             output=SimOutput(status="", time_seconds=0.0)
         )
         setups.append(setup)
@@ -1474,53 +1954,61 @@ def collect_supervised_dataset(
         "seed": None if seed is None else int(seed),
         "bank_fraction": float(bank_fraction),
         "bank_band": [band_min, band_max],
+        "ship_model": ship_model.name,
+        "configuration": configuration,
+        "steering": ship.steering,
         "straight_fraction": float(straight_fraction),
         "straight": {
             "rudder_max_deg": float(STRAIGHT_RUDDER_MAX_DEG),
             "rudder_zero_share": float(STRAIGHT_RUDDER_ZERO_SHARE),
             "thrust_range": [float(v) for v in STRAIGHT_THRUST_RANGE],
-            "surge_per_thrust": float(STRAIGHT_SURGE_PER_THRUST),
+            "surge_per_thrust": float(ship.straight_surge_per_thrust),
             "surge_spread": [float(v) for v in STRAIGHT_SURGE_SPREAD],
             "init_sway_range": [float(v) for v in STRAIGHT_INIT_SWAY_RANGE],
             "init_yaw_rate_range": [float(v) for v in STRAIGHT_INIT_YAW_RATE_RANGE],
             "calm_share": float(STRAIGHT_CALM_SHARE),
             "no_current_share": float(STRAIGHT_NO_CURRENT_SHARE),
             "heading_step_deg": float(STRAIGHT_HEADING_STEP_DEG),
-            "lookahead_m": float(straight_lookahead(horizon_seconds)),
-            "current_margin": float(STRAIGHT_CURRENT_MARGIN),
+            "lookahead_m": float(straight_lookahead(horizon_seconds, current_margin)),
+            "current_margin": float(current_margin),
             "heading_choice": "uniform_among_sufficient_v2",
         },
         "exercise": exercise_path.name,
         "exercise_no_current": exercise_path_no_current.name if uses_no_current else None,
         "math_model_frequency": float(DEFAULT_MATH_MODEL_FREQUENCY),
         "initialization_time": float(INITIALIZATION_TIME),
-        "wind_warmup_time": float(WIND_WARMUP_TIME),
+        "wind_warmup_time": float(WIND_WARMUP_TIME) if conf.wind_current else None,
         "min_keel_clearance": float(MIN_KEEL_CLEARANCE),
         "min_bank_distance": float(MIN_BANK_DISTANCE),
         "cutoff_clearance": float(CUTOFF_CLEARANCE),
         "cutoff_segments": int(cutoff_n),
         "cutoff_length_m": round(float(cutoff_length), 1),
-        "time_start_range": [int(v) for v in CURRENT_TIME_START_RANGE],
-        "rudder_max_deg": float(RUDDER_MAX_DEG),
+        "time_start_range": ([int(v) for v in CURRENT_TIME_START_RANGE]
+                             if conf.randomize_time_start else None),
+        "rudder_max_deg": float(rudder_max_deg),
+        "rudder_scale_source": "profile" if fixed_rudder_max is not None else "fh_getMaximumAngle",
         "propeller_rps_scale": float(_PROPELLER_RPS_SCALE),
         "init_surge_range": [float(v) for v in INIT_SURGE_RANGE],
         "init_sway_range": [float(v) for v in INIT_SWAY_RANGE],
         "init_yaw_rate_range": [float(v) for v in INIT_YAW_RATE_RANGE],
-        "wind_scale_sigma": float(WIND_SCALE_SIGMA),
-        "wind_scale_max": float(WIND_SCALE_MAX),
+        "wind_scale_sigma": float(WIND_SCALE_SIGMA) if conf.wind_current else None,
+        "wind_scale_max": float(WIND_SCALE_MAX) if conf.wind_current else None,
         "ray_max_distance": float(RAY_MAX_DISTANCE),
         "ray_angles_deg": [int(v) for v in RAY_ANGLES_DEG],
         "ray_layout": RAY_LAYOUT_VERSION,
         "fh_heading_convention": FH_HEADING_CONVENTION,
-        "n_x_features": int(NBR_X_FEATURES),
+        "n_x_features": int(n_x),
         "n_y_features": int(NBR_Y_FEATURES),
         # Simulator input files (timeStart masked); the simexe binaries are not covered.
         "input_files": {
             "exercise": _file_fingerprint(exercise_path),
             "exercise_no_current": _file_fingerprint(exercise_path_no_current) if uses_no_current else None,
             "config": _file_fingerprint(sim_config.config_path),
-            "current_xml": _file_fingerprint(CURRENT_XML_PATH),
-            "tide_xml": _file_fingerprint(TIDE_XML_PATH),
+            "current_xml": _file_fingerprint(CURRENT_XML_PATH) if conf.randomize_time_start else None,
+            "tide_xml": _file_fingerprint(TIDE_XML_PATH) if conf.randomize_time_start else None,
+            # Read by the no-current exercises (see STATIC_TIDE_XML_PATH); None if not used or not present.
+            "static_tide_xml": (_file_fingerprint(STATIC_TIDE_XML_PATH)
+                                if uses_static_tide and STATIC_TIDE_XML_PATH.exists() else None),
         },
     }
     n_resumed = 0
@@ -1563,7 +2051,7 @@ def collect_supervised_dataset(
                           "the remaining episodes get different tidal offsets than in an "
                           "uninterrupted run, so the dataset is not identical to one.")
             # Replay the tide draws of the chunks already done.
-            if tide_rng is not None:
+            if tide_rng is not None and conf.randomize_time_start:
                 low, high = CURRENT_TIME_START_RANGE
                 for _ in range(chunks_done):
                     tide_rng.integers(low, high, endpoint=True)
@@ -1583,7 +2071,7 @@ def collect_supervised_dataset(
         if not checkpointing or upto <= last_saved:
             return
         path = _write_checkpoint_shard(ckpt_dir, list(range(last_saved, upto)), episode_meta,
-                                       episode_results, chunks_since_save)
+                                       episode_results, chunks_since_save, n_x)
         print(f"[Checkpoint] Episodes {last_saved}-{upto - 1} saved to {path.name}")
         last_saved = upto
         chunks_since_save = 0
@@ -1649,11 +2137,14 @@ def collect_supervised_dataset(
                 chunk = setups[chunk_start:chunk_start + num_workers]
                 chunk_end = chunk_start + len(chunk) - 1
 
-                new_time_start = randomize_current_time_start(rng=tide_rng)
-                print(f"timeStart randomized to {new_time_start}s for simulations "
-                      f"{chunk_start}-{chunk_end} in:")
-                for _xml_path in TIME_START_XML_PATHS:
-                    print(f"  - {_xml_path}")
+                if conf.randomize_time_start:
+                    new_time_start = randomize_current_time_start(rng=tide_rng)
+                    print(f"timeStart randomized to {new_time_start}s for simulations "
+                          f"{chunk_start}-{chunk_end} in:")
+                    for _xml_path in TIME_START_XML_PATHS:
+                        print(f"  - {_xml_path}")
+                else:
+                    print(f"Executing simulations {chunk_start}-{chunk_end}:")
 
                 future_to_test = {
                     executor.submit(execute_with_param, setup): (chunk_start + i, setup)
@@ -1760,7 +2251,7 @@ def collect_supervised_dataset(
     if counter == 0 or not x_inputs:
         print("Warning: No successful simulations!")
         _warn_if_stale_csv(output_file)
-        return _empty_result()
+        return _empty_result(n_x)
 
     x_values = np.vstack(x_inputs).astype(np.float32)
     y_values = np.vstack(y_outputs).astype(np.float32)
@@ -1794,7 +2285,9 @@ if __name__ == "__main__":
         nbr_samples=10000,
         horizon_seconds=5.0,
         dt=0.1,
-        workers=max(1, multiprocessing.cpu_count() - 1)
+        workers=max(1, multiprocessing.cpu_count() - 1),
+        ship_model=DEFAULT_SHIP_MODEL,
+        configuration=DEFAULT_CONFIGURATION,
     )
 
     print(f"Dataset generation complete. Successful samples: {successful_count}")

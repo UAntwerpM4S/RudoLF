@@ -130,7 +130,7 @@ from fw.environments.py_sim_env import PySimEnv
 from fw.environments.ray_features import RAY_ANGLES_DEG, compute_ray_features, ray_world_angles
 from fw.ships.actuator_command import ActuatorCommand
 from fw.surrogate.sim_fh_dataset_generator import _cutoff_geometry
-from fw.surrogate.validation.model_comparison import (
+from fw.surrogate.model_comparison import (
     FhSession,
     OUTPUT_DIR,
     RUDDER_ANGLE_RAD,
@@ -281,7 +281,7 @@ def track_metrics(start: TrackPoint, point: TrackPoint) -> Dict[str, float]:
 
 
 def _rays_hit(ray_env: PySimEnv, x: float, y: float, heading_rad: float) -> bool:
-    """True if any ray at this pose sees a bank within RAY_MAX_DISTANCE (any feature > 0)."""
+    """True if any ray at this pose sees a bank within RAY_MAX_DISTANCE (any feature > 1e-6)."""
     features = compute_ray_features(ray_env, (float(x), float(y)), float(heading_rad))
     return bool(np.any(np.asarray(features) > 1e-6))
 
