@@ -37,11 +37,14 @@ from fw.surrogate.schema import SWAY_CONVENTION, DatasetIdentity, npz_metadata, 
 from fw.surrogate.sim_fh_dataset_generator import (
     BANK_START_BAND,
     BANK_START_FRACTION,
+    BANK_STRAIGHT_BAND,
+    BANK_STRAIGHT_FRACTION,
     CONFIGURATIONS,
     DEFAULT_CONFIGURATION,
     DEFAULT_SHIP_MODEL,
     SHIP_PROFILES,
     STRAIGHT_FRACTION,
+    THRUST_ACTION_RANGE,
     check_ship_against_factory,
     collect_supervised_dataset,
     nbr_x_features,
@@ -110,7 +113,7 @@ def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetId
             goes to test).
         seed: Optional seed for the episode shuffle, so the same data gives
             the same split. Each .npz also stores the per-row `episode_id`,
-            so the split can be inspected or reproduced afterward, plus the
+            so the split can be inspected or reproduced afterwards, plus the
             identity (`schema.npz_metadata`), which dataset.load_raw checks.
     """
 
@@ -227,6 +230,31 @@ def main():
                              "rudder ~0, constant forward thrust; taken from the uniform starts, "
                              "so at most 1 - bank-fraction). 0 = none")
 
+    parser.add_argument("--bank-straight-fraction",
+                        type=float,
+                        default=BANK_STRAIGHT_FRACTION,
+                        help="Fraction of ALL episodes run as 'bank-straight' episodes (start "
+                             "--bank-straight-band m from a real bank, heading parallel to it, "
+                             "rudder ~0, constant forward thrust; taken from the uniform starts). "
+                             "0 = none (default)")
+
+    parser.add_argument("--bank-straight-band",
+                        type=float,
+                        nargs=2,
+                        metavar=("MIN_M", "MAX_M"),
+                        default=list(BANK_STRAIGHT_BAND),
+                        help="Distance band (m, from ship centre to nearest real bank) for "
+                             "bank-straight starts (min must exceed the 10 m bank stop limit)")
+
+    parser.add_argument("--thrust-range",
+                        type=float,
+                        nargs=2,
+                        metavar=("LOW", "HIGH"),
+                        default=list(THRUST_ACTION_RANGE),
+                        help="thrust_action range of the random episodes (default -1 1). The RL "
+                             "framework maps its thrust to [min_thrust, max_thrust] = [0.1, 1], so "
+                             "'0 1' spends no data on negative thrust")
+
     parser.add_argument("--ship-model",
                         choices=[m.name for m in SHIP_PROFILES],
                         default=DEFAULT_SHIP_MODEL.name,
@@ -251,13 +279,18 @@ def main():
     # type checker (tuple(list) is inferred as a variable-length tuple).
     bank_min, bank_max = args.bank_band
     bank_band = (float(bank_min), float(bank_max))
+    bs_min, bs_max = args.bank_straight_band
+    bank_straight_band = (float(bs_min), float(bs_max))
+    t_lo, t_hi = args.thrust_range
+    thrust_range = (float(t_lo), float(t_hi))
 
     # Before the (long) generation run: the rudder scale (for the Myzako probed
     # from FH) must match ship_factory.
     ship_model = ShipModel[args.ship_model]
     # Cheap checks first: the probe below starts FH and can take up to TIMEOUT_SECONDS.
     try:
-        validate_start_settings(args.bank_fraction, bank_band, args.straight_fraction)
+        validate_start_settings(args.bank_fraction, bank_band, args.straight_fraction,
+                                args.bank_straight_fraction, bank_straight_band, thrust_range)
     except ValueError as exc:
         parser.error(str(exc))
     rudder_max_deg = resolve_rudder_max_deg(ship_model, args.configuration)
@@ -280,6 +313,9 @@ def main():
         bank_fraction=args.bank_fraction,
         bank_band=bank_band,
         straight_fraction=args.straight_fraction,
+        bank_straight_fraction=args.bank_straight_fraction,
+        bank_straight_band=bank_straight_band,
+        thrust_range=thrust_range,
         ship_model=ship_model,
         configuration=args.configuration,
         rudder_max_deg=rudder_max_deg,

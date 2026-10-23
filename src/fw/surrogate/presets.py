@@ -26,6 +26,11 @@ from fw.surrogate.schema import CONFINED_UKC, FULL_ENV, OPEN_WATER, ScenarioSche
 # UKC lookup CSVs have always lived, next to the surrogate dynamics module).
 LOOKUP_CSV_DIR = Path(__file__).resolve().parent.parent / "dynamics"
 
+# Relative checkpoint paths are resolved against this ONE folder (src/fw/
+# checkpoints), so the surrogate finds its checkpoint whatever the working
+# directory (training env, model_comparison under surrogate/validation, ...).
+CHECKPOINT_DIR = Path(__file__).resolve().parent.parent / "checkpoints"
+
 
 @dataclass(frozen=True)
 class SurrogatePreset:
@@ -36,8 +41,8 @@ class SurrogatePreset:
         name: Preset name, used as ua_surrogate_config["preset"].
         ship_model: Ship the checkpoint must have been trained for.
         scenario: Scenario the checkpoint must have been trained for.
-        checkpoint: Default checkpoint path (relative to the working
-            directory, as before).
+        checkpoint: Default checkpoint file, relative to CHECKPOINT_DIR
+            unless absolute.
         lookup_csv: Default CSV for the nearest-neighbor UKC lookup
             (fw.dynamics.wcu_lookup.WcuLookup), relative to LOOKUP_CSV_DIR
             unless absolute; None = no lookup. Only used when the scenario
@@ -65,12 +70,16 @@ class SurrogatePreset:
 # (the value the previous per-scenario classes used).
 _TRIPOLI_WATER_DEPTH_M = 18.5
 
+# UKC fallback for the Myzako confined preset: the median UKC of its training
+# data (static water level, 2.2-25 m). Only used without (a hit in) the lookup.
+_MYZAKO_CONFINED_DEFAULT_UKC_M = 12.6
+
 PRESETS = {p.name: p for p in (
     SurrogatePreset(
         name="tripoli_clean",
         ship_model=ShipModel.TRIPOLI,
         scenario=OPEN_WATER,
-        checkpoint="checkpoints/best_surrogate_tripoli_clean.pth",
+        checkpoint="best_surrogate_tripoli_clean.pth",
         lookup_csv=None,
         default_ukc=0.0,        # UKC is not a model input; informational only
     ),
@@ -78,7 +87,7 @@ PRESETS = {p.name: p for p in (
         name="tripoli_confined",
         ship_model=ShipModel.TRIPOLI,
         scenario=CONFINED_UKC,
-        checkpoint="checkpoints/best_surrogate_tripoli_confined.pth",
+        checkpoint="best_surrogate_tripoli_confined.pth",
         lookup_csv="ship_dynamics_dataset_tripoli_confined.csv",
         default_ukc=_TRIPOLI_WATER_DEPTH_M,
     ),
@@ -86,9 +95,27 @@ PRESETS = {p.name: p for p in (
         name="tripoli_full",
         ship_model=ShipModel.TRIPOLI,
         scenario=FULL_ENV,
-        checkpoint="checkpoints/best_surrogate_tripoli_full.pth",
+        checkpoint="best_surrogate_tripoli_full.pth",
         lookup_csv="ship_dynamics_dataset_tripoli_full.csv",
         default_ukc=_TRIPOLI_WATER_DEPTH_M,
+    ),
+    SurrogatePreset(
+        name="myzako_clean",
+        ship_model=ShipModel.MYZAKO_37,
+        scenario=OPEN_WATER,
+        checkpoint="best_surrogate_myzako_clean.pth",
+        lookup_csv=None,
+        default_ukc=0.0,        # UKC is not a model input; informational only
+    ),
+    SurrogatePreset(
+        name="myzako_confined",
+        ship_model=ShipModel.MYZAKO_37,
+        scenario=CONFINED_UKC,
+        checkpoint="best_surrogate_myzako_confined.pth",
+        # The full dataset CSV works as well; a grid-reduced copy
+        # (fw.surrogate.make_ukc_lookup) loads much faster.
+        lookup_csv="ukc_lookup_myzako_confined.csv",
+        default_ukc=_MYZAKO_CONFINED_DEFAULT_UKC_M,
     ),
 )}
 
@@ -105,6 +132,13 @@ def get_preset(name: str) -> SurrogatePreset:
         return PRESETS[name]
     except KeyError:
         raise ValueError(f"Unknown UAntwerp surrogate preset {name!r}. Available: {sorted(PRESETS)}.") from None
+
+
+def resolve_checkpoint(path: str) -> Path:
+    """Absolute path of a checkpoint (relative paths against CHECKPOINT_DIR)."""
+
+    p = Path(path)
+    return p if p.is_absolute() else CHECKPOINT_DIR / p
 
 
 def resolve_lookup_csv(path: Optional[str]) -> Optional[Path]:

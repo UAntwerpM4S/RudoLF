@@ -21,6 +21,32 @@ Output (3-D): [delta_surge, delta_sway, delta_yaw_rate]
 The checkpoint stores the scenario, env encoding, the data's identity (ship
 model, rudder scale, ray layout) and the feature layout; SurrogatePredictor
 checks all of them on load.
+
+Several datasets of the same identity (same scenario, ship, rudder scale, ray
+layout, sway convention), e.g. a main run plus a supplementary run with
+bank-straight episodes, are trained on together by giving several files per
+split (in the same order for the three splits):
+
+    python -m fw.surrogate.train_surrogate \
+        --train-file main_train.npz extra_train.npz \
+        --val-file main_val.npz extra_val.npz \
+        --test-file main_test.npz extra_test.npz ...
+
+The rows are concatenated per split; normalization stats come from all
+training files together. The test results are reported per test file too.
+
+--min-bank-distance D keeps only rows whose nearest bank (from the row's own
+ray features, all rays) is at least D m away, in all three splits. Meant for
+an open_water ("clean") model trained from confined_ukc data: it cannot see
+the bank, so rows with bank interaction would only add unexplainable noise.
+D = 200 (the ray range) keeps only rows without any bank in ray range:
+
+    python -m fw.surrogate.train_surrogate --scenario open_water \
+        --min-bank-distance 200 ... --checkpoint checkpoints/best_surrogate_myzako_clean.pth
+
+--min-ukc U keeps only rows with an under-keel clearance of at least U m (from
+the data's UKC column), in all three splits: e.g. a clean model for deep
+water only.
 """
 
 import random
@@ -30,19 +56,24 @@ import logging
 import numpy as np
 import torch.nn.functional as F
 
-from pathlib import Path
 from collections.abc import Sized
-from torch.utils.data import DataLoader
-from fw.surrogate.dataset import ShipDynamicsDataset, check_same_identity, read_identity
+from pathlib import Path
+from typing import List, Optional, Sequence, Tuple, Union
+from torch.utils.data import DataLoader, TensorDataset
+from fw.environments.ray_features import RAY_MAX_DISTANCE
+from fw.surrogate.dataset import check_same_identity, load_raw, read_identity, stats_from_arrays
 from fw.surrogate.models.mlp_surrogate import ACTIVATIONS, SurrogateMLP, activation_from_name
 from fw.surrogate.schema import (
     DEFAULT_ENV_ENCODING,
     ENV_ENCODINGS,
     SCENARIOS,
+    RAY_COLUMN_NAMES,
     TARGET_NAMES,
     check_projection,
     encoded_feature_names,
     get_scenario,
+    project_raw_columns,
+    select_and_encode,
 )
 from fw.surrogate.utils import load_checkpoint, data_path, get_device, save_checkpoint
 
@@ -169,18 +200,105 @@ def evaluate(
     return mean_loss, mae.cpu().numpy()
 
 
-def make_dataloaders(train_file, val_file, test_file, scenario, env_encoding, batch_size=256, num_workers=0,
-                     seed=None, drop_last=False, pin_memory=False):
+PathOrPaths = Union[str, Path, Sequence[Union[str, Path]]]
+
+
+def _as_paths(files: PathOrPaths) -> List[str]:
+    """One path or a sequence of paths -> list of path strings."""
+
+    if isinstance(files, (str, Path)):
+        return [str(files)]
+    return [str(f) for f in files]
+
+
+def nearest_bank_distance(x_raw: np.ndarray, source) -> np.ndarray:
+    """
+    Distance [m] to the nearest bank per raw row of scenario `source`, from
+    its ray features (minimum over all rays; RAY_MAX_DISTANCE = none in range).
+
+    Raises:
+        ValueError: If `source` has no ray columns.
+    """
+
+    if not source.includes_rays:
+        raise ValueError(f"Scenario '{source.name}' has no ray columns: cannot filter on bank distance.")
+    rays = np.clip(x_raw[:, [source.col(c) for c in RAY_COLUMN_NAMES]], 0.0, 1.0)
+    return RAY_MAX_DISTANCE * (1.0 - rays.max(axis=1))
+
+
+def load_split(files: PathOrPaths, scenario, env_encoding,
+               min_bank_distance: Optional[float] = None,
+               min_ukc: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Encoded (unnormalized) X and Y of one split, concatenated over `files`.
+
+    Args:
+        files: One or more dataset .npz files.
+        scenario: Model scenario (the files' scenario, or one derived from it).
+        env_encoding: Wind/current encoding.
+        min_bank_distance: If given, keep only rows whose nearest bank (from
+            the file's own ray features, before projection) is at least this
+            many metres away.
+        min_ukc: If given, keep only rows whose UKC (the file's own UKC
+            column, before projection) is at least this many metres.
+
+    Returns:
+        `(x, y)` float32 arrays.
+    """
+
+    xs, ys = [], []
+    for f in _as_paths(files):
+        if min_bank_distance is None and min_ukc is None:
+            x_raw, y_vals, _ = load_raw(f, scenario)    # projected to the model scenario
+        else:
+            x_raw, y_vals, identity = load_raw(f)       # the file's own scenario (with rays/UKC)
+            source = get_scenario(identity.scenario)
+            keep = np.ones(len(x_raw), dtype=bool)
+            what = []
+            if min_bank_distance is not None:
+                keep &= nearest_bank_distance(x_raw, source) >= min_bank_distance
+                what.append(f"no bank within {min_bank_distance:g} m")
+            if min_ukc is not None:
+                if not source.includes_ukc:
+                    raise ValueError(f"{f}: scenario '{source.name}' has no UKC column: cannot filter on UKC.")
+                keep &= x_raw[:, source.col("ukc")] >= min_ukc
+                what.append(f"UKC >= {min_ukc:g} m")
+            logger.info("%s: %d of %d rows (%.1f %%) have %s; the rest is left out.",
+                        f, int(keep.sum()), len(keep), 100.0 * keep.mean() if len(keep) else 0.0,
+                        " and ".join(what))
+            x_raw = project_raw_columns(x_raw[keep], source, scenario)
+            y_vals = y_vals[keep]
+        x_vals = select_and_encode(x_raw, scenario, env_encoding)
+        xs.append(x_vals)
+        ys.append(y_vals)
+    if len(xs) == 1:
+        return xs[0], ys[0]
+    return np.concatenate(xs), np.concatenate(ys)
+
+
+def normalized_dataset(x_vals: np.ndarray, y_vals: np.ndarray, x_mean, x_std, y_mean, y_std) -> TensorDataset:
+    """TensorDataset of the normalized arrays (same arithmetic as ShipDynamicsDataset)."""
+
+    x_out = (x_vals - np.asarray(x_mean, np.float32).reshape(1, -1)) / np.asarray(x_std, np.float32).reshape(1, -1)
+    y_out = (y_vals - np.asarray(y_mean, np.float32).reshape(1, -1)) / np.asarray(y_std, np.float32).reshape(1, -1)
+    return TensorDataset(torch.from_numpy(np.ascontiguousarray(x_out, dtype=np.float32)),
+                         torch.from_numpy(np.ascontiguousarray(y_out, dtype=np.float32)))
+
+
+def make_dataloaders(train_file: PathOrPaths, val_file: PathOrPaths, test_file: PathOrPaths, scenario,
+                     env_encoding, batch_size=256, num_workers=0, seed=None, drop_last=False, pin_memory=False,
+                     min_bank_distance: Optional[float] = None, min_ukc: Optional[float] = None):
     """
     Build train / val / test DataLoaders with shared normalization stats.
 
     Normalization statistics are computed from the training split only and
-    then re-applied identically to the validation and test splits.
+    then re-applied identically to the validation and test splits. Each split
+    may consist of several .npz files (rows concatenated).
 
     Args:
-        train_file:  Path to training .npz file.
-        val_file:    Path to validation .npz file.
-        test_file:   Path to test .npz file.
+        train_file:  Path(s) to training .npz file(s).
+        val_file:    Path(s) to validation .npz file(s).
+        test_file:   Path(s) to test .npz file(s).
         scenario:    schema.ScenarioSchema of the model.
         env_encoding: Wind/current encoding ("angles" / "body_components");
                      the same one is used for all three splits.
@@ -192,19 +310,22 @@ def make_dataloaders(train_file, val_file, test_file, scenario, env_encoding, ba
                      BatchNorm: a tiny last batch gives noisy batch stats,
                      and a batch of 1 makes BatchNorm1d raise.
         pin_memory:  Pin host memory (useful when training on CUDA).
+        min_bank_distance, min_ukc: Row filters applied to all splits (see load_split).
 
     Returns:
         Tuple of (train_loader, val_loader, test_loader,
                   x_mean, x_std, y_mean, y_std).
     """
 
-    # The train split computes its own stats (loaded once); val/test reuse them.
-    train_ds = ShipDynamicsDataset(train_file, scenario, env_encoding, normalize=True)
-    x_mean, x_std, y_mean, y_std = train_ds.x_mean, train_ds.x_std, train_ds.y_mean, train_ds.y_std
+    # Stats from the (concatenated) training split only; val/test reuse them.
+    x_train, y_train = load_split(train_file, scenario, env_encoding, min_bank_distance, min_ukc)
+    stats = stats_from_arrays(x_train, y_train, encoded_feature_names(scenario, env_encoding))
+    x_mean, x_std, y_mean, y_std = (np.asarray(s, np.float32).reshape(1, -1) for s in stats)
 
-    stats = dict(x_mean=x_mean, x_std=x_std, y_mean=y_mean, y_std=y_std, normalize=True)
-    val_ds   = ShipDynamicsDataset(val_file,   scenario, env_encoding, **stats)
-    test_ds  = ShipDynamicsDataset(test_file,  scenario, env_encoding, **stats)
+    train_ds = normalized_dataset(x_train, y_train, *stats)
+    del x_train, y_train
+    val_ds = normalized_dataset(*load_split(val_file, scenario, env_encoding, min_bank_distance, min_ukc), *stats)
+    test_ds = normalized_dataset(*load_split(test_file, scenario, env_encoding, min_bank_distance, min_ukc), *stats)
 
     generator = torch.Generator().manual_seed(seed) if seed is not None else None
     # Only drop the last batch when that still leaves at least one batch.
@@ -247,9 +368,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Train an MLP surrogate (any scenario) -> 3 outputs (delta surge/sway/yaw rate)."
     )
-    parser.add_argument("--train-file", default=data_path("ship_dynamics_dataset_train.npz"))
-    parser.add_argument("--val-file", default=data_path("ship_dynamics_dataset_val.npz"))
-    parser.add_argument("--test-file", default=data_path("ship_dynamics_dataset_test.npz"))
+    parser.add_argument("--train-file", nargs="+", default=[data_path("ship_dynamics_dataset_train.npz")],
+                        help="Training .npz file(s); several = datasets of one identity trained together")
+    parser.add_argument("--val-file", nargs="+", default=[data_path("ship_dynamics_dataset_val.npz")],
+                        help="Validation .npz file(s), same number and order as --train-file")
+    parser.add_argument("--test-file", nargs="+", default=[data_path("ship_dynamics_dataset_test.npz")],
+                        help="Test .npz file(s), same number and order as --train-file")
     parser.add_argument("--batch-size", type=int, default=128)  # 256)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=0)  # 1e-4)
@@ -280,14 +404,39 @@ def main(argv=None):
                         help="Wind/current input encoding: body_components (ship-frame components, "
                              "default) or angles (speed + sin/cos direction). No effect for "
                              "scenarios without wind/current. Stored in the checkpoint.")
+    parser.add_argument("--min-bank-distance", type=float, default=None,
+                        help="Keep only rows whose nearest bank (from the data's ray features, all rays) "
+                             f"is at least this many metres away, in all splits; {RAY_MAX_DISTANCE:g} = no "
+                             "bank in ray range. For an open_water model from confined/full data. "
+                             "Default: no filter")
+    parser.add_argument("--min-ukc", type=float, default=None,
+                        help="Keep only rows with an under-keel clearance of at least this many metres "
+                             "(the data's UKC column), in all splits. Default: no filter")
     args = parser.parse_args(argv)
 
-    # Identity of the data: all three splits from one generation run.
-    split_files = [str(args.train_file), str(args.val_file), str(args.test_file)]
-    data_identity = check_same_identity(split_files, [read_identity(f) for f in split_files])
+    # Identity of the data: all splits of all datasets must have the same identity.
+    train_files, val_files, test_files = (_as_paths(f) for f in (args.train_file, args.val_file, args.test_file))
+    if not len(train_files) == len(val_files) == len(test_files):
+        parser.error(f"--train-file, --val-file and --test-file need the same number of files "
+                     f"(one per dataset), got {len(train_files)}, {len(val_files)}, {len(test_files)}.")
+    all_files = train_files + val_files + test_files
+    resolved = [str(Path(f).resolve()) for f in all_files]
+    if len(set(resolved)) != len(resolved):
+        parser.error("A file is given more than once (its rows would be counted twice).")
+    data_identity = check_same_identity(all_files, [read_identity(f) for f in all_files])
+    if len(train_files) > 1:
+        logger.info("Training on %d datasets: %s", len(train_files), ", ".join(train_files))
     source_scenario = get_scenario(data_identity.scenario)
     scenario = get_scenario(args.scenario) if args.scenario else source_scenario
     check_projection(source_scenario, scenario)
+    if args.min_bank_distance is not None:
+        if not source_scenario.includes_rays:
+            parser.error(f"--min-bank-distance needs data with ray features; the files are "
+                         f"'{source_scenario.name}'.")
+        if not 0.0 < args.min_bank_distance <= RAY_MAX_DISTANCE:
+            parser.error(f"--min-bank-distance must be in (0, {RAY_MAX_DISTANCE:g}] m, got {args.min_bank_distance}.")
+    if args.min_ukc is not None and not source_scenario.includes_ukc:
+        parser.error(f"--min-ukc needs data with a UKC column; the files are '{source_scenario.name}'.")
     logger.info("Data: scenario=%s, ship_model=%s, rudder_max_deg=%g -> model scenario=%s",
                 source_scenario.name, data_identity.ship_model, data_identity.rudder_max_deg, scenario.name)
 
@@ -304,9 +453,10 @@ def main(argv=None):
     device = torch.device(args.device) if args.device else get_device()
 
     train_loader, val_loader, test_loader, x_mean, x_std, y_mean, y_std = make_dataloaders(
-        *split_files, scenario, args.env_encoding,
+        train_files, val_files, test_files, scenario, args.env_encoding,
         batch_size=args.batch_size, num_workers=args.num_workers,
         seed=args.seed, drop_last=args.batchnorm, pin_memory=device.type == "cuda",
+        min_bank_distance=args.min_bank_distance, min_ukc=args.min_ukc,
     )
 
     # Checked before the peek below: on an empty split, next(iter(...)) would
@@ -467,6 +617,9 @@ def main(argv=None):
                 "sway_convention":      data_identity.sway_convention,
                 "ray_layout":           data_identity.ray_layout,
                 "raw_input_dim":        scenario.raw_input_dim,
+                # Row filter of the training data (None = all rows).
+                "min_bank_distance":    args.min_bank_distance,
+                "min_ukc":              args.min_ukc,
                 "hidden_sizes":         args.hidden_sizes,
                 "activation":           args.activation,
                 "dropout":              args.dropout,
@@ -513,6 +666,22 @@ def main(argv=None):
 
     for name, mae in zip(target_names, test_mae):
         print(f"MAE {name:<15}: {mae:.6f}")
+
+    if len(test_files) > 1:
+        # Per dataset: a combined number can hide a poor fit on the smaller dataset.
+        for test_file in test_files:
+            loader = DataLoader(normalized_dataset(*load_split(test_file, scenario, args.env_encoding,
+                                                               args.min_bank_distance, args.min_ukc),
+                                                   x_mean, x_std, y_mean, y_std),
+                                batch_size=args.batch_size, shuffle=False)
+            if _num_samples(loader) == 0:
+                print(f"\nTest file {test_file}: 0 rows (after the row filters) -- not evaluated.")
+                continue
+            file_loss, file_mae = evaluate(model, loader, device, y_mean, y_std, loss_fn)
+            print(f"\nTest file {test_file} ({_num_samples(loader)} rows)")
+            print(f"  Test Loss (normalized {loss_label}): {file_loss:.6f}")
+            for name, mae in zip(target_names, file_mae):
+                print(f"  MAE {name:<15}: {mae:.6f}")
 
 
 if __name__ == "__main__":

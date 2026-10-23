@@ -24,8 +24,10 @@ Models compared:
     Fossen      -- fw.dynamics.fossen.Fossen
     UA_clean    -- fw.dynamics.uantwerp_surrogate.UAntwerpSurrogate, preset "tripoli_clean"
     UA_confined -- fw.dynamics.uantwerp_surrogate.UAntwerpSurrogate, preset "tripoli_confined"
+                   (MYZAKO_37: preset "myzako_confined"; UA_clean: "myzako_clean")
     UA_full     -- fw.dynamics.uantwerp_surrogate.UAntwerpSurrogate, preset "tripoli_full"
-                   (see UA_PRESETS / build_ua_models)
+                   (see UA_PRESETS_BY_SHIP / build_ua_models; a slot without
+                   a preset for SHIP_MODEL is left out)
 
 This module is also the shared base of the wind test (model_comparison_wind.py
 imports FhSession, _inject_live_environment, ... from here); the FhSession
@@ -48,7 +50,7 @@ UA_clean/confined/full's numbers):
 
   - Consolidation: the three UAntwerpSurrogateTripoli{Clean,Confined,Full}
     classes are replaced by the single fw.dynamics.uantwerp_surrogate.
-    UAntwerpSurrogate, configured per slot by a preset (UA_PRESETS). Same
+    UAntwerpSurrogate, configured per slot by a preset (UA_PRESETS_BY_SHIP). Same
     checkpoints, same raw input rows, same rudder scale (35 deg, now read
     from the checkpoint), same get_env/_env hooks, so the results are
     unchanged. UA_clean (no UKC/rays) still has no `_env` and never calls
@@ -217,7 +219,7 @@ import logging
 import numpy as np
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 from fw.ships.ship_factory import create_ship, ShipModel
 from fw.ships.vessel_state import VesselState
@@ -225,6 +227,7 @@ from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.fh_tabular_model import FhTabularModel, fh_rudder_sign
 from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
+from fw.surrogate.presets import PRESETS
 from fw.dynamics.wcu_lookup import EnvironmentData
 from fw.simulators.fh_sim_bridge import FhSimBridge
 from fw.surrogate.schema import SURROGATE_DT
@@ -323,18 +326,36 @@ OUTPUT_DIR = Path("model_comparison_output").resolve()
 # Ship simulated by FH (and used for ship_spec / ray_env). FhSimBridge picks
 # the exercise from it: TRIPOLI -> DDShip_Tripoli_scenario_nowindnocurrent.tab,
 # MYZAKO_37 -> DDShip_scenario1_nowindnocurrent_myzako_37.tab.
-# UGent and the UA_* checkpoints are Tripoli models: for any other ship they
-# are left out automatically (TRIPOLI_ONLY_MODELS), so a Myzako run compares
-# FH with Fossen (Myzako coefficients) only.
+# UGent is a Tripoli model (TRIPOLI_ONLY_MODELS); the UA_* slots run for every
+# ship that has a preset for them (UA_PRESETS_BY_SHIP). A slot without one is
+# left out automatically, so a Myzako run compares FH, Fossen (Myzako
+# coefficients), UA_clean (preset "myzako_clean") and UA_confined
+# (preset "myzako_confined").
 SHIP_MODEL = ShipModel.TRIPOLI
 
-# UA_* model slots -> UAntwerp surrogate preset (fw/surrogate/presets.py:
-# ship, scenario, checkpoint, UKC lookup CSV). Shared with the wind test.
-UA_PRESETS = {
-    "UA_clean": "tripoli_clean",
-    "UA_confined": "tripoli_confined",
-    "UA_full": "tripoli_full",
+# All UA_* model slots, in report order.
+UA_LABELS = ("UA_clean", "UA_confined", "UA_full")
+
+# Per ship: UA_* model slot -> UAntwerp surrogate preset (fw/surrogate/presets.py:
+# ship, scenario, checkpoint, UKC lookup CSV). Shared with the wind and
+# current tests. Add a slot here once its checkpoint is trained.
+UA_PRESETS_BY_SHIP = {
+    ShipModel.TRIPOLI: {
+        "UA_clean": "tripoli_clean",
+        "UA_confined": "tripoli_confined",
+        "UA_full": "tripoli_full",
+    },
+    ShipModel.MYZAKO_37: {
+        "UA_clean": "myzako_clean",
+        "UA_confined": "myzako_confined",
+    },
 }
+
+
+def ua_presets() -> dict:
+    """UA_* slot -> preset name for the current SHIP_MODEL (empty if it has none)."""
+
+    return UA_PRESETS_BY_SHIP.get(SHIP_MODEL, {})
 
 
 # Surge limits [m/s] of the ShipSimulator that integrates every NON-FH model
@@ -393,27 +414,31 @@ class SurgeClipCounter:
                            run_id, self.limits[1], clipped)
 
 
-# Models that exist for the Tripoli only (UGent's identified coefficients, the
-# UA_* checkpoints). For any other SHIP_MODEL (e.g. MYZAKO_37) the tests run
-# FH and Fossen only. Provisional, until the framework's Myzako support grows.
-TRIPOLI_ONLY_MODELS = ("UGent",) + tuple(UA_PRESETS)
-_skip_warned = False
+# Models that exist for the Tripoli only (UGent's identified coefficients).
+# The UA_* slots depend on UA_PRESETS_BY_SHIP instead.
+TRIPOLI_ONLY_MODELS = ("UGent",)
+_skip_warned: set = set()
 
 
 def tripoli_models_enabled() -> bool:
-    """True if SHIP_MODEL is the Tripoli, i.e. UGent and the UA_* models apply."""
+    """True if SHIP_MODEL is the Tripoli, i.e. the Tripoli-only models (UGent) apply."""
 
     return SHIP_MODEL == ShipModel.TRIPOLI
+
+
+def _note_models_skipped(labels) -> None:
+    """Log once per model that it is left out because it does not exist for SHIP_MODEL."""
+
+    new = [label for label in labels if label not in _skip_warned]
+    if new:
+        logger.warning("SHIP_MODEL=%s: no %s for this ship -- left out.", SHIP_MODEL.name, ", ".join(new))
+        _skip_warned.update(new)
 
 
 def _note_tripoli_models_skipped() -> None:
     """Log once that the Tripoli-only models are left out for a non-Tripoli SHIP_MODEL."""
 
-    global _skip_warned
-    if not _skip_warned:
-        logger.warning("SHIP_MODEL=%s: %s are Tripoli models and are left out -- only FH and Fossen run.",
-                       SHIP_MODEL.name, ", ".join(TRIPOLI_ONLY_MODELS))
-        _skip_warned = True
+    _note_models_skipped(TRIPOLI_ONLY_MODELS)
 
 
 def build_reference_models(ship_spec, ray_env) -> dict:
@@ -433,20 +458,46 @@ def build_reference_models(ship_spec, ray_env) -> dict:
     return models
 
 
-def build_ua_models(ship_spec, labels=tuple(UA_PRESETS)) -> dict:
+def build_ua_models(ship_spec, labels: Optional[Sequence[str]] = None) -> dict:
     """
-    One UAntwerpSurrogate per label (see UA_PRESETS), in `labels` order;
-    empty unless SHIP_MODEL is the Tripoli (see TRIPOLI_ONLY_MODELS).
+    One UAntwerpSurrogate per label (default: all UA_LABELS), in `labels`
+    order, for the labels that have a preset for SHIP_MODEL (see
+    UA_PRESETS_BY_SHIP); the others are left out with a warning.
 
     Each checkpoint is checked against its preset (scenario and ship) and
     the preset's ship against SHIP_MODEL.
+
+    A slot whose checkpoint file does not exist (yet), or whose preset is
+    not defined in fw/surrogate/presets.py, is left out with a warning, so
+    the other models still run. A checkpoint that exists but does not match
+    its preset still raises.
+
+    Raises:
+        ValueError: If a label is not one of UA_LABELS, or a checkpoint does
+            not match its preset / SHIP_MODEL.
     """
 
-    if not tripoli_models_enabled():
-        _note_tripoli_models_skipped()
-        return {}
-    return {label: UAntwerpSurrogate(ship_spec, {"preset": UA_PRESETS[label]}, ship_model=SHIP_MODEL)
-            for label in labels}
+    wanted = UA_LABELS if labels is None else tuple(labels)
+    unknown = [label for label in wanted if label not in UA_LABELS]
+    if unknown:
+        raise ValueError(f"Unknown UA model label(s) {unknown}; expected some of {UA_LABELS}.")
+    presets = ua_presets()
+    missing = [label for label in wanted if label not in presets]
+    if missing:
+        _note_models_skipped(missing)
+    models = {}
+    for label in wanted:
+        if label not in presets:
+            continue
+        if presets[label] not in PRESETS:
+            logger.warning("%s left out: preset '%s' is not defined in fw/surrogate/presets.py "
+                           "(an older presets.py?). Defined: %s.", label, presets[label], sorted(PRESETS))
+            continue
+        try:
+            models[label] = UAntwerpSurrogate(ship_spec, {"preset": presets[label]}, ship_model=SHIP_MODEL)
+        except FileNotFoundError as exc:
+            logger.warning("%s left out: %s", label, exc)
+    return models
 
 # RAY_MAX_DISTANCE is imported from fw.environments.ray_features (round 17)
 # instead of being redefined here, so this script's bank-finding geometry
@@ -652,10 +703,16 @@ def locate_point_at_distance(
     Returns:
         (2,) point at approximately `target_distance` from the bank.
 
+    Distances beyond RAY_MAX_DISTANCE are located too (with a longer
+    measuring ray, out to 2 * target_distance, but never past the opposite
+    boundary): the confined/full models' rays then no longer see THIS bank.
+    The opposite bank may still be within ray range in a narrow stretch.
+
     Raises:
         RuntimeError: If the target is not bracketed within
-            [0.5, RAY_MAX_DISTANCE], or bisection does not converge within
-            `max_iter` iterations.
+            [0.5, search range] (e.g. the opposite bank is closer than
+            `target_distance`), or bisection does not converge within
+            `max_iter` iterations. The callers skip that distance.
     """
 
     # Ray direction back toward the bank -- derived from the empirically
@@ -663,16 +720,28 @@ def locate_point_at_distance(
     # the bank heading (an earlier version of this function used
     # heading_rad - pi/2 here, which could disagree with perp_into_water).
     to_bank = -perp_into_water
+    # Search/measuring range: the sensor range as before; longer only for
+    # targets beyond it (the ray-cast would otherwise cap at RAY_MAX_DISTANCE).
+    reach = RAY_MAX_DISTANCE if target_distance <= RAY_MAX_DISTANCE else 2.0 * float(target_distance)
 
     def measured_distance(pos: np.ndarray) -> float:
-        """Ray-cast distance [m] from `pos` toward the bank, capped at RAY_MAX_DISTANCE."""
+        """Ray-cast distance [m] from `pos` toward the bank, capped at `reach`."""
 
         origin = (float(pos[0]), float(pos[1]))
-        end = (float(pos[0] + to_bank[0] * RAY_MAX_DISTANCE),
-               float(pos[1] + to_bank[1] * RAY_MAX_DISTANCE))
-        return float(env.ray_cast_distance(origin, end, max_distance=RAY_MAX_DISTANCE))
+        end = (float(pos[0] + to_bank[0] * reach),
+               float(pos[1] + to_bank[1] * reach))
+        return float(env.ray_cast_distance(origin, end, max_distance=reach))
 
-    lo, hi = 0.5, RAY_MAX_DISTANCE
+    lo, hi = 0.5, reach
+    if reach > RAY_MAX_DISTANCE:
+        # Stay in this stretch of water: stop the search just before the
+        # opposite boundary along perp_into_water (beyond it, the measured
+        # distance would come from outside the river).
+        start = bank_point + perp_into_water * lo
+        far_end = start + perp_into_water * reach
+        width = float(env.ray_cast_distance((float(start[0]), float(start[1])),
+                                            (float(far_end[0]), float(far_end[1])), max_distance=reach))
+        hi = min(hi, lo + 0.999 * width)
     pos_lo = bank_point + perp_into_water * lo
     pos_hi = bank_point + perp_into_water * hi
     d_lo = measured_distance(pos_lo)
@@ -682,7 +751,8 @@ def locate_point_at_distance(
         raise RuntimeError(
             f"target_distance={target_distance} not bracketed by "
             f"[{d_lo}, {d_hi}] (offsets [{lo}, {hi}] from bank_point); "
-            f"cannot locate a point at this distance."
+            f"cannot locate a point at this distance"
+            + (" (is the opposite bank closer than that?)." if target_distance > d_hi else ".")
         )
 
     for _ in range(max_iter):
@@ -1359,7 +1429,7 @@ def run_comparison(seed_point: Tuple[float, float]) -> None:
     # shared ray_env, at the state passed to each _compute_accelerations call.
     ref_models = build_reference_models(ship_spec, ray_env)
 
-    # One UAntwerpSurrogate per preset (UA_PRESETS), each loading its
+    # One UAntwerpSurrogate per preset (UA_PRESETS_BY_SHIP), each loading its
     # preset's checkpoint. Their own environmental/ray sourcing (WcuLookup
     # CSV lookup, own PySimEnv ray-casting) is overridden per grid point, in
     # the loop below, via _inject_live_environment -- see module docstring
@@ -1401,7 +1471,11 @@ def _run_grid(ray_env, bank_point, perp_into_water, heading_deg, ship_spec, ref_
     output)."""
 
     for distance in DISTANCES:
-        pos = locate_point_at_distance(ray_env, bank_point, perp_into_water, float(distance))
+        try:
+            pos = locate_point_at_distance(ray_env, bank_point, perp_into_water, float(distance))
+        except RuntimeError as exc:
+            print(f"SKIPPED distance={distance}: {exc}", flush=True)
+            continue
         print(
             f"run_comparison: distance={distance} -> pos=({pos[0]:.3f}, {pos[1]:.3f})",
             flush=True,
@@ -1651,7 +1725,11 @@ def generate_trajectories(
     trajectories_by_distance = {}
 
     for distance in distances:
-        pos = locate_point_at_distance(ray_env, bank_point, perp_into_water, float(distance))
+        try:
+            pos = locate_point_at_distance(ray_env, bank_point, perp_into_water, float(distance))
+        except RuntimeError as exc:
+            print(f"SKIPPED trajectory at distance={distance}: {exc}", flush=True)
+            continue
         print(
             f"generate_trajectories: distance={distance} -> "
             f"pos=({pos[0]:.3f}, {pos[1]:.3f})",

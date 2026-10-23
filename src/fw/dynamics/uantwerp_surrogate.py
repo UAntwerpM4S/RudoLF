@@ -13,8 +13,12 @@ does is fully determined by its checkpoint's scenario (fw.surrogate.schema):
 Configuration (`ua_surrogate_config`, see config.py)::
 
     {"preset": "tripoli_confined",          # required, see fw.surrogate.presets
-     "checkpoint": "checkpoints/x.pth",     # optional override of the preset's
+     "checkpoint": "x.pth",                 # optional override of the preset's
      "lookup_csv": "x.csv"}                 # optional override (None = no lookup)
+
+Relative checkpoint paths are resolved against fw/checkpoints
+(presets.CHECKPOINT_DIR), relative lookup CSVs against fw/dynamics
+(presets.LOOKUP_CSV_DIR), independent of the working directory.
 
 The checkpoint must match the preset (scenario and ship); the rudder angle is
 converted to the model's rudder_action with the rudder scale stored in the
@@ -54,7 +58,7 @@ from fw.dynamics.dynamics_model import DynamicsBase
 from fw.dynamics.wcu_lookup import WcuLookup, EnvironmentData
 # The single shared ray implementation, also used by the dataset generator.
 from fw.environments.ray_features import RAY_ANGLES_DEG, compute_ray_features, ray_world_angles
-from fw.surrogate.presets import get_preset, resolve_lookup_csv
+from fw.surrogate.presets import CHECKPOINT_DIR, get_preset, resolve_checkpoint, resolve_lookup_csv
 from fw.surrogate.schema import SURROGATE_DT
 
 logger = logging.getLogger(__name__)
@@ -170,8 +174,12 @@ class UAntwerpSurrogate(DynamicsBase):
         # Imported here: torch is only needed once a surrogate is actually used.
         from fw.surrogate.inference_surrogate import SurrogatePredictor
 
-        checkpoint = config.get("checkpoint", self.preset.checkpoint)
-        self.surrogate = SurrogatePredictor(checkpoint)
+        checkpoint = resolve_checkpoint(config.get("checkpoint", self.preset.checkpoint))
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"Checkpoint of UAntwerp surrogate preset '{self.preset.name}' not found: "
+                                    f"{checkpoint} (relative checkpoint paths are resolved against "
+                                    f"{CHECKPOINT_DIR}).")
+        self.surrogate = SurrogatePredictor(str(checkpoint))
         if self.surrogate.scenario != self.preset.scenario:
             raise ValueError(f"Checkpoint {checkpoint} is a '{self.surrogate.scenario.name}' model, but preset "
                              f"'{self.preset.name}' expects '{self.preset.scenario.name}'.")

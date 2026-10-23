@@ -104,6 +104,11 @@ BANK_START_BAND = (20.0, 135.0)  # m, from the ship center
 # The rudder scale (action[0] = +-1 <-> +-rudder_max_deg) is per ship: SHIP_PROFILES.
 _PROPELLER_RPS_SCALE = 5.5            # action[1] = +-1 -> initial propeller rps
 INIT_SURGE_RANGE = (0.0, 6.0)         # m/s
+# thrust_action range of the random episodes (uniform). The default keeps the
+# earlier [-1, 1]; the RL framework maps its action to [min_thrust, max_thrust]
+# (ship_factory: 0.1-1.0) before it reaches FH or a surrogate, so a narrower
+# range such as (0, 1) spends no data on negative thrust the surrogate never gets.
+THRUST_ACTION_RANGE = (-1.0, 1.0)
 INIT_SWAY_RANGE = (-2.0, 2.0)         # m/s
 INIT_YAW_RATE_RANGE = (-1.5, 1.5)     # FH units (deg/s)
 WIND_SCALE_SIGMA = 7.8                # |N(0, sigma)|: about 80% of the wind scales between 0 and 10
@@ -141,6 +146,29 @@ STRAIGHT_LOOKAHEAD = 600.0            # m; search range for free water ahead (se
 # confined configuration (no current).
 STRAIGHT_CURRENT_MARGIN = 1.5         # m/s
 
+# "Bank-straight" episodes: steady straight sailing ALONGSIDE a real bank
+# (rudder ~0, constant forward thrust, near-steady initial speed, heading
+# parallel to the nearest real bank). The random near-bank starts above have
+# random headings/actions and the straight episodes avoid the banks, so the
+# operating point of a ship following a bank (the model_comparison ship-bank
+# test) is almost absent from the data (measured on myzako_confined: < 0.1 %
+# of the rows at rudder ~0 within 20 m of a bank). Rudder, thrust, initial
+# speed/sway/yaw rate and the calm-wind share: as the straight episodes
+# (STRAIGHT_*). 0 disables (the default: earlier runs are reproduced exactly).
+BANK_STRAIGHT_FRACTION = 0.0          # of ALL episodes
+BANK_STRAIGHT_BAND = (11.0, 40.0)     # m, from the ship center to the nearest real bank
+BANK_STRAIGHT_HEADING_JITTER_DEG = 3.0  # heading = bank tangent + U(-this, +this)
+
+# Actuator settling before the first recorded row: the command is applied
+# (unrecorded steps of dt) until every steering actuator is at its commanded
+# angle, at most ACTUATOR_SETTLE_MAX_SECONDS (else the episode FAILS). Needed
+# for the azipods: FH ignores setInitialRudderAngle for them, they start at 0
+# deg and turn at about 36 deg/s (probe_actuator_lag), so without it the first
+# up to ~1 s of an episode had a thrust direction the recorded action did not
+# describe. A rudder that starts at its commanded angle needs 0 steps.
+ACTUATOR_SETTLE_MAX_SECONDS = 3.0
+ACTUATOR_SETTLE_TOL_DEG = 0.1
+
 TIMEOUT_SECONDS = 60.0
 
 # NOTE: change the constants in this file by editing them here. Assigning them
@@ -148,7 +176,8 @@ TIMEOUT_SECONDS = 60.0
 # on Windows each pool worker re-imports this module with the file's values.
 
 CHECKPOINT_EVERY = 1000   # episodes per checkpoint shard
-_CHECKPOINT_VERSION = 1   # bump when the data or the run signature changes
+_CHECKPOINT_VERSION = 2   # bump when the data or the run signature changes
+                          # (2: actuator settling, no initial reverse rps without reverse thrust)
 
 CACHE_CLEAR_INTERVAL = 100        # simulations between C:\cache cleanups
 # Crash dumps of failed simulator processes. ALL contents are deleted every
@@ -211,12 +240,18 @@ class ShipProfile:
             or None), file names in EXERCISE_DIR.
         straight_surge_per_thrust: Initial surge of a straight episode per
             unit thrust action [m/s] (see STRAIGHT_SURGE_SPREAD).
+        reverse_thrust: Whether FH turns the propeller(s) backwards for a
+            negative engine lever. False = FH runs them down to 0 rps instead
+            (measured for the Tripoli azipods with probe_actuator_lag: from the
+            initial -rps to 0 at about 1 rps/s, from any speed), so a negative
+            thrust_action means "no thrust" and the initial rps is set to 0.
     """
 
     rudder_max_deg: Optional[float]
     steering: str
     exercises: Dict[str, Tuple[str, Optional[str]]]
     straight_surge_per_thrust: float
+    reverse_thrust: bool
 
 
 SHIP_PROFILES: Dict[ShipModel, ShipProfile] = {
@@ -232,6 +267,7 @@ SHIP_PROFILES: Dict[ShipModel, ShipProfile] = {
         # The approximation model_comparison uses (thrust = speed / 6; FH holds
         # ~5.0 m/s at thrust 0.83).
         straight_surge_per_thrust=6.0,
+        reverse_thrust=False,   # FH azipods: negative lever -> 0 rps (probe_actuator_lag)
     ),
     ShipModel.MYZAKO_37: ShipProfile(
         # setControlValue(+-1) moves the rudder to +-FH's own maximum, so that is
@@ -244,6 +280,7 @@ SHIP_PROFILES: Dict[ShipModel, ShipProfile] = {
             "confined": ("DDShip_scenario1_nowindnocurrent_myzako_37.tab", None),
         },
         straight_surge_per_thrust=6.0,   # Tripoli value, not measured for the Myzako
+        reverse_thrust=True,    # propeller runs backwards (probe_actuator_lag: -4.47 rps at lever -0.8)
     ),
 }
 
@@ -597,15 +634,18 @@ class SimSetup:
     dt: float = 0.1
     horizon_seconds: float = 3.0
     seed: Optional[int] = None  # per-episode RNG seed; None = non-reproducible
-    episode_kind: str = "random"  # "random" (bank/uniform starts) or "straight" (see STRAIGHT_*;
-                                  # start types "straight" and "straight_nocur")
+    episode_kind: str = "random"  # "random" (bank/uniform starts), "straight" (see STRAIGHT_*;
+                                  # start types "straight" and "straight_nocur") or
+                                  # "bank_straight" (see BANK_STRAIGHT_*)
     ship_model: str = DEFAULT_SHIP_MODEL.name     # key of SHIP_PROFILES, by name
     rudder_max_deg: float = 0.0                   # rudder scale of the run (resolve_rudder_max_deg)
+    thrust_range: Tuple[float, float] = THRUST_ACTION_RANGE   # thrust_action range of random episodes
     configuration: str = DEFAULT_CONFIGURATION   # key of CONFIGURATIONS
     output: SimOutput = field(default_factory=SimOutput)
 
 
-def plot_start_points(env: "PySimEnv", xy_uniform: np.ndarray, xy_bank: np.ndarray, out_png: Path) -> None:
+def plot_start_points(env: "PySimEnv", xy_uniform: np.ndarray, xy_bank: np.ndarray, out_png: Path,
+                      xy_bank_straight: Optional[np.ndarray] = None) -> None:
     """
     Save a plot of the start points, with real banks and map cut-off edges in
     different colors (to check PySimEnv.bank_segments). Never raises.
@@ -627,6 +667,9 @@ def plot_start_points(env: "PySimEnv", xy_uniform: np.ndarray, xy_bank: np.ndarr
             ax.scatter(xy_uniform[:, 0], xy_uniform[:, 1], s=8, c="0.45", label="uniform start")
         if len(xy_bank):
             ax.scatter(xy_bank[:, 0], xy_bank[:, 1], s=8, c="tab:orange", label="near-bank start")
+        if xy_bank_straight is not None and len(xy_bank_straight):
+            ax.scatter(xy_bank_straight[:, 0], xy_bank_straight[:, 1], s=8, c="tab:green",
+                       label="bank-straight start")
         ax.set_aspect("equal", "box")
         ax.set_title("Start points (check that red edges are map cut-offs, not real banks)")
         ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8)
@@ -866,6 +909,59 @@ def _straight_heading(env: "PySimEnv", cutoff: Optional[MultiLineString], start:
     ok = np.flatnonzero(free >= (target if best >= target else 0.9 * best))
     k = int(rng.choice(ok))
     return float(PySimEnv.normalize_angle(cands[k])), float(free[k])
+
+
+_WORKER_REAL_BANK = []  # per process: [real-bank geometry or None] (see _worker_real_bank)
+
+
+def _worker_real_bank(env: "PySimEnv") -> Optional[MultiLineString]:
+    """Real banks (PySimEnv.bank_segments, without map cut-offs) as one geometry, once per process."""
+
+    if not _WORKER_REAL_BANK:
+        geom = None
+        if hasattr(env, "bank_segments"):
+            bank, _ = env.bank_segments()
+            lines = [LineString(np.asarray(seg, dtype=np.float64)) for seg in bank if len(seg) >= 2]
+            geom = MultiLineString(lines) if lines else None
+        _WORKER_REAL_BANK.append(geom)
+    return _WORKER_REAL_BANK[0]
+
+
+def _bank_straight_heading(env: "PySimEnv", cutoff: Optional[MultiLineString], start: np.ndarray,
+                           lookahead: float, needed: float,
+                           rng: np.random.Generator) -> Tuple[float, float, float]:
+    """
+    Heading (radians, 0 = East, CCW) parallel to the nearest real bank, plus
+    a jitter of U(-BANK_STRAIGHT_HEADING_JITTER_DEG, +...). Of the two
+    directions along the bank, a random one among those with at least
+    min(needed, lookahead) free water (see _straight_heading), else the one
+    with the most.
+
+    Returns:
+        (heading_rad, free_m, bank_distance_m)
+
+    Raises:
+        RuntimeError: If PySimEnv provides no real-bank geometry.
+    """
+
+    bank = _worker_real_bank(env)
+    if bank is None:
+        raise RuntimeError("bank_straight episode: PySimEnv.bank_segments() gives no real-bank segments.")
+    p = Point(float(start[0]), float(start[1]))
+    nearest = bank.interpolate(bank.project(p))
+    normal = np.array([p.x - nearest.x, p.y - nearest.y], dtype=np.float64)
+    bank_distance = float(np.hypot(*normal))
+    if bank_distance < 1e-6:
+        raise RuntimeError(f"bank_straight episode: start {tuple(start)} lies on a bank.")
+    tangent_rad = float(np.arctan2(normal[0], -normal[1]))   # normal rotated by +90 deg
+    jitter = np.radians(rng.uniform(-BANK_STRAIGHT_HEADING_JITTER_DEG, BANK_STRAIGHT_HEADING_JITTER_DEG))
+    cands = np.array([tangent_rad, tangent_rad + np.pi]) + jitter
+    zone = _straight_stop_zone(env, cutoff).intersection(p.buffer(lookahead + 1.0))
+    free = np.array([_free_distance(zone, start, h, lookahead) for h in cands])
+    target = min(needed, lookahead)
+    ok = np.flatnonzero(free >= target)
+    k = int(rng.choice(ok)) if len(ok) else int(np.argmax(free))
+    return float(PySimEnv.normalize_angle(cands[k])), float(free[k]), bank_distance
 
 
 def straight_lookahead(horizon_seconds: float, current_margin: float = STRAIGHT_CURRENT_MARGIN) -> float:
@@ -1114,6 +1210,35 @@ def _fh_state(ship_interface, env: "PySimEnv", wind_current: bool) -> np.ndarray
     return np.array(state, dtype=np.float64)
 
 
+def _wrap180(angle_deg: float) -> float:
+    """Angle difference [deg] wrapped to [-180, 180)."""
+
+    return (float(angle_deg) + 180.0) % 360.0 - 180.0
+
+
+def _actuator_angles(steering: str, controls, azipod_command_deg: float) -> list:
+    """
+    (actual, target) angle [deg] of every steering control.
+
+    Azipods: target = the commanded direction itself (NOT FH's
+    getDesiredDirection, which might only follow the command after the next
+    simulation step -- the check would then pass at once and settle nothing).
+    Rudders: target = FH's getDesiredAngle (a rudder starts at its commanded
+    angle via setInitialRudderAngle, so this only guards against a lag).
+    """
+
+    if steering == "azipod":
+        return [(float(c.getActualDirection()), float(azipod_command_deg)) for c in controls]
+    return [(float(c.getActualAngle()), float(c.getDesiredAngle())) for c in controls]
+
+
+def _actuators_settled(steering: str, controls, azipod_command_deg: float) -> bool:
+    """True if every steering control is within ACTUATOR_SETTLE_TOL_DEG of its target (angles wrapped)."""
+
+    return all(abs(_wrap180(actual - target)) <= ACTUATOR_SETTLE_TOL_DEG
+               for actual, target in _actuator_angles(steering, controls, azipod_command_deg))
+
+
 def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
     """Run one episode in FH (inside a pool worker process) and return its rows."""
 
@@ -1176,7 +1301,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
 
         # One constant (rudder, thrust) action per episode, by design: it is
         # applied at every step (and used for the initial rudder angle and rps).
-        straight = sim_setup.episode_kind == "straight"
+        bank_straight = sim_setup.episode_kind == "bank_straight"
+        straight = sim_setup.episode_kind == "straight" or bank_straight
         if straight:
             # Steady straight sailing (see STRAIGHT_*).
             if rng.random() < STRAIGHT_RUDDER_ZERO_SHARE:
@@ -1191,21 +1317,34 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             init_yaw_rate = float(rng.uniform(*STRAIGHT_INIT_YAW_RATE_RANGE))
             # Free water this episode needs: its own speed plus a following current.
             needed_m = 1.1 * (init_surge + current_margin) * float(sim_setup.horizon_seconds)
-            heading_rad, free_m = _straight_heading(
-                env, cutoff, np.array([sim_setup.x_pos, sim_setup.y_pos], dtype=np.float64),
-                straight_lookahead(sim_setup.horizon_seconds, current_margin), needed_m, rng)
+            start_xy = np.array([sim_setup.x_pos, sim_setup.y_pos], dtype=np.float64)
+            lookahead_m = straight_lookahead(sim_setup.horizon_seconds, current_margin)
+            if bank_straight:
+                heading_rad, free_m, bank_m = _bank_straight_heading(env, cutoff, start_xy, lookahead_m,
+                                                                     needed_m, rng)
+                sim_setup.output.info["bank_distance_m"] = bank_m
+            else:
+                heading_rad, free_m = _straight_heading(env, cutoff, start_xy, lookahead_m, needed_m, rng)
             init_heading_fh = env_rad_to_fh_heading_deg(heading_rad)
             sim_setup.output.info["straight_free_m"] = free_m
         else:
             # Same draws, in the same order, as before the straight episodes existed.
             action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
+            t_lo, t_hi = (float(v) for v in sim_setup.thrust_range)
+            if (t_lo, t_hi) != (-1.0, 1.0):   # same draw, rescaled: the default stays bit-identical
+                action[1] = np.float32(t_lo + 0.5 * (float(action[1]) + 1.0) * (t_hi - t_lo))
             init_heading_fh = float(rng.uniform(0.0, 360.0))
             init_surge = float(rng.uniform(*INIT_SURGE_RANGE))
             init_sway = float(rng.uniform(*INIT_SWAY_RANGE))
             init_yaw_rate = float(rng.uniform(*INIT_YAW_RATE_RANGE))
 
         ship_config.setInitialPosition(sim_setup.x_pos, sim_setup.y_pos)
-        ship_config.setInitialPropellerRps(float(_PROPELLER_RPS_SCALE * action[1]))
+        # Initial rps as FH will run the propeller for this lever: a ship without
+        # reverse thrust runs a negative lever down to 0 rps (see ShipProfile).
+        initial_rps = _PROPELLER_RPS_SCALE * float(action[1])
+        if initial_rps < 0 and not ship.reverse_thrust:
+            initial_rps = 0.0
+        ship_config.setInitialPropellerRps(float(initial_rps))
         # FH's sign, as the per-step command below (on the Myzako it used to be the
         # opposite, so every episode started with the rudder on the wrong side).
         ship_config.setInitialRudderAngle(float(rudder_sign * rudder_max_deg * action[0]))
@@ -1261,28 +1400,6 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
                 sim_setup.output.info["error"] = error_msg
                 return sim_setup
 
-        # [x, y, heading, surge, sway, yaw_rate, UKC] (+ [wind speed, wind dir,
-        # current speed, current dir] in the full configuration)
-        input_state = _fh_state(ship_interface, env, conf.wind_current)
-        if conf.wind_current:
-            initial_wind_state = ship_interface.getWindState()
-            print(f"Wind direction: {initial_wind_state.Direction} - wind speed: {initial_wind_state.Speed}")
-
-        initial_ray_features = compute_ray_features(
-            env,
-            np.array([input_state[0], input_state[1]]),
-            float(input_state[2]),
-        )
-
-        steps_per_episode = max(1, int(round(sim_setup.horizon_seconds / sim_setup.dt)))
-
-        curr_ship_pos = np.array([input_state[0], input_state[1]], dtype=np.float32)
-
-        input_states = []
-        output_states = []
-        traj = [curr_ship_pos.copy()]
-        ray_features = initial_ray_features
-
         # Controls the action is applied to (see ShipProfile.steering). Missing
         # controls fail the episode: the recorded action would have no effect.
         if ship.steering == "azipod":
@@ -1316,6 +1433,64 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
                 sim_setup.output.info["error"] = error_msg
                 return sim_setup
 
+        if ship.steering == "azipod":
+            rudder_command = float(rudder_sign * action[0] * rudder_max_deg)   # direction [deg]
+        else:
+            rudder_command = float(rudder_sign * action[0])   # normalized to FH's own maximum
+        thrust_command = float(action[1])
+
+        def apply_command() -> None:
+            """Set this episode's (constant) steering and thrust command on all controls."""
+            if ship.steering == "azipod":
+                for azipod in steering_controls:
+                    azipod.setDesiredDirection(rudder_command)
+                    azipod.setEngineLeverValue(thrust_command)
+            else:
+                for rudder in steering_controls:
+                    rudder.setControlValue(rudder_command)
+                for propeller in thrust_controls:
+                    propeller.engage()
+                    propeller.setEngineLeverValue(thrust_command)
+
+        # Settle the actuators (see ACTUATOR_SETTLE_MAX_SECONDS) before the first row.
+        settle_steps = 0
+        max_settle_steps = int(round(ACTUATOR_SETTLE_MAX_SECONDS / sim_setup.dt))
+        apply_command()
+        while not _actuators_settled(ship.steering, steering_controls, rudder_command):
+            if settle_steps >= max_settle_steps:
+                error_msg = (f"Steering actuators not at their commanded angle after "
+                             f"{ACTUATOR_SETTLE_MAX_SECONDS:g} s: (actual, target) {_actuator_angles(ship.steering, steering_controls, rudder_command)}")
+                print(error_msg)
+                sim_setup.output.status = "FAILED"
+                sim_setup.output.info["error"] = error_msg
+                return sim_setup
+            math_model.simulateSeconds(sim_setup.dt)
+            settle_steps += 1
+            apply_command()
+        sim_setup.output.info["settle_seconds"] = settle_steps * sim_setup.dt
+
+        # [x, y, heading, surge, sway, yaw_rate, UKC] (+ [wind speed, wind dir,
+        # current speed, current dir] in the full configuration)
+        input_state = _fh_state(ship_interface, env, conf.wind_current)
+        if conf.wind_current:
+            initial_wind_state = ship_interface.getWindState()
+            print(f"Wind direction: {initial_wind_state.Direction} - wind speed: {initial_wind_state.Speed}")
+
+        initial_ray_features = compute_ray_features(
+            env,
+            np.array([input_state[0], input_state[1]]),
+            float(input_state[2]),
+        )
+
+        steps_per_episode = max(1, int(round(sim_setup.horizon_seconds / sim_setup.dt)))
+
+        curr_ship_pos = np.array([input_state[0], input_state[1]], dtype=np.float32)
+
+        input_states = []
+        output_states = []
+        traj = [curr_ship_pos.copy()]
+        ray_features = initial_ray_features
+
         # A row is recorded only if its start and end state are within the stop
         # limits; the episode stops at the first violating step, earlier rows are kept.
         termination = stop_reason(env, curr_ship_pos, float(input_state[6]), ray_features, cutoff)
@@ -1323,23 +1498,8 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             termination = "start_" + termination
         else:
             termination = "horizon"
-            if ship.steering == "azipod":
-                rudder_command = float(rudder_sign * action[0] * rudder_max_deg)   # direction [deg]
-            else:
-                rudder_command = float(rudder_sign * action[0])   # normalized to FH's own maximum
-            thrust_command = float(action[1])
             for step in range(steps_per_episode):
-                if ship.steering == "azipod":
-                    for azipod in steering_controls:
-                        azipod.setDesiredDirection(rudder_command)
-                        azipod.setEngineLeverValue(thrust_command)
-                else:
-                    for rudder in steering_controls:
-                        rudder.setControlValue(rudder_command)
-                    for propeller in thrust_controls:
-                        propeller.engage()
-                        propeller.setEngineLeverValue(thrust_command)
-
+                apply_command()
                 math_model.simulateSeconds(sim_setup.dt)
 
                 next_input_state = _fh_state(ship_interface, env, conf.wind_current)
@@ -1612,7 +1772,9 @@ def _load_checkpoint_shards(ckpt_dir: Path):
 
 
 def validate_start_settings(bank_fraction: float, bank_band: Tuple[float, float],
-                            straight_fraction: float) -> Tuple[float, float]:
+                            straight_fraction: float, bank_straight_fraction: float = 0.0,
+                            bank_straight_band: Tuple[float, float] = BANK_STRAIGHT_BAND,
+                            thrust_range: Tuple[float, float] = THRUST_ACTION_RANGE) -> Tuple[float, float]:
     """
     Check the start-point settings of collect_supervised_dataset (cheap: call
     it before anything slow, such as the rudder probe).
@@ -1627,12 +1789,25 @@ def validate_start_settings(bank_fraction: float, bank_band: Tuple[float, float]
     if not 0.0 <= bank_fraction <= 1.0:
         raise ValueError(f"bank_fraction must be in [0, 1], got {bank_fraction}")
     # Sum, not 1 - bank_fraction: 1.0 - 0.8 = 0.19999999999999996 would reject 0.8 + 0.2.
-    if not (straight_fraction >= 0.0 and bank_fraction + straight_fraction <= 1.0 + 1e-9):  # also rejects NaN
-        raise ValueError(f"straight_fraction must be in [0, 1 - bank_fraction] = [0, {1.0 - bank_fraction:g}] "
-                         f"(straight episodes use uniform starts), got {straight_fraction}")
+    if not 0.0 <= bank_straight_fraction <= 1.0:   # also rejects NaN
+        raise ValueError(f"bank_straight_fraction must be in [0, 1], got {bank_straight_fraction}")
+    if bank_fraction + bank_straight_fraction > 1.0 + 1e-9:
+        raise ValueError(f"bank_fraction + bank_straight_fraction must be <= 1, got "
+                         f"{bank_fraction} + {bank_straight_fraction}")
+    rest = bank_fraction + bank_straight_fraction
+    if not (straight_fraction >= 0.0 and rest + straight_fraction <= 1.0 + 1e-9):  # also rejects NaN
+        raise ValueError(f"straight_fraction must be in [0, 1 - bank_fraction - bank_straight_fraction] = "
+                         f"[0, {1.0 - rest:g}] (straight episodes use uniform starts), got {straight_fraction}")
     band_min, band_max = (float(v) for v in bank_band)
     if bank_fraction > 0 and not 0.0 <= band_min < band_max:
         raise ValueError(f"bank_band must be (min, max) with 0 <= min < max, got {bank_band}")
+    t_lo, t_hi = (float(v) for v in thrust_range)
+    if not -1.0 <= t_lo < t_hi <= 1.0:
+        raise ValueError(f"thrust_range must be (low, high) with -1 <= low < high <= 1, got {thrust_range}")
+    bs_min, bs_max = (float(v) for v in bank_straight_band)
+    if bank_straight_fraction > 0 and not MIN_BANK_DISTANCE < bs_min < bs_max:
+        raise ValueError(f"bank_straight_band must be (min, max) with MIN_BANK_DISTANCE "
+                         f"({MIN_BANK_DISTANCE:g} m) < min < max, got {bank_straight_band}")
     return band_min, band_max
 
 
@@ -1662,6 +1837,9 @@ def collect_supervised_dataset(
         bank_fraction: float = BANK_START_FRACTION,
         bank_band: Tuple[float, float] = BANK_START_BAND,
         straight_fraction: float = STRAIGHT_FRACTION,
+        bank_straight_fraction: float = BANK_STRAIGHT_FRACTION,
+        bank_straight_band: Tuple[float, float] = BANK_STRAIGHT_BAND,
+        thrust_range: Tuple[float, float] = THRUST_ACTION_RANGE,
         stop_file: Optional[str] = None,
         checkpoint_every: Optional[int] = CHECKPOINT_EVERY,
         resume: bool = True,
@@ -1706,6 +1884,12 @@ def collect_supervised_dataset(
         bank_band: (min, max) distance in m from the nearest real bank.
         straight_fraction: Fraction of ALL episodes run as "straight" episodes
             (see STRAIGHT_*), taken from the uniform starts (at most all of them).
+        bank_straight_fraction: Fraction of ALL episodes run as "bank_straight"
+            episodes (see BANK_STRAIGHT_*), sampled bank_straight_band m from
+            a real bank; taken from the uniform starts. 0 = none.
+        bank_straight_band: (min, max) distance in m from the nearest real bank.
+        thrust_range: (low, high) thrust_action range of the random episodes
+            (see THRUST_ACTION_RANGE); straight episodes use STRAIGHT_THRUST_RANGE.
         stop_file: Stop-file path; default "STOP_COLLECTION" next to output_file.
         checkpoint_every: Episodes per checkpoint; 0/None disables checkpoints.
         resume: False deletes an existing checkpoint and starts over.
@@ -1744,7 +1928,8 @@ def collect_supervised_dataset(
                          f"got rudder_max_deg={rudder_max_deg}.")
     if rudder_max_deg is not None and not float(rudder_max_deg) > 0:
         raise ValueError(f"rudder_max_deg must be positive, got {rudder_max_deg}")
-    validate_start_settings(bank_fraction, bank_band, straight_fraction)   # before the (slow) probe
+    validate_start_settings(bank_fraction, bank_band, straight_fraction,   # before the (slow) probe
+                            bank_straight_fraction, bank_straight_band, thrust_range)
     n_x = nbr_x_features(configuration)
     current_margin = straight_current_margin(configuration)
     # simulateSeconds only advances whole math-model steps.
@@ -1815,7 +2000,12 @@ def collect_supervised_dataset(
     y_outputs = []
     episode_ids = []
 
-    band_min, band_max = validate_start_settings(bank_fraction, bank_band, straight_fraction)
+    band_min, band_max = validate_start_settings(bank_fraction, bank_band, straight_fraction,
+                                                 bank_straight_fraction, bank_straight_band, thrust_range)
+    bs_min, bs_max = (float(v) for v in bank_straight_band)
+    if bank_straight_fraction > 0 and _worker_real_bank(env) is None:
+        raise RuntimeError("bank_straight_fraction > 0, but PySimEnv.bank_segments() gives no real-bank "
+                           "segments to sail along.")
     if bank_fraction > 0 and band_min <= MIN_BANK_DISTANCE:
         print(f"Warning: bank_band starts at {band_min} m, at or below MIN_BANK_DISTANCE "
               f"({MIN_BANK_DISTANCE} m) -- such starts end immediately as start_bank.")
@@ -1846,25 +2036,41 @@ def collect_supervised_dataset(
         """`k` start points within [band_min, band_max] m of a real bank."""
         return env.sample_point_near_bank(k, band_min, band_max)
 
+    def bank_straight_sampler(k):
+        """`k` start points within [bs_min, bs_max] m of a real bank."""
+        return env.sample_point_near_bank(k, bs_min, bs_max)
+
     n_bank = int(round(bank_fraction * nbr_samples))
-    xy_uniform = _sample_points(uniform_sampler, nbr_samples - n_bank, cutoff_geom)
+    # min(): the two roundings must not add up to more than nbr_samples.
+    n_bank_straight = min(int(round(bank_straight_fraction * nbr_samples)), nbr_samples - n_bank)
+    xy_uniform = _sample_points(uniform_sampler, nbr_samples - n_bank - n_bank_straight, cutoff_geom)
     xy_bank = (_sample_points(bank_sampler, n_bank, cutoff_geom) if n_bank > 0
                else np.zeros((0, 2), dtype=np.float32))
+    # Sampled after the bank starts: with bank_straight_fraction = 0 nothing changes.
+    xy_bank_straight = (_sample_points(bank_straight_sampler, n_bank_straight, cutoff_geom)
+                        if n_bank_straight > 0 else np.zeros((0, 2), dtype=np.float32))
+    if len(xy_bank_straight) < n_bank_straight:
+        missing = n_bank_straight - len(xy_bank_straight)
+        print(f"Warning: only {len(xy_bank_straight)} of {n_bank_straight} bank-straight start points could "
+              f"be sampled (band {bs_min:g}-{bs_max:g} m). Using {missing} extra uniform start points instead.")
+        xy_uniform = np.vstack([xy_uniform, _sample_points(uniform_sampler, missing, cutoff_geom)])
     if len(xy_bank) < n_bank:
         missing = n_bank - len(xy_bank)
         print(f"Warning: only {len(xy_bank)} of {n_bank} near-bank start points could be sampled "
               f"(band {band_min:g}-{band_max:g} m; see the PySimEnv warning and start_points.png). "
               f"Using {missing} extra uniform start points instead.")
         xy_uniform = np.vstack([xy_uniform, _sample_points(uniform_sampler, missing, cutoff_geom)])
-    if len(xy_uniform) + len(xy_bank) < nbr_samples:
-        print(f"Warning: only {len(xy_uniform) + len(xy_bank)} of {nbr_samples} start points could "
+    n_sampled = len(xy_uniform) + len(xy_bank) + len(xy_bank_straight)
+    if n_sampled < nbr_samples:
+        print(f"Warning: only {n_sampled} of {nbr_samples} start points could "
               "be sampled" + (f" at least {CUTOFF_CLEARANCE:g} m from the map cut-off edges."
                               if cutoff_geom is not None else "."))
 
     # Shuffle, so near-bank starts are spread over all chunks.
-    xy = np.vstack([xy_uniform, xy_bank])
+    xy = np.vstack([xy_uniform, xy_bank, xy_bank_straight])
     # Wide dtype: resumed episodes write their start type back into this array.
-    start_types = np.array(["uniform"] * len(xy_uniform) + ["bank"] * len(xy_bank), dtype="<U16")
+    start_types = np.array(["uniform"] * len(xy_uniform) + ["bank"] * len(xy_bank)
+                           + ["bank_straight"] * len(xy_bank_straight), dtype="<U16")
     order = env._rng.permutation(len(xy))
     xy, start_types = xy[order], start_types[order]
     # "straight" episodes (see STRAIGHT_*): a random subset of the uniform starts.
@@ -1881,8 +2087,10 @@ def collect_supervised_dataset(
             start_types[kind_rng.choice(straight_idx, n_no_current, replace=False)] = "straight_nocur"
     print(f"Start points: {int((start_types == 'uniform').sum())} uniform, {len(xy_bank)} near-bank "
           f"({band_min:g}-{band_max:g} m from a real bank), {n_straight} straight ({n_no_current} without current) "
-          f"(uniform start, rudder ~0, thrust {STRAIGHT_THRUST_RANGE[0]:g}-{STRAIGHT_THRUST_RANGE[1]:g})")
-    plot_start_points(env, xy_uniform, xy_bank, out_dir / "start_points.png")
+          f"(uniform start, rudder ~0, thrust {STRAIGHT_THRUST_RANGE[0]:g}-{STRAIGHT_THRUST_RANGE[1]:g})"
+          + (f", {len(xy_bank_straight)} bank-straight ({bs_min:g}-{bs_max:g} m from a real bank, "
+             f"parallel to it, rudder ~0)" if n_bank_straight > 0 else ""))
+    plot_start_points(env, xy_uniform, xy_bank, out_dir / "start_points.png", xy_bank_straight)
 
     x0 = xy[:, 0]
     y0 = xy[:, 1]
@@ -1904,7 +2112,7 @@ def collect_supervised_dataset(
         episode_seeds = [int(s) for s in episode_ss.generate_state(nbr_samples)]
     else:
         episode_seeds = [None] * nbr_samples
-    all_start_types = ("uniform", "bank", "straight", "straight_nocur")
+    all_start_types = ("uniform", "bank", "straight", "straight_nocur", "bank_straight")
     rows_per_start_type = {st: 0 for st in all_start_types}
     kept_per_start_type = {st: 0 for st in all_start_types}
 
@@ -1917,9 +2125,11 @@ def collect_supervised_dataset(
             dt=dt,
             horizon_seconds=horizon_seconds,
             seed=episode_seeds[i],
-            episode_kind="straight" if start_types[i] in ("straight", "straight_nocur") else "random",
+            episode_kind=("straight" if start_types[i] in ("straight", "straight_nocur")
+                          else "bank_straight" if start_types[i] == "bank_straight" else "random"),
             ship_model=ship_model.name,
             rudder_max_deg=rudder_max_deg,
+            thrust_range=(float(thrust_range[0]), float(thrust_range[1])),
             configuration=configuration,
             output=SimOutput(status="", time_seconds=0.0)
         )
@@ -1931,7 +2141,7 @@ def collect_supervised_dataset(
     episode_meta = {}  # index -> (reason, start_x, start_y, start_type)
 
     def _record_episode(_index, _reason, _start_xy, _start_type, _x_ep=None, _y_ep=None, _traj_ep=None):
-        """Bookkeeping for live and resumed episodes."""
+        """Book-keeping for live and resumed episodes."""
         nonlocal counter
         termination_counts[_reason] = termination_counts.get(_reason, 0) + 1
         episode_meta[_index] = (_reason, float(_start_xy[0]), float(_start_xy[1]), _start_type)
@@ -1988,6 +2198,10 @@ def collect_supervised_dataset(
         "rudder_max_deg": float(rudder_max_deg),
         "rudder_scale_source": "profile" if fixed_rudder_max is not None else "fh_getMaximumAngle",
         "propeller_rps_scale": float(_PROPELLER_RPS_SCALE),
+        "reverse_thrust": bool(ship.reverse_thrust),
+        "thrust_range": [float(v) for v in thrust_range],
+        "actuator_settle": {"max_seconds": float(ACTUATOR_SETTLE_MAX_SECONDS),
+                            "tol_deg": float(ACTUATOR_SETTLE_TOL_DEG)},
         "init_surge_range": [float(v) for v in INIT_SURGE_RANGE],
         "init_sway_range": [float(v) for v in INIT_SWAY_RANGE],
         "init_yaw_rate_range": [float(v) for v in INIT_YAW_RATE_RANGE],
@@ -2011,6 +2225,14 @@ def collect_supervised_dataset(
                                 if uses_static_tide and STATIC_TIDE_XML_PATH.exists() else None),
         },
     }
+    # Only when used, so the signature (and resuming) of runs without them is unchanged.
+    if bank_straight_fraction > 0:
+        run_signature["bank_straight_fraction"] = float(bank_straight_fraction)
+        run_signature["bank_straight"] = {
+            "band": [bs_min, bs_max],
+            "heading_jitter_deg": float(BANK_STRAIGHT_HEADING_JITTER_DEG),
+            "heading_choice": "bank_tangent_v1",
+        }
     n_resumed = 0
     chunks_done = 0    # including earlier sessions
     if checkpointing:
@@ -2170,7 +2392,8 @@ def collect_supervised_dataset(
                                             sim_setup.output.y_output,
                                             sim_setup.output.trajectory)
                             print(f"Simulation {index} succeeded: {len(sim_setup.output.x_input)} rows "
-                                  f"(ended: {sim_setup.output.info.get('termination')})")
+                                  f"(ended: {sim_setup.output.info.get('termination')}, actuators settled in "
+                                  f"{sim_setup.output.info.get('settle_seconds', 0.0):.1f} s)")
                         else:
                             _record_episode(index, reason, xy[index], str(start_types[index]))
                             # "error": explicit checks; "message": exceptions.
