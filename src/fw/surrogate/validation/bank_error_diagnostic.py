@@ -37,6 +37,12 @@ Usage (from src):
         --data data\\myzako_confined\\ship_dynamics_dataset_test.npz ^
         --train data\\myzako_confined\\ship_dynamics_dataset_train.npz
 
+--min-time / --max-time keep only the rows at that time since the start of
+their episode [s] (from the file's t_episode array, or reconstructed as in
+fw.surrogate.episode_time; episodes that cannot be ordered are dropped). Use it to separate the bank
+effect from the start-of-episode transient: bank-straight episodes start next
+to the bank, so near-bank rows are mostly early rows.
+
 A relative --checkpoint is resolved like the presets do (fw/checkpoints).
 Writes <checkpoint stem>_bank_error.png next to --data unless --plot is given.
 """
@@ -193,6 +199,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                    help="|rudder_action| limit of the straight-rudder table (default 0.05).")
     p.add_argument("--rays", choices=("beam", "all"), default="beam",
                    help="Rays that define the bank distance: beam (60-120/240-300 deg, default) or all.")
+    p.add_argument("--min-time", type=float, default=None,
+                   help="Keep only rows at least this long [s] after the start of their episode.")
+    p.add_argument("--max-time", type=float, default=None,
+                   help="Keep only rows less than this long [s] after the start of their episode.")
     p.add_argument("--plot", type=Path, default=None, help="PNG path (default: next to --data).")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -218,6 +228,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         user = sorted({float(b) for b in args.bins if 0.0 < float(b) < 199.999})
         bins = [0.0] + user + [199.999, RAY_MAX_DISTANCE + 1e-6]
 
+    title_extra = ""
+    if args.min_time is not None or args.max_time is not None:
+        from fw.surrogate.episode_time import STATE_COLUMNS, T_EPISODE_KEY, step_index
+        from fw.surrogate.schema import SURROGATE_DT
+        with np.load(args.data) as z:
+            episode_id = z["episode_id"].astype(np.int64)
+            stored = z[T_EPISODE_KEY] if T_EPISODE_KEY in z.files else None
+        if stored is not None:      # written by fw.surrogate.episode_time
+            t = stored.astype(np.float64)
+            n_ok, n_bad = len(np.unique(episode_id[t >= 0])), len(np.unique(episode_id[t < 0]))
+        else:
+            state = x_raw[:, [scenario.col(c) for c in STATE_COLUMNS]]
+            steps, n_ok, n_bad = step_index(state, y, episode_id)
+            t = np.where(steps >= 0, steps * SURROGATE_DT, -1.0)
+        keep = t >= 0
+        if args.min_time is not None:
+            keep &= t >= args.min_time - 1e-9
+        if args.max_time is not None:
+            keep &= t < args.max_time - 1e-9
+        logger.info("Time filter [%s, %s) s: %d episodes ordered, %d skipped; keeping %d of %d rows.",
+                    args.min_time, args.max_time, n_ok, n_bad, int(keep.sum()), len(y))
+        x_raw, y = x_raw[keep], y[keep]
+        if len(y) == 0:
+            logger.error("No rows left after the time filter.")
+            return 2
+        title_extra = f", t in [{args.min_time if args.min_time is not None else 0:g}, " \
+                      f"{args.max_time if args.max_time is not None else 'end'}) s"
+
     d = bank_distance(x_raw, scenario, args.rays)
     d_train = None
     if args.train is not None:
@@ -235,7 +273,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     counts = np.bincount(np.digitize(d, bins) - 1, minlength=len(bins))
     out = args.plot or args.data.with_name(f"{ckpt.stem}_bank_error.png")
-    plot(out, bins, gains_all, gains_straight, counts, f"{ckpt.name} on {args.data.name}")
+    plot(out, bins, gains_all, gains_straight, counts, f"{ckpt.name} on {args.data.name}{title_extra}")
     return 0
 
 

@@ -62,6 +62,7 @@ from typing import List, Optional, Sequence, Tuple, Union
 from torch.utils.data import DataLoader, TensorDataset
 from fw.environments.ray_features import RAY_MAX_DISTANCE
 from fw.surrogate.dataset import check_same_identity, load_raw, read_identity, stats_from_arrays
+from fw.surrogate.episode_time import T_EPISODE_KEY
 from fw.surrogate.models.mlp_surrogate import ACTIVATIONS, SurrogateMLP, activation_from_name
 from fw.surrogate.schema import (
     DEFAULT_ENV_ENCODING,
@@ -228,7 +229,8 @@ def nearest_bank_distance(x_raw: np.ndarray, source) -> np.ndarray:
 
 def load_split(files: PathOrPaths, scenario, env_encoding,
                min_bank_distance: Optional[float] = None,
-               min_ukc: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray]:
+               min_ukc: Optional[float] = None,
+               min_episode_time: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray]:
     """
     Encoded (unnormalized) X and Y of one split, concatenated over `files`.
 
@@ -241,6 +243,10 @@ def load_split(files: PathOrPaths, scenario, env_encoding,
             many metres away.
         min_ukc: If given, keep only rows whose UKC (the file's own UKC
             column, before projection) is at least this many metres.
+        min_episode_time: If given, keep only rows at least this many seconds
+            after the start of their episode (the file's t_episode array,
+            written by fw.surrogate.episode_time); rows of episodes whose
+            order could not be reconstructed (t_episode < 0) are left out too.
 
     Returns:
         `(x, y)` float32 arrays.
@@ -248,7 +254,7 @@ def load_split(files: PathOrPaths, scenario, env_encoding,
 
     xs, ys = [], []
     for f in _as_paths(files):
-        if min_bank_distance is None and min_ukc is None:
+        if min_bank_distance is None and min_ukc is None and min_episode_time is None:
             x_raw, y_vals, _ = load_raw(f, scenario)    # projected to the model scenario
         else:
             x_raw, y_vals, identity = load_raw(f)       # the file's own scenario (with rays/UKC)
@@ -263,6 +269,16 @@ def load_split(files: PathOrPaths, scenario, env_encoding,
                     raise ValueError(f"{f}: scenario '{source.name}' has no UKC column: cannot filter on UKC.")
                 keep &= x_raw[:, source.col("ukc")] >= min_ukc
                 what.append(f"UKC >= {min_ukc:g} m")
+            if min_episode_time is not None:
+                with np.load(f, allow_pickle=False) as z:
+                    if T_EPISODE_KEY not in z.files:
+                        raise ValueError(f"{f} has no '{T_EPISODE_KEY}' array: run "
+                                         f"'python -m fw.surrogate.episode_time {f}' first.")
+                    t_episode = z[T_EPISODE_KEY]
+                if t_episode.shape != (len(x_raw),):
+                    raise ValueError(f"{f}: '{T_EPISODE_KEY}' has shape {t_episode.shape}, expected ({len(x_raw)},).")
+                keep &= (t_episode >= 0) & (t_episode >= min_episode_time - 1e-6)
+                what.append(f"t_episode >= {min_episode_time:g} s")
             logger.info("%s: %d of %d rows (%.1f %%) have %s; the rest is left out.",
                         f, int(keep.sum()), len(keep), 100.0 * keep.mean() if len(keep) else 0.0,
                         " and ".join(what))
@@ -287,7 +303,8 @@ def normalized_dataset(x_vals: np.ndarray, y_vals: np.ndarray, x_mean, x_std, y_
 
 def make_dataloaders(train_file: PathOrPaths, val_file: PathOrPaths, test_file: PathOrPaths, scenario,
                      env_encoding, batch_size=256, num_workers=0, seed=None, drop_last=False, pin_memory=False,
-                     min_bank_distance: Optional[float] = None, min_ukc: Optional[float] = None):
+                     min_bank_distance: Optional[float] = None, min_ukc: Optional[float] = None,
+                     min_episode_time: Optional[float] = None):
     """
     Build train / val / test DataLoaders with shared normalization stats.
 
@@ -310,7 +327,8 @@ def make_dataloaders(train_file: PathOrPaths, val_file: PathOrPaths, test_file: 
                      BatchNorm: a tiny last batch gives noisy batch stats,
                      and a batch of 1 makes BatchNorm1d raise.
         pin_memory:  Pin host memory (useful when training on CUDA).
-        min_bank_distance, min_ukc: Row filters applied to all splits (see load_split).
+        min_bank_distance, min_ukc, min_episode_time: Row filters applied to
+                     all splits (see load_split).
 
     Returns:
         Tuple of (train_loader, val_loader, test_loader,
@@ -318,14 +336,17 @@ def make_dataloaders(train_file: PathOrPaths, val_file: PathOrPaths, test_file: 
     """
 
     # Stats from the (concatenated) training split only; val/test reuse them.
-    x_train, y_train = load_split(train_file, scenario, env_encoding, min_bank_distance, min_ukc)
+    x_train, y_train = load_split(train_file, scenario, env_encoding, min_bank_distance, min_ukc,
+                                  min_episode_time)
     stats = stats_from_arrays(x_train, y_train, encoded_feature_names(scenario, env_encoding))
     x_mean, x_std, y_mean, y_std = (np.asarray(s, np.float32).reshape(1, -1) for s in stats)
 
     train_ds = normalized_dataset(x_train, y_train, *stats)
     del x_train, y_train
-    val_ds = normalized_dataset(*load_split(val_file, scenario, env_encoding, min_bank_distance, min_ukc), *stats)
-    test_ds = normalized_dataset(*load_split(test_file, scenario, env_encoding, min_bank_distance, min_ukc), *stats)
+    val_ds = normalized_dataset(*load_split(val_file, scenario, env_encoding, min_bank_distance, min_ukc,
+                                                min_episode_time), *stats)
+    test_ds = normalized_dataset(*load_split(test_file, scenario, env_encoding, min_bank_distance, min_ukc,
+                                                 min_episode_time), *stats)
 
     generator = torch.Generator().manual_seed(seed) if seed is not None else None
     # Only drop the last batch when that still leaves at least one batch.
@@ -412,6 +433,11 @@ def main(argv=None):
     parser.add_argument("--min-ukc", type=float, default=None,
                         help="Keep only rows with an under-keel clearance of at least this many metres "
                              "(the data's UKC column), in all splits. Default: no filter")
+    parser.add_argument("--min-episode-time", type=float, default=None,
+                        help="Keep only rows at least this many seconds after the start of their episode, "
+                             "in all splits (leaves out the start transient). Needs the files' t_episode "
+                             "array: run 'python -m fw.surrogate.episode_time <files>' first. "
+                             "Default: no filter")
     args = parser.parse_args(argv)
 
     # Identity of the data: all splits of all datasets must have the same identity.
@@ -437,6 +463,8 @@ def main(argv=None):
             parser.error(f"--min-bank-distance must be in (0, {RAY_MAX_DISTANCE:g}] m, got {args.min_bank_distance}.")
     if args.min_ukc is not None and not source_scenario.includes_ukc:
         parser.error(f"--min-ukc needs data with a UKC column; the files are '{source_scenario.name}'.")
+    if args.min_episode_time is not None and not args.min_episode_time >= 0.0:   # also rejects NaN
+        parser.error(f"--min-episode-time must be >= 0 s, got {args.min_episode_time}.")
     logger.info("Data: scenario=%s, ship_model=%s, rudder_max_deg=%g -> model scenario=%s",
                 source_scenario.name, data_identity.ship_model, data_identity.rudder_max_deg, scenario.name)
 
@@ -457,6 +485,7 @@ def main(argv=None):
         batch_size=args.batch_size, num_workers=args.num_workers,
         seed=args.seed, drop_last=args.batchnorm, pin_memory=device.type == "cuda",
         min_bank_distance=args.min_bank_distance, min_ukc=args.min_ukc,
+        min_episode_time=args.min_episode_time,
     )
 
     # Checked before the peek below: on an empty split, next(iter(...)) would
@@ -620,6 +649,7 @@ def main(argv=None):
                 # Row filter of the training data (None = all rows).
                 "min_bank_distance":    args.min_bank_distance,
                 "min_ukc":              args.min_ukc,
+                "min_episode_time":     args.min_episode_time,
                 "hidden_sizes":         args.hidden_sizes,
                 "activation":           args.activation,
                 "dropout":              args.dropout,
@@ -671,7 +701,8 @@ def main(argv=None):
         # Per dataset: a combined number can hide a poor fit on the smaller dataset.
         for test_file in test_files:
             loader = DataLoader(normalized_dataset(*load_split(test_file, scenario, args.env_encoding,
-                                                               args.min_bank_distance, args.min_ukc),
+                                                               args.min_bank_distance, args.min_ukc,
+                                                               args.min_episode_time),
                                                    x_mean, x_std, y_mean, y_std),
                                 batch_size=args.batch_size, shuffle=False)
             if _num_samples(loader) == 0:

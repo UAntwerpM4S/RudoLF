@@ -66,9 +66,9 @@ class SurrogatePreset:
                              f"'{self.scenario.name}' has no UKC input.")
 
 
-# Water depth used as UKC fallback for the Tripoli presets with a UKC input
+# Water depth used as UKC fallback for the all presets with a UKC input
 # (the value the previous per-scenario classes used).
-_TRIPOLI_WATER_DEPTH_M = 18.5
+_DEFAULT_WATER_DEPTH_M = 18.5
 
 # UKC fallback for the Myzako confined preset: the median UKC of its training
 # data (static water level, 2.2-25 m). Only used without (a hit in) the lookup.
@@ -88,8 +88,8 @@ PRESETS = {p.name: p for p in (
         ship_model=ShipModel.TRIPOLI,
         scenario=CONFINED_UKC,
         checkpoint="best_surrogate_tripoli_confined.pth",
-        lookup_csv="ship_dynamics_dataset_tripoli_confined.csv",
-        default_ukc=_TRIPOLI_WATER_DEPTH_M,
+        lookup_csv="ukc_lookup_tripoli_confined.csv",
+        default_ukc=_DEFAULT_WATER_DEPTH_M,
     ),
     SurrogatePreset(
         name="tripoli_full",
@@ -97,7 +97,7 @@ PRESETS = {p.name: p for p in (
         scenario=FULL_ENV,
         checkpoint="best_surrogate_tripoli_full.pth",
         lookup_csv="ship_dynamics_dataset_tripoli_full.csv",
-        default_ukc=_TRIPOLI_WATER_DEPTH_M,
+        default_ukc=_DEFAULT_WATER_DEPTH_M,
     ),
     SurrogatePreset(
         name="myzako_clean",
@@ -115,7 +115,7 @@ PRESETS = {p.name: p for p in (
         # The full dataset CSV works as well; a grid-reduced copy
         # (fw.surrogate.make_ukc_lookup) loads much faster.
         lookup_csv="ukc_lookup_myzako_confined.csv",
-        default_ukc=_MYZAKO_CONFINED_DEFAULT_UKC_M,
+        default_ukc=_DEFAULT_WATER_DEPTH_M,
     ),
 )}
 
