@@ -1,112 +1,232 @@
+"""
+Dataset files (.npz) and the torch Dataset for surrogate training -- one
+implementation for every scenario (open_water / confined_ukc / full_env,
+see schema.py).
+
+A dataset file holds RAW rows ("X", in the layout of the scenario it was
+generated for), targets ("Y") and its identity (schema.DatasetIdentity:
+scenario, ray layout, ship model, rudder scale). A model can be trained for
+the file's own scenario or for a poorer one derived from it by dropping
+columns (schema.check_projection, e.g. an open_water model from
+confined_ukc data).
+
+Normalization strategy:
+  - Inputs X normalized using x_mean/x_std, targets Y using y_mean/y_std,
+    both computed from the TRAINING split only (`compute_stats`).
+  - Features whose std is (near-)zero in the stats source get std = 1.0
+    instead of ~1e-8 (see `STD_FLOOR` / `safe_std`): otherwise any deviation
+    of that feature in val/test or at inference time is multiplied by 1e8.
+"""
+
+import logging
+
 import torch
 import numpy as np
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence, Tuple
 from torch.utils.data import Dataset
+
+from fw.surrogate.schema import (
+    DEFAULT_ENV_ENCODING,
+    TARGET_NAMES,
+    DatasetIdentity,
+    ScenarioSchema,
+    check_env_encoding,
+    encoded_feature_names,
+    get_scenario,
+    project_raw_columns,
+    read_npz_identity,
+    read_npz_provenance,
+    select_and_encode,
+)
+
+logger = logging.getLogger(__name__)
+
+# A feature whose std in the stats source is below this is treated as
+# constant: its std is replaced by 1.0.
+STD_FLOOR = 1e-6
+
+
+def read_identity(path) -> DatasetIdentity:
+    """
+    Identity of a dataset .npz (checked: all keys present, known scenario,
+    current ray layout).
+    """
+
+    with np.load(path, allow_pickle=False) as data:
+        return read_npz_identity(data, path)
+
+
+def read_provenance(path) -> Optional[dict]:
+    """
+    Generation provenance of a dataset .npz (generator settings, see
+    generate_ship_data.generation_provenance), or None for files written
+    before it was recorded.
+    """
+
+    with np.load(path, allow_pickle=False) as data:
+        return read_npz_provenance(data)
+
+
+def load_raw(path, scenario: Optional[ScenarioSchema] = None) -> Tuple[np.ndarray, np.ndarray, DatasetIdentity]:
+    """
+    Load the RAW X and Y arrays of a dataset .npz. Every reader of dataset
+    files goes through this (training, diagnose_splits, plot_val_vs_simulator,
+    inference_tester).
+
+    Args:
+        path: Path to an .npz written by generate_ship_data.py.
+        scenario: Scenario to return X for. None = the file's own scenario.
+            A different scenario must be derivable from the file's
+            (schema.check_projection); X is then projected to it.
+
+    Returns:
+        `(x_raw, y, identity)`: float32 arrays, X in `scenario`'s raw layout
+        (not selected, encoded or normalized), Y as `(N, 3)`, and the file's
+        identity (its `scenario` is the SOURCE scenario of the file).
+
+    Raises:
+        ValueError: On missing/invalid identity, a projection that is not
+            allowed, wrong array shapes or NaN/inf values.
+    """
+
+    with np.load(path, allow_pickle=False) as data:
+        identity = read_npz_identity(data, path)
+        x_file = data["X"].astype(np.float32)
+        y_vals = data["Y"].astype(np.float32)
+
+    source = get_scenario(identity.scenario)
+    if x_file.ndim != 2 or x_file.shape[1] != source.raw_input_dim:
+        raise ValueError(
+            f"{path}: X has shape {x_file.shape}, but the file says scenario '{source.name}' "
+            f"(raw width {source.raw_input_dim})."
+        )
+    if y_vals.ndim == 1:
+        y_vals = y_vals.reshape(-1, 1)
+    if y_vals.shape != (len(x_file), len(TARGET_NAMES)):
+        raise ValueError(f"{path}: Y has shape {y_vals.shape}, expected ({len(x_file)}, {len(TARGET_NAMES)}).")
+    target = source if scenario is None else scenario
+    x_raw = project_raw_columns(x_file, source, target)
+    # Checked after projection: columns the model scenario drops do not matter.
+    for name, arr in (("X", x_raw), ("Y", y_vals)):
+        n_bad = int((~np.isfinite(arr)).sum())
+        if n_bad:
+            raise ValueError(f"{path}: {name} contains {n_bad} NaN/inf values")
+    return x_raw, y_vals, identity
+
+
+def check_same_identity(paths: Sequence, identities: Sequence[DatasetIdentity]) -> DatasetIdentity:
+    """
+    Raise unless all `identities` are equal (e.g. train/val/test of one run).
+
+    Returns:
+        The common identity.
+    """
+
+    first = identities[0]
+    for path, ident in zip(paths[1:], identities[1:]):
+        if ident != first:
+            raise ValueError(f"{path} has identity {ident}, but {paths[0]} has {first}; "
+                             f"all splits must come from the same generation run.")
+    return first
+
+
+def safe_std(values: np.ndarray, names: Optional[Sequence[str]] = None,
+             what: str = "feature") -> np.ndarray:
+    """
+    Per-column std (shape `(1, D)`) with near-constant columns set to 1.0.
+
+    Args:
+        values: Array of shape `(N, D)`.
+        names: Optional column names, used only for the warning.
+        what: Label used in the warning ("input feature" / "target").
+
+    Returns:
+        Std array of shape `(1, D)`, float32.
+    """
+
+    std = values.std(axis=0, keepdims=True).astype(np.float32)
+    degenerate = std[0] < STD_FLOOR
+    if degenerate.any():
+        idx = np.flatnonzero(degenerate)
+        use_names = names is not None and len(names) == values.shape[1]
+        labels = [names[i] if use_names else str(i) for i in idx]
+        logger.warning(
+            "%d %s(s) are (near-)constant in the normalization source "
+            "(std < %g): %s. Using std=1.0 for them. If these vary in "
+            "val/test or at inference time, the model has never seen that "
+            "variation -- consider dropping them or regenerating data that "
+            "covers it.", len(idx), what, STD_FLOOR, labels,
+        )
+    std = std + 1e-8
+    std[:, degenerate] = 1.0
+    return std
+
+
+def stats_from_arrays(x_vals: np.ndarray, y_vals: np.ndarray, feature_names: Sequence[str]):
+    """
+    Mean/std for encoded X and Y.
+
+    Returns:
+        `(x_mean, x_std, y_mean, y_std)`, each shaped `(1, D)`.
+    """
+
+    if len(x_vals) == 0:
+        raise ValueError(
+            "Cannot compute normalization stats from an empty dataset (0 rows). "
+            "Check that the train split actually received episodes."
+        )
+    x_mean = x_vals.mean(axis=0, keepdims=True).astype(np.float32)
+    x_std = safe_std(x_vals, feature_names, "input feature")
+    y_mean = y_vals.mean(axis=0, keepdims=True).astype(np.float32)
+    y_std = safe_std(y_vals, TARGET_NAMES, "target")
+    return x_mean, x_std, y_mean, y_std
+
+
+def load_encoded(path, scenario: ScenarioSchema, env_encoding: str) -> Tuple[np.ndarray, np.ndarray, DatasetIdentity]:
+    """
+    `load_raw(path, scenario)`, then select/encode X for `scenario` and
+    `env_encoding`.
+
+    Returns:
+        `(x_encoded, y, identity)`.
+    """
+
+    x_raw, y_vals, identity = load_raw(path, scenario)
+    return select_and_encode(x_raw, scenario, env_encoding), y_vals, identity
+
+
+def compute_stats(path, scenario: ScenarioSchema, env_encoding: str):
+    """
+    Per-feature mean/std for encoded X and for Y of a dataset .npz.
+
+    Returns:
+        `(x_mean, x_std, y_mean, y_std)`, each shaped `(1, D)`.
+    """
+
+    x_vals, y_vals, _ = load_encoded(path, scenario, env_encoding)
+    return stats_from_arrays(x_vals, y_vals, encoded_feature_names(scenario, env_encoding))
 
 
 class ShipDynamicsDataset(Dataset):
     """
-    Normalization strategy (Option A):
-      - Inputs X normalized using x_mean/x_std
-      - Targets Y normalized using y_mean/y_std
+    Torch Dataset over one dataset .npz, encoded for one scenario.
 
-    Column selection strategy:
-      Raw "X" arrays are 37-wide, matching
-      sim_fh_dataset_generator.collect_supervised_dataset's column layout
-      (x, y, heading, surge, sway, yaw_rate, UKC, wind_speed, wind_dir,
-      current_speed, current_dir, rudder_action, thrust_action, ray_0..ray_345).
-      `_select_and_encode` is the single source of truth for which raw
-      columns become model inputs, and is used by both `__init__` and
-      `compute_stats` so the two can never see a different feature set.
-
-      - x, y (world position) are dropped: they have ~0 correlation with
-        the one-step dynamics deltas and would just add noise/overfitting
-        risk for a body-frame dynamics model.
-      - heading, wind_dir, current_dir are angles in [-pi, pi] and are
-        sin/cos encoded rather than passed raw, since a raw radian value
-        has a discontinuity at +-pi that an MLP cannot represent (e.g.
-        headings of 3.13 and -3.13 rad are ~0.01 rad apart physically but
-        ~6.28 apart numerically).
-      - All 24 ray proximity features are kept (collision-influenced
-        dynamics are in scope for this model).
+    Attributes:
+        scenario: Scenario the model inputs are built for.
+        env_encoding: Wind/current encoding used for the inputs.
+        identity: Identity of the file (its `scenario` is the SOURCE scenario).
+        feature_names: Encoded feature names, in input order.
+        X, Y: Encoded but unnormalized inputs and targets (numpy).
+        x_mean, x_std, y_mean, y_std: Normalization stats (None if not normalized).
     """
-
-    COL_X = 0
-    COL_Y = 1
-    COL_HEADING = 2
-    COL_SURGE = 3
-    COL_SWAY = 4
-    COL_YAW_RATE = 5
-    COL_UKC = 6
-    COL_WIND_SPEED = 7
-    COL_WIND_DIR = 8
-    COL_CURRENT_SPEED = 9
-    COL_CURRENT_DIR = 10
-    COL_RUDDER = 11
-    COL_THRUST = 12
-    RAY_COLS = list(range(13, 37))  # 24 ray proximity features
-
-    RAW_INPUT_DIM = 37  # width of the raw "X" arrays this class consumes
-
-    # Raw columns selected as model inputs, in order. x/y intentionally
-    # excluded (see class docstring).
-    INPUT_COLS = (
-        [COL_HEADING, COL_SURGE, COL_SWAY, COL_YAW_RATE, COL_UKC,
-         COL_WIND_SPEED, COL_WIND_DIR, COL_CURRENT_SPEED, COL_CURRENT_DIR,
-         COL_RUDDER, COL_THRUST]
-        + RAY_COLS
-    )
-
-    # Subset of INPUT_COLS that are angles in [-pi, pi] and must be
-    # sin/cos encoded instead of passed through raw.
-    ANGLE_COLS = [COL_HEADING, COL_WIND_DIR, COL_CURRENT_DIR]
-
-    @classmethod
-    def select_and_encode(cls, x_raw: np.ndarray) -> np.ndarray:
-        """
-        Select `INPUT_COLS` from a raw 37-wide X block and sin/cos-encode
-        the angular columns.
-
-        This is the ONLY place raw-column selection happens; both
-        `__init__` and `compute_stats` call this so they are guaranteed to
-        agree on the feature set (fixes the previous bug where the two
-        used separately hardcoded, inconsistent slices).
-
-        Args:
-            x_raw: Raw input array, shape `(N, 37)`.
-
-        Returns:
-            Feature array, shape `(N, len(INPUT_COLS) + len(ANGLE_COLS))`:
-            non-angle INPUT_COLS in order, followed by sin(angle) for each
-            ANGLE_COLS entry, followed by cos(angle) for each ANGLE_COLS
-            entry.
-
-        Raises:
-            ValueError: If `x_raw` is not shaped `(N, RAW_INPUT_DIM)`.
-        """
-
-        if x_raw.ndim != 2 or x_raw.shape[1] != cls.RAW_INPUT_DIM:
-            raise ValueError(
-                f"Expected raw X with shape (N, {cls.RAW_INPUT_DIM}), "
-                f"got {x_raw.shape}"
-            )
-
-        selected = x_raw[:, cls.INPUT_COLS]
-        angle_mask = np.isin(cls.INPUT_COLS, cls.ANGLE_COLS)
-
-        non_angle_vals = selected[:, ~angle_mask]
-        angle_vals = selected[:, angle_mask]
-
-        return np.concatenate(
-            [non_angle_vals, np.sin(angle_vals), np.cos(angle_vals)],
-            axis=1,
-        ).astype(np.float32)
 
     def __init__(
         self,
-        path: str,
+        path,
+        scenario: Optional[ScenarioSchema] = None,
+        env_encoding: str = DEFAULT_ENV_ENCODING,
         x_mean: Optional[np.ndarray] = None,
         x_std: Optional[np.ndarray] = None,
         y_mean: Optional[np.ndarray] = None,
@@ -114,110 +234,77 @@ class ShipDynamicsDataset(Dataset):
         normalize: bool = True,
     ):
         """
-        Load a `.npz` dataset (keys "X", "Y") and set up normalization.
+        Load a `.npz` dataset and set up normalization.
 
-        If `normalize` is True and `x_mean` is None, per-feature mean/std
-        are computed from this dataset's own `X`/`Y` (std has `1e-8`
-        added to avoid division by zero); otherwise the given
-        `x_mean`/`x_std`/`y_mean`/`y_std` are used as-is. Note only
-        `x_mean` is checked to decide which path to take - callers should
-        pass all four stats together or none of them.
+        If `normalize` is True and no stats are given, per-feature mean/std
+        are computed from this dataset itself; otherwise the given stats are
+        used as-is. All four stats must be passed together or none.
 
         Args:
-            path: Path to the `.npz` file containing `X` and `Y` arrays.
-            x_mean: Precomputed per-feature input mean; if None (and
-                `normalize` is True), computed from this dataset's `X`.
-            x_std: Precomputed per-feature input std (paired with
-                `x_mean`).
-            y_mean: Precomputed per-feature target mean (paired with
-                `x_mean`).
-            y_std: Precomputed per-feature target std (paired with
-                `x_mean`).
-            normalize: If False, `__getitem__` returns raw `X`/`Y` values
-                and no stats are computed or stored.
+            path: Path to the `.npz` file.
+            scenario: Scenario to encode the inputs for; None = the file's own.
+            env_encoding: "angles" or "body_components" (no effect for
+                scenarios without wind/current).
+            x_mean, x_std, y_mean, y_std: Precomputed normalization stats.
+            normalize: If False, `__getitem__` returns unnormalized values.
 
         Raises:
             FileNotFoundError: If `path` does not exist.
+            ValueError: If only some of the four stats are given, or their
+                widths do not match the data.
         """
 
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Dataset not found: {path}")
 
-        data = np.load(path)
-        self.X = self.select_and_encode(data["X"].astype(np.float32))
-        self.Y = data["Y"].astype(np.float32)
-
+        self.env_encoding = check_env_encoding(env_encoding)
+        x_raw, self.Y, self.identity = load_raw(path, scenario)
+        self.scenario = scenario if scenario is not None else get_scenario(self.identity.scenario)
+        self.X = select_and_encode(x_raw, self.scenario, self.env_encoding)
+        self.feature_names = list(encoded_feature_names(self.scenario, self.env_encoding))
         self.normalize = normalize
 
         if normalize:
-            # Compute stats if not provided
+            given = [s is not None for s in (x_mean, x_std, y_mean, y_std)]
+            if any(given) and not all(given):
+                raise ValueError("Pass all four of x_mean/x_std/y_mean/y_std, or none.")
             if x_mean is None:
-                self.x_mean = self.X.mean(axis=0, keepdims=True)
-                self.x_std = self.X.std(axis=0, keepdims=True) + 1e-8
-                self.y_mean = self.Y.mean(axis=0, keepdims=True)
-                self.y_std = self.Y.std(axis=0, keepdims=True) + 1e-8
-            else:
-                self.x_mean = x_mean
-                self.x_std = x_std
-                self.y_mean = y_mean
-                self.y_std = y_std
+                x_mean, x_std, y_mean, y_std = stats_from_arrays(self.X, self.Y, self.feature_names)
+
+            self.x_mean = np.asarray(x_mean, np.float32).reshape(1, -1)
+            self.x_std = np.asarray(x_std, np.float32).reshape(1, -1)
+            self.y_mean = np.asarray(y_mean, np.float32).reshape(1, -1)
+            self.y_std = np.asarray(y_std, np.float32).reshape(1, -1)
+
+            # Stats from a different feature layout would otherwise broadcast
+            # silently (width 1) or fail with an opaque numpy error.
+            for name, stat, width in (("x_mean", self.x_mean, self.X.shape[1]),
+                                      ("x_std", self.x_std, self.X.shape[1]),
+                                      ("y_mean", self.y_mean, self.Y.shape[1]),
+                                      ("y_std", self.y_std, self.Y.shape[1])):
+                if stat.shape[1] != width:
+                    raise ValueError(
+                        f"{name} has {stat.shape[1]} columns but the data in {path} has "
+                        f"{width}; the stats come from a different feature layout."
+                    )
+
+            x_out = (self.X - self.x_mean) / self.x_std
+            y_out = (self.Y - self.y_mean) / self.y_std
         else:
-            self.x_mean = None
-            self.x_std = None
-            self.y_mean = None
-            self.y_std = None
+            self.x_mean = self.x_std = self.y_mean = self.y_std = None
+            x_out, y_out = self.X, self.Y
+
+        # Normalized once here, so __getitem__ is a plain index.
+        self._x_t = torch.from_numpy(np.ascontiguousarray(x_out, dtype=np.float32))
+        self._y_t = torch.from_numpy(np.ascontiguousarray(y_out, dtype=np.float32))
 
     def __len__(self):
-        """
-        Return the number of samples in the dataset.
-        """
+        """Number of samples."""
 
-        return len(self.X)
+        return len(self._x_t)
 
     def __getitem__(self, idx):
-        """
-        Return the (optionally normalized) sample at `idx`.
+        """`(x, y)` tensors at `idx` (normalized if `self.normalize`)."""
 
-        Args:
-            idx: Sample index into `X`/`Y`.
-
-        Returns:
-            `(x, y)` tensors, normalized using the stored stats if
-            `self.normalize` is True.
-        """
-
-        x = self.X[idx].reshape(-1)
-        y = self.Y[idx].reshape(-1)
-
-        if self.normalize:
-            x = (x - self.x_mean.reshape(-1)) / self.x_std.reshape(-1)
-            y = (y - self.y_mean.reshape(-1)) / self.y_std.reshape(-1)
-
-        return torch.from_numpy(x), torch.from_numpy(y)
-
-    @staticmethod
-    def compute_stats(path: str):
-        """
-        Compute per-feature mean/std for X and Y from a `.npz` dataset.
-
-        Args:
-            path: Path to the `.npz` file containing `X` and `Y` arrays.
-
-        Returns:
-            `(x_mean, x_std, y_mean, y_std)`, each shaped
-            `(1, num_features)`; std has `1e-8` added to avoid division
-            by zero.
-        """
-
-        path = Path(path)
-        data = np.load(path)
-        x_vals = ShipDynamicsDataset.select_and_encode(data["X"].astype(np.float32))
-        y_vals = data["Y"].astype(np.float32)
-
-        x_mean = x_vals.mean(axis=0, keepdims=True)
-        x_std = x_vals.std(axis=0, keepdims=True) + 1e-8
-        y_mean = y_vals.mean(axis=0, keepdims=True)
-        y_std = y_vals.std(axis=0, keepdims=True) + 1e-8
-
-        return x_mean, x_std, y_mean, y_std
+        return self._x_t[idx], self._y_t[idx]

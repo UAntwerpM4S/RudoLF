@@ -14,6 +14,7 @@ matplotlib.rcParams['figure.raise_window'] = False
 
 from shapely import LineString
 from typing import Dict, List, Optional, Tuple
+from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_MAX_DISTANCE, ray_world_angles
 from shapely.geometry import Point, Polygon, MultiPoint, GeometryCollection
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, ShipModel
@@ -58,7 +59,22 @@ DPI = 100
 PERPENDICULAR_LINE_LENGTH = 50.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
+
+# Map cut-off edges per depth-contour file: places where the contour is clipped
+# at the edge of the mapped area while FH has water beyond it (NOT real banks).
+MAP_CUTOFF_LINES: Dict[str, Tuple[Tuple[Tuple[float, float], ...], ...]] = {
+    "env_Sche_250cm_no_scale.csv": (
+        ((-10790.0, 9620.0), (-10770.0, 8760.0)),    # west end of the main channel
+        ((-10810.0, 11880.0), (-10710.0, 12960.0)),  # north-west branch tip
+        ((7992.0, -4640.0), (7992.0, -5320.0)),      # east (upstream) end
+    ),
+}
+CUTOFF_LINE_TOLERANCE = 100.0  # m
 EPSILON = 1e-9  # Small epsilon for numerical stability
+
+# Port/starboard beam rays (ray_features layout), used for UGent bank distances.
+_PORT_BEAM_RAY_IDX = int(np.flatnonzero(RAY_ANGLES_DEG == 270)[0])
+_STARBOARD_BEAM_RAY_IDX = int(np.flatnonzero(RAY_ANGLES_DEG == 90)[0])
 
 
 def calculate_perpendicular_lines(
@@ -154,6 +170,7 @@ class PySimEnv(BaseEnv):
             wind: bool = False,
             current: bool = False,
             ua_surrogate_config: Optional[Dict] = None,
+            ugent_surrogate_config: Optional[Dict] = None,
             enable_bank_collision_check: bool = True,
             enable_ukc_check: bool = True,
             #Reward configuration
@@ -186,7 +203,11 @@ class PySimEnv(BaseEnv):
             ship_model: optional ship model to use.
             wind: enable wind effects.
             current: enable current effects.
-            ua_surrogate_config: optional configuration for the UA surrogate model.
+            ua_surrogate_config: configuration for the UA surrogate model
+                (Model.UANTWERP), e.g. {"preset": "tripoli_confined"}; see
+                fw.dynamics.uantwerp_surrogate and fw.surrogate.presets.
+            ugent_surrogate_config: optional configuration for the UGent surrogate
+                model, e.g. {"ukc_percent": 363}.
             reward_name: name of reward profile (combination of components).
             reward_weights: optional per-component reward weights.
             scenario: FH Simulator scenario name. Retained for record-keeping
@@ -247,6 +268,7 @@ class PySimEnv(BaseEnv):
         self.performed_action = None
         self.previous_action = None
         self._boundary_cache = None
+        self._bank_lines_cache = None
         self.background = None
         self.dynamics = None
         
@@ -279,7 +301,7 @@ class PySimEnv(BaseEnv):
 
         # State and control placeholders
         self.ship = create_ship(self.ship_model)
-        self.phys_sim = self.create_simulator(ua_surrogate_config)
+        self.phys_sim = self.create_simulator(ua_surrogate_config, ugent_surrogate_config)
 
         self._initialize_simulation()
 
@@ -384,7 +406,8 @@ class PySimEnv(BaseEnv):
         self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
 
-    def create_simulator(self, ua_surrogate_config: Optional[Dict]=None):
+    def create_simulator(self, ua_surrogate_config: Optional[Dict]=None,
+                         ugent_surrogate_config: Optional[Dict]=None):
         """
         Create and return a configured ship simulator.
 
@@ -396,6 +419,7 @@ class PySimEnv(BaseEnv):
             ShipSimulator: A fully initialized simulator instance configured
                 with the specified initial state and the current model parameters.
             ua_surrogate_config: Configuration for the UA surrogate model.
+            ugent_surrogate_config: Configuration for the UGent surrogate model.
         """
 
         if self.dynamics_model == Model.FOSSEN:
@@ -403,9 +427,34 @@ class PySimEnv(BaseEnv):
         elif self.dynamics_model == Model.NOMOTO:
             self.dynamics = Nomoto(self.ship.specifications)
         elif self.dynamics_model == Model.UGENT_SURROGATE:
-            self.dynamics = UGentSurrogate(self.ship.specifications)
+            # UGent's coefficients are identified for the Tripoli only.
+            if self.ship_model != ShipModel.TRIPOLI:
+                raise ValueError(
+                    f"Model.UGENT_SURROGATE is identified for ShipModel.TRIPOLI only, "
+                    f"got ship_model={self.ship_model}."
+                )
+            self.dynamics = UGentSurrogate(self.ship.specifications, ugent_surrogate_config)
+            # Bound method, so deepcopy re-binds it to the copied env.
+            self.dynamics.set_bank_distance_provider(self.bank_beam_distances)
         elif self.dynamics_model == Model.UANTWERP:
-            self.dynamics = UAntwerpSurrogate(self.ship.specifications, ua_surrogate_config)
+            # Rays are cast against this environment's own river polygon.
+            self.dynamics = UAntwerpSurrogate(self.ship.specifications, ua_surrogate_config,
+                                              ship_model=self.ship_model, ray_caster=self)
+            # ShipSimulator adds no environmental forces for UAntwerpSurrogate: wind and
+            # current come only from the surrogate itself (UAntwerpSurrogate.get_env).
+            if self.dynamics.scenario.includes_wind_current:
+                if not (self.wind and self.current):
+                    logger.warning(
+                        "wind=%s/current=%s, but the UAntwerp surrogate (preset '%s') always takes "
+                        "wind and current from its lookup CSV: these flags have no effect on it.",
+                        self.wind, self.current, self.dynamics.preset.name,
+                    )
+            elif self.wind or self.current:
+                logger.warning(
+                    "wind=%s/current=%s, but the UAntwerp surrogate (preset '%s') has no wind/current "
+                    "inputs and ShipSimulator adds none for it: this run sails in calm conditions.",
+                    self.wind, self.current, self.dynamics.preset.name,
+                )
         elif self.dynamics_model == Model.FH_TABULAR:
             # Explicit guard so any future code path that bypasses __init__
             # does not silently pass None to FhTabularModel.
@@ -439,6 +488,9 @@ class PySimEnv(BaseEnv):
         """
 
         new_instance = self.__class__.__new__(self.__class__)
+        # Register first, so references back to this env (e.g. the UGent bank
+        # provider) resolve to the copy instead of recursing.
+        memo[id(self)] = new_instance
         if self._fh_sim is not None:
             memo[id(self._fh_sim)] = self._fh_sim
 
@@ -627,6 +679,224 @@ class PySimEnv(BaseEnv):
 
         return np.array(samples, dtype=np.float32)
 
+    def bank_segments(
+            self,
+            edge_tol: float = 0.01,
+            min_cutoff_length: float = 50.0,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Split the river-polygon boundary into real-bank and map cut-off segments.
+
+        Map cut-offs are straight edges where the depth contour is clipped at
+        the map limit; they are not banks. Uses MAP_CUTOFF_LINES when the
+        contour has an entry there; otherwise a cut-off is a run of
+        consecutive segments on one bounding-box side, at least
+        `min_cutoff_length` long (short touches, e.g. a bend crest, are banks).
+        Cut-offs not aligned with the bounding box are not detected.
+
+        Args:
+            edge_tol: Tolerance (m) for lying on a bounding-box side.
+            min_cutoff_length: Minimum run length (m) to count as cut-off.
+
+        Returns:
+            (bank_segments, cutoff_segments): float64 arrays (K, 2, 2).
+        """
+
+        explicit_lines = MAP_CUTOFF_LINES.get(os.path.basename(str(self.depth_contour)))
+        if explicit_lines:
+            return self._bank_segments_from_lines(explicit_lines)
+
+        minx, miny, maxx, maxy = self.polygon_shape.bounds
+        bank_parts, cutoff_parts = [], []
+
+        for ring in [self.polygon_shape.exterior, *self.polygon_shape.interiors]:
+            c = np.asarray(ring.coords, dtype=np.float64)[:, :2]
+            if len(c) < 2:
+                continue
+            segs = np.stack([c[:-1], c[1:]], axis=1)
+            seg_len = np.linalg.norm(segs[:, 1] - segs[:, 0], axis=1)
+            keep = seg_len > 1e-9                      # drop zero-length
+            segs, seg_len = segs[keep], seg_len[keep]
+            if len(segs) == 0:
+                continue
+
+            # Bounding-box side each segment lies on (0 = none, 1..4 = side).
+            x, y = segs[..., 0], segs[..., 1]
+            side = np.zeros(len(segs), dtype=int)
+            for k, (v, ref) in enumerate(((x, minx), (x, maxx), (y, miny), (y, maxy)), start=1):
+                side[(side == 0) & np.all(np.abs(v - ref) <= edge_tol, axis=1)] = k
+
+            # Runs of consecutive same-side segments (may wrap around the ring).
+            is_cutoff = np.zeros(len(segs), dtype=bool)
+            if np.all(side == side[0]) and side[0] != 0:
+                runs = [np.arange(len(segs))]          # whole ring on one side
+            else:
+                start = int(np.flatnonzero(side != np.roll(side, 1))[0]) if np.any(side != np.roll(side, 1)) else 0
+                order = np.roll(np.arange(len(segs)), -start)
+                runs, current = [], [order[0]]
+                for i in order[1:]:
+                    if side[i] == side[current[-1]]:
+                        current.append(i)
+                    else:
+                        runs.append(np.array(current)); current = [i]
+                runs.append(np.array(current))
+            for run in runs:
+                if side[run[0]] != 0 and seg_len[run].sum() >= min_cutoff_length:
+                    is_cutoff[run] = True
+
+            bank_parts.append(segs[~is_cutoff])
+            cutoff_parts.append(segs[is_cutoff])
+
+        def cat(parts):
+            """Concatenate the non-empty (n, 2, 2) segment arrays; an empty (0, 2, 2) array if there are none."""
+            parts = [p for p in parts if len(p)]
+            return np.concatenate(parts) if parts else np.zeros((0, 2, 2))
+
+        return cat(bank_parts), cat(cutoff_parts)
+
+    def _bank_segments_from_lines(
+            self,
+            lines: Tuple[Tuple[Tuple[float, float], ...], ...],
+            tolerance: float = CUTOFF_LINE_TOLERANCE,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        As `bank_segments`, using explicit cut-off lines (MAP_CUTOFF_LINES).
+
+        A segment is a cut-off when its end points and midpoint all lie within
+        `tolerance` of the same line. Warns for a line that matches nothing.
+
+        Args:
+            lines: Cut-off polylines in world coordinates (m).
+            tolerance: Maximum distance (m) to a line.
+
+        Returns:
+            (bank_segments, cutoff_segments): float64 arrays (K, 2, 2).
+        """
+
+        line_geoms = [LineString(np.asarray(line, dtype=np.float64)) for line in lines]
+
+        segments = []
+        for ring in [self.polygon_shape.exterior, *self.polygon_shape.interiors]:
+            c = np.asarray(ring.coords, dtype=np.float64)[:, :2]
+            if len(c) < 2:
+                continue
+            segs = np.stack([c[:-1], c[1:]], axis=1)
+            segs = segs[np.linalg.norm(segs[:, 1] - segs[:, 0], axis=1) > 1e-9]
+            if len(segs):
+                segments.append(segs)
+        if not segments:
+            return np.zeros((0, 2, 2)), np.zeros((0, 2, 2))
+        segs = np.concatenate(segments)
+
+        starts = shapely.points(segs[:, 0])
+        ends = shapely.points(segs[:, 1])
+        mids = shapely.points(segs.mean(axis=1))
+        is_cutoff = np.zeros(len(segs), dtype=bool)
+        for k, line in enumerate(line_geoms):
+            near = ((shapely.distance(line, starts) <= tolerance)
+                    & (shapely.distance(line, ends) <= tolerance)
+                    & (shapely.distance(line, mids) <= tolerance))
+            is_cutoff |= near
+            if not near.any():
+                logger.warning("MAP_CUTOFF_LINES entry %d %s matches no boundary segment within "
+                               "%.0f m; check its coordinates.", k, list(line.coords), tolerance)
+
+        return segs[~is_cutoff], segs[is_cutoff]
+
+    def sample_point_near_bank(
+            self,
+            nbr_samples: int = 1,
+            min_distance: float = 20.0,
+            max_distance: float = 135.0,
+            edge_tol: float = 0.01,
+            min_cutoff_length: float = 50.0,
+            max_tries: Optional[int] = None,
+    ) -> np.ndarray:
+        """
+        Sample points in the river whose distance to the nearest real bank is
+        in [min_distance, max_distance].
+
+        Steps a random distance into the water, perpendicular from a random
+        point on a real bank, and keeps candidates inside the polygon whose
+        exact bank distance is within the band. Points closer than
+        `max_distance` to a map cut-off edge are rejected. Uses `self._rng`.
+
+        Args:
+            nbr_samples: Number of points to return.
+            min_distance, max_distance: Distance band to the nearest real bank (m).
+            edge_tol, min_cutoff_length: Passed to `bank_segments`.
+            max_tries: Candidate budget; default 200 * nbr_samples + 1000.
+
+        Returns:
+            Float32 array (M, 2), M <= nbr_samples (warns when M < nbr_samples).
+
+        Raises:
+            ValueError: If the distance band is invalid.
+        """
+
+        if nbr_samples <= 0:
+            return np.zeros((0, 2), dtype=np.float32)
+        if not (0.0 <= min_distance < max_distance):
+            raise ValueError(
+                f"Need 0 <= min_distance < max_distance, got [{min_distance}, {max_distance}]"
+            )
+
+        bank, cutoff = self.bank_segments(edge_tol, min_cutoff_length)
+        if len(bank) == 0:
+            logger.warning("No real-bank segments found (all boundary segments look like map "
+                           "cut-off edges); no near-bank points sampled.")
+            return np.zeros((0, 2), dtype=np.float32)
+
+        bank_geom = shapely.multilinestrings(bank)
+        cutoff_geom = shapely.multilinestrings(cutoff) if len(cutoff) else None
+
+        a, b = bank[:, 0], bank[:, 1]
+        seg_vec = b - a
+        seg_len = np.linalg.norm(seg_vec, axis=1)
+        unit = seg_vec / seg_len[:, None]
+        normal = np.stack([-unit[:, 1], unit[:, 0]], axis=1)   # left-hand normal
+        seg_prob = seg_len / seg_len.sum()
+
+        rng = self._rng
+        max_tries = int(max_tries) if max_tries is not None else 200 * nbr_samples + 1000
+        samples = []
+        n_found, tries = 0, 0
+
+        while n_found < nbr_samples and tries < max_tries:
+            batch = int(min(max(4 * (nbr_samples - n_found), 64), max_tries - tries))
+            tries += batch
+
+            idx = rng.choice(len(bank), size=batch, p=seg_prob)
+            foot = a[idx] + rng.uniform(0.0, 1.0, size=(batch, 1)) * seg_vec[idx]
+            d = rng.uniform(min_distance, max_distance, size=(batch, 1))
+
+            # Water side is unknown (differs for islands): try left, else right.
+            left = foot + normal[idx] * d
+            right = foot - normal[idx] * d
+            left_in = shapely.contains_xy(self.polygon_shape, left[:, 0], left[:, 1])
+            cand = np.where(left_in[:, None], left, right)
+            inside = shapely.contains_xy(self.polygon_shape, cand[:, 0], cand[:, 1])
+            cand = cand[inside]
+            if len(cand) == 0:
+                continue
+
+            pts = shapely.points(cand)
+            d_bank = shapely.distance(bank_geom, pts)
+            ok = (d_bank >= min_distance) & (d_bank <= max_distance)
+            if cutoff_geom is not None:
+                ok &= shapely.distance(cutoff_geom, pts) >= max_distance
+
+            for p in cand[ok][: nbr_samples - n_found]:
+                samples.append(p)
+            n_found = len(samples)
+
+        if n_found < nbr_samples:
+            logger.warning("Only generated %d near-bank points out of requested %d "
+                           "(band [%.1f, %.1f] m may not fit the polygon, or max_tries reached).",
+                           n_found, nbr_samples, min_distance, max_distance)
+
+        return np.asarray(samples, dtype=np.float32).reshape(-1, 2)
+
     def get_keel_clearance(self, pos: Optional[np.ndarray] = None) -> float:
         """
         Get keel clearance.
@@ -647,7 +917,7 @@ class PySimEnv(BaseEnv):
         if self._fh_sim is not None:
             # noinspection PyUnresolvedReferences
             return self._fh_sim.ship_interface.getKeelClearance()
-        elif isinstance(self.dynamics, UAntwerpSurrogate):
+        elif isinstance(self.dynamics, (UAntwerpSurrogate, UGentSurrogate)):
             return self.dynamics.get_ukc(pos)
         else:
             return 0.0
@@ -730,7 +1000,7 @@ class PySimEnv(BaseEnv):
 
         Args:
             origin:       (x, y) start point shared by all rays (world frame).
-            end_points:   Float array of shape (N, 2) — one end-point per ray.
+            end_points:   Float array of shape (N, 2), one end-point per ray.
                           Each row should be at least *max_distance* metres from
                           *origin* to cover the full sensor range.
             max_distance: Cut-off range in metres.
@@ -788,6 +1058,43 @@ class PySimEnv(BaseEnv):
 
         distances = np.minimum(dists, max_distance).astype(np.float32)
         return distances
+
+    def bank_beam_distances(self, state: Optional[VesselState] = None) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Distances [m] to the port and starboard bank, along the beam rays.
+
+        Only real banks count (map cut-off edges are ignored). Used as the
+        UGent surrogate's bank-distance provider, i.e. at every sub-step.
+
+        Args:
+            state: Vessel state to cast from; defaults to the env's own state.
+
+        Returns:
+            (dist_port, dist_starboard); None if no bank within RAY_MAX_DISTANCE.
+        """
+
+        if self._bank_lines_cache is None:
+            bank_segs, _ = self.bank_segments()
+            lines = shapely.linestrings(bank_segs) if len(bank_segs) else np.empty(0, dtype=object)
+            self._bank_lines_cache = (lines, shapely.STRtree(lines))
+        lines, tree = self._bank_lines_cache
+
+        if state is None:
+            state = self.phys_sim.state
+        origin = np.array([state.x, state.y], dtype=np.float64)
+        angles = ray_world_angles(state.heading)[[_PORT_BEAM_RAY_IDX, _STARBOARD_BEAM_RAY_IDX]]
+        ends = origin + RAY_MAX_DISTANCE * np.stack([np.cos(angles), np.sin(angles)], axis=1)
+        rays = shapely.linestrings(np.stack([np.tile(origin, (2, 1)), ends], axis=1))
+
+        # Nearest hit per ray, among the segments the index returns.
+        ray_idx, seg_idx = tree.query(rays, predicate="intersects")
+        nearest: List[Optional[float]] = [None, None]
+        if len(ray_idx):
+            dists = shapely.distance(Point(origin), shapely.intersection(lines[seg_idx], rays[ray_idx]))
+            for i, d in zip(ray_idx, dists):
+                if not np.isnan(d) and (nearest[i] is None or d < nearest[i]):
+                    nearest[i] = float(d)
+        return nearest[0], nearest[1]
 
     def _has_enough_keel_clearance(self, depth_threshold: float = 0.5) -> bool:
         """
@@ -888,18 +1195,23 @@ class PySimEnv(BaseEnv):
         start_index = int(np.argmin(start_distances))
 
         if target_pos is None:
-            # Slice the path from following point to the end (forward, as before)
-            reduced_path = path[start_index+1:]
+            if start_index < len(path) - 1:
+                # Slice the path from following point to the end (forward, as before)
+                return path[start_index + 1:]
 
-            if len(reduced_path) == 0:
+            # start_pos is at (or beyond) the trajectory's last point: nothing
+            # lies ahead, so walk the trajectory backwards to its first point.
+            if len(path) < 2:
                 raise ValueError(
-                    f"_reduce_path produced an empty path. The start position "
-                    f"{np.asarray(start_pos).tolist()} is at or beyond the last point in the trajectory "
-                    f"(closest index {start_index} of {len(path) - 1}). "
-                    f"Check that start_pos lies near the beginning of the trajectory."
+                    f"_reduce_path: the trajectory has only one point, so no path "
+                    f"can be built from start_pos {np.asarray(start_pos).tolist()}."
                 )
-
-            return reduced_path
+            logger.info(
+                "_reduce_path: start_pos %s is closest to the trajectory's last point "
+                "(index %d); walking the trajectory backwards to its first point.",
+                np.asarray(start_pos).tolist(), start_index,
+            )
+            return path[:start_index][::-1].copy()
 
         target_pos = np.asarray(target_pos)
 
@@ -1230,7 +1542,9 @@ class PySimEnv(BaseEnv):
 
         track_vec = current_chkp_pos - prev_chkp_pos
         ship_vec = self.ship_pos - prev_chkp_pos
-        norm_cross_error *= 1.0 if np.cross(track_vec, ship_vec) >= 0.0 else -1.0
+        # 2-D cross product written out (np.cross on 2-D vectors is deprecated since NumPy 2.0).
+        cross_z = track_vec[0] * ship_vec[1] - track_vec[1] * ship_vec[0]
+        norm_cross_error *= 1.0 if cross_z >= 0.0 else -1.0
 
         # --- Heading errors ---
 
@@ -1472,8 +1786,8 @@ class PySimEnv(BaseEnv):
     @staticmethod
     def _segments_intersect(prev_point: np.ndarray, curr_point: np.ndarray, line_start: np.ndarray, line_end: np.ndarray) -> bool:
         """
-        Return True if segment prev — curr intersects the infinite line through
-        line_seg_start — line_seg_end.
+        Return True if segment prev - curr intersects the infinite line through
+        line_seg_start - line_seg_end.
         """
 
         def _orientation(a, b, c):

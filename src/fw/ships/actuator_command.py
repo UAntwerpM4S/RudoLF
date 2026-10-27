@@ -19,8 +19,8 @@ class ActuatorCommand:
     """
     Rudder deflection angle in radians.
 
-    Positive values correspond to a deflection to starboard, following
-    the body-fixed coordinate convention.
+    Positive = the ship turns to PORT (framework convention, see
+    fw.dynamics.dynamics_model.DynamicsBase and CONVENTIONS.md).
     """
 
     thrust: float         # normalized [-]

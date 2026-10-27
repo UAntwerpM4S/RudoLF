@@ -2,6 +2,7 @@ import copy
 import logging
 import numpy as np
 
+from fw.dynamics.fh_tabular_model import fh_rudder_sign
 from fw.ships.ship_factory import ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.ships.actuator_state import ActuatorState
@@ -19,9 +20,11 @@ class FhSimWrapper(BaseSimulator):
     framework and the FH Simulator black box:
 
     Rudder sign convention:
-        Framework:  -1 = turn right (starboard),  +1 = turn left (port)
-        FH Sim:     -1 = turn left (port),        +1 = turn right (starboard)
-        -> rudder command is negated before being sent to the FH engine.
+        Framework (every ship): +1 = turn to port, -1 = turn to starboard.
+        FH azipod (Tripoli), setDesiredDirection(+deg): turns to port      -> sent as is.
+        FH rudder (Myzako),  setControlValue(+):        turns to starboard -> negated.
+        Both via fh_rudder_sign() (fw.dynamics.fh_tabular_model), measured
+        with check_rudder_sign.py.
 
     Rudder angle units:
         The framework stores max_rudder_angle in radians; getMaximumAngle()
@@ -38,8 +41,8 @@ class FhSimWrapper(BaseSimulator):
         body-fixed frame despite its name.
 
     Sway sign:
-        The FH engine returns y-velocity with positive = port (opposite to the
-        body-fixed convention where positive = starboard), so vy is negated.
+        The FH engine returns y-velocity with positive = port, which is also the
+        framework convention (fw.ships.vessel_state), so vy is used as is.
     """
 
     def __init__(self, specs: ShipSpecifications, fh_engine, dt: float):
@@ -118,7 +121,9 @@ class FhSimWrapper(BaseSimulator):
                 training) and the FH engine's own rudder limit (from
                 getMaximumAngle()). If False, the framework angle is used
                 directly as the FH engine target, which is correct when both
-                simulators share the same rudder limit.
+                simulators share the same rudder limit. Myzako (rudder) only:
+                for the Tripoli the azipod direction is always the policy
+                output times the framework maximum (as FhTabularModel).
 
         Note on actuator model:
             apply_smoothing() (EMA only) is used rather than ActuatorModel.step()
@@ -134,10 +139,15 @@ class FhSimWrapper(BaseSimulator):
                   (self._specs.max_thrust - self._specs.min_thrust))
         actuator = ActuatorState(action[0], thrust)
 
+        sign = fh_rudder_sign(self._engine.ship_model)   # framework -> FH command sign
+
         if self._engine.ship_model == ShipModel.TRIPOLI:
+            # The policy output in [-1, 1] spans the ship's own rudder limit
+            # (ShipSpecifications.max_rudder_angle, 35 deg for the Tripoli), the
+            # same physical angle FhTabularModel sends to the azipods.
+            framework_max_deg = np.rad2deg(self._specs.max_rudder_angle)
             for rudder in self._engine.ship_interface.getAzipodControls():
-                fh_max_deg = 90.0       # [deg] - FH engine limit
-                rudder.setDesiredDirection(float(-actuator.rudder_angle*fh_max_deg))
+                rudder.setDesiredDirection(float(sign * actuator.rudder_angle * framework_max_deg))
                 rudder.setEngineLeverValue(float(actuator.thrust))
         else:
             # Step 2a: rudder
@@ -154,7 +164,7 @@ class FhSimWrapper(BaseSimulator):
                 else:
                     # No rescaling: treat the policy output as already in the FH range.
                     val = actuator.rudder_angle
-                rudder.setControlValue(float(-val))         # negated: framework -> FH sign flip
+                rudder.setControlValue(float(sign * val))   # Myzako: sign = -1
 
             # Step 2b: propeller
             for propeller in self._engine.ship_interface.getPropellerControls():
@@ -181,6 +191,6 @@ class FhSimWrapper(BaseSimulator):
             y=new_ship_pos.y,
             heading=(heading_rad + np.pi) % (2.0 * np.pi) - np.pi,
             u=velocity_over_ground.x,
-            v=-velocity_over_ground.y,
+            v=velocity_over_ground.y,   # port positive, as the framework
             r=yaw_rate,
         )

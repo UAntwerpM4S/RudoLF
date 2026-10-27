@@ -14,8 +14,7 @@ Usage
     python plot_val_vs_simulator.py
 
 Paths (edit the constants below if needed):
-    VAL_NPZ   – validation split produced by the dataset generator
-    CSV_PATH  – full raw CSV from the FH simulator (all splits combined)
+    VAL_NPZ   – validation split produced by generate_ship_data.py
     CKPT_PATH – trained surrogate checkpoint
 """
 
@@ -31,7 +30,6 @@ from pathlib import Path
 # Paths – adjust as needed
 # ──────────────────────────────────────────────────────────────────────────────
 VAL_NPZ   = Path("data/ship_dynamics_dataset_val.npz")
-CSV_PATH  = Path("data/ship_dynamics_dataset.csv")
 CKPT_PATH = Path("checkpoints/best_surrogate.pth")
 OUT_PNG   = Path("val_vs_simulator.png")
 
@@ -43,30 +41,34 @@ OUTPUT_UNITS  = ["m/s",        "m/s",         "rad/s"]
 OUTPUT_KEYS   = ["delta_surge","delta_sway",  "delta_yaw_rate"]
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1.  Load validation split (X used for inference, Y_sim = ground truth)
+# 1.  Load surrogate (its checkpoint says which scenario it expects)
+# ──────────────────────────────────────────────────────────────────────────────
+from fw.surrogate.inference_surrogate import SurrogatePredictor   # noqa: E402
+from fw.surrogate.dataset import load_raw                         # noqa: E402
+
+predictor = SurrogatePredictor(str(CKPT_PATH))
+print(f"Surrogate: scenario={predictor.scenario.name}, env_encoding={predictor.env_encoding}, "
+      f"ship_model={predictor.ship_model}")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 2.  Load validation split (X used for inference, Y_sim = ground truth) and
+#     run inference
 # ──────────────────────────────────────────────────────────────────────────────
 print("Loading validation split …")
-val       = np.load(VAL_NPZ)
-# Pass RAW columns straight through — SurrogatePredictor.predict() now
-# applies ShipDynamicsDataset._select_and_encode() internally (column
-# selection + sin/cos angle encoding), the same function used at training
-# time. This used to hardcode its own `[:, 2:]` slice here, independently
-# of dataset.py's logic and already stale by the time it was found —
-# never hand-duplicate this selection again; let SurrogatePredictor do it.
-X_val     = val["X"].astype(np.float32)          # (N, 37) raw input columns
-Y_sim     = val["Y"]          # (N, 3)  – raw simulator deltas (ground truth)
+# RAW rows in the checkpoint scenario's layout (projected from the file's own
+# scenario when allowed, e.g. open_water from confined_ukc data); load_raw
+# checks the file's identity. SurrogatePredictor.predict() selects and
+# encodes the columns itself -- never hand-slice X here.
+X_val, Y_sim, val_identity = load_raw(VAL_NPZ, predictor.scenario)
+_mismatch = predictor.data_mismatch(val_identity)
+if _mismatch:
+    raise SystemExit(f"{VAL_NPZ}: {_mismatch}.")
 
 N = X_val.shape[0]
 print(f"  {N:,} validation samples")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 2.  Load surrogate and run inference
-# ──────────────────────────────────────────────────────────────────────────────
 print("Running surrogate inference …")
-from fw.surrogate.inference_surrogate import SurrogatePredictor   # noqa: E402
-
-predictor = SurrogatePredictor(str(CKPT_PATH))
-Y_pred    = predictor.predict(X_val)   # batched — avoids one Python-level
+Y_pred    = predictor.predict(X_val)   # batched, avoids one Python-level
                                         # model call per row on what can be
                                         # a 100k+ row validation split
 print(f"  Predictions shape: {Y_pred.shape}")
@@ -158,7 +160,7 @@ COLOR_PRED = "#DC2626"   # red
 COLOR_RESID= "#059669"   # green
 
 fig = plt.figure(figsize=(16, 13))
-fig.suptitle("Surrogate vs FH Simulator — Validation Set", fontsize=13, fontweight="bold", y=0.98)
+fig.suptitle("Surrogate vs FH Simulator - Validation Set", fontsize=13, fontweight="bold", y=0.98)
 
 outer = gridspec.GridSpec(3, 1, figure=fig, hspace=0.48)
 
@@ -201,7 +203,7 @@ for row, i in enumerate(range(3)):
                  linestyle="-", label=f"Mean={resid.mean():.3g}")
     ax_h.set_xlabel(f"Residual (pred − sim)  [{unit}]")
     ax_h.set_ylabel("Count")
-    ax_h.set_title(f"{name} — Residuals\n"
+    ax_h.set_title(f"{name} - Residuals\n"
                    f"μ={resid.mean():.3g}  σ={resid.std():.3g}")
     ax_h.legend(fontsize=7)
     ax_h.grid(True, linewidth=0.4, alpha=0.5)
@@ -218,10 +220,10 @@ for row, i in enumerate(range(3)):
               alpha=0.65, linestyle="--", label="Surrogate prediction")
     ax_s.set_xlabel("Sample index (sorted by simulator value)")
     ax_s.set_ylabel(f"Value  [{unit}]")
-    ax_s.set_title(f"{name} — Sorted overlay\n(random {N_SORTED:,} samples)")
+    ax_s.set_title(f"{name} - Sorted overlay\n(random {N_SORTED:,} samples)")
     ax_s.legend(fontsize=7)
     ax_s.grid(True, linewidth=0.4, alpha=0.5)
 
 plt.savefig(OUT_PNG, bbox_inches="tight", dpi=150)
-print(f"\nPlot saved → {OUT_PNG}")
+print(f"\nPlot saved -> {OUT_PNG}")
 plt.show()

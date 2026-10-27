@@ -62,7 +62,7 @@ class FhSimEnv(PySimEnv):
 
         Raises:
             RuntimeError: If the fh_sim_bridge module cannot be imported. FhSimEnv
-                requires the FH Simulator to be installed — use PySimEnv for
+                requires the FH Simulator to be installed. Use PySimEnv for
                 pure-Python simulation without external dependencies.
         """
 

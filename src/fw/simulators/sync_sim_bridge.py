@@ -32,7 +32,7 @@ def _load_sync_app():
     global _SyncApp
     if _SyncApp is not None:
         return
-    import clr  # pythonnet — only needed at connect time
+    import clr  # pythonnet: only needed at connect time
     clr.AddReference(_MANAGED_SIM_SYNC_DLL)
     from Managed.SimSync import SyncApp  # noqa: PLC0415
     _SyncApp = SyncApp
@@ -44,7 +44,7 @@ class _SyncMathModelProxy:
 
     simulateSeconds(dt) blocks until `dt` seconds of *simulation time* have
     elapsed by accumulating state-update events. The controls written by the
-    previous step() remain in effect throughout the interval — same semantics
+    previous step() remain in effect throughout the interval. Same semantics
     as fasttime, just running at 1x wall-clock.
 
     At 40 Hz sim tick rate with dt=2.0 s, simulateSeconds blocks for ~80
@@ -226,7 +226,7 @@ class SimSyncBridge:
             value: Initial vessel state object.
         """
 
-        # Stored for API parity but ignored in realtime — the running sim
+        # Stored for API parity but ignored in realtime. The running sim
         # already has a vessel state.
         self._initial_vessel_state = value
         if value is not None:
@@ -367,7 +367,7 @@ class SimSyncBridge:
         with self._state_lock:
             if self._latest_state is None:
                 raise RuntimeError(
-                    "No state received yet. Call reset() first — it blocks "
+                    "No state received yet. Call reset() first. It blocks "
                     "until the first state arrives."
                 )
             return self._latest_state

@@ -290,7 +290,7 @@ class MultiPPOAgent(BasePPOAgent):
             }
 
             # Fallback: if env_id tags are absent (e.g. running old base code),
-            # reconstruct by position — same behavior as before.
+            # reconstruct by position, same behavior as before.
             if not episode_by_env:
                 episode_by_env = {i: ep for i, ep in enumerate(batch_data)}
 
@@ -302,7 +302,7 @@ class MultiPPOAgent(BasePPOAgent):
                 episode = episode_by_env.get(agent_id)
 
                 if episode is None:
-                    logger.warning("[Warning] Iteration %d: no trajectory for agent %s — skipping update.", iteration, agent_id)
+                    logger.warning("[Warning] Iteration %d: no trajectory for agent %s - skipping update.", iteration, agent_id)
                     mean_rewards.append(float('nan'))
                     mean_losses.append(float('nan'))
                     training_metrics[f"agent{agent_id}"].append({
@@ -343,7 +343,7 @@ class MultiPPOAgent(BasePPOAgent):
             if iteration > 0 and iteration % self.eval_frequency == 0:
                 self.save_policy(f"ppo_checkpoint_{iteration}")
 
-            # Aggregate metrics for stopping condition — ignore NaN entries
+            # Aggregate metrics for stopping condition; ignore NaN entries
             valid_rewards = [r for r in mean_rewards if not np.isnan(r)]
             valid_losses = [l for l in mean_losses if not np.isnan(l)]
 
@@ -442,7 +442,7 @@ class MultiPPOAgent(BasePPOAgent):
                     # if "optimizer_state_dict" in saved_variables:
                     #     try:
                     #         agent.optimizer.load_state_dict(saved_variables["optimizer_state_dict"])
-                    #     except Exception as opt_exc:  # shape mismatch on arch change — not fatal
+                    #     except Exception as opt_exc:  # shape mismatch on arch change, not fatal
                     #         print("Could not restore optimizer state for agent %d: %s", i, opt_exc)
 
                 # Verify all agents loaded

@@ -318,7 +318,7 @@ def _run_training_with_transfer(
     Create a SinglePPOAgent directly, inject a transfer policy, and run learn().
 
     Bypasses Trainer/Scheduler so the policy can be replaced before training
-    starts — the Trainer creates the agent inside train() which is too late for
+    starts. The Trainer creates the agent inside train() which is too late for
     weight injection.  This path is AirSim-only and has no effect on 2D envs.
     """
 
@@ -343,7 +343,7 @@ def _run_training_with_transfer(
     act_dim = int(env.gym_env.action_space.shape[0])
     freeze = get_validated_bool(tl_cfg, "freeze_shared_layers", True)
     print("\n" + "=" * 60)
-    print("  TRANSFER LEARNING — loading 2D policy weights")
+    print("  TRANSFER LEARNING - loading 2D policy weights")
     print("=" * 60)
     print(f"  Source : {source_path}")
     print(f"  Target : AirSimEnv  obs={obs_dim}  act={act_dim}  device={agent.device}")
@@ -366,7 +366,7 @@ def _run_training_with_transfer(
     except (TransferIncompatibilityError, RuntimeError) as exc:
         print(
             f"\n{'!'*60}\n"
-            f"[TransferLearning] FAILED — falling back to random-weight training.\n"
+            f"[TransferLearning] FAILED - falling back to random-weight training.\n"
             f"  Reason: {exc}\n"
             f"  Check that source_policy_path exists and action dims match.\n"
             f"{'!'*60}\n"

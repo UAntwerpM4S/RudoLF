@@ -138,7 +138,7 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
         reward = sub["reward"]
 
         if reward.isna().all():
-            print(f"[skip] '{policy}' — all reward values are NaN")
+            print(f"[skip] '{policy}' - all reward values are NaN")
             continue
 
         color = POLICY_COLORS.get(policy, FALLBACK_CYCLE[idx % len(FALLBACK_CYCLE)])

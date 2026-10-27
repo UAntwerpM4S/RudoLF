@@ -75,17 +75,21 @@ def is_ship_heading_correct(checkpoint, state):
         Find the intersection of two line segments if it exists.
         """
 
+        def _cross(a, b):
+            """z-component of the 2-D cross product (np.cross on 2-D vectors is deprecated since NumPy 2.0)."""
+            return a[0] * b[1] - a[1] * b[0]
+
         r = p2 - p1
         s = q2 - q1
 
-        r_cross_s = np.cross(r, s)
+        r_cross_s = _cross(r, s)
         q_minus_p = q1 - p1
 
         if r_cross_s == 0:
             return None  # Lines are parallel and non-intersecting
 
-        t = np.cross(q_minus_p, s) / r_cross_s
-        u = np.cross(q_minus_p, r) / r_cross_s
+        t = _cross(q_minus_p, s) / r_cross_s
+        u = _cross(q_minus_p, r) / r_cross_s
 
         if 0 <= t <= 1 and 0 <= u <= 1:
             return p1 + t * r

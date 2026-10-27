@@ -124,7 +124,7 @@ class ShipEpisodeData:
 
 
 # Type alias for the full data structure:
-#   ship_data["ship_0"][episode_index] → ShipEpisodeData
+#   ship_data["ship_0"][episode_index] -> ShipEpisodeData
 ShipData = dict[str, list[ShipEpisodeData]]
 
 

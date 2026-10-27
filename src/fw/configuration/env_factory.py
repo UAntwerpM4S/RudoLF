@@ -324,6 +324,7 @@ class PySimEnvironment(BaseEnvironment):
                             wind=self.configuration["wind"],
                             current=self.configuration["current"],
                             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
+                            ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
                             reward_name=self.configuration.get("reward_name", "default"),
                             reward_weights=self.configuration.get("reward_weights", None))
 
@@ -373,6 +374,8 @@ class MultiPySimEnvironment(BaseEnvironment):
                              enable_ukc_check=self.configuration["enable_ukc_check"],
                              wind=self.configuration["wind"],
                              current=self.configuration["current"],
+                             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
+                             ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
@@ -386,6 +389,8 @@ class MultiPySimEnvironment(BaseEnvironment):
                              enable_ukc_check=self.configuration["enable_ukc_check"],
                              wind=self.configuration["wind"],
                              current=self.configuration["current"],
+                             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
+                             ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
@@ -407,7 +412,7 @@ class PySimColavEnvironment(BaseEnvironment):
             name: Registered environment name.
             configuration: Scoped configuration dict (see `build_colav_config`).
                 Expected keys: wind, current, ship_model, dynamics_model,
-                enable_obstacles.
+                enable_obstacles, ugent_surrogate_config.
         """
         super().__init__(name, configuration)
 
@@ -433,6 +438,7 @@ class PySimColavEnvironment(BaseEnvironment):
             ship_model=self.configuration["ship_model"],
             wind=self.configuration["wind"],
             current=self.configuration["current"],
+            ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
             enable_obstacles=self.configuration.get("enable_obstacles", True),
         )
 
@@ -455,7 +461,8 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             name: Registered environment name.
             configuration: Scoped configuration dict (see
                 `build_multi_policy_colav_config`). Expected keys: wind,
-                current, ship_model, dynamics_model, enable_obstacles.
+                current, ship_model, dynamics_model, enable_obstacles,
+                ugent_surrogate_config.
                 eval/eval_scenario/eval_obstacle_count/
                 include_scenario_one_hot/minimal_path_render remain
                 hardcoded below pending a future rework.
@@ -484,6 +491,7 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             ship_model=self.configuration["ship_model"],
             wind=self.configuration["wind"],
             current=self.configuration["current"],
+            ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
             enable_obstacles=self.configuration.get("enable_obstacles", True),
             evaluate=False,
             eval_scenario="crossing-right",
@@ -548,6 +556,7 @@ class FhSimEnvironment(BaseEnvironment):
                             wind=self.configuration["wind"],
                             current=self.configuration["current"],
                             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
+                            ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
                             reward_name=self.configuration.get("reward_name", "default"),
                             reward_weights=self.configuration.get("reward_weights", None),
                             fh_bridge=fh_bridge)
@@ -560,7 +569,7 @@ class FhSimSyncEnvironment(BaseEnvironment):
     Connects to a running simSync instance over UDP instead of initializing
     a local FH math model. Same framework-facing shape as FhSimEnvironment:
     the framework gets the same env interface, the same observation/reward
-    pipeline, the same agent loop — only the underlying simulator changes.
+    pipeline, the same agent loop; only the underlying simulator changes.
     """
 
     ENVIRONMENT_NAME = "FhSimSyncEnv"
@@ -618,6 +627,7 @@ class FhSimSyncEnvironment(BaseEnvironment):
             wind=self.configuration["wind"],
             current=self.configuration["current"],
             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
+            ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
             reward_name=self.configuration.get("reward_name", "default"),
             reward_weights=self.configuration.get("reward_weights", None),
             fh_bridge=fh_bridge,
@@ -821,6 +831,7 @@ def build_pysim_config(framework_config: dict, extra: dict | None = None) -> dic
         "enable_bank_collision_check":  get_validated_bool(framework_config, "enable_bank_collision_check", True),
         "enable_ukc_check":             get_validated_bool(framework_config, "enable_ukc_check", True),
         "ua_surrogate_config":          framework_config["ua_surrogate_config"],
+        "ugent_surrogate_config":       framework_config.get("ugent_surrogate_config", {}),
         "reward_weights":               framework_config.get("reward_weights", None),
         "reward_name":                  framework_config.get("reward_name", "default"),
     }
@@ -852,6 +863,7 @@ def build_colav_config(framework_config: dict, extra: dict | None = None) -> dic
         "depth_contour":       framework_config["depth_contour"],
         "trajectory":          framework_config["trajectory"],
         "enable_obstacles":    framework_config.get("enable_obstacles", True),
+        "ugent_surrogate_config": framework_config.get("ugent_surrogate_config", {}),
     }
     if extra:
         cfg.update(extra)
@@ -903,6 +915,7 @@ def build_fhsim_config(framework_config: dict) -> dict:
         "wind":                         framework_config["wind"],
         "current":                      framework_config["current"],
         "ua_surrogate_config":          framework_config["ua_surrogate_config"],
+        "ugent_surrogate_config":       framework_config.get("ugent_surrogate_config", {}),
         "reward_weights":               framework_config.get("reward_weights", None),
         "reward_name":                  framework_config.get("reward_name", "default"),
     }
@@ -918,7 +931,7 @@ def build_fhsimsync_config(framework_config: dict) -> dict:
     Returns:
         A dict containing the required keys consumed by FhSimSyncEnvironment
         (ship_model, scenario) plus wind/current/reward/UA-surrogate keys
-        (same as build_pysim_config) and any optional UDP connection
+        (same as build_pysim_config, including ugent_surrogate_config) and any optional UDP connection
         overrides (remote_ip, remote_port, local_ip, local_port,
         connect_timeout, step_timeout_per_tick) when present in the
         framework config.
@@ -938,6 +951,7 @@ def build_fhsimsync_config(framework_config: dict) -> dict:
         "enable_bank_collision_check":  get_validated_bool(framework_config, "enable_bank_collision_check", True),
         "enable_ukc_check":             get_validated_bool(framework_config, "enable_ukc_check", True),
         "ua_surrogate_config":          framework_config["ua_surrogate_config"],
+        "ugent_surrogate_config":       framework_config.get("ugent_surrogate_config", {}),
         "reward_weights":               framework_config.get("reward_weights", None),
         "reward_name":                  framework_config.get("reward_name", "default"),
     }
@@ -1000,7 +1014,7 @@ def _pick_airsim_fallback(configuration) -> str:
     if configuration and isinstance(configuration, dict):
         config = configuration
     else:
-        from fw.configuration.config import get_config_parameters  # local import — last resort only
+        from fw.configuration.config import get_config_parameters  # local import, last resort only
         config = get_config_parameters()
 
     env_types = config.get("env_type", [])

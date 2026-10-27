@@ -1,8 +1,8 @@
 """
 Runtime settings validation, merge behavior, and config error messages.
 
-Covers R8 (configuration drift — defaults and merge contract) and
-R10 (actionable error messages — field names in validation output).
+Covers R8 (configuration drift: defaults and merge contract) and
+R10 (actionable error messages, field names in validation output).
 """
 
 import pytest
@@ -16,7 +16,7 @@ from airsim.config.airsim_config import (
 
 class TestDefaultRuntimeSettingsKeys:
     """
-    R8 — built-in defaults must expose all expected top-level sections and keys.
+    R8 - built-in defaults must expose all expected top-level sections and keys.
     """
 
     def test_visualization_section_contains_mode_flags(self):
@@ -83,7 +83,7 @@ class TestDefaultRuntimeSettingsKeys:
 
 class TestMergeRuntimeSettings:
     """
-    R8 — merge_runtime_settings must preserve defaults on partial or unknown overrides.
+    R8 - merge_runtime_settings must preserve defaults on partial or unknown overrides.
     """
 
     def test_unknown_top_level_section_does_not_crash_merge(self):
@@ -138,7 +138,7 @@ class TestMergeRuntimeSettings:
 
 class TestAirSimConfigErrorMessages:
     """
-    R10 — AirSimConfig validation must produce field-naming, actionable error messages.
+    R10 - AirSimConfig validation must produce field-naming, actionable error messages.
     """
 
     def test_invalid_port_message_names_the_port_field(self):

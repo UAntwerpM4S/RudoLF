@@ -158,7 +158,7 @@ class MultiSimEnv(BaseEnv):
         Agent states are updated AFTER all sub-environments have stepped.
         This implements synchronous (simultaneous) execution: every ship acts
         on the world state from the end of the previous timestep. This is
-        intentional — it avoids ordering bias between agents and matches the
+        intentional. It avoids ordering bias between agents and matches the
         standard multi-agent RL assumption.
 
         Args:

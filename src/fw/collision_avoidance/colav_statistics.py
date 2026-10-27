@@ -27,9 +27,9 @@ def plot_min_distance_stats(
     Plot encounter-level min-distance statistics.
 
     Generates two images:
-      * `pdf_save_path` — histogram + KDE of min center-to-center distance
+      * `pdf_save_path`: histogram + KDE of min center-to-center distance
         aggregated across all non-collision encounters (no per-policy split).
-      * `boxplot_save_path` — per-policy/scenario boxplots of the same
+      * `boxplot_save_path`: per-policy/scenario boxplots of the same
         min-distance values, bucketed by the encounter's ground-truth label.
 
     When `include_banks` is True, the per-encounter distance is the minimum
@@ -337,7 +337,7 @@ def plot_scenario_confusion_matrix(
     ax.set_xlabel("Geometric prediction (at encounter entry)")
     ax.set_ylabel("Ground truth (builder scenario)")
     ax.set_title(
-        f"Scenario confusion matrix — {total} encounters, "
+        f"Scenario confusion matrix - {total} encounters, "
         f"accuracy {accuracy:.1f}% ({correct}/{total})"
     )
 

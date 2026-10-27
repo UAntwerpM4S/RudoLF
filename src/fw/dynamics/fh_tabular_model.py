@@ -7,6 +7,42 @@ from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 
 
+def fh_rudder_sign(ship_model: ShipModel) -> float:
+    """
+    Factor from the framework's rudder sign to FH's command sign.
+
+    Framework convention (every ship, every dynamics model): a positive rudder
+    command turns the ship to PORT. FH, measured with check_rudder_sign.py
+    (2026-10-19):
+      - azipod (Tripoli), setDesiredDirection(+deg): the ship turns to port  -> +1
+      - classic rudder (Myzako), setControlValue(+):  the ship turns to starboard -> -1
+    Used by FhTabularModel, FhSimWrapper, FhSession and the Myzako dataset
+    generators, so the conversion lives in one place.
+
+    Raises:
+        ValueError: For a ship without a known sign: measure it first (see
+            CONVENTIONS.md, "Adding a ship") and add it to _FH_RUDDER_SIGNS.
+    """
+
+    try:
+        return _FH_RUDDER_SIGNS[ship_model]
+    except KeyError:
+        raise ValueError(
+            f"No FH rudder sign known for {ship_model!r}; measure it with check_rudder_sign.py "
+            f"and add it to fh_tabular_model._FH_RUDDER_SIGNS."
+        ) from None
+
+
+# Measured for TRIPOLI and MYZAKO_37; the other Myzako presets use the same
+# FH rudder control (setControlValue) and are assumed to share its sign.
+_FH_RUDDER_SIGNS = {
+    ShipModel.TRIPOLI: 1.0,
+    ShipModel.MYZAKO_DEFAULT: -1.0,
+    ShipModel.MYZAKO_29: -1.0,
+    ShipModel.MYZAKO_37: -1.0,
+}
+
+
 class FhTabularModel(DynamicsBase):
     """
     FH-engine-backed vessel dynamics model.
@@ -14,7 +50,7 @@ class FhTabularModel(DynamicsBase):
     Wraps the FH math model (FastShip / FhSimBridge engine) as a DynamicsBase
     implementation. On each call to step(), the FH engine is advanced by dt
     seconds and the resulting body-fixed velocities (u, v, r) are read back
-    directly — no velocity-delta differencing and no re-integration.
+    directly: no velocity-delta differencing and no re-integration.
 
     This avoids the numerical drift that arises when accelerations are
     reconstructed by finite-differencing velocity snapshots and then
@@ -22,11 +58,14 @@ class FhTabularModel(DynamicsBase):
 
     Coordinate convention:
         u  =  velocity_over_ground.x          (surge, forward positive)
-        v  = -velocity_over_ground.y          (sway,  starboard positive)
-        r  =  radians(getShipYawRate())       (yaw rate, bow-to-starboard positive)
+        v  =  velocity_over_ground.y          (sway, port positive -- FH's body
+                                               frame is the framework's, see
+                                               fw.ships.vessel_state)
+        r  =  radians(getShipYawRate())       (yaw rate, counter-clockwise =
+                                               bow-to-port positive)
 
     Note: getShipVelocityOverGround() returns velocities already expressed
-    in the body-fixed frame despite its name (confirmed empirically — the
+    in the body-fixed frame despite its name (confirmed empirically: the
     x-component aligns with surge regardless of heading).
     """
 
@@ -58,9 +97,10 @@ class FhTabularModel(DynamicsBase):
         Args:
             state:        Current vessel state (used for interface consistency;
                           the FH engine maintains its own internal state).
-            rudder_angle: Rudder deflection angle [rad], positive to starboard
-                          (same convention as the rest of the framework — NOT
-                          a normalized [-1, 1] value).
+            rudder_angle: Rudder command [rad]; positive = the ship turns to
+                          PORT (the framework convention, see fh_rudder_sign),
+                          NOT a normalized [-1, 1] value. Converted to FH's
+                          sign with fh_rudder_sign(ship_model).
                           - Conventional rudder ships: converted internally to
                             the FH engine's normalized [-1, 1] range via
                             np.degrees(rudder_angle) / fh_max_deg.
@@ -82,15 +122,15 @@ class FhTabularModel(DynamicsBase):
             Tuple (u, v, r) read directly from the FH engine after advancing
             by dt seconds:
                 u = velocity_over_ground.x          [m/s]
-                v = -velocity_over_ground.y         [m/s]
+                v =  velocity_over_ground.y         [m/s]
                 r = radians(getShipYawRate())       [rad/s]
         """
 
         # --- Set controls ---
         if self._engine.ship_model == ShipModel.TRIPOLI:
             for rudder in self._engine.ship_interface.getAzipodControls():
-                # rudder_angle is in radians; convert to degrees.
-                val_deg = np.degrees(rudder_angle)
+                # rudder_angle is in radians; convert to degrees (FH sign +1 for azipods).
+                val_deg = fh_rudder_sign(self._engine.ship_model) * np.degrees(rudder_angle)
                 rudder.setDesiredDirection(float(val_deg))
                 rudder.setEngineLeverValue(float(thrust))
         else:
@@ -102,7 +142,8 @@ class FhTabularModel(DynamicsBase):
                     val = np.degrees(rudder_angle) / framework_max_deg
                 else:
                     val = np.degrees(rudder_angle) / rudder.getMaximumAngle()
-                rudder.setControlValue(float(-val))   # negated: framework -> FH sign convention
+                # FH's positive rudder control turns the ship to starboard: convert.
+                rudder.setControlValue(float(fh_rudder_sign(self._engine.ship_model) * val))
 
             for propeller in self._engine.ship_interface.getPropellerControls():
                 propeller.engage()
@@ -115,4 +156,4 @@ class FhTabularModel(DynamicsBase):
         vel = self._engine.ship_interface.getShipVelocityOverGround()
         yaw_rate = np.radians(self._engine.ship_interface.getShipYawRate())
 
-        return float(vel.x), float(-vel.y), float(yaw_rate)
+        return float(vel.x), float(vel.y), float(yaw_rate)

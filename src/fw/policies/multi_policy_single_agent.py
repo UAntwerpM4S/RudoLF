@@ -157,7 +157,7 @@ class CollapseWatchdog:
             pid (int): Policy index.
             iteration (int): Current training iteration.
             reward (float): Mean reward for `pid` this iteration (NaN if
-                the policy collected no segments — will be ignored).
+                the policy collected no segments; will be ignored).
             network (nn.Module): The policy's live network; snapshotted
                 (cloned) when a new peak rolling mean is observed.
 
@@ -177,7 +177,7 @@ class CollapseWatchdog:
 
         smoothed = float(np.mean(self._reward_history[pid]))
 
-        # New best — snapshot the current network state
+        # New best: snapshot the current network state
         if smoothed > self._best_smoothed[pid]:
             self._best_smoothed[pid] = smoothed
             self._best_state_dict[pid] = {
@@ -192,7 +192,7 @@ class CollapseWatchdog:
         if self._rollback_count[pid] >= self.max_rollbacks:
             return None
 
-        # No usable peak yet (peak too small / negative — ratio test
+        # No usable peak yet (peak too small / negative - ratio test
         # would be meaningless or trigger-happy)
         peak = self._best_smoothed[pid]
         if peak <= self.min_peak_for_trigger or self._best_state_dict[pid] is None:
@@ -237,7 +237,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
     During training, each collected trajectory is split into contiguous
     segments where the same policy was active.  At segment boundaries
     (scenario switches), the outgoing policy's value estimate is used for
-    GAE bootstrapping — treating the switch as a mini-episode boundary.
+    GAE bootstrapping, treating the switch as a mini-episode boundary.
     Each policy is then trained independently on only its own segments.
 
     This design is fully generalizable to any number of policies N.
@@ -341,7 +341,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         # Vectorized environment handle (lazy-init like SinglePPOAgent)
         self._vec_env = None
 
-        # Reward normalization (shared across policies — same environment)
+        # Reward normalization (shared across policies, same environment)
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4
@@ -968,7 +968,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         # (Adam's `m` and `v` buffers) were accumulated
                         # during the collapse phase and, if reused after
                         # rolling weights back, would push the network
-                        # right along the failure trajectory — producing
+                        # right along the failure trajectory, producing
                         # a rapid second collapse and a rollback ping-pong.
                         # A fresh optimizer ensures the next gradient steps
                         # are computed cleanly from the rolled-back weights.
@@ -976,7 +976,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                             self.policies[pid].network.parameters(),
                             lr=self.learning_rate,
                         )
-                        # Discard pending segments — they were collected
+                        # Discard pending segments: they were collected
                         # under the now-discarded post-collapse weights and
                         # would be off-policy w.r.t. the rolled-back net.
                         self._pending_segments[pid] = []

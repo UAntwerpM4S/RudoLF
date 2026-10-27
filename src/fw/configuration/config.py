@@ -167,8 +167,17 @@ CONFIG_PARAMETERS = {
     'depth_contour': "env_Sche_250cm_no_scale.csv",
     'trajectory': "trajectory_points_no_scale.csv",
     'scenario': "DDShip_scenario1_nowindnocurrent",
-    'ua_surrogate_config': {"wcu_enabled": False,
-                            "file_name": "checkpoints/best_surrogate_clean.pth"},
+    # UAntwerp surrogate (dynamics_model = Model.UANTWERP). "preset" selects
+    # ship, scenario, checkpoint and lookup (fw/surrogate/presets.py):
+    #   "tripoli_clean", "tripoli_confined", "tripoli_full",
+    #   "myzako_clean",  "myzako_confined",  "myzako_full".
+    # clean = open water (no lookup); confined = UKC lookup;
+    # full = environment lookup (UKC, wind and current). Lookups are .csv.gz.
+    # Optional overrides: "checkpoint", "lookup_csv". The preset's ship must
+    # equal 'ship_model' below (a mismatch is refused at startup), and the
+    # environment time step must be a whole multiple of 0.1 s.
+    'ua_surrogate_config': {"preset": "myzako_confined"},
+    'ugent_surrogate_config': {"ukc_percent": 363},
     'ship_model': ShipModel.MYZAKO_37,
     'dynamics_model': Model.FOSSEN,
     'live_animation': False,
@@ -239,7 +248,7 @@ def get_config_parameters() -> dict:
 
     Resolves the profile name from the config, validates it, applies it to
     the config dict, and returns the result. This is the single authoritative
-    place where profile application onto the config happens — callers should
+    place where profile application onto the config happens. Callers should
     not re-apply the profile to the config dict after calling this function.
 
     Returns:

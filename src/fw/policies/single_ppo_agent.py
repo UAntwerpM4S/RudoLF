@@ -157,7 +157,7 @@ class SinglePPOAgent(BasePPOAgent):
             ("returns", all_returns),
         ):
             if torch.isnan(tensor).any() or torch.isinf(tensor).any():
-                logger.warning("[Alert] NaN/Inf detected in %s before PPO update — skipping batch.", name)
+                logger.warning("[Alert] NaN/Inf detected in %s before PPO update - skipping batch.", name)
                 return float('nan')
 
         # Normalizing a near-constant tensor produces NaN/inf gradients.
@@ -210,7 +210,7 @@ class SinglePPOAgent(BasePPOAgent):
 
                 if torch.isnan(loss) or torch.isinf(loss):
                     logger.warning("[Alert] NaN/Inf loss detected (policy=%.4f, "
-                                   "value=%.4f) — skipping update step.", policy_loss.item(), value_loss.item())
+                                   "value=%.4f) - skipping update step.", policy_loss.item(), value_loss.item())
                     continue
 
                 # Optimize
@@ -715,7 +715,7 @@ class SinglePPOAgent(BasePPOAgent):
 
             self.policy = PPOPolicy.load(policy_file_name, self.device)
             # PPOPolicy.load() returns a NEW object, so the optimizer must be
-            # rebound to the new network's parameters — otherwise step() silently
+            # rebound to the new network's parameters; otherwise step() silently
             # updates the old (unreferenced) network and the loaded policy never trains.
             self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
 
@@ -726,7 +726,7 @@ class SinglePPOAgent(BasePPOAgent):
             #         self.optimizer.load_state_dict(
             #             torch.load(opt_path, map_location=self.device, weights_only=True)
             #         )
-            #     except Exception as opt_exc:  # shape mismatch on arch change — not fatal
+            #     except Exception as opt_exc:  # shape mismatch on arch change, not fatal
             #         import logging as _logging
             #         _logging.getLogger(__name__).warning(
             #             "Could not restore optimizer state from '%s': %s", opt_path, opt_exc

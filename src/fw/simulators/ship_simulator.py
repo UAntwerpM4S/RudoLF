@@ -51,9 +51,10 @@ class ShipSimulator(BaseSimulator):
     --------------------------------
     step() always uses a 0.1 s physics sub-step.  If the environment dt is
     not an exact multiple of 0.1 s a fractional remainder sub-step is issued.
-    UAntwerpSurrogate asserts dt == 0.1 s on every call, so it will crash on
-    a remainder sub-step.  Use an environment dt that is an exact integer
-    multiple of 0.1 s when using UAntwerpSurrogate (e.g. 0.1, 0.5, 1.0, 2.0).
+    UAntwerpSurrogate only accepts dt == 0.1 s (it raises a ValueError
+    otherwise), so a remainder sub-step stops the run.  Use an environment dt
+    that is an exact integer multiple of 0.1 s when using UAntwerpSurrogate
+    (e.g. 0.1, 0.5, 1.0, 2.0).
     """
 
     def __init__(self, specs: ShipSpecifications, dynamics: DynamicsBase, dt: float, wind: bool = False,
@@ -116,7 +117,7 @@ class ShipSimulator(BaseSimulator):
 
         state = self._state
 
-        # Advance dynamics — returns updated (u, v, r)
+        # Advance dynamics, returns updated (u, v, r)
         u, v, r = self._dynamics.step(state, actuator.rudder_angle, actuator.thrust,
                                       time_step, enable_rudder_angle_scaling)
 

@@ -26,10 +26,21 @@ class Fossen(DynamicsBase):
 
     Coordinate frame and assumptions:
         - Body-fixed reference frame located at the vessel center of gravity.
-        - Axes: x forward, y starboard, z downward.
+        - Axes: the framework's (fw.ships.vessel_state, CONVENTIONS.md):
+          x forward, y to PORT, yaw counter-clockwise positive.
         - Motion is restricted to the horizontal plane (3-DOF).
         - Environmental forces (wind, current) are not included.
         - Coefficients are heuristic and scale with vessel mass and length.
+
+    Known limitation (toy model): the turning DIRECTION follows the framework
+    convention (positive rudder -> turn to port), but the sway during a turn
+    does not follow real ship behaviour: it starts toward the inside of the
+    turn (port for a port turn) instead of the outside. The turn is driven
+    mainly by that sway force through the u*v coupling terms (N_uv,
+    (m22 - m11) * u * v), not by N_rudder, so flipping Y_rudder alone reverses
+    the turning direction (checked 2026-10-19); correcting it needs a re-tune
+    of N_rudder / N_uv, e.g. against FH. The sway concerned is small
+    (|v| < ~0.2 m/s, drift < 2 deg).
     """
 
     def __init__(self, ship_spec: ShipSpecifications):
@@ -105,11 +116,12 @@ class Fossen(DynamicsBase):
 
         Args:
             state:        Current vessel state.
-            rudder_angle: Rudder deflection angle [rad], positive to starboard.
+            rudder_angle: Rudder command [rad]; positive = the ship turns to PORT
+                (framework convention, see DynamicsBase).
             thrust:       Normalized thrust command (dimensionless), positive forward.
 
         Returns:
-            Tuple (du, dv, dr) — surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
+            Tuple (du, dv, dr): surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
 
         # --- CORIOLIS-CENTRIPETAL MATRIX ---

@@ -4,6 +4,14 @@ from enum import auto, Enum
 from fw.ships.ship_specs import ShipSpecifications
 
 
+# Maximum rudder deflection per ship family [deg]. This is the single source of
+# truth for the rudder limit: actuators, PySimEnv action scaling and the
+# UAntwerp surrogate's rudder normalisation all read
+# `ShipSpecifications.max_rudder_angle`, which is set from these values.
+MYZAKO_MAX_RUDDER_ANGLE_DEG = 75.0
+TRIPOLI_MAX_RUDDER_ANGLE_DEG = 35.0
+
+
 class ShipModel(Enum):
     """
     Enumeration of supported ship specification presets.
@@ -33,11 +41,15 @@ class MyzakoShip:
         """
         Initialize the ship model with parameters specific to *ship_model*.
 
-        Hydrodynamic coefficients (mass, length, added-mass, damping) differ
-        per variant; the actuator and kinematic limits below are shared across
-        all variants:
+        Hydrodynamic coefficients (mass, length, added-mass, damping) and the
+        maximum rudder angle differ per variant:
 
-            - Maximum rudder angle : 75.0 deg  (≈ 1.309 rad)
+            - Maximum rudder angle : Myzako 75.0 deg (MYZAKO_MAX_RUDDER_ANGLE_DEG),
+                                     Tripoli 35.0 deg (TRIPOLI_MAX_RUDDER_ANGLE_DEG)
+
+        The remaining actuator and kinematic limits are shared across all
+        variants:
+
             - Maximum rudder rate  : 6.0 deg/s (≈ 0.105 rad/s)
             - Rudder jitter threshold : 0.6 deg
             - Thrust               : min 0.1, max 1.0 (normalized)
@@ -57,8 +69,10 @@ class MyzakoShip:
                 Length 110 m, mass 6.16 × 10⁶ kg, heuristic coefficients.
         """
 
+        # Shared limits. max_rudder_angle is deliberately NOT in here: every
+        # branch below must set it explicitly, so a new ship model can never
+        # silently inherit another ship's rudder limit.
         default_actuator_envelope = dict(
-            max_rudder_angle=np.radians(75.0),
             max_rudder_rate=np.radians(6.0),
             min_thrust=0.1,
             max_thrust=1.0,
@@ -84,7 +98,8 @@ class MyzakoShip:
             N_rr_coeff = -0.0392
             Y_uv_coeff = -0.00426
             N_uv_coeff = -0.00007
-            actuator_envelope = dict(default_actuator_envelope)
+            actuator_envelope = dict(default_actuator_envelope,
+                                     max_rudder_angle=np.radians(MYZAKO_MAX_RUDDER_ANGLE_DEG))
         elif ship_model == ShipModel.MYZAKO_37:
             mass = 4.19e6
             length = 108.0
@@ -99,7 +114,8 @@ class MyzakoShip:
             N_rr_coeff = -0.0362
             Y_uv_coeff = -0.00467
             N_uv_coeff = -0.00007
-            actuator_envelope = dict(default_actuator_envelope)
+            actuator_envelope = dict(default_actuator_envelope,
+                                     max_rudder_angle=np.radians(MYZAKO_MAX_RUDDER_ANGLE_DEG))
         elif ship_model == ShipModel.TRIPOLI:
             mass = 6161870.27   # 7.16e6
             length = 110.0  # 109.0
@@ -114,8 +130,9 @@ class MyzakoShip:
             N_rr_coeff = -0.0005
             Y_uv_coeff = -0.005
             N_uv_coeff = -0.0005
-            actuator_envelope = dict(default_actuator_envelope)
-        else:
+            actuator_envelope = dict(default_actuator_envelope,
+                                     max_rudder_angle=np.radians(TRIPOLI_MAX_RUDDER_ANGLE_DEG))
+        elif ship_model == ShipModel.MYZAKO_DEFAULT:
             mass = 3.86e6
             length = 110.0
             X_udot_coeff = -0.05
@@ -129,7 +146,10 @@ class MyzakoShip:
             N_rr_coeff = -0.0005
             Y_uv_coeff = -0.005
             N_uv_coeff = -0.0005
-            actuator_envelope = dict(default_actuator_envelope)
+            actuator_envelope = dict(default_actuator_envelope,
+                                     max_rudder_angle=np.radians(MYZAKO_MAX_RUDDER_ANGLE_DEG))
+        else:
+            raise ValueError(f"No specifications defined for ship model {ship_model}.")
 
         self.specifications = ShipSpecifications(
             length=length,

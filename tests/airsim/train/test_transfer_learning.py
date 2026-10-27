@@ -1,11 +1,11 @@
 """
-Unit tests for AirSim transfer learning utilities (T-055 — dimension validation).
+Unit tests for AirSim transfer learning utilities (T-055 - dimension validation).
 
 Covers:
     - TopologyReport construction and formatting
     - validate_transfer_compatibility: accepts valid configs, rejects mismatches
     - apply_transfer_weights: correct keys transferred, shapes preserved, freeze logic
-    - Cross-device weight transfer (CPU source → CUDA target shape parity)
+    - Cross-device weight transfer (CPU source -> CUDA target shape parity)
 """
 
 from __future__ import annotations
@@ -39,13 +39,13 @@ def _make_policy(input_dim: int, output_dim: int = 2, device: str = "cpu") -> PP
 
 
 # ---------------------------------------------------------------------------
-# T-054 — topology comparison
+# T-054 - topology comparison
 # ---------------------------------------------------------------------------
 
 
 class TestCompareNetworkTopology:
     """
-    Tests for compare_network_topology — 2D vs 3D input/output dimension reporting.
+    Tests for compare_network_topology: 2D vs 3D input/output dimension reporting.
     """
 
     def test_extra_dims_computed_correctly(self):
@@ -87,7 +87,7 @@ class TestCompareNetworkTopology:
 
     def test_shared_layer_shapes_include_256_to_128(self):
         """
-        The transferable hidden layer (256→128) must appear in shared_layer_shapes.
+        The transferable hidden layer (256->128) must appear in shared_layer_shapes.
         """
 
         src = _make_policy(input_dim=10)
@@ -108,13 +108,13 @@ class TestCompareNetworkTopology:
 
 
 # ---------------------------------------------------------------------------
-# T-055 — incompatibility reporting
+# T-055 - incompatibility reporting
 # ---------------------------------------------------------------------------
 
 
 class TestValidateTransferCompatibility:
     """
-    Tests for validate_transfer_compatibility — error messages and pass/fail logic.
+    Tests for validate_transfer_compatibility: error messages and pass/fail logic.
     """
 
     def test_valid_config_does_not_raise(self):
@@ -224,13 +224,13 @@ class TestValidateTransferCompatibility:
 
 
 # ---------------------------------------------------------------------------
-# T-056 — weight loading with layer matching and freezing
+# T-056 - weight loading with layer matching and freezing
 # ---------------------------------------------------------------------------
 
 
 class TestApplyTransferWeights:
     """
-    Tests for apply_transfer_weights — key selection, device safety, and freeze logic.
+    Tests for apply_transfer_weights: key selection, device safety, and freeze logic.
     """
 
     def test_transferable_keys_are_copied(self):

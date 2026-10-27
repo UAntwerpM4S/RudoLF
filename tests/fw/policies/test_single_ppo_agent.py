@@ -178,7 +178,7 @@ def test_load_policy_rebinds_optimizer(tmp_path):
     Optimizer must point at the loaded policy's parameters, not the original ones.
 
     PPOPolicy.load() returns a NEW object, so after load_policy() the optimizer
-    must be recreated — otherwise step() silently updates the old unreferenced
+    must be recreated; otherwise step() silently updates the old unreferenced
     network and the transferred policy never receives gradient updates.
     """
 
