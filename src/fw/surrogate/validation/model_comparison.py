@@ -1,7 +1,8 @@
 """
 Compares 5 dynamics models against FH (ground truth) over a grid of
-(initial surge speed, perpendicular distance-to-bank) points, for a single
-ship model (Tripoli) sailing parallel to a river bank.
+(initial surge speed, perpendicular distance-to-bank) points, for one ship
+model at a time (SHIP_MODEL: TRIPOLI or MYZAKO_37) sailing parallel to a
+river bank.
 
 Models compared:
     FH          -- the real simexe engine, advanced via
@@ -51,8 +52,8 @@ UA_clean/confined/full's numbers):
   - Consolidation: the three UAntwerpSurrogateTripoli{Clean,Confined,Full}
     classes are replaced by the single fw.dynamics.uantwerp_surrogate.
     UAntwerpSurrogate, configured per slot by a preset (UA_PRESETS_BY_SHIP). Same
-    checkpoints, same raw input rows, same rudder scale (35 deg, now read
-    from the checkpoint), same get_env/_env hooks, so the results are
+    checkpoints, same raw input rows, same rudder scale (read from the
+    checkpoint: 35 deg Tripoli, 75 deg Myzako), same get_env/_env hooks, so the results are
     unchanged. UA_clean (no UKC/rays) still has no `_env` and never calls
     get_env. The ship-bank test runs trajectories at TRAJECTORY_SPEED = 3;
     the wind test has its own WIND_TRAJECTORY_SPEED.
@@ -179,8 +180,8 @@ once per grid point for every UA_* model just before
     yaw_rate/rudder/thrust); `_inject_live_environment` is still called on
     it for uniformity, but is a harmless no-op there.
   - UAntwerpSurrogate converts the rudder angle with the rudder scale stored
-    in the checkpoint (the generator's RUDDER_MAX_DEG, 35 deg for Tripoli,
-    equal to Tripoli's max rudder angle in ship_factory); RUDDER_ANGLE_RAD is
+    in the checkpoint (the data's rudder_max_deg: 35 deg Tripoli, 75 deg
+    Myzako, equal to the ship's max rudder angle in ship_factory); RUDDER_ANGLE_RAD is
     0.0 throughout this script anyway.
 
 Two notes worth reading before trusting this script's output:
@@ -318,9 +319,9 @@ INITIALIZATION_TIME = 0.125          # documentation-only: FhSimBridge hardcodes
 # This script's own output (the CSVs this script writes, one per grid
 # point) only -- NOT passed to FhSimBridge, which is now left to use its
 # own default output_path for exact parity with the confirmed-working
-# construction (see FhSession's docstring). Resolved to an absolute path
-# so this script's own CSV output lands in the same place regardless of
-# the caller's current working directory.
+# construction (see FhSession's docstring). Relative to the current working
+# directory at IMPORT time (resolved to an absolute path then, so a later
+# chdir does not move it).
 OUTPUT_DIR = Path("model_comparison_output").resolve()
 
 # Ship simulated by FH (and used for ship_spec / ray_env). FhSimBridge picks
@@ -524,9 +525,7 @@ TRAJECTORY_SPEED = 3                  # fixed initial surge speed [m/s] for
                                        # uses its own WIND_TRAJECTORY_SPEED.
 TRAJECTORY_TARGET_DISTANCE = 300.0    # [m] stop a trajectory once FH's OWN
                                        # cumulative path length reaches this
-                                       # -- chosen as roughly half the
-                                       # original pseudocode's ~300m cap, a
-                                       # tracked distance long enough to show
+                                       # -- a tracked distance long enough to show
                                        # genuine divergence between models
                                        # without running past where FH itself
                                        # might reach open water/map edge.
@@ -535,8 +534,8 @@ TRAJECTORY_TARGET_DISTANCE = 300.0    # [m] stop a trajectory once FH's OWN
                                        # this (not its own path length), so
                                        # all 6 trajectories span identical
                                        # elapsed time at a given grid point.
-TRAJECTORY_MAX_STEPS = 8000           # Safety cap (3000 * SURROGATE_DT =
-                                       # 300s) in case FH's own speed decays
+TRAJECTORY_MAX_STEPS = 8000           # Safety cap (8000 * SURROGATE_DT =
+                                       # 800 s) in case FH's own speed decays
                                        # toward zero (e.g. thrust too low to
                                        # make headway against current) and
                                        # target_distance is never reached --
@@ -734,15 +733,17 @@ def locate_point_at_distance(
         return float(env.ray_cast_distance(origin, end, max_distance=reach))
 
     lo, hi = 0.5, reach
-    if reach > RAY_MAX_DISTANCE:
-        # Stay in this stretch of water: stop the search just before the
-        # opposite boundary along perp_into_water (beyond it, the measured
-        # distance would come from outside the river).
-        start = bank_point + perp_into_water * lo
-        far_end = start + perp_into_water * reach
-        width = float(env.ray_cast_distance((float(start[0]), float(start[1])),
-                                            (float(far_end[0]), float(far_end[1])), max_distance=reach))
-        hi = min(hi, lo + 0.999 * width)
+    # Stay in this stretch of water: stop the search just before the opposite
+    # boundary along perp_into_water (beyond it, the measured distance would
+    # come from outside the river and the bisection could settle on land).
+    # Needed for every target, also within RAY_MAX_DISTANCE: a waterway can
+    # be narrower than the search range. In water wider than `reach` the ray
+    # finds no boundary (width = reach) and `hi` stays `reach`.
+    start = bank_point + perp_into_water * lo
+    far_end = start + perp_into_water * reach
+    width = float(env.ray_cast_distance((float(start[0]), float(start[1])),
+                                        (float(far_end[0]), float(far_end[1])), max_distance=reach))
+    hi = min(hi, lo + 0.999 * width)
     pos_lo = bank_point + perp_into_water * lo
     pos_hi = bank_point + perp_into_water * hi
     d_lo = measured_distance(pos_lo)

@@ -41,10 +41,12 @@ the .npz identity do not depend on it.
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_LAYOUT_VERSION
 
@@ -555,6 +557,10 @@ NPZ_RAY_LAYOUT_KEY = "ray_layout"
 NPZ_SHIP_MODEL_KEY = "ship_model"            # fw.ships.ship_factory.ShipModel name, e.g. "TRIPOLI"
 NPZ_RUDDER_MAX_DEG_KEY = "rudder_max_deg"    # rudder_action = +-1 <-> +-this many degrees
 NPZ_SWAY_CONVENTION_KEY = "sway_convention"  # SWAY_CONVENTION at generation time
+# Optional provenance (how the data was generated: generator settings, seed,
+# exercises, ...), a JSON string. NOT part of the identity: datasets with
+# different provenance may still be combined; training only logs it.
+NPZ_PROVENANCE_KEY = "generation_json"
 
 
 @dataclass(frozen=True)
@@ -590,6 +596,26 @@ def npz_metadata(identity: DatasetIdentity) -> dict:
             NPZ_SHIP_MODEL_KEY: np.array(identity.ship_model),
             NPZ_RUDDER_MAX_DEG_KEY: np.array(float(identity.rudder_max_deg)),
             NPZ_SWAY_CONVENTION_KEY: np.array(identity.sway_convention)}
+
+
+def provenance_metadata(provenance: dict) -> dict:
+    """
+    The provenance entry to store in a dataset .npz (a 0-d string array with
+    the JSON text, so np.load needs no pickle).
+    """
+
+    return {NPZ_PROVENANCE_KEY: np.array(json.dumps(provenance, sort_keys=True))}
+
+
+def read_npz_provenance(data) -> Optional[dict]:
+    """
+    Provenance of an opened .npz (`np.load` result), or None if the file has
+    none (datasets written before it was recorded).
+    """
+
+    if NPZ_PROVENANCE_KEY not in data.files:
+        return None
+    return json.loads(str(data[NPZ_PROVENANCE_KEY]))
 
 
 def read_npz_identity(data, path) -> DatasetIdentity:

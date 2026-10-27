@@ -13,9 +13,9 @@ Features are encoded the way training encodes them: for --scenario
 training default). Use --env-encoding angles to inspect the angle encoding.
 
 Usage:
-    python -m fw.surrogate.diagnose_splits                # default data/ files
-    python -m fw.surrogate.diagnose_splits --train-file ... --val-file ... --test-file ...
-    python -m fw.surrogate.diagnose_splits --scenario open_water ...   # as UA_clean sees it
+    python -m fw.surrogate.validation.diagnose_splits                # default data/ files
+    python -m fw.surrogate.validation.diagnose_splits --train-file ... --val-file ... --test-file ...
+    python -m fw.surrogate.validation.diagnose_splits --scenario open_water ...   # as UA_clean sees it
 """
 
 import argparse

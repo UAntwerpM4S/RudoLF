@@ -70,9 +70,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     predictor = SurrogatePredictor(str(ckpt))
     x_raw, y, identity = load_raw(args.data)
     source = get_scenario(identity.scenario)
-    if identity.ship_model != predictor.ship_model:
-        logger.error("%s is %s data, but the checkpoint is a %s model.", args.data, identity.ship_model,
-                     predictor.ship_model)
+    mismatch = predictor.data_mismatch(identity)
+    if mismatch:
+        logger.error("%s: %s.", args.data, mismatch)
         return 2
     with np.load(args.data) as z:
         episode_id = z["episode_id"].astype(np.int64)

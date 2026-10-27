@@ -15,6 +15,15 @@ the order within an episode is reconstructed from the data itself (see
 Rows of episodes whose order cannot be reconstructed get t_episode = -1
 (train_surrogate --min-episode-time drops them).
 
+t_episode counts from the FIRST RECORDED ROW of the episode. The generator
+records only after FH's start-up (0.1 s), the wind warm-up (full
+configuration, 1 s) and the actuator settling (0 - 3 s, per episode), so the
+time since FH started is that much longer.
+
+Time windows should be compared in whole steps (`steps_from_times` /
+`step_threshold`), not on the float32 times: float32(k * 0.1) is not exactly
+k / 10.
+
 Usage (from src; rewrites the files in place, all other arrays unchanged):
 
     python -m fw.surrogate.episode_time ^
@@ -64,8 +73,16 @@ def step_index(state: np.ndarray, delta: np.ndarray, episode_id: np.ndarray) -> 
 
     A row's successor is the row of the same episode closest to this row's
     predicted next state: velocities = state + targets (exact up to float32
-    rounding), position = one kinematic step of SURROGATE_DT. The row nobody
-    points to is the first one.
+    rounding), position = one kinematic step of SURROGATE_DT. A row is never
+    its own successor (a slow or stopped ship's predicted next state lies
+    close to the row itself), and the row with the worst match is the last
+    one (a chain of n rows has n - 1 links). If even that row has a match
+    within MATCH_TOL (the track closes on itself, e.g. a full turning
+    circle), it is taken as the last one only when its match is clearly
+    worse (> 3x) than every other link; otherwise the episode is skipped.
+    The row nobody points to is the first one. Episodes that remain
+    ambiguous (e.g. a fully stopped ship, whose rows are identical) are
+    skipped, never mis-ordered.
 
     Args:
         state: (N, 6) x, y, heading [rad, 0 = East, CCW], surge, sway (port
@@ -96,8 +113,26 @@ def step_index(state: np.ndarray, delta: np.ndarray, episode_id: np.ndarray) -> 
         y_next = yy + SURROGATE_DT * (u * np.sin(hm) + v * np.cos(hm))
         here = _match_space(x, yy, u, v, r)
         nxt = _match_space(x_next, y_next, u + du, v + dv, r + dr)
-        dist, succ = cKDTree(here).query(nxt)
+        # k=2: a row is never its own successor (a slow or stopped ship's
+        # predicted next state is within MATCH_TOL of the row itself).
+        dist2, succ2 = cKDTree(here).query(nxt, k=2)
+        self_hit = succ2[:, 0] == np.arange(len(rows))
+        dist = np.where(self_hit, dist2[:, 1], dist2[:, 0])
+        succ = np.where(self_hit, succ2[:, 1], succ2[:, 0])
         has_succ = dist <= MATCH_TOL
+        # A chain of n rows has exactly n - 1 links: the worst-matching row is
+        # the last one, even if some unrelated row happens to lie within
+        # MATCH_TOL of its predicted next state (closed turning circle).
+        i_end = int(np.argmax(dist))
+        if dist[i_end] <= MATCH_TOL:
+            # Every row has a match: the track closes on itself (e.g. a full
+            # turning circle). Cut it only where the worst link is clearly
+            # worse than all others; otherwise the order is ambiguous -> skip.
+            second = float(np.partition(dist, -2)[-2])
+            if not dist[i_end] > 3.0 * second:
+                n_bad += 1
+                continue
+        has_succ[i_end] = False
         pointed = np.zeros(len(rows), dtype=bool)
         pointed[succ[has_succ]] = True
         starts = np.flatnonzero(~pointed)
@@ -119,6 +154,22 @@ def step_index(state: np.ndarray, delta: np.ndarray, episode_id: np.ndarray) -> 
         steps[rows[chain]] = np.arange(len(chain))
         n_ok += 1
     return steps, n_ok, n_bad
+
+
+def steps_from_times(t: np.ndarray) -> np.ndarray:
+    """Step indices of t_episode values [s] (-1 stays -1, i.e. not reconstructed)."""
+
+    t = np.asarray(t, dtype=np.float64)
+    return np.where(t >= 0, np.rint(t / SURROGATE_DT), -1).astype(np.int64)
+
+
+def step_threshold(seconds: float) -> int:
+    """
+    First step index at or after `seconds` [s] (e.g. 0.7 s -> step 7, 0.75 s ->
+    step 8), robust against float rounding of `seconds`.
+    """
+
+    return int(np.ceil(float(seconds) / SURROGATE_DT - 1e-6))
 
 
 def episode_time(path) -> Tuple[np.ndarray, int, int]:

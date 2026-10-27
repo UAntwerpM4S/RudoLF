@@ -1180,7 +1180,7 @@ def _generate(start_x, start_y, start_heading_deg, exercise_path, exercise_path_
                        start_pos=np.array([start_x, start_y], dtype=np.float32), ship_model=SHIP_MODEL)
     cutoff_geom = _cutoff_geometry(ray_env)
 
-    # One UAntwerpSurrogate per preset (model_comparison.UA_PRESETS), shared with the
+    # One UAntwerpSurrogate per preset (model_comparison.UA_PRESETS_BY_SHIP), shared with the
     # ship-bank and wind tests; UGent only for the Tripoli, the UA_* slots per SHIP_MODEL.
     ua_models = build_ua_models(ship_spec)
     non_fh = {**build_reference_models(ship_spec, ray_env), **ua_models}

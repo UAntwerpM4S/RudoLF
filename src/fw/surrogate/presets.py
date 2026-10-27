@@ -66,12 +66,14 @@ class SurrogatePreset:
                              f"'{self.scenario.name}' has no UKC input.")
 
 
-# Water depth used as UKC fallback for the all presets with a UKC input
-# (the value the previous per-scenario classes used).
+# UKC [m] used as fallback for all presets with a UKC input, when there is no
+# lookup or no hit in it (the value the previous per-scenario classes used;
+# historically called a water depth, but it is fed to the models as the UKC).
 _DEFAULT_WATER_DEPTH_M = 18.5
 
-# UKC fallback for the Myzako confined preset: the median UKC of its training
-# data (static water level, 2.2-25 m). Only used without (a hit in) the lookup.
+# Alternative fallback for the Myzako confined preset: the median UKC of its
+# training data (static water level, 2.2-25 m). NOT USED at the moment --
+# myzako_confined uses _DEFAULT_WATER_DEPTH_M like the other presets.
 _MYZAKO_CONFINED_DEFAULT_UKC_M = 12.6
 
 PRESETS = {p.name: p for p in (

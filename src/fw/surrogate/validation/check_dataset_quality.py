@@ -73,11 +73,13 @@ def _pct(values: np.ndarray, qs=(0, 1, 50, 99, 100)) -> str:
 
 
 def _hist_text(values: np.ndarray, edges) -> str:
-    """Share of `values` per bin of `edges`, as percentages."""
+    """Share of `values` per bin of `edges`, as percentages (np.histogram: the last bin is closed, [lo, hi])."""
 
     counts, _ = np.histogram(values, bins=edges)
     total = max(len(values), 1)
-    return "  ".join(f"[{lo:g},{hi:g}):{100 * c / total:.1f}%" for lo, hi, c in zip(edges[:-1], edges[1:], counts))
+    last = len(counts) - 1
+    return "  ".join(f"[{lo:g},{hi:g}{']' if i == last else ')'}:{100 * c / total:.1f}%"
+                     for i, (lo, hi, c) in enumerate(zip(edges[:-1], edges[1:], counts)))
 
 
 def main(argv=None) -> int:

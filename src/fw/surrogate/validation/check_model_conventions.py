@@ -40,10 +40,10 @@ The start position must be in open water of the FH exercise (default: the
 comparison tests' start point).
 
 Usage (from src):
-    python -m fw.surrogate.check_model_conventions                      # Tripoli, all models
-    python -m fw.surrogate.check_model_conventions --ship MYZAKO_37
-    python -m fw.surrogate.check_model_conventions --no-fh             # without FH
-    python -m fw.surrogate.check_model_conventions --plot conventions.png
+    python -m fw.surrogate.validation.check_model_conventions                      # Tripoli, all models
+    python -m fw.surrogate.validation.check_model_conventions --ship MYZAKO_37
+    python -m fw.surrogate.validation.check_model_conventions --no-fh             # without FH
+    python -m fw.surrogate.validation.check_model_conventions --plot conventions.png
 """
 
 import argparse
@@ -53,7 +53,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-_SRC_DIR = str(Path(__file__).resolve().parents[2])
+_SRC_DIR = str(Path(__file__).resolve().parents[3])     # src (this file: src/fw/surrogate/validation/)
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 

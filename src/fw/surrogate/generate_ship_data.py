@@ -25,7 +25,9 @@ Each .npz carries its identity (schema.DatasetIdentity):
 """
 
 import os
+import json
 import argparse
+import datetime
 import numpy as np
 
 from typing import Optional
@@ -33,7 +35,8 @@ from typing import Optional
 # schema (numpy only), not dataset.py: data generation must not need torch.
 from fw.environments.ray_features import RAY_LAYOUT_VERSION
 from fw.ships.ship_factory import ShipModel
-from fw.surrogate.schema import SWAY_CONVENTION, DatasetIdentity, npz_metadata, scenario_for_raw_width
+from fw.surrogate.schema import (SWAY_CONVENTION, DatasetIdentity, npz_metadata, provenance_metadata,
+                                 scenario_for_raw_width)
 from fw.surrogate.sim_fh_dataset_generator import (
     BANK_START_BAND,
     BANK_START_FRACTION,
@@ -82,8 +85,38 @@ def dataset_identity(ship_model: ShipModel, configuration: str = DEFAULT_CONFIGU
 # ================================================================
 # TRAIN/VAL/TEST SPLITTING
 # ================================================================
+def generation_provenance(args, ship_model: ShipModel, rudder_max_deg: float, n_episodes: int,
+                          n_rows: int, started_utc: Optional[str] = None) -> dict:
+    """
+    How a dataset was generated: the CLI settings, the resolved rudder scale,
+    the FH exercises, the generator's data version and what came out. Stored
+    in every .npz (schema.NPZ_PROVENANCE_KEY) and next to the CSV
+    (<csv stem>_generation.json). Informational only: it is not part of the
+    dataset identity and changes nothing in the data.
+    """
+
+    # Imported here so the import list at the top stays as it was.
+    from fw.surrogate.sim_fh_dataset_generator import _CHECKPOINT_VERSION, exercise_paths
+
+    exercise, no_current = exercise_paths(ship_model, args.configuration)
+    settings = {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in sorted(vars(args).items())}
+    return {
+        "started_utc": started_utc,
+        "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "generator_data_version": int(_CHECKPOINT_VERSION),
+        "cli_settings": settings,
+        "ship_model": ship_model.name,
+        "configuration": args.configuration,
+        "rudder_max_deg": float(rudder_max_deg),
+        "exercise": os.path.basename(str(exercise)),
+        "exercise_no_current": os.path.basename(str(no_current)) if no_current else None,
+        "episodes_with_rows": int(n_episodes),
+        "rows": int(n_rows),
+    }
+
+
 def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetIdentity,
-                   train=0.8, val=0.1, seed=None):
+                   train=0.8, val=0.1, seed=None, provenance: Optional[dict] = None):
     """
     Split dataset into train/val/test BY EPISODE and save as .npz.
 
@@ -115,6 +148,8 @@ def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetId
             the same split. Each .npz also stores the per-row `episode_id`,
             so the split can be inspected or reproduced afterwards, plus the
             identity (`schema.npz_metadata`), which dataset.load_raw checks.
+        provenance: Optional generation provenance (generation_provenance),
+            stored in every .npz as well (schema.provenance_metadata).
     """
 
     unique_episodes = np.unique(episode_ids)
@@ -151,7 +186,8 @@ def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetId
             pending.append((tmp, path))
             with open(tmp, "wb") as f:
                 np.savez(f, X=x_vals[mask], Y=y_vals[mask], episode_id=episode_ids[mask],
-                         **npz_metadata(identity))
+                         **npz_metadata(identity),
+                         **(provenance_metadata(provenance) if provenance is not None else {}))
         for tmp, path in pending:
             os.replace(tmp, path)
     finally:
@@ -301,6 +337,7 @@ def main():
     # Generate
     # ============================================================
 
+    started_utc = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     print(f"Generating {args.samples} episodes (max. horizon={args.horizon}s, {ship_model.name}, "
           f"configuration '{args.configuration}')...")
 
@@ -327,12 +364,43 @@ def main():
 
     print(f"Saved dataset to {args.save} ({len(x_values)} rows from {nbr_samples} episodes)")
 
+    # Provenance: next to the CSV, and in every .npz below. Informational
+    # only -- after a long run it must never cost the data, so any failure
+    # here is reported and the run continues without it.
+    provenance = None
+    try:
+        provenance = generation_provenance(args, ship_model, rudder_max_deg, nbr_samples, len(x_values),
+                                           started_utc=started_utc)
+        provenance_metadata(provenance)          # serializable? (checked here, not while writing the splits)
+    except Exception as exc:  # noqa: BLE001 - never lose the dataset over the provenance
+        provenance = None
+        print(f"WARNING: could not record the generation settings ({type(exc).__name__}: {exc}); "
+              f"the dataset is written without them.")
+    if provenance is not None:
+        # Written separately: a failing sidecar file does not drop the provenance in the .npz files.
+        provenance_path = os.path.splitext(args.save)[0] + "_generation.json"
+        tmp = f"{provenance_path}.tmp{os.getpid()}"
+        try:
+            with open(tmp, "w") as f:
+                json.dump(provenance, f, indent=2, sort_keys=True)
+            os.replace(tmp, provenance_path)
+            print(f"Saved generation settings to {provenance_path}")
+        except Exception as exc:  # noqa: BLE001 - never lose the dataset over the provenance
+            print(f"WARNING: could not write {provenance_path} ({type(exc).__name__}: {exc}); the .npz "
+                  f"files still carry the generation settings.")
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+
     # ============================================================
     # Optional splitting
     # ============================================================
     if args.split:
         prefix = os.path.splitext(args.save)[0]
-        split_and_save(x_values, y_values, episode_ids, prefix, identity, seed=args.seed)
+        split_and_save(x_values, y_values, episode_ids, prefix, identity, seed=args.seed, provenance=provenance)
 
 
 if __name__ == "__main__":

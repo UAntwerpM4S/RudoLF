@@ -45,6 +45,10 @@ Environment from the lookup CSV (`get_env`, nearest dataset row):
   Without a lookup (or no row found): default UKC, zero wind and current.
   The rows come from episodes with random tide times and wind fields, so the
   looked-up wind/current can jump when the nearest row changes.
+  The nearest row is used however far away it is (unchanged behaviour), but
+  a lookup farther than LOOKUP_WARN_DISTANCE_M is reported: a warning the
+  first time, and counted in `lookup_far_count` (largest distance seen in
+  `lookup_max_distance`), so gaps in the lookup's coverage become visible.
 """
 
 import logging
@@ -65,6 +69,11 @@ logger = logging.getLogger(__name__)
 
 # Keys accepted in ua_surrogate_config.
 CONFIG_KEYS = ("preset", "checkpoint", "lookup_csv")
+
+# A lookup row farther away than this [m] is reported (see the module
+# docstring). The lookups are 5 m grids of the positions the dataset visited,
+# so inside the covered water the nearest row is a few metres away.
+LOOKUP_WARN_DISTANCE_M = 50.0
 
 _RAY_IDX_BOW = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=float), 0.0))[0])
 _RAY_IDX_STBD = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=float), 90.0))[0])
@@ -130,6 +139,9 @@ class UAntwerpSurrogate(DynamicsBase):
         wcu_lookup: WcuLookup for the UKC, or None.
         default_ukc: UKC [m] used without (a hit in) the lookup.
         ukc: Last UKC used [m].
+        lookup_far_count: Number of lookups whose nearest row was farther
+            than LOOKUP_WARN_DISTANCE_M (the row is still used).
+        lookup_max_distance: Largest lookup distance seen so far [m].
         _env: Ray caster (scenarios with rays only); created on first use if
             none was given.
     """
@@ -202,6 +214,8 @@ class UAntwerpSurrogate(DynamicsBase):
         # the scenario's raw column layout, so the positions come from the schema.
         self.default_ukc = float(self.preset.default_ukc)
         self.ukc = self.default_ukc
+        self.lookup_far_count = 0
+        self.lookup_max_distance = 0.0
         self.wcu_lookup = None
         if self.scenario.includes_ukc:
             csv = resolve_lookup_csv(config.get("lookup_csv", self.preset.lookup_csv))
@@ -273,6 +287,7 @@ class UAntwerpSurrogate(DynamicsBase):
             return EnvironmentData(ukc=self.ukc, wind_speed=calm, wind_direction=calm,
                                    current_speed=0.0, current_direction=0.0)
 
+        self._note_lookup_distance(pos, getattr(sample, "distance", None))
         self.ukc = sample.env.ukc
         if not self.scenario.includes_wind_current:
             return EnvironmentData(ukc=self.ukc, wind_speed=0.0, wind_direction=0.0,
@@ -288,6 +303,25 @@ class UAntwerpSurrogate(DynamicsBase):
         return EnvironmentData(ukc=self.ukc, wind_speed=wind_speed, wind_direction=wind_dir,
                                current_speed=sample.env.current_speed,
                                current_direction=sample.env.current_direction)
+
+    def _note_lookup_distance(self, pos, distance: float) -> None:
+        """Track the lookup distance; warn the first time it exceeds LOOKUP_WARN_DISTANCE_M."""
+
+        if distance is None:          # a lookup without distance information: nothing to report
+            return
+        distance = float(distance)
+        if distance > self.lookup_max_distance:
+            self.lookup_max_distance = distance
+        if distance > LOOKUP_WARN_DISTANCE_M:
+            self.lookup_far_count += 1
+            if self.lookup_far_count == 1:
+                logger.warning(
+                    "UAntwerp surrogate '%s': the nearest lookup row to (%.1f, %.1f) is %.1f m away "
+                    "(> %.0f m); its UKC%s %s used anyway. The lookup does not cover this area well. "
+                    "Further cases are only counted (lookup_far_count).",
+                    self.preset.name, float(pos[0]), float(pos[1]), distance, LOOKUP_WARN_DISTANCE_M,
+                    ", wind and current" if self.scenario.includes_wind_current else "",
+                    "are" if self.scenario.includes_wind_current else "is")
 
     def step(
         self,
@@ -313,14 +347,16 @@ class UAntwerpSurrogate(DynamicsBase):
             Tuple `(u, v, r)` containing the updated body-frame velocities.
 
         Raises:
-            AssertionError: If `dt` differs from `SURROGATE_DT`.
+            ValueError: If `dt` differs from `SURROGATE_DT` (an explicit check, not
+                an assert, so it also holds under `python -O`).
         """
 
-        assert np.isclose(dt, SURROGATE_DT), (
-            f"UAntwerpSurrogate requires dt == {SURROGATE_DT} s (surrogate training step), got {dt}. "
-            f"Ensure ShipSimulator.dt is an exact integer multiple of {SURROGATE_DT} s "
-            f"so no fractional remainder sub-step is produced."
-        )
+        if not np.isclose(dt, SURROGATE_DT):
+            raise ValueError(
+                f"UAntwerpSurrogate requires dt == {SURROGATE_DT} s (surrogate training step), got {dt}. "
+                f"Ensure ShipSimulator.dt is an exact integer multiple of {SURROGATE_DT} s "
+                f"so no fractional remainder sub-step is produced."
+            )
         return super().step(state, rudder_angle, thrust, dt, enable_rudder_angle_scaling)
 
     def _build_input_vector(self, state: VesselState, rudder_angle: float, thrust: float) -> np.ndarray:

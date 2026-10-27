@@ -20,8 +20,13 @@ Rows are fed to SurrogatePredictor exactly as stored (cols 0..36 = the raw
 tripoli_full preset);
 targets are cols 37..39 (delta u, v, r over 0.1 s).
 
-Usage (from src/fw/surrogate, with the RudoLF venv):
-    python check_ua_full_onestep_on_data.py <dataset.csv> [--checkpoint PATH] [--sample N]
+Usage (from src, with the RudoLF venv):
+    python -m fw.surrogate.validation.check_ua_full_onestep_on_data <dataset.csv> [--checkpoint PATH] [--sample N]
+
+--checkpoint: an existing path is used as given; otherwise it is resolved like
+the presets do (relative = in fw/checkpoints). Default: the tripoli_full
+preset's checkpoint. The CSV carries no ship identity: use the dataset of the
+checkpoint's ship (the checkpoint's ship is printed).
 """
 
 import argparse
@@ -30,9 +35,9 @@ import sys
 import time
 from pathlib import Path
 
-# Make `import fw...` work when run as a plain script from src/fw/surrogate
-# (this file lives in src/fw/surrogate -> src is two levels up).
-_SRC = Path(__file__).resolve().parents[2]
+# Make `import fw...` work when run as a plain script
+# (this file lives in src/fw/surrogate/validation -> src is three levels up).
+_SRC = Path(__file__).resolve().parents[3]     # src (this file: src/fw/surrogate/validation/)
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
@@ -65,14 +70,29 @@ def _true_wind_speed(a):
     return np.hypot(ws * np.cos(wd) - u, ws * np.sin(wd) + v)
 
 
+def _count_rows(path: Path) -> int:
+    """Number of non-empty lines of the CSV (one cheap pass, for the sampling rate)."""
+    n = 0
+    with open(path, "rb") as f:
+        for line in f:
+            if line.strip():
+                n += 1
+    return n
+
+
 def _load(path: Path, sample: int, seed: int):
-    """Random row sample + ALL test-like rows (they are rare), chunked to save memory."""
+    """Random row sample (about `sample` rows) + ALL test-like rows (they are rare), chunked to save memory."""
     rng = np.random.default_rng(seed)
+    n_cols = len(pd.read_csv(path, header=None, nrows=1).columns)
+    if n_cols != N_IN + len(TARGET_COLS) + 1:
+        raise SystemExit(f"{path} has {n_cols} columns; a full_env dataset CSV has "
+                         f"{N_IN + len(TARGET_COLS) + 1} (raw row, 3 targets, episode_id).")
+    rate = min(1.0, sample / max(1, _count_rows(path)))
     keep_rand, keep_like, n_total = [], [], 0
     for chunk in pd.read_csv(path, header=None, dtype=np.float32, chunksize=500_000):
         a = chunk.to_numpy()
         n_total += len(a)
-        keep_rand.append(a[rng.random(len(a)) < sample / 6.5e6])  # ~`sample` rows for a ~6.5 M-row dataset
+        keep_rand.append(a[rng.random(len(a)) < rate])
         like = ((np.abs(a[:, COL_RUDDER]) < RUDDER_TOL) & (np.abs(a[:, COL_R]) < YAW_RATE_TOL)
                 & (a[:, RAY_COLS].max(axis=1) < MAX_RAY))
         keep_like.append(a[like])
@@ -130,7 +150,9 @@ def main():
 
     ap = argparse.ArgumentParser()
     ap.add_argument("csv")
-    ap.add_argument("--checkpoint", default="checkpoints/best_surrogate_tripoli_full.pth")
+    ap.add_argument("--checkpoint", default=None,
+                    help="checkpoint path (existing path as given, else relative to fw/checkpoints); "
+                         "default: the tripoli_full preset's checkpoint")
     ap.add_argument("--sample", type=int, default=50_000, help="random rows for the 'all rows' line")
     ap.add_argument("--max-like", type=int, default=100_000, help="cap on test-like rows to predict")
     ap.add_argument("--seed", type=int, default=0)
@@ -140,16 +162,23 @@ def main():
     args = ap.parse_args()
 
     from fw.surrogate.inference_surrogate import SurrogatePredictor
+    from fw.surrogate.presets import get_preset, resolve_checkpoint
     from fw.surrogate.schema import FULL_ENV
-    ckpt = Path(args.checkpoint)
-    if not ckpt.is_absolute() and not ckpt.exists() and (Path(__file__).resolve().parent / ckpt).exists():
-        ckpt = Path(__file__).resolve().parent / ckpt
+    if args.checkpoint is None:
+        ckpt = resolve_checkpoint(get_preset("tripoli_full").checkpoint)
+    else:
+        ckpt = Path(args.checkpoint)
+        if not ckpt.exists():
+            ckpt = resolve_checkpoint(args.checkpoint)
+        if not ckpt.exists():      # e.g. the old default "checkpoints/<name>.pth": try the bare name
+            ckpt = resolve_checkpoint(Path(args.checkpoint).name)
     if not ckpt.exists():
         raise SystemExit(f"Checkpoint not found: {ckpt} (cwd {Path.cwd()}); pass --checkpoint <path>.")
     if not Path(args.csv).exists():
         raise SystemExit(f"Dataset not found: {args.csv}")
     print(f"Checkpoint: {ckpt.resolve()}")
     predictor = SurrogatePredictor(str(ckpt))
+    print(f"Checkpoint ship: {predictor.ship_model} -- the dataset must be of the same ship.")
     if predictor.scenario != FULL_ENV:
         raise SystemExit(f"{ckpt} is a '{predictor.scenario.name}' checkpoint; this check needs a "
                          f"'{FULL_ENV.name}' (UA_full) checkpoint.")

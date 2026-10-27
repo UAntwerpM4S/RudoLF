@@ -7,6 +7,8 @@ are read from the checkpoint, never assumed by the caller.
 
 import logging
 
+from typing import Optional
+
 import torch
 import numpy as np
 
@@ -111,6 +113,22 @@ class SurrogatePredictor:
         ).to(self.device)
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model.eval()
+
+    def data_mismatch(self, identity) -> Optional[str]:
+        """
+        Why data with dataset identity `identity` (schema.DatasetIdentity, e.g.
+        from dataset.load_raw) cannot be evaluated with this model, or None if
+        it can: a different ship, or a different rudder scale (rudder_action = 1
+        would stand for another angle). The scenario is checked separately
+        (schema.check_projection).
+        """
+
+        if str(identity.ship_model) != self.ship_model:
+            return f"the data is {identity.ship_model} data, but the checkpoint is a {self.ship_model} model"
+        if abs(float(identity.rudder_max_deg) - self.rudder_max_deg) > 1e-6:
+            return (f"the data's rudder scale is {float(identity.rudder_max_deg):g} deg, the checkpoint's "
+                    f"{self.rudder_max_deg:g} deg (rudder_action = 1 would mean a different angle)")
+        return None
 
     def _check_feature_set(self, ckpt) -> None:
         """Fail loudly if the checkpoint does not match the current schema."""

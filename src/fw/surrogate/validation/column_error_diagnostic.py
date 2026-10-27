@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from fw.surrogate.dataset import load_raw
-from fw.surrogate.episode_time import T_EPISODE_KEY
+from fw.surrogate.episode_time import T_EPISODE_KEY, step_threshold, steps_from_times
 from fw.surrogate.presets import resolve_checkpoint
 from fw.surrogate.schema import TARGET_NAMES, check_projection, get_scenario, project_raw_columns
 
@@ -74,9 +74,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     predictor = SurrogatePredictor(str(ckpt))
     x_raw, y, identity = load_raw(args.data)
     source = get_scenario(identity.scenario)
-    if identity.ship_model != predictor.ship_model:
-        logger.error("%s is %s data, but the checkpoint is a %s model.", args.data, identity.ship_model,
-                     predictor.ship_model)
+    mismatch = predictor.data_mismatch(identity)
+    if mismatch:
+        logger.error("%s: %s.", args.data, mismatch)
         return 2
     if args.by not in source.raw_columns:
         logger.error("Column '%s' is not in the %s data. Columns: %s", args.by, source.name,
@@ -99,7 +99,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              args.data, T_EPISODE_KEY, args.data)
                 return 2
             t = z[T_EPISODE_KEY]
-        keep &= (t >= 0) & (t >= args.min_time - 1e-6)
+        steps = steps_from_times(t)     # whole steps: float32 times are not exactly k * 0.1
+        keep &= (steps >= 0) & (steps >= step_threshold(args.min_time))
     if args.where or args.min_time is not None:
         x_raw, y = x_raw[keep], y[keep]
         logger.info("Rows after the filters (%s): %d.",

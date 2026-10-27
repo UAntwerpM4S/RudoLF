@@ -37,6 +37,7 @@ from fw.surrogate.schema import (
     get_scenario,
     project_raw_columns,
     read_npz_identity,
+    read_npz_provenance,
     select_and_encode,
 )
 
@@ -55,6 +56,17 @@ def read_identity(path) -> DatasetIdentity:
 
     with np.load(path, allow_pickle=False) as data:
         return read_npz_identity(data, path)
+
+
+def read_provenance(path) -> Optional[dict]:
+    """
+    Generation provenance of a dataset .npz (generator settings, see
+    generate_ship_data.generation_provenance), or None for files written
+    before it was recorded.
+    """
+
+    with np.load(path, allow_pickle=False) as data:
+        return read_npz_provenance(data)
 
 
 def load_raw(path, scenario: Optional[ScenarioSchema] = None) -> Tuple[np.ndarray, np.ndarray, DatasetIdentity]:

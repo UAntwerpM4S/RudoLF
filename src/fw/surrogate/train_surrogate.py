@@ -61,7 +61,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Tuple, Union
 from torch.utils.data import DataLoader, TensorDataset
 from fw.environments.ray_features import RAY_MAX_DISTANCE
-from fw.surrogate.dataset import check_same_identity, load_raw, read_identity, stats_from_arrays
+from fw.surrogate.dataset import check_same_identity, load_raw, read_identity, read_provenance, stats_from_arrays
 from fw.surrogate.episode_time import T_EPISODE_KEY
 from fw.surrogate.models.mlp_surrogate import ACTIVATIONS, SurrogateMLP, activation_from_name
 from fw.surrogate.schema import (
@@ -88,8 +88,8 @@ def _num_samples(loader: DataLoader) -> int:
     Number of samples in a map-style loader's dataset.
 
     torch types `DataLoader.dataset` as `Dataset`, which deliberately does not
-    define `__len__` (iterable datasets have no length). ShipDynamicsDataset
-    does; the isinstance check narrows the type for the checker and fails
+    define `__len__` (iterable datasets have no length). The TensorDatasets
+    built here do; the isinstance check narrows the type for the checker and fails
     loudly if a dataset without a length is ever passed in.
     """
 
@@ -301,6 +301,71 @@ def normalized_dataset(x_vals: np.ndarray, y_vals: np.ndarray, x_mean, x_std, y_
                          torch.from_numpy(np.ascontiguousarray(y_out, dtype=np.float32)))
 
 
+def log_provenance(train_files: Sequence[str], all_files: Sequence[str]) -> dict:
+    """
+    Log how each dataset file was generated (its provenance, see
+    generate_ship_data.generation_provenance) and return {file: provenance or
+    None} for the checkpoint. When several training datasets are combined,
+    the generator settings in which they differ are listed: combining them is
+    allowed (e.g. a main dataset plus a bank-straight one), this only makes
+    the difference visible. Informational only: nothing is checked or changed.
+    """
+
+    provenance = {}
+    unreadable = set()
+    for f in all_files:
+        try:
+            p = read_provenance(f)
+            if p is not None and not isinstance(p, dict):
+                raise ValueError(f"expected a JSON object, got {type(p).__name__}")
+            provenance[f] = p
+        except Exception as exc:  # noqa: BLE001 - informational only, never stop training over it
+            logger.warning("%s: could not read its generation provenance (%s).", f, exc)
+            provenance[f] = None
+            unreadable.add(f)
+    missing = [f for f in all_files if provenance[f] is None and f not in unreadable]
+    if missing:
+        logger.info("No generation provenance recorded in %d file(s) (written before it was recorded): %s",
+                    len(missing), ", ".join(missing))
+    try:
+        _log_provenance_summary(train_files, provenance)
+    except Exception as exc:  # noqa: BLE001 - informational only, never stop training over it
+        logger.warning("Could not summarise the generation provenance (%s).", exc)
+    return provenance
+
+
+def _cli_settings(p: dict) -> dict:
+    """The provenance's generator CLI settings ({} if absent or malformed)."""
+
+    s = p.get("cli_settings")
+    return s if isinstance(s, dict) else {}
+
+
+def _log_provenance_summary(train_files: Sequence[str], provenance: dict) -> None:
+    """Log the provenance of every training file and the settings in which they differ (see log_provenance)."""
+
+    for f in train_files:
+        p = provenance[f]
+        if p is not None:
+            s = _cli_settings(p)
+            logger.info("%s: generated %s, %s %s, %s episodes, seed %s, thrust range %s, bank %s / straight %s / "
+                        "bank-straight %s", f, p.get("created_utc"), p.get("ship_model"), p.get("configuration"),
+                        p.get("episodes_with_rows"), s.get("seed"), s.get("thrust_range"), s.get("bank_fraction"),
+                        s.get("straight_fraction"), s.get("bank_straight_fraction"))
+    known = [(f, provenance[f]) for f in train_files if provenance[f] is not None]
+    if len(known) > 1:
+        ignore = {"save", "workers", "split"}
+        settings = [{k: v for k, v in _cli_settings(p).items() if k not in ignore} for _, p in known]
+        keys = sorted(set().union(*settings))
+        differing = [k for k in keys if len({repr(st.get(k)) for st in settings}) > 1]
+        for k in ("configuration", "exercise", "generator_data_version"):
+            if k not in differing and len({repr(p.get(k)) for _, p in known}) > 1:
+                differing.append(k)
+        if differing:
+            logger.info("The training datasets were generated with different settings: %s. Combining them "
+                        "is allowed; check that this is intended.", ", ".join(differing))
+
+
 def make_dataloaders(train_file: PathOrPaths, val_file: PathOrPaths, test_file: PathOrPaths, scenario,
                      env_encoding, batch_size=256, num_workers=0, seed=None, drop_last=False, pin_memory=False,
                      min_bank_distance: Optional[float] = None, min_ukc: Optional[float] = None,
@@ -347,6 +412,20 @@ def make_dataloaders(train_file: PathOrPaths, val_file: PathOrPaths, test_file: 
                                                 min_episode_time), *stats)
     test_ds = normalized_dataset(*load_split(test_file, scenario, env_encoding, min_bank_distance, min_ukc,
                                                  min_episode_time), *stats)
+    # Fail before training, not after it: an empty val split would only fail
+    # after the first epoch, an empty test split only after the whole run.
+    empty = [name for name, ds in (("validation", val_ds), ("test", test_ds)) if len(ds) == 0]
+    if empty:
+        filters = ", ".join(f"{k}={v}" for k, v in (("min_bank_distance", min_bank_distance),
+                                                    ("min_ukc", min_ukc),
+                                                    ("min_episode_time", min_episode_time)) if v is not None)
+        raise ValueError(
+            f"The {' and '.join(empty)} split{'s have' if len(empty) > 1 else ' has'} 0 samples"
+            + (f" after the row filters ({filters}) -- or the file itself has no rows. Relax the "
+               f"filters, or check the files."
+               if filters else
+               ". The episode-level split probably gave it no episodes (too few episodes for its "
+               "fraction); generate more episodes or check the files."))
 
     generator = torch.Generator().manual_seed(seed) if seed is not None else None
     # Only drop the last batch when that still leaves at least one batch.
@@ -452,6 +531,7 @@ def main(argv=None):
     data_identity = check_same_identity(all_files, [read_identity(f) for f in all_files])
     if len(train_files) > 1:
         logger.info("Training on %d datasets: %s", len(train_files), ", ".join(train_files))
+    data_provenance = log_provenance(train_files, all_files)
     source_scenario = get_scenario(data_identity.scenario)
     scenario = get_scenario(args.scenario) if args.scenario else source_scenario
     check_projection(source_scenario, scenario)
@@ -596,7 +676,7 @@ def main(argv=None):
         if not np.isfinite(train_running_loss):
             raise FloatingPointError(
                 f"Training loss became {train_running_loss} in epoch {epoch}. Check the data "
-                f"for extreme values (python -m fw.surrogate.diagnose_splits) or lower --lr."
+                f"for extreme values (python -m fw.surrogate.validation.diagnose_splits) or lower --lr."
             )
 
         # Loss on the training set under the SAME conditions as validation
@@ -650,6 +730,8 @@ def main(argv=None):
                 "min_bank_distance":    args.min_bank_distance,
                 "min_ukc":              args.min_ukc,
                 "min_episode_time":     args.min_episode_time,
+                # How the data was generated (informational; None for older files).
+                "data_provenance":      data_provenance,
                 "hidden_sizes":         args.hidden_sizes,
                 "activation":           args.activation,
                 "dropout":              args.dropout,

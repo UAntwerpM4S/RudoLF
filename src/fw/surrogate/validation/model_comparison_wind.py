@@ -35,7 +35,7 @@ its own learned response). This sidesteps the ShipSimulator isinstance
 double-counting issue noted in model_comparison.py.
 
 UA_* models: fw.dynamics.uantwerp_surrogate.UAntwerpSurrogate, one per preset
-(model_comparison.UA_PRESETS / build_ua_models).
+(model_comparison.UA_PRESETS_BY_SHIP / build_ua_models).
 
 Test layout:
   - one start pose (x, y, heading) in open water, supplied by the caller;
@@ -1241,9 +1241,13 @@ def _onestep_section(out_dir: Path, d) -> str:
     u0 = float(WIND_TRAJECTORY_SPEED)
     T = o["duration_s"]
     # Constant-bias estimates over the run duration (rough indicator; the bias is
-    # measured along FH's path, while a rollout leaves that path):
-    o["implied_turn_deg"] = np.degrees(0.5 * o["bias_dr"] * T ** 2)
-    o["implied_lateral_m"] = 0.5 * o["bias_dv"] * T ** 2 + u0 * o["bias_dr"] * T ** 3 / 6.0
+    # measured along FH's path, while a rollout leaves that path). The biases are
+    # in the state convention (yaw rate counter-clockwise = to port positive, sway
+    # port positive); the rollout errors they are compared with (track_metrics:
+    # turn_error_vs_fh_deg, lateral_error_vs_fh) are STARBOARD positive, hence the
+    # minus signs -- a pure bias then lies on the diagonal of Figure 4.
+    o["implied_turn_deg"] = -np.degrees(0.5 * o["bias_dr"] * T ** 2)
+    o["implied_lateral_m"] = -(0.5 * o["bias_dv"] * T ** 2 + u0 * o["bias_dr"] * T ** 3 / 6.0)
     key = ["target_wind_speed", "target_rel_dir_deg", "model"]
     roll = d[key + ["turn_error_vs_fh_deg", "lateral_error_vs_fh"]]
     o["target_rel_dir_deg"] = o["target_rel_dir_deg"].astype(float)
@@ -1402,12 +1406,17 @@ def write_report(out_dir: Path = None) -> Path:
     q = d[d["model"] == "FH"][["target_wind_speed", "target_rel_dir_deg", "actual_wind_speed", "actual_rel_dir_deg",
                                "true_wind_speed_min_along_path", "true_wind_speed_max_along_path", "n_steps",
                                "fh_domain_exit_step"]].copy()
-    hits = d.groupby(["target_wind_speed", "target_rel_dir_deg"], dropna=False)["first_bank_hit_step"].apply(
+    # The no-wind run has target_rel_dir_deg NaN, and NaN never equals NaN as a
+    # lookup key: group and look up on a sentinel instead.
+    _NO_DIR = -999.0
+    keyed = d.assign(_dir=d["target_rel_dir_deg"].fillna(_NO_DIR))
+    hits = keyed.groupby(["target_wind_speed", "_dir"])["first_bank_hit_step"].apply(
         lambda s: int(s.notna().sum()))
-    misses = d.groupby(["target_wind_speed", "target_rel_dir_deg"], dropna=False)["ukc_lookup_misses"].apply(
+    misses = keyed.groupby(["target_wind_speed", "_dir"])["ukc_lookup_misses"].apply(
         lambda s: int(np.nansum(s.to_numpy(dtype=float))))
-    q["bank_hits"] = [hits.get((a, b), 0) for a, b in zip(q["target_wind_speed"], q["target_rel_dir_deg"])]
-    q["ukc_misses"] = [misses.get((a, b), 0) for a, b in zip(q["target_wind_speed"], q["target_rel_dir_deg"])]
+    q_dirs = q["target_rel_dir_deg"].fillna(_NO_DIR)
+    q["bank_hits"] = [hits.get((a, b), 0) for a, b in zip(q["target_wind_speed"], q_dirs)]
+    q["ukc_misses"] = [misses.get((a, b), 0) for a, b in zip(q["target_wind_speed"], q_dirs)]
     q = q.rename(columns={
         "target_wind_speed": "target wind [m/s]", "target_rel_dir_deg": "target dir [deg]",
         "actual_wind_speed": "true wind at start [m/s]", "actual_rel_dir_deg": "true dir at start [deg]",

@@ -60,9 +60,9 @@ print("Loading validation split …")
 # checks the file's identity. SurrogatePredictor.predict() selects and
 # encodes the columns itself -- never hand-slice X here.
 X_val, Y_sim, val_identity = load_raw(VAL_NPZ, predictor.scenario)
-if val_identity.ship_model != predictor.ship_model:
-    raise SystemExit(f"{VAL_NPZ} is {val_identity.ship_model} data, but the surrogate was trained "
-                     f"on {predictor.ship_model} data.")
+_mismatch = predictor.data_mismatch(val_identity)
+if _mismatch:
+    raise SystemExit(f"{VAL_NPZ}: {_mismatch}.")
 
 N = X_val.shape[0]
 print(f"  {N:,} validation samples")

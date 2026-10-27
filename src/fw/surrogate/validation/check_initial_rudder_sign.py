@@ -17,11 +17,13 @@ measures it (needs FH):
   * the heading change over the first seconds says which way it turned
     (heading counter-clockwise positive: > 0 = to port).
 
-    run "+" turns to port and run "-" to starboard -> the assumption holds
-    the other way round                             -> negate the initial angle
-    both ~0                                         -> inconclusive (FH ignores
-                                                       the initial angle, or
-                                                       the rudder snaps back)
+  Verdict:
+    run "+" turns to port, run "-" to starboard -> the assumption holds
+    run "+" turns to starboard, run "-" to port -> the initial angle has the
+                                                   opposite sign: negate it
+    both ~0                                     -> inconclusive (FH ignores the
+                                                   initial angle, or the rudder
+                                                   snaps back)
 
 It also prints FH's own maximum rudder angle (getMaximumAngle) and the
 angle-related methods of the rudder control, to compare with the
@@ -29,15 +31,15 @@ generator's RUDDER_MAX_DEG (the per-step setControlValue is normalized to
 FH's maximum, the initial angle uses RUDDER_MAX_DEG degrees).
 
 Usage (from src; position/heading must be in open water of the exercise):
-    python -m fw.surrogate.check_initial_rudder_sign --ship MYZAKO_37
-    python -m fw.surrogate.check_initial_rudder_sign --ship TRIPOLI --x -1559 --y 11990 --heading -45
+    python -m fw.surrogate.validation.check_initial_rudder_sign --ship MYZAKO_37
+    python -m fw.surrogate.validation.check_initial_rudder_sign --ship TRIPOLI --x -1559 --y 11990 --heading -45
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-_SRC_DIR = str(Path(__file__).resolve().parents[2])
+_SRC_DIR = str(Path(__file__).resolve().parents[3])     # src (this file: src/fw/surrogate/validation/)
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 

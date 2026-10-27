@@ -217,9 +217,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     x_raw, y, identity = load_raw(args.data, scenario)
-    if identity.ship_model != predictor.ship_model:
-        logger.error("%s is %s data, but the checkpoint is a %s model.", args.data, identity.ship_model,
-                     predictor.ship_model)
+    mismatch = predictor.data_mismatch(identity)
+    if mismatch:
+        logger.error("%s: %s.", args.data, mismatch)
         return 2
     if args.bins is None:
         bins = list(DEFAULT_BINS)
@@ -230,23 +230,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     title_extra = ""
     if args.min_time is not None or args.max_time is not None:
-        from fw.surrogate.episode_time import STATE_COLUMNS, T_EPISODE_KEY, step_index
-        from fw.surrogate.schema import SURROGATE_DT
+        from fw.surrogate.episode_time import (STATE_COLUMNS, T_EPISODE_KEY, step_index, step_threshold,
+                                               steps_from_times)
         with np.load(args.data) as z:
             episode_id = z["episode_id"].astype(np.int64)
             stored = z[T_EPISODE_KEY] if T_EPISODE_KEY in z.files else None
+        # Compared in whole steps, the same whether the time is stored (float32) or
+        # reconstructed: [min_time, max_time) -> steps [step_threshold(min), step_threshold(max)).
         if stored is not None:      # written by fw.surrogate.episode_time
-            t = stored.astype(np.float64)
-            n_ok, n_bad = len(np.unique(episode_id[t >= 0])), len(np.unique(episode_id[t < 0]))
+            steps = steps_from_times(stored)
+            n_ok, n_bad = len(np.unique(episode_id[steps >= 0])), len(np.unique(episode_id[steps < 0]))
         else:
             state = x_raw[:, [scenario.col(c) for c in STATE_COLUMNS]]
             steps, n_ok, n_bad = step_index(state, y, episode_id)
-            t = np.where(steps >= 0, steps * SURROGATE_DT, -1.0)
-        keep = t >= 0
+        keep = steps >= 0
         if args.min_time is not None:
-            keep &= t >= args.min_time - 1e-9
+            keep &= steps >= step_threshold(args.min_time)
         if args.max_time is not None:
-            keep &= t < args.max_time - 1e-9
+            keep &= steps < step_threshold(args.max_time)
         logger.info("Time filter [%s, %s) s: %d episodes ordered, %d skipped; keeping %d of %d rows.",
                     args.min_time, args.max_time, n_ok, n_bad, int(keep.sum()), len(y))
         x_raw, y = x_raw[keep], y[keep]

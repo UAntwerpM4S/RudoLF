@@ -30,8 +30,8 @@ states with starboard-positive sway make every non-FH model's sideways drift
 go to the wrong side.
 
 Usage (from src):
-    python -m fw.surrogate.check_sway_sign model_comparison_output/wind_trajectories
-    python -m fw.surrogate.check_sway_sign model_comparison_output/current_trajectories
+    python -m fw.surrogate.validation.check_sway_sign model_comparison_output/wind_trajectories
+    python -m fw.surrogate.validation.check_sway_sign model_comparison_output/current_trajectories
 """
 
 import argparse
@@ -39,7 +39,7 @@ import sys
 from pathlib import Path
 
 # Allow running by file path as well (src on the import path).
-_SRC_DIR = str(Path(__file__).resolve().parents[2])
+_SRC_DIR = str(Path(__file__).resolve().parents[3])     # src (this file: src/fw/surrogate/validation/)
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 

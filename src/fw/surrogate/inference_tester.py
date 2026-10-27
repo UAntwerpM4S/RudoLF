@@ -9,6 +9,9 @@ predictor = SurrogatePredictor("checkpoints/best_surrogate.pth")
 # load ONE raw sample from a dataset file, in the checkpoint scenario's raw
 # layout (load_raw checks the file's identity and projects if allowed)
 X, Y, identity = load_raw("data/ship_dynamics_dataset_test.npz", predictor.scenario)
+mismatch = predictor.data_mismatch(identity)
+if mismatch:
+    raise SystemExit(f"data/ship_dynamics_dataset_test.npz: {mismatch}.")
 
 sample_idx = 0
 x_raw = X[sample_idx]

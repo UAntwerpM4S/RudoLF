@@ -10,8 +10,8 @@ verified. Otherwise, it compares the bounding-box heuristic over a range of
 edge tolerances, one panel per tolerance.
 
 Usage (from the folder you run the generator from, e.g. src):
-    python -m fw.surrogate.check_cutoffs
-    python fw/surrogate/check_cutoffs.py
+    python -m fw.surrogate.validation.check_cutoffs
+    python fw/surrogate/validation/check_cutoffs.py
 """
 
 import os
@@ -21,7 +21,7 @@ from pathlib import Path
 
 # Allow running by file path: put the folder that contains the `fw` package
 # (src) on the import path. Not needed with `python -m`.
-_SRC_DIR = str(Path(__file__).resolve().parents[2])
+_SRC_DIR = str(Path(__file__).resolve().parents[3])     # src (this file: src/fw/surrogate/validation/)
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 

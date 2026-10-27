@@ -91,7 +91,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 float(ukc.max()), float(np.median(ukc)))
 
     bins = sorted(args.bins)
-    which = np.digitize(ukc, bins) - 1
+    # Last bin closed on the right ([lo, hi]), like column_error_diagnostic: a UKC
+    # equal to the last edge belongs to the last bin.
+    edges = np.array(bins, dtype=np.float64)
+    edges[-1] = np.nextafter(edges[-1], np.inf)
+    which = np.digitize(ukc, edges) - 1
     labels = [f"{bins[b]:g}-{bins[b + 1]:g} m" for b in range(len(bins) - 1)]
     counts = [int((which == b).sum()) for b in range(len(labels))]
     outside = len(y) - sum(counts)
@@ -102,8 +106,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for ckpt_arg in args.checkpoint:
         ckpt = resolve_checkpoint(ckpt_arg)
         predictor = SurrogatePredictor(str(ckpt))
-        if predictor.ship_model != identity.ship_model:
-            logger.error("%s is a %s model, the data is %s.", ckpt.name, predictor.ship_model, identity.ship_model)
+        mismatch = predictor.data_mismatch(identity)
+        if mismatch:
+            logger.error("%s / %s: %s.", ckpt.name, args.data, mismatch)
             return 2
         check_projection(source, predictor.scenario)
         pred = predict(predictor, project_raw_columns(x_raw, source, predictor.scenario))
