@@ -374,6 +374,7 @@ class MultiPySimEnvironment(BaseEnvironment):
                              enable_ukc_check=self.configuration["enable_ukc_check"],
                              wind=self.configuration["wind"],
                              current=self.configuration["current"],
+                             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
                              ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
@@ -388,6 +389,7 @@ class MultiPySimEnvironment(BaseEnvironment):
                              enable_ukc_check=self.configuration["enable_ukc_check"],
                              wind=self.configuration["wind"],
                              current=self.configuration["current"],
+                             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
                              ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))

@@ -168,11 +168,15 @@ CONFIG_PARAMETERS = {
     'trajectory': "trajectory_points_no_scale.csv",
     'scenario': "DDShip_scenario1_nowindnocurrent",
     # UAntwerp surrogate (dynamics_model = Model.UANTWERP). "preset" selects
-    # ship, scenario, checkpoint and UKC lookup CSV (fw/surrogate/presets.py:
-    # "tripoli_clean", "tripoli_confined", "tripoli_full"). Optional
-    # overrides: "checkpoint", "lookup_csv". The preset's ship must equal
-    # 'ship_model' below.
-    'ua_surrogate_config': {"preset": "tripoli_confined"},
+    # ship, scenario, checkpoint and lookup (fw/surrogate/presets.py):
+    #   "tripoli_clean", "tripoli_confined", "tripoli_full",
+    #   "myzako_clean",  "myzako_confined",  "myzako_full".
+    # clean = open water (no lookup); confined = UKC lookup;
+    # full = environment lookup (UKC, wind and current). Lookups are .csv.gz.
+    # Optional overrides: "checkpoint", "lookup_csv". The preset's ship must
+    # equal 'ship_model' below (a mismatch is refused at startup), and the
+    # environment time step must be a whole multiple of 0.1 s.
+    'ua_surrogate_config': {"preset": "myzako_confined"},
     'ugent_surrogate_config': {"ukc_percent": 363},
     'ship_model': ShipModel.MYZAKO_37,
     'dynamics_model': Model.FOSSEN,

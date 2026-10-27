@@ -1542,7 +1542,9 @@ class PySimEnv(BaseEnv):
 
         track_vec = current_chkp_pos - prev_chkp_pos
         ship_vec = self.ship_pos - prev_chkp_pos
-        norm_cross_error *= 1.0 if np.cross(track_vec, ship_vec) >= 0.0 else -1.0
+        # 2-D cross product written out (np.cross on 2-D vectors is deprecated since NumPy 2.0).
+        cross_z = track_vec[0] * ship_vec[1] - track_vec[1] * ship_vec[0]
+        norm_cross_error *= 1.0 if cross_z >= 0.0 else -1.0
 
         # --- Heading errors ---
 
