@@ -1,7 +1,7 @@
 """
 Transfer learning from 2D PPO policies to AirSimEnv (3D).
 
-Only used by AirSimEnv training, has no effect on 2D environment training.
+Only used by AirSimEnv training; it has no effect on 2D environment training.
 
 Tasks implemented:
     T-054: Network topology comparison (2D vs 3D input dims, layers, neurons, activations).

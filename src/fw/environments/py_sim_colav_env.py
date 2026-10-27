@@ -43,6 +43,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
             wind: bool = False,
             current: bool = False,
+            ugent_surrogate_config: Optional[dict] = None,
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
             evaluate: bool = False,
@@ -85,6 +86,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             ship_model: Ship specification model.
             wind: Enables wind disturbances.
             current: Enables current disturbances.
+            ugent_surrogate_config: Configuration for the UGent surrogate
+                (Model.UGENT_SURROGATE), e.g. {"ukc_percent": 363}.
             enable_obstacles: Enables obstacle generation.
             enable_variable_ship_size: Enables randomized ship sizes.
             evaluate: Enables evaluation mode.
@@ -171,6 +174,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             ship_model=ship_model,
             wind=wind,
             current=current,
+            ugent_surrogate_config=ugent_surrogate_config,
             enable_obstacles=enable_obstacles,
             enable_variable_ship_size=enable_variable_ship_size,
             encounter_range=self.polar_max_range,

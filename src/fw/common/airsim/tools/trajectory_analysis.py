@@ -441,7 +441,7 @@ def compute_trajectory_similarity(
         n_samples: Number of arc-length sample points for resampling.
 
     Returns:
-        Tuple `(rmse, dtw)`, lower values indicate more similar shapes.
+        Tuple `(rmse, dtw)`; lower values indicate more similar shapes.
         Both values are `float('nan')` when either trajectory is empty.
     """
 

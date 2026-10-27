@@ -202,7 +202,7 @@ class ScenarioBuilder:
         # ----------------------------------------------------------
         # 1b. Path-following 'encounter' active (focused training only)
         #     The episode sampled "path-following" as its encounter type,
-        #     so no TS is spawned, we just run PF for
+        #     so no TS is spawned; we just run PF for
         #     `pathfollowing_encounter_steps` and then transition into
         #     the post-encounter countdown so the episode terminates with
         #     the same 150-step PF tail as a normal TS encounter.
@@ -237,7 +237,7 @@ class ScenarioBuilder:
                 chosen_scenario = self.sample_collision_entity_scenario()
                 if chosen_scenario == "path-following":
                     # Focused training: treat the sampled "path-following"
-                    # as the encounter, start the PF-only encounter timer
+                    # as the encounter: start the PF-only encounter timer
                     # and lock the classifier to PF for the duration so
                     # reward shaping / observations stay in pure-PF mode.
                     if is_focused:
@@ -945,7 +945,7 @@ class ScenarioBuilder:
             return
 
         # If reset/spawn somehow missed (e.g. target_seg_idx unresolved),
-        # don't keep retrying, block further spawns to honor the spec.
+        # don't keep retrying: block further spawns to honor the spec.
         if not self._single_encounter_spawned:
             return
 
@@ -958,7 +958,7 @@ class ScenarioBuilder:
         dist = ts.distance_to_point(env.ship_pos)
 
         # Despawn is only valid AFTER the OS has approached the TS at least
-        # once, otherwise the dormant TS placed far ahead on the route
+        # once; otherwise the dormant TS placed far ahead on the route
         # would despawn on step 0 (dist > forget_range from the start).
         # Use "ever been within encounter_range" as the activation gate,
         # which is the same trigger that wakes the TS up.

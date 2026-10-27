@@ -168,6 +168,7 @@ project/log/
 project/build/
 
 src/fw/training_files/
+src/run_archives/
 src/logs/
 src/exports/
 src/models/

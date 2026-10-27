@@ -2,7 +2,7 @@
 
 One convention for the whole framework: `ShipSimulator.integrate`, every dynamics model, the surrogate datasets and checkpoints, and FH's own body frame. Sign conversions happen **only** at the places listed under *Conversion points*. Anywhere else, a sign flip is a bug.
 
-`fw/surrogate/check_model_conventions.py` runs every dynamics model, FH included, with the same commands and checks turning direction, yaw-rate and sway signs, and the thrust response. `fw/tests/test_conventions.py` covers the framework side (`python -m fw.tests.test_conventions`, run from `src`). The FH side was measured with `fw/surrogate/check_sway_sign.py`, `check_rudder_sign.py`, `check_initial_rudder_sign.py` and `check_model_conventions.py` on 2026-10-19. Every model passed for the Tripoli and the Myzako 37, apart from the UA surrogates, which were not yet retrained.
+`fw/surrogate/validation/check_model_conventions.py` runs every dynamics model, FH included, with the same commands and checks turning direction, yaw-rate and sway signs, and the thrust response. `tests/surrogate/test_conventions.py` covers the framework side (`python -m pytest tests/surrogate`, run from the repository root). The FH side was measured with `check_sway_sign.py`, `check_rudder_sign.py`, `check_initial_rudder_sign.py` and `check_model_conventions.py` (all in `fw/surrogate/validation/`) on 2026-10-19. Every model passed for the Tripoli and the Myzako 37, apart from the UA surrogates, which were not yet retrained at the time; they were retrained afterwards (the v2 checkpoints in `fw/checkpoints/`) and validated against FH with `model_comparison.py`, `model_comparison_wind.py` and `model_comparison_current.py`.
 
 ## Frames
 
@@ -25,7 +25,7 @@ One convention for the whole framework: `ShipSimulator.integrate`, every dynamic
 
 | Quantity | Unit | Positive | Notes |
 |---|---|---|---|
-| Rudder command (`rudder_angle` in `DynamicsBase.step`) | rad | **the ship turns to port**, every ship and model | For the Tripoli's Z-drive the azimuth is physically to starboard. |
+| Rudder command (`rudder_angle` in `DynamicsBase.step`) | rad | **the ship turns to port**, every ship and model | For the Tripoli's Z-drive the azimuth is physically to starboard. Maximum per ship: `ShipSpecifications.max_rudder_angle`, set in `ship_factory` (Myzako 75°, Tripoli 35°). |
 | `rudder_action` (dataset, surrogate input) | [-1, 1] | the ship turns to port | Degrees = `rudder_action × rudder_max_deg`. `rudder_max_deg` is stored in the dataset and checkpoint. |
 | Policy action `[rudder, thrust]` | [-1, 1] | rudder: the ship turns to port | `ActionMapper` maps thrust to `[min_thrust, max_thrust]` (Tripoli/Myzako: [0.1, 1.0]) |
 | Thrust passed to `DynamicsBase.step` | normalized engine lever | ahead | Sent to FH's `setEngineLeverValue` unchanged |
@@ -98,5 +98,6 @@ Lookup CSVs carry **no** identity. Regenerate them together with the datasets.
 1. Measure FH's rudder sign with a short dataset and `check_rudder_sign.py` (add `--negated` if the generator flips the sign). Then add the ship to `_FH_RUDDER_SIGNS` in `fh_tabular_model.py`; `fh_rudder_sign` refuses ships that are not listed.
 2. Check that FH's sway is still port positive with `check_sway_sign.py` (expected slope about −1 after the 2026-10-19 fix).
 3. Check the sign of the initial rudder angle with `check_initial_rudder_sign.py --ship <SHIP>`.
-4. Run `python -m fw.surrogate.check_model_conventions --ship <SHIP>`: every model, FH included, must turn the same way for the same command.
-5. If the ship has a new kind of actuator, add a case to `test_conventions.py`.
+4. Run `python -m fw.surrogate.validation.check_model_conventions --ship <SHIP>` (from `src`): every model, FH included, must turn the same way for the same command.
+5. If the ship has a new kind of actuator, add a case to `tests/surrogate/test_conventions.py`.
+6. Set the ship's maximum rudder angle in `ship_factory` (every ship branch must set it explicitly).

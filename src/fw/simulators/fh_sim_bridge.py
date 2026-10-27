@@ -52,7 +52,7 @@ class FhSimBridge:
         Initialize the FhSimBridge.
 
         Resolves all file paths and sets up instance logging. The math model
-        itself is not initialized here, it is initialized lazily on the first
+        itself is not initialized here; it is initialized lazily on the first
         call to reset().
 
         Args:
@@ -300,7 +300,9 @@ class FhSimBridge:
 
                 self.math_model.simulateSeconds(0.125)  # initialize velocities
             except BaseException:
-                self.dispose()
+                # Release the model only: the log handlers stay, so the error
+                # (and a retry with this bridge) is still logged.
+                self._dispose_math_model()
                 raise
 
         except SimException as e:
@@ -442,7 +444,31 @@ class FhSimBridge:
         is False, _math_model and _ship_interface are None, and initialize_math_model
         is True so a subsequent reset() will re-initialize from scratch.
 
+        Also closes this bridge's log handlers: call it when the bridge is no
+        longer needed.
+
         Safe to call multiple times (idempotent).
+        """
+
+        self._dispose_math_model()
+
+        # The file handler was also attached to SimAPI's global "sim" logger
+        # (see __init__); remove it there too, or every new bridge adds one more.
+        sim_logger = logging.getLogger("sim")
+        for handler in self._logger.handlers[:]:
+            try:
+                handler.close()
+            except Exception:
+                pass
+            self._logger.removeHandler(handler)
+            sim_logger.removeHandler(handler)
+
+
+    def _dispose_math_model(self) -> None:
+        """
+        Terminate and dispose the math model (best effort) and reset the
+        bridge so the next reset() re-initializes; the log handlers are kept.
+        No-op when no model is initialized.
         """
 
         if self.math_model_initialized:
@@ -456,14 +482,3 @@ class FhSimBridge:
                 self._ship_interface = None
                 self.math_model_initialized = False
                 self.initialize_math_model = True
-
-        # The file handler was also attached to SimAPI's global "sim" logger
-        # (see __init__); remove it there too, or every new bridge adds one more.
-        sim_logger = logging.getLogger("sim")
-        for handler in self._logger.handlers[:]:
-            try:
-                handler.close()
-            except Exception:
-                pass
-            self._logger.removeHandler(handler)
-            sim_logger.removeHandler(handler)

@@ -14,16 +14,16 @@ tests pin down the framework side, so a later edit cannot silently flip it.
 
 See fw/CONVENTIONS.md for the full list.
 
-Run from src:
-    python -m pytest fw/tests/test_conventions.py
-    python -m fw.tests.test_conventions          (without pytest)
+Run from the repository root:
+    python -m pytest tests/surrogate/test_conventions.py
+    python tests/surrogate/test_conventions.py   (without pytest)
 """
 
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-_SRC_DIR = str(Path(__file__).resolve().parents[2])
+_SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")   # <repo>/tests/surrogate -> <repo>/src
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 

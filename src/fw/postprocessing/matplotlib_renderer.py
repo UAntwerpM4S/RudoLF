@@ -331,7 +331,7 @@ class MatplotlibRenderer:
                 else:
                     end_color, end_marker, end_size = "red", "X", 130
             else:
-                # Non-collision endpoint, gray, smaller, less prominent.
+                # Non-collision endpoint: gray, smaller, less prominent.
                 end_color, end_marker, end_size = "dimgray", "o", 60
             ax.scatter(
                 *ep.path[-1], c=end_color, marker=end_marker,

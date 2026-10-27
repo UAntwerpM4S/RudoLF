@@ -121,7 +121,9 @@ class FhSimWrapper(BaseSimulator):
                 training) and the FH engine's own rudder limit (from
                 getMaximumAngle()). If False, the framework angle is used
                 directly as the FH engine target, which is correct when both
-                simulators share the same rudder limit.
+                simulators share the same rudder limit. Myzako (rudder) only:
+                for the Tripoli the azipod direction is always the policy
+                output times the framework maximum (as FhTabularModel).
 
         Note on actuator model:
             apply_smoothing() (EMA only) is used rather than ActuatorModel.step()
@@ -140,9 +142,12 @@ class FhSimWrapper(BaseSimulator):
         sign = fh_rudder_sign(self._engine.ship_model)   # framework -> FH command sign
 
         if self._engine.ship_model == ShipModel.TRIPOLI:
+            # The policy output in [-1, 1] spans the ship's own rudder limit
+            # (ShipSpecifications.max_rudder_angle, 35 deg for the Tripoli), the
+            # same physical angle FhTabularModel sends to the azipods.
+            framework_max_deg = np.rad2deg(self._specs.max_rudder_angle)
             for rudder in self._engine.ship_interface.getAzipodControls():
-                fh_max_deg = 90.0       # [deg] - FH engine limit
-                rudder.setDesiredDirection(float(sign * actuator.rudder_angle * fh_max_deg))
+                rudder.setDesiredDirection(float(sign * actuator.rudder_angle * framework_max_deg))
                 rudder.setEngineLeverValue(float(actuator.thrust))
         else:
             # Step 2a: rudder

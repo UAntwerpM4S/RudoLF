@@ -45,7 +45,7 @@ def _make_policy(input_dim: int, output_dim: int = 2, device: str = "cpu") -> PP
 
 class TestCompareNetworkTopology:
     """
-    Tests for compare_network_topology, 2D vs 3D input/output dimension reporting.
+    Tests for compare_network_topology: 2D vs 3D input/output dimension reporting.
     """
 
     def test_extra_dims_computed_correctly(self):
@@ -114,7 +114,7 @@ class TestCompareNetworkTopology:
 
 class TestValidateTransferCompatibility:
     """
-    Tests for validate_transfer_compatibility, error messages and pass/fail logic.
+    Tests for validate_transfer_compatibility: error messages and pass/fail logic.
     """
 
     def test_valid_config_does_not_raise(self):
@@ -230,7 +230,7 @@ class TestValidateTransferCompatibility:
 
 class TestApplyTransferWeights:
     """
-    Tests for apply_transfer_weights, key selection, device safety, and freeze logic.
+    Tests for apply_transfer_weights: key selection, device safety, and freeze logic.
     """
 
     def test_transferable_keys_are_copied(self):

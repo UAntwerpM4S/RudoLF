@@ -11,7 +11,7 @@ objects so that no call-sites outside this module need to be rewritten:
   overrides
 * Raw `[rudder, thrust]` action arrays  – fixed-thrust substitution only
   (see :class:`ActionAdapter` below). Rudder-angle *scaling* is NOT applied
-  here to the raw action array, it's a boolean flag
+  here to the raw action array: it's a boolean flag
   (`enable_rudder_angle_scaling`) set on `BaseEnv` by :class:`EnvApplier`,
   which is threaded down through `ShipSimulator` into the dynamics model's
   own `step()` (currently consumed only by `FhTabularModel`; see that
@@ -69,7 +69,7 @@ def apply_profile(
 
     Each keyword argument is independent; pass only what you have at hand.
     `config`, `env`, and `simulator` are mutated in-place.  When
-    `action` is supplied the function returns a transformed copy, the
+    `action` is supplied the function returns a transformed copy; the
     original array is never modified.
 
     Args:

@@ -177,7 +177,7 @@ class CollapseWatchdog:
 
         smoothed = float(np.mean(self._reward_history[pid]))
 
-        # New best snapshot, the current network state
+        # New best: snapshot the current network state
         if smoothed > self._best_smoothed[pid]:
             self._best_smoothed[pid] = smoothed
             self._best_state_dict[pid] = {
@@ -976,7 +976,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                             self.policies[pid].network.parameters(),
                             lr=self.learning_rate,
                         )
-                        # Discard pending segments, they were collected
+                        # Discard pending segments: they were collected
                         # under the now-discarded post-collapse weights and
                         # would be off-policy w.r.t. the rolled-back net.
                         self._pending_segments[pid] = []

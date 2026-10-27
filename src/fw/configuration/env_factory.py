@@ -412,7 +412,7 @@ class PySimColavEnvironment(BaseEnvironment):
             name: Registered environment name.
             configuration: Scoped configuration dict (see `build_colav_config`).
                 Expected keys: wind, current, ship_model, dynamics_model,
-                enable_obstacles.
+                enable_obstacles, ugent_surrogate_config.
         """
         super().__init__(name, configuration)
 
@@ -438,6 +438,7 @@ class PySimColavEnvironment(BaseEnvironment):
             ship_model=self.configuration["ship_model"],
             wind=self.configuration["wind"],
             current=self.configuration["current"],
+            ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
             enable_obstacles=self.configuration.get("enable_obstacles", True),
         )
 
@@ -460,7 +461,8 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             name: Registered environment name.
             configuration: Scoped configuration dict (see
                 `build_multi_policy_colav_config`). Expected keys: wind,
-                current, ship_model, dynamics_model, enable_obstacles.
+                current, ship_model, dynamics_model, enable_obstacles,
+                ugent_surrogate_config.
                 eval/eval_scenario/eval_obstacle_count/
                 include_scenario_one_hot/minimal_path_render remain
                 hardcoded below pending a future rework.
@@ -489,6 +491,7 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             ship_model=self.configuration["ship_model"],
             wind=self.configuration["wind"],
             current=self.configuration["current"],
+            ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
             enable_obstacles=self.configuration.get("enable_obstacles", True),
             evaluate=False,
             eval_scenario="crossing-right",
@@ -566,7 +569,7 @@ class FhSimSyncEnvironment(BaseEnvironment):
     Connects to a running simSync instance over UDP instead of initializing
     a local FH math model. Same framework-facing shape as FhSimEnvironment:
     the framework gets the same env interface, the same observation/reward
-    pipeline, the same agent loop, only the underlying simulator changes.
+    pipeline, the same agent loop; only the underlying simulator changes.
     """
 
     ENVIRONMENT_NAME = "FhSimSyncEnv"
@@ -860,6 +863,7 @@ def build_colav_config(framework_config: dict, extra: dict | None = None) -> dic
         "depth_contour":       framework_config["depth_contour"],
         "trajectory":          framework_config["trajectory"],
         "enable_obstacles":    framework_config.get("enable_obstacles", True),
+        "ugent_surrogate_config": framework_config.get("ugent_surrogate_config", {}),
     }
     if extra:
         cfg.update(extra)

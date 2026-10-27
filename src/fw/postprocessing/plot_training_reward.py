@@ -32,7 +32,7 @@ DEFAULT_CSV    = "training_metrics.csv"
 DEFAULT_WINDOW = 50          # rolling-window size (iterations)
 DEFAULT_OUT    = "reward_curve.pdf"
 
-# Color palette, a single accent color keeps the figure clean and readable
+# Color palette: a single accent color keeps the figure clean and readable
 # in both color and greyscale print.
 COLOR_RAW    = "#a8c7e8"     # light blue  -> raw reward
 COLOR_SMOOTH = "#1a5fa8"     # dark blue   -> rolling mean
@@ -146,7 +146,7 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
     # --- Figure & axes ---------------------------------------------------
     fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
 
-    # 1. Raw reward, semi-transparent to keep focus on the smooth curve
+    # 1. Raw reward: semi-transparent to keep focus on the smooth curve
     ax.plot(
         iterations, reward,
         color=COLOR_RAW, alpha=0.35, linewidth=0.7,
@@ -162,7 +162,7 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
         zorder=2,
     )
 
-    # 3. Rolling mean, the star of the show
+    # 3. Rolling mean: the star of the show
     ax.plot(
         iterations, rm,
         color=COLOR_SMOOTH, linewidth=2.0,
@@ -180,7 +180,7 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
         lambda x, _: f"{int(x):,}"
     ))
 
-    # Tight x-limits, no unnecessary whitespace
+    # Tight x-limits: no unnecessary whitespace
     ax.set_xlim(iterations[0], iterations[-1])
 
     # Horizontal guide line at y = 0 for reference

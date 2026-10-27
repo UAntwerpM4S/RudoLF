@@ -170,7 +170,7 @@ class TestTopologyReportDataclassContract:
 
     def test_topology_report_is_frozen(self):
         """
-        TopologyReport must be immutable, attribute assignment must raise an exception.
+        TopologyReport must be immutable; attribute assignment must raise an exception.
 
         Verifies:
             - Attempting to set a field on a constructed TopologyReport raises

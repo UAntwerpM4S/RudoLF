@@ -715,7 +715,7 @@ class SinglePPOAgent(BasePPOAgent):
 
             self.policy = PPOPolicy.load(policy_file_name, self.device)
             # PPOPolicy.load() returns a NEW object, so the optimizer must be
-            # rebound to the new network's parameters, otherwise step() silently
+            # rebound to the new network's parameters; otherwise step() silently
             # updates the old (unreferenced) network and the loaded policy never trains.
             self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
 

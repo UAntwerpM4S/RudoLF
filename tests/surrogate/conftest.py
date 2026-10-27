@@ -1,14 +1,14 @@
 """
 Shared fixtures for the surrogate contract tests.
 
-The tests need no FH simulator and no GPU. Run from src:
+The tests need no FH simulator and no GPU. Run from the repository root
+(pyproject.toml puts src on the path):
 
     python -m pytest tests/surrogate -q
 
-(adapt the path to where this folder lives). Tiny synthetic datasets are
-written to a temporary folder and tiny models are trained on them for one
-epoch (a few seconds on CPU): the tests check contracts (column order, signs,
-file formats, integration), not model quality.
+Tiny synthetic datasets are written to a temporary folder and tiny models are
+trained on them for one epoch (a few seconds on CPU): the tests check
+contracts (column order, signs, file formats, integration), not model quality.
 """
 
 import sys

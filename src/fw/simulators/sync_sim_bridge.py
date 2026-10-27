@@ -32,7 +32,7 @@ def _load_sync_app():
     global _SyncApp
     if _SyncApp is not None:
         return
-    import clr  # pythonnet only needed at connect time
+    import clr  # pythonnet: only needed at connect time
     clr.AddReference(_MANAGED_SIM_SYNC_DLL)
     from Managed.SimSync import SyncApp  # noqa: PLC0415
     _SyncApp = SyncApp

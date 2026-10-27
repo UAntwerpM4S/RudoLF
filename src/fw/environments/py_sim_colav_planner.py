@@ -33,6 +33,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
             wind: bool = False,
             current: bool = False,
+            ugent_surrogate_config: Optional[dict] = None,
             enable_obstacles: bool = True,
             encounter_range: float = 500.0,
             evaluate: bool = True,
@@ -61,6 +62,8 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             ship_model: Ship specification model.
             wind: Enables wind disturbances.
             current: Enables current disturbances.
+            ugent_surrogate_config: Configuration for the UGent surrogate
+                (Model.UGENT_SURROGATE), e.g. {"ukc_percent": 363}.
             enable_obstacles: Enables obstacle generation.
             encounter_range: Maximum obstacle encounter distance in meters.
             evaluate: Enables evaluation mode.
@@ -91,6 +94,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             ship_model=ship_model,
             wind=wind,
             current=current,
+            ugent_surrogate_config=ugent_surrogate_config,
             enable_obstacles=enable_obstacles,
             encounter_range=encounter_range,
             evaluate=evaluate,

@@ -171,7 +171,7 @@ class TransferConfig:
         enable_rudder_angle_scaling: Whether to rescale the rudder action at
             every step to compensate for differing maximum rudder angles between
             the original (training) and target (inference) simulators.  The
-            scale is computed internally by the simulator at runtime, no manual
+            scale is computed internally by the simulator at runtime; no manual
             angle configuration is required.  *False* means the raw policy
             output is forwarded without rescaling.
     """
@@ -186,7 +186,7 @@ class ModelConfig:
 
     Attributes:
         ship_model: Which :class:`~fw.ships.ship_factory.ShipModel` preset
-            to load.  *None* means no override, the framework's own default
+            to load.  *None* means no override: the framework's own default
             is used.
         dynamics_model: Which :class:`~fw.dynamics.dynamics_model.Model`
             family to use inside the simulator.  *None* means no override.
@@ -520,7 +520,7 @@ class ProfileRegistry:
 
     Because :class:`VesselProfile` is a frozen dataclass, the registry stores
     direct references (no deep-copy on write).  :meth:`get` returns a shallow
-    copy - sufficient for immutable objects - so callers can hold and pass the
+    copy (sufficient for immutable objects), so callers can hold and pass the
     profile freely without any risk of mutating the registry entry.
     """
 
@@ -553,8 +553,8 @@ class ProfileRegistry:
         """
         Retrieve a registered profile by name.
 
-        Returns a shallow copy, safe because the profile and all its
-        sub-configs are frozen. So the caller can hold the object freely.
+        Returns a shallow copy. That is safe because the profile and all its
+        sub-configs are frozen, so the caller can hold the object freely.
 
         Raises:
             KeyError: If no profile with that name is registered.

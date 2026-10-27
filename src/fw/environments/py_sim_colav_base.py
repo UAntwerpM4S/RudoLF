@@ -92,6 +92,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
             wind: bool = False,
             current: bool = False,
             minimal_path_render: bool = False,
+            ugent_surrogate_config: Optional[dict] = None,
             # COLAV configuration
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
@@ -133,6 +134,8 @@ class PySimColavBaseEnv(PySimBaseEnv):
             wind: Enables wind disturbances.
             current: Enables current disturbances.
             minimal_path_render: Enables simplified path rendering.
+            ugent_surrogate_config: Configuration for the UGent surrogate
+                (Model.UGENT_SURROGATE), e.g. {"ukc_percent": 363}.
             enable_obstacles: Enables obstacle generation.
             enable_variable_ship_size: Enables randomized target ship sizes.
             encounter_range: Distance within which encounters become active.
@@ -296,6 +299,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
             wind=wind,
             current=current,
             minimal_path_render=minimal_path_render,
+            ugent_surrogate_config=ugent_surrogate_config,
         )
 
         # Scenario builder
@@ -561,7 +565,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
 
         obs = self._get_obs()
 
-        # Classification metrics, update after _get_obs() has re-run the
+        # Classification metrics: update after _get_obs() has re-run the
         # scenario classifier for this step.
         self._update_encounter_metrics()
 
@@ -631,11 +635,11 @@ class PySimColavBaseEnv(PySimBaseEnv):
         """
 
         # _get_obs() skips re-running the classifier on terminal steps,
-        # so the classifier state is stale, do not sample it. Still
+        # so the classifier state is stale; do not sample it. Still
         # finalize an in-progress encounter so its min_dist/collided flags
         # are written into the record before the episode ends.
         if self.phys_sim.state.terminated or self.phys_sim.state.truncated:
-            # Episode is ending mid-encounter, TS has not left the forget
+            # Episode is ending mid-encounter; the TS has not left the forget
             # range, so the encounter is *not* resolved.
             self._finalize_active_encounter(resolved_normally=False)
             return
@@ -1019,7 +1023,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._current_episode_min_dist = float("inf")
         self._current_episode_collided = False
 
-        # Finalize any encounter still active at reset (defensive, terminal
+        # Finalize any encounter still active at reset (defensive: terminal
         # steps already finalize via _update_encounter_metrics).
         # Reaching here mid-encounter means it was cut off by the episode
         # ending without the TS leaving forget range -> not resolved.

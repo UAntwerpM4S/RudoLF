@@ -50,7 +50,7 @@ class FhTabularModel(DynamicsBase):
     Wraps the FH math model (FastShip / FhSimBridge engine) as a DynamicsBase
     implementation. On each call to step(), the FH engine is advanced by dt
     seconds and the resulting body-fixed velocities (u, v, r) are read back
-    directly, no velocity-delta differencing and no re-integration.
+    directly: no velocity-delta differencing and no re-integration.
 
     This avoids the numerical drift that arises when accelerations are
     reconstructed by finite-differencing velocity snapshots and then
@@ -65,7 +65,7 @@ class FhTabularModel(DynamicsBase):
                                                bow-to-port positive)
 
     Note: getShipVelocityOverGround() returns velocities already expressed
-    in the body-fixed frame despite its name (confirmed empirically, the
+    in the body-fixed frame despite its name (confirmed empirically: the
     x-component aligns with surge regardless of heading).
     """
 

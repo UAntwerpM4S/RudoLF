@@ -123,6 +123,7 @@ class PySimBaseEnv(BaseEnv):
             wind: bool = False,
             current: bool = False,
             minimal_path_render: bool = False,
+            ugent_surrogate_config: Optional[Dict] = None,
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -145,6 +146,10 @@ class PySimBaseEnv(BaseEnv):
             ship_model: optional ship model to use.
             wind: enable wind effects.
             current: enable current effects.
+            minimal_path_render: draw only a faint path line (no checkpoints).
+            ugent_surrogate_config: configuration for the UGent surrogate
+                (Model.UGENT_SURROGATE), e.g. {"ukc_percent": 363}; see
+                fw.dynamics.ugent_surrogate.
         """
 
         super().__init__(render_mode)
@@ -189,7 +194,7 @@ class PySimBaseEnv(BaseEnv):
 
         # State and control placeholders
         self.ship = create_ship(self.ship_model)
-        self.phys_sim = self.create_simulator()
+        self.phys_sim = self.create_simulator(ugent_surrogate_config)
 
         self._initialize_simulation()
 
@@ -321,7 +326,7 @@ class PySimBaseEnv(BaseEnv):
         self.previous_ship_pos = self.ship_pos.copy()
         self.checkpoint_index = chosen_seg + 1
 
-    def create_simulator(self):
+    def create_simulator(self, ugent_surrogate_config: Optional[Dict] = None):
         """
         Create and return a configured ship simulator.
 
@@ -329,9 +334,18 @@ class PySimBaseEnv(BaseEnv):
         ship model, dynamics configuration, environmental conditions, and time
         step stored on this object.
 
+        Args:
+            ugent_surrogate_config: Configuration for the UGent surrogate model
+                (required for Model.UGENT_SURROGATE).
+
         Returns:
             ShipSimulator: A fully initialized simulator instance configured
             with the specified initial state and the current model parameters.
+
+        Raises:
+            ValueError: Model.UGENT_SURROGATE with a ship other than the Tripoli,
+                or an invalid ugent_surrogate_config.
+            RuntimeError: Unknown dynamics model.
         """
 
         if self.dynamics_model == Model.FOSSEN:
@@ -339,7 +353,15 @@ class PySimBaseEnv(BaseEnv):
         elif self.dynamics_model == Model.NOMOTO:
             self.dynamics = Nomoto(self.ship.specifications)
         elif self.dynamics_model == Model.UGENT_SURROGATE:
-            self.dynamics = UGentSurrogate(self.ship.specifications)
+            # UGent's coefficients are identified for the Tripoli only.
+            if self.ship_model != ShipModel.TRIPOLI:
+                raise ValueError(
+                    f"Model.UGENT_SURROGATE is identified for ShipModel.TRIPOLI only, "
+                    f"got ship_model={self.ship_model}."
+                )
+            # No bank-distance provider here (PySimBaseEnv has no bank
+            # geometry): bank forces are zero, as before. PySimEnv sets one.
+            self.dynamics = UGentSurrogate(self.ship.specifications, ugent_surrogate_config)
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
@@ -895,7 +917,9 @@ class PySimBaseEnv(BaseEnv):
 
         track_vec = current_chkp_pos - prev_chkp_pos
         ship_vec = self.ship_pos - prev_chkp_pos
-        norm_cross_error *= 1.0 if np.cross(track_vec, ship_vec) >= 0.0 else -1.0
+        # 2-D cross product written out (np.cross on 2-D vectors is deprecated since NumPy 2.0).
+        cross_z = track_vec[0] * ship_vec[1] - track_vec[1] * ship_vec[0]
+        norm_cross_error *= 1.0 if cross_z >= 0.0 else -1.0
 
         # --- Heading errors ---
 

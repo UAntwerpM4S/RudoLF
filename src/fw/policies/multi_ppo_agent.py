@@ -343,7 +343,7 @@ class MultiPPOAgent(BasePPOAgent):
             if iteration > 0 and iteration % self.eval_frequency == 0:
                 self.save_policy(f"ppo_checkpoint_{iteration}")
 
-            # Aggregate metrics for stopping condition, ignore NaN entries
+            # Aggregate metrics for stopping condition; ignore NaN entries
             valid_rewards = [r for r in mean_rewards if not np.isnan(r)]
             valid_losses = [l for l in mean_losses if not np.isnan(l)]
 
