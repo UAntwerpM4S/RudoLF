@@ -45,8 +45,8 @@ class SurrogatePreset:
             unless absolute.
         lookup_csv: Default CSV for the nearest-neighbor UKC lookup
             (fw.dynamics.wcu_lookup.WcuLookup), relative to LOOKUP_CSV_DIR
-            unless absolute; None = no lookup. Only used when the scenario
-            has a UKC input.
+            unless absolute; None = no lookup. May be gzip-compressed
+            (.csv.gz, read as is). Only used when the scenario has a UKC input.
         default_ukc: UKC [m] used when no lookup is configured/available, or
             the lookup finds nothing.
     """
@@ -88,7 +88,7 @@ PRESETS = {p.name: p for p in (
         ship_model=ShipModel.TRIPOLI,
         scenario=CONFINED_UKC,
         checkpoint="best_surrogate_tripoli_confined.pth",
-        lookup_csv="ukc_lookup_tripoli_confined.csv",
+        lookup_csv="ukc_lookup_tripoli_confined.csv.gz",
         default_ukc=_DEFAULT_WATER_DEPTH_M,
     ),
     SurrogatePreset(
@@ -96,7 +96,10 @@ PRESETS = {p.name: p for p in (
         ship_model=ShipModel.TRIPOLI,
         scenario=FULL_ENV,
         checkpoint="best_surrogate_tripoli_full.pth",
-        lookup_csv="ship_dynamics_dataset_tripoli_full.csv",
+        # One real dataset row per 5 m cell (UKC, wind, current and the recording
+        # ship's heading/speed of the same moment; fw.surrogate.make_ukc_lookup).
+        # The full dataset CSV works as well, but loads much slower.
+        lookup_csv="env_lookup_tripoli_full.csv.gz",
         default_ukc=_DEFAULT_WATER_DEPTH_M,
     ),
     SurrogatePreset(
@@ -114,7 +117,16 @@ PRESETS = {p.name: p for p in (
         checkpoint="best_surrogate_myzako_confined.pth",
         # The full dataset CSV works as well; a grid-reduced copy
         # (fw.surrogate.make_ukc_lookup) loads much faster.
-        lookup_csv="ukc_lookup_myzako_confined.csv",
+        lookup_csv="ukc_lookup_myzako_confined.csv.gz",
+        default_ukc=_DEFAULT_WATER_DEPTH_M,
+    ),
+    SurrogatePreset(
+        name="myzako_full",
+        ship_model=ShipModel.MYZAKO_37,
+        scenario=FULL_ENV,
+        checkpoint="best_surrogate_myzako_full.pth",
+        # See tripoli_full: one real dataset row per 5 m cell (make_ukc_lookup).
+        lookup_csv="env_lookup_myzako_full.csv.gz",
         default_ukc=_DEFAULT_WATER_DEPTH_M,
     ),
 )}

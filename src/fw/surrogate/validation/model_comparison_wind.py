@@ -104,7 +104,7 @@ no-wind baseline / paired metrics / own-position UKC were added after the
 last real run and have only been exercised with stubbed fw modules.
 
 Usage:
-    from fw.surrogate.model_comparison_wind import generate_wind_trajectories
+    from fw.surrogate.validation.model_comparison_wind import generate_wind_trajectories
     generate_wind_trajectories(
         start_x=..., start_y=..., start_heading_deg=...,
         exercise_path=Path(".../DDShip_Tripoli_scenario_windonly.tab"),
@@ -130,7 +130,7 @@ from fw.environments.py_sim_env import PySimEnv
 from fw.environments.ray_features import RAY_ANGLES_DEG, compute_ray_features, ray_world_angles
 from fw.ships.actuator_command import ActuatorCommand
 from fw.surrogate.sim_fh_dataset_generator import _cutoff_geometry
-from fw.surrogate.model_comparison import (
+from fw.surrogate.validation.model_comparison import (
     FhSession,
     OUTPUT_DIR,
     RUDDER_ANGLE_RAD,
@@ -1732,7 +1732,7 @@ def _generate(start_x, start_y, start_heading_deg, exercise_path, wind_speeds, r
 
     # Models are stateless w.r.t. the trajectory (state lives in ShipSimulator), so
     # they are built once and reused, as run_comparison does.
-    ua_models = build_ua_models(ship_spec)          # empty unless SHIP_MODEL is the Tripoli
+    ua_models = build_ua_models(ship_spec)          # the UA_* slots SHIP_MODEL has a preset for
     non_fh_models = {**build_reference_models(ship_spec, ray_env), **ua_models}
     ukc_source = UkcSource(ua_models)
     ukc_source.validate(start_x, start_y)
@@ -1840,11 +1840,16 @@ if __name__ == "__main__":
     if "--report-only" in sys.argv:
         write_report(WIND_OUTPUT_DIR)          # rebuild the report from an existing output folder
     else:
+        # The wind-only (no-current) full exercise of SHIP_MODEL (model_comparison.SHIP_MODEL):
+        # Tripoli -> DDShip_Tripoli_scenario_windnocurrent.tab,
+        # MYZAKO_37 -> DDShip_scenario2_windnocurrent_myzako_37.tab (sim_fh_dataset_generator.SHIP_PROFILES).
+        from fw.surrogate.sim_fh_dataset_generator import exercise_paths
+        _, _wind_only_exercise = exercise_paths(SHIP_MODEL, "full")
         generate_wind_trajectories(
             start_x=-1559.0,
             start_y=11990.0,
             start_heading_deg=-45.0,   # same convention as model_comparison.py's heading_deg
-            exercise_path="C:\\Users\\wadaems\\Work\\Development\\simexe\\database\\areas\\ScheldeSaeftinge_23_002\\invoer\\tra\\DDShip_Tripoli_scenario_windnocurrent.tab",
+            exercise_path=_wind_only_exercise,
             wind_speeds=WIND_SPEEDS,
             rel_dirs_deg=REL_WIND_DIRS_DEG,
         )

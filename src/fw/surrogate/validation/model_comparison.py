@@ -331,7 +331,7 @@ OUTPUT_DIR = Path("model_comparison_output").resolve()
 # left out automatically, so a Myzako run compares FH, Fossen (Myzako
 # coefficients), UA_clean (preset "myzako_clean") and UA_confined
 # (preset "myzako_confined").
-SHIP_MODEL = ShipModel.TRIPOLI
+SHIP_MODEL = ShipModel.MYZAKO_37
 
 # All UA_* model slots, in report order.
 UA_LABELS = ("UA_clean", "UA_confined", "UA_full")
@@ -348,6 +348,7 @@ UA_PRESETS_BY_SHIP = {
     ShipModel.MYZAKO_37: {
         "UA_clean": "myzako_clean",
         "UA_confined": "myzako_confined",
+        "UA_full": "myzako_full",
     },
 }
 
@@ -365,7 +366,7 @@ def ua_presets() -> dict:
 # upper limit -- or a following current, since the models start from FH's
 # speed over ground -- clips the models but not FH. Example: (0.0, 8.0).
 # Every run reports the steps in which a model sat at the upper limit.
-SIM_SURGE_LIMITS: Optional[Tuple[float, float]] = None
+SIM_SURGE_LIMITS: Optional[Tuple[float, float]] = (0.0, 8.0)
 
 
 def sim_surge_limits(ship_spec) -> Tuple[float, float]:
@@ -2062,7 +2063,7 @@ def diagnose_fh_initialization() -> None:
     Call this manually, before run_comparison(), to test it in the same
     run where FhSession has been failing:
 
-        from fw.surrogate.model_comparison import diagnose_fh_initialization
+        from fw.surrogate.validation.model_comparison import diagnose_fh_initialization
         diagnose_fh_initialization()
     """
 
@@ -2146,7 +2147,7 @@ def diagnose_fh_session_at_known_good_position(
 
     Call this manually:
 
-        from fw.surrogate.model_comparison import diagnose_fh_session_at_known_good_position
+        from fw.surrogate.validation.model_comparison import diagnose_fh_session_at_known_good_position
         diagnose_fh_session_at_known_good_position()
     """
 
@@ -2222,7 +2223,7 @@ def diagnose_fh_position_sweep(
 
     Call this manually:
 
-        from fw.surrogate.model_comparison import diagnose_fh_position_sweep
+        from fw.surrogate.validation.model_comparison import diagnose_fh_position_sweep
         diagnose_fh_position_sweep()
     """
 

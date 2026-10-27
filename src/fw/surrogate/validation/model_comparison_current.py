@@ -64,9 +64,9 @@ may come near a bank: they are flagged, not skipped.
 
 Usage (from src, with the current architecture's model_comparison.py and
 model_comparison_wind.py installed):
-    python fw/surrogate/model_comparison_current.py               # full run
-    python fw/surrogate/model_comparison_current.py --calibrate-only
-    python fw/surrogate/model_comparison_current.py --report-only # rebuild the report
+    python fw/surrogate/validation/model_comparison_current.py               # full run
+    python fw/surrogate/validation/model_comparison_current.py --calibrate-only
+    python fw/surrogate/validation/model_comparison_current.py --report-only # rebuild the report
 """
 
 import csv
@@ -1181,7 +1181,7 @@ def _generate(start_x, start_y, start_heading_deg, exercise_path, exercise_path_
     cutoff_geom = _cutoff_geometry(ray_env)
 
     # One UAntwerpSurrogate per preset (model_comparison.UA_PRESETS), shared with the
-    # ship-bank and wind tests; UGent and the UA_* models only for the Tripoli.
+    # ship-bank and wind tests; UGent only for the Tripoli, the UA_* slots per SHIP_MODEL.
     ua_models = build_ua_models(ship_spec)
     non_fh = {**build_reference_models(ship_spec, ray_env), **ua_models}
     tf_models = None
@@ -1265,13 +1265,18 @@ def _generate(start_x, start_y, start_heading_deg, exercise_path, exercise_path_
 
 
 if __name__ == "__main__":
-    _TRA = Path("C:\\Users\\wadaems\\Work\\Development\\simexe\\database\\areas\\ScheldeSaeftinge_23_002\\invoer\\tra")
     if "--report-only" in sys.argv:
         write_report(CURRENT_OUTPUT_DIR)
     else:
+        # The full exercises of SHIP_MODEL (model_comparison.SHIP_MODEL), with and without
+        # current: Tripoli -> DDShip_Tripoli_scenario_windcurrent/windnocurrent.tab,
+        # MYZAKO_37 -> DDShip_scenario3_windcurrent / scenario2_windnocurrent_myzako_37.tab
+        # (sim_fh_dataset_generator.SHIP_PROFILES).
+        from fw.surrogate.sim_fh_dataset_generator import exercise_paths
+        _current_exercise, _nocurrent_exercise = exercise_paths(SHIP_MODEL, "full")
         generate_current_trajectories(
             start_x=-1559.0, start_y=11990.0, start_heading_deg=-45.0,
-            exercise_path=_TRA / "DDShip_Tripoli_scenario_windcurrent.tab",
-            exercise_path_nocurrent=_TRA / "DDShip_Tripoli_scenario_windnocurrent.tab",
+            exercise_path=_current_exercise,
+            exercise_path_nocurrent=_nocurrent_exercise,
             calibrate_only="--calibrate-only" in sys.argv,
         )
