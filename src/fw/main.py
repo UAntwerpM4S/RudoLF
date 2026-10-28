@@ -118,7 +118,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             )
             return False
         except Exception:
-            # Documented behaviour (README): a failing AirSim step is skipped
+            # Documented behavior (README): a failing AirSim step is skipped
             # and the remaining environments still run. Previously only
             # SystemExit/ConnectionError/OSError were caught, so e.g. a
             # RuntimeError from the transfer-learning path or a ValueError
@@ -145,11 +145,13 @@ if __name__ == "__main__" or __name__ == "fw.main":
             patience=4,
             max_time_steps=850,
         ),
+        # Per-agent stop condition in MultiPPOAgent (each agent is judged on
+        # its own reward), so the same target as the single-agent PySimEnv.
         multi_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
-            target_reward=1.75,
+            target_reward=0.99,
             patience=4,
-            max_time_steps=1300,
+            max_time_steps=850,
         ),
         airsim_env_name: StopCondition(
             stop_criterion=Criterion.NBR_POLICY_UPDATES,
