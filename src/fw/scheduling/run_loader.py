@@ -11,7 +11,7 @@ from typing import Any, Dict, Set
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from fw.configuration.config import PolicyStrategy
-from fw.configuration.stop_condition import Criterion
+from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.configuration.config_profile import ProfileRegistry
 from fw.common.tools.config_utils import get_validated_bool
 from fw.common.tools.logging_config import resolve_log_level
@@ -224,13 +224,29 @@ def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopCon
             f"not implemented by StopCondition yet (see "
             f"fw.configuration.stop_condition.Criterion) and cannot be used here."
         )
-    return StopConditionSpec(
+    spec = StopConditionSpec(
         criterion=criterion,
         max_time_steps=int(raw.get("max_time_steps", 2000)),
         target_reward=raw.get("target_reward"),
         target_loss=raw.get("target_loss"),
         patience=raw.get("patience"),
     )
+
+    # Build the StopCondition once at load time, exactly as PipelineScheduler
+    # does when the block starts, so a missing target_reward / target_loss is
+    # reported now instead of after hours of earlier blocks.
+    try:
+        StopCondition(
+            stop_criterion=Criterion[spec.criterion],
+            max_time_steps=spec.max_time_steps,
+            target_reward=spec.target_reward,
+            target_loss=spec.target_loss,
+            patience=spec.patience,
+        )
+    except (ValueError, TypeError, NotImplementedError) as exc:
+        raise PipelineSpecError(f"{where} ('{name}'): invalid stop_condition: {exc}") from exc
+
+    return spec
 
 
 def _parse_transfer(raw: Dict[str, Any], action: str, where: str, name: str) -> TransferSpec:

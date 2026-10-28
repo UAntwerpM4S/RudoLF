@@ -8,7 +8,7 @@ import importlib
 from enum import Enum
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from fw.configuration.env_factory import (
     resolve_environment_name,
     py_sim_env_name,
@@ -211,7 +211,8 @@ class Trainer:
         return None
 
 
-    def train(self, configuration: dict = None, show_plots: bool = True) -> dict:
+    def train(self, configuration: dict = None, show_plots: bool = True,
+              evaluate: Optional[bool] = None) -> dict:
         """
         Starts the training process.
 
@@ -228,6 +229,13 @@ class Trainer:
                 of a multi-stage run). Defaults to True, matching existing
                 behavior exactly - nothing changes for existing callers
                 that never pass this.
+            evaluate (bool, optional): Run the post-training evaluation
+                episode (and store `evaluation_summary`) independently of
+                `show_plots`. None (default) keeps the old coupling
+                (evaluate only when show_plots is True). `evaluate_reward`
+                passes evaluate=True with show_plots=False: it needs the
+                metrics but no interactive windows; before, its exported
+                metric columns were always empty.
 
         Returns:
             dict: Training metrics collected during execution.
@@ -235,7 +243,9 @@ class Trainer:
 
         metrics = self._scheduler.execute(configuration)
 
-        if not show_plots:
+        if evaluate is None:
+            evaluate = show_plots
+        if not evaluate:
             return metrics
 
         last_env = self._envs[-1] if self._envs else None
@@ -478,8 +488,12 @@ class Trainer:
                 # mutations from this run never bleed into subsequent configurations.
                 isolated_configuration = copy.deepcopy(training_configuration)
 
-                # Train once and keep plots off to avoid multi-threaded UI issues.
-                metrics = trainer.train(isolated_configuration, show_plots=False)
+                # Train once and keep interactive plots off, but DO run the
+                # evaluation episode: export_evaluation_results reads its
+                # evaluation_summary, and the trajectory snapshot below needs
+                # the image it renders (otherwise a stale image from an earlier
+                # run was picked up).
+                metrics = trainer.train(isolated_configuration, show_plots=False, evaluate=True)
                 # Snapshot the trajectory image with a unique name per config.
                 trajectory_file = self._save_evaluation_trajectory_snapshot(trainer, reward_weights)
 

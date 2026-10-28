@@ -1,0 +1,300 @@
+"""
+Regression tests for the RL-contract fixes from the framework review:
+
+- envs return the real Gymnasium `terminated` / `truncated` flags, and keep
+  returning them after the episode has ended;
+- the PPO agents bootstrap a truncated episode from its real last
+  observation (not SB3's auto-reset one), and do not treat a truncation as a
+  termination in the info-less fallback;
+- the tanh-squashed log-prob is evaluated at the same point in the rollout
+  and in the update (ratio exactly 1 before any optimizer step);
+- a policy saved on another device type loads on CPU;
+- deep-copied vectorized workers get independent RNGs.
+"""
+
+import copy
+
+import gymnasium as gym
+import numpy as np
+import pytest
+import torch
+
+from fw.dynamics.dynamics_model import Model
+from fw.ships.ship_factory import ShipModel
+
+START = np.array([2245.0, -47.0], dtype=np.float32)
+TARGET = np.array([-1559.0, 11990.0], dtype=np.float32)
+
+
+# ----------------------------------------------------------------------
+# Environment step contract
+# ----------------------------------------------------------------------
+
+def _straight(env, n):
+    """Step `n` times with a neutral rudder; return the last 5-tuple."""
+
+    out = None
+    for _ in range(n):
+        out = env.step(np.array([0.0, 0.5], dtype=np.float32))
+    return out
+
+
+def test_pysimenv_time_limit_is_truncation():
+    """At max_steps PySimEnv reports truncated=True, terminated=False, also after the end."""
+
+    from fw.environments.py_sim_env import PySimEnv
+
+    env = PySimEnv(time_step=2.0, max_steps=5, start_pos=START, target_pos=TARGET,
+                   dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
+    env.reset(seed=0)
+    _, reward, terminated, truncated, info = _straight(env, 5)
+    assert (terminated, truncated) == (False, True)
+    assert info["truncations"] is True and info["terminations"] is False
+    assert isinstance(reward, float)
+
+    _, _, terminated, truncated, _ = _straight(env, 2)          # stepping a finished episode
+    assert (terminated, truncated) == (False, True)
+
+
+def test_colav_flags_persist_after_episode_end():
+    """The COLAV env does not 'un-terminate' when stepped after the end."""
+
+    from fw.environments.py_sim_colav_env import PySimColavEnv
+
+    env = PySimColavEnv(time_step=1.0, max_steps=5, ship_pos=START, target_pos=TARGET,
+                        dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
+    env.reset(seed=0)
+    done_flags = None
+    for _ in range(10):
+        _, _, terminated, truncated, _ = env.step(np.array([0.0, 0.5], dtype=np.float32))
+        if done_flags is None and (terminated or truncated):
+            done_flags = (terminated, truncated)
+        elif done_flags is not None:
+            assert (terminated, truncated) == done_flags
+    assert done_flags is not None
+    assert not (done_flags[0] and done_flags[1])
+
+
+# ----------------------------------------------------------------------
+# Bootstrapping
+# ----------------------------------------------------------------------
+
+class _CountingEnv(gym.Env):
+    """Observation = step index; truncates after 3 steps; info carries no framework keys."""
+
+    observation_space = gym.spaces.Box(low=-100.0, high=100.0, shape=(4,), dtype=np.float32)
+    action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+    type_name = training_name = "CountingEnv"
+
+    def __init__(self):
+        """Create the toy env."""
+
+        self.t = 0
+
+    def reset(self, seed=None, options=None):
+        """Restart counting at 0."""
+
+        super().reset(seed=seed)
+        self.t = 0
+        return np.zeros(4, dtype=np.float32), {}
+
+    def step(self, action):
+        """Advance one step; truncate at t == 3."""
+
+        self.t += 1
+        return np.full(4, float(self.t), dtype=np.float32), 1.0, False, self.t >= 3, {}
+
+    def get_neutral_action(self, env_id, action):
+        """Neutral action for finished envs (BasePPOAgent hook)."""
+
+        return np.zeros_like(action)
+
+
+def test_step_envs_returns_terminal_observation_and_real_truncation(tmp_path):
+    """Without framework info keys: truncation is not a termination, and the final state is the real one."""
+
+    from stable_baselines3.common.vec_env import DummyVecEnv
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    agent = SinglePPOAgent(environment=_CountingEnv(), model_dir=str(tmp_path))
+    agent._vec_env = DummyVecEnv([_CountingEnv])
+    agent._vec_env.reset()
+    for _ in range(2):
+        agent._step_envs(np.zeros((1, 2), dtype=np.float32))
+    next_states, _, terminations, truncations, final_states = agent._step_envs(np.zeros((1, 2), dtype=np.float32))
+
+    assert truncations.tolist() == [True]
+    assert terminations.tolist() == [False]                 # was True: bootstrap zeroed
+    assert next_states[0][0] == 0.0                          # SB3 auto-reset observation
+    assert final_states[0][0] == 3.0                         # real last observation
+
+
+# ----------------------------------------------------------------------
+# Policy
+# ----------------------------------------------------------------------
+
+def test_squashed_log_prob_ratio_is_one_before_update():
+    """Rollout and update evaluate the log-prob at the same point, also for saturated samples."""
+
+    from fw.policies.ppo_policy import PPOPolicy
+
+    torch.manual_seed(0)
+    policy = PPOPolicy(4, 2, "cpu")
+    with torch.no_grad():
+        policy.network.actor_log_std.fill_(2.0)              # std = 7.4: many saturated samples
+    states = torch.randn(512, 4)
+    with torch.no_grad():
+        actions, old_log_probs, _ = policy._predict(states)
+        mean, std, _ = policy.network(states)
+        new_log_probs = PPOPolicy.squashed_log_prob(torch.distributions.Normal(mean, std), actions)
+    ratio = torch.exp(new_log_probs - old_log_probs)
+    assert (actions.abs() > 0.999).any()                     # saturation actually exercised
+    assert torch.allclose(ratio, torch.ones_like(ratio), atol=1e-4)
+
+
+def test_policy_trained_on_other_device_loads_on_cpu(tmp_path):
+    """The device stored in a checkpoint is informational: a 'cuda' checkpoint loads on CPU."""
+
+    from fw.policies import ppo_policy
+    from fw.policies.ppo_policy import PPOPolicy
+
+    policy = PPOPolicy(4, 2, "cpu")
+    path = tmp_path / "p"
+    policy.save(str(path))
+
+    original = PPOPolicy.serialize_policy
+
+    def _as_cuda(self):
+        """Serialize as if the policy had been trained on a GPU."""
+
+        data = original(self)
+        data.setdefault("data", {})["device"] = "cuda"
+        return data
+
+    PPOPolicy.serialize_policy = _as_cuda
+    try:
+        policy.save(str(path))
+    finally:
+        PPOPolicy.serialize_policy = original
+
+    loaded = ppo_policy.PPOPolicy.load(str(path), device="cpu")
+    assert next(loaded.network.parameters()).device.type == "cpu"
+
+
+def test_deep_copied_workers_get_independent_rngs():
+    """reseed_env_rng gives every deep copy its own generator."""
+
+    from fw.common.tools.ppo_utils import reseed_env_rng
+
+    class _E:
+        """Env stub with a generator."""
+
+        def __init__(self):
+            """Create the generator."""
+
+            self._rng = np.random.default_rng(1)
+
+    template = _E()
+    a, b = copy.deepcopy(template), copy.deepcopy(template)
+    assert a._rng.integers(1 << 30) == b._rng.integers(1 << 30)   # the problem
+    reseed_env_rng(a)
+    reseed_env_rng(b)
+    assert a._rng.integers(1 << 30, size=4).tolist() != b._rng.integers(1 << 30, size=4).tolist()
+
+
+@pytest.mark.parametrize("ship_model", [ShipModel.MYZAKO_37, ShipModel.TRIPOLI])
+def test_rudder_change_penalty_limit_is_in_radians(ship_model):
+    """The rudder-change limit has the same unit (rad) as the rudder change, for every ship."""
+
+    from fw.environments.py_sim_env import PySimEnv
+
+    env = PySimEnv(time_step=2.0, max_steps=50, start_pos=START, target_pos=TARGET,
+                   dynamics_model=Model.FOSSEN, ship_model=ship_model)
+    env.reset(seed=0)
+    captured = {}
+    original = env.reward_calculator._component_functions["rudder_change"]
+
+    def _spy(rudder_change, max_rudder_change, **kwargs):
+        """Record the arguments of the rudder-change component."""
+
+        captured.update(rudder_change=rudder_change, max_rudder_change=max_rudder_change)
+        return original(rudder_change=rudder_change, max_rudder_change=max_rudder_change, **kwargs)
+
+    env.reward_calculator._component_functions["rudder_change"] = _spy
+    env.step(np.array([1.0, 0.5], dtype=np.float32))          # full rudder from zero
+
+    spec = env.ship.specifications
+    assert captured["max_rudder_change"] == pytest.approx(spec.max_rudder_rate * 2.0 + 1e-6)   # rad + rounding tolerance
+    assert captured["rudder_change"] == pytest.approx(abs(float(env.performed_action[0])))   # rad
+
+
+@pytest.mark.parametrize("ship_model", [ShipModel.MYZAKO_37, ShipModel.TRIPOLI])
+def test_full_rate_rudder_move_is_not_a_violation(ship_model):
+    """With smoothing on, a move at exactly the top slew rate gets the ratio branch, not the hard -1."""
+
+    from fw.environments.py_sim_env import PySimEnv
+
+    env = PySimEnv(time_step=2.0, max_steps=50, start_pos=START, target_pos=TARGET,
+                   dynamics_model=Model.FOSSEN, ship_model=ship_model)
+    env.enable_smoothing = True
+    env.reset(seed=0)
+    ratios = []
+    original = env.reward_calculator._component_functions["rudder_change"]
+
+    def _spy(rudder_change, max_rudder_change, **kwargs):
+        """Record rudder_change / max_rudder_change."""
+
+        ratios.append(rudder_change / max_rudder_change)
+        return original(rudder_change=rudder_change, max_rudder_change=max_rudder_change, **kwargs)
+
+    env.reward_calculator._component_functions["rudder_change"] = _spy
+    for k in range(10):                                         # alternating full rudder: always rate-limited
+        env.step(np.array([1.0 if k % 2 == 0 else -1.0, 0.5], dtype=np.float32))
+    assert max(ratios) < 1.0
+    assert max(ratios) == pytest.approx(1.0, abs=1e-4)          # really at the top rate
+
+
+def test_vec_env_factory_reseeds_each_worker(tmp_path):
+    """SinglePPOAgent.make_env gives every worker copy its own RNG (not a copy of the template's)."""
+
+    from fw.environments.py_sim_env import PySimEnv
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    env = PySimEnv(time_step=2.0, max_steps=5, start_pos=START, target_pos=TARGET,
+                   dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
+    agent = SinglePPOAgent(environment=env, model_dir=str(tmp_path))
+    w1, w2 = agent.make_env()(), agent.make_env()()            # Monitor-wrapped copies
+    draws = [w.env._rng.integers(1 << 30, size=4).tolist() for w in (w1, w2)]
+    assert draws[0] != draws[1]
+
+
+def test_colav_static_obstacle_is_not_despawned():
+    """The despawn rule only removes dynamic target ships (scope unchanged by the E16 fix)."""
+
+    from fw.environments.py_sim_colav_env import PySimColavEnv
+
+    env = PySimColavEnv(time_step=1.0, max_steps=100000, ship_pos=START, target_pos=TARGET,
+                        dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37,
+                        scenario_types=["static"], scenario_probs=[1.0])
+    env.scenario_builder.check_collision_entity_collision = lambda *a, **k: False
+    env.reset(seed=1)
+    seen, removed = False, False
+    for _ in range(1200):
+        err = env._calculate_heading_error(env.los_guidance_heading(), env.phys_sim.state.heading)
+        _, _, terminated, truncated, _ = env.step(np.array([np.clip(2.0 * err, -1, 1), 0.6], dtype=np.float32))
+        if env.collision_entities:
+            seen = True
+        elif seen:
+            removed = True
+        if terminated or truncated:
+            break
+    assert seen and not removed
+
+
+def test_pipeline_stop_condition_type_error_is_a_spec_error():
+    """A non-numeric patience is reported by the loader, not when the block starts."""
+
+    from fw.scheduling.run_loader import PipelineSpecError, _parse_stop_condition
+
+    with pytest.raises(PipelineSpecError):
+        _parse_stop_condition({"criterion": "TARGET_REWARD", "target_reward": 0.9, "patience": "3"}, "block[0]", "b")

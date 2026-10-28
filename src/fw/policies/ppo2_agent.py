@@ -1,7 +1,6 @@
 import os
 import copy
 import torch
-import warnings
 import logging
 import numpy as np
 import gymnasium as gym
@@ -10,13 +9,13 @@ from pathlib import Path
 from typing import Optional, Tuple
 from fw.policies.base_agent import BaseAgent
 from fw.configuration.stop_condition import StopCondition
+from fw.common.tools.ppo_utils import reseed_env_rng
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3 import PPO
 
 logger = logging.getLogger(__name__)
-warnings.filterwarnings("ignore")
 
 _SRC_DIR = Path(__file__).resolve().parents[2]
 
@@ -79,7 +78,8 @@ class PPO2Agent(BaseAgent):
         self.n_steps = n_steps
         self.reward_threshold = reward_threshold
         self.log_dir = str(_SRC_DIR / log_dir)
-        self.tensorboard_log = str(_SRC_DIR / tensorboard_log)
+        # None disables TensorBoard logging (as documented).
+        self.tensorboard_log = str(_SRC_DIR / tensorboard_log) if tensorboard_log else None
         self.verbose = verbose
 
         if self.num_envs > 1:
@@ -142,6 +142,9 @@ class PPO2Agent(BaseAgent):
         """
 
         env = copy.deepcopy(self.env)
+        # Each copy gets its own RNG; otherwise every worker would draw the
+        # same randomization as the template environment.
+        reseed_env_rng(env)
         if hasattr(env, "randomize"):
             env.randomize()
         return env
@@ -203,12 +206,15 @@ class PPO2Agent(BaseAgent):
             verbose=int(self.verbose),
         )
 
-        self.ppo.learn(
-            total_timesteps=self.total_time_steps,
-            callback=eval_callback,
-            log_interval=self.log_interval,
-            progress_bar=True,
-        )
+        try:
+            self.ppo.learn(
+                total_timesteps=self.total_time_steps,
+                callback=eval_callback,
+                log_interval=self.log_interval,
+                progress_bar=True,
+            )
+        finally:
+            eval_env.close()
 
         final_model_path = f"final_ppo_{self.total_time_steps}"
         self.save_policy(final_model_path)
@@ -239,6 +245,25 @@ class PPO2Agent(BaseAgent):
         if loaded_ppo.action_space.shape != self.env.action_space.shape:
             raise ValueError(f"Action space dimension mismatch: loaded policy expects {loaded_ppo.action_space.shape}, but environment requires {self.env.action_space.shape}.")
             
+        # Attach the current training env so that learn() can continue from
+        # the loaded weights (PPO.load without env leaves model.env = None).
+        # Re-loading WITH the env lets SB3 size the model for this env's
+        # num_envs (set_env would assert when it differs from the saved one).
+        current_env = self.ppo.get_env() if self.ppo is not None else None
+        if current_env is not None:
+            try:
+                loaded_ppo = PPO.load(policy_file_name, env=current_env, device=self.device)
+            except ValueError as exc:
+                # Same shapes (checked above) but other space details, e.g. Box
+                # bounds: keep the env-less model, as before this change, so
+                # predict/visualize still work; continued training then needs
+                # matching spaces.
+                logger.warning(
+                    "Loaded '%s' without attaching the training env (%s); "
+                    "predict works, continued training needs matching spaces.",
+                    policy_file_name, exc,
+                )
+
         self.ppo = loaded_ppo
 
 
@@ -265,3 +290,15 @@ class PPO2Agent(BaseAgent):
         """
 
         self.ppo.policy.eval()
+
+
+    def close(self) -> None:
+        """
+        Close the vectorized training environment (worker processes and,
+        for simulator-backed envs, their connections).
+        """
+
+        if self.ppo is not None:
+            vec_env = self.ppo.get_env()
+            if vec_env is not None:
+                vec_env.close()

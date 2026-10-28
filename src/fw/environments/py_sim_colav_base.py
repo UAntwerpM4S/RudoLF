@@ -14,6 +14,7 @@ Class hierarchy:
 
 import math
 import logging
+from collections import deque
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -75,6 +76,11 @@ class PySimColavBaseEnv(PySimBaseEnv):
         _get_obs() - extend observation vector
         _on_episode_reset() - additional per-episode reset logic
     """
+
+    # Maximum number of past encounters / episode minimum distances kept for
+    # the evaluation statistics (oldest dropped first).
+    METRIC_HISTORY_MAXLEN: int = 10_000
+
 
     def __init__(
             self,
@@ -203,7 +209,11 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self.min_distance = float("inf")
 
         # Per-episode minimum distance tracking
-        self._episode_min_distances: list[float] = []
+        # Accumulated across episodes for the evaluation statistics. Capped:
+        # every training worker (a deep copy) also appends to its own copy for
+        # the whole run, and nothing reads those. The cap is far above what an
+        # evaluation run produces, so evaluation statistics are unaffected.
+        self._episode_min_distances: deque = deque(maxlen=self.METRIC_HISTORY_MAXLEN)
         self._current_episode_min_dist: float = float("inf")
         self._current_episode_collided: bool = False
 
@@ -263,7 +273,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
         # locking-during-encounter behavior applied to the 4-way classifier
         # label used for reward shaping.
         self._episode_encounters: list[dict] = []    # encounters in the current episode
-        self._all_encounters: list[dict] = []        # accumulated across episodes
+        self._all_encounters: deque = deque(maxlen=self.METRIC_HISTORY_MAXLEN)  # across episodes (capped, see above)
         self._prev_tracked_ts: Optional[int] = None  # for None -> tracked transition detection
 
         # Passing snapshot: list of dicts with OS/TS positions at the moment of passing
@@ -411,12 +421,13 @@ class PySimColavBaseEnv(PySimBaseEnv):
             self.previous_ship_pos = self.ship_pos.copy()
             self.previous_heading = self.phys_sim.state.heading
 
-            self.phys_sim.step(action, self.enable_smoothing)
+            self.phys_sim.step(action, self.enable_smoothing, self.enable_rudder_angle_scaling)
             self.ship_pos = np.array(
                 [self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32
             )
             self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
             self.step_count += 1
+            self._episode_step = getattr(self, "_episode_step", 0) + 1
 
         # Capture collision segment before reward may advance checkpoint
         prev_idx = max(0, self.checkpoint_index - 1)
@@ -484,18 +495,23 @@ class PySimColavBaseEnv(PySimBaseEnv):
                 self._current_encounter_first_action_step is None
                 and self.performed_action is not None
             ):
-                max_rud = float(self.ship.specifications.max_rudder_angle)
-                abs_rudder_rad = abs(float(self.performed_action[0])) * max_rud
+                # performed_action[0] is the actuator's rudder angle, already
+                # in radians (ActuatorModel._rudder); multiplying it by
+                # max_rudder_angle again over-reported it on the Myzako and
+                # under-reported it on the Tripoli.
+                abs_rudder_rad = abs(float(self.performed_action[0]))
                 if abs_rudder_rad >= self._first_action_rudder_threshold_rad:
-                    self._current_encounter_first_action_step = self.step_count
+                    self._current_encounter_first_action_step = getattr(self, "_episode_step", 0)
 
         # Post-entity-step hook (subclass: e.g. rebuild polar geometries)
         self._on_entities_stepped()
 
-        # Calculate reward and termination
+        # Calculate reward and termination. After the episode has ended the
+        # stored flags are returned again (as PySimEnv does), so stepping a
+        # finished episode never "un-terminates" it.
         reward = 0.0
-        terminated = False
-        truncated = False
+        terminated = bool(self.phys_sim.state.terminated)
+        truncated = bool(self.phys_sim.state.truncated)
 
         if self.phys_sim.state.terminated and self.phys_sim.state.truncated:
             logger.debug("Both terminated and truncated set simultaneously.")
@@ -582,7 +598,9 @@ class PySimColavBaseEnv(PySimBaseEnv):
             },
         }
 
-        return obs, reward, terminated | truncated, False, info
+        # Gymnasium contract: max-steps and focused-encounter cut-offs are
+        # `truncated` (bootstrap V(s')), collisions / success are `terminated`.
+        return obs, float(reward), bool(terminated), bool(truncated), info
 
     # --------------------------------
     # Reward (override in subclass)
@@ -677,10 +695,14 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._current_encounter_min_cri = float("inf")
         self._current_encounter_cri_sum = 0.0
         self._current_encounter_cri_count = 0
-        # Encounter-scoped CTE / time-to-first-action accumulators. start_step
+        # Encounter-scoped CTE / time-to-first-action accumulators. They use the
+        # monotonic _episode_step: step_count resets at every checkpoint (by
+        # design, for max_steps), which made (first_action - start) negative
+        # and clipped to 0 whenever a checkpoint fell inside the encounter.
+        # start_step
         # is recorded once at encounter detection so time_to_first_action can
         # be computed as (first_action_step - start_step) * time_step.
-        self._current_encounter_start_step = self.step_count
+        self._current_encounter_start_step = getattr(self, "_episode_step", 0)
         self._current_encounter_first_action_step = None
         self._current_encounter_cte_sum = 0.0
         self._current_encounter_cte_count = 0

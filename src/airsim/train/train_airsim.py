@@ -374,6 +374,20 @@ def _run_training_with_transfer(
         logger.error("Transfer learning FAILED, falling back to random-weight training: %s", exc)
 
     agent.learn(stop_condition=stop_condition)
+
+    # This path bypasses SimpleScheduler, which is what normally writes the
+    # canonical "<env>_PPO_policy" model (the default model path for AirSim
+    # inference) and the profile JSON next to it. Write them here as well,
+    # otherwise inference silently runs a stale model from an earlier run.
+    training_name = getattr(env.gym_env, "training_name", "AirSimEnv")
+    agent.save_policy(f"{training_name}_{PPO_POLICY_NAME}_policy")
+    if profile is not None:
+        model_dir = getattr(agent, "model_dir", None) or "models"
+        profile_path = Path(model_dir) / f"{training_name}_profile.json"
+        try:
+            profile_path.write_text(profile.to_json(), encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Could not save profile JSON '%s' (%s).", profile_path, exc)
     return {}
 
 

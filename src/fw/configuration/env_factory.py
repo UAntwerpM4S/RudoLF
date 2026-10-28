@@ -463,9 +463,9 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
                 `build_multi_policy_colav_config`). Expected keys: wind,
                 current, ship_model, dynamics_model, enable_obstacles,
                 ugent_surrogate_config.
-                eval/eval_scenario/eval_obstacle_count/
-                include_scenario_one_hot/minimal_path_render remain
-                hardcoded below pending a future rework.
+                evaluate/include_scenario_one_hot/minimal_path_render
+                remain hardcoded below pending a future rework
+                (eval_scenario/eval_obstacle_count are not env parameters yet).
         """
         super().__init__(name, configuration)
 
@@ -494,8 +494,9 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
             enable_obstacles=self.configuration.get("enable_obstacles", True),
             evaluate=False,
-            eval_scenario="crossing-right",
-            eval_obstacle_count=1,
+            # eval_scenario / eval_obstacle_count were passed here but are not
+            # parameters of PySimColavEnv (they ended up in **kwargs, unused);
+            # removed, pending the planned eval rework.
             include_scenario_one_hot=True,
             minimal_path_render=True
         )
@@ -875,8 +876,8 @@ def build_multi_policy_colav_config(framework_config: dict, extra: dict | None =
     Extract MultiPolicyColav-relevant keys from *framework_config*.
 
     Currently identical to `build_colav_config`; the eval/scenario-related
-    fields (eval, eval_scenario, eval_obstacle_count, include_scenario_one_hot,
-    minimal_path_render) remain hardcoded in MultiPolicyColavEnvironment
+    fields (evaluate, include_scenario_one_hot, minimal_path_render) remain
+    hardcoded in MultiPolicyColavEnvironment
     pending a future rework, so they are not sourced from framework_config yet.
 
     Args:

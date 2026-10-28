@@ -69,7 +69,11 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     _log_file_path = _log_dir / f"AirSimEnv_{_PPO_POLICY_NAME}_{action}_{_log_ts}.log"
 
     root_logger = logging.getLogger()
-    root_logger.addHandler(create_logfile_handler(_log_file_path, _file_level))
+    # Keep a reference to THIS run's handler: the rename below must touch only
+    # it, not the first FileHandler on the root logger (when delegated from
+    # fw.main that is fw.main's own run log).
+    _own_file_handler = create_logfile_handler(_log_file_path, _file_level)
+    root_logger.addHandler(_own_file_handler)
     root_logger.setLevel(min(root_logger.level, _file_level))
 
     logger = logging.getLogger("fw.main_with_airsim")
@@ -155,9 +159,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
             # filename accurately reflects what this run actually did.
             _new_log_file_path = _log_dir / f"AirSimEnv_{_PPO_POLICY_NAME}_{action}_{_log_ts}.log"
             _root_logger = logging.getLogger()
-            _old_file_handler = next(
-                (h for h in _root_logger.handlers if isinstance(h, logging.FileHandler)), None
-            )
+            _old_file_handler = _own_file_handler if _own_file_handler in _root_logger.handlers else None
             if _old_file_handler is not None and _new_log_file_path != _log_file_path:
                 _root_logger.removeHandler(_old_file_handler)
                 _old_file_handler.close()
@@ -170,6 +172,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 _new_file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
                 _new_file_handler.setLevel(_file_level)
                 _root_logger.addHandler(_new_file_handler)
+                _own_file_handler = _new_file_handler
                 logger.info("Log file renamed to: %s", _log_file_path)
 
     def _run_airsim_visualization_from_runtime() -> bool:

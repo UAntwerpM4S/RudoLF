@@ -160,11 +160,12 @@ class MultiPPOAgent(BasePPOAgent):
             actions (tuple): Tuple of actions, one per agent.
 
         Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-                - next_states: Next observations.
+            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                - next_states: Next observations (auto-reset ones for finished envs).
                 - rewards: Rewards per agent.
                 - terminations: Termination flags.
                 - truncations: Truncation flags.
+                - final_states: Real last observations (used to bootstrap truncations).
 
         Notes:
             - Supports custom info dictionaries for richer transition data.
@@ -186,7 +187,9 @@ class MultiPPOAgent(BasePPOAgent):
             rewards = next_rewards
             terminations = next_terminations
 
-        return next_states, rewards, terminations, truncations
+        # MultiSimEnv does not auto-reset, so the returned observations are
+        # already the real last observations of finished sub-environments.
+        return next_states, rewards, terminations, truncations, next_states
 
 
     def _predict(self, states, deterministic=False):
@@ -275,101 +278,108 @@ class MultiPPOAgent(BasePPOAgent):
             for i, env in enumerate(self.env.sub_environments.values())
         ]
 
-        for iteration in range(stopping_condition.max_time_steps):
-            self.set_policy_eval()
+        # try/finally: on an exception or Ctrl-C the sub-environments
+        # (simulator connections) are still closed.
+        try:
+            for iteration in range(stopping_condition.max_time_steps):
+                self.set_policy_eval()
 
-            # Collect batch data from multiple parallel environments
-            batch_data = self.run_parallel_episodes(self.num_envs)
+                # Collect batch data from multiple parallel environments
+                batch_data = self.run_parallel_episodes(self.num_envs)
 
-            # Build a dict keyed by env_id for safe lookup.
-            # Each episode dict now carries episode["env_id"].
-            episode_by_env: dict[int, dict] = {
-                ep["env_id"]: ep
-                for ep in batch_data
-                if "env_id" in ep
-            }
+                # Build a dict keyed by env_id for safe lookup.
+                # Each episode dict now carries episode["env_id"].
+                episode_by_env: dict[int, dict] = {
+                    ep["env_id"]: ep
+                    for ep in batch_data
+                    if "env_id" in ep
+                }
 
-            # Fallback: if env_id tags are absent (e.g. running old base code),
-            # reconstruct by position, same behavior as before.
-            if not episode_by_env:
-                episode_by_env = {i: ep for i, ep in enumerate(batch_data)}
+                # Fallback: if env_id tags are absent (e.g. running old base code),
+                # reconstruct by position, same behavior as before.
+                if not episode_by_env:
+                    episode_by_env = {i: ep for i, ep in enumerate(batch_data)}
 
-            mean_rewards = []
-            mean_losses = []
+                mean_rewards = []
+                mean_losses = []
 
-            # Train each agent
-            for agent_id, agent in enumerate(self.agents):
-                episode = episode_by_env.get(agent_id)
+                # Train each agent
+                for agent_id, agent in enumerate(self.agents):
+                    episode = episode_by_env.get(agent_id)
 
-                if episode is None:
-                    logger.warning("[Warning] Iteration %d: no trajectory for agent %s - skipping update.", iteration, agent_id)
-                    mean_rewards.append(float('nan'))
-                    mean_losses.append(float('nan'))
+                    if episode is None:
+                        logger.warning("[Warning] Iteration %d: no trajectory for agent %s - skipping update.", iteration, agent_id)
+                        mean_rewards.append(float('nan'))
+                        mean_losses.append(float('nan'))
+                        training_metrics[f"agent{agent_id}"].append({
+                            'iteration': iteration,
+                            'loss': float('nan'),
+                            'advantage': float('nan'),
+                            'reward': float('nan'),
+                        })
+                        continue
+
+                    mean_reward = np.mean(episode['rewards'])
+                    mean_advantage = np.mean(episode['advantages'])
+
+                    # Train agent on its episode
+                    loss = agent.train([episode])
+
+                    # Store metrics
+                    mean_rewards.append(mean_reward)
+                    mean_losses.append(loss)
+
                     training_metrics[f"agent{agent_id}"].append({
                         'iteration': iteration,
-                        'loss': float('nan'),
-                        'advantage': float('nan'),
-                        'reward': float('nan'),
+                        'loss': loss,
+                        'advantage': mean_advantage,
+                        'reward': mean_reward,
                     })
-                    continue
 
-                mean_reward = np.mean(episode['rewards'])
-                mean_advantage = np.mean(episode['advantages'])
+                    # Save the best policy per agent
+                    if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_rewards[agent_id]:
+                        best_rewards[agent_id] = mean_reward
+                        agent.save_policy(best_policy_files[agent_id])
 
-                # Train agent on its episode
-                loss = agent.train([episode])
+                    # Log evaluation results periodically
+                    if iteration % self.eval_frequency == 0:
+                        logger.info("Iteration %d | agent %s | average reward: %.3f, loss: %.3f", iteration, agent_id, mean_reward, loss)
 
-                # Store metrics
-                mean_rewards.append(mean_reward)
-                mean_losses.append(loss)
+                # Periodic checkpoint (all agents in one zip)
+                if iteration > 0 and iteration % self.eval_frequency == 0:
+                    self.save_policy(f"ppo_checkpoint_{iteration}")
 
-                training_metrics[f"agent{agent_id}"].append({
-                    'iteration': iteration,
-                    'loss': loss,
-                    'advantage': mean_advantage,
-                    'reward': mean_reward,
-                })
+                # Aggregate metrics for stopping condition; ignore NaN entries
+                valid_rewards = [r for r in mean_rewards if not np.isnan(r)]
+                valid_losses = [l for l in mean_losses if not np.isnan(l)]
 
-                # Save the best policy per agent
-                if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_rewards[agent_id]:
-                    best_rewards[agent_id] = mean_reward
-                    agent.save_policy(best_policy_files[agent_id])
+                mean_reward_all_agents = np.mean(valid_rewards) if valid_rewards else 0.0
+                mean_loss_all_agents = np.mean(valid_losses) if valid_losses else float('nan')
 
-                # Log evaluation results periodically
-                if iteration % self.eval_frequency == 0:
-                    logger.info("Iteration %d | agent %s | average reward: %.3f, loss: %.3f", iteration, agent_id, mean_reward, loss)
+                # Check if the condition is met for early stopping
+                should_stop, reason = stopping_condition.should_stop(
+                    current_step=iteration,
+                    mean_reward=mean_reward_all_agents,
+                    mean_loss=mean_loss_all_agents,
+                )
 
-            # Periodic checkpoint (all agents in one zip)
-            if iteration > 0 and iteration % self.eval_frequency == 0:
-                self.save_policy(f"ppo_checkpoint_{iteration}")
+                if should_stop:
+                    logger.info("Stopping: %s", reason)
+                    last_save_index = iteration
+                    break
 
-            # Aggregate metrics for stopping condition; ignore NaN entries
-            valid_rewards = [r for r in mean_rewards if not np.isnan(r)]
-            valid_losses = [l for l in mean_losses if not np.isnan(l)]
-
-            mean_reward_all_agents = np.mean(valid_rewards) if valid_rewards else 0.0
-            mean_loss_all_agents = np.mean(valid_losses) if valid_losses else float('nan')
-
-            # Check if the condition is met for early stopping
-            should_stop, reason = stopping_condition.should_stop(
-                current_step=iteration,
-                mean_reward=mean_reward_all_agents,
-                mean_loss=mean_loss_all_agents,
-            )
-
-            if should_stop:
-                logger.info("Stopping: %s", reason)
-                last_save_index = iteration
-                break
-
-        # Save final checkpoint
-        self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
-
-        # Dump training metrics to CSV
-        dump_multi_agent_metrics(self.model_dir, training_metrics)
-
-        for sub_env in self.env.sub_environments.values():
-            sub_env.close()
+            # Final checkpoint and metrics: only when training ended normally
+            # (same rule as SinglePPOAgent; a failure here raises).
+            self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
+            dump_multi_agent_metrics(self.model_dir, training_metrics)
+        finally:
+            # Always release the sub-environments (simulator connections),
+            # also on an exception or Ctrl-C.
+            for sub_env in self.env.sub_environments.values():
+                try:
+                    sub_env.close()
+                except Exception:
+                    logger.exception("Closing sub-environment %s failed.", getattr(sub_env, "training_name", sub_env))
 
         logger.info("Training completed!")
 

@@ -268,26 +268,43 @@ class ScenarioBuilder:
         #    path-following TS (e.g. an overtaking TS that the OS never
         #    catches up to) reaches the end of the trajectory
         # ----------------------------------------------------------
-        if env.collision_entities and len(env.collision_entities) == 1:
-            if getattr(env, "ts_idx", None) is not None and env.ts_idx < len(env.collision_entities):
-                ts = env.collision_entities[env.ts_idx]
-                dist = env.collision_entities[0].distance_to_point(env.ship_pos)
-                route_finished = bool(getattr(ts, "route_finished", False))
-                if dist > env.forget_range or route_finished:
-                    env.collision_entities = []
-                    env.ts_idx = None
-                    env._sync_collision_entity_views()
-                    self.step_counter = 0
-                    # Reset the classifier so it doesn't hold a stale tracked_ts
-                    # index into the now-empty collision_entities list.
-                    if hasattr(env, "scenario_classifier"):
-                        env.scenario_classifier.reset()
+        #
+        #    A TS is only despawned for distance after it has been within
+        #    forget_range at least once (`_despawn_engaged`), so a TS spawned
+        #    beyond forget_range is not removed before it approaches. This
+        #    used to rely on `env.ts_idx` still being set from the previous
+        #    step while the classifier had already dropped the TS (a two-step
+        #    lag that any reordering of reward/observation would break).
+        #    Scope is unchanged from before: only DYNAMIC target ships, and
+        #    only in envs that track one (`ts_idx`, the polar env). Static
+        #    obstacles and the planner env never despawned and still do not.
+        if (
+            env.collision_entities
+            and len(env.collision_entities) == 1
+            and hasattr(env, "ts_idx")
+            and bool(getattr(env.collision_entities[0], "is_dynamic", False))
+        ):
+            ts = env.collision_entities[0]
+            dist = ts.distance_to_point(env.ship_pos)
+            if dist <= env.forget_range:
+                ts._despawn_engaged = True
+            route_finished = bool(getattr(ts, "route_finished", False))
+            left_range = bool(getattr(ts, "_despawn_engaged", False)) and dist > env.forget_range
+            if left_range or route_finished:
+                env.collision_entities = []
+                env.ts_idx = None
+                env._sync_collision_entity_views()
+                self.step_counter = 0
+                # Reset the classifier so it doesn't hold a stale tracked_ts
+                # index into the now-empty collision_entities list.
+                if hasattr(env, "scenario_classifier"):
+                    env.scenario_classifier.reset()
 
-                    # Focused training: encounter is over, start the
-                    # post-encounter countdown to clean truncation.
-                    if is_focused:
-                        self._post_encounter_active = True
-                        self._post_encounter_counter = 0
+                # Focused training: encounter is over, start the
+                # post-encounter countdown to clean truncation.
+                if is_focused:
+                    self._post_encounter_active = True
+                    self._post_encounter_counter = 0
 
     def cache_checkpoint_segments(self) -> None:
         """

@@ -17,6 +17,8 @@ from fw.dynamics.dynamics_model import Model
 from fw.environments.py_sim_colav_base import PySimColavBaseEnv
 from fw.collision_avoidance.scenario_classifier import NUM_SCENARIOS
 
+logger = logging.getLogger(__name__)
+
 EPSILON = 1e-9
 
 
@@ -112,8 +114,16 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 placement.
             random_segment_start: Randomizes the initial path segment.
             minimal_path_render: Enables simplified path rendering.
-            **kwargs: Reserved for future compatibility.
+            **kwargs: Reserved for future compatibility. Currently NOT used;
+                any keys passed here are logged as ignored so that typos and
+                not-yet-wired options are visible.
         """
+
+        if kwargs:
+            logger.warning(
+                "%s: ignoring unsupported argument(s) %s (not implemented yet).",
+                type(self).__name__, sorted(kwargs),
+            )
 
         # Polar scan configuration
         self.polar_scan_cached = None

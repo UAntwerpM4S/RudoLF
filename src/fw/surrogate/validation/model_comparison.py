@@ -1285,7 +1285,10 @@ def _inject_live_environment(
         current_speed=current_speed, current_direction=current_dir,
     )
     model.get_env = lambda pos, state=None: env_data
-    model.ukc = ukc  # keeps the class's own get_ukc() (returns self.ukc) consistent too
+    model.ukc = ukc  # get_ukc() returns self.ukc when there is no lookup
+    # Drop the lookup so get_ukc(pos) cannot bypass the injected environment.
+    if hasattr(model, "wcu_lookup"):
+        model.wcu_lookup = None
     if hasattr(model, "_env"):
         model._env = ray_env
 

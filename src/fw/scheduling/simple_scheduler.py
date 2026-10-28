@@ -189,10 +189,15 @@ class SimpleScheduler(BaseScheduler):
 
                         reward_weights = getattr(self.current_env.gym_env, "reward_weights", None)
                         weight_suffix = self._format_reward_weight_suffix(reward_weights)
-                        # If reward_weights is empty, use the standard policy name without any suffix.
-                        if weight_suffix == "default":
-                            self.agent_mgr.agent.save_policy(save_name)
-                        else:
+                        # The canonical name is what AgentManager.set_environment
+                        # (REUSE_*), Trainer.visualize and the next scheduled env
+                        # look up, so it is always written. Envs with reward
+                        # weights (e.g. every colav env) additionally get a
+                        # weight-suffixed copy for reward-weight bookkeeping;
+                        # previously ONLY the suffixed file was written, so the
+                        # follow-up load silently fell back to a random policy.
+                        self.agent_mgr.agent.save_policy(save_name)
+                        if weight_suffix != "default":
                             self.agent_mgr.agent.save_policy(f"{save_name}_{weight_suffix}")
 
                         # Persist the active profile alongside the checkpoint so

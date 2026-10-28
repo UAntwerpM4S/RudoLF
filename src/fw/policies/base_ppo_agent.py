@@ -180,11 +180,12 @@ class BasePPOAgent(BaseAgent):
             actions (np.ndarray): Actions of shape (num_envs, action_dim).
 
         Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-                - next_states: Next observations.
+            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                - next_states: Next observations (auto-reset ones for finished envs).
                 - rewards: Rewards per environment.
                 - terminations: Episode termination flags.
                 - truncations: Episode truncation flags.
+                - final_states: Real last observations (used to bootstrap truncations).
         """
 
         pass
@@ -392,7 +393,7 @@ class BasePPOAgent(BaseAgent):
             # Restore the container type that _step_envs expects, i.e.
             # np.ndarray for SinglePPOAgent, tuple for MultiPPOAgent.
             effective_actions = self._repack_actions(actions, effective_actions)
-            next_states, rewards, terminations, truncations = self._step_envs(effective_actions)
+            next_states, rewards, terminations, truncations, final_states = self._step_envs(effective_actions)
 
             # Store per-agent transitions
             for env_id in range(num_envs):
@@ -406,7 +407,9 @@ class BasePPOAgent(BaseAgent):
                 collected_data[env_id]["truncations"].append(truncations[env_id])
                 collected_data[env_id]["values"].append(values[env_id])
                 collected_data[env_id]["log_probs"].append(log_probs[env_id])
-                collected_data[env_id]["next_states"].append(next_states[env_id])
+                # Real last observation (not an auto-reset one), so a
+                # truncated episode is bootstrapped from its own final state.
+                collected_data[env_id]["next_states"].append(final_states[env_id])
 
             # Update done flags at environment level
             env_done = np.logical_or(terminations, truncations)

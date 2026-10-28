@@ -174,6 +174,7 @@ class AgentManager:
             )
 
         agent = MultiPolicySingleAgent(
+            self._profile,
             environment=target_env,
             num_policies=NUM_SCENARIOS,
             policy_labels=list(SCENARIO_LABELS),
@@ -249,6 +250,14 @@ class AgentManager:
             self._agent.save_policy(policy_file_name)
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
             policy_file_name = f"{other_env_name}_{self._agent_type}_policy"
+
+        # Release resources held by the agent being replaced (e.g. the SB3
+        # VecEnv of PPO2Agent, which is built in its constructor).
+        if self._agent is not None and callable(getattr(self._agent, "close", None)):
+            try:
+                self._agent.close()
+            except Exception:
+                logger.exception("Closing the previous agent failed; continuing.")
 
         if PPO_POLICY_NAME == self._agent_type:
             self._agent = self._build_single_agent(env)
