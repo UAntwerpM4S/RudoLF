@@ -7,7 +7,6 @@ import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import gymnasium as gym
-import tkinter as tk
 import numpy as np
 
 matplotlib.rcParams['figure.raise_window'] = False
@@ -382,8 +381,6 @@ class PySimEnv(BaseEnv):
         self.previous_action = np.zeros(2, dtype=np.float32)
         self.checkpoint_index = 1
 
-        self.heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
-        self.velocities = self.phys_sim.state.u
         self.previous_heading = 0.0
         self.cross_error = 0.0
         self.step_count = 0
@@ -405,6 +402,11 @@ class PySimEnv(BaseEnv):
             u=self.initial_speed, v=0.0, r=0.0))
         self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
+
+        # Computed AFTER phys_sim.reset(), otherwise they describe the
+        # previous episode's final state.
+        self.heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
+        self.velocities = self.phys_sim.state.u
 
     def create_simulator(self, ua_surrogate_config: Optional[Dict]=None,
                          ugent_surrogate_config: Optional[Dict]=None):
@@ -1445,7 +1447,8 @@ class PySimEnv(BaseEnv):
 
             self.randomization_scale = randomization_scale
 
-        ran_gen = np.random.default_rng()
+        # Use the env's own generator so `reset(seed=...)` makes this reproducible.
+        ran_gen = self._rng
 
         perturbation = ran_gen.uniform(
             low=-self.randomization_scale,
@@ -1663,7 +1666,10 @@ class PySimEnv(BaseEnv):
             "truncations": truncated,
         }
 
-        return self._get_obs(), reward, terminated | truncated, False, info
+        # Gymnasium contract: a time-limit cut-off is `truncated` (bootstrap
+        # V(s')), a real end of the episode is `terminated`. The same flags are
+        # mirrored in `info` for the framework's own agents.
+        return self._get_obs(), float(reward), bool(terminated), bool(truncated), info
 
     # -------------------
     # Reward calculation
@@ -1696,7 +1702,16 @@ class PySimEnv(BaseEnv):
 
         # Ship information
         rudder_change = abs(self.performed_action[0] - self.previous_action[0])
-        max_rudder_change = self.ship.specifications.max_rudder_rate * self.time_step / self.ship.specifications.max_rudder_angle  # rad/s * s * action/rad
+        # Both in radians: performed_action/previous_action hold the actuator's
+        # rudder ANGLE (ActuatorModel._rudder, rad). The limit used to be divided
+        # by max_rudder_angle (action units), which scaled the penalty by
+        # max_rudder_angle: x1.31 and saturating at 76 % of the rate on the
+        # Myzako (75 deg), x0.61 on the Tripoli (35 deg).
+        # The +1e-6 rad tolerance keeps a move at exactly the actuator's top
+        # slew rate (enable_smoothing=True) in the normal ratio branch of the
+        # penalty: float32 rounding put it ~5e-9 rad above the limit, which
+        # gave the hard 'exceeded' penalty to a physically allowed move.
+        max_rudder_change = self.ship.specifications.max_rudder_rate * self.time_step + 1e-6  # rad
         heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
         distance_traveled = abs(np.linalg.norm(self.ship_pos - self.previous_ship_pos))
         velocity = distance_traveled / self.time_step
@@ -2002,12 +2017,17 @@ class PySimEnv(BaseEnv):
         self.initialize_plots = False
 
         # Create temporary Tk root to determine screen size when possible
+        # tkinter is imported lazily: a module-level import made the whole
+        # framework unimportable on headless machines / Python builds
+        # without Tk (e.g. HPC training nodes), although Tk is only needed
+        # here, for rendering.
         try:
+            import tkinter as tk
             root = tk.Tk()
             screen_width = root.winfo_screenwidth()
             screen_height = root.winfo_screenheight()
             root.destroy()
-        except tk.TclError:
+        except Exception:   # ImportError (no Tk) or tk.TclError (no display)
             screen_width, screen_height = MAX_FIG_WIDTH, MAX_FIG_HEIGHT
 
         fig_width = min(MAX_FIG_WIDTH, screen_width)

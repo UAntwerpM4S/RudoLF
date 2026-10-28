@@ -73,7 +73,8 @@ DEFAULT_HYPERPARAMETERS = {
         'max_nbr_iterations': 200000,
         'batch_size': 64,
         'device': "cpu",
-        'model_dir': "models"
+        'model_dir': "models",
+        'seed': None,       # base seed of the worker env RNGs; None = random, logged
     },
     PPO2_POLICY_NAME: {
         'learning_rate': 3e-4,
@@ -95,7 +96,8 @@ DEFAULT_HYPERPARAMETERS = {
         'model_dir': "models",
         'log_dir': "logs",
         'tensorboard_log': "logs/tensorboard",
-        'verbose': True
+        'verbose': True,
+        'seed': None,       # base seed of the worker env RNGs; None = random, logged
     },
     MULTI_PPO_POLICY_NAME: {
         'learning_rate': 1e-4,
@@ -112,7 +114,8 @@ DEFAULT_HYPERPARAMETERS = {
         'max_nbr_iterations': 200000,
         'batch_size': 64,
         'device': "cpu",
-        'model_dir': "models"
+        'model_dir': "models",
+        'seed': None,       # base seed of the worker env RNGs; None = random, logged
     },
     MULTI_POLICY_SINGLE_NAME: {
         'learning_rate': 3e-4,
@@ -131,6 +134,7 @@ DEFAULT_HYPERPARAMETERS = {
         'device': "cpu",
         'model_dir': "models",
         'steps_per_policy_update': 8192,
+        'seed': None,       # base seed of the worker env RNGs; None = random, logged
     },
 }
 

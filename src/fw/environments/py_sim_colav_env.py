@@ -17,6 +17,8 @@ from fw.dynamics.dynamics_model import Model
 from fw.environments.py_sim_colav_base import PySimColavBaseEnv
 from fw.collision_avoidance.scenario_classifier import NUM_SCENARIOS
 
+logger = logging.getLogger(__name__)
+
 EPSILON = 1e-9
 
 
@@ -27,6 +29,10 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     Adds a polar scan (ray-cast sectors) and CRI scalar to the observation,
     and applies COLREG-aware reward shaping based on relative bearings.
     """
+
+    # Tracks one target ship (`ts_idx`) via the scenario classifier; the
+    # ScenarioBuilder may despawn it once it has passed.
+    TRACKS_TARGET_SHIP: bool = True
 
     def __init__(
             self,
@@ -112,8 +118,20 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 placement.
             random_segment_start: Randomizes the initial path segment.
             minimal_path_render: Enables simplified path rendering.
-            **kwargs: Reserved for future compatibility.
+            **kwargs: Reserved for future compatibility. Currently NOT used;
+                any keys passed here are logged as ignored so that typos and
+                not-yet-wired options are visible.
         """
+
+        if kwargs:
+            logger.warning(
+                "%s: ignoring unsupported argument(s) %s (not implemented yet).",
+                type(self).__name__, sorted(kwargs),
+            )
+
+        # Index of the tracked target ship (set from the classifier in the
+        # reward). Defined up front so it exists from the very first step.
+        self.ts_idx = None
 
         # Polar scan configuration
         self.polar_scan_cached = None

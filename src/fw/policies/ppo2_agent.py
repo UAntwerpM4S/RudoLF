@@ -1,7 +1,6 @@
 import os
 import copy
 import torch
-import warnings
 import logging
 import numpy as np
 import gymnasium as gym
@@ -10,13 +9,13 @@ from pathlib import Path
 from typing import Optional, Tuple
 from fw.policies.base_agent import BaseAgent
 from fw.configuration.stop_condition import StopCondition
+from fw.common.tools.ppo_utils import reseed_env_rng
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3 import PPO
 
 logger = logging.getLogger(__name__)
-warnings.filterwarnings("ignore")
 
 _SRC_DIR = Path(__file__).resolve().parents[2]
 
@@ -79,14 +78,17 @@ class PPO2Agent(BaseAgent):
         self.n_steps = n_steps
         self.reward_threshold = reward_threshold
         self.log_dir = str(_SRC_DIR / log_dir)
-        self.tensorboard_log = str(_SRC_DIR / tensorboard_log)
+        # None disables TensorBoard logging (as documented).
+        self.tensorboard_log = str(_SRC_DIR / tensorboard_log) if tensorboard_log else None
         self.verbose = verbose
 
+        # One child seed per training worker (see BaseAgent 'seed').
+        worker_seeds = self._spawn_worker_seeds(self.num_envs)
         if self.num_envs > 1:
-            train_env = SubprocVecEnv([self.make_env(i) for i in range(self.num_envs)])
+            train_env = SubprocVecEnv([self.make_env(i, worker_seeds[i]) for i in range(self.num_envs)])
         else:
             logging_dir = str(_SRC_DIR / "logs/env_0")
-            train_env = DummyVecEnv([lambda: Monitor(self.create_env(), logging_dir)])
+            train_env = DummyVecEnv([lambda: Monitor(self.create_env(worker_seeds[0]), logging_dir)])
 
         policy_kwargs = dict(
             net_arch=[256, 256, 128],
@@ -113,10 +115,18 @@ class PPO2Agent(BaseAgent):
         )
 
 
-    def make_env(self, rank):
+    def make_env(self, rank, worker_seed=None):
         """
         Utility function for multiprocessing env creation.
+
+        Args:
+            rank: Worker index (used for the Monitor log directory).
+            worker_seed: Seed for this worker's env RNG; None spawns a new
+                child of the agent's worker SeedSequence.
         """
+
+        if worker_seed is None:
+            worker_seed = self._spawn_worker_seeds(1)[0]
 
         def _init():
             """
@@ -127,21 +137,30 @@ class PPO2Agent(BaseAgent):
             """
 
             logging_dir = str(_SRC_DIR / f"logs/env_{rank}")
-            return Monitor(self.create_env(), logging_dir)
+            return Monitor(self.create_env(worker_seed), logging_dir)
 
         return _init
 
 
-    def create_env(self) -> gym.Env:
+    def create_env(self, worker_seed=None) -> gym.Env:
         """
         Create a fresh copy of the base environment.
+
+        Args:
+            worker_seed: Seed for the copy's env RNG; None spawns a new
+                child of the agent's worker SeedSequence (see BaseAgent 'seed').
 
         Returns:
             gym.Env: A deep copy of the original environment. If the environment supports randomization,
                      a random initial configuration is applied.
         """
 
+        if worker_seed is None:
+            worker_seed = self._spawn_worker_seeds(1)[0]
         env = copy.deepcopy(self.env)
+        # Each copy gets its own (seeded) RNG; otherwise every worker would
+        # draw the same randomization as the template environment.
+        reseed_env_rng(env, worker_seed)
         if hasattr(env, "randomize"):
             env.randomize()
         return env
@@ -203,12 +222,15 @@ class PPO2Agent(BaseAgent):
             verbose=int(self.verbose),
         )
 
-        self.ppo.learn(
-            total_timesteps=self.total_time_steps,
-            callback=eval_callback,
-            log_interval=self.log_interval,
-            progress_bar=True,
-        )
+        try:
+            self.ppo.learn(
+                total_timesteps=self.total_time_steps,
+                callback=eval_callback,
+                log_interval=self.log_interval,
+                progress_bar=True,
+            )
+        finally:
+            eval_env.close()
 
         final_model_path = f"final_ppo_{self.total_time_steps}"
         self.save_policy(final_model_path)
@@ -239,6 +261,25 @@ class PPO2Agent(BaseAgent):
         if loaded_ppo.action_space.shape != self.env.action_space.shape:
             raise ValueError(f"Action space dimension mismatch: loaded policy expects {loaded_ppo.action_space.shape}, but environment requires {self.env.action_space.shape}.")
             
+        # Attach the current training env so that learn() can continue from
+        # the loaded weights (PPO.load without env leaves model.env = None).
+        # Re-loading WITH the env lets SB3 size the model for this env's
+        # num_envs (set_env would assert when it differs from the saved one).
+        current_env = self.ppo.get_env() if self.ppo is not None else None
+        if current_env is not None:
+            try:
+                loaded_ppo = PPO.load(policy_file_name, env=current_env, device=self.device)
+            except ValueError as exc:
+                # Same shapes (checked above) but other space details, e.g. Box
+                # bounds: keep the env-less model, as before this change, so
+                # predict/visualize still work; continued training then needs
+                # matching spaces.
+                logger.warning(
+                    "Loaded '%s' without attaching the training env (%s); "
+                    "predict works, continued training needs matching spaces.",
+                    policy_file_name, exc,
+                )
+
         self.ppo = loaded_ppo
 
 
@@ -265,3 +306,15 @@ class PPO2Agent(BaseAgent):
         """
 
         self.ppo.policy.eval()
+
+
+    def close(self) -> None:
+        """
+        Close the vectorized training environment (worker processes and,
+        for simulator-backed envs, their connections).
+        """
+
+        if self.ppo is not None:
+            vec_env = self.ppo.get_env()
+            if vec_env is not None:
+                vec_env.close()

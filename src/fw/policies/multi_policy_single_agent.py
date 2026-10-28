@@ -40,6 +40,8 @@ from typing import Optional, Tuple, Union, List, Dict
 from fw.common.tools.logging_utils import dump_metrics_to_csv
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
+from fw.configuration.profile_applier import SimulatorApplier
+from fw.common.tools.ppo_utils import reseed_env_rng
 
 logger = logging.getLogger(__name__)
 
@@ -320,10 +322,13 @@ class MultiPolicySingleAgent(BasePPOAgent):
             )
 
         action_space = self.env.action_space
-        if isinstance(action_space, gym.spaces.Discrete):
-            self.output_dim = action_space.n
-        else:
-            self.output_dim = action_space.shape[0]
+        if not isinstance(action_space, gym.spaces.Box):
+            # The policy is a tanh-squashed Gaussian: it emits continuous
+            # vectors in [-1, 1]. A Discrete space would receive float vectors.
+            raise NotImplementedError(
+                f"MultiPolicySingleAgent supports only Box action spaces, got {action_space}."
+            )
+        self.output_dim = action_space.shape[0]
 
         self.action_space = action_space
 
@@ -511,26 +516,43 @@ class MultiPolicySingleAgent(BasePPOAgent):
     # ------------------------------------------------------------------
     # Vectorized environment management (mirrors SinglePPOAgent)
     # ------------------------------------------------------------------
-    def make_env(self):
+    def make_env(self, worker_seed=None):
         """
         Create a callable factory for deep-copied, monitored environments.
 
         The closure captures only `self.env` (not the full agent) to
         avoid pickling CUDA policy tensors when `SubprocVecEnv` sends
         the factory to child processes.
+
+        Args:
+            worker_seed: Seed (np.random.SeedSequence or int) for this
+                worker's env RNG. None: a new child of the agent's worker
+                SeedSequence is spawned (see BaseAgent 'seed').
         """
 
         env = self.env  # capture only the lightweight env, not the agent
+        profile = self._profile
+        if worker_seed is None:
+            worker_seed = self._spawn_worker_seeds(1)[0]
 
         def _init():
             """
             Create one monitored deep-copied environment instance.
 
+            Applies the profile's simulator settings (if any), as
+            SinglePPOAgent.make_env does, and gives the copy its own RNG.
+
             Returns:
                 A monitored Gym environment copied from the agent base environment.
             """
 
-            return Monitor(copy.deepcopy(env))
+            env_copy = copy.deepcopy(env)
+            if profile is not None:
+                _sim = getattr(env_copy, "phys_sim", None) or getattr(env_copy, "_phys_sim", None)
+                if _sim is not None:
+                    SimulatorApplier.apply(profile, _sim)
+            reseed_env_rng(env_copy, worker_seed)
+            return Monitor(env_copy)
 
         return _init
 
@@ -546,7 +568,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         """
 
         if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
-            env_fns = [self.make_env() for _ in range(num_envs)]
+            env_fns = [self.make_env(worker_seed) for worker_seed in self._spawn_worker_seeds(num_envs)]
             self._vec_env = SubprocVecEnv(env_fns) if num_envs > 1 else DummyVecEnv(env_fns)
 
         if hasattr(self._vec_env, "env_method"):
@@ -562,7 +584,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
             actions (np.ndarray): Shape `(num_envs, action_dim)`.
 
         Returns:
-            Tuple: next_states, rewards, terminations, truncations.
+            Tuple: next_states, rewards, terminations, truncations, final_states
+            (real last observations of finished envs, for bootstrapping).
         """
 
         next_states, next_rewards, next_terminations, infos = self._vec_env.step(actions)
@@ -576,12 +599,12 @@ class MultiPolicySingleAgent(BasePPOAgent):
             truncations = np.array([env_info["truncations"] for env_info in infos], dtype=bool)
         else:
             rewards = next_rewards
-            terminations = next_terminations
 
             # `next_terminations` here is SB3 VecEnv's combined `done` flag
             # (terminated OR truncated). Recover the true truncation signal
-            # from SB3's own "TimeLimit.truncated" info key when present,
-            # rather than reporting every episode end as a hard termination.
+            # from SB3's own "TimeLimit.truncated" info key when present, and
+            # remove it from the termination flags: a truncated step must be
+            # bootstrapped, not treated as a terminal state.
             if infos:
                 truncations = np.array(
                     [bool(env_info.get("TimeLimit.truncated", False)) for env_info in infos],
@@ -589,8 +612,20 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 )
             else:
                 truncations = np.zeros(actions.shape[0], dtype=bool)
+            terminations = np.asarray(next_terminations, dtype=bool) & ~truncations
 
-        return next_states, rewards, terminations, truncations
+        # SB3 VecEnvs auto-reset a finished env: `next_states[i]` is then the
+        # FIRST observation of the next episode. The real last observation,
+        # needed to bootstrap a truncated episode, is in
+        # info["terminal_observation"].
+        final_states = np.array(next_states, copy=True)
+        if infos:
+            dones = np.asarray(next_terminations, dtype=bool)
+            for env_id, env_info in enumerate(infos):
+                if dones[env_id] and "terminal_observation" in env_info:
+                    final_states[env_id] = env_info["terminal_observation"]
+
+        return next_states, rewards, terminations, truncations, final_states
 
     # ------------------------------------------------------------------
     # Per-segment GAE
@@ -768,8 +803,23 @@ class MultiPolicySingleAgent(BasePPOAgent):
         if all_advantages.numel() <= 1:
             return float("nan"), float("nan"), float("nan"), float("nan")
 
-        # Normalize advantages
-        all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
+        # Same guards as SinglePPOAgent.train: one NaN/Inf in a slot's batch
+        # would otherwise corrupt that slot's weights permanently.
+        for name, tensor in (
+            ("states", all_states),
+            ("advantages", all_advantages),
+            ("returns", all_returns),
+        ):
+            if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+                logger.warning(
+                    "[Alert] NaN/Inf detected in %s of policy '%s' before PPO update - skipping batch.",
+                    name, self.policy_labels[policy_id],
+                )
+                return float("nan"), float("nan"), float("nan"), float("nan")
+
+        # Normalize advantages (a near-constant tensor would give NaN/Inf).
+        if all_advantages.std() > 1e-6:
+            all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
 
         batch_size = all_states.shape[0]
         loss_per_epoch = []
@@ -794,12 +844,9 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 action_mean, action_std, state_values = policy.network(mb_states)
                 dist = torch.distributions.Normal(action_mean, action_std)
 
-                # Inverse-tanh for log-prob correction
-                if isinstance(self.action_space, gym.spaces.Box):
-                    raw_actions = torch.atanh(mb_actions.clamp(-0.999, 0.999))
-                else:
-                    raw_actions = mb_actions
-                log_probs = policy.calc_log_probs(dist, raw_actions, mb_actions)
+                # Log-prob of the stored squashed action, evaluated at the same
+                # point as during the rollout (see PPOPolicy.squashed_log_prob).
+                log_probs = policy.squashed_log_prob(dist, mb_actions)
 
                 # PPO clipped objective
                 ratios = torch.exp(log_probs - mb_old_log_probs)
@@ -813,6 +860,13 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
                 entropy_bonus = self.entropy_coef * entropy_loss
                 loss = policy_loss + (self.value_loss_coef * value_loss) - entropy_bonus
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    logger.warning(
+                        "[Alert] NaN/Inf loss for policy '%s' (policy=%.4f, value=%.4f) - skipping update step.",
+                        self.policy_labels[policy_id], policy_loss.item(), value_loss.item(),
+                    )
+                    continue
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -868,188 +922,195 @@ class MultiPolicySingleAgent(BasePPOAgent):
             for label in self.policy_labels
         ]
 
-        for iteration in range(stopping_condition.max_time_steps):
-            self.set_policy_eval()
+        # try/finally: on an exception or Ctrl-C the SubprocVecEnv workers
+        # are still shut down.
+        try:
+            for iteration in range(stopping_condition.max_time_steps):
+                self.set_policy_eval()
 
-            # --- 1. Collect trajectories (base class handles routing via _predict) ---
-            batch_data = self.run_parallel_episodes(self.num_envs)
+                # --- 1. Collect trajectories (base class handles routing via _predict) ---
+                batch_data = self.run_parallel_episodes(self.num_envs)
 
-            # --- 2. Split every trajectory & recompute per-segment GAE ---
-            accumulated_segments: Dict[int, List[dict]] = {
-                k: [] for k in range(self.num_policies)
-            }
+                # --- 2. Split every trajectory & recompute per-segment GAE ---
+                accumulated_segments: Dict[int, List[dict]] = {
+                    k: [] for k in range(self.num_policies)
+                }
 
-            for episode in batch_data:
-                policy_segments = self._split_trajectory_and_compute_gae(episode)
-                for pid, segs in policy_segments.items():
-                    accumulated_segments[pid].extend(segs)
+                for episode in batch_data:
+                    policy_segments = self._split_trajectory_and_compute_gae(episode)
+                    for pid, segs in policy_segments.items():
+                        accumulated_segments[pid].extend(segs)
 
-            # --- 3. Train each policy on its segments ---
-            iter_rewards = {}
-            iter_losses = {}
-            iter_policy_losses = {}
-            iter_value_losses = {}
-            iter_entropy_bonuses = {}
+                # --- 3. Train each policy on its segments ---
+                iter_rewards = {}
+                iter_losses = {}
+                iter_policy_losses = {}
+                iter_value_losses = {}
+                iter_entropy_bonuses = {}
 
-            for pid in range(self.num_policies):
-                segs = accumulated_segments[pid]
+                for pid in range(self.num_policies):
+                    segs = accumulated_segments[pid]
 
-                # Push this iteration's segments into the per-slot pending
-                # buffer; the update only fires once the buffer crosses
-                # `steps_per_policy_update`.
-                self._pending_segments[pid].extend(segs)
-                self._pending_steps[pid] += sum(len(s["rewards"]) for s in segs)
+                    # Push this iteration's segments into the per-slot pending
+                    # buffer; the update only fires once the buffer crosses
+                    # `steps_per_policy_update`.
+                    self._pending_segments[pid].extend(segs)
+                    self._pending_steps[pid] += sum(len(s["rewards"]) for s in segs)
 
-                if self._pending_steps[pid] >= self.steps_per_policy_update:
-                    update_segs = self._pending_segments[pid]
-                    loss, policy_loss, value_loss, entropy_bonus = self._train_policy(
-                        pid, update_segs,
-                    )
-                    flushed_steps = self._pending_steps[pid]
-                    self._pending_segments[pid] = []
-                    self._pending_steps[pid] = 0
-                else:
-                    loss = policy_loss = value_loss = entropy_bonus = float("nan")
-                    flushed_steps = 0
-
-                iter_losses[pid] = loss
-                iter_policy_losses[pid] = policy_loss
-                iter_value_losses[pid] = value_loss
-                iter_entropy_bonuses[pid] = entropy_bonus
-
-                # Reward reflects only this iteration's freshly collected
-                # segments (not the pending buffer), so the per-iteration
-                # reward curve isn't smeared by stale data.
-                if segs:
-                    all_seg_rewards = np.concatenate([s["rewards"] for s in segs])
-                    iter_rewards[pid] = float(np.mean(all_seg_rewards))
-                else:
-                    iter_rewards[pid] = float("nan")
-
-                training_metrics[self.policy_labels[pid]].append({
-                    "iteration": iteration,
-                    "loss": loss,
-                    "policy_loss": policy_loss,
-                    "value_loss": value_loss,
-                    "entropy_bonus": entropy_bonus,
-                    "reward": iter_rewards[pid],
-                    "n_steps": sum(len(s["rewards"]) for s in segs),
-                    "pending_steps": self._pending_steps[pid],
-                    "flushed_steps": flushed_steps,
-                })
-
-                # Save best policy per scenario (only on iterations where
-                # an update actually fired, so we don't snapshot a stale
-                # policy against a noisy single-iteration reward).
-                if (
-                    flushed_steps > 0
-                    and iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE
-                    and not np.isnan(iter_rewards[pid])
-                    and iter_rewards[pid] > best_rewards[pid]
-                ):
-                    best_rewards[pid] = iter_rewards[pid]
-                    self._save_single_policy(pid, best_policy_files[pid])
-
-                # Collapse watchdog: track rolling-mean reward, snapshot
-                # the network at new peaks, and roll back on collapse.
-                # Skipped for frozen slots (which don't update anyway).
-                rollback_triggered = False
-                if self.watchdog is not None and pid not in self.frozen_pids:
-                    rollback_state = self.watchdog.observe(
-                        pid=pid,
-                        iteration=iteration,
-                        reward=iter_rewards[pid],
-                        network=self.policies[pid].network,
-                    )
-                    if rollback_state is not None:
-                        self.policies[pid].network.load_state_dict(rollback_state)
-                        # Reset this policy's Adam optimizer state. The
-                        # exponential moving averages of past gradients
-                        # (Adam's `m` and `v` buffers) were accumulated
-                        # during the collapse phase and, if reused after
-                        # rolling weights back, would push the network
-                        # right along the failure trajectory, producing
-                        # a rapid second collapse and a rollback ping-pong.
-                        # A fresh optimizer ensures the next gradient steps
-                        # are computed cleanly from the rolled-back weights.
-                        self.optimizers[pid] = optim.Adam(
-                            self.policies[pid].network.parameters(),
-                            lr=self.learning_rate,
+                    if self._pending_steps[pid] >= self.steps_per_policy_update:
+                        update_segs = self._pending_segments[pid]
+                        loss, policy_loss, value_loss, entropy_bonus = self._train_policy(
+                            pid, update_segs,
                         )
-                        # Discard pending segments: they were collected
-                        # under the now-discarded post-collapse weights and
-                        # would be off-policy w.r.t. the rolled-back net.
+                        flushed_steps = self._pending_steps[pid]
                         self._pending_segments[pid] = []
                         self._pending_steps[pid] = 0
-                        self.watchdog.record_rollback(pid, iteration)
-                        rollback_triggered = True
-                        logger.warning(
-                            "[watchdog] iter %d: collapse detected for '%s' "
-                            "(peak smoothed=%.3f, rollback %d/%d). "
-                            "Rolled back to best rolling-mean snapshot.",
-                            iteration, self.policy_labels[pid],
-                            self.watchdog._best_smoothed[pid],
-                            self.watchdog._rollback_count[pid],
-                            self.watchdog.max_rollbacks,
+                    else:
+                        loss = policy_loss = value_loss = entropy_bonus = float("nan")
+                        flushed_steps = 0
+
+                    iter_losses[pid] = loss
+                    iter_policy_losses[pid] = policy_loss
+                    iter_value_losses[pid] = value_loss
+                    iter_entropy_bonuses[pid] = entropy_bonus
+
+                    # Reward reflects only this iteration's freshly collected
+                    # segments (not the pending buffer), so the per-iteration
+                    # reward curve isn't smeared by stale data.
+                    if segs:
+                        all_seg_rewards = np.concatenate([s["rewards"] for s in segs])
+                        iter_rewards[pid] = float(np.mean(all_seg_rewards))
+                    else:
+                        iter_rewards[pid] = float("nan")
+
+                    training_metrics[self.policy_labels[pid]].append({
+                        "iteration": iteration,
+                        "loss": loss,
+                        "policy_loss": policy_loss,
+                        "value_loss": value_loss,
+                        "entropy_bonus": entropy_bonus,
+                        "reward": iter_rewards[pid],
+                        "n_steps": sum(len(s["rewards"]) for s in segs),
+                        "pending_steps": self._pending_steps[pid],
+                        "flushed_steps": flushed_steps,
+                    })
+
+                    # Save best policy per scenario (only on iterations where
+                    # an update actually fired, so we don't snapshot a stale
+                    # policy against a noisy single-iteration reward).
+                    if (
+                        flushed_steps > 0
+                        and iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE
+                        and not np.isnan(iter_rewards[pid])
+                        and iter_rewards[pid] > best_rewards[pid]
+                    ):
+                        best_rewards[pid] = iter_rewards[pid]
+                        self._save_single_policy(pid, best_policy_files[pid])
+
+                    # Collapse watchdog: track rolling-mean reward, snapshot
+                    # the network at new peaks, and roll back on collapse.
+                    # Skipped for frozen slots (which don't update anyway).
+                    rollback_triggered = False
+                    if self.watchdog is not None and pid not in self.frozen_pids:
+                        rollback_state = self.watchdog.observe(
+                            pid=pid,
+                            iteration=iteration,
+                            reward=iter_rewards[pid],
+                            network=self.policies[pid].network,
                         )
+                        if rollback_state is not None:
+                            self.policies[pid].network.load_state_dict(rollback_state)
+                            # Reset this policy's Adam optimizer state. The
+                            # exponential moving averages of past gradients
+                            # (Adam's `m` and `v` buffers) were accumulated
+                            # during the collapse phase and, if reused after
+                            # rolling weights back, would push the network
+                            # right along the failure trajectory, producing
+                            # a rapid second collapse and a rollback ping-pong.
+                            # A fresh optimizer ensures the next gradient steps
+                            # are computed cleanly from the rolled-back weights.
+                            self.optimizers[pid] = optim.Adam(
+                                self.policies[pid].network.parameters(),
+                                lr=self.learning_rate,
+                            )
+                            # Discard pending segments: they were collected
+                            # under the now-discarded post-collapse weights and
+                            # would be off-policy w.r.t. the rolled-back net.
+                            self._pending_segments[pid] = []
+                            self._pending_steps[pid] = 0
+                            self.watchdog.record_rollback(pid, iteration)
+                            rollback_triggered = True
+                            logger.warning(
+                                "[watchdog] iter %d: collapse detected for '%s' "
+                                "(peak smoothed=%.3f, rollback %d/%d). "
+                                "Rolled back to best rolling-mean snapshot.",
+                                iteration, self.policy_labels[pid],
+                                self.watchdog._best_smoothed[pid],
+                                self.watchdog._rollback_count[pid],
+                                self.watchdog.max_rollbacks,
+                            )
 
-                # Annotate the most recent metrics record with watchdog state
-                if training_metrics[self.policy_labels[pid]]:
-                    training_metrics[self.policy_labels[pid]][-1][
-                        "rollback_triggered"
-                    ] = rollback_triggered
+                    # Annotate the most recent metrics record with watchdog state
+                    if training_metrics[self.policy_labels[pid]]:
+                        training_metrics[self.policy_labels[pid]][-1][
+                            "rollback_triggered"
+                        ] = rollback_triggered
 
-            # --- 4. Logging ---
-            valid_rewards = [r for r in iter_rewards.values() if not np.isnan(r)]
-            valid_losses = [l for l in iter_losses.values() if not np.isnan(l)]
-            agg_reward = float(np.mean(valid_rewards)) if valid_rewards else 0.0
-            agg_loss = float(np.mean(valid_losses)) if valid_losses else float("nan")
+                # --- 4. Logging ---
+                valid_rewards = [r for r in iter_rewards.values() if not np.isnan(r)]
+                valid_losses = [l for l in iter_losses.values() if not np.isnan(l)]
+                agg_reward = float(np.mean(valid_rewards)) if valid_rewards else 0.0
+                agg_loss = float(np.mean(valid_losses)) if valid_losses else float("nan")
 
-            if True: # iteration % self.eval_frequency == 0
-                parts = []
-                for pid in range(self.num_policies):
-                    label = self.policy_labels[pid]
-                    r = iter_rewards[pid]
-                    pl = iter_policy_losses[pid]
-                    vl = iter_value_losses[pid]
-                    eb = iter_entropy_bonuses[pid]
-                    n = sum(len(s["rewards"]) for s in accumulated_segments[pid])
-                    pending = self._pending_steps[pid]
-                    upd = "" if np.isnan(pl) else " [upd]"
-                    parts.append(
-                        f"{label}: r={r:.3f}, loss: p={pl:.3f}, v={vl:.3f}, e={eb:.3f}, "
-                        f"steps={n}, pending={pending}{upd}"
-                    )
-                logger.info("[Iter %d] %s", iteration, " | ".join(parts))
+                if True: # iteration % self.eval_frequency == 0
+                    parts = []
+                    for pid in range(self.num_policies):
+                        label = self.policy_labels[pid]
+                        r = iter_rewards[pid]
+                        pl = iter_policy_losses[pid]
+                        vl = iter_value_losses[pid]
+                        eb = iter_entropy_bonuses[pid]
+                        n = sum(len(s["rewards"]) for s in accumulated_segments[pid])
+                        pending = self._pending_steps[pid]
+                        upd = "" if np.isnan(pl) else " [upd]"
+                        parts.append(
+                            f"{label}: r={r:.3f}, loss: p={pl:.3f}, v={vl:.3f}, e={eb:.3f}, "
+                            f"steps={n}, pending={pending}{upd}"
+                        )
+                    logger.info("[Iter %d] %s", iteration, " | ".join(parts))
 
-            # Periodic checkpoint (all policies in one ZIP)
-            if iteration > 0 and iteration % self.eval_frequency == 0:
-                self.save_policy(f"multi_policy_checkpoint_{iteration}")
+                # Periodic checkpoint (all policies in one ZIP)
+                if iteration > 0 and iteration % self.eval_frequency == 0:
+                    self.save_policy(f"multi_policy_checkpoint_{iteration}")
 
-            # --- 5. Stopping condition ---
-            should_stop, reason = stopping_condition.should_stop(
-                current_step=iteration,
-                mean_reward=agg_reward,
-                mean_loss=agg_loss,
+                # --- 5. Stopping condition ---
+                should_stop, reason = stopping_condition.should_stop(
+                    current_step=iteration,
+                    mean_reward=agg_reward,
+                    mean_loss=agg_loss,
+                )
+
+                if should_stop:
+                    logger.info("Stopping: %s", reason)
+                    last_save_index = iteration
+                    break
+
+            # Final checkpoint and metrics: only when training ended normally
+            # (same rule as SinglePPOAgent; a failure here raises).
+            self.save_policy(
+                f"multi_policy_checkpoint_"
+                f"{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}"
             )
-
-            if should_stop:
-                logger.info("Stopping: %s", reason)
-                last_save_index = iteration
-                break
-
-        # Final checkpoint
-        self.save_policy(
-            f"multi_policy_checkpoint_"
-            f"{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}"
-        )
-
-        # Dump per-policy training metrics
-        self._dump_training_metrics(training_metrics)
-
-        if self._vec_env is not None:
-            self._vec_env.close()
-            self._vec_env = None
+            self._dump_training_metrics(training_metrics)
+        finally:
+            # Always shut down the SubprocVecEnv workers, also on an
+            # exception or Ctrl-C.
+            if self._vec_env is not None:
+                try:
+                    self._vec_env.close()
+                except Exception:
+                    logger.exception("Closing the VecEnv failed.")
+                self._vec_env = None
 
         logger.info("Multi-policy training completed!")
 

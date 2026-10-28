@@ -20,6 +20,7 @@ from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 # from fw.common.tools.ppo_utils import normalize_policy_zip_path
 from fw.common.tools.logging_utils import dump_metrics_to_csv
 from fw.configuration.profile_applier import SimulatorApplier
+from fw.common.tools.ppo_utils import reseed_env_rng
 from fw.configuration.config_profile import VesselProfile
 
 logger = logging.getLogger(__name__)
@@ -68,11 +69,14 @@ class SinglePPOAgent(BasePPOAgent):
         self.observation_space = self.env.observation_space
         self.action_space = self.env.action_space
 
-        # Handle discrete and continuous action spaces
-        if isinstance(self.action_space, gym.spaces.Discrete):
-            self.output_dim = self.action_space.n
-        else:
-            self.output_dim = self.action_space.shape[0]
+        # The policy is a tanh-squashed Gaussian: only continuous (Box)
+        # action spaces are supported. Fail fast instead of sending float
+        # vectors to a Discrete env.
+        if not isinstance(self.action_space, gym.spaces.Box):
+            raise NotImplementedError(
+                f"SinglePPOAgent supports only Box action spaces, got {self.action_space}."
+            )
+        self.output_dim = self.action_space.shape[0]
 
         self.input_dim = self.observation_space.shape[0]
         self.policy = PPOPolicy(self.input_dim, self.output_dim, str(self.device))
@@ -186,12 +190,9 @@ class SinglePPOAgent(BasePPOAgent):
                 action_mean, action_std, state_values = self.policy.network(mb_states)
                 dist = torch.distributions.Normal(action_mean, action_std)
 
-                # Adjust actions if action space is continuous
-                if isinstance(self.action_space, gym.spaces.Box):
-                    raw_actions = torch.atanh(mb_actions.clamp(-0.999, 0.999))
-                else:
-                    raw_actions = mb_actions
-                log_probs = self.policy.calc_log_probs(dist, raw_actions, mb_actions)
+                # Log-prob of the stored squashed action, evaluated at the same
+                # point as during the rollout (see PPOPolicy.squashed_log_prob).
+                log_probs = self.policy.squashed_log_prob(dist, mb_actions)
 
                 # PPO clipped loss
                 ratios = torch.exp(log_probs - mb_old_log_probs)
@@ -254,9 +255,14 @@ class SinglePPOAgent(BasePPOAgent):
         return valid_episodes, skipped_count
 
 
-    def make_env(self):
+    def make_env(self, worker_seed=None):
         """
         Create a callable environment factory for vectorized execution.
+
+        Args:
+            worker_seed: Seed (np.random.SeedSequence or int) for this
+                worker's env RNG. None: a new child of the agent's worker
+                SeedSequence is spawned (see BaseAgent 'seed').
 
         Returns:
             Callable[[], gym.Env]: Function that creates a monitored copy of the base environment.
@@ -270,6 +276,8 @@ class SinglePPOAgent(BasePPOAgent):
         """
 
         profile = self._profile  # captured by closure; avoids a late-binding issue
+        if worker_seed is None:
+            worker_seed = self._spawn_worker_seeds(1)[0]
 
         def _init():
             """
@@ -292,6 +300,12 @@ class SinglePPOAgent(BasePPOAgent):
                 _sim = getattr(env_copy, "phys_sim", None) or getattr(env_copy, "_phys_sim", None)
                 if _sim is not None:
                     SimulatorApplier.apply(profile, _sim)
+
+            # Every worker is a deep copy of the same env, including its
+            # random generator: without its own RNG every worker would sample
+            # identical start poses / route segments. Seeded per worker from
+            # the 'seed' hyperparameter, so runs are reproducible.
+            reseed_env_rng(env_copy, worker_seed)
 
             return Monitor(env_copy)
 
@@ -319,7 +333,7 @@ class SinglePPOAgent(BasePPOAgent):
         # where the vector is passed for each rollout instead of recreating it for all environments
         if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
             # Recreate vec_env only if it does not exist or if the requested number of envs changed
-            env_fns = [self.make_env() for _ in range(num_envs)]
+            env_fns = [self.make_env(worker_seed) for worker_seed in self._spawn_worker_seeds(num_envs)]
             self._vec_env = SubprocVecEnv(env_fns) if num_envs > 1 else DummyVecEnv(env_fns)
 
         # ------------------------------------------------------------------
@@ -342,11 +356,12 @@ class SinglePPOAgent(BasePPOAgent):
             actions (np.ndarray): Actions of shape (num_envs, action_dim).
 
         Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-                - next_states: Next observations.
+            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                - next_states: Next observations (auto-reset ones for finished envs).
                 - rewards: Rewards per environment.
                 - terminations: Episode termination flags.
                 - truncations: Episode truncation flags.
+                - final_states: Real last observations (used to bootstrap truncations).
 
         Notes:
             - Supports both standard Gymnasium outputs and custom info dictionaries.
@@ -365,12 +380,12 @@ class SinglePPOAgent(BasePPOAgent):
             truncations = np.array([env_info["truncations"] for env_info in infos], dtype=bool)
         else:
             rewards = next_rewards
-            terminations = next_terminations
 
             # `next_terminations` here is SB3 VecEnv's combined `done` flag
             # (terminated OR truncated). Recover the true truncation signal
-            # from SB3's own "TimeLimit.truncated" info key when present,
-            # rather than reporting every episode end as a hard termination.
+            # from SB3's own "TimeLimit.truncated" info key when present, and
+            # remove it from the termination flags: a truncated step must be
+            # bootstrapped, not treated as a terminal state.
             if infos:
                 truncations = np.array(
                     [bool(env_info.get("TimeLimit.truncated", False)) for env_info in infos],
@@ -378,8 +393,20 @@ class SinglePPOAgent(BasePPOAgent):
                 )
             else:
                 truncations = np.zeros(actions.shape[0], dtype=bool)
+            terminations = np.asarray(next_terminations, dtype=bool) & ~truncations
 
-        return next_states, rewards, terminations, truncations
+        # SB3 VecEnvs auto-reset a finished env: `next_states[i]` is then the
+        # FIRST observation of the next episode. The real last observation,
+        # needed to bootstrap a truncated episode, is in
+        # info["terminal_observation"].
+        final_states = np.array(next_states, copy=True)
+        if infos:
+            dones = np.asarray(next_terminations, dtype=bool)
+            for env_id, env_info in enumerate(infos):
+                if dones[env_id] and "terminal_observation" in env_info:
+                    final_states[env_id] = env_info["terminal_observation"]
+
+        return next_states, rewards, terminations, truncations, final_states
 
 
     def _predict(self, states, deterministic=False):
@@ -647,38 +674,70 @@ class SinglePPOAgent(BasePPOAgent):
             except Exception as _save_err:
                 logger.warning("Could not save interrupt checkpoint: %s", _save_err)
         finally:
-            if training_session is not None:
-                training_session.log_run_events(self._drain_env_run_events())
-                latest_snapshot = self._get_training_export_snapshot()
-                if latest_snapshot is not None:
-                    cached_route_snapshot = latest_snapshot
-                training_session.set_route_snapshot(cached_route_snapshot)
+            # Every cleanup step is guarded: a failing step (e.g. an env_method
+            # RPC to a dead worker, or a plot) must neither replace the
+            # original exception nor prevent the VecEnv (worker processes,
+            # simulator connections) from being closed.
+            final_save_errors = []
 
-            if completed_successfully:
-                final_checkpoint_iteration = (
-                    last_save_index
-                    if last_save_index > 0
-                    else last_completed_iteration
-                )
-                if final_checkpoint_iteration < 0:
-                    final_checkpoint_iteration = 0
-                self.save_policy(f'ppo_checkpoint_{final_checkpoint_iteration}')
-                iteration_logger.save()
-                dump_metrics_to_csv(self.model_dir, "training_metrics.csv", training_metrics)
+            def _safe(step_name, fn, *fn_args, critical=False, **fn_kwargs):
+                """
+                Run one cleanup step; log (do not raise) if it fails.
 
-            if training_session is not None:
-                training_session.finalize(
-                    training_metrics=training_metrics,
-                    interrupted=interrupted,
-                    skipped_short_rollouts=skipped_short_rollouts,
-                    last_completed_iteration=last_completed_iteration,
-                    best_mean_reward=best_mean_reward,
-                    stop_rule=str(stopping_condition) if not stop_reason else stop_reason,
-                )
+                A failing `critical` step (final checkpoint / metrics after a
+                successful run) is re-raised once the VecEnv is closed, as
+                before this cleanup was guarded.
+                """
 
-            if getattr(self, "_vec_env", None) is not None:
-                self._vec_env.close()
-                self._vec_env = None
+                try:
+                    return fn(*fn_args, **fn_kwargs)
+                except Exception as step_exc:
+                    logger.exception("Training cleanup step '%s' failed; continuing.", step_name)
+                    if critical:
+                        final_save_errors.append(step_exc)
+                    return None
+
+            try:
+                if training_session is not None:
+                    run_events = _safe("drain env run events", self._drain_env_run_events)
+                    _safe("log run events", training_session.log_run_events, run_events or [])
+                    latest_snapshot = _safe("route snapshot", self._get_training_export_snapshot)
+                    if latest_snapshot is not None:
+                        cached_route_snapshot = latest_snapshot
+                    _safe("set route snapshot", training_session.set_route_snapshot, cached_route_snapshot)
+
+                if completed_successfully:
+                    final_checkpoint_iteration = (
+                        last_save_index
+                        if last_save_index > 0
+                        else last_completed_iteration
+                    )
+                    if final_checkpoint_iteration < 0:
+                        final_checkpoint_iteration = 0
+                    _safe("final checkpoint", self.save_policy, f'ppo_checkpoint_{final_checkpoint_iteration}', critical=True)
+                    _safe("iteration log", iteration_logger.save, critical=True)
+                    _safe("training metrics CSV", dump_metrics_to_csv, self.model_dir, "training_metrics.csv", training_metrics, critical=True)
+
+                if training_session is not None:
+                    _safe(
+                        "finalize training session",
+                        training_session.finalize,
+                        training_metrics=training_metrics,
+                        interrupted=interrupted,
+                        skipped_short_rollouts=skipped_short_rollouts,
+                        last_completed_iteration=last_completed_iteration,
+                        best_mean_reward=best_mean_reward,
+                        stop_rule=str(stopping_condition) if not stop_reason else stop_reason,
+                    )
+            finally:
+                if getattr(self, "_vec_env", None) is not None:
+                    _safe("close VecEnv", self._vec_env.close)
+                    self._vec_env = None
+
+            # Only reached after a successful run (critical steps run only then):
+            # a failed final save is still an error, raised after cleanup.
+            if final_save_errors:
+                raise final_save_errors[0]
 
         if skipped_short_rollouts > 0:
             logger.info(

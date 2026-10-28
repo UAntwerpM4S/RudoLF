@@ -53,6 +53,7 @@ Environment from the lookup CSV (`get_env`, nearest dataset row):
 
 import logging
 import numpy as np
+import pandas as pd
 
 from typing import Tuple, Optional, Dict
 from fw.ships.vessel_state import VesselState
@@ -63,9 +64,18 @@ from fw.dynamics.wcu_lookup import WcuLookup, EnvironmentData
 # The single shared ray implementation, also used by the dataset generator.
 from fw.environments.ray_features import RAY_ANGLES_DEG, compute_ray_features, ray_world_angles
 from fw.surrogate.presets import CHECKPOINT_DIR, get_preset, resolve_checkpoint, resolve_lookup_csv
-from fw.surrogate.schema import SURROGATE_DT
+from fw.surrogate.schema import SURROGATE_DT, TARGET_NAMES, scenario_for_raw_width
 
 logger = logging.getLogger(__name__)
+
+
+def _finite_position(pos) -> bool:
+    """True if `pos` is an (x, y) pair of finite numbers (None counts as not finite)."""
+
+    try:
+        return bool(np.all(np.isfinite(np.asarray(pos[:2], dtype=float))))
+    except (TypeError, ValueError):
+        return False
 
 # Keys accepted in ua_surrogate_config.
 CONFIG_KEYS = ("preset", "checkpoint", "lookup_csv")
@@ -233,6 +243,21 @@ class UAntwerpSurrogate(DynamicsBase):
         """WcuLookup on `csv`, reading only the columns this scenario needs."""
 
         sc = self.scenario
+        # Lookup CSVs carry no identity, so their width is the only check that
+        # they have this scenario's layout. Without it a 37-column confined_ukc
+        # CSV is accepted by a full_env preset (needs >= 11 columns) and its
+        # rudder/thrust/ray columns are read as wind and current.
+        expected = sc.raw_input_dim + len(TARGET_NAMES) + 1     # raw row + targets + episode_id
+        n_cols = len(pd.read_csv(csv, header=None, nrows=1).columns)
+        if n_cols != expected:
+            try:
+                found = scenario_for_raw_width(n_cols - len(TARGET_NAMES) - 1).name
+            except ValueError:
+                found = "no known scenario"
+            raise ValueError(
+                f"Lookup CSV {csv} has {n_cols} columns ({found}); a '{sc.name}' dataset/lookup CSV "
+                f"has {expected} (raw row {sc.raw_input_dim} + {len(TARGET_NAMES)} targets + episode_id). "
+                f"Wrong lookup_csv for preset '{self.preset.name}'?")
         cols = dict(x_col=sc.col("x"), y_col=sc.col("y"), ukc_col=sc.col("ukc"),
                     wind_speed_col=None, wind_dir_col=None, current_speed_col=None, current_dir_col=None)
         if sc.includes_wind_current:
@@ -252,16 +277,31 @@ class UAntwerpSurrogate(DynamicsBase):
 
     def get_ukc(self, pos: Optional[np.ndarray]):
         """
-        Return the last under-keel clearance used (updated by `get_env`).
+        Under-keel clearance at `pos`.
 
-        The position argument is accepted for interface compatibility but is
-        ignored.
+        With a lookup and a position, the nearest lookup row at `pos` is used
+        (no side effects on the state used by the model). Without a position
+        or without a lookup, the UKC of the last model input is returned
+        (the default UKC when there is no lookup). Previously `pos` was
+        ignored, so the value lagged one sub-step behind and, right after a
+        reset, still belonged to the previous episode.
+
+        Args:
+            pos: World-frame position `[x, y]` in metres, or None.
 
         Returns:
             Under-keel clearance in metres.
         """
 
-        return self.ukc
+        if pos is None or self.wcu_lookup is None:
+            return self.ukc
+        if not _finite_position(pos):
+            # A NaN position (NaN dynamics) must not raise here: scipy's KD-tree
+            # refuses non-finite queries; _compute_accelerations raises the
+            # clear FloatingPointError instead.
+            return self.default_ukc
+        ukc = self.wcu_lookup.get_ukc(float(pos[0]), float(pos[1]))
+        return self.default_ukc if ukc is None else float(ukc)
 
     def get_env(self, pos: Optional[np.ndarray], state: Optional[VesselState] = None) -> EnvironmentData:
         """
@@ -281,7 +321,11 @@ class UAntwerpSurrogate(DynamicsBase):
         """
 
         calm = 0.0 if state is not None or not self.scenario.includes_wind_current else None
-        sample = None if self.wcu_lookup is None else self.wcu_lookup.get_sample(pos[0], pos[1])
+        # A non-finite position (NaN dynamics) gets the no-row defaults: the
+        # KD-tree query would raise a cryptic error; the NaN x/y then reach
+        # _compute_accelerations, which raises a clear FloatingPointError.
+        sample = (None if self.wcu_lookup is None or not _finite_position(pos)
+                  else self.wcu_lookup.get_sample(pos[0], pos[1]))
         if sample is None or sample.env.ukc is None:
             self.ukc = self.default_ukc
             return EnvironmentData(ukc=self.ukc, wind_speed=calm, wind_direction=calm,
@@ -395,11 +439,16 @@ class UAntwerpSurrogate(DynamicsBase):
                           current_speed=env.current_speed, current_direction=env.current_direction)
 
         if self.scenario.includes_rays:
-            values["rays"] = compute_ray_features(
-                self._ray_caster(),
-                np.array([state.x, state.y]),
-                float(state.heading),
-            )
+            if _finite_position((state.x, state.y)) and np.isfinite(float(state.heading)):
+                values["rays"] = compute_ray_features(
+                    self._ray_caster(),
+                    np.array([state.x, state.y]),
+                    float(state.heading),
+                )
+            else:
+                # NaN pose: no ray casting (geometry queries on NaN are not
+                # safe); _compute_accelerations then raises FloatingPointError.
+                values["rays"] = np.full(len(RAY_ANGLES_DEG), np.nan, dtype=np.float32)
 
         return self.scenario.build_raw_row(values)
 
@@ -440,5 +489,16 @@ class UAntwerpSurrogate(DynamicsBase):
             )
 
         x_raw = self._build_input_vector(state, rudder_angle, thrust)
+        if not np.all(np.isfinite(x_raw)):
+            # Fail fast: a NaN/inf input gives a NaN prediction that np.clip
+            # keeps, and it would only surface later as a NaN observation.
+            # The lookup and ray casting skip a non-finite position (see
+            # get_env / _build_input_vector), so this clear error is the one
+            # raised, not scipy's KD-tree "'x' must be finite".
+            bad = [name for name, val in zip(self.scenario.raw_columns, x_raw) if not np.isfinite(val)]
+            raise FloatingPointError(
+                f"UAntwerpSurrogate ({self.scenario.name}): non-finite input(s) {bad} "
+                f"at x={state.x}, y={state.y}."
+            )
         delta_u, delta_v, delta_r = self.surrogate.predict_single(x_raw)
         return float(delta_u / SURROGATE_DT), float(delta_v / SURROGATE_DT), float(delta_r / SURROGATE_DT)

@@ -279,6 +279,14 @@ class AgentManagerSimple:
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
             policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
 
+        # Release resources held by the agent being replaced (same as
+        # AgentManager.set_environment, e.g. PPO2Agent's SB3 VecEnv).
+        if self._agent is not None and callable(getattr(self._agent, "close", None)):
+            try:
+                self._agent.close()
+            except Exception:
+                logger.exception("Closing the previous agent failed; continuing.")
+
         if PPO_POLICY_NAME == self._agent_type:
             self._agent = self._build_single_agent(env)
         elif PPO2_POLICY_NAME == self._agent_type:

@@ -9,6 +9,7 @@ from fw.simulators.base_simulator import BaseSimulator
 from fw.dynamics.fh_tabular_model import FhTabularModel
 from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 from fw.dynamics.environmental_model import EnvironmentModel
+from fw.surrogate.schema import SURROGATE_DT
 
 
 class ShipSimulator(BaseSimulator):
@@ -51,11 +52,15 @@ class ShipSimulator(BaseSimulator):
     --------------------------------
     step() always uses a 0.1 s physics sub-step.  If the environment dt is
     not an exact multiple of 0.1 s a fractional remainder sub-step is issued.
-    UAntwerpSurrogate only accepts dt == 0.1 s (it raises a ValueError
-    otherwise), so a remainder sub-step stops the run.  Use an environment dt
+    UAntwerpSurrogate only accepts dt == 0.1 s, so for that model a dt that is
+    not a multiple is refused in __init__ (ValueError).  Use an environment dt
     that is an exact integer multiple of 0.1 s when using UAntwerpSurrogate
     (e.g. 0.1, 0.5, 1.0, 2.0).
     """
+
+    # Physics integration sub-step [s] (= surrogate training step).
+    PHYSICS_DT: float = SURROGATE_DT
+
 
     def __init__(self, specs: ShipSpecifications, dynamics: DynamicsBase, dt: float, wind: bool = False,
                  current: bool = False):
@@ -72,6 +77,23 @@ class ShipSimulator(BaseSimulator):
         """
 
         super().__init__(specs, dt)
+
+        # Physics sub-stepping grid, computed and validated once here (not on
+        # the first step(), deep inside a training run). The sub-step equals
+        # the surrogate training step (single source of truth: schema).
+        n_full = int(round(dt / self.PHYSICS_DT))
+        if n_full >= 1 and np.isclose(n_full * self.PHYSICS_DT, dt, rtol=0.0, atol=1e-9):
+            dt_rem = 0.0
+        else:
+            n_full = int(np.floor(dt / self.PHYSICS_DT + 1e-9))
+            dt_rem = dt - n_full * self.PHYSICS_DT
+            if isinstance(dynamics, UAntwerpSurrogate):
+                raise ValueError(
+                    f"time_step={dt} s must be a positive integer multiple of {self.PHYSICS_DT} s "
+                    f"for {type(dynamics).__name__} (the surrogate's training step)."
+                )
+        self._n_sub_steps = n_full
+        self._dt_remainder = dt_rem
 
         self._dynamics = dynamics
         self._mapper = ActionMapper()
@@ -177,14 +199,9 @@ class ShipSimulator(BaseSimulator):
         if action.shape != (2,):
             raise ValueError(f"Action must have shape (2,), got {action.shape}")
 
-        dyn_model_time_step = 0.1
-        assert dyn_model_time_step <= self.dt
-        n_full = int(self.dt / dyn_model_time_step)
-        dt_rem = self.dt - n_full * dyn_model_time_step
-
-        # guard against floating noise
-        if dt_rem < 1e-15:
-            dt_rem = 0.0
+        dyn_model_time_step = self.PHYSICS_DT
+        n_full = self._n_sub_steps
+        dt_rem = self._dt_remainder
 
         # Map normalized actions to physical actuators
         command = self._mapper.map(action, self._specs)
@@ -193,7 +210,7 @@ class ShipSimulator(BaseSimulator):
             actuator = self._actuators.step(command, dyn_model_time_step, enable_smoothing)
             self.integrate(actuator, dyn_model_time_step, enable_rudder_angle_scaling)
 
-        if dt_rem > 1e-12:
+        if dt_rem > 0.0:
             actuator = self._actuators.step(command, dt_rem, enable_smoothing)
             self.integrate(actuator, dt_rem, enable_rudder_angle_scaling)
 

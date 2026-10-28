@@ -90,6 +90,15 @@ if __name__ == "__main__" or __name__ == "fw.main":
             it failed and the caller should continue with remaining steps.
         """
 
+        # main_with_airsim adds a per-run file handler to the root logger and
+        # lowers its level every time it is executed. Snapshot both so that a
+        # second AirSim step (env_type lists may repeat it) does not log into
+        # the first step's file as well, and later non-AirSim steps keep the
+        # original level.
+        _root_logger = logging.getLogger()
+        _handlers_before = list(_root_logger.handlers)
+        _level_before = _root_logger.level
+
         try:
             os.environ["FW_MAIN_ACTION_OVERRIDE"] = selected_action
             runpy.run_module("fw.main_with_airsim", run_name="__main__")
@@ -108,8 +117,26 @@ if __name__ == "__main__" or __name__ == "fw.main":
                 "falling back to the default framework entrypoint.", ex
             )
             return False
+        except Exception:
+            # Documented behaviour (README): a failing AirSim step is skipped
+            # and the remaining environments still run. Previously only
+            # SystemExit/ConnectionError/OSError were caught, so e.g. a
+            # RuntimeError from the transfer-learning path or a ValueError
+            # from settings validation ended the whole ordered run.
+            logger.exception(
+                "AirSim step failed; skipping it and continuing with the remaining environments."
+            )
+            return False
         finally:
             os.environ.pop("FW_MAIN_ACTION_OVERRIDE", None)
+            for _handler in list(_root_logger.handlers):
+                if _handler not in _handlers_before:
+                    _root_logger.removeHandler(_handler)
+                    try:
+                        _handler.close()
+                    except Exception:
+                        pass
+            _root_logger.setLevel(_level_before)
 
     configuration = {
         py_sim_env_name: StopCondition(

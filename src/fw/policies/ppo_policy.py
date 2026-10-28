@@ -1,4 +1,5 @@
 import os
+import logging
 import torch
 import zipfile
 import tempfile
@@ -7,6 +8,8 @@ import numpy as np
 from typing import Tuple, Dict, Any, Union
 from fw.policies.actor_critic_network import ActorCriticNetwork
 from fw.common.tools.ppo_utils import normalize_policy_zip_path
+
+logger = logging.getLogger(__name__)
 
 POLICY_FILE_NAME = 'policy.pth'
 
@@ -162,15 +165,18 @@ class PPOPolicy:
         Returns:
             PPOPolicy: Reconstructed policy instance with loaded weights.
 
-        Raises:
-            RuntimeError: If there is a mismatch between the expected device
-                and the device specified in the saved data.
         """
 
-        data = cls.infer_constructor_data(saved_variables, device)
+        data = dict(cls.infer_constructor_data(saved_variables, device))
 
-        if device.type != torch.device(data["device"]).type:
-            raise RuntimeError(f'Expected a "{device}" device, but got a "{data["device"]}" device instead!')
+        # The device stored in the checkpoint is where it was TRAINED. The
+        # tensors are already remapped by torch.load(map_location=device), so
+        # the policy is simply rebuilt on the requested device (a GPU-trained
+        # checkpoint must load for CPU inference / transfer learning).
+        trained_on = data.get("device")
+        if trained_on is not None and torch.device(trained_on).type != device.type:
+            logger.info("Loading a policy trained on '%s' onto '%s'.", trained_on, device)
+        data["device"] = str(device)
 
         model = cls(**data)  # Initialize model with constructor data
         model.network.load_state_dict(saved_variables["model_state_dict"])  # Load the model weights
@@ -233,6 +239,39 @@ class PPOPolicy:
         return cls.build_policy_from_state(saved_variables, device)
 
 
+    # Squashed actions are clamped to +-SQUASH_CLAMP before the log-density is
+    # evaluated. The SAME clamp is applied when the log-prob is computed during
+    # the rollout and when it is recomputed from the stored (squashed) action in
+    # the PPO update, so both evaluate exactly the same point and the importance
+    # ratio is exactly 1 before the first optimizer step. Without that, samples
+    # with |raw| > atanh(0.999) ~= 3.8 were evaluated at different points in the
+    # rollout (exact raw sample) and the update (atanh of the clamped action),
+    # which produced ratios of 1e4..1e18 for saturated actions.
+    SQUASH_CLAMP = 0.999
+
+    @classmethod
+    def squashed_log_prob(
+        cls,
+        dist: torch.distributions.Normal,
+        actions: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Log-probability of tanh-squashed actions, computed from the squashed
+        action only (no dependency on the raw Gaussian sample).
+
+        Args:
+            dist (torch.distributions.Normal): Pre-squash Gaussian.
+            actions (torch.Tensor): Squashed actions in [-1, 1].
+
+        Returns:
+            torch.Tensor: Log-probabilities summed over the action dimensions.
+        """
+
+        a = actions.clamp(-cls.SQUASH_CLAMP, cls.SQUASH_CLAMP)
+        raw = torch.atanh(a)
+        log_probs = dist.log_prob(raw) - torch.log(1 - a.pow(2) + 1e-6)
+        return log_probs.sum(dim=-1)
+
     @staticmethod
     def calc_log_probs(
         dist: torch.distributions.Normal,
@@ -242,18 +281,20 @@ class PPOPolicy:
         """
         Calculate the log probabilities of actions with an adjustment for tanh squashing.
 
+        Kept for backward compatibility. The rollout and the PPO update use
+        `squashed_log_prob`, which depends on the squashed action only, so the
+        two are always evaluated at the same point. `raw_actions` is ignored.
+
         Args:
             dist (torch.distributions.Normal): The normal distribution of actions.
-            raw_actions (torch.Tensor): The unbounded sampled actions from the distribution.
+            raw_actions (torch.Tensor): Ignored (see above).
             actions (torch.Tensor): The squashed actions (after applying tanh).
 
         Returns:
             torch.Tensor: The log probabilities of the actions.
         """
 
-        log_probs = dist.log_prob(raw_actions)  # Calculate log probability of raw actions
-        log_probs -= torch.log(1 - actions.pow(2) + 1e-6)  # Adjust for tanh squashing
-        return log_probs.sum(dim=-1)  # Sum across the action dimensions
+        return PPOPolicy.squashed_log_prob(dist, actions)
 
 
     def _predict(self, state: torch.Tensor, deterministic: bool = False) -> Tuple:
@@ -286,8 +327,9 @@ class PPOPolicy:
         # Sample raw action and squash it using tanh
         action = torch.tanh(raw_action)
 
-        # Compute log probability of the squashed action
-        log_prob = self.calc_log_probs(dist, raw_action, action)
+        # Compute log probability of the squashed action (same evaluation
+        # point as in the PPO update, see `squashed_log_prob`).
+        log_prob = self.squashed_log_prob(dist, action)
 
         return action, log_prob, value.squeeze(-1)  # Return action, log_prob, and value (squeezed)
 

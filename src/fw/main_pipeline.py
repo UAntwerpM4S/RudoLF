@@ -33,6 +33,7 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     from fw.scheduling.pipeline_scheduler import PipelineScheduler
     from fw.scheduling.run_loader import load_pipeline_spec, PipelineSpecError
     from fw.configuration.env_factory import initialize_all_environments, resolve_environment_name, airsim_env_name
+    from fw.configuration.env_factory import multi_sim_env_name, multi_policy_colav_env_name
 
     parser = argparse.ArgumentParser(description="Run a JSON-defined training pipeline.")
     parser.add_argument("--spec", required=True, help="Path to the pipeline JSON file.")
@@ -67,6 +68,19 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
                     "main_pipeline.py (see pipeline_env.py's rejection of AirSim). "
                     "Use fw.main for AirSim training, or exclude this block.",
                     block.name,
+                )
+                raise SystemExit(1)
+
+            # The pipeline runs one AgentManager with the single-policy PPO
+            # agent. MultiSimEnv needs MPPO and MultiPolicyColavEnv needs MPSA
+            # (fw.main selects these automatically); under PPO the first
+            # crashes and the second silently trains ONE policy on the
+            # one-hot observation. Refuse them up front.
+            if resolve_environment_name(block.env_type) in (multi_sim_env_name, multi_policy_colav_env_name):
+                logger.error(
+                    "Block '%s' uses %s, which needs a multi-policy agent (MPPO/MPSA); "
+                    "main_pipeline.py only runs the single-policy PPO agent. Use fw.main for it.",
+                    block.name, resolve_environment_name(block.env_type),
                 )
                 raise SystemExit(1)
 
