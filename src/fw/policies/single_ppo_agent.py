@@ -255,9 +255,14 @@ class SinglePPOAgent(BasePPOAgent):
         return valid_episodes, skipped_count
 
 
-    def make_env(self):
+    def make_env(self, worker_seed=None):
         """
         Create a callable environment factory for vectorized execution.
+
+        Args:
+            worker_seed: Seed (np.random.SeedSequence or int) for this
+                worker's env RNG. None: a new child of the agent's worker
+                SeedSequence is spawned (see BaseAgent 'seed').
 
         Returns:
             Callable[[], gym.Env]: Function that creates a monitored copy of the base environment.
@@ -271,6 +276,8 @@ class SinglePPOAgent(BasePPOAgent):
         """
 
         profile = self._profile  # captured by closure; avoids a late-binding issue
+        if worker_seed is None:
+            worker_seed = self._spawn_worker_seeds(1)[0]
 
         def _init():
             """
@@ -295,9 +302,10 @@ class SinglePPOAgent(BasePPOAgent):
                     SimulatorApplier.apply(profile, _sim)
 
             # Every worker is a deep copy of the same env, including its
-            # random generator: without a fresh RNG all workers would sample
-            # identical start poses / route segments.
-            reseed_env_rng(env_copy)
+            # random generator: without its own RNG every worker would sample
+            # identical start poses / route segments. Seeded per worker from
+            # the 'seed' hyperparameter, so runs are reproducible.
+            reseed_env_rng(env_copy, worker_seed)
 
             return Monitor(env_copy)
 
@@ -325,7 +333,7 @@ class SinglePPOAgent(BasePPOAgent):
         # where the vector is passed for each rollout instead of recreating it for all environments
         if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
             # Recreate vec_env only if it does not exist or if the requested number of envs changed
-            env_fns = [self.make_env() for _ in range(num_envs)]
+            env_fns = [self.make_env(worker_seed) for worker_seed in self._spawn_worker_seeds(num_envs)]
             self._vec_env = SubprocVecEnv(env_fns) if num_envs > 1 else DummyVecEnv(env_fns)
 
         # ------------------------------------------------------------------

@@ -81,6 +81,13 @@ class PySimColavBaseEnv(PySimBaseEnv):
     # the evaluation statistics (oldest dropped first).
     METRIC_HISTORY_MAXLEN: int = 10_000
 
+    # True for envs that track one target ship through the scenario
+    # classifier (`ts_idx`): the ScenarioBuilder despawns a dynamic TS that
+    # has passed only in those envs. Explicit flag instead of
+    # `hasattr(env, "ts_idx")`, which depended on whether a reward call had
+    # already created the attribute.
+    TRACKS_TARGET_SHIP: bool = False
+
 
     def __init__(
             self,

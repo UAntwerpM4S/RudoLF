@@ -270,23 +270,27 @@ class ScenarioBuilder:
         # ----------------------------------------------------------
         #
         #    A TS is only despawned for distance after it has been within
-        #    forget_range at least once (`_despawn_engaged`), so a TS spawned
-        #    beyond forget_range is not removed before it approaches. This
-        #    used to rely on `env.ts_idx` still being set from the previous
-        #    step while the classifier had already dropped the TS (a two-step
-        #    lag that any reordering of reward/observation would break).
-        #    Scope is unchanged from before: only DYNAMIC target ships, and
-        #    only in envs that track one (`ts_idx`, the polar env). Static
-        #    obstacles and the planner env never despawned and still do not.
+        #    encounter_range at least once (`_despawn_engaged`): that is the
+        #    range at which the classifier starts tracking a TS, so this is the
+        #    same rule as before ("tracked, then left forget_range"), and the
+        #    same gate as the single-encounter path. A TS whose closest
+        #    approach stays between encounter_range and forget_range is
+        #    therefore NOT removed for distance. The old code relied on
+        #    `env.ts_idx` still being set from the previous step while the
+        #    classifier had already dropped the TS (a lag that any reordering
+        #    of reward/observation would break).
+        #    Scope: only DYNAMIC target ships, and only in envs that track one
+        #    (TRACKS_TARGET_SHIP, the polar env). Static obstacles and the
+        #    planner env never despawn here.
         if (
             env.collision_entities
             and len(env.collision_entities) == 1
-            and hasattr(env, "ts_idx")
+            and getattr(env, "TRACKS_TARGET_SHIP", False)
             and bool(getattr(env.collision_entities[0], "is_dynamic", False))
         ):
             ts = env.collision_entities[0]
             dist = ts.distance_to_point(env.ship_pos)
-            if dist <= env.forget_range:
+            if dist <= env.encounter_range:
                 ts._despawn_engaged = True
             route_finished = bool(getattr(ts, "route_finished", False))
             left_range = bool(getattr(ts, "_despawn_engaged", False)) and dist > env.forget_range

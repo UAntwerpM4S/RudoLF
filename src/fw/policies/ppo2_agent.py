@@ -82,11 +82,13 @@ class PPO2Agent(BaseAgent):
         self.tensorboard_log = str(_SRC_DIR / tensorboard_log) if tensorboard_log else None
         self.verbose = verbose
 
+        # One child seed per training worker (see BaseAgent 'seed').
+        worker_seeds = self._spawn_worker_seeds(self.num_envs)
         if self.num_envs > 1:
-            train_env = SubprocVecEnv([self.make_env(i) for i in range(self.num_envs)])
+            train_env = SubprocVecEnv([self.make_env(i, worker_seeds[i]) for i in range(self.num_envs)])
         else:
             logging_dir = str(_SRC_DIR / "logs/env_0")
-            train_env = DummyVecEnv([lambda: Monitor(self.create_env(), logging_dir)])
+            train_env = DummyVecEnv([lambda: Monitor(self.create_env(worker_seeds[0]), logging_dir)])
 
         policy_kwargs = dict(
             net_arch=[256, 256, 128],
@@ -113,10 +115,18 @@ class PPO2Agent(BaseAgent):
         )
 
 
-    def make_env(self, rank):
+    def make_env(self, rank, worker_seed=None):
         """
         Utility function for multiprocessing env creation.
+
+        Args:
+            rank: Worker index (used for the Monitor log directory).
+            worker_seed: Seed for this worker's env RNG; None spawns a new
+                child of the agent's worker SeedSequence.
         """
+
+        if worker_seed is None:
+            worker_seed = self._spawn_worker_seeds(1)[0]
 
         def _init():
             """
@@ -127,24 +137,30 @@ class PPO2Agent(BaseAgent):
             """
 
             logging_dir = str(_SRC_DIR / f"logs/env_{rank}")
-            return Monitor(self.create_env(), logging_dir)
+            return Monitor(self.create_env(worker_seed), logging_dir)
 
         return _init
 
 
-    def create_env(self) -> gym.Env:
+    def create_env(self, worker_seed=None) -> gym.Env:
         """
         Create a fresh copy of the base environment.
+
+        Args:
+            worker_seed: Seed for the copy's env RNG; None spawns a new
+                child of the agent's worker SeedSequence (see BaseAgent 'seed').
 
         Returns:
             gym.Env: A deep copy of the original environment. If the environment supports randomization,
                      a random initial configuration is applied.
         """
 
+        if worker_seed is None:
+            worker_seed = self._spawn_worker_seeds(1)[0]
         env = copy.deepcopy(self.env)
-        # Each copy gets its own RNG; otherwise every worker would draw the
-        # same randomization as the template environment.
-        reseed_env_rng(env)
+        # Each copy gets its own (seeded) RNG; otherwise every worker would
+        # draw the same randomization as the template environment.
+        reseed_env_rng(env, worker_seed)
         if hasattr(env, "randomize"):
             env.randomize()
         return env

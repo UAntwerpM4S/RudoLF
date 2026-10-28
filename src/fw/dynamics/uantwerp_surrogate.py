@@ -68,6 +68,15 @@ from fw.surrogate.schema import SURROGATE_DT, TARGET_NAMES, scenario_for_raw_wid
 
 logger = logging.getLogger(__name__)
 
+
+def _finite_position(pos) -> bool:
+    """True if `pos` is an (x, y) pair of finite numbers (None counts as not finite)."""
+
+    try:
+        return bool(np.all(np.isfinite(np.asarray(pos[:2], dtype=float))))
+    except (TypeError, ValueError):
+        return False
+
 # Keys accepted in ua_surrogate_config.
 CONFIG_KEYS = ("preset", "checkpoint", "lookup_csv")
 
@@ -286,6 +295,11 @@ class UAntwerpSurrogate(DynamicsBase):
 
         if pos is None or self.wcu_lookup is None:
             return self.ukc
+        if not _finite_position(pos):
+            # A NaN position (NaN dynamics) must not raise here: scipy's KD-tree
+            # refuses non-finite queries; _compute_accelerations raises the
+            # clear FloatingPointError instead.
+            return self.default_ukc
         ukc = self.wcu_lookup.get_ukc(float(pos[0]), float(pos[1]))
         return self.default_ukc if ukc is None else float(ukc)
 
@@ -307,7 +321,11 @@ class UAntwerpSurrogate(DynamicsBase):
         """
 
         calm = 0.0 if state is not None or not self.scenario.includes_wind_current else None
-        sample = None if self.wcu_lookup is None else self.wcu_lookup.get_sample(pos[0], pos[1])
+        # A non-finite position (NaN dynamics) gets the no-row defaults: the
+        # KD-tree query would raise a cryptic error; the NaN x/y then reach
+        # _compute_accelerations, which raises a clear FloatingPointError.
+        sample = (None if self.wcu_lookup is None or not _finite_position(pos)
+                  else self.wcu_lookup.get_sample(pos[0], pos[1]))
         if sample is None or sample.env.ukc is None:
             self.ukc = self.default_ukc
             return EnvironmentData(ukc=self.ukc, wind_speed=calm, wind_direction=calm,
@@ -421,11 +439,16 @@ class UAntwerpSurrogate(DynamicsBase):
                           current_speed=env.current_speed, current_direction=env.current_direction)
 
         if self.scenario.includes_rays:
-            values["rays"] = compute_ray_features(
-                self._ray_caster(),
-                np.array([state.x, state.y]),
-                float(state.heading),
-            )
+            if _finite_position((state.x, state.y)) and np.isfinite(float(state.heading)):
+                values["rays"] = compute_ray_features(
+                    self._ray_caster(),
+                    np.array([state.x, state.y]),
+                    float(state.heading),
+                )
+            else:
+                # NaN pose: no ray casting (geometry queries on NaN are not
+                # safe); _compute_accelerations then raises FloatingPointError.
+                values["rays"] = np.full(len(RAY_ANGLES_DEG), np.nan, dtype=np.float32)
 
         return self.scenario.build_raw_row(values)
 
@@ -469,6 +492,9 @@ class UAntwerpSurrogate(DynamicsBase):
         if not np.all(np.isfinite(x_raw)):
             # Fail fast: a NaN/inf input gives a NaN prediction that np.clip
             # keeps, and it would only surface later as a NaN observation.
+            # The lookup and ray casting skip a non-finite position (see
+            # get_env / _build_input_vector), so this clear error is the one
+            # raised, not scipy's KD-tree "'x' must be finite".
             bad = [name for name, val in zip(self.scenario.raw_columns, x_raw) if not np.isfinite(val)]
             raise FloatingPointError(
                 f"UAntwerpSurrogate ({self.scenario.name}): non-finite input(s) {bad} "

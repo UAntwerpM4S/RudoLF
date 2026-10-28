@@ -298,3 +298,129 @@ def test_pipeline_stop_condition_type_error_is_a_spec_error():
 
     with pytest.raises(PipelineSpecError):
         _parse_stop_condition({"criterion": "TARGET_REWARD", "target_reward": 0.9, "patience": "3"}, "block[0]", "b")
+
+
+# ----------------------------------------------------------------------
+# Seeded worker RNGs ('seed' hyperparameter)
+# ----------------------------------------------------------------------
+
+def _worker_draws(seed, tmp_path, n_workers=2):
+    """First draws of the env RNGs of `n_workers` workers of a SinglePPOAgent seeded with `seed`."""
+
+    from fw.environments.py_sim_env import PySimEnv
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    env = PySimEnv(time_step=2.0, max_steps=5, start_pos=START, target_pos=TARGET,
+                   dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
+    agent = SinglePPOAgent(environment=env, model_dir=str(tmp_path), seed=seed)
+    workers = [agent.make_env(s)() for s in agent._spawn_worker_seeds(n_workers)]   # as _reset_envs does
+    return agent, [w.env._rng.integers(1 << 30, size=4).tolist() for w in workers]
+
+
+def test_worker_rngs_are_reproducible_from_the_seed(tmp_path):
+    """Same 'seed' -> same worker streams; workers differ from each other; another seed differs."""
+
+    _, run_a = _worker_draws(42, tmp_path)
+    _, run_b = _worker_draws(42, tmp_path)
+    _, run_c = _worker_draws(43, tmp_path)
+    assert run_a == run_b
+    assert run_a[0] != run_a[1]
+    assert run_a != run_c
+
+
+def test_unset_seed_is_drawn_and_logged(tmp_path, caplog):
+    """seed=None draws a base seed and logs it, so the run can be reproduced afterwards."""
+
+    with caplog.at_level("INFO", logger="fw.policies.base_agent"):
+        agent, run = _worker_draws(None, tmp_path)
+    assert isinstance(agent.seed, int) and agent.seed >= 0
+    assert any(str(agent.seed) in r.getMessage() for r in caplog.records)
+    _, rerun = _worker_draws(agent.seed, tmp_path)
+    assert run == rerun
+
+
+@pytest.mark.parametrize("bad_seed", [-1, True, "42", 4.2])
+def test_invalid_seed_is_refused(bad_seed):
+    """Only None or a non-negative int is accepted (fail fast, no silent bool -> 1)."""
+
+    from fw.common.tools.ppo_utils import resolve_base_seed
+
+    with pytest.raises(ValueError):
+        resolve_base_seed(bad_seed)
+
+
+# ----------------------------------------------------------------------
+# Target-ship despawn threshold
+# ----------------------------------------------------------------------
+
+def _despawn_after_pass(closest_offset, env_cls=None):
+    """
+    Place one dynamic TS at `encounter_range + closest_offset` from the OS,
+    then beyond forget_range, running the ScenarioBuilder step each time.
+    Returns True if the TS was despawned. `env_cls` defaults to the polar env.
+    """
+
+    from fw.collision_avoidance.collision_entity import CollisionEntity
+    from fw.environments.py_sim_colav_env import PySimColavEnv
+
+    env_cls = env_cls or PySimColavEnv
+    env = env_cls(time_step=1.0, max_steps=100000, ship_pos=START, target_pos=TARGET,
+                  dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
+    env.reset(seed=1)
+    if env.TRACKS_TARGET_SHIP:
+        assert env.ts_idx is None
+    builder = env.scenario_builder
+    ts = CollisionEntity(x=0.0, y=0.0, radius=5.0, is_dynamic=True, entity_type="ship")
+    env.collision_entities = [ts]
+    env._sync_collision_entity_views()
+    builder.step_counter = builder._active_cooldown()            # past the cooldown, as after a spawn
+
+    os_x, os_y = float(env.ship_pos[0]), float(env.ship_pos[1])
+    for distance in (env.encounter_range + closest_offset, env.forget_range + 50.0):
+        ts.set_position(os_x + distance, os_y)
+        builder.on_step(env.time_step)
+    return not env.collision_entities
+
+
+def test_ts_that_came_within_encounter_range_despawns_when_it_leaves():
+    """Closest approach inside encounter_range, then beyond forget_range: despawned."""
+
+    assert _despawn_after_pass(-10.0)
+
+
+def test_ts_passing_only_through_the_hysteresis_band_is_not_despawned():
+    """Closest approach between encounter_range and forget_range: kept, as before PR 418."""
+
+    assert not _despawn_after_pass(+10.0)
+
+
+def test_planner_env_never_despawns_a_target_ship():
+    """Envs without TRACKS_TARGET_SHIP (the planner env) keep their TS, as before PR 418."""
+
+    from fw.environments.py_sim_colav_planner import PySimColavPlannerEnv
+
+    assert PySimColavPlannerEnv.TRACKS_TARGET_SHIP is False
+    assert not _despawn_after_pass(-10.0, env_cls=PySimColavPlannerEnv)
+
+
+def test_multi_ppo_seeds_its_sub_environments(tmp_path):
+    """MultiPPOAgent steps its sub-envs directly: each gets its own child of 'seed', reproducibly."""
+
+    from fw.environments.multi_sim_env import MultiSimEnv
+    from fw.environments.py_sim_env import PySimEnv
+    from fw.policies.multi_ppo_agent import MultiPPOAgent
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    def _draws(seed):
+        """First RNG draws of every sub-env after building an MPPO agent with `seed`."""
+
+        subs = [PySimEnv(time_step=2.0, max_steps=5, start_pos=START, target_pos=TARGET,
+                         dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37) for _ in range(2)]
+        env = MultiSimEnv(sub_environments=subs)
+        agents = [SinglePPOAgent(environment=e, model_dir=str(tmp_path), seed=seed)
+                  for e in env.sub_environments.values()]
+        agent = MultiPPOAgent(None, environment=env, agents=agents, model_dir=str(tmp_path), seed=seed)
+        return [e._rng.integers(1 << 30, size=3).tolist() for e in agent.env.sub_environments.values()]
+
+    a, b = _draws(5), _draws(5)
+    assert a == b and a[0] != a[1]

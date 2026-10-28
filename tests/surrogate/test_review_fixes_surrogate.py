@@ -64,6 +64,18 @@ def test_non_finite_input_fails_fast(tiny_models, tmp_path):
         model._compute_accelerations(state, 0.0, 0.5)
 
 
+def test_nan_position_with_lookup_raises_the_clear_error(tiny_models, tmp_path):
+    """A NaN position (velocity and position turn NaN in the same sub-step) must
+    give the clear FloatingPointError, not scipy's KD-tree "'x' must be finite";
+    get_ukc at a NaN position returns the default instead of raising."""
+
+    model = _confined(tiny_models, _csv(tmp_path / "lk.csv", CONFINED, [(0.0, 0.0, 5.0)]))
+    state = make_state(x=float("nan"), y=float("nan"), heading=0.0, u=1.0, v=0.0, r=0.0)
+    with pytest.raises(FloatingPointError, match=r"\bx\b"):
+        model._compute_accelerations(state, 0.0, 0.5)
+    assert model.get_ukc(np.array([np.nan, np.nan])) == pytest.approx(model.default_ukc)
+
+
 def test_ship_simulator_sub_step_grid():
     """dt is validated at construction: UA needs a multiple of 0.1 s; other models get a remainder step."""
 

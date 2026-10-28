@@ -10,6 +10,7 @@ from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.configuration.stop_condition import StopCondition
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
+from fw.common.tools.ppo_utils import reseed_env_rng
 from fw.configuration.profile_applier import SimulatorApplier
 from fw.configuration.config_profile import VesselProfile
 from fw.environments.multi_sim_env import MultiSimEnv
@@ -79,6 +80,13 @@ class MultiPPOAgent(BasePPOAgent):
                 f"Number of agents ({len(agents)}) must match "
                 f"number of sub-environments ({self.num_envs})"
             )
+
+        # MultiPPOAgent steps the MultiSimEnv's sub-environments directly (no
+        # vectorized worker copies), so they are seeded here: one child of the
+        # 'seed' hyperparameter per sub-environment, in sub-environment order.
+        for sub_env, sub_seed in zip(self.env.sub_environments.values(),
+                                     self._spawn_worker_seeds(self.num_envs)):
+            reseed_env_rng(sub_env, sub_seed)
 
 
     def predict(

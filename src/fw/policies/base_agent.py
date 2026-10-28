@@ -1,4 +1,5 @@
 import os
+import logging
 import numpy as np
 
 from pathlib import Path
@@ -8,6 +9,9 @@ from fw.configuration.stop_condition import StopCondition
 from fw.environments.base_env import BaseEnv
 from fw.policies.ppo_policy import get_device
 from fw.common.tools.path_utils import resolve_path_relative_to_src
+from fw.common.tools.ppo_utils import resolve_base_seed
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent(ABC):
@@ -35,6 +39,7 @@ class BaseAgent(ABC):
         batch_size: int = 64,
         device: str = "cpu",
         model_dir: str = "models",
+        seed: Optional[int] = None,
     ):
         """
         Initialize the base agent with environment and hyperparameters.
@@ -56,6 +61,14 @@ class BaseAgent(ABC):
                 or 'auto' ('auto' resolves to 'cuda' if available, else 'cpu').
                 Default is 'cpu'.
             model_dir (str, optional): Folder in which the generated agents are saved.
+            seed (int, optional): Base seed for the RNGs of the vectorized
+                worker environments ('seed' hyperparameter). Each worker
+                gets its own child seed of it, so workers are independent
+                and a run is reproducible. None: a random base seed is
+                drawn and logged, so the run can still be reproduced.
+
+        Raises:
+            ValueError: If `seed` is not None or a non-negative integer.
         """
 
         if device not in ("cpu", "cuda", "auto"):
@@ -93,6 +106,34 @@ class BaseAgent(ABC):
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4  # avoid division by zero
+
+        # Worker RNG seeding. SeedSequence.spawn() is deterministic in call
+        # order, so recreating the workers (e.g. a different num_envs) gives
+        # new, but still reproducible, seeds.
+        self.seed = resolve_base_seed(seed)
+        self._worker_seed_seq = np.random.SeedSequence(self.seed)
+        # Only the env RNG streams (start poses, route segments, scenario
+        # sampling) are seeded; policy sampling (torch) is not, so a training
+        # run as a whole is not bit-reproducible.
+        logger.info(
+            "%s: base seed of the env RNG streams = %d%s.",
+            type(self).__name__, self.seed,
+            "" if seed is not None else " (randomly drawn; set the 'seed' hyperparameter to get the same env streams again)",
+        )
+
+
+    def _spawn_worker_seeds(self, n: int) -> list[np.random.SeedSequence]:
+        """
+        Child seeds for `n` new worker environments.
+
+        Args:
+            n: Number of workers.
+
+        Returns:
+            list[np.random.SeedSequence]: One independent child seed per worker.
+        """
+
+        return self._worker_seed_seq.spawn(n)
 
 
     @abstractmethod

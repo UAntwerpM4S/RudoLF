@@ -30,6 +30,10 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     and applies COLREG-aware reward shaping based on relative bearings.
     """
 
+    # Tracks one target ship (`ts_idx`) via the scenario classifier; the
+    # ScenarioBuilder may despawn it once it has passed.
+    TRACKS_TARGET_SHIP: bool = True
+
     def __init__(
             self,
             render_mode: Optional[str] = None,
@@ -124,6 +128,10 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 "%s: ignoring unsupported argument(s) %s (not implemented yet).",
                 type(self).__name__, sorted(kwargs),
             )
+
+        # Index of the tracked target ship (set from the classifier in the
+        # reward). Defined up front so it exists from the very first step.
+        self.ts_idx = None
 
         # Polar scan configuration
         self.polar_scan_cached = None

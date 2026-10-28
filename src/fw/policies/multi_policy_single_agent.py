@@ -516,17 +516,24 @@ class MultiPolicySingleAgent(BasePPOAgent):
     # ------------------------------------------------------------------
     # Vectorized environment management (mirrors SinglePPOAgent)
     # ------------------------------------------------------------------
-    def make_env(self):
+    def make_env(self, worker_seed=None):
         """
         Create a callable factory for deep-copied, monitored environments.
 
         The closure captures only `self.env` (not the full agent) to
         avoid pickling CUDA policy tensors when `SubprocVecEnv` sends
         the factory to child processes.
+
+        Args:
+            worker_seed: Seed (np.random.SeedSequence or int) for this
+                worker's env RNG. None: a new child of the agent's worker
+                SeedSequence is spawned (see BaseAgent 'seed').
         """
 
         env = self.env  # capture only the lightweight env, not the agent
         profile = self._profile
+        if worker_seed is None:
+            worker_seed = self._spawn_worker_seeds(1)[0]
 
         def _init():
             """
@@ -544,7 +551,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 _sim = getattr(env_copy, "phys_sim", None) or getattr(env_copy, "_phys_sim", None)
                 if _sim is not None:
                     SimulatorApplier.apply(profile, _sim)
-            reseed_env_rng(env_copy)
+            reseed_env_rng(env_copy, worker_seed)
             return Monitor(env_copy)
 
         return _init
@@ -561,7 +568,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         """
 
         if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
-            env_fns = [self.make_env() for _ in range(num_envs)]
+            env_fns = [self.make_env(worker_seed) for worker_seed in self._spawn_worker_seeds(num_envs)]
             self._vec_env = SubprocVecEnv(env_fns) if num_envs > 1 else DummyVecEnv(env_fns)
 
         if hasattr(self._vec_env, "env_method"):

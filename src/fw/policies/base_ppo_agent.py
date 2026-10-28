@@ -103,6 +103,7 @@ class BasePPOAgent(BaseAgent):
         model_dir: str = "models",
         max_nbr_iterations: int = 200000,
         normalize: bool = False,
+        seed: Optional[int] = None,
     ):
         """
         Initialize the PPO agent with environment and training hyperparameters.
@@ -125,6 +126,7 @@ class BasePPOAgent(BaseAgent):
             model_dir (str): Directory for saving models.
             max_nbr_iterations (int): Maximum steps per rollout.
             normalize (bool): Whether to normalize rewards.
+            seed (int, optional): Base seed for the worker env RNGs (see BaseAgent).
 
         Attributes:
             max_nbr_iterations: Safeguard value to avoid infinite stepping through environments.
@@ -146,6 +148,7 @@ class BasePPOAgent(BaseAgent):
             batch_size=batch_size,
             device=device,
             model_dir=model_dir,
+            seed=seed,
         )
 
         self._profile = profile
