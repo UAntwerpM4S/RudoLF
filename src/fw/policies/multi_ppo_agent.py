@@ -329,6 +329,10 @@ class MultiPPOAgent(BasePPOAgent):
 
                     if episode is None:
                         logger.warning("[Warning] Iteration %d: no trajectory for agent %s - skipping update.", iteration, agent_id)
+                        if not frozen[agent_id]:
+                            # A gap breaks the "patience consecutive iterations
+                            # on target" streak, as an off-target iteration does.
+                            agent_stop_conditions[agent_id].reset()
                         training_metrics[f"agent{agent_id}"].append({
                             'iteration': iteration,
                             'loss': float('nan'),
@@ -385,6 +389,13 @@ class MultiPPOAgent(BasePPOAgent):
                     if agent_done:
                         frozen[agent_id] = True
                         logger.info("Iteration %d | agent %s frozen: %s", iteration, agent_id, reason)
+                        # A frozen agent is never saved as best again, so one
+                        # that froze before MINIMUM_ITERATIONS_FOR_BEST_SAVE
+                        # would have no Best_* file: save its final (converged)
+                        # policy as its best.
+                        if best_rewards[agent_id] == float('-inf'):
+                            best_rewards[agent_id] = mean_reward
+                            agent.save_policy(best_policy_files[agent_id])
 
                 # Periodic checkpoint (all agents in one zip)
                 if iteration > 0 and iteration % self.eval_frequency == 0:
@@ -394,6 +405,15 @@ class MultiPPOAgent(BasePPOAgent):
                     logger.info("Stopping: every agent met its stop condition (iteration %d).", iteration)
                     last_save_index = iteration
                     break
+
+            if not all(frozen):
+                logger.info(
+                    "Stopping: reached max_time_steps = %d; agent(s) %s did not meet their stop "
+                    "condition (frozen: %s).",
+                    stopping_condition.max_time_steps,
+                    [i for i, f in enumerate(frozen) if not f],
+                    [i for i, f in enumerate(frozen) if f] or "none",
+                )
 
             # Final checkpoint and metrics: only when training ended normally
             # (same rule as SinglePPOAgent; a failure here raises).
