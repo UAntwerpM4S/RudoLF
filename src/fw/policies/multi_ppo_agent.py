@@ -1,4 +1,5 @@
 import os
+import copy
 import torch
 import zipfile
 import tempfile
@@ -269,8 +270,14 @@ class MultiPPOAgent(BasePPOAgent):
             - Episodes are matched to agents by env_id tag, not list position.
             - A missing trajectory for an agent causes a warning + skip, not a crash.
             - Metrics are recorded as NaN for skipped agents so the CSV stays aligned.
-            - Early stopping uses aggregated metrics across agents.
-            - Best policies are tracked per agent.
+            - Early stopping is per agent: each agent has its own copy of the
+              stop condition, evaluated on its OWN episode reward. An agent
+              that meets it is frozen (no more policy updates; it keeps acting
+              stochastically and its reward is still logged, with
+              `frozen=True` in the metrics CSV). Training ends when all agents
+              are frozen or after `max_time_steps` iterations.
+            - Best policies are tracked per agent (frozen agents no longer
+              change, so they are not re-saved).
         """
 
         logger.info("Starting training with %d parallel environments on a '%s' device", self.num_envs, self.device)
@@ -279,6 +286,14 @@ class MultiPPOAgent(BasePPOAgent):
         best_rewards = [float('-inf')] * len(self.agents)
         training_metrics = {f"agent{i}": [] for i in range(len(self.agents))}
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
+
+        # One stop condition per agent: StopCondition is stateful (patience
+        # counter), and each agent is judged on its own reward. The run ends
+        # when every agent is frozen, or after stopping_condition.max_time_steps.
+        agent_stop_conditions = [copy.deepcopy(stopping_condition) for _ in self.agents]
+        for condition in agent_stop_conditions:
+            condition.reset()
+        frozen = [False] * len(self.agents)
 
         best_policy_files = [
             f"Best_{env.training_name}_{i+1}_PPO_policy" if self.num_envs > 1
@@ -308,40 +323,50 @@ class MultiPPOAgent(BasePPOAgent):
                 if not episode_by_env:
                     episode_by_env = {i: ep for i, ep in enumerate(batch_data)}
 
-                mean_rewards = []
-                mean_losses = []
-
-                # Train each agent
+                # Train each agent that has not met its own stop condition yet
                 for agent_id, agent in enumerate(self.agents):
                     episode = episode_by_env.get(agent_id)
 
                     if episode is None:
                         logger.warning("[Warning] Iteration %d: no trajectory for agent %s - skipping update.", iteration, agent_id)
-                        mean_rewards.append(float('nan'))
-                        mean_losses.append(float('nan'))
+                        if not frozen[agent_id]:
+                            # A gap breaks the "patience consecutive iterations
+                            # on target" streak, as an off-target iteration does.
+                            agent_stop_conditions[agent_id].reset()
                         training_metrics[f"agent{agent_id}"].append({
                             'iteration': iteration,
                             'loss': float('nan'),
                             'advantage': float('nan'),
                             'reward': float('nan'),
+                            'frozen': frozen[agent_id],
                         })
                         continue
 
                     mean_reward = np.mean(episode['rewards'])
                     mean_advantage = np.mean(episode['advantages'])
 
+                    if frozen[agent_id]:
+                        # Converged agent: no more updates (as a single-agent run
+                        # that has stopped), but it keeps acting stochastically and
+                        # its reward is still logged.
+                        training_metrics[f"agent{agent_id}"].append({
+                            'iteration': iteration,
+                            'loss': float('nan'),
+                            'advantage': mean_advantage,
+                            'reward': mean_reward,
+                            'frozen': True,
+                        })
+                        continue
+
                     # Train agent on its episode
                     loss = agent.train([episode])
-
-                    # Store metrics
-                    mean_rewards.append(mean_reward)
-                    mean_losses.append(loss)
 
                     training_metrics[f"agent{agent_id}"].append({
                         'iteration': iteration,
                         'loss': loss,
                         'advantage': mean_advantage,
                         'reward': mean_reward,
+                        'frozen': False,
                     })
 
                     # Save the best policy per agent
@@ -353,28 +378,42 @@ class MultiPPOAgent(BasePPOAgent):
                     if iteration % self.eval_frequency == 0:
                         logger.info("Iteration %d | agent %s | average reward: %.3f, loss: %.3f", iteration, agent_id, mean_reward, loss)
 
+                    # Per-agent stop decision on this agent's OWN reward (not the
+                    # mean over agents): a converged agent is frozen instead of
+                    # being trained on until the slowest agent converges too.
+                    agent_done, reason = agent_stop_conditions[agent_id].should_stop(
+                        current_step=iteration,
+                        mean_reward=mean_reward,
+                        mean_loss=loss,
+                    )
+                    if agent_done:
+                        frozen[agent_id] = True
+                        logger.info("Iteration %d | agent %s frozen: %s", iteration, agent_id, reason)
+                        # A frozen agent is never saved as best again, so one
+                        # that froze before MINIMUM_ITERATIONS_FOR_BEST_SAVE
+                        # would have no Best_* file: save its final (converged)
+                        # policy as its best.
+                        if best_rewards[agent_id] == float('-inf'):
+                            best_rewards[agent_id] = mean_reward
+                            agent.save_policy(best_policy_files[agent_id])
+
                 # Periodic checkpoint (all agents in one zip)
                 if iteration > 0 and iteration % self.eval_frequency == 0:
                     self.save_policy(f"ppo_checkpoint_{iteration}")
 
-                # Aggregate metrics for stopping condition; ignore NaN entries
-                valid_rewards = [r for r in mean_rewards if not np.isnan(r)]
-                valid_losses = [l for l in mean_losses if not np.isnan(l)]
-
-                mean_reward_all_agents = np.mean(valid_rewards) if valid_rewards else 0.0
-                mean_loss_all_agents = np.mean(valid_losses) if valid_losses else float('nan')
-
-                # Check if the condition is met for early stopping
-                should_stop, reason = stopping_condition.should_stop(
-                    current_step=iteration,
-                    mean_reward=mean_reward_all_agents,
-                    mean_loss=mean_loss_all_agents,
-                )
-
-                if should_stop:
-                    logger.info("Stopping: %s", reason)
+                if all(frozen):
+                    logger.info("Stopping: every agent met its stop condition (iteration %d).", iteration)
                     last_save_index = iteration
                     break
+
+            if not all(frozen):
+                logger.info(
+                    "Stopping: reached max_time_steps = %d; agent(s) %s did not meet their stop "
+                    "condition (frozen: %s).",
+                    stopping_condition.max_time_steps,
+                    [i for i, f in enumerate(frozen) if not f],
+                    [i for i, f in enumerate(frozen) if f] or "none",
+                )
 
             # Final checkpoint and metrics: only when training ended normally
             # (same rule as SinglePPOAgent; a failure here raises).

@@ -8,6 +8,11 @@ Deep Reinforcement Learning publications:
   - A running/rolling mean overlaid as a solid line (the "smooth" curve).
   - A shaded ±1 std-dev band around the running mean to convey variance.
 
+Multi-agent CSVs (MultiPPOAgent, with an `agent_id` column) get one curve per
+agent, each with its own rolling statistics, and a dashed vertical line where
+an agent met its stop condition and was frozen (`frozen` column). Before,
+the rows of all agents were interleaved into one curve.
+
 Usage
 -----
     python plot_training_reward.py                       # uses default CSV path
@@ -37,6 +42,15 @@ DEFAULT_OUT    = "reward_curve.pdf"
 COLOR_RAW    = "#a8c7e8"     # light blue  -> raw reward
 COLOR_SMOOTH = "#1a5fa8"     # dark blue   -> rolling mean
 COLOR_BAND   = "#a8c7e8"     # same as raw -> +/- 1 σ band
+
+# Per-agent (light, dark) color pairs for multi-agent CSVs.
+AGENT_COLORS = [
+    ("#a8c7e8", "#1a5fa8"),     # blue
+    ("#f5c28b", "#c25e00"),     # orange
+    ("#a9dba4", "#2a7a22"),     # green
+    ("#e8a8a8", "#a81a1a"),     # red
+    ("#cdb5e3", "#5b2a8a"),     # purple
+]
 
 FONT_SIZE_LABEL  = 14
 FONT_SIZE_TICK   = 12
@@ -83,9 +97,13 @@ def load_data(csv_path: str) -> pd.DataFrame:
     # Normalize column names to lowercase
     df.columns = df.columns.str.lower()
 
-    # Use explicit iteration column if present, else use row index
+    # Use explicit iteration column if present, else use row index (per
+    # agent for a multi-agent CSV, whose rows interleave the agents)
     if "iteration" not in df.columns and "step" not in df.columns:
-        df.insert(0, "iteration", np.arange(len(df)))
+        if "agent_id" in df.columns:
+            df.insert(0, "iteration", df.groupby("agent_id").cumcount())
+        else:
+            df.insert(0, "iteration", np.arange(len(df)))
     elif "step" in df.columns:
         df = df.rename(columns={"step": "iteration"})
 
@@ -118,7 +136,50 @@ def rolling_stats(
 # Plotting
 # ---------------------------------------------------------------------------
 
-def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
+def _plot_curve(ax, iterations, reward: pd.Series, window: int,
+                color_raw: str, color_smooth: str, label: str = "") -> None:
+    """
+    Draw one reward curve: raw signal, ±1 σ rolling band and rolling mean.
+
+    Args:
+        ax: Matplotlib axes to draw on.
+        iterations: X values (training iterations).
+        reward (pd.Series): Reward per iteration.
+        window (int): Rolling window size for smoothing.
+        color_raw (str): Color of the raw signal and band.
+        color_smooth (str): Color of the rolling mean.
+        label (str): Prefix for the legend entries ("" for a single curve).
+    """
+
+    prefix = f"{label}: " if label else ""
+    rm, rm_lo, rm_hi = rolling_stats(reward.reset_index(drop=True), window)
+
+    # 1. Raw reward: semi-transparent to keep focus on the smooth curve
+    ax.plot(
+        iterations, reward.values,
+        color=color_raw, alpha=0.35, linewidth=0.7,
+        label=f"{prefix}Reward (per iteration)",
+        zorder=1,
+    )
+
+    # 2. ±1 σ shaded band
+    ax.fill_between(
+        iterations, rm_lo, rm_hi,
+        color=color_raw, alpha=0.25,
+        label=f"{prefix}" + r"$\pm 1\,\sigma$ (rolling)",
+        zorder=2,
+    )
+
+    # 3. Rolling mean: the star of the show
+    ax.plot(
+        iterations, rm,
+        color=color_smooth, linewidth=2.0,
+        label=f"{prefix}Rolling mean (w = {window})",
+        zorder=3,
+    )
+
+
+def plot_reward(df: pd.DataFrame, window: int, out_path: str):
     """
     Plot DRL training reward curve with smoothing and variance visualization.
 
@@ -127,48 +188,41 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
         - Rolling mean reward (main curve)
         - ±1 standard deviation band around rolling mean
 
+    With an `agent_id` column (multi-agent CSV), every agent gets its own
+    curve and rolling statistics, plus a dashed vertical line at the first
+    iteration it was frozen (`frozen` column), if any.
+
     Args:
         df (pd.DataFrame): Input dataframe containing:
             - iteration (int)
             - reward (float)
+            - agent_id (int, optional), frozen (bool, optional)
         window (int): Rolling window size for smoothing.
         out_path (str): Output file path for saving the figure.
 
     Returns:
-        None
+        matplotlib.figure.Figure: The figure (also saved to `out_path`).
     """
-
-    iterations = df["iteration"].values
-    reward     = df["reward"].values
-
-    rm, rm_lo, rm_hi = rolling_stats(df["reward"], window)
 
     # --- Figure & axes ---------------------------------------------------
     fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
 
-    # 1. Raw reward: semi-transparent to keep focus on the smooth curve
-    ax.plot(
-        iterations, reward,
-        color=COLOR_RAW, alpha=0.35, linewidth=0.7,
-        label="Reward (per iteration)",
-        zorder=1,
-    )
-
-    # 2. ±1 σ shaded band
-    ax.fill_between(
-        iterations, rm_lo, rm_hi,
-        color=COLOR_BAND, alpha=0.25,
-        label=r"$\pm 1\,\sigma$ (rolling)",
-        zorder=2,
-    )
-
-    # 3. Rolling mean: the star of the show
-    ax.plot(
-        iterations, rm,
-        color=COLOR_SMOOTH, linewidth=2.0,
-        label=f"Rolling mean (w = {window})",
-        zorder=3,
-    )
+    if "agent_id" in df.columns:
+        for k, (agent_id, agent_df) in enumerate(df.groupby("agent_id", sort=True)):
+            agent_df = agent_df.sort_values("iteration")
+            color_raw, color_smooth = AGENT_COLORS[k % len(AGENT_COLORS)]
+            _plot_curve(ax, agent_df["iteration"].values, agent_df["reward"], window,
+                        color_raw, color_smooth, label=f"Agent {agent_id}")
+            if "frozen" in agent_df.columns:
+                frozen = agent_df["frozen"].astype(str).str.lower() == "true"
+                if frozen.any():
+                    ax.axvline(agent_df.loc[frozen, "iteration"].iloc[0],
+                               color=color_smooth, linewidth=1.0, linestyle="--", alpha=0.8,
+                               label=f"Agent {agent_id}: frozen", zorder=4)
+        iterations = np.sort(df["iteration"].unique())
+    else:
+        iterations = df["iteration"].values
+        _plot_curve(ax, iterations, df["reward"], window, COLOR_RAW, COLOR_SMOOTH)
 
     # --- Labels & formatting --------------------------------------------
     ax.set_xlabel("Iteration", fontsize=FONT_SIZE_LABEL)
@@ -205,6 +259,7 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
     fig.savefig(out, dpi=300, bbox_inches="tight")
     print(f"[✓] Figure saved -> {out.resolve()}")
     plt.show()
+    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -247,8 +302,9 @@ def main() -> None:
     args = parser.parse_args()
 
     df = load_data(args.csv)
+    n_agents = df["agent_id"].nunique() if "agent_id" in df.columns else 1
     print(
-        f"[i] Loaded {len(df):,} iterations · "
+        f"[i] Loaded {len(df):,} rows ({n_agents} agent(s)) · "
         f"reward ∈ [{df['reward'].min():.3f}, {df['reward'].max():.3f}]"
     )
 
