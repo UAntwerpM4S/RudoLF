@@ -137,3 +137,19 @@ def test_confined_gz_and_open_water(tmp_path):
     np.savetxt(tmp_path / "ow.csv", np.zeros((10, ow.raw_input_dim + 4)), delimiter=",")
     with pytest.raises(ValueError, match="no UKC"):
         M.main([str(tmp_path / "ow.csv"), "--no-figures"])
+
+
+def test_compare_slide_from_two_coverage_folders(tmp_path):
+    """compare_environment_coverage draws one slide from the tables of two coverage folders."""
+
+    pytest.importorskip("matplotlib")
+    from fw.surrogate.validation import compare_environment_coverage as C
+
+    rng = np.random.default_rng(3)
+    for name in ("a", "b"):
+        _write_full_csv(tmp_path / f"{name}.csv", rng, n_episodes=10, rows=20)
+        assert M.main([str(tmp_path / f"{name}.csv"), "--no-figures"]) == 0
+    out = tmp_path / "cmp.png"
+    assert C.main([str(tmp_path / "a_coverage"), str(tmp_path / "b_coverage"),
+                   "--labels", "A", "B", "--out", str(out), "--dpi", "40"]) == 0
+    assert out.is_file() and out.stat().st_size > 0
