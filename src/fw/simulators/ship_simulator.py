@@ -21,7 +21,8 @@ class ShipSimulator(BaseSimulator):
         - Several dynamics models: Fossen 3-DOF, Nomoto, UGentSurrogate,
           UAntwerpSurrogate, FhTabularModel.
         - Actuator dynamics and rate limiting.
-        - Environmental forces (wind and current) for physics-based models.
+        - Environmental forces (wind and current) for models that do not
+          model them themselves.
         - A unified interface compatible with RL or control loops.
 
     The simulator computes the vessel state in earth-fixed coordinates
@@ -34,19 +35,26 @@ class ShipSimulator(BaseSimulator):
 
         u, v, r = dynamics.step(state, rudder_angle, thrust, dt)
 
-    Two families exist:
+    Physics-based models (Fossen, Nomoto, UGentSurrogate) and the
+    UAntwerpSurrogate return un-clipped (u, v, r) from Euler integration of
+    their accelerations; FhTabularModel returns (u, v, r) read from the FH
+    engine. ShipSimulator applies velocity clipping to all of them.
 
-    Physics-based models (Fossen, Nomoto, UGentSurrogate):
-        Return un-clipped (u, v, r) computed via Euler integration of
-        their equations of motion. ShipSimulator applies velocity clipping,
-        and environmental forces after the call.
+    Wind and current
+    ----------------
+    EnvironmentModel's accelerations are added after dynamics.step() only
+    when dynamics.models_own_wind_current is False:
 
-    Engine-backed models (FhTabularModel, UAntwerpSurrogate):
-        Return (u, v, r) directly from an internal engine or surrogate after
-        advancing by dt. No re-integration is performed by ShipSimulator;
-        clipping is still applied for consistency.
-        Environmental forces are NOT added for these models, as their engine
-        already accounts for relevant dynamics.
+        models_own_wind_current = True  -> skipped (the model already has them):
+            FhTabularModel, UAntwerpSurrogate with a full_env checkpoint.
+        models_own_wind_current = False -> added:
+            Fossen, Nomoto, UGentSurrogate, UAntwerpSurrogate open_water /
+            confined_ukc.
+
+    The `wind` / `current` switches only control EnvironmentModel, so they
+    have no effect on models with models_own_wind_current = True: FH takes
+    wind and current from its exercise, a full_env surrogate from its
+    lookup CSV (by design).
 
     Sub-stepping and dt constraints
     --------------------------------
@@ -72,8 +80,10 @@ class ShipSimulator(BaseSimulator):
                                actuator limits, and kinematic constraints.
             dynamics:          DynamicsBase instance implementing the step() interface.
             dt:                Simulation time step [s]. Must be positive.
-            wind:              Enable wind influence if True.
-            current:           Enable water current influence if True.
+            wind:              Enable EnvironmentModel wind if True. No effect when
+                               dynamics.models_own_wind_current is True.
+            current:           Enable EnvironmentModel current if True. No effect
+                               when dynamics.models_own_wind_current is True.
         """
 
         super().__init__(specs, dt)
@@ -94,6 +104,15 @@ class ShipSimulator(BaseSimulator):
                 )
         self._n_sub_steps = n_full
         self._dt_remainder = dt_rem
+
+        # Decided once here (fail fast): a non-bool flag (e.g. a forgotten
+        # property returning None) must not silently pick a branch per step.
+        own_wc = getattr(dynamics, "models_own_wind_current", None)
+        if not isinstance(own_wc, bool):
+            raise TypeError(
+                f"{type(dynamics).__name__}.models_own_wind_current must be a bool, got {own_wc!r}."
+            )
+        self._add_environment = not own_wc
 
         self._dynamics = dynamics
         self._mapper = ActionMapper()
@@ -118,8 +137,9 @@ class ShipSimulator(BaseSimulator):
         Advance the vessel state by a single physics integration step.
 
         Calls dynamics.step() to obtain updated body-fixed velocities (u, v, r),
-        then applies environmental forces (for physics-based models), velocity
-        clipping, and midpoint position integration.
+        then applies environmental forces (unless the model has its own, see
+        the class docstring), velocity clipping, and midpoint position
+        integration.
 
         Args:
             actuator:                    ActuatorState containing the current rudder_angle
@@ -128,10 +148,8 @@ class ShipSimulator(BaseSimulator):
             enable_rudder_angle_scaling: Enable rudder angle scaling.
 
         Notes:
-            - For physics-based models, environmental accelerations are added
-              to (u, v) before clipping.
-            - For engine-backed models (FhTabularModel, UAntwerpSurrogate),
-              environmental forces are skipped; the engine handles them internally.
+            - EnvironmentModel accelerations are added to (u, v) before
+              clipping, unless dynamics.models_own_wind_current is True.
             - Velocity clipping is applied for all model types.
             - Earth-fixed position is updated using midpoint heading integration.
             - Heading is wrapped to [-π, π].
@@ -143,9 +161,9 @@ class ShipSimulator(BaseSimulator):
         u, v, r = self._dynamics.step(state, actuator.rudder_angle, actuator.thrust,
                                       time_step, enable_rudder_angle_scaling)
 
-        # Add environmental accelerations, except for FhTabularModel and UAntwerpSurrogate,
-        # as they already add environmental effects internally.
-        if not isinstance(self._dynamics, (FhTabularModel, UAntwerpSurrogate)):
+        # Add environmental accelerations, except for models that already
+        # include wind and current themselves (avoids applying them twice).
+        if self._add_environment:
             ax_env, ay_env = self._env.accelerations(state.heading)
             u += ax_env * time_step
             v += ay_env * time_step

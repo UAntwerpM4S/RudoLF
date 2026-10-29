@@ -67,7 +67,13 @@ class FhTabularModel(DynamicsBase):
     Note: getShipVelocityOverGround() returns velocities already expressed
     in the body-fixed frame despite its name (confirmed empirically: the
     x-component aligns with surge regardless of heading).
+
+    Wind and current come from the FH exercise itself, so ShipSimulator must
+    not add EnvironmentModel's accelerations (models_own_wind_current = True).
     """
+
+    # FH simulates the exercise's own wind and current.
+    models_own_wind_current: bool = True
 
     def __init__(self, ship_spec: ShipSpecifications, fh_engine):
         """

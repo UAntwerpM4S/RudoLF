@@ -231,13 +231,33 @@ class UAntwerpSurrogate(DynamicsBase):
             csv = resolve_lookup_csv(config.get("lookup_csv", self.preset.lookup_csv))
             if csv is not None and csv.exists():
                 self.wcu_lookup = self._make_lookup(csv)
-            elif csv is not None:
-                logger.warning("Ship data file %s not found, falling back to default UKC value of %s%s",
-                               csv, self.default_ukc,
-                               " and zero wind/current" if self.scenario.includes_wind_current else "")
+            else:
+                # Deliberately a warning, not an error (the lookup CSVs are large
+                # and often left out). For full_env it means NO wind and current
+                # at all: this model has its own (models_own_wind_current), so
+                # ShipSimulator does not fall back to EnvironmentModel either.
+                logger.warning(
+                    "UAntwerp surrogate '%s': %s; falling back to default UKC value of %s%s",
+                    self.preset.name,
+                    "no lookup CSV configured" if csv is None else f"ship data file {csv} not found",
+                    self.default_ukc,
+                    " and ZERO wind/current (ShipSimulator does not add EnvironmentModel wind/current "
+                    "for this model, so the run has no wind or current at all)"
+                    if self.scenario.includes_wind_current else "")
 
         if self.scenario.includes_rays:
             self._env = ray_caster
+
+    @property
+    def models_own_wind_current(self) -> bool:
+        """
+        True only for scenarios with wind/current inputs (full_env): those
+        take wind and current from the lookup themselves, so ShipSimulator
+        must not add EnvironmentModel's accelerations. open_water and
+        confined_ukc have no wind/current inputs and get EnvironmentModel's.
+        """
+
+        return bool(self.scenario.includes_wind_current)
 
     def _make_lookup(self, csv) -> WcuLookup:
         """WcuLookup on `csv`, reading only the columns this scenario needs."""
