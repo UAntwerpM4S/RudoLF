@@ -34,6 +34,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             wind: bool = False,
             current: bool = False,
             ugent_surrogate_config: Optional[dict] = None,
+            ugent_b01_surrogate_config: Optional[dict] = None,
             enable_obstacles: bool = True,
             encounter_range: float = 500.0,
             evaluate: bool = True,
@@ -64,6 +65,8 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             current: Enables current disturbances.
             ugent_surrogate_config: Configuration for the UGent surrogate
                 (Model.UGENT_SURROGATE), e.g. {"ukc_percent": 363}.
+            ugent_b01_surrogate_config: Configuration for the UGent B01 model-scale
+                surrogate (Model.UGENT_B01_SURROGATE), e.g. {"ukc_percent": 379}.
             enable_obstacles: Enables obstacle generation.
             encounter_range: Maximum obstacle encounter distance in meters.
             evaluate: Enables evaluation mode.
@@ -95,6 +98,7 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             wind=wind,
             current=current,
             ugent_surrogate_config=ugent_surrogate_config,
+            ugent_b01_surrogate_config=ugent_b01_surrogate_config,
             enable_obstacles=enable_obstacles,
             encounter_range=encounter_range,
             evaluate=evaluate,

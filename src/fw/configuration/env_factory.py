@@ -325,6 +325,7 @@ class PySimEnvironment(BaseEnvironment):
                             current=self.configuration["current"],
                             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
                             ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
+                            ugent_b01_surrogate_config=self.configuration.get("ugent_b01_surrogate_config", {}),
                             reward_name=self.configuration.get("reward_name", "default"),
                             reward_weights=self.configuration.get("reward_weights", None))
 
@@ -376,6 +377,7 @@ class MultiPySimEnvironment(BaseEnvironment):
                              current=self.configuration["current"],
                              ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
                              ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
+                             ugent_b01_surrogate_config=self.configuration.get("ugent_b01_surrogate_config", {}),
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
@@ -391,6 +393,7 @@ class MultiPySimEnvironment(BaseEnvironment):
                              current=self.configuration["current"],
                              ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
                              ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
+                             ugent_b01_surrogate_config=self.configuration.get("ugent_b01_surrogate_config", {}),
                              reward_name=self.configuration.get("reward_name", "default"),
                              reward_weights=self.configuration.get("reward_weights", None))
 
@@ -412,7 +415,7 @@ class PySimColavEnvironment(BaseEnvironment):
             name: Registered environment name.
             configuration: Scoped configuration dict (see `build_colav_config`).
                 Expected keys: wind, current, ship_model, dynamics_model,
-                enable_obstacles, ugent_surrogate_config.
+                enable_obstacles, ugent_surrogate_config, ugent_b01_surrogate_config.
         """
         super().__init__(name, configuration)
 
@@ -439,6 +442,7 @@ class PySimColavEnvironment(BaseEnvironment):
             wind=self.configuration["wind"],
             current=self.configuration["current"],
             ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
+            ugent_b01_surrogate_config=self.configuration.get("ugent_b01_surrogate_config", {}),
             enable_obstacles=self.configuration.get("enable_obstacles", True),
         )
 
@@ -462,7 +466,7 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             configuration: Scoped configuration dict (see
                 `build_multi_policy_colav_config`). Expected keys: wind,
                 current, ship_model, dynamics_model, enable_obstacles,
-                ugent_surrogate_config.
+                ugent_surrogate_config, ugent_b01_surrogate_config.
                 evaluate/include_scenario_one_hot/minimal_path_render
                 remain hardcoded below pending a future rework
                 (eval_scenario/eval_obstacle_count are not env parameters yet).
@@ -492,6 +496,7 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             wind=self.configuration["wind"],
             current=self.configuration["current"],
             ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
+            ugent_b01_surrogate_config=self.configuration.get("ugent_b01_surrogate_config", {}),
             enable_obstacles=self.configuration.get("enable_obstacles", True),
             evaluate=False,
             # eval_scenario / eval_obstacle_count were passed here but are not
@@ -558,6 +563,7 @@ class FhSimEnvironment(BaseEnvironment):
                             current=self.configuration["current"],
                             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
                             ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
+                            ugent_b01_surrogate_config=self.configuration.get("ugent_b01_surrogate_config", {}),
                             reward_name=self.configuration.get("reward_name", "default"),
                             reward_weights=self.configuration.get("reward_weights", None),
                             fh_bridge=fh_bridge)
@@ -629,6 +635,7 @@ class FhSimSyncEnvironment(BaseEnvironment):
             current=self.configuration["current"],
             ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
             ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
+            ugent_b01_surrogate_config=self.configuration.get("ugent_b01_surrogate_config", {}),
             reward_name=self.configuration.get("reward_name", "default"),
             reward_weights=self.configuration.get("reward_weights", None),
             fh_bridge=fh_bridge,
@@ -833,6 +840,7 @@ def build_pysim_config(framework_config: dict, extra: dict | None = None) -> dic
         "enable_ukc_check":             get_validated_bool(framework_config, "enable_ukc_check", True),
         "ua_surrogate_config":          framework_config["ua_surrogate_config"],
         "ugent_surrogate_config":       framework_config.get("ugent_surrogate_config", {}),
+        "ugent_b01_surrogate_config":    framework_config.get("ugent_b01_surrogate_config", {}),
         "reward_weights":               framework_config.get("reward_weights", None),
         "reward_name":                  framework_config.get("reward_name", "default"),
     }
@@ -865,6 +873,7 @@ def build_colav_config(framework_config: dict, extra: dict | None = None) -> dic
         "trajectory":          framework_config["trajectory"],
         "enable_obstacles":    framework_config.get("enable_obstacles", True),
         "ugent_surrogate_config": framework_config.get("ugent_surrogate_config", {}),
+        "ugent_b01_surrogate_config": framework_config.get("ugent_b01_surrogate_config", {}),
     }
     if extra:
         cfg.update(extra)
@@ -917,6 +926,7 @@ def build_fhsim_config(framework_config: dict) -> dict:
         "current":                      framework_config["current"],
         "ua_surrogate_config":          framework_config["ua_surrogate_config"],
         "ugent_surrogate_config":       framework_config.get("ugent_surrogate_config", {}),
+        "ugent_b01_surrogate_config":    framework_config.get("ugent_b01_surrogate_config", {}),
         "reward_weights":               framework_config.get("reward_weights", None),
         "reward_name":                  framework_config.get("reward_name", "default"),
     }
@@ -932,7 +942,8 @@ def build_fhsimsync_config(framework_config: dict) -> dict:
     Returns:
         A dict containing the required keys consumed by FhSimSyncEnvironment
         (ship_model, scenario) plus wind/current/reward/UA-surrogate keys
-        (same as build_pysim_config, including ugent_surrogate_config) and any optional UDP connection
+        (same as build_pysim_config, including ugent_surrogate_config and
+        ugent_b01_surrogate_config) and any optional UDP connection
         overrides (remote_ip, remote_port, local_ip, local_port,
         connect_timeout, step_timeout_per_tick) when present in the
         framework config.
@@ -953,6 +964,7 @@ def build_fhsimsync_config(framework_config: dict) -> dict:
         "enable_ukc_check":             get_validated_bool(framework_config, "enable_ukc_check", True),
         "ua_surrogate_config":          framework_config["ua_surrogate_config"],
         "ugent_surrogate_config":       framework_config.get("ugent_surrogate_config", {}),
+        "ugent_b01_surrogate_config":    framework_config.get("ugent_b01_surrogate_config", {}),
         "reward_weights":               framework_config.get("reward_weights", None),
         "reward_name":                  framework_config.get("reward_name", "default"),
     }

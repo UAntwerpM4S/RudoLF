@@ -637,6 +637,23 @@ ProfileRegistry.register(VesselProfile(
 ))
 
 ProfileRegistry.register(VesselProfile(
+    name="ugent_b01_surrogate_profile",
+    description="Configuration profile for UGent's B01 model-scale (towing tank) surrogate model.",
+    run_mode=RunMode.TRAIN,
+    model=ModelConfig(
+        ship_model=ShipModel.B01,
+        dynamics_model=Model.UGENT_B01_SURROGATE,
+    ),
+    # Model-scale start speed [m/s], below the B01 surge limit of 1.0 m/s. Steady speed at
+    # full thrust: ~0.93 m/s at 379 % UKC, ~0.91 at 153 %, ~0.77 at 100 %, ~0.41 at 35 %
+    # (lower the start speed for shallow water). NOTE: refused by the full-scale PySim environments
+    # (SUPPORTS_MODEL_SCALE_SHIPS) until a towing-tank environment exists.
+    scenario=ScenarioConfig(initial_speed=0.8),
+    actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
+    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
+))
+
+ProfileRegistry.register(VesselProfile(
     name="uantwerp_surrogate_profile",
     description="Configuration profile for UAntwerp's surrogate model.",
     run_mode=RunMode.TRAIN,

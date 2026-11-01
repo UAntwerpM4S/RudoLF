@@ -59,7 +59,7 @@ if _SRC_DIR not in sys.path:
 
 import numpy as np
 
-from fw.ships.ship_factory import ShipModel, create_ship
+from fw.ships.ship_factory import B01_MODEL_SCALE, MODEL_SCALE_SHIP_MODELS, ShipModel, create_ship
 from fw.ships.vessel_state import VesselState
 from fw.ships.actuator_state import ActuatorState
 from fw.surrogate.schema import SURROGATE_DT
@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 RUDDER_DEG = 15.0             # +- rudder command [deg]
 THRUST = 0.5                  # thrust for the rudder runs (normalized, as FhTabularModel / UA input)
 THRUST_LOW, THRUST_HIGH = 0.2, 0.8
-U0 = 3.0                      # initial surge [m/s]
+U0 = 3.0                      # initial surge [m/s] (full scale; model-scale ships: U0 / sqrt(lambda))
 DURATION = 30.0               # [s] per run
 PROPELLER_RPS_SCALE = 5.5     # FH initial rps = scale * thrust (as the generators / FhSession)
 THRUST_CHECK_TIME = 2.0      # [s] surge gain compared after this time
@@ -115,6 +115,14 @@ def build_models(ship: ShipModel, spec, keep_lookup_env: bool) -> Dict[str, Call
     from fw.dynamics.nomoto import Nomoto
 
     factories: Dict[str, Callable[[], object]] = {"Fossen": lambda: Fossen(spec), "Nomoto": lambda: Nomoto(spec)}
+    if ship == ShipModel.B01:
+        from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
+        # Model scale; no bank provider: open water. Same convention as UGent.
+        # Fossen/Nomoto use the heuristic full-scale coefficients (normalised by
+        # mass), which are not meaningful at model scale: Nomoto reaches the
+        # 1.0 m/s surge limit within 2 s at any thrust. Only the B01 model is run.
+        print("B01: Fossen/Nomoto (heuristic full-scale coefficients), UA_* and UGent (Tripoli) -- skipped.")
+        return {"UGentB01": lambda: UGentB01Surrogate(spec, {"ukc_percent": 379})}
     if ship != ShipModel.TRIPOLI:
         print(f"{ship.name}: UGent and UA_* are Tripoli models -- skipped.")
         return factories
@@ -322,7 +330,8 @@ def main(argv=None) -> int:
     ap.add_argument("--x", type=float, default=-1559.0)
     ap.add_argument("--y", type=float, default=11990.0)
     ap.add_argument("--heading", type=float, default=-45.0, help="deg, counter-clockwise from East")
-    ap.add_argument("--u0", type=float, default=U0)
+    ap.add_argument("--u0", type=float, default=None,
+                    help=f"initial surge [m/s] (default {U0:g}; model-scale ships {U0 / B01_MODEL_SCALE ** 0.5:g})")
     ap.add_argument("--rudder", type=float, default=RUDDER_DEG, help="rudder command magnitude [deg]")
     ap.add_argument("--thrust", type=float, default=THRUST)
     ap.add_argument("--duration", type=float, default=DURATION)
@@ -335,6 +344,12 @@ def main(argv=None) -> int:
 
     ship = ShipModel[args.ship]
     spec = create_ship(ship).specifications
+    model_scale = ship in MODEL_SCALE_SHIP_MODELS
+    if args.u0 is None:
+        args.u0 = U0 / B01_MODEL_SCALE ** 0.5 if model_scale else U0
+    if model_scale and not args.no_fh:
+        print(f"{ship.name}: model-scale preset without an FH ship model -- FH skipped.")
+        args.no_fh = True
     rudder = float(np.radians(args.rudder))
     start = VesselState(terminated=False, truncated=False, x=args.x, y=args.y,
                         heading=float(np.radians(args.heading)), u=args.u0, v=0.0, r=0.0)

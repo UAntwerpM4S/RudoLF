@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Tuple
 from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_MAX_DISTANCE, ray_world_angles
 from shapely.geometry import Point, Polygon, MultiPoint, GeometryCollection
 from fw.environments.tools import create_checkpoints_from_simple_path
-from fw.ships.ship_factory import create_ship, ShipModel
+from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 from fw.reward.reward import Reward
@@ -25,6 +25,7 @@ from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 from fw.dynamics.fh_tabular_model import FhTabularModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.dynamics.ugent_surrogate import UGentSurrogate
+from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
 from fw.dynamics.dynamics_model import Model
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.nomoto import Nomoto
@@ -129,7 +130,7 @@ class PySimEnv(BaseEnv):
     Custom ship navigation environment with improved physics.
 
     Supports both pure-Python dynamics models (Fossen, Nomoto,
-    UGentSurrogate, UAntwerpSurrogate) and the external FH Simulator engine
+    UGentSurrogate, UGentB01Surrogate, UAntwerpSurrogate) and the external FH Simulator engine
     (Model.FH_TABULAR). When dynamics_model == Model.FH_TABULAR, the
     environment is backed by an externally-constructed FH engine bridge
     (self._fh_sim / self.fh_sim) that manages the FH Simulator math model;
@@ -153,6 +154,14 @@ class PySimEnv(BaseEnv):
             dynamics_model == Model.FH_TABULAR; None otherwise.
     """
 
+    SUPPORTS_MODEL_SCALE_SHIPS: bool = False
+    """
+    False: the map, distances, speeds and rewards are full scale (Western
+    Scheldt), so model-scale presets (ShipModel.B01) are refused at
+    construction. A towing-tank environment sets this to True.
+    """
+
+
     def __init__(
             self,
             render_mode: Optional[str] = None,
@@ -170,6 +179,7 @@ class PySimEnv(BaseEnv):
             current: bool = False,
             ua_surrogate_config: Optional[Dict] = None,
             ugent_surrogate_config: Optional[Dict] = None,
+            ugent_b01_surrogate_config: Optional[Dict] = None,
             enable_bank_collision_check: bool = True,
             enable_ukc_check: bool = True,
             #Reward configuration
@@ -207,6 +217,9 @@ class PySimEnv(BaseEnv):
                 fw.dynamics.uantwerp_surrogate and fw.surrogate.presets.
             ugent_surrogate_config: optional configuration for the UGent surrogate
                 model, e.g. {"ukc_percent": 363}.
+            ugent_b01_surrogate_config: optional configuration for the UGent B01
+                model-scale surrogate (Model.UGENT_B01_SURROGATE, ShipModel.B01),
+                e.g. {"ukc_percent": 379}.
             reward_name: name of reward profile (combination of components).
             reward_weights: optional per-component reward weights.
             scenario: FH Simulator scenario name. Retained for record-keeping
@@ -255,6 +268,8 @@ class PySimEnv(BaseEnv):
         self.depth_contour = depth_contour if depth_contour is not None else "env_Sche_250cm_no_scale.csv"
         self.trajectory = trajectory if trajectory is not None else "trajectory_points_no_scale.csv"
         self.ship_model: ShipModel = ship_model if ship_model is not None else ShipModel.MYZAKO_DEFAULT
+        if not self.SUPPORTS_MODEL_SCALE_SHIPS:
+            require_full_scale_ship(self.ship_model, type(self).__name__)
         self.enable_bank_collision_check = bool(enable_bank_collision_check)
         self.enable_ukc_check = bool(enable_ukc_check)
         self.max_steps = int(max_steps)
@@ -300,7 +315,7 @@ class PySimEnv(BaseEnv):
 
         # State and control placeholders
         self.ship = create_ship(self.ship_model)
-        self.phys_sim = self.create_simulator(ua_surrogate_config, ugent_surrogate_config)
+        self.phys_sim = self.create_simulator(ua_surrogate_config, ugent_surrogate_config, ugent_b01_surrogate_config)
 
         self._initialize_simulation()
 
@@ -409,7 +424,8 @@ class PySimEnv(BaseEnv):
         self.velocities = self.phys_sim.state.u
 
     def create_simulator(self, ua_surrogate_config: Optional[Dict]=None,
-                         ugent_surrogate_config: Optional[Dict]=None):
+                         ugent_surrogate_config: Optional[Dict]=None,
+                         ugent_b01_surrogate_config: Optional[Dict]=None):
         """
         Create and return a configured ship simulator.
 
@@ -422,11 +438,15 @@ class PySimEnv(BaseEnv):
                 with the specified initial state and the current model parameters.
             ua_surrogate_config: Configuration for the UA surrogate model.
             ugent_surrogate_config: Configuration for the UGent surrogate model.
+            ugent_b01_surrogate_config: Configuration for the UGent B01 model-scale
+                surrogate model.
         """
 
         if self.dynamics_model == Model.FOSSEN:
+            require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.FOSSEN")
             self.dynamics = Fossen(self.ship.specifications)
         elif self.dynamics_model == Model.NOMOTO:
+            require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.NOMOTO")
             self.dynamics = Nomoto(self.ship.specifications)
         elif self.dynamics_model == Model.UGENT_SURROGATE:
             # UGent's coefficients are identified for the Tripoli only.
@@ -437,6 +457,17 @@ class PySimEnv(BaseEnv):
                 )
             self.dynamics = UGentSurrogate(self.ship.specifications, ugent_surrogate_config)
             # Bound method, so deepcopy re-binds it to the copied env.
+            self.dynamics.set_bank_distance_provider(self.bank_beam_distances)
+        elif self.dynamics_model == Model.UGENT_B01_SURROGATE:
+            # The B01 coefficients are identified for the model-scale B01 only.
+            if self.ship_model != ShipModel.B01:
+                raise ValueError(
+                    f"Model.UGENT_B01_SURROGATE is identified for ShipModel.B01 only, "
+                    f"got ship_model={self.ship_model}."
+                )
+            self.dynamics = UGentB01Surrogate(self.ship.specifications, ugent_b01_surrogate_config)
+            # Bound method, so deepcopy re-binds it to the copied env. Bank distances
+            # come from this env's own map (towing-tank geometry once it exists).
             self.dynamics.set_bank_distance_provider(self.bank_beam_distances)
         elif self.dynamics_model == Model.UANTWERP:
             # Rays are cast against this environment's own river polygon.
@@ -921,7 +952,7 @@ class PySimEnv(BaseEnv):
         if self._fh_sim is not None:
             # noinspection PyUnresolvedReferences
             return self._fh_sim.ship_interface.getKeelClearance()
-        elif isinstance(self.dynamics, (UAntwerpSurrogate, UGentSurrogate)):
+        elif isinstance(self.dynamics, (UAntwerpSurrogate, UGentSurrogate, UGentB01Surrogate)):
             return self.dynamics.get_ukc(pos)
         else:
             return 0.0
@@ -1068,7 +1099,8 @@ class PySimEnv(BaseEnv):
         Distances [m] to the port and starboard bank, along the beam rays.
 
         Only real banks count (map cut-off edges are ignored). Used as the
-        UGent surrogate's bank-distance provider, i.e. at every sub-step.
+        bank-distance provider of the UGent surrogates (Tripoli and B01), i.e.
+        at every sub-step.
 
         Args:
             state: Vessel state to cast from; defaults to the env's own state.

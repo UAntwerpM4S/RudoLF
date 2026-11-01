@@ -15,6 +15,7 @@ class Model(Enum):
     UGENT_SURROGATE = auto()
     UANTWERP = auto()
     FH_TABULAR = auto()
+    UGENT_B01_SURROGATE = auto()
 
 
 class DynamicsBase:
@@ -31,7 +32,7 @@ class DynamicsBase:
 
     Two families of implementations exist:
 
-    - Physics-based models (Fossen, Nomoto, UGentSurrogate):
+    - Physics-based models (Fossen, Nomoto, UGentSurrogate, UGentB01Surrogate):
         Compute accelerations (du, dv, dr) from equations of motion and
         return (u + du*dt, v + dv*dt, r + dr*dt) via this class's default
         `step()` implementation. Velocity clipping is applied by
@@ -55,8 +56,15 @@ class DynamicsBase:
         (FhTabularModel; UAntwerpSurrogate with a full_env checkpoint). For
         them ShipSimulator must NOT add EnvironmentModel's accelerations as
         well, or the effect is applied twice. All other models (Fossen,
-        Nomoto, UGentSurrogate, UAntwerpSurrogate open_water/confined_ukc)
-        get their wind/current from EnvironmentModel via ShipSimulator.
+        Nomoto, UGentSurrogate, UGentB01Surrogate, UAntwerpSurrogate
+        open_water/confined_ukc) get their wind/current from EnvironmentModel
+        via ShipSimulator, except UGentB01Surrogate (see below).
+
+    EnvironmentModel support (`supports_environment_model`):
+        EnvironmentModel adds fixed full-scale accelerations. A model for which
+        they make no sense (UGentB01Surrogate, model scale: they are about 9x
+        its maximum thrust acceleration) sets this to False, and ShipSimulator
+        then refuses wind=True / current=True instead of adding them.
     """
 
     models_own_wind_current: bool = False
@@ -65,6 +73,13 @@ class DynamicsBase:
     ShipSimulator must skip the EnvironmentModel accelerations for it.
     Default False: ShipSimulator adds them. Subclasses override it as a class
     attribute or, if it depends on the instance, as a read-only property.
+    """
+
+    supports_environment_model: bool = True
+    """
+    False if EnvironmentModel's (full-scale) wind/current accelerations must
+    never be added to this model; ShipSimulator then raises ValueError when
+    wind or current is enabled. Default True.
     """
 
     def _compute_accelerations(

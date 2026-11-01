@@ -18,7 +18,7 @@ class ShipSimulator(BaseSimulator):
 
     This simulator can integrate:
 
-        - Several dynamics models: Fossen 3-DOF, Nomoto, UGentSurrogate,
+        - Several dynamics models: Fossen 3-DOF, Nomoto, UGentSurrogate, UGentB01Surrogate,
           UAntwerpSurrogate, FhTabularModel.
         - Actuator dynamics and rate limiting.
         - Environmental forces (wind and current) for models that do not
@@ -35,8 +35,8 @@ class ShipSimulator(BaseSimulator):
 
         u, v, r = dynamics.step(state, rudder_angle, thrust, dt)
 
-    Physics-based models (Fossen, Nomoto, UGentSurrogate) and the
-    UAntwerpSurrogate return un-clipped (u, v, r) from Euler integration of
+    Physics-based models (Fossen, Nomoto, UGentSurrogate, UGentB01Surrogate)
+    and the UAntwerpSurrogate return un-clipped (u, v, r) from Euler integration of
     their accelerations; FhTabularModel returns (u, v, r) read from the FH
     engine. ShipSimulator applies velocity clipping to all of them.
 
@@ -50,6 +50,8 @@ class ShipSimulator(BaseSimulator):
         models_own_wind_current = False -> added:
             Fossen, Nomoto, UGentSurrogate, UAntwerpSurrogate open_water /
             confined_ukc.
+        supports_environment_model = False -> refused (ValueError if wind
+            or current is enabled): UGentB01Surrogate (model scale).
 
     The `wind` / `current` switches only control EnvironmentModel, so they
     have no effect on models with models_own_wind_current = True: FH takes
@@ -84,6 +86,10 @@ class ShipSimulator(BaseSimulator):
                                dynamics.models_own_wind_current is True.
             current:           Enable EnvironmentModel current if True. No effect
                                when dynamics.models_own_wind_current is True.
+
+        Raises:
+            ValueError: wind or current enabled for a model with
+                supports_environment_model = False (UGentB01Surrogate).
         """
 
         super().__init__(specs, dt)
@@ -113,6 +119,17 @@ class ShipSimulator(BaseSimulator):
                 f"{type(dynamics).__name__}.models_own_wind_current must be a bool, got {own_wc!r}."
             )
         self._add_environment = not own_wc
+
+        supports_env = getattr(dynamics, "supports_environment_model", None)
+        if not isinstance(supports_env, bool):
+            raise TypeError(
+                f"{type(dynamics).__name__}.supports_environment_model must be a bool, got {supports_env!r}."
+            )
+        if (wind or current) and self._add_environment and not supports_env:
+            raise ValueError(
+                f"wind={wind}/current={current}: {type(dynamics).__name__} does not support "
+                f"EnvironmentModel's wind/current (fixed full-scale accelerations). Disable wind and current."
+            )
 
         self._dynamics = dynamics
         self._mapper = ActionMapper()

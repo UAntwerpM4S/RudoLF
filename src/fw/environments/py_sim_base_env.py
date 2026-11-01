@@ -12,12 +12,13 @@ matplotlib.rcParams['figure.raise_window'] = False
 from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
 from fw.environments.tools import create_checkpoints_from_simple_path
-from fw.ships.ship_factory import create_ship, ShipModel
+from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.dynamics.ugent_surrogate import UGentSurrogate
+from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
 from fw.dynamics.dynamics_model import Model
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.nomoto import Nomoto
@@ -106,6 +107,14 @@ class PySimBaseEnv(BaseEnv):
     Custom Python Simulator environment for ship navigation with improved physics.
     """
 
+    SUPPORTS_MODEL_SCALE_SHIPS: bool = False
+    """
+    False: the map, distances, speeds and rewards are full scale (Western
+    Scheldt), so model-scale presets (ShipModel.B01) are refused at
+    construction. A towing-tank environment sets this to True.
+    """
+
+
     def __init__(
             self,
             render_mode: Optional[str] = None,
@@ -123,6 +132,7 @@ class PySimBaseEnv(BaseEnv):
             current: bool = False,
             minimal_path_render: bool = False,
             ugent_surrogate_config: Optional[Dict] = None,
+            ugent_b01_surrogate_config: Optional[Dict] = None,
     ) -> None:
         """
         Initialize the ship navigation environment.
@@ -149,6 +159,9 @@ class PySimBaseEnv(BaseEnv):
             ugent_surrogate_config: configuration for the UGent surrogate
                 (Model.UGENT_SURROGATE), e.g. {"ukc_percent": 363}; see
                 fw.dynamics.ugent_surrogate.
+            ugent_b01_surrogate_config: configuration for the UGent B01 model-scale
+                surrogate (Model.UGENT_B01_SURROGATE), e.g. {"ukc_percent": 379};
+                see fw.dynamics.ugent_b01_surrogate.
         """
 
         super().__init__(render_mode)
@@ -162,6 +175,8 @@ class PySimBaseEnv(BaseEnv):
         self.depth_contour = depth_contour if depth_contour is not None else "env_Sche_250cm_no_scale.csv"
         self.trajectory = trajectory if trajectory is not None else "trajectory_points_no_scale.csv"
         self.ship_model = ship_model
+        if not self.SUPPORTS_MODEL_SCALE_SHIPS:
+            require_full_scale_ship(self.ship_model, type(self).__name__)
         self.max_steps = int(max_steps)
         self.time_step = float(time_step)
         self.dynamics_model = dynamics_model
@@ -193,7 +208,7 @@ class PySimBaseEnv(BaseEnv):
 
         # State and control placeholders
         self.ship = create_ship(self.ship_model)
-        self.phys_sim = self.create_simulator(ugent_surrogate_config)
+        self.phys_sim = self.create_simulator(ugent_surrogate_config, ugent_b01_surrogate_config)
 
         self._initialize_simulation()
 
@@ -332,7 +347,8 @@ class PySimBaseEnv(BaseEnv):
         self.previous_ship_pos = self.ship_pos.copy()
         self.checkpoint_index = chosen_seg + 1
 
-    def create_simulator(self, ugent_surrogate_config: Optional[Dict] = None):
+    def create_simulator(self, ugent_surrogate_config: Optional[Dict] = None,
+                         ugent_b01_surrogate_config: Optional[Dict] = None):
         """
         Create and return a configured ship simulator.
 
@@ -343,6 +359,8 @@ class PySimBaseEnv(BaseEnv):
         Args:
             ugent_surrogate_config: Configuration for the UGent surrogate model
                 (required for Model.UGENT_SURROGATE).
+            ugent_b01_surrogate_config: Configuration for the UGent B01 model-scale
+                surrogate (required for Model.UGENT_B01_SURROGATE).
 
         Returns:
             ShipSimulator: A fully initialized simulator instance configured
@@ -350,13 +368,17 @@ class PySimBaseEnv(BaseEnv):
 
         Raises:
             ValueError: Model.UGENT_SURROGATE with a ship other than the Tripoli,
-                or an invalid ugent_surrogate_config.
+                Model.UGENT_B01_SURROGATE with a ship other than B01, Model.FOSSEN /
+                Model.NOMOTO with a model-scale ship (ShipModel.B01), or an
+                invalid ugent_surrogate_config / ugent_b01_surrogate_config.
             RuntimeError: Unknown dynamics model.
         """
 
         if self.dynamics_model == Model.FOSSEN:
+            require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.FOSSEN")
             self.dynamics = Fossen(self.ship.specifications)
         elif self.dynamics_model == Model.NOMOTO:
+            require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.NOMOTO")
             self.dynamics = Nomoto(self.ship.specifications)
         elif self.dynamics_model == Model.UGENT_SURROGATE:
             # UGent's coefficients are identified for the Tripoli only.
@@ -368,10 +390,19 @@ class PySimBaseEnv(BaseEnv):
             # No bank-distance provider here (PySimBaseEnv has no bank
             # geometry): bank forces are zero, as before. PySimEnv sets one.
             self.dynamics = UGentSurrogate(self.ship.specifications, ugent_surrogate_config)
+        elif self.dynamics_model == Model.UGENT_B01_SURROGATE:
+            # The B01 coefficients are identified for the model-scale B01 only.
+            if self.ship_model != ShipModel.B01:
+                raise ValueError(
+                    f"Model.UGENT_B01_SURROGATE is identified for ShipModel.B01 only, "
+                    f"got ship_model={self.ship_model}."
+                )
+            # No bank-distance provider here (no bank geometry): bank forces are zero.
+            self.dynamics = UGentB01Surrogate(self.ship.specifications, ugent_b01_surrogate_config)
         elif self.dynamics_model in (Model.UANTWERP, Model.FH_TABULAR):
             raise RuntimeError(
                 f"{type(self).__name__} (PySimBaseEnv / collision-avoidance envs) does not support "
-                f"{self.dynamics_model} yet; supported: FOSSEN, NOMOTO, UGENT_SURROGATE. "
+                f"{self.dynamics_model} yet; supported: FOSSEN, NOMOTO, UGENT_SURROGATE, UGENT_B01_SURROGATE. "
                 f"Use PySimEnv for UANTWERP / FH_TABULAR, or pick another dynamics model / profile."
             )
         else:
