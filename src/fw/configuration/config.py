@@ -182,6 +182,12 @@ CONFIG_PARAMETERS = {
     # environment time step must be a whole multiple of 0.1 s.
     'ua_surrogate_config': {"preset": "myzako_confined"},
     'ugent_surrogate_config': {"ukc_percent": 363},
+    # UGent B01 MODEL-SCALE surrogate (dynamics_model = Model.UGENT_B01_SURROGATE,
+    # ship_model = ShipModel.B01, towing tank). "ukc_percent" (required): tested
+    # 379, 153, 35; other values are interpolated, outside 35-379 the closest
+    # tested set is used. Optional: "n_max_rpm" (1650), "min_bank_clearance"
+    # (0.001, only guards y' <= 0), "max_bank_clearance" (None = no cut-off). See fw.dynamics.ugent_b01_surrogate.
+    'ugent_b01_surrogate_config': {"ukc_percent": 379},
     'ship_model': ShipModel.MYZAKO_37,
     'dynamics_model': Model.FOSSEN,
     'live_animation': False,

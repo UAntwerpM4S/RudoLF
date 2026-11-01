@@ -106,6 +106,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
             current: bool = False,
             minimal_path_render: bool = False,
             ugent_surrogate_config: Optional[dict] = None,
+            ugent_b01_surrogate_config: Optional[dict] = None,
             # COLAV configuration
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
@@ -149,6 +150,8 @@ class PySimColavBaseEnv(PySimBaseEnv):
             minimal_path_render: Enables simplified path rendering.
             ugent_surrogate_config: Configuration for the UGent surrogate
                 (Model.UGENT_SURROGATE), e.g. {"ukc_percent": 363}.
+            ugent_b01_surrogate_config: Configuration for the UGent B01 model-scale
+                surrogate (Model.UGENT_B01_SURROGATE), e.g. {"ukc_percent": 379}.
             enable_obstacles: Enables obstacle generation.
             enable_variable_ship_size: Enables randomized target ship sizes.
             encounter_range: Distance within which encounters become active.
@@ -317,6 +320,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
             current=current,
             minimal_path_render=minimal_path_render,
             ugent_surrogate_config=ugent_surrogate_config,
+            ugent_b01_surrogate_config=ugent_b01_surrogate_config,
         )
 
         # Scenario builder

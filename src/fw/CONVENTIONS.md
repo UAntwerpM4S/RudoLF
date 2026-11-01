@@ -25,9 +25,9 @@ One convention for the whole framework: `ShipSimulator.integrate`, every dynamic
 
 | Quantity | Unit | Positive | Notes |
 |---|---|---|---|
-| Rudder command (`rudder_angle` in `DynamicsBase.step`) | rad | **the ship turns to port**, every ship and model | For the Tripoli's Z-drive the azimuth is physically to starboard. Maximum per ship: `ShipSpecifications.max_rudder_angle`, set in `ship_factory` (Myzako 75°, Tripoli 35°). |
+| Rudder command (`rudder_angle` in `DynamicsBase.step`) | rad | **the ship turns to port**, every ship and model | For the Tripoli's Z-drive the azimuth is physically to starboard. Maximum per ship: `ShipSpecifications.max_rudder_angle`, set in `ship_factory` (Myzako 75°, Tripoli 35°, B01 35°). |
 | `rudder_action` (dataset, surrogate input) | [-1, 1] | the ship turns to port | Degrees = `rudder_action × rudder_max_deg`. `rudder_max_deg` is stored in the dataset and checkpoint. |
-| Policy action `[rudder, thrust]` | [-1, 1] | rudder: the ship turns to port | `ActionMapper` maps thrust to `[min_thrust, max_thrust]` (Tripoli/Myzako: [0.1, 1.0]) |
+| Policy action `[rudder, thrust]` | [-1, 1] | rudder: the ship turns to port | `ActionMapper` maps thrust to `[min_thrust, max_thrust]` (Tripoli/Myzako: [0.1, 1.0]; B01: [0.2, 1.0]) |
 | Thrust passed to `DynamicsBase.step` | normalized engine lever | ahead | Sent to FH's `setEngineLeverValue` unchanged |
 | `thrust_action` (dataset, surrogate input) | [-1, 1] | ahead | The generators sample the full range, astern included |
 
@@ -87,6 +87,7 @@ Lookup CSVs carry **no** identity. Regenerate them together with the datasets.
 |---|---|
 | `fw.dynamics.fh_tabular_model.fh_rudder_sign(ship_model)` | Framework rudder sign → FH command sign. Used by `FhTabularModel`, `FhSimWrapper`, `FhSession` and the Myzako generators. |
 | `fw.dynamics.ugent_surrogate` | UGent report frame (y to starboard) ↔ framework: `v` and `r` change sign at the boundary. |
+| `fw.dynamics.ugent_b01_surrogate` | Same as UGent (B01, model scale): `v` and `r` change sign at the boundary; the rudder command is NOT flipped (positive = turn to port). |
 | `fw.dynamics.uantwerp_surrogate.apparent_wind_for_state` | Recording ship's apparent wind → this ship's apparent wind. |
 | `fw.surrogate.schema.select_and_encode` | Wind and current angles → ship-frame components. |
 | `fw.environments.ray_features.ray_world_angles` | Clockwise ray bearing → counter-clockwise world angle. |
@@ -94,6 +95,8 @@ Lookup CSVs carry **no** identity. Regenerate them together with the datasets.
 | `FhSimBridge` (`setInitialHeading(degrees(heading))`), `ShipSimulator`, `FhSession`, `FhSimWrapper` (`radians(getShipHeading())`) | The same heading conversion, written out directly. All of them assume `FH_HEADING_CONVENTION = "math"`. |
 
 ## Adding a ship
+
+Steps 1-3 and the FH part of step 4 are for full-scale ships with an FH model. Model-scale presets (`MODEL_SCALE_SHIP_MODELS`, e.g. `ShipModel.B01`) have no FH model: `require_fh_supported` refuses them, the full-scale PySim environments refuse them (`SUPPORTS_MODEL_SCALE_SHIPS`), and `check_model_conventions` skips FH for them.
 
 1. Measure FH's rudder sign with a short dataset and `check_rudder_sign.py` (add `--negated` if the generator flips the sign). Then add the ship to `_FH_RUDDER_SIGNS` in `fh_tabular_model.py`; `fh_rudder_sign` refuses ships that are not listed.
 2. Check that FH's sway is still port positive with `check_sway_sign.py` (expected slope about −1 after the 2026-10-19 fix).
