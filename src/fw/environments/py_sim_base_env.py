@@ -12,7 +12,7 @@ matplotlib.rcParams['figure.raise_window'] = False
 from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
 from fw.environments.tools import create_checkpoints_from_simple_path
-from fw.ships.ship_factory import create_ship, require_full_scale_ship, ShipModel
+from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 
@@ -368,14 +368,17 @@ class PySimBaseEnv(BaseEnv):
 
         Raises:
             ValueError: Model.UGENT_SURROGATE with a ship other than the Tripoli,
-                Model.UGENT_B01_SURROGATE with a ship other than B01, or an
+                Model.UGENT_B01_SURROGATE with a ship other than B01, Model.FOSSEN /
+                Model.NOMOTO with a model-scale ship (ShipModel.B01), or an
                 invalid ugent_surrogate_config / ugent_b01_surrogate_config.
             RuntimeError: Unknown dynamics model.
         """
 
         if self.dynamics_model == Model.FOSSEN:
+            require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.FOSSEN")
             self.dynamics = Fossen(self.ship.specifications)
         elif self.dynamics_model == Model.NOMOTO:
+            require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.NOMOTO")
             self.dynamics = Nomoto(self.ship.specifications)
         elif self.dynamics_model == Model.UGENT_SURROGATE:
             # UGent's coefficients are identified for the Tripoli only.

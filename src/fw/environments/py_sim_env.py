@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Tuple
 from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_MAX_DISTANCE, ray_world_angles
 from shapely.geometry import Point, Polygon, MultiPoint, GeometryCollection
 from fw.environments.tools import create_checkpoints_from_simple_path
-from fw.ships.ship_factory import create_ship, require_full_scale_ship, ShipModel
+from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 from fw.reward.reward import Reward
@@ -443,8 +443,10 @@ class PySimEnv(BaseEnv):
         """
 
         if self.dynamics_model == Model.FOSSEN:
+            require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.FOSSEN")
             self.dynamics = Fossen(self.ship.specifications)
         elif self.dynamics_model == Model.NOMOTO:
+            require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.NOMOTO")
             self.dynamics = Nomoto(self.ship.specifications)
         elif self.dynamics_model == Model.UGENT_SURROGATE:
             # UGent's coefficients are identified for the Tripoli only.

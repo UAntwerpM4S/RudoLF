@@ -11,7 +11,8 @@ from fw.dynamics.dynamics_model import Model
 from fw.dynamics.ugent_b01_surrogate import (
     B01_COEFFICIENT_SETS, TESTED_UKC_PERCENT, UGentB01Surrogate, interpolation_blend)
 from fw.ships.ship_factory import (
-    B01_MIN_THRUST, ShipModel, create_ship, require_fh_supported, require_full_scale_ship)
+    B01_MIN_THRUST, ShipModel, create_ship, require_fh_supported, require_full_scale_ship,
+    require_hull_coefficients)
 from fw.ships.vessel_state import VesselState
 
 START = np.array([2245.0, -47.0], dtype=np.float32)
@@ -403,3 +404,32 @@ def test_build_colav_config_carries_b01_config():
     framework_config["ugent_b01_surrogate_config"] = {"ukc_percent": 35}
     assert build_colav_config(framework_config)["ugent_b01_surrogate_config"] == {"ukc_percent": 35}
     assert build_multi_policy_colav_config(framework_config)["ugent_b01_surrogate_config"] == {"ukc_percent": 35}
+
+
+def test_hull_coefficient_guard():
+    """require_hull_coefficients refuses only model-scale presets."""
+
+    with pytest.raises(ValueError, match="model-scale"):
+        require_hull_coefficients(ShipModel.B01, "test")
+    for other in set(ShipModel) - {ShipModel.B01}:
+        require_hull_coefficients(other, "test")
+
+
+@pytest.mark.parametrize("dynamics_model", [Model.FOSSEN, Model.NOMOTO])
+@pytest.mark.parametrize("base", ["pysim", "colav"])
+def test_model_scale_envs_refuse_fossen_and_nomoto(dynamics_model, base):
+    """Even where model-scale ships are accepted, Fossen/Nomoto refuse B01 (full-scale placeholder coefficients)."""
+
+    if base == "pysim":
+        from fw.environments.py_sim_env import PySimEnv as Base
+    else:
+        from fw.environments.py_sim_colav_env import PySimColavEnv as Base
+
+    class _ModelScaleEnv(Base):
+        """Env that accepts model-scale ships (stand-in for the towing-tank env)."""
+
+        SUPPORTS_MODEL_SCALE_SHIPS = True
+
+    kwargs = {} if base == "pysim" else dict(time_step=1.0, max_steps=20, ship_pos=START, target_pos=TARGET)
+    with pytest.raises(ValueError, match=dynamics_model.name):
+        _ModelScaleEnv(dynamics_model=dynamics_model, ship_model=ShipModel.B01, **kwargs)

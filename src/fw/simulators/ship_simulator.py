@@ -48,8 +48,10 @@ class ShipSimulator(BaseSimulator):
         models_own_wind_current = True  -> skipped (the model already has them):
             FhTabularModel, UAntwerpSurrogate with a full_env checkpoint.
         models_own_wind_current = False -> added:
-            Fossen, Nomoto, UGentSurrogate, UGentB01Surrogate, UAntwerpSurrogate open_water /
+            Fossen, Nomoto, UGentSurrogate, UAntwerpSurrogate open_water /
             confined_ukc.
+        supports_environment_model = False -> refused (ValueError if wind
+            or current is enabled): UGentB01Surrogate (model scale).
 
     The `wind` / `current` switches only control EnvironmentModel, so they
     have no effect on models with models_own_wind_current = True: FH takes

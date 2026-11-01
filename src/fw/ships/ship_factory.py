@@ -89,6 +89,30 @@ def require_full_scale_ship(ship_model: ShipModel, where: str) -> None:
         )
 
 
+def require_hull_coefficients(ship_model: ShipModel, where: str) -> None:
+    """
+    Fail fast if a model-scale preset is used with a coefficient-based model.
+
+    Fossen and Nomoto read the hull coefficients in ShipSpecifications. For
+    model-scale presets (ShipModel.B01) those are the full-scale heuristic
+    placeholders, which are not meaningful at model scale; such presets are
+    only supported by their own surrogate (Model.UGENT_B01_SURROGATE).
+
+    Args:
+        ship_model: The ship model about to be used.
+        where:      Name of the caller and dynamics model, for the error message.
+
+    Raises:
+        ValueError: If ship_model is in MODEL_SCALE_SHIP_MODELS.
+    """
+
+    if ship_model in MODEL_SCALE_SHIP_MODELS:
+        raise ValueError(
+            f"{where}: ShipModel.{ship_model.name} is a model-scale preset; its Fossen/Nomoto "
+            f"coefficients are full-scale placeholders. Use Model.UGENT_B01_SURROGATE."
+        )
+
+
 def require_fh_supported(ship_model: ShipModel, where: str) -> None:
     """
     Fail fast if `ship_model` cannot be used with the FH simulator (yet).
