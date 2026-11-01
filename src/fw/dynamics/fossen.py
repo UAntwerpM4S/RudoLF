@@ -30,7 +30,21 @@ class Fossen(DynamicsBase):
           x forward, y to PORT, yaw counter-clockwise positive.
         - Motion is restricted to the horizontal plane (3-DOF).
         - Environmental forces (wind, current) are not included.
-        - Coefficients are heuristic and scale with vessel mass and length.
+        - Hydrodynamic coefficients are stored per ship as ratios (dimensional
+          value divided by m, m*L or m*L^2, see ShipSpecifications) and scaled
+          back with the vessel's mass and length. For Myzako (MYZAKO_29/37) and Tripoli
+          (TRIPOLI_38/45) the hull coefficients come from the FH "Fossen
+          model" identification; other presets, and the rudder and thrust
+          coefficients of all presets, are heuristic.
+        - The reference point is the CoG, taken at midships (x_g = 0), as in
+          the FH identification. The FH ship data list x_g = 0.5 - 2.24 m;
+          this offset is not modelled.
+        - Rigid-body yaw inertia I_z comes from ShipSpecifications.I_z when
+          given, else from the slender-rod approximation m * L^2 / 12. The
+          FH presets use the slender-rod value, as in the FH identification.
+        - Equations and notation follow Fossen_3DOF_Model.docx. The yaw
+          Coriolis term (m22 - m11) * u * v has the opposite sign to the Munk
+          moment in Fossen (2011); see _compute_accelerations.
 
     Known limitation (toy model): the turning DIRECTION follows the framework
     convention (positive rudder -> turn to port), but the sway during a turn
@@ -79,10 +93,16 @@ class Fossen(DynamicsBase):
         self.Y_vdot = self.ship_spec.Y_vdot_coeff * mass  # Added mass
         self.N_rdot = self.ship_spec.N_rdot_coeff * mass * length ** 2.0  # Added inertia
 
+        # Rigid-body yaw inertia: identified value when available, otherwise
+        # the slender-rod approximation (overestimates the RIZZ of the Myzako and Tripoli hulls by ~29-38 %).
+        i_z = self.ship_spec.I_z
+        if i_z is None:
+            i_z = mass * length ** 2.0 / 12.0
+
         # Mass matrix components
         self.m11 = mass - self.X_udot
         self.m22 = mass - self.Y_vdot
-        self.m33 = (mass * length ** 2.0 / 12.0) - self.N_rdot
+        self.m33 = i_z - self.N_rdot
 
         # Hydrodynamic damping coefficients
         self.X_u = self.ship_spec.X_u_coeff * mass  # Surge damping
@@ -124,12 +144,24 @@ class Fossen(DynamicsBase):
             Tuple (du, dv, dr): surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
 
-        # --- CORIOLIS-CENTRIPETAL MATRIX ---
+        # Notation follows Fossen_3DOF_Model.docx:
+        #     M * nu_dot = tau - C(nu) nu - D(nu)
+        # coriolis_* = the components of -C(nu) nu, d_* = the components of
+        # -D(nu) = [X_D, Y_D, N_D], and the control terms below form tau.
+
+        # --- CORIOLIS-CENTRIPETAL TERMS: -C(nu) nu ---
+        # NOTE: Fossen (2011) gives -(m22 - m11) * u * v for the yaw term
+        # (destabilising Munk moment). The + sign below is deliberate: FH
+        # identified the MYZAKO_29/37 and TRIPOLI_38/45 coefficients with
+        # exactly these equations, so the fit absorbs it. Do not flip the
+        # sign without re-identifying the coefficients.
         coriolis_surge = self.m22 * state.v * state.r
         coriolis_sway = -self.m11 * state.u * state.r
         coriolis_yaw = (self.m22 - self.m11) * state.u * state.v
 
-        # --- HYDRODYNAMIC DAMPING FORCES ---
+        # --- HYDRODYNAMIC DAMPING FORCES: -D(nu) = [X_D, Y_D, N_D] ---
+        # X_D, Y_D, N_D are the damping forces as they act on the ship; the
+        # minus sign in D(nu) = -[X_D, Y_D, N_D] follows from the equation form.
         d_surge = self.X_u * state.u + self.X_uu * state.u * abs(state.u)
         d_sway = (self.Y_v * state.v +
                   self.Y_vv * state.v * abs(state.v) +
@@ -138,16 +170,17 @@ class Fossen(DynamicsBase):
                  self.N_rr * state.r * abs(state.r) +
                  self.N_uv * state.u * state.v)
 
-        # --- CONTROL FORCES ---
-        # Speed-dependent rudder effectiveness
+        # --- CONTROL FORCES: tau = [X_T, Y_R, N_R] ---
+        # Speed-dependent rudder effectiveness kappa(u) = max(u / U_ref, kappa_min)
         # At low speeds, rudder is less effective
         speed_factor = max(state.u / RUDDER_SPEED_FACTOR_DENOMINATOR, MIN_RUDDER_EFFECTIVENESS)
 
-        # Rudder effectiveness
+        # Direct sway force from the rudder (rudder lift). Note that it is
+        # scaled by the same speed_factor, so it does not add extra authority
+        # at low speed.
         f_rudder_sway = self.Y_rudder * rudder_angle * speed_factor
 
-        # IMPORTANT: Add direct sway force from rudder (helps initial turn)
-        # Ships create sideways force when rudder is applied
+        # Yaw moment from the rudder
         m_rudder_yaw = self.N_rudder * rudder_angle * speed_factor
 
         # Thrust force

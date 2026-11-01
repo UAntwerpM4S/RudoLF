@@ -4,7 +4,7 @@ import logging
 import numpy as np
 
 from typing import Optional
-from fw.ships.ship_factory import ShipModel
+from fw.ships.ship_factory import ShipModel, require_fh_supported
 
 _logger = logging.getLogger(__name__)
 
@@ -77,6 +77,7 @@ class FhSimBridge:
                 ignores a transform set later).
         """
 
+        require_fh_supported(ship_model, "FhSimBridge")
         self._ship_model = ship_model
         self.exercise_path_exists = True
 

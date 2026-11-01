@@ -1,7 +1,7 @@
 import numpy as np
 
 from typing import Tuple, Optional
-from fw.ships.ship_factory import ShipModel
+from fw.ships.ship_factory import ShipModel, require_fh_supported
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
@@ -67,7 +67,13 @@ class FhTabularModel(DynamicsBase):
     Note: getShipVelocityOverGround() returns velocities already expressed
     in the body-fixed frame despite its name (confirmed empirically: the
     x-component aligns with surge regardless of heading).
+
+    Wind and current come from the FH exercise itself, so ShipSimulator must
+    not add EnvironmentModel's accelerations (models_own_wind_current = True).
     """
+
+    # FH simulates the exercise's own wind and current.
+    models_own_wind_current: bool = True
 
     def __init__(self, ship_spec: ShipSpecifications, fh_engine):
         """
@@ -79,6 +85,11 @@ class FhTabularModel(DynamicsBase):
             fh_engine:  Initialized FH engine object exposing
                         ship_interface and math_model.
         """
+
+        # Also covers engines other than FhSimBridge (e.g. SyncSimBridge).
+        engine_ship_model = getattr(fh_engine, "ship_model", None)
+        if engine_ship_model is not None:
+            require_fh_supported(engine_ship_model, "FhTabularModel")
 
         self.ship_spec: ShipSpecifications = ship_spec
         self._engine = fh_engine
@@ -122,7 +133,7 @@ class FhTabularModel(DynamicsBase):
             Tuple (u, v, r) read directly from the FH engine after advancing
             by dt seconds:
                 u = velocity_over_ground.x          [m/s]
-                v =  velocity_over_ground.y         [m/s]
+                v = velocity_over_ground.y          [m/s]
                 r = radians(getShipYawRate())       [rad/s]
         """
 

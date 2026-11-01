@@ -49,6 +49,22 @@ class DynamicsBase:
         This only reproduces the surrogate's intended behavior when dt
         equals the surrogate's training step size, which the subclass
         enforces explicitly.
+
+    Wind and current (`models_own_wind_current`):
+        Some models already include wind and current in their own dynamics
+        (FhTabularModel; UAntwerpSurrogate with a full_env checkpoint). For
+        them ShipSimulator must NOT add EnvironmentModel's accelerations as
+        well, or the effect is applied twice. All other models (Fossen,
+        Nomoto, UGentSurrogate, UAntwerpSurrogate open_water/confined_ukc)
+        get their wind/current from EnvironmentModel via ShipSimulator.
+    """
+
+    models_own_wind_current: bool = False
+    """
+    True if this model includes wind and current in its own dynamics, so
+    ShipSimulator must skip the EnvironmentModel accelerations for it.
+    Default False: ShipSimulator adds them. Subclasses override it as a class
+    attribute or, if it depends on the instance, as a read-only property.
     """
 
     def _compute_accelerations(
