@@ -442,9 +442,11 @@ class PySimEnv(BaseEnv):
             # Rays are cast against this environment's own river polygon.
             self.dynamics = UAntwerpSurrogate(self.ship.specifications, ua_surrogate_config,
                                               ship_model=self.ship_model, ray_caster=self)
-            # ShipSimulator adds no environmental forces for UAntwerpSurrogate: wind and
-            # current come only from the surrogate itself (UAntwerpSurrogate.get_env).
-            if self.dynamics.scenario.includes_wind_current:
+            # Wind/current source depends on the scenario (models_own_wind_current):
+            # full_env takes them from its own lookup CSV and ShipSimulator adds no
+            # EnvironmentModel forces; open_water / confined_ukc have no wind/current
+            # inputs, so ShipSimulator adds EnvironmentModel's per the wind/current flags.
+            if self.dynamics.models_own_wind_current:
                 if not (self.wind and self.current):
                     logger.warning(
                         "wind=%s/current=%s, but the UAntwerp surrogate (preset '%s') always takes "
@@ -452,9 +454,9 @@ class PySimEnv(BaseEnv):
                         self.wind, self.current, self.dynamics.preset.name,
                     )
             elif self.wind or self.current:
-                logger.warning(
-                    "wind=%s/current=%s, but the UAntwerp surrogate (preset '%s') has no wind/current "
-                    "inputs and ShipSimulator adds none for it: this run sails in calm conditions.",
+                logger.info(
+                    "wind=%s/current=%s: the UAntwerp surrogate (preset '%s') has no wind/current "
+                    "inputs, so ShipSimulator adds EnvironmentModel wind/current for it.",
                     self.wind, self.current, self.dynamics.preset.name,
                 )
         elif self.dynamics_model == Model.FH_TABULAR:

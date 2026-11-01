@@ -19,6 +19,9 @@ class ShipModel(Enum):
     MYZAKO_29 / MYZAKO_37 and TRIPOLI_38 / TRIPOLI_45 carry the FH-identified
     Fossen hull coefficients for one draft each (T = 2.85 / 3.65 m and
     T = 3.78 / 4.50 m). MYZAKO_DEFAULT and TRIPOLI are heuristic presets.
+
+    TRIPOLI_38 / TRIPOLI_45 are Fossen/Nomoto-only for now, see
+    FOSSEN_ONLY_SHIP_MODELS.
     """
 
     MYZAKO_DEFAULT = auto()
@@ -27,6 +30,37 @@ class ShipModel(Enum):
     TRIPOLI = auto()
     TRIPOLI_38 = auto()
     TRIPOLI_45 = auto()
+
+
+# TEMPORARY (until the ShipModel refactor): the FH code paths, the dataset
+# generators and the validation tools identify the Tripoli hull with
+# `ship_model == ShipModel.TRIPOLI` (azipod controls, exercise file, FH
+# rudder sign). These presets are Tripoli hulls but would take the
+# conventional-rudder branch there, so they are rejected up front by every
+# FH entry point (FhSimBridge, FhTabularModel) via require_fh_supported().
+# UGentSurrogate and UAntwerpSurrogate reject them through their own checks.
+FOSSEN_ONLY_SHIP_MODELS = frozenset({ShipModel.TRIPOLI_38, ShipModel.TRIPOLI_45})
+
+
+def require_fh_supported(ship_model: ShipModel, where: str) -> None:
+    """
+    Fail fast if `ship_model` cannot be used with the FH simulator (yet).
+
+    Args:
+        ship_model: The ship model about to be used with FH.
+        where:      Name of the caller, for the error message.
+
+    Raises:
+        ValueError: If ship_model is in FOSSEN_ONLY_SHIP_MODELS.
+    """
+
+    if ship_model in FOSSEN_ONLY_SHIP_MODELS:
+        raise ValueError(
+            f"{where}: ShipModel.{ship_model.name} carries FH-identified Fossen coefficients but is "
+            f"not supported by the FH simulator code paths yet (they recognise the Tripoli hull as "
+            f"ShipModel.TRIPOLI only). Use it with Model.FOSSEN or Model.NOMOTO, or use "
+            f"ShipModel.TRIPOLI for FH."
+        )
 
 
 # FH "Fossen model" identification in full scale, dimensional values as

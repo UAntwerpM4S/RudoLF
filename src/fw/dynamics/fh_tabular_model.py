@@ -1,7 +1,7 @@
 import numpy as np
 
 from typing import Tuple, Optional
-from fw.ships.ship_factory import ShipModel
+from fw.ships.ship_factory import ShipModel, require_fh_supported
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
@@ -85,6 +85,11 @@ class FhTabularModel(DynamicsBase):
             fh_engine:  Initialized FH engine object exposing
                         ship_interface and math_model.
         """
+
+        # Also covers engines other than FhSimBridge (e.g. SyncSimBridge).
+        engine_ship_model = getattr(fh_engine, "ship_model", None)
+        if engine_ship_model is not None:
+            require_fh_supported(engine_ship_model, "FhTabularModel")
 
         self.ship_spec: ShipSpecifications = ship_spec
         self._engine = fh_engine

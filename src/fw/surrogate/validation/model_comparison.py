@@ -257,23 +257,11 @@ from fw.environments.ray_features import (
 # Fossen/UA_* (risking yet another subtly-wrong heading convention, as
 # happened in round 8), each model's multi-step trajectory is advanced via
 # the SAME ShipSimulator.integrate() the rest of the framework trains and
-# runs with. See generate_trajectories' own docstring for one caveat this
-# reuse inherits: ShipSimulator.integrate() only skips adding environmental
-# (wind/current) accelerations for `isinstance(dynamics, (FhTabularModel,
-# UAntwerpSurrogate))` -- and UAntwerpSurrogateTripoliClean/Confined/Full
-# subclass DynamicsBase directly, NOT UAntwerpSurrogate (confirmed via
-# grep), so that isinstance check does NOT exclude them. Harmless here only
-# because this script runs with wind=False/current=False throughout (see
-# EnvironmentModel.accelerations(), which then always returns (0.0, 0.0));
-# it would double-count environmental forces for these 3 classes (which
-# already have wind/current baked into their own trained predictions, see
-# module docstring NOTE) if this script -- or ship_simulator.py -- is ever
-# run with wind/current enabled. Flagging this for Walter rather than
-# silently patching ship_simulator.py, since that file lives outside this
-# script and a fix there needs his own sign-off.
-# [Consolidation] The UA_* models are now UAntwerpSurrogate instances, so the
-# isinstance check DOES exclude them from then on; with wind=False/
-# current=False throughout, as here, this changes nothing.
+# runs with. ShipSimulator.integrate() adds EnvironmentModel wind/current
+# accelerations only for models with models_own_wind_current = False
+# (Fossen, Nomoto, UGent, UA_clean, UA_confined); FH and UA_full model their
+# own. This script runs with wind=False/current=False throughout, so
+# EnvironmentModel contributes nothing here either way.
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.actuator_command import ActuatorCommand
 

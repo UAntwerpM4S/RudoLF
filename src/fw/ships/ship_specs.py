@@ -151,6 +151,8 @@ class ShipSpecifications:
     """
 
     def __post_init__(self):
+        """Validate I_z: positive or None (raises ValueError otherwise)."""
+
         # "not > 0" also rejects NaN
         if self.I_z is not None and not self.I_z > 0.0:
             raise ValueError(f"I_z must be positive or None, got {self.I_z}")
