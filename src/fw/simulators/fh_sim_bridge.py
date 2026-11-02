@@ -8,7 +8,7 @@ from fw.ships.ship_factory import ShipModel, require_fh_supported
 
 _logger = logging.getLogger(__name__)
 
-# FH installation root and user name for the default paths
+# FH installation root and username for the default paths
 try:
     simexe_path = os.environ['SIMEXE_REPO_FOLDER']
 except KeyError:

@@ -4,7 +4,7 @@ used by the dataset generator.
 
 With a MAP_CUTOFF_LINES entry for the depth contour, prints each detected
 cut-off run and saves cutoff_check.png with the configured lines (black
-dashed) and classified cut-off segments (red). Otherwise compares the
+dashed) and classified cut-off segments (red). Otherwise, compares the
 bounding-box heuristic over several edge tolerances, one panel each.
 
 Usage (from the folder you run the generator from, e.g. src):

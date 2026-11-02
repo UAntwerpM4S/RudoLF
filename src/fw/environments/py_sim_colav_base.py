@@ -210,7 +210,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
 
         # Per-encounter tracking. Each encounter adds a record to
         # _episode_encounters / _all_encounters (also used by the confusion
-        # matrix); "min_dist" is the closest centre-to-centre distance to any
+        # matrix); "min_dist" is the closest center-to-center distance to any
         # collision entity while the encounter was active. Records are finalized
         # when tracking ends, or on reset / terminal step mid-encounter.
         # "resolved": ended by the classifier's tracked -> None transition (TS out
@@ -269,6 +269,21 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._seg_starts: Optional[np.ndarray] = None
         self._seg_tangents: Optional[np.ndarray] = None
         self._seg_lengths: Optional[np.ndarray] = None
+
+        # Monotonic step counter over the env's lifetime (step_count resets at
+        # every checkpoint); only differences within an encounter are used.
+        self._episode_step: int = 0
+
+        # Path segment around the OS, captured in step() before the reward may
+        # advance the checkpoint; used for the collision side / CTE.
+        self._collision_segment_start: np.ndarray = np.zeros(2, dtype=np.float32)
+        self._collision_segment_end: np.ndarray = np.zeros(2, dtype=np.float32)
+
+        # Render state (reset per episode in env_specific_reset, artists created in render()).
+        self._passing_snapshot_artists: list = []
+        self.os_trail_history: list = []
+        self.ts_trail_history: list = []
+        self.ts_trails: list = []
 
         super().__init__(
             render_mode=render_mode,
@@ -396,7 +411,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
             )
             self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
             self.step_count += 1
-            self._episode_step = getattr(self, "_episode_step", 0) + 1
+            self._episode_step += 1
 
         # Capture the collision segment before the reward may advance the checkpoint.
         prev_idx = max(0, self.checkpoint_index - 1)
@@ -463,7 +478,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
                 # scale it by max_rudder_angle.
                 abs_rudder_rad = abs(float(self.performed_action[0]))
                 if abs_rudder_rad >= self._first_action_rudder_threshold_rad:
-                    self._current_encounter_first_action_step = getattr(self, "_episode_step", 0)
+                    self._current_encounter_first_action_step = self._episode_step
 
         self._on_entities_stepped()
 
@@ -636,7 +651,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._current_encounter_cri_count = 0
         # Uses the monotonic _episode_step, since step_count resets at every
         # checkpoint; time_to_first_action = (first_action - start) * time_step.
-        self._current_encounter_start_step = getattr(self, "_episode_step", 0)
+        self._current_encounter_start_step = self._episode_step
         self._current_encounter_first_action_step = None
         self._current_encounter_cte_sum = 0.0
         self._current_encounter_cte_count = 0
@@ -754,7 +769,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
 
     def _step_collision_entities(self) -> None:
         """
-        Advance the dynamic collision entities one step (activation, encounter behaviour, path following).
+        Advance the dynamic collision entities one step (activation, encounter behavior, path following).
         """
 
         if not getattr(self, "collision_entities", None):
@@ -789,19 +804,14 @@ class PySimColavBaseEnv(PySimBaseEnv):
                     if hasattr(entity, "path_speed"):
                         entity.path_speed = orig_speed
 
-            if getattr(entity, "entity_type", None) == "head-on":
-                 if active_ship_positions and not getattr(entity, "dodged", False):
-                     entity_pos = entity.get_position()
-                     min_dist = min(
-                         float(np.linalg.norm(entity_pos - os_pos))
-                         for os_pos in active_ship_positions
-                     )
-                     # if self.enable_headon_dodge and min_dist <= self.encounter_range / 2:
-                     #     entity.dodged = True
-                     #     dodge_angle = math.radians(20)
-                     #     entity.set_heading(entity.get_heading() - dodge_angle)
-                     #     entity.set_lateral_speed(0.0)
-                     #     entity.route_mode = None
+            # Head-on dodge is disabled. To re-enable, for a head-on entity that has
+            # not dodged yet, with min_dist = its distance to the nearest OS:
+            # if self.enable_headon_dodge and min_dist <= self.encounter_range / 2:
+            #     entity.dodged = True
+            #     dodge_angle = math.radians(20)
+            #     entity.set_heading(entity.get_heading() - dodge_angle)
+            #     entity.set_lateral_speed(0.0)
+            #     entity.route_mode = None
 
             if getattr(entity, "entity_type", "") in ("crossing-right", "crossing-left"):
                 if not getattr(entity, "crossing_activated", False) and active_ship_positions:
@@ -864,7 +874,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
 
     def _advance_entity_along_checkpoints(self, entity, dt: float) -> None:
         """
-        Move an entity along the checkpoint path, honouring its path direction
+        Move an entity along the checkpoint path, honoring its path direction
         and lateral (starboard) offset; marks route_finished at the path end.
 
         Args:
@@ -985,7 +995,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._episode_encounters = []
         self._prev_tracked_ts = None
 
-        for artists in getattr(self, "_passing_snapshot_artists", []):
+        for artists in self._passing_snapshot_artists:
             for artist in artists:
                 artist.remove()
         self._passing_snapshot_artists = []
@@ -996,7 +1006,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self.scenario_builder.on_reset()
 
         self.os_trail_history = []
-        for trail_line in getattr(self, "ts_trails", []):
+        for trail_line in self.ts_trails:
             trail_line.remove()
         self.ts_trail_history = []
         self.ts_trails = []
@@ -1058,7 +1068,7 @@ class PySimColavBaseEnv(PySimBaseEnv):
         for patch in self._collision_entity_patches:
             try:
                 patch.remove()
-            except Exception:
+            except (ValueError, NotImplementedError, AttributeError):   # already removed / not removable
                 pass
         self._collision_entity_patches = []
 

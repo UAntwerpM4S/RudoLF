@@ -269,9 +269,11 @@ def true_wind(app_speed: np.ndarray, app_dir: np.ndarray, heading: np.ndarray,
     stored apparent wind and the ship's motion.
 
     Args:
-        app_speed, app_dir: Apparent wind [m/s, rad off the bow, + = from starboard].
-        heading: Ship heading [rad, CCW from East] (framework convention).
-        u, v: Surge and sway [m/s, sway port positive].
+        app_speed:  Apparent wind [m/s].
+        app_dir:    Apparent wind [rad off the bow, + = from starboard].
+        heading:    Ship heading [rad, CCW from East] (framework convention).
+        u:          Surge [m/s].
+        v:          Sway [m/s, sway port positive].
     """
 
     # (ahead, starboard) components of the "comes from" vector: apparent = true + (u, -v).
@@ -613,6 +615,9 @@ def save_figures(cov: Coverage, title: str, out_dir: Path, dpi: int) -> List[Pat
 
     # Overview slide (16:9).
     fig = plt.figure(figsize=(16.0, 9.0), facecolor=SURFACE)
+    current_ax = None
+    wind_ax = None
+
     if cov.has_env:
         grid = fig.add_gridspec(2, 4, hspace=0.62, wspace=0.42, left=0.05, right=0.97, top=0.86, bottom=0.05)
         slots = {"ukc": grid[0, 0], "wind_speed": grid[0, 1], "current_speed": grid[0, 2],
@@ -645,7 +650,7 @@ def save_figures(cov: Coverage, title: str, out_dir: Path, dpi: int) -> List[Pat
 # ------------------------------------------------------------------ main
 def default_out_dir(csv_file: Path) -> Path:
     """
-    <csv folder>/<csv stem>_coverage (".csv.gz" counts as one suffix).
+    <csv folder>/<csv stem>_coverage ('.csv.gz' counts as one suffix).
     """
 
     stem = csv_file.name[:-len(".csv.gz")] if csv_file.name.endswith(".csv.gz") else csv_file.stem

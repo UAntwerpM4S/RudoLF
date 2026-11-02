@@ -26,6 +26,16 @@ from airsim.communication.coord_transform import CoordTransform
 _THIS_DIR = Path(__file__).resolve().parent
 _CONFIG_DIR = _SRC_DIR / "airsim" / "config"
 _ENVIRONMENTS_DIR = _SRC_DIR / "fw" / "environments"
+_PLOT_CHUNK_SIZE = 500   # points per simPlotLineStrip call (chunks overlap by one point)
+
+
+def _as_xy(value) -> tuple[float, float]:
+    """
+    A 2-element sequence (e.g. a JSON list) as an (x, y) tuple of floats.
+    """
+
+    x, y = value
+    return float(x), float(y)
 
 def _load_trajectory_endpoints() -> tuple:
     """
@@ -84,7 +94,7 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
         choice: User-selected calibration mode ("1"-"4").
 
     Returns:
-        (framework_A, framework_B, ue5_A, ue5_B, mirror_x, mirror_y, offset_x, offset_y).
+        (framework_a, framework_b, ue5_a, ue5_b, mirror_x, mirror_y, offset_x, offset_y).
     """
 
     if choice in ["1", "4", "5"] and has_existing:
@@ -94,24 +104,24 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
 
         drift = _detect_origin_drift(client, saved)
 
-        framework_A = np.array(saved["framework_origin"])
-        ue5_A = np.array(saved["airsim_origin"]) + drift
+        framework_a = np.array(saved["framework_origin"])
+        ue5_a = np.array(saved["airsim_origin"]) + drift
         mirror_x = saved.get("mirror_x", False)
         mirror_y = saved.get("mirror_y", False)
 
         if "framework_endpoint" in saved and "airsim_endpoint" in saved:
-            framework_B = np.array(saved["framework_endpoint"])
-            ue5_B = np.array(saved["airsim_endpoint"]) + drift
+            framework_b = np.array(saved["framework_endpoint"])
+            ue5_b = np.array(saved["airsim_endpoint"]) + drift
         else:
-            framework_B = traj_end
+            framework_b = traj_end
             corrected = dict(saved)
-            corrected["airsim_origin"] = ue5_A.tolist()
+            corrected["airsim_origin"] = ue5_a.tolist()
             coord = CoordTransform(corrected)
-            ux, uy = coord.framework_to_airsim_2d(framework_B[0], framework_B[1])
-            ue5_B = np.array([ux, uy])
+            ux, uy = coord.framework_to_airsim_2d(framework_b[0], framework_b[1])
+            ue5_b = np.array([ux, uy])
 
         print(f"\n  Re-using saved calibration from: {cal_path}")
-        return framework_A, framework_B, ue5_A, ue5_B, mirror_x, mirror_y, 0.0, 0.0
+        return framework_a, framework_b, ue5_a, ue5_b, mirror_x, mirror_y, 0.0, 0.0
 
     # Ask for Framework reference points
     print()
@@ -121,11 +131,11 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
         ay = float(input("Framework point A - y: "))
         bx = float(input("Framework point B - x: "))
         by = float(input("Framework point B - y: "))
-        framework_A = np.array([ax, ay])
-        framework_B = np.array([bx, by])
+        framework_a = np.array([ax, ay])
+        framework_b = np.array([bx, by])
     else:
-        framework_A = traj_start
-        framework_B = traj_end
+        framework_a = traj_start
+        framework_b = traj_end
 
     # Get AirSim points
     if choice == "3":
@@ -134,23 +144,23 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
         uay = float(input("AirSim point A - y: "))
         ubx = float(input("AirSim point B - x: "))
         uby = float(input("AirSim point B - y: "))
-        ue5_A = np.array([uax, uay])
-        ue5_B = np.array([ubx, uby])
+        ue5_a = np.array([uax, uay])
+        ue5_b = np.array([ubx, uby])
     else:
         print()
         print("-" * 40)
         print("Drive/place the vehicle at the START of the route in UE5.")
         input("Press Enter when ready...")
-        pose_A = client.simGetVehiclePose()
-        ue5_A = np.array([pose_A.position.x_val, pose_A.position.y_val])
-        print(f"  UE5 point A measured: x={ue5_A[0]:.2f}, y={ue5_A[1]:.2f}")
+        pose_a = client.simGetVehiclePose()
+        ue5_a = np.array([pose_a.position.x_val, pose_a.position.y_val])
+        print(f"  UE5 point A measured: x={ue5_a[0]:.2f}, y={ue5_a[1]:.2f}")
 
         print()
         print("Now drive/place the vehicle at the END of the route in UE5.")
         input("Press Enter when ready...")
-        pose_B = client.simGetVehiclePose()
-        ue5_B = np.array([pose_B.position.x_val, pose_B.position.y_val])
-        print(f"  UE5 point B measured: x={ue5_B[0]:.2f}, y={ue5_B[1]:.2f}")
+        pose_b = client.simGetVehiclePose()
+        ue5_b = np.array([pose_b.position.x_val, pose_b.position.y_val])
+        print(f"  UE5 point B measured: x={ue5_b[0]:.2f}, y={ue5_b[1]:.2f}")
 
     # Mirror and offset
     print()
@@ -164,20 +174,20 @@ def _collect_reference_points(client, traj_start, traj_end, has_existing, choice
     offset_x = float(input("Manual X offset (e.g. 0.0): ") or 0.0)
     offset_y = float(input("Manual Y offset (e.g. 0.0): ") or 0.0)
 
-    return framework_A, framework_B, ue5_A, ue5_B, mirror_x, mirror_y, offset_x, offset_y
+    return framework_a, framework_b, ue5_a, ue5_b, mirror_x, mirror_y, offset_x, offset_y
 
 
-def _compute_calibration(framework_A, framework_B, ue5_A, ue5_B,
+def _compute_calibration(framework_a, framework_b, ue5_a, ue5_b,
                           mirror_x, mirror_y, offset_x, offset_y,
                           spawn_position) -> dict:
     """
     Compute the calibration dictionary from two reference-point pairs.
 
     Args:
-        framework_A: First reference point in Framework coordinates.
-        framework_B: Second reference point in Framework coordinates.
-        ue5_A: First reference point in AirSim / UE5 coordinates.
-        ue5_B: Second reference point in AirSim / UE5 coordinates.
+        framework_a: First reference point in Framework coordinates.
+        framework_b: Second reference point in Framework coordinates.
+        ue5_a: First reference point in AirSim / UE5 coordinates.
+        ue5_b: Second reference point in AirSim / UE5 coordinates.
         mirror_x: Whether the X-axis is flipped.
         mirror_y: Whether the Y-axis is flipped.
         offset_x: Manual X offset in metres.
@@ -188,32 +198,32 @@ def _compute_calibration(framework_A, framework_B, ue5_A, ue5_B,
         Dictionary to write to calibration.json.
     """
 
-    framework_dist = np.linalg.norm(framework_B - framework_A)
-    ue5_dist = np.linalg.norm(ue5_B - ue5_A)
+    framework_dist = np.linalg.norm(framework_b - framework_a)
+    ue5_dist = np.linalg.norm(ue5_b - ue5_a)
     scale = ue5_dist / framework_dist
 
-    dx_f = framework_B[0] - framework_A[0]
-    dy_f = framework_B[1] - framework_A[1]
+    dx_f = framework_b[0] - framework_a[0]
+    dy_f = framework_b[1] - framework_a[1]
     if mirror_x:
         dx_f = -dx_f
     if mirror_y:
         dy_f = -dy_f
 
     framework_angle = np.arctan2(dy_f, dx_f)
-    ue5_angle = np.arctan2(ue5_B[1] - ue5_A[1], ue5_B[0] - ue5_A[0])
+    ue5_angle = np.arctan2(ue5_b[1] - ue5_a[1], ue5_b[0] - ue5_a[0])
     rotation = ue5_angle - framework_angle
 
-    ue5_A_shifted = ue5_A + np.array([offset_x, offset_y])
+    ue5_a_shifted = ue5_a + np.array([offset_x, offset_y])
 
     return {
         "scale": float(scale),
         "rotation": float(rotation),
         "mirror_x": mirror_x,
         "mirror_y": mirror_y,
-        "framework_origin": framework_A.tolist(),
-        "airsim_origin": ue5_A_shifted.tolist(),
-        "framework_endpoint": framework_B.tolist(),
-        "airsim_endpoint": ue5_B.tolist(),
+        "framework_origin": framework_a.tolist(),
+        "airsim_origin": ue5_a_shifted.tolist(),
+        "framework_endpoint": framework_b.tolist(),
+        "airsim_endpoint": ue5_b.tolist(),
         "spawn_position": spawn_position.tolist(),
     }
 
@@ -221,10 +231,10 @@ def _compute_calibration(framework_A, framework_B, ue5_A, ue5_B,
 def _draw_visualization(
     client,
     coord,
-    framework_A,
-    framework_B,
-    ue5_A,
-    ue5_B,
+    framework_a,
+    framework_b,
+    ue5_a,
+    ue5_b,
     ridge_overlay_offset: tuple[float, float] = (0.0, 0.0),
     ridge_overlay_rot_z_deg: float = 0.0,
     ship_pos: tuple[float, float] | None = None,
@@ -238,10 +248,15 @@ def _draw_visualization(
     Args:
         client: Active cosysairsim.CarClient.
         coord: CoordTransform with the current calibration.
-        framework_A: First Framework reference point.
-        framework_B: Second Framework reference point.
-        ue5_A: First AirSim reference point.
-        ue5_B: Second AirSim reference point.
+        framework_a: First Framework reference point.
+        framework_b: Second Framework reference point.
+        ue5_a: First AirSim reference point.
+        ue5_b: Second AirSim reference point.
+        ridge_overlay_offset: (dx, dy) shift [m] applied to the ridge overlay only.
+        ridge_overlay_rot_z_deg: Z rotation [deg] of the ridge overlay only, about ue5_a.
+        ship_pos: Framework start position (blue marker, trajectory slicing); default (2245, -47).
+        target_pos: Framework target position (red marker); default framework_b.
+        duration: Marker lifetime [s].
     """
 
     import cosysairsim as airsim
@@ -252,18 +267,18 @@ def _draw_visualization(
     ridge_rot_z_rad = math.radians(ridge_overlay_rot_z_deg)
     cos_rz = math.cos(ridge_rot_z_rad)
     sin_rz = math.sin(ridge_rot_z_rad)
-    ridge_pivot_x = float(ue5_A[0])
-    ridge_pivot_y = float(ue5_A[1])
+    ridge_pivot_x = float(ue5_a[0])
+    ridge_pivot_y = float(ue5_a[1])
 
     client.simFlushPersistentMarkers()
     time.sleep(0.3)
 
-    check_A = coord.framework_to_airsim_2d(*framework_A)
-    check_B = coord.framework_to_airsim_2d(*framework_B)
-    err_A = np.linalg.norm(np.array(check_A) - ue5_A)
-    err_B = np.linalg.norm(np.array(check_B) - ue5_B)
-    print(f"\n  Verification A: ({check_A[0]:.2f}, {check_A[1]:.2f}) vs ({ue5_A[0]:.2f}, {ue5_A[1]:.2f}) - error: {err_A:.4f}")
-    print(f"  Verification B: ({check_B[0]:.2f}, {check_B[1]:.2f}) vs ({ue5_B[0]:.2f}, {ue5_B[1]:.2f}) - error: {err_B:.4f}")
+    check_a = coord.framework_to_airsim_2d(*framework_a)
+    check_b = coord.framework_to_airsim_2d(*framework_b)
+    err_a = np.linalg.norm(np.array(check_a) - ue5_a)
+    err_b = np.linalg.norm(np.array(check_b) - ue5_b)
+    print(f"\n  Verification A: ({check_a[0]:.2f}, {check_a[1]:.2f}) vs ({ue5_a[0]:.2f}, {ue5_a[1]:.2f}) - error: {err_a:.4f}")
+    print(f"  Verification B: ({check_b[0]:.2f}, {check_b[1]:.2f}) vs ({ue5_b[0]:.2f}, {ue5_b[1]:.2f}) - error: {err_b:.4f}")
 
     # Ridges: river banks (overall map) in green, navigation channel in red.
     print("\nDrawing Framework polygons in UE5 for visual verification...")
@@ -278,22 +293,21 @@ def _draw_visualization(
 
         points_3d = []
         for p in polygon[::2]:
-            ux, uy = coord.framework_to_airsim_2d(p[0], p[1])
-            ux += ridge_dx
-            uy += ridge_dy
+            rx, ry = coord.framework_to_airsim_2d(p[0], p[1])
+            rx += ridge_dx
+            ry += ridge_dy
             # Optional overlay-only Z-axis rotation for ridge finetuning (top-down orientation).
-            dx_rel = ux - ridge_pivot_x
-            dy_rel = uy - ridge_pivot_y
+            dx_rel = rx - ridge_pivot_x
+            dy_rel = ry - ridge_pivot_y
             ux_rot = ridge_pivot_x + (cos_rz * dx_rel - sin_rz * dy_rel)
             uy_rot = ridge_pivot_y + (sin_rz * dx_rel + cos_rz * dy_rel)
             points_3d.append(airsim.Vector3r(ux_rot, uy_rot, z))
 
-        chunk_size = 500
-        for i in range(0, len(points_3d), chunk_size - 1):
-            chunk = points_3d[i:i + chunk_size]
-            if len(chunk) > 1:
+        for start in range(0, len(points_3d), _PLOT_CHUNK_SIZE - 1):
+            ridge_chunk = points_3d[start:start + _PLOT_CHUNK_SIZE]
+            if len(ridge_chunk) > 1:
                 client.simPlotLineStrip(
-                    chunk,
+                    ridge_chunk,
                     color_rgba=color_rgba,
                     thickness=thickness,
                     duration=duration,
@@ -302,7 +316,6 @@ def _draw_visualization(
 
     _plot_polygon_ridges("env_Sche_no_scale.csv", color_rgba=[0.75, 1.0, 0.75, 1.0], thickness=56.0)
     _plot_polygon_ridges("env_Sche_250cm_no_scale.csv", color_rgba=[1.0, 0.3, 0.3, 1.0], thickness=56.0)
-    chunk_size = 500
 
     # Draw trajectory (yellow)
     route_start = np.array(
@@ -321,8 +334,8 @@ def _draw_visualization(
         ux, uy = coord.framework_to_airsim_2d(p[0], p[1])
         traj_points.append(airsim.Vector3r(ux, uy, overlay_z))
 
-    for i in range(0, len(traj_points), chunk_size - 1):
-        chunk = traj_points[i:i + chunk_size]
+    for i in range(0, len(traj_points), _PLOT_CHUNK_SIZE - 1):
+        chunk = traj_points[i:i + _PLOT_CHUNK_SIZE]
         if len(chunk) > 1:
             client.simPlotLineStrip(
                 chunk,
@@ -335,7 +348,7 @@ def _draw_visualization(
     # Draw start (blue) and target (red) dots
     marker_start = route_start
     marker_target = np.array(
-        target_pos if target_pos is not None else framework_B,
+        target_pos if target_pos is not None else framework_b,
         dtype=np.float64,
     )
     start_ux, start_uy = coord.framework_to_airsim_2d(marker_start[0], marker_start[1])
@@ -386,6 +399,7 @@ def load_saved_calibration_reference(
         ship_pos: Optional Framework start position used for the blue marker and
             trajectory slicing.
         target_pos: Optional Framework target position used for the red marker.
+        duration: Marker lifetime [s] when draw_reference is set.
 
     Returns:
         (coord, config): drift-corrected transform and calibration dictionary.
@@ -398,31 +412,31 @@ def load_saved_calibration_reference(
     drift = _detect_origin_drift(client, saved)
     config = dict(saved)
 
-    ue5_A = np.array(saved["airsim_origin"], dtype=np.float64) + drift
-    framework_A = np.array(saved["framework_origin"], dtype=np.float64)
-    config["airsim_origin"] = ue5_A.tolist()
+    ue5_a = np.array(saved["airsim_origin"], dtype=np.float64) + drift
+    framework_a = np.array(saved["framework_origin"], dtype=np.float64)
+    config["airsim_origin"] = ue5_a.tolist()
 
     _, traj_end = _load_trajectory_endpoints()
-    framework_B = np.array(saved.get("framework_endpoint", traj_end), dtype=np.float64)
+    framework_b = np.array(saved.get("framework_endpoint", traj_end), dtype=np.float64)
     if "airsim_endpoint" in saved:
-        ue5_B = np.array(saved["airsim_endpoint"], dtype=np.float64) + drift
+        ue5_b = np.array(saved["airsim_endpoint"], dtype=np.float64) + drift
     else:
         preview = CoordTransform(config)
-        ux, uy = preview.framework_to_airsim_2d(framework_B[0], framework_B[1])
-        ue5_B = np.array([ux, uy], dtype=np.float64)
-    config["airsim_endpoint"] = ue5_B.tolist()
+        ux, uy = preview.framework_to_airsim_2d(framework_b[0], framework_b[1])
+        ue5_b = np.array([ux, uy], dtype=np.float64)
+    config["airsim_endpoint"] = ue5_b.tolist()
 
     coord = CoordTransform(config)
     if draw_reference:
-        ridge_overlay_offset = tuple(config.get("ridge_overlay_offset", [0.0, 0.0]))
+        ridge_overlay_offset = _as_xy(config.get("ridge_overlay_offset", [0.0, 0.0]))
         ridge_overlay_rot_z_deg = float(config.get("ridge_overlay_rot_z_deg", 0.0))
         _draw_visualization(
             client,
             coord,
-            framework_A,
-            framework_B,
-            ue5_A,
-            ue5_B,
+            framework_a,
+            framework_b,
+            ue5_a,
+            ue5_b,
             ridge_overlay_offset=ridge_overlay_offset,
             ridge_overlay_rot_z_deg=ridge_overlay_rot_z_deg,
             ship_pos=ship_pos,
@@ -472,22 +486,22 @@ def run_calibration() -> None:
 
     choice = input(f"Choose [{'1/4/5/' if has_existing else ''}2/3]: ").strip()
 
-    framework_A, framework_B, ue5_A, ue5_B, mirror_x, mirror_y, offset_x, offset_y = (
+    framework_a, framework_b, ue5_a, ue5_b, mirror_x, mirror_y, offset_x, offset_y = (
         _collect_reference_points(client, traj_start, traj_end, has_existing, choice)
     )
 
     if choice in ["1", "4", "5"] and has_existing:
         with open(existing_cal, "r") as f:
             config = json.load(f)
-        drift = ue5_A - np.array(config["airsim_origin"])
+        drift = ue5_a - np.array(config["airsim_origin"])
         if np.linalg.norm(drift) > 0.01:
-            config["airsim_origin"] = ue5_A.tolist()
+            config["airsim_origin"] = ue5_a.tolist()
             if "airsim_endpoint" in config:
-                config["airsim_endpoint"] = ue5_B.tolist()
+                config["airsim_endpoint"] = ue5_b.tolist()
             config["spawn_position"] = spawn_position.tolist()
     else:
         config = _compute_calibration(
-            framework_A, framework_B, ue5_A, ue5_B,
+            framework_a, framework_b, ue5_a, ue5_b,
             mirror_x, mirror_y, offset_x, offset_y,
             spawn_position,
         )
@@ -515,11 +529,11 @@ def run_calibration() -> None:
         _draw_visualization(
             client,
             coord,
-            framework_A,
-            framework_B,
-            ue5_A,
-            ue5_B,
-            ridge_overlay_offset=tuple(config.get("ridge_overlay_offset", [0.0, 0.0])),
+            framework_a,
+            framework_b,
+            ue5_a,
+            ue5_b,
+            ridge_overlay_offset=_as_xy(config.get("ridge_overlay_offset", [0.0, 0.0])),
             ridge_overlay_rot_z_deg=float(config.get("ridge_overlay_rot_z_deg", 0.0)),
         )
 
@@ -579,7 +593,7 @@ def run_calibration() -> None:
                     config["ridge_overlay_offset"][0] += dx
                     config["ridge_overlay_offset"][1] += dy
                     print(f"\nApplied ridge-only shift: +{dx} X, +{dy} Y. Ideal path remains fixed. Redrawing...")
-        except Exception:
+        except ValueError:   # wrong number of values or not a number
             print("\nInvalid format. Use 'X, Y' (e.g. '10.5, -3.2') or 'RZ, deg' (e.g. 'RZ, 2.5')")
 
 

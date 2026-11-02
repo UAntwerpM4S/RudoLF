@@ -37,12 +37,20 @@ LOW_WIND_LIMITS = (0.5, 1.0, 2.0, 3.0, 5.0)          # m/s, true wind
 LOW_CURRENT_LIMITS = (0.01, 0.05, 0.1, 0.2, 0.5)     # m/s
 
 
-def _wrap_deg(a):
+def _wrap_deg(a: np.ndarray) -> np.ndarray:
     """
     Wrap angle(s) in degrees to [-180, 180).
     """
 
     return (a + 180.0) % 360.0 - 180.0
+
+
+def _share_pct(mask) -> float:
+    """
+    Share of True values in `mask` [%] (as a Python float).
+    """
+
+    return 100.0 * float(np.mean(mask))
 
 
 def main():
@@ -84,7 +92,7 @@ def main():
     # 2. balance
     print("\n== 2. Starboard (>0 deg) vs port (<0 deg), all rows ==")
     for label, d, s in (("apparent", app_deg, ws), ("true (reconstructed)", true_deg, true_speed)):
-        port = d < 0.0
+        port = np.less(d, 0.0)            # boolean array
         p, q = int(port.sum()), int((~port).sum())
         print(f"{label:22s}: port {p:>12,} rows (mean {s[port].mean() if p else float('nan'):5.2f} m/s) | "
               f"starboard {q:>12,} rows (mean {s[~port].mean() if q else float('nan'):5.2f} m/s) | "
@@ -97,8 +105,8 @@ def main():
     ep_median = pd.Series(true_speed).groupby(df["ep"].to_numpy()).median()
     print("Share below limit (episodes counted by their median true wind):")
     for lim in LOW_WIND_LIMITS:
-        print(f"  < {lim:3g} m/s: {100.0 * np.mean(true_speed < lim):6.2f}% of rows, "
-              f"{100.0 * np.mean(ep_median < lim):6.2f}% of episodes")
+        print(f"  < {lim:3g} m/s: {_share_pct(true_speed < lim):6.2f}% of rows, "
+              f"{_share_pct(ep_median < lim):6.2f}% of episodes")
     print("Episode-median true wind percentiles: " + ", ".join(
         f"p{q}={np.percentile(ep_median, q):.2f}" for q in (1, 5, 10, 50, 90, 99)) + " m/s")
 
@@ -117,8 +125,8 @@ def main():
                                             for q in (0, 1, 5, 10, 25, 50, 75, 90, 99, 100)) + " m/s")
     print("Share below limit (episodes counted by their median current):")
     for lim in LOW_CURRENT_LIMITS:
-        print(f"  < {lim:4g} m/s: {100.0 * np.mean(cs < lim):6.2f}% of rows, "
-              f"{100.0 * np.mean(ep_cur < lim):6.2f}% of episodes")
+        print(f"  < {lim:4g} m/s: {_share_pct(cs < lim):6.2f}% of rows, "
+              f"{_share_pct(ep_cur < lim):6.2f}% of episodes")
     rel = _wrap_deg(np.degrees(df["cd"].to_numpy() - df["hdg"].to_numpy()))
     print("Current direction relative to heading (deg, 0 = flowing ahead, + = towards port):")
     h = np.histogram(rel, bins=np.arange(-180.0, 181.0, 45.0))[0]

@@ -281,7 +281,7 @@ class AgentManagerSimple:
     @contextmanager
     def rendering(self, env):
         """
-        Context manager: set env.render_mode to 'human' and restore it afterwards
+        Context manager: set env.render_mode to 'human' and restore it afterward
         (no-op if env has no render_mode).
         """
 
@@ -304,7 +304,7 @@ class AgentManagerSimple:
         Args:
             stop_condition (StopCondition): When to stop training.
             dispose_env (bool): Dispose the FH Simulator bridge (if any)
-                afterwards, also on exceptions. Pass False when
+                afterward, also on exceptions. Pass False when
                 visualize_trained_agent() follows on the same environment, to
                 avoid a needless re-initialization; it disposes itself.
 
@@ -343,7 +343,7 @@ class AgentManagerSimple:
             env_color_index (int): Environment color index (unused here).
             airsim_bridge (AirSimBridge, optional): Connected Cosys-AirSim bridge;
                 the ship pose is mirrored to UE5 and the bridge is disconnected
-                afterwards.
+                afterward.
             return_summary (bool): Return average/best/worst reward per environment.
             show_plots (bool): Show the plot window.
 

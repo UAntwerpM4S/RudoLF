@@ -20,12 +20,20 @@ import gymnasium as gym
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 try:
+    from msgpackrpc.error import RPCError as _MsgpackRPCError
     from msgpackrpc.error import TransportError as _MsgpackTransportError
-except Exception:  # pragma: no cover - optional dependency fallback
-    class _MsgpackTransportError(Exception):
+except ImportError:  # pragma: no cover - optional dependency fallback
+    class _MsgpackRPCError(Exception):
+        """
+        Fallback RPCError type when msgpackrpc is unavailable.
+        """
+
+        pass
+
+    class _MsgpackTransportError(_MsgpackRPCError):
         """
         Fallback TransportError type when msgpackrpc is unavailable.
         """
@@ -165,6 +173,9 @@ _AIRSIM_READ_EXCEPTIONS = (
     _MsgpackTransportError,
 )
 _AIRSIM_DECODE_EXCEPTIONS = (AttributeError, TypeError, ValueError)
+# Best-effort AirSim commands (reset, pause, kinematics, disconnect): the read
+# errors plus any msgpack-rpc error the server reports for the call.
+_AIRSIM_COMMAND_EXCEPTIONS = (*_AIRSIM_READ_EXCEPTIONS, _MsgpackRPCError)
 
 
 def normalize_navigation_state(
@@ -229,13 +240,36 @@ def _safe_load_csv(path: Path, fallback: np.ndarray) -> np.ndarray:
 
     try:
         data = np.loadtxt(path, delimiter=",", skiprows=1)
-    except Exception:
+    except (OSError, ValueError):   # missing / unreadable file or unparsable content
         return np.asarray(fallback, dtype=np.float32)
 
     data = np.asarray(data, dtype=np.float32)
     if data.ndim != 2 or data.shape[1] != 2 or len(data) == 0:
         return np.asarray(fallback, dtype=np.float32)
     return data
+
+
+def _telemetry_float(value: Any) -> float:
+    """
+    A bridge telemetry value as float; raises TypeError/ValueError if it is missing (None) or not numeric.
+    """
+
+    return float(value)
+
+
+def _settled_pose_event_fields(pose: Optional[dict[str, float]]) -> dict[str, Optional[float]]:
+    """
+    airsim_x/y/z and airsim_yaw_deg of a settled spawn pose for a run event (all None without a pose).
+    """
+
+    if pose is None:
+        return {"airsim_x": None, "airsim_y": None, "airsim_z": None, "airsim_yaw_deg": None}
+    return {
+        "airsim_x": float(pose["x"]),
+        "airsim_y": float(pose["y"]),
+        "airsim_z": float(pose["z"]),
+        "airsim_yaw_deg": float(math.degrees(float(pose["yaw"]))),
+    }
 
 
 def _calculate_perpendicular_lines(
@@ -249,25 +283,25 @@ def _calculate_perpendicular_lines(
     if not checkpoints:
         return []
 
-    def _tangent_at(index: int) -> np.ndarray:
+    def _tangent_at(cp_idx: int) -> np.ndarray:
         """
         Return a normalized local path tangent vector at a checkpoint index.
         """
 
         if len(checkpoints) == 1:
             return np.array([1.0, 0.0], dtype=np.float32)
-        if index == 0:
-            tangent = checkpoints[1]["pos"] - checkpoints[0]["pos"]
-        elif index == len(checkpoints) - 1:
-            tangent = checkpoints[-1]["pos"] - checkpoints[-2]["pos"]
+        if cp_idx == 0:
+            direction = checkpoints[1]["pos"] - checkpoints[0]["pos"]
+        elif cp_idx == len(checkpoints) - 1:
+            direction = checkpoints[-1]["pos"] - checkpoints[-2]["pos"]
         else:
-            tangent = 0.5 * (
-                checkpoints[index + 1]["pos"] - checkpoints[index - 1]["pos"]
+            direction = 0.5 * (
+                checkpoints[cp_idx + 1]["pos"] - checkpoints[cp_idx - 1]["pos"]
             )
-        norm = float(np.linalg.norm(tangent))
+        norm = float(np.linalg.norm(direction))
         if norm <= 1e-9:
             return np.array([1.0, 0.0], dtype=np.float32)
-        return (tangent / norm).astype(np.float32)
+        return (direction / norm).astype(np.float32)
 
     lines: list[tuple[np.ndarray, np.ndarray]] = []
     for index, checkpoint in enumerate(checkpoints):
@@ -629,7 +663,7 @@ class AirSimEnv(BaseEnv):
         if self._world_prepared and self.reset_mode == _RESET_MODE_BRIDGE_RESET:
             try:
                 self.bridge.reset()
-            except Exception:
+            except _AIRSIM_COMMAND_EXCEPTIONS:
                 logger.debug("AirSim reset failed during episode reset.", exc_info=True)
 
         self.bridge.set_simulation_speed(self.simulation_speed)
@@ -930,7 +964,7 @@ class AirSimEnv(BaseEnv):
         try:
             if getattr(self, "bridge", None) is not None:
                 self.bridge.disconnect()
-        except Exception:
+        except _AIRSIM_COMMAND_EXCEPTIONS:
             logger.debug("AirSimEnv close() swallowed a bridge disconnect error.", exc_info=True)
 
     def _prepare_world_if_needed(self) -> None:
@@ -951,14 +985,7 @@ class AirSimEnv(BaseEnv):
                     "world_loaded",
                     save_slot=self.save_slot,
                     load_duration_s=float(time.perf_counter() - load_started_at),
-                    airsim_x=float(settled_pose["x"]) if settled_pose is not None else None,
-                    airsim_y=float(settled_pose["y"]) if settled_pose is not None else None,
-                    airsim_z=float(settled_pose["z"]) if settled_pose is not None else None,
-                    airsim_yaw_deg=(
-                        float(math.degrees(float(settled_pose["yaw"])))
-                        if settled_pose is not None
-                        else None
-                    ),
+                    **_settled_pose_event_fields(settled_pose),
                 )
             except Exception as exc:
                 logger.warning("Could not load AirSim save slot '%s': %s", self.save_slot, exc)
@@ -1237,7 +1264,7 @@ class AirSimEnv(BaseEnv):
                 preserve_current_z=False,
                 preserve_roll_pitch=False,
             )
-        except Exception:
+        except _AIRSIM_COMMAND_EXCEPTIONS:
             logger.debug("Could not enforce reset zero-velocity state via kinematics.", exc_info=True)
 
         self._apply_parked_controls()
@@ -1249,7 +1276,7 @@ class AirSimEnv(BaseEnv):
 
         try:
             self.bridge.set_pause(bool(is_paused))
-        except Exception:
+        except _AIRSIM_COMMAND_EXCEPTIONS:
             logger.debug("Could not change AirSim pause mode.", exc_info=True)
 
     def _advance_simulation(self) -> float:
@@ -1297,32 +1324,32 @@ class AirSimEnv(BaseEnv):
         signature: dict[str, float | int] = {}
         try:
             state = self.bridge.get_state()
-        except Exception:
+        except _AIRSIM_READ_EXCEPTIONS:
             state = None
 
         if isinstance(state, dict) and not bool(state.get("state_read_failed")):
             try:
                 signature["timestamp"] = int(state.get("timestamp", 0) or 0)
-                signature["pos_x"] = float(state["pos_x"])
-                signature["pos_y"] = float(state["pos_y"])
-                signature["yaw"] = float(state["yaw"])
+                signature["pos_x"] = _telemetry_float(state["pos_x"])
+                signature["pos_y"] = _telemetry_float(state["pos_y"])
+                signature["yaw"] = _telemetry_float(state["yaw"])
             except (KeyError, TypeError, ValueError):
                 signature.clear()
 
         try:
             pose = self.bridge.get_vehicle_pose()
-        except Exception:
+        except _AIRSIM_READ_EXCEPTIONS:
             pose = None
 
         if pose is not None:
             try:
                 signature["pose_x"] = float(pose.position.x_val)
                 signature["pose_y"] = float(pose.position.y_val)
-            except Exception:
+            except _AIRSIM_DECODE_EXCEPTIONS:
                 pass
             try:
                 signature["pose_yaw"] = float(yaw_from_quaternion(pose.orientation))
-            except Exception:
+            except _AIRSIM_DECODE_EXCEPTIONS:
                 pass
 
         return signature or None
@@ -1377,7 +1404,6 @@ class AirSimEnv(BaseEnv):
         airsim_x: float | None = None
         airsim_y: float | None = None
         airsim_yaw: float | None = None
-        pose = None
         try:
             pose = self.bridge.get_vehicle_pose()
         except _AIRSIM_READ_EXCEPTIONS:
@@ -1876,7 +1902,8 @@ class AirSimEnv(BaseEnv):
             )
         builder = getattr(self, builder_name)
         observation = builder()
-        return np.clip(observation, self.observation_space.low, self.observation_space.high)
+        box = cast(gym.spaces.Box, self.observation_space)
+        return np.clip(observation, box.low, box.high)
 
     def _build_route_relative_car_observation(self) -> np.ndarray:
         """
@@ -2363,8 +2390,8 @@ class AirSimEnv(BaseEnv):
         segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
         return np.concatenate([[0.0], np.cumsum(segment_lengths)]).astype(np.float32)
 
+    @staticmethod
     def _build_checkpoints(
-        self,
         route_points: np.ndarray,
         cumulative_distances: np.ndarray,
     ) -> list[dict[str, Any]]:

@@ -92,7 +92,7 @@ def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
 
 def test_main_with_airsim_model_visualisation_exits_cleanly_when_ue5_is_unreachable(monkeypatch, capsys):
     """
-    A ConnectionError from the model visualiser becomes SystemExit(1) with a message
+    A ConnectionError from the model visualizer becomes SystemExit(1) with a message
     explaining that UE5 is not reachable.
     """
 

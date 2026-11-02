@@ -262,7 +262,7 @@ class AgentManager:
             stop_condition (StopCondition): The condition that determines when
                 training should stop.
             dispose_env (bool, optional): Dispose the FH simulator bridge (if
-                any) afterwards. Pass False when `visualize_trained_agent()`
+                any) afterward. Pass False when `visualize_trained_agent()`
                 follows on the same env (it disposes itself), to avoid a
                 needless math-model reinitialization.
 

@@ -6,7 +6,7 @@ from fw.ships.ship_specs import ShipSpecifications
 
 # Maximum rudder deflection per ship family [deg]: the single source of truth for
 # ShipSpecifications.max_rudder_angle (actuators, PySimEnv action scaling, UAntwerp
-# surrogate rudder normalisation).
+# surrogate rudder normalization).
 MYZAKO_MAX_RUDDER_ANGLE_DEG = 75.0
 TRIPOLI_MAX_RUDDER_ANGLE_DEG = 35.0
 B01_MAX_RUDDER_ANGLE_DEG = 35.0
@@ -43,7 +43,7 @@ class ShipModel(Enum):
 
 
 # Temporary, until the ShipModel refactor: FH code, dataset generators and
-# validation tools recognise the Tripoli hull only as ShipModel.TRIPOLI (azipods,
+# validation tools recognize the Tripoli hull only as ShipModel.TRIPOLI (azipods,
 # exercise file, rudder sign). These Tripoli presets would take the rudder branch
 # there, so FH entry points reject them via require_fh_supported(); UGentSurrogate
 # and UAntwerpSurrogate reject them with their own checks.

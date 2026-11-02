@@ -20,7 +20,7 @@ class Fossen(DynamicsBase):
 
     Frame and assumptions:
         - Body frame at the CoG, taken at midships (x_g = 0) as in the FH
-          identification (FH ship data list x_g = 0.5 - 2.24 m; not modelled).
+          identification (FH ship data list x_g = 0.5 - 2.24 m; not modeled).
         - Framework axes (CONVENTIONS.md): x forward, y to port, yaw CCW positive.
         - No wind or current forces.
         - Coefficients are stored as ratios (divided by m, m*L or m*L^2, see

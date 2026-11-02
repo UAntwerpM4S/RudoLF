@@ -80,7 +80,7 @@ import time
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -113,8 +113,8 @@ logger = logging.getLogger(__name__)
 # Test parameters
 # --------------------------------------------------------------------------
 
-WIND_SPEEDS = [5.0, 10.0, 15.0, 20.0]                 # target true wind speed [m/s], one PNG each
-REL_WIND_DIRS_DEG = [0, 45, 90, 135, 180, 225, 270, 315]  # target relative direction (FH frame), one subplot each
+WIND_SPEEDS = (5.0, 10.0, 15.0, 20.0)                 # target true wind speed [m/s], one PNG each
+REL_WIND_DIRS_DEG = (0, 45, 90, 135, 180, 225, 270, 315)  # target relative direction (FH frame), one subplot each
 
 WIND_TRAJECTORY_SPEED = 5                             # initial surge speed [m/s] (the ship-bank test uses its own TRAJECTORY_SPEED)
 TARGET_PATH_LENGTH = 500.0                            # [m] stop once FH's own path length reaches this
@@ -308,6 +308,14 @@ def _true_wind(fh: FhSession) -> Tuple[float, float, float, float]:
     return true_speed, true_dir, app_speed, app_dir
 
 
+def _speed_dir_only(t: Tuple[float, float, float, float]) -> Tuple[float, float]:
+    """
+    (true speed, true dir) of a _true_wind tuple.
+    """
+
+    return t[0], t[1]
+
+
 def _sway_sign() -> float:
     """
     TRUE_WIND_SWAY_SIGN as a float; 0.0 when it is None (sway not corrected).
@@ -492,7 +500,8 @@ def calibrate_wind_field(start_x: float, start_y: float, start_heading_deg: floa
             fh_probe.close()
 
     t90, t2, tz = probe(90.0, 1.0), probe(0.0, 2.0), probe(0.0, 0.0)
-    cal = derive_calibration(t0[:2], t90[:2], t2[:2], tz[:2], trep[:2], heading_change_deg=dpsi)
+    cal = derive_calibration(_speed_dir_only(t0), _speed_dir_only(t90), _speed_dir_only(t2),
+                             _speed_dir_only(tz), _speed_dir_only(trep), heading_change_deg=dpsi)
     cal.summary = (f"{cal.base_speed:.3f} m/s true wind per unit Scale, from {cal.base_dir_deg:.1f} deg rel. bow at "
                    f"Rotation 0; rotation sign {cal.rotation_sign:+.0f}; Scale 0 leaves {tz[0]:.3f} m/s")
 
@@ -696,6 +705,7 @@ def run_case(
         n_updates = 0
         tf_pred: Dict[str, list] = {label: [] for label in (tf_models or {})}
         tf_fh: list = []
+        tf_pre: Tuple[float, float, float] = (0.0, 0.0, 0.0)   # FH (u, v, r) before the step
 
         while fh_length < TARGET_PATH_LENGTH and step_i < MAX_STEPS:
             fh_ukc = fh.get_ukc()
@@ -1254,12 +1264,12 @@ def _onestep_section(out_dir: Path, d) -> str:
     if o.empty:
         return ""
     u0 = float(WIND_TRAJECTORY_SPEED)
-    T = o["duration_s"]
+    t_run = o["duration_s"]
     # Errors a constant bias would cause over the run (rough). Biases are port
     # positive, the rollout errors starboard positive, hence the minus signs (a
     # pure bias then lies on Figure 4's diagonal).
-    o["implied_turn_deg"] = -np.degrees(0.5 * o["bias_dr"] * T ** 2)
-    o["implied_lateral_m"] = -(0.5 * o["bias_dv"] * T ** 2 + u0 * o["bias_dr"] * T ** 3 / 6.0)
+    o["implied_turn_deg"] = -np.degrees(0.5 * o["bias_dr"] * t_run ** 2)
+    o["implied_lateral_m"] = -(0.5 * o["bias_dv"] * t_run ** 2 + u0 * o["bias_dr"] * t_run ** 3 / 6.0)
     key = ["target_wind_speed", "target_rel_dir_deg", "model"]
     roll = d[key + ["turn_error_vs_fh_deg", "lateral_error_vs_fh"]]
     o["target_rel_dir_deg"] = o["target_rel_dir_deg"].astype(float)
@@ -1378,9 +1388,9 @@ def write_report(out_dir: Path = None) -> Path:
         rows = []
         for m in models_present:
             sub = wind[wind["model"] == m]
-            r = {"model": m}
-            for ws in speeds:
-                r[f"{ws:g}"] = float(sub[sub["target_wind_speed"] == ws][col].abs().mean())
+            r: Dict[str, object] = {"model": m}
+            for speed in speeds:
+                r[f"{speed:g}"] = float(sub[sub["target_wind_speed"] == speed][col].abs().mean())
             r["all"] = float(sub[col].abs().mean())
             rows.append(r)
         return pd.DataFrame(rows)
@@ -1394,13 +1404,14 @@ def write_report(out_dir: Path = None) -> Path:
     fh_turn_max = float(fh["fh_wind_effect_turn_deg"].abs().max()) if not fh.empty else float("nan")
     ua = wind[wind["model"] == "UA_full"]
 
-    def side_of(rd):
+    def side_of(rel_dir):
         """
         Side group of a relative wind direction [deg].
         """
 
-        return "from starboard (45-135 deg)" if 0 < rd < 180 else ("from port (225-315 deg)" if rd > 180 else
-                                                              "head / tail wind (0, 180 deg)")
+        if 0 < rel_dir < 180:
+            return "from starboard (45-135 deg)"
+        return "from port (225-315 deg)" if rel_dir > 180 else "head / tail wind (0, 180 deg)"
     side_rows = []
     for side in ("from port (225-315 deg)", "from starboard (45-135 deg)", "head / tail wind (0, 180 deg)"):
         fs = fh[fh["target_rel_dir_deg"].map(side_of) == side]
@@ -1480,12 +1491,12 @@ def write_report(out_dir: Path = None) -> Path:
     fig_err = _error_bar_plot(err_lat.drop(columns=["all"]), "Figure 3 - Mean absolute error of the lateral wind effect",
                               "mean |error| [m]")
 
-    def kpi(v, label, fmt="{:.1f}"):
+    def kpi(v, caption, fmt="{:.1f}"):
         """
         HTML KPI tile for value `v`, formatted with `fmt` ("n/a" for None/NaN).
         """
 
-        return f'<div class="kpi"><div class="v">{"n/a" if v is None or (isinstance(v, float) and np.isnan(v)) else fmt.format(v)}</div><div class="l">{html.escape(label)}</div></div>'
+        return f'<div class="kpi"><div class="v">{"n/a" if v is None or (isinstance(v, float) and np.isnan(v)) else fmt.format(v)}</div><div class="l">{html.escape(caption)}</div></div>'
 
     setup_rows = [
         ("Ship model", meta.get("ship_model", "")),
@@ -1675,8 +1686,8 @@ def generate_wind_trajectories(
         start_y: float,
         start_heading_deg: float,
         exercise_path: Optional[Path] = None,
-        wind_speeds=WIND_SPEEDS,
-        rel_dirs_deg=REL_WIND_DIRS_DEG,
+        wind_speeds: Sequence[float] = WIND_SPEEDS,
+        rel_dirs_deg: Sequence[float] = REL_WIND_DIRS_DEG,
         speed: float = WIND_TRAJECTORY_SPEED,
 ) -> None:
     """

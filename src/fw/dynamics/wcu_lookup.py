@@ -264,7 +264,8 @@ class WcuLookup:
         Environmental conditions of the dataset row nearest to `(x, y)`.
 
         Args:
-            x, y: World-frame position [m].
+            x: World-frame x-position [m].
+            y: World-frame y-position [m].
             max_distance: Optional search radius [m]; no row within it -> all
                 fields None (distance inf).
             return_distance: Also return the distance to the row.

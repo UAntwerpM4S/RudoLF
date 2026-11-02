@@ -67,7 +67,15 @@ def _pct(values: np.ndarray, qs=(0, 1, 50, 99, 100)) -> str:
     Percentiles of `values` as one compact text.
     """
 
-    return " ".join(f"p{q}={v:.4g}" for q, v in zip(qs, np.percentile(values, qs)))
+    return " ".join(f"p{q}={v:.4g}" for q, v in zip(qs, np.atleast_1d(np.percentile(values, qs))))
+
+
+def _share_pct(mask) -> float:
+    """
+    Share of True values in `mask` [%] (as a Python float).
+    """
+
+    return 100.0 * float(np.mean(mask))
 
 
 def _hist_text(values: np.ndarray, edges) -> str:
@@ -135,9 +143,9 @@ def main(argv=None) -> int:
     print("  episode fractions: " + ", ".join(f"{s} {100 * len(e) / max(n_eps, 1):.1f}%" for s, e in eps.items()))
 
     # float32 as stored (a full run has millions of rows); statistics per column.
-    X = np.concatenate([d[0] for d in data.values()]).astype(np.float32, copy=False)
-    Y = np.concatenate([d[1] for d in data.values()]).astype(np.float32, copy=False)
-    EP = np.concatenate([d[2] for d in data.values()])
+    x_all = np.concatenate([d[0] for d in data.values()]).astype(np.float32, copy=False)
+    y_all = np.concatenate([d[1] for d in data.values()]).astype(np.float32, copy=False)
+    ep_all = np.concatenate([d[2] for d in data.values()])
     if "train" in data:
         x_train = data["train"][0]
         const = [cols[i] for i in scenario.input_col_indices()
@@ -147,12 +155,12 @@ def main(argv=None) -> int:
 
     # ---- 3. design: one action per episode, lengths --------------------------
     print("\n== 3. Episode design")
-    order = np.argsort(EP, kind="stable")
-    ep_sorted = EP[order]
+    order = np.argsort(ep_all, kind="stable")
+    ep_sorted = ep_all[order]
     starts = np.r_[0, np.flatnonzero(np.diff(ep_sorted)) + 1]
     lengths = np.diff(np.r_[starts, len(ep_sorted)])
     for name in ("rudder_action", "thrust_action"):
-        v = X[order, c[name]]
+        v = x_all[order, c[name]]
         spread = np.maximum.reduceat(v, starts) - np.minimum.reduceat(v, starts)
         n_var = int((spread > 1e-6).sum())
         print(f"  {name}: constant within every episode: {'yes' if n_var == 0 else f'NO ({n_var} episodes vary)'}; "
@@ -163,15 +171,15 @@ def main(argv=None) -> int:
             failures.append(f"{name} outside [-1, 1]")
     max_rows = int(round(args.horizon / args.dt))
     print(f"  rows per episode: {_pct(lengths)}  (max possible {max_rows}); "
-          f"full length: {100 * np.mean(lengths >= max_rows):.1f}% of the episodes")
+          f"full length: {_share_pct(lengths >= max_rows):.1f}% of the episodes")
     if lengths.max() > max_rows:
         failures.append(f"an episode has {lengths.max()} rows > horizon/dt = {max_rows} (wrong --horizon/--dt?)")
 
-    ep_rudder = X[order[starts], c["rudder_action"]]
-    ep_thrust = X[order[starts], c["thrust_action"]]
+    ep_rudder = x_all[order[starts], c["rudder_action"]]
+    ep_thrust = x_all[order[starts], c["thrust_action"]]
     straight = (np.abs(ep_rudder) < STRAIGHT_ABS_RUDDER) & (ep_thrust >= 0.2 - 1e-6)
     print(f"  straight-like episodes (|rudder| < {STRAIGHT_ABS_RUDDER}, thrust >= 0.2): "
-          f"{100 * straight.mean():.1f}% of the episodes, {100 * lengths[straight].sum() / len(X):.1f}% of the rows")
+          f"{_share_pct(straight):.1f}% of the episodes, {100 * lengths[straight].sum() / len(x_all):.1f}% of the rows")
 
     # ---- 4. coverage -----------------------------------------------------------
     print(f"\n== 4. Coverage (all rows, {first.ship_model}, rudder_action +-1 = +-{first.rudder_max_deg:g} deg)")
@@ -179,29 +187,31 @@ def main(argv=None) -> int:
     print("  thrust_action per episode: " + _hist_text(ep_thrust, np.linspace(-1, 1, 9)))
     for name, unit in (("surge", "m/s"), ("sway", "m/s"), ("yaw_rate", "rad/s"), ("ukc", "m")):
         if name in c:
-            print(f"  {name:9s} [{unit}]: {_pct(X[:, c[name]])}")
+            print(f"  {name:9s} [{unit}]: {_pct(x_all[:, c[name]])}")
     if "ukc" in c:
-        u = X[:, c["ukc"]]
-        print(f"  UKC: {100 * np.mean(u < 2):.1f}% of rows < 2 m, {100 * np.mean(u < 5):.1f}% < 5 m")
-    heading_deg = np.degrees(X[:, c["heading"]])
+        u = x_all[:, c["ukc"]]
+        print(f"  UKC: {_share_pct(u < 2):.1f}% of rows < 2 m, {_share_pct(u < 5):.1f}% < 5 m")
+    heading_deg = np.degrees(x_all[:, c["heading"]])
     hc, _ = np.histogram(heading_deg, bins=np.linspace(-180, 180, 13))
-    print(f"  heading (30 deg bins): min {100 * hc.min() / len(X):.1f}% / max {100 * hc.max() / len(X):.1f}% of rows")
+    print(f"  heading (30 deg bins): min {100 * hc.min() / len(x_all):.1f}% / max {100 * hc.max() / len(x_all):.1f}% of rows")
     ray_cols = [i for i, n in enumerate(cols) if n.startswith("ray_")]
     if ray_cols:
-        rays = X[:, ray_cols]
+        rays = x_all[:, ray_cols]
         hit = rays.max(1)
-        print(f"  rays: {100 * np.mean(hit > 1e-6):.1f}% of rows see a bank (any ray), "
-              f"{100 * np.mean(hit > 0.75):.1f}% a close bank (feature > 0.75)")
+        print(f"  rays: {_share_pct(hit > 1e-6):.1f}% of rows see a bank (any ray), "
+              f"{_share_pct(hit > 0.75):.1f}% a close bank (feature > 0.75)")
     if scenario.includes_wind_current:
-        print(f"  wind speed [m/s]: {_pct(X[:, c['wind_speed']])}")
-        print(f"  current speed [m/s]: {_pct(X[:, c['current_speed']])}")
+        print(f"  wind speed [m/s]: {_pct(x_all[:, c['wind_speed']])}")
+        print(f"  current speed [m/s]: {_pct(x_all[:, c['current_speed']])}")
 
     # ---- 5. targets ------------------------------------------------------------
     print(f"\n== 5. Targets (per {args.dt:g} s step)")
     for k, name in enumerate(TARGET_NAMES):
-        v = Y[:, k]
+        v = y_all[:, k]
         med = np.median(v)
-        mad = np.median(np.abs(v - med)) * 1.4826 or 1e-12
+        mad = float(np.median(np.abs(v - med))) * 1.4826
+        if mad == 0.0:          # constant target: avoid division by zero
+            mad = 1e-12
         z = np.abs(v - med) / mad
         n_out = int((z > OUTLIER_K).sum())
         print(f"  {name:15s}: {_pct(v)}  outliers (> {OUTLIER_K:g} MAD): {n_out} rows "
@@ -209,31 +219,31 @@ def main(argv=None) -> int:
         if n_out and ray_cols:
             # Outliers near a bank are plausible (bank effects); in open water suspicious.
             out_rows = z > OUTLIER_K
-            near = X[:, ray_cols].max(1)
+            near = x_all[:, ray_cols].max(1)
             for label, sel in (("all rows", np.ones(len(v), dtype=bool)), ("outlier rows", out_rows)):
-                print(f"      {label:12s}: close bank (max ray > 0.75) {100 * np.mean(near[sel] > 0.75):5.1f}%, "
-                      f"no bank in range {100 * np.mean(near[sel] <= 1e-6):5.1f}%, "
-                      f"mean |rudder| {np.mean(np.abs(X[sel, c['rudder_action']])):.2f}, "
-                      f"mean surge {np.mean(X[sel, c['surge']]):+.2f} m/s")
+                print(f"      {label:12s}: close bank (max ray > 0.75) {_share_pct(near[sel] > 0.75):5.1f}%, "
+                      f"no bank in range {_share_pct(near[sel] <= 1e-6):5.1f}%, "
+                      f"mean |rudder| {np.mean(np.abs(x_all[sel, c['rudder_action']])):.2f}, "
+                      f"mean surge {np.mean(x_all[sel, c['surge']]):+.2f} m/s")
             open_out = out_rows & (near <= 1e-6)
             if open_out.any():
                 print(f"      outliers with NO bank in ray range: {int(open_out.sum()):,} rows in "
-                      f"{len(np.unique(EP[open_out])):,} episodes (the most suspicious ones)")
+                      f"{len(np.unique(ep_all[open_out])):,} episodes (the most suspicious ones)")
         if n_out:
             worst = np.argsort(z)[-3:][::-1]
             for i in worst:
-                bank = f"  max_ray={X[i, ray_cols].max():.2f}" if ray_cols else ""
-                print(f"      episode {EP[i]}: {name}={v[i]:+.4g}  surge={X[i, c['surge']]:+.3f}  "
-                      f"rudder={X[i, c['rudder_action']]:+.3f}  thrust={X[i, c['thrust_action']]:+.3f}{bank}")
+                bank = f"  max_ray={x_all[i, ray_cols].max():.2f}" if ray_cols else ""
+                print(f"      episode {ep_all[i]}: {name}={v[i]:+.4g}  surge={x_all[i, c['surge']]:+.3f}  "
+                      f"rudder={x_all[i, c['rudder_action']]:+.3f}  thrust={x_all[i, c['thrust_action']]:+.3f}{bank}")
 
     # ---- 6. rudder sign ----------------------------------------------------------
     print("\n== 6. Rudder sign (framework: + rudder_action -> turn to PORT -> yaw rate increases)")
-    m = ((X[:, c["surge"]] > MIN_SURGE_FOR_SIGN) & (X[:, c["thrust_action"]] > 0)
-         & (np.abs(X[:, c["rudder_action"]]) > MIN_ABS_RUDDER))
+    m = ((x_all[:, c["surge"]] > MIN_SURGE_FOR_SIGN) & (x_all[:, c["thrust_action"]] > 0)
+         & (np.abs(x_all[:, c["rudder_action"]]) > MIN_ABS_RUDDER))
     if m.sum() > 100:
-        corr = float(np.corrcoef(X[m, c["rudder_action"]].astype(np.float64), Y[m, 2].astype(np.float64))[0, 1])
-        pos = float(Y[m & (X[:, c["rudder_action"]] > 0), 2].mean())
-        neg = float(Y[m & (X[:, c["rudder_action"]] < 0), 2].mean())
+        corr = float(np.corrcoef(x_all[m, c["rudder_action"]].astype(np.float64), y_all[m, 2].astype(np.float64))[0, 1])
+        pos = float(y_all[m & (x_all[:, c["rudder_action"]] > 0), 2].mean())
+        neg = float(y_all[m & (x_all[:, c["rudder_action"]] < 0), 2].mean())
         print(f"  {int(m.sum()):,} rows: corr(rudder_action, delta_yaw_rate) = {corr:+.3f}; mean delta_yaw_rate "
               f"for rudder > 0: {np.degrees(pos):+.5f} deg/s, < 0: {np.degrees(neg):+.5f} deg/s")
         if corr <= 0:
@@ -242,7 +252,7 @@ def main(argv=None) -> int:
         print("  too few rows with forward speed, forward thrust and a clear rudder")
 
     # ---- 7. duplicates -------------------------------------------------------------
-    rows = np.ascontiguousarray(np.hstack([X, Y]))
+    rows = np.ascontiguousarray(np.hstack([x_all, y_all]))
     n_dup = len(rows) - len(np.unique(rows.view(np.dtype((np.void, rows.dtype.itemsize * rows.shape[1])))))
     print(f"\n== 7. Exact duplicate rows: {n_dup}")
     if n_dup > 0.001 * len(rows):
@@ -255,14 +265,14 @@ def main(argv=None) -> int:
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
             panels = [("rudder_action (per episode)", ep_rudder), ("thrust_action (per episode)", ep_thrust),
-                      ("surge [m/s]", X[:, c["surge"]]), ("sway [m/s]", X[:, c["sway"]]),
-                      ("yaw_rate [deg/s]", np.degrees(X[:, c["yaw_rate"]])), ("heading [deg]", heading_deg),
+                      ("surge [m/s]", x_all[:, c["surge"]]), ("sway [m/s]", x_all[:, c["sway"]]),
+                      ("yaw_rate [deg/s]", np.degrees(x_all[:, c["yaw_rate"]])), ("heading [deg]", heading_deg),
                       ("rows per episode", lengths)]
             if "ukc" in c:
-                panels.append(("UKC [m]", X[:, c["ukc"]]))
+                panels.append(("UKC [m]", x_all[:, c["ukc"]]))
             if ray_cols:
-                panels.append(("max ray feature", X[:, ray_cols].max(1)))
-            panels += [(f"{n}", Y[:, k]) for k, n in enumerate(TARGET_NAMES)]
+                panels.append(("max ray feature", x_all[:, ray_cols].max(1)))
+            panels += [(f"{n}", y_all[:, k]) for k, n in enumerate(TARGET_NAMES)]
             ncol = 4
             fig, axes = plt.subplots(-(-len(panels) // ncol), ncol, figsize=(4.2 * ncol, 3.0 * -(-len(panels) // ncol)))
             for ax, (title, v) in zip(axes.flat, panels):
@@ -271,7 +281,7 @@ def main(argv=None) -> int:
                 ax.set_title(title, fontsize=9)
             for ax in list(axes.flat)[len(panels):]:
                 ax.axis("off")
-            fig.suptitle(f"{Path(args.prefix).name}: {first.ship_model} / {first.scenario}, {len(X):,} rows")
+            fig.suptitle(f"{Path(args.prefix).name}: {first.ship_model} / {first.scenario}, {len(x_all):,} rows")
             fig.tight_layout()
             out = Path(f"{args.prefix}_quality.png")
             fig.savefig(out, dpi=110)

@@ -89,7 +89,7 @@ def calculate_perpendicular_lines(
 
     def smooth_tangent(check_points: List[dict], index: int) -> np.ndarray:
         """
-        Unit tangent at a checkpoint, averaging the neighbouring segments (x-axis for a single checkpoint).
+        Unit tangent at a checkpoint, averaging the neighboring segments (x-axis for a single checkpoint).
         """
 
         if len(check_points) == 1:
@@ -492,10 +492,10 @@ class PySimEnv(BaseEnv):
             csv_path = os.path.join(base_path, name)
             try:
                 data = np.loadtxt(csv_path, delimiter=',', skiprows=1)
-            except FileNotFoundError:
-                raise FileNotFoundError(f"Missing required environment file: {csv_path}")
-            except Exception as exc:
-                raise RuntimeError(f"Failed to load {csv_path}: {exc}")
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(f"Missing required environment file: {csv_path}") from exc
+            except Exception as exc:   # anything else from loadtxt, re-raised with the path
+                raise RuntimeError(f"Failed to load {csv_path}: {exc}") from exc
             if data.ndim != 2 or data.shape[1] != 2:
                 raise ValueError(f"{csv_path} must be a 2D array with shape (N, 2), got {data.shape}")
             if data.size == 0:
@@ -713,9 +713,9 @@ class PySimEnv(BaseEnv):
         mids = shapely.points(segs.mean(axis=1))
         is_cutoff = np.zeros(len(segs), dtype=bool)
         for k, line in enumerate(line_geoms):
-            near = ((shapely.distance(line, starts) <= tolerance)
-                    & (shapely.distance(line, ends) <= tolerance)
-                    & (shapely.distance(line, mids) <= tolerance))
+            near = np.asarray((shapely.distance(line, starts) <= tolerance)
+                              & (shapely.distance(line, ends) <= tolerance)
+                              & (shapely.distance(line, mids) <= tolerance), dtype=bool)
             is_cutoff |= near
             if not near.any():
                 logger.warning("MAP_CUTOFF_LINES entry %d %s matches no boundary segment within "
@@ -741,8 +741,10 @@ class PySimEnv(BaseEnv):
 
         Args:
             nbr_samples: Number of points to return.
-            min_distance, max_distance: Distance band to the nearest real bank (m).
-            edge_tol, min_cutoff_length: Passed to `bank_segments`.
+            min_distance: Lower bound of the distance band to the nearest real bank (m).
+            max_distance: Upper bound of that band (m); also the minimum distance to a map cut-off edge.
+            edge_tol: Passed to `bank_segments`.
+            min_cutoff_length: Passed to `bank_segments`.
             max_tries: Candidate budget; default 200 * nbr_samples + 1000.
 
         Returns:
@@ -941,7 +943,7 @@ class PySimEnv(BaseEnv):
 
         if self._bank_lines_cache is None:
             bank_segs, _ = self.bank_segments()
-            lines = shapely.linestrings(bank_segs) if len(bank_segs) else np.empty(0, dtype=object)
+            lines = np.asarray(shapely.linestrings(bank_segs)) if len(bank_segs) else np.empty(0, dtype=object)
             self._bank_lines_cache = (lines, shapely.STRtree(lines))
         lines, tree = self._bank_lines_cache
 
@@ -950,13 +952,14 @@ class PySimEnv(BaseEnv):
         origin = np.array([state.x, state.y], dtype=np.float64)
         angles = ray_world_angles(state.heading)[[_PORT_BEAM_RAY_IDX, _STARBOARD_BEAM_RAY_IDX]]
         ends = origin + RAY_MAX_DISTANCE * np.stack([np.cos(angles), np.sin(angles)], axis=1)
-        rays = shapely.linestrings(np.stack([np.tile(origin, (2, 1)), ends], axis=1))
+        rays = np.asarray(shapely.linestrings(np.stack([np.tile(origin, (2, 1)), ends], axis=1)))
 
         # Nearest hit per ray, among the segments the index returns.
         ray_idx, seg_idx = tree.query(rays, predicate="intersects")
         nearest: List[Optional[float]] = [None, None]
         if len(ray_idx):
-            dists = shapely.distance(Point(origin), shapely.intersection(lines[seg_idx], rays[ray_idx]))
+            dists = np.asarray(shapely.distance(Point(origin), shapely.intersection(lines[seg_idx], rays[ray_idx])),
+                               dtype=np.float64)
             for i, d in zip(ray_idx, dists):
                 if not np.isnan(d) and (nearest[i] is None or d < nearest[i]):
                     nearest[i] = float(d)
@@ -1709,14 +1712,19 @@ class PySimEnv(BaseEnv):
 
         # Screen size via a temporary Tk root. tkinter is imported lazily so the
         # framework still imports on headless machines without Tk (e.g. HPC nodes).
+        screen_width, screen_height = MAX_FIG_WIDTH, MAX_FIG_HEIGHT
         try:
             import tkinter as tk
-            root = tk.Tk()
-            screen_width = root.winfo_screenwidth()
-            screen_height = root.winfo_screenheight()
-            root.destroy()
-        except Exception:   # ImportError (no Tk) or tk.TclError (no display)
-            screen_width, screen_height = MAX_FIG_WIDTH, MAX_FIG_HEIGHT
+        except ImportError:          # no Tk installed
+            tk = None
+        if tk is not None:
+            try:
+                root = tk.Tk()
+                screen_width = root.winfo_screenwidth()
+                screen_height = root.winfo_screenheight()
+                root.destroy()
+            except tk.TclError:      # Tk installed but no display
+                screen_width, screen_height = MAX_FIG_WIDTH, MAX_FIG_HEIGHT
 
         fig_width = min(MAX_FIG_WIDTH, screen_width)
         fig_height = min(MAX_FIG_HEIGHT, screen_height)

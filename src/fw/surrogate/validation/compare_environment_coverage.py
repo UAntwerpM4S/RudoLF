@@ -20,7 +20,7 @@ import argparse
 import csv
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple, TypedDict, cast
 
 import numpy as np
 
@@ -40,6 +40,16 @@ ROSES = (("true wind direction", "True wind, comes from", "N,NE,E,SE,S,SW,W,NW")
          ("current relative to the ship", "Current relative to the ship", "following,,to stbd,,head,,to port,"))
 
 
+class CoverageData(TypedDict):
+    """
+    One coverage folder's tables, as returned by load().
+    """
+
+    summary: Dict[str, Dict[str, str]]                # quantity -> summary.csv row
+    thresholds: Dict[Tuple[str, float], float]        # (quantity, below) -> share of time [%]
+    directions: Dict[str, Dict[str, str]]             # quantity -> directions.csv row
+
+
 def _read(path: Path) -> List[Dict[str, str]]:
     """
     Read a CSV file as a list of dicts ([] if the file does not exist).
@@ -51,7 +61,7 @@ def _read(path: Path) -> List[Dict[str, str]]:
         return list(csv.DictReader(f))
 
 
-def load(folder: Path) -> Dict[str, object]:
+def load(folder: Path) -> CoverageData:
     """
     Load summary, thresholds and directions of one coverage folder, keyed for lookup.
     """
@@ -62,7 +72,7 @@ def load(folder: Path) -> Dict[str, object]:
     thresholds = {(r["quantity"], float(r["below"])): float(r["share_of_time_pct"])
                   for r in _read(folder / "thresholds.csv")}
     directions = {r["quantity"]: r for r in _read(folder / "directions.csv")}
-    return {"summary": summary, "thresholds": thresholds, "directions": directions}
+    return CoverageData(summary=summary, thresholds=thresholds, directions=directions)
 
 
 def _style(ax, polar: bool = False) -> None:
@@ -83,7 +93,7 @@ def _style(ax, polar: bool = False) -> None:
             ax.spines[side].set_color(GRID)
 
 
-def plot(datasets: Sequence[Dict[str, object]], labels: Sequence[str], out: Path,
+def plot(datasets: Sequence[CoverageData], labels: Sequence[str], out: Path,
          title: Optional[str], dpi: int) -> None:
     """
     Draw and save the comparison slide.
@@ -92,6 +102,8 @@ def plot(datasets: Sequence[Dict[str, object]], labels: Sequence[str], out: Path
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.projections.polar import PolarAxes
+    from matplotlib.ticker import MaxNLocator
 
     n = len(datasets)
     colors = SERIES[:n]
@@ -144,7 +156,7 @@ def plot(datasets: Sequence[Dict[str, object]], labels: Sequence[str], out: Path
 
     # Bottom right: 30-deg sector shares as closed lines.
     for k, (quantity, name, ticks) in enumerate(ROSES):
-        ax = fig.add_subplot(grid[1, 2 + 2 * k:4 + 2 * k], projection="polar")
+        ax = cast(PolarAxes, fig.add_subplot(grid[1, 2 + 2 * k:4 + 2 * k], projection="polar"))
         _style(ax, polar=True)
         ax.set_theta_zero_location("N")
         ax.set_theta_direction(-1)
@@ -160,9 +172,8 @@ def plot(datasets: Sequence[Dict[str, object]], labels: Sequence[str], out: Path
         ax.set_ylim(0, None)
         ax.set_xticks(np.radians(np.arange(0, 360, 45)))
         ax.set_xticklabels(ticks.split(","), fontsize=10, color=INK_2)
-        from matplotlib.ticker import MaxNLocator
         ax.yaxis.set_major_locator(MaxNLocator(3))
-        ax.yaxis.set_major_formatter(lambda y, _: f"{y:.0f}%")
+        ax.yaxis.set_major_formatter(lambda value, _: f"{value:.0f}%")
         ax.tick_params(axis="y", labelsize=9, labelcolor=INK_2)
         ax.set_rlabel_position(202.5)
         ax.set_title(f"{name}\n(share of time per 30° sector)", fontsize=12, color=INK, pad=16)
