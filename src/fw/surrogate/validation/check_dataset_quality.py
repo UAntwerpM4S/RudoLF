@@ -209,7 +209,7 @@ def main(argv=None) -> int:
     for k, name in enumerate(TARGET_NAMES):
         v = y_all[:, k]
         med = np.median(v)
-        mad = float(np.median(np.abs(v - med))) * 1.4826
+        mad = float(np.median(np.abs(v - med)) * 1.4826)   # product in float32, as stored
         if mad == 0.0:          # constant target: avoid division by zero
             mad = 1e-12
         z = np.abs(v - med) / mad

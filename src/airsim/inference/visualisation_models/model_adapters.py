@@ -32,22 +32,8 @@ from fw.policies.ppo_policy import PPOPolicy
 from fw.environments.fh_sim_env import FhSimEnv
 from fw.environments.py_sim_env import PySimEnv
 
-def _default_ship_pos() -> np.ndarray:
-    """
-    Fresh copy of the default framework start position (an env may modify it in place).
-    """
-
-    return np.asarray(DEFAULT_FRAMEWORK_SHIP_POS, dtype=np.float32).copy()
-
-
-def _default_target_pos() -> np.ndarray:
-    """
-    Fresh copy of the default framework target position (an env may modify it in place).
-    """
-
-    return np.asarray(DEFAULT_FRAMEWORK_TARGET_POS, dtype=np.float32).copy()
-
-
+_DEFAULT_SHIP_POS = list(DEFAULT_FRAMEWORK_SHIP_POS)
+_DEFAULT_TARGET_POS = list(DEFAULT_FRAMEWORK_TARGET_POS)
 _SRC_DIR = Path(__file__).resolve().parents[3]
 _MAX_VISUAL_UPDATE_HZ = 240.0
 
@@ -262,6 +248,8 @@ def _build_visual_controls(
     specs = adapter.extract_ship_specifications(env, ship_index=ship_index)
     replay_brake = 1.0
     speed_ratio = None
+    # Best effort: any failure only disables speed matching.
+    # noinspection PyBroadException
     try:
         surge_speed, _, _ = adapter.extract_velocity(env, ship_index=ship_index)
         surge_limits = getattr(specs, "surge_limits", None)
@@ -269,7 +257,7 @@ def _build_visual_controls(
             max_speed = max(abs(float(surge_limits[0])), abs(float(surge_limits[1])))
             if max_speed > 1e-6:
                 speed_ratio = float(np.clip(abs(float(surge_speed)) / max_speed, 0.0, 1.0))
-    except (ValueError, TypeError):   # no velocity state / non-numeric limits: no speed matching
+    except Exception:
         speed_ratio = None
 
     def _apply_visual_speed_matching(car_controls: Any):
@@ -688,8 +676,8 @@ class PySimVisualisationAdapter(ModelVisualisationAdapter):
         return {
             "PySimEnv": lambda max_steps: PySimEnv(
                 max_steps=max_steps,
-                start_pos=_default_ship_pos(),
-                target_pos=_default_target_pos(),
+                start_pos=_DEFAULT_SHIP_POS,
+                target_pos=_DEFAULT_TARGET_POS,
             ),
         }
 
@@ -712,8 +700,8 @@ class FhSimVisualisationAdapter(ModelVisualisationAdapter):
         return {
             "FhSimEnv": lambda max_steps: FhSimEnv(
                 max_steps=max_steps,
-                start_pos=_default_ship_pos(),
-                target_pos=_default_target_pos(),
+                start_pos=_DEFAULT_SHIP_POS,
+                target_pos=_DEFAULT_TARGET_POS,
             ),
         }
 

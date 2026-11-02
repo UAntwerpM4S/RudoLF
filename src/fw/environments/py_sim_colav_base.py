@@ -270,8 +270,8 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._seg_tangents: Optional[np.ndarray] = None
         self._seg_lengths: Optional[np.ndarray] = None
 
-        # Monotonic step counter over the env's lifetime (step_count resets at
-        # every checkpoint); only differences within an encounter are used.
+        # Episode step counter (reset per episode by _initialize_simulation);
+        # unlike step_count it is not reset at checkpoints.
         self._episode_step: int = 0
 
         # Path segment around the OS, captured in step() before the reward may
@@ -1066,9 +1066,11 @@ class PySimColavBaseEnv(PySimBaseEnv):
             self._collision_entity_patches = []
             return
         for patch in self._collision_entity_patches:
+            # Best effort: a patch that cannot be removed is skipped.
+            # noinspection PyBroadException
             try:
                 patch.remove()
-            except (ValueError, NotImplementedError, AttributeError):   # already removed / not removable
+            except Exception:
                 pass
         self._collision_entity_patches = []
 

@@ -15,6 +15,7 @@ import sys
 import time
 import numpy as np
 from pathlib import Path
+from typing import cast
 
 _THIS_FILE = Path(__file__).resolve()
 _SRC_DIR = _THIS_FILE.parents[4]
@@ -28,14 +29,6 @@ _CONFIG_DIR = _SRC_DIR / "airsim" / "config"
 _ENVIRONMENTS_DIR = _SRC_DIR / "fw" / "environments"
 _PLOT_CHUNK_SIZE = 500   # points per simPlotLineStrip call (chunks overlap by one point)
 
-
-def _as_xy(value) -> tuple[float, float]:
-    """
-    A 2-element sequence (e.g. a JSON list) as an (x, y) tuple of floats.
-    """
-
-    x, y = value
-    return float(x), float(y)
 
 def _load_trajectory_endpoints() -> tuple:
     """
@@ -428,7 +421,7 @@ def load_saved_calibration_reference(
 
     coord = CoordTransform(config)
     if draw_reference:
-        ridge_overlay_offset = _as_xy(config.get("ridge_overlay_offset", [0.0, 0.0]))
+        ridge_overlay_offset = cast(tuple[float, float], tuple(config.get("ridge_overlay_offset", [0.0, 0.0])))
         ridge_overlay_rot_z_deg = float(config.get("ridge_overlay_rot_z_deg", 0.0))
         _draw_visualization(
             client,
@@ -533,7 +526,7 @@ def run_calibration() -> None:
             framework_b,
             ue5_a,
             ue5_b,
-            ridge_overlay_offset=_as_xy(config.get("ridge_overlay_offset", [0.0, 0.0])),
+            ridge_overlay_offset=cast(tuple[float, float], tuple(config.get("ridge_overlay_offset", [0.0, 0.0]))),
             ridge_overlay_rot_z_deg=float(config.get("ridge_overlay_rot_z_deg", 0.0)),
         )
 
@@ -565,6 +558,8 @@ def run_calibration() -> None:
             print("Done!")
             break
 
+        # Any parse or update error re-prompts.
+        # noinspection PyBroadException
         try:
             parts = offset_val.split(",")
             if len(parts) != 2:
@@ -593,7 +588,7 @@ def run_calibration() -> None:
                     config["ridge_overlay_offset"][0] += dx
                     config["ridge_overlay_offset"][1] += dy
                     print(f"\nApplied ridge-only shift: +{dx} X, +{dy} Y. Ideal path remains fixed. Redrawing...")
-        except ValueError:   # wrong number of values or not a number
+        except Exception:
             print("\nInvalid format. Use 'X, Y' (e.g. '10.5, -3.2') or 'RZ, deg' (e.g. 'RZ, 2.5')")
 
 

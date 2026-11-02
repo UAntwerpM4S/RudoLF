@@ -22,18 +22,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional, cast
 
+# Any import failure (not only ImportError, e.g. an incompatible tornado) falls back.
+# noinspection PyBroadException
 try:
-    from msgpackrpc.error import RPCError as _MsgpackRPCError
     from msgpackrpc.error import TransportError as _MsgpackTransportError
-except ImportError:  # pragma: no cover - optional dependency fallback
-    class _MsgpackRPCError(Exception):
-        """
-        Fallback RPCError type when msgpackrpc is unavailable.
-        """
-
-        pass
-
-    class _MsgpackTransportError(_MsgpackRPCError):
+except Exception:  # pragma: no cover - optional dependency fallback
+    class _MsgpackTransportError(Exception):
         """
         Fallback TransportError type when msgpackrpc is unavailable.
         """
@@ -173,9 +167,6 @@ _AIRSIM_READ_EXCEPTIONS = (
     _MsgpackTransportError,
 )
 _AIRSIM_DECODE_EXCEPTIONS = (AttributeError, TypeError, ValueError)
-# Best-effort AirSim commands (reset, pause, kinematics, disconnect): the read
-# errors plus any msgpack-rpc error the server reports for the call.
-_AIRSIM_COMMAND_EXCEPTIONS = (*_AIRSIM_READ_EXCEPTIONS, _MsgpackRPCError)
 
 
 def normalize_navigation_state(
@@ -238,9 +229,11 @@ def _safe_load_csv(path: Path, fallback: np.ndarray) -> np.ndarray:
     Load a two-column CSV file or return the provided fallback array.
     """
 
+    # Best effort: any load failure falls back.
+    # noinspection PyBroadException
     try:
         data = np.loadtxt(path, delimiter=",", skiprows=1)
-    except (OSError, ValueError):   # missing / unreadable file or unparsable content
+    except Exception:
         return np.asarray(fallback, dtype=np.float32)
 
     data = np.asarray(data, dtype=np.float32)
@@ -661,9 +654,11 @@ class AirSimEnv(BaseEnv):
         start_heading = self._select_episode_start_heading(start_index)
 
         if self._world_prepared and self.reset_mode == _RESET_MODE_BRIDGE_RESET:
+            # Best effort: any bridge error is logged and ignored.
+            # noinspection PyBroadException
             try:
                 self.bridge.reset()
-            except _AIRSIM_COMMAND_EXCEPTIONS:
+            except Exception:
                 logger.debug("AirSim reset failed during episode reset.", exc_info=True)
 
         self.bridge.set_simulation_speed(self.simulation_speed)
@@ -961,10 +956,12 @@ class AirSimEnv(BaseEnv):
         Disconnect from AirSim and release bridge resources.
         """
 
+        # Best effort: any bridge error is logged and ignored.
+        # noinspection PyBroadException
         try:
             if getattr(self, "bridge", None) is not None:
                 self.bridge.disconnect()
-        except _AIRSIM_COMMAND_EXCEPTIONS:
+        except Exception:
             logger.debug("AirSimEnv close() swallowed a bridge disconnect error.", exc_info=True)
 
     def _prepare_world_if_needed(self) -> None:
@@ -1249,6 +1246,8 @@ class AirSimEnv(BaseEnv):
             self._apply_parked_controls()
             return
 
+        # Best effort: any bridge error is logged and ignored.
+        # noinspection PyBroadException
         try:
             self.bridge.set_kinematics(
                 airsim_x,
@@ -1264,7 +1263,7 @@ class AirSimEnv(BaseEnv):
                 preserve_current_z=False,
                 preserve_roll_pitch=False,
             )
-        except _AIRSIM_COMMAND_EXCEPTIONS:
+        except Exception:
             logger.debug("Could not enforce reset zero-velocity state via kinematics.", exc_info=True)
 
         self._apply_parked_controls()
@@ -1274,9 +1273,11 @@ class AirSimEnv(BaseEnv):
         Toggle paused stepping mode.
         """
 
+        # Best effort: any bridge error is logged and ignored.
+        # noinspection PyBroadException
         try:
             self.bridge.set_pause(bool(is_paused))
-        except _AIRSIM_COMMAND_EXCEPTIONS:
+        except Exception:
             logger.debug("Could not change AirSim pause mode.", exc_info=True)
 
     def _advance_simulation(self) -> float:
@@ -1322,9 +1323,11 @@ class AirSimEnv(BaseEnv):
         """
 
         signature: dict[str, float | int] = {}
+        # Best effort: a failed read only leaves fields out of the signature.
+        # noinspection PyBroadException
         try:
             state = self.bridge.get_state()
-        except _AIRSIM_READ_EXCEPTIONS:
+        except Exception:
             state = None
 
         if isinstance(state, dict) and not bool(state.get("state_read_failed")):
@@ -1336,20 +1339,23 @@ class AirSimEnv(BaseEnv):
             except (KeyError, TypeError, ValueError):
                 signature.clear()
 
+        # noinspection PyBroadException
         try:
             pose = self.bridge.get_vehicle_pose()
-        except _AIRSIM_READ_EXCEPTIONS:
+        except Exception:
             pose = None
 
         if pose is not None:
+            # noinspection PyBroadException
             try:
                 signature["pose_x"] = float(pose.position.x_val)
                 signature["pose_y"] = float(pose.position.y_val)
-            except _AIRSIM_DECODE_EXCEPTIONS:
+            except Exception:
                 pass
+            # noinspection PyBroadException
             try:
                 signature["pose_yaw"] = float(yaw_from_quaternion(pose.orientation))
-            except _AIRSIM_DECODE_EXCEPTIONS:
+            except Exception:
                 pass
 
         return signature or None

@@ -1712,19 +1712,16 @@ class PySimEnv(BaseEnv):
 
         # Screen size via a temporary Tk root. tkinter is imported lazily so the
         # framework still imports on headless machines without Tk (e.g. HPC nodes).
-        screen_width, screen_height = MAX_FIG_WIDTH, MAX_FIG_HEIGHT
+        # Any failure (no Tk, no display, Tk off the main thread, ...) falls back.
+        # noinspection PyBroadException
         try:
             import tkinter as tk
-        except ImportError:          # no Tk installed
-            tk = None
-        if tk is not None:
-            try:
-                root = tk.Tk()
-                screen_width = root.winfo_screenwidth()
-                screen_height = root.winfo_screenheight()
-                root.destroy()
-            except tk.TclError:      # Tk installed but no display
-                screen_width, screen_height = MAX_FIG_WIDTH, MAX_FIG_HEIGHT
+            root = tk.Tk()
+            screen_width = root.winfo_screenwidth()
+            screen_height = root.winfo_screenheight()
+            root.destroy()
+        except Exception:
+            screen_width, screen_height = MAX_FIG_WIDTH, MAX_FIG_HEIGHT
 
         fig_width = min(MAX_FIG_WIDTH, screen_width)
         fig_height = min(MAX_FIG_HEIGHT, screen_height)
