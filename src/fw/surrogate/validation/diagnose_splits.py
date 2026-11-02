@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+from typing import Dict, List
 
 import numpy as np
 
@@ -29,7 +30,7 @@ from fw.surrogate.schema import (
 from fw.surrogate.utils import data_path
 
 
-def report(kind, names, tr, splits):
+def report(kind: str, names: List[str], tr: np.ndarray, splits: Dict[str, np.ndarray]) -> None:
     """
     Print, per column, the train std and each split's mean shift, max |z| and out-of-range share,
     sorted by severity.
@@ -58,7 +59,13 @@ def report(kind, names, tr, splits):
             row[f"{sname}_out"] = np.mean((col < lo[i]) | (col > hi[i]))
         rows.append(row)
 
-    score = lambda r: max((r[f"{s}_maxz"] for s in splits), default=0.0) + 100 * r["const"]
+    def score(entry: dict) -> float:
+        """
+        Severity of one column: its largest max|z| over the splits, +100 if constant in train.
+        """
+
+        return max((entry[f"{s}_maxz"] for s in splits), default=0.0) + 100 * entry["const"]
+
     rows.sort(key=score, reverse=True)
 
     snames = list(splits)
@@ -94,7 +101,10 @@ def main(argv=None):
     files = [str(a.train_file), str(a.val_file), str(a.test_file)]
     identity = check_same_identity(files, [read_identity(f) for f in files])
     scenario = get_scenario(a.scenario or identity.scenario)
-    (xtr, ytr, _), (xva, yva, _), (xte, yte, _) = (load_encoded(f, scenario, a.env_encoding) for f in files)
+    train, val, test = [load_encoded(f, scenario, a.env_encoding) for f in files]
+    xtr, ytr, _ = train
+    xva, yva, _ = val
+    xte, yte, _ = test
     print(f"samples: train={len(xtr)}  val={len(xva)}  test={len(xte)}  "
           f"(data: {identity.scenario}, {identity.ship_model}; model scenario={scenario.name}, "
           f"env_encoding={a.env_encoding})")

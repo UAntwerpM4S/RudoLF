@@ -357,16 +357,19 @@ def make_dataloaders(train_file: PathOrPaths, val_file: PathOrPaths, test_file: 
     split only and are reused for val/test. Each split may be several .npz files.
 
     Args:
-        train_file, val_file, test_file: Path(s) to the .npz file(s) per split.
-        scenario:    schema.ScenarioSchema of the model.
-        env_encoding: Wind/current encoding ("angles" / "body_components").
-        batch_size:  Mini-batch size.
-        num_workers: DataLoader worker processes.
-        seed:        Seeds the train loader's shuffle order.
-        drop_last:   Drop the last incomplete train batch (for BatchNorm: a batch
-                     of 1 makes BatchNorm1d raise).
-        pin_memory:  Pin host memory (useful on CUDA).
-        min_bank_distance, min_ukc, min_episode_time: Row filters (see load_split).
+        train_file:        Path to the train_file .npz file.
+        val_file:          Path to the val_file .npz file.
+        test_file:         Path to the test_file .npz file.
+        scenario:          schema.ScenarioSchema of the model.
+        env_encoding:      Wind/current encoding ("angles" / "body_components").
+        batch_size:        Mini-batch size.
+        num_workers:       DataLoader worker processes.
+        seed:              Seeds the train loader's shuffle order.
+        drop_last:         Drop the last incomplete train batch (for BatchNorm: a batch of 1 makes BatchNorm1d raise).
+        pin_memory:        Pin host memory (useful on CUDA).
+        min_bank_distance: Row filters (see load_split).
+        min_ukc:           Row filters (see load_split).
+        min_episode_time:  Row filters (see load_split).
 
     Returns:
         (train_loader, val_loader, test_loader, x_mean, x_std, y_mean, y_std).

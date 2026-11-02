@@ -115,8 +115,8 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------
 
 V_VALUES = [1, 2, 3, 4, 5, 6]        # initial surge speed [m/s]
-DISTANCES = [35.0, 30.0, 25.0, 20.0, 15.0, 11.0]  # perpendicular distance to bank [m]
-# DISTANCES = [200.0, 150.0, 100.0, 75.0, 50.0, 35.0, 30.0, 25.0, 20.0, 15.0, 11.0]  # perpendicular distance to bank [m]
+DISTANCES = (35.0, 30.0, 25.0, 20.0, 15.0, 11.0)  # perpendicular distance to bank [m]
+# DISTANCES = (200.0, 150.0, 100.0, 75.0, 50.0, 35.0, 30.0, 25.0, 20.0, 15.0, 11.0)  # perpendicular distance to bank [m]
 
 RUDDER_ANGLE_RAD = 0.0               # fixed: ship sails parallel to the bank
 # SURROGATE_DT (0.1 s) comes from fw.surrogate.schema; the wind/current tests
@@ -482,6 +482,7 @@ def locate_point_at_distance(
             + (" (is the opposite bank closer than that?)." if target_distance > d_hi else ".")
         )
 
+    d_mid = float("nan")   # stays NaN only if max_iter < 1
     for _ in range(max_iter):
         mid = 0.5 * (lo + hi)
         pos_mid = bank_point + perp_into_water * mid
@@ -775,8 +776,9 @@ class FhSession:
 
         # The returned (u, v, r) is discarded; state() is the single place that
         # reads FH's state (before and after, for the finite differences).
+        # noinspection PyTypeChecker
         self._fh_model.step(
-            state=None,
+            state=None,   # step() is typed VesselState; None is passed on purpose (no framework state here)
             rudder_angle=RUDDER_ANGLE_RAD,
             thrust=self._thrust_normalized,
             dt=dt,
@@ -1111,7 +1113,7 @@ def _run_grid(ray_env, bank_point, perp_into_water, heading_deg, ship_spec, ref_
 def generate_trajectories(
         seed_point: Tuple[float, float],
         speed: float = TRAJECTORY_SPEED,
-        distances=DISTANCES,
+        distances: Sequence[float] = DISTANCES,
         target_distance: float = TRAJECTORY_TARGET_DISTANCE,
         max_steps: int = TRAJECTORY_MAX_STEPS,
 ) -> None:
@@ -1202,7 +1204,7 @@ def generate_trajectories(
 
         # Ray geometry check at FH's settled start pose, once per distance.
         _print_bank_ray_diagnostics(
-            ua_models, (x0, y0), float(np.degrees(heading0)), perp_into_water,
+            ua_models, np.array([x0, y0], dtype=float), float(np.degrees(heading0)), perp_into_water,
             ray_env, expected_distance=float(distance),
             log_prefix="generate_trajectories",
         )
@@ -1560,9 +1562,9 @@ def diagnose_fh_position_sweep(
     )
     for i in range(n_steps + 1):
         t = i / n_steps
-        x = good_pos[0] + t * (bad_pos[0] - good_pos[0])
-        y = good_pos[1] + t * (bad_pos[1] - good_pos[1])
-        try_point(x, y, 0.0, f"position_sweep[{i}/{n_steps}]")
+        sweep_x = good_pos[0] + t * (bad_pos[0] - good_pos[0])
+        sweep_y = good_pos[1] + t * (bad_pos[1] - good_pos[1])
+        try_point(sweep_x, sweep_y, 0.0, f"position_sweep[{i}/{n_steps}]")
 
     print(
         "=== diagnose_fh_position_sweep: part 2, heading sweep "
@@ -1571,8 +1573,8 @@ def diagnose_fh_position_sweep(
     )
     for i in range(n_steps + 1):
         t = i / n_steps
-        heading_deg = t * bad_heading_deg
-        try_point(bad_pos[0], bad_pos[1], heading_deg, f"heading_sweep[{i}/{n_steps}]")
+        sweep_heading_deg = t * bad_heading_deg
+        try_point(bad_pos[0], bad_pos[1], sweep_heading_deg, f"heading_sweep[{i}/{n_steps}]")
 
 
 if __name__ == "__main__":

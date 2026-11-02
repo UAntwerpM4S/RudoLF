@@ -248,6 +248,8 @@ def _build_visual_controls(
     specs = adapter.extract_ship_specifications(env, ship_index=ship_index)
     replay_brake = 1.0
     speed_ratio = None
+    # Best effort: any failure only disables speed matching.
+    # noinspection PyBroadException
     try:
         surge_speed, _, _ = adapter.extract_velocity(env, ship_index=ship_index)
         surge_limits = getattr(specs, "surge_limits", None)
@@ -258,17 +260,17 @@ def _build_visual_controls(
     except Exception:
         speed_ratio = None
 
-    def _apply_visual_speed_matching(controls: Any):
+    def _apply_visual_speed_matching(car_controls: Any):
         """
         Set the throttle visual from the speed ratio.
         """
 
-        if controls is None or speed_ratio is None:
-            return controls
-        controls.throttle = float(
+        if car_controls is None or speed_ratio is None:
+            return car_controls
+        car_controls.throttle = float(
             np.clip(float(speed_ratio) * max(float(throttle_visual_gain), 0.0), 0.0, 1.0)
         )
-        return controls
+        return car_controls
 
     if mirror_controls_in_ue5:
         controls = map_framework_actuator_state(
@@ -362,22 +364,22 @@ def _animate_framework_state(
     target_x, target_y, target_yaw, target_vx, target_vy, target_yaw_rate = target_motion_state
     _prefetched_pose = None
 
-    def _send_pose(alpha: float) -> None:
+    def _send_pose(fraction: float) -> None:
         """
-        Push the pose interpolated at alpha to UE5.
+        Push the pose interpolated at fraction (0 = previous, 1 = target) to UE5.
         """
 
         if not bridge.is_connected:
             return
-        ix = start_x + alpha * (target_x - start_x)
-        iy = start_y + alpha * (target_y - start_y)
-        iyaw = interpolate_angle(start_yaw, target_yaw, alpha)
+        ix = start_x + fraction * (target_x - start_x)
+        iy = start_y + fraction * (target_y - start_y)
+        iyaw = interpolate_angle(start_yaw, target_yaw, fraction)
         if vehicle_object_name:
             bridge.set_object_pose(vehicle_object_name, ix, iy, bridge.render_z, iyaw)
         elif use_kinematics_in_ue5:
-            ivx = start_vx + alpha * (target_vx - start_vx)
-            ivy = start_vy + alpha * (target_vy - start_vy)
-            iyr = start_yaw_rate + alpha * (target_yaw_rate - start_yaw_rate)
+            ivx = start_vx + fraction * (target_vx - start_vx)
+            ivy = start_vy + fraction * (target_vy - start_vy)
+            iyr = start_yaw_rate + fraction * (target_yaw_rate - start_yaw_rate)
             bridge.set_kinematics(
                 ix, iy, bridge.render_z, iyaw,
                 linear_velocity_x=ivx, linear_velocity_y=ivy, linear_velocity_z=0.0,
@@ -391,9 +393,9 @@ def _animate_framework_state(
                 _current_pose=_prefetched_pose,
             )
 
-    def _send_controls(alpha: float) -> None:
+    def _send_controls(fraction: float) -> None:
         """
-        Send the controls interpolated at alpha.
+        Send the controls interpolated at fraction (0 = previous, 1 = target).
         """
 
         if vehicle_object_name or target_actuator_state is None:
@@ -402,7 +404,7 @@ def _animate_framework_state(
             return
         if not bridge.is_connected:
             return
-        interp_act = _interpolate_actuator_state(previous_actuator_state, target_actuator_state, alpha)
+        interp_act = _interpolate_actuator_state(previous_actuator_state, target_actuator_state, fraction)
         controls = _build_visual_controls(
             adapter=adapter,
             env=env,
@@ -438,6 +440,8 @@ def _animate_framework_state(
         return target_motion_state, target_actuator_state
 
     if not vehicle_object_name and not use_kinematics_in_ue5 and bridge.is_connected:
+        # Optional prefetch; on failure set_pose() gets _current_pose=None, as before.
+        # noinspection PyBroadException
         try:
             _prefetched_pose = bridge.get_vehicle_pose()
         except Exception:
@@ -488,6 +492,8 @@ class ModelVisualisationAdapter(ABC):
         stem = Path(model_path).stem.lower()
         return any(keyword in stem for keyword in self.filename_keywords)
 
+    # model_path is part of the adapter interface (used by filename-aware subclasses).
+    # noinspection PyUnusedLocal
     def resolve_environment_name(self, model_path: str, requested_env_name: str) -> str:
         """
         Return the environment name for playback.
@@ -516,6 +522,8 @@ class ModelVisualisationAdapter(ABC):
             f"Model family '{self.family}' requires an explicit environment name."
         )
 
+    # Adapter hook: subclasses may override it with instance state.
+    # noinspection PyMethodMayBeStatic
     def load_policy(self, model_path: str, device: str = "cpu") -> PPOPolicy:
         """
         Load the policy checkpoint (see module-level load_policy).
@@ -591,6 +599,8 @@ class ModelVisualisationAdapter(ABC):
             float(getattr(state, "r", 0.0)),
         )
 
+    # Adapter hook: subclasses may override it with instance state.
+    # noinspection PyMethodMayBeStatic
     def extract_actuator_state(self, env, ship_index: int = 0) -> Optional[np.ndarray]:
         """
         Return the ship's performed action as a flat array, or None.
@@ -635,6 +645,8 @@ class ModelVisualisationAdapter(ABC):
 
         return _animate_framework_state(self, env, bridge, **kwargs)
 
+    # Adapter hook: subclasses may override it with instance state.
+    # noinspection PyMethodMayBeStatic
     def cleanup_environment(self, env) -> None:
         """
         Dispose the environment's FH Simulator, if any.

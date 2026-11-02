@@ -30,9 +30,9 @@ Notes:
       the ship cannot hold a straight course with |rudder| <= 35 deg and spins up.
       ShipModel.B01 uses min_thrust = 0.2 (lowest tested rate); a warning is logged once
       below min_straight_running_thrust (computed per UKC).
-    - Validity: straight running and small manoeuvres; under-predicts rudder effectiveness
+    - Validity: straight running and small maneuvers; under-predicts rudder effectiveness
       in zigzags (§5.2.2) and does not predict turning circles (§6).
-    - Wind and current are not modelled, and EnvironmentModel's full-scale accelerations
+    - Wind and current are not modeled, and EnvironmentModel's full-scale accelerations
       are about 9x the B01's maximum thrust acceleration, so ShipSimulator refuses them
       (supports_environment_model = False).
 """
@@ -177,7 +177,7 @@ def interpolation_blend(ukc_percent: float) -> _Blend:
     for lo, hi in zip(sets[:-1], sets[1:]):
         if x <= hi.depth_ratio:
             w = (x - lo.depth_ratio) / (hi.depth_ratio - lo.depth_ratio)
-            return ((lo, 1.0 - w), (hi, w))
+            return (lo, 1.0 - w), (hi, w)
     raise AssertionError("unreachable: depth ratio not bracketed")  # pragma: no cover
 
 

@@ -97,7 +97,7 @@ class ScenarioBuilder:
     def _push_scenario_to_classifier(self, scenario_label: Optional[str]) -> None:
         """
         Lock the classifier to the builder's scenario, if the env has
-        ground_truth_classification=True. Otherwise the classifier stays purely
+        ground_truth_classification=True. Otherwise, the classifier stays purely
         geometric, so its error rate can be measured against the ground truth.
         """
 
@@ -582,7 +582,7 @@ class ScenarioBuilder:
 
     def compute_headon_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
-        Place a head-on TS travelling backward along the path, on a
+        Place a head-on TS traveling backward along the path, on a
         length-weighted random eligible segment or on target_seg_idx.
         """
 
@@ -845,7 +845,7 @@ class ScenarioBuilder:
 
         env.collision_entities = entities
         env._sync_collision_entity_views()
-        # Lets the live renderer centre the camera here (same view across runs).
+        # Lets the live renderer center the camera here (same view across runs).
         env._single_encounter_ts_spawn_pos = np.asarray(
             entities[0].get_position(), dtype=np.float32
         ).copy()
@@ -857,7 +857,7 @@ class ScenarioBuilder:
         """
         Single-encounter eval mode: despawn the TS once its route is finished
         or the OS leaves forget_range (after having been within
-        encounter_range). Nothing respawns afterwards.
+        encounter_range). Nothing respawns afterward.
         """
 
         env = self.env

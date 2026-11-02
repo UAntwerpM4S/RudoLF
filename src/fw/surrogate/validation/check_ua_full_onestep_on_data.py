@@ -141,7 +141,7 @@ def _report(name: str, a: np.ndarray, pred: np.ndarray) -> None:
     bias_dr = math.degrees(float(np.mean(err[:, 2])) / DT)
     eps = len(np.unique(a[:, COL_EP]))
     print(f"{name:52s} n={n:>8,} ({eps:>5,} eps) | RMS err/RMS FH: du {ratio[0]:6.1f}%  dv {ratio[1]:6.1f}%  "
-          f"dr {ratio[2]:6.1f}% | mean dr bias {bias_dr:+.4f} deg/s^2 | RMS FH dr {math.degrees(rms_sig[2] / DT):.4f} deg/s^2")
+          f"dr {ratio[2]:6.1f}% | mean dr bias {bias_dr:+.4f} deg/s^2 | RMS FH dr {math.degrees(float(rms_sig[2]) / DT):.4f} deg/s^2")
 
 
 def main():
@@ -213,7 +213,8 @@ def main():
     _report(f"test-like, thrust {args.thrust:.2f}+-{args.thrust_tol:g}, wind < {LOW_WIND:g}",
             like[tm & (tw < LOW_WIND)], p_like[tm & (tw < LOW_WIND)])
     th_all = rand[:, COL_THRUST]
-    print(f"\nThrust {args.thrust:.2f}+-{args.thrust_tol:g}: {100.0 * np.mean(np.abs(th_all - args.thrust) < args.thrust_tol):.2f}% "
+    thrust_share_pct = 100.0 * float(np.mean(np.abs(th_all - args.thrust) < args.thrust_tol))
+    print(f"\nThrust {args.thrust:.2f}+-{args.thrust_tol:g}: {thrust_share_pct:.2f}% "
           f"of all rows (random sample), {int(tm.sum()):,} test-like rows in {len(np.unique(like[tm, COL_EP])):,} episodes.")
     print("Thrust action, all rows (random sample): " + ", ".join(
         f"p{q}={np.percentile(th_all, q):.2f}" for q in (5, 25, 50, 75, 95)))

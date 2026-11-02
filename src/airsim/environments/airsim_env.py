@@ -20,8 +20,10 @@ import gymnasium as gym
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
+# Any import failure (not only ImportError, e.g. an incompatible tornado) falls back.
+# noinspection PyBroadException
 try:
     from msgpackrpc.error import TransportError as _MsgpackTransportError
 except Exception:  # pragma: no cover - optional dependency fallback
@@ -227,6 +229,8 @@ def _safe_load_csv(path: Path, fallback: np.ndarray) -> np.ndarray:
     Load a two-column CSV file or return the provided fallback array.
     """
 
+    # Best effort: any load failure falls back.
+    # noinspection PyBroadException
     try:
         data = np.loadtxt(path, delimiter=",", skiprows=1)
     except Exception:
@@ -236,6 +240,29 @@ def _safe_load_csv(path: Path, fallback: np.ndarray) -> np.ndarray:
     if data.ndim != 2 or data.shape[1] != 2 or len(data) == 0:
         return np.asarray(fallback, dtype=np.float32)
     return data
+
+
+def _telemetry_float(value: Any) -> float:
+    """
+    A bridge telemetry value as float; raises TypeError/ValueError if it is missing (None) or not numeric.
+    """
+
+    return float(value)
+
+
+def _settled_pose_event_fields(pose: Optional[dict[str, float]]) -> dict[str, Optional[float]]:
+    """
+    airsim_x/y/z and airsim_yaw_deg of a settled spawn pose for a run event (all None without a pose).
+    """
+
+    if pose is None:
+        return {"airsim_x": None, "airsim_y": None, "airsim_z": None, "airsim_yaw_deg": None}
+    return {
+        "airsim_x": float(pose["x"]),
+        "airsim_y": float(pose["y"]),
+        "airsim_z": float(pose["z"]),
+        "airsim_yaw_deg": float(math.degrees(float(pose["yaw"]))),
+    }
 
 
 def _calculate_perpendicular_lines(
@@ -249,25 +276,25 @@ def _calculate_perpendicular_lines(
     if not checkpoints:
         return []
 
-    def _tangent_at(index: int) -> np.ndarray:
+    def _tangent_at(cp_idx: int) -> np.ndarray:
         """
         Return a normalized local path tangent vector at a checkpoint index.
         """
 
         if len(checkpoints) == 1:
             return np.array([1.0, 0.0], dtype=np.float32)
-        if index == 0:
-            tangent = checkpoints[1]["pos"] - checkpoints[0]["pos"]
-        elif index == len(checkpoints) - 1:
-            tangent = checkpoints[-1]["pos"] - checkpoints[-2]["pos"]
+        if cp_idx == 0:
+            direction = checkpoints[1]["pos"] - checkpoints[0]["pos"]
+        elif cp_idx == len(checkpoints) - 1:
+            direction = checkpoints[-1]["pos"] - checkpoints[-2]["pos"]
         else:
-            tangent = 0.5 * (
-                checkpoints[index + 1]["pos"] - checkpoints[index - 1]["pos"]
+            direction = 0.5 * (
+                checkpoints[cp_idx + 1]["pos"] - checkpoints[cp_idx - 1]["pos"]
             )
-        norm = float(np.linalg.norm(tangent))
+        norm = float(np.linalg.norm(direction))
         if norm <= 1e-9:
             return np.array([1.0, 0.0], dtype=np.float32)
-        return (tangent / norm).astype(np.float32)
+        return (direction / norm).astype(np.float32)
 
     lines: list[tuple[np.ndarray, np.ndarray]] = []
     for index, checkpoint in enumerate(checkpoints):
@@ -627,6 +654,8 @@ class AirSimEnv(BaseEnv):
         start_heading = self._select_episode_start_heading(start_index)
 
         if self._world_prepared and self.reset_mode == _RESET_MODE_BRIDGE_RESET:
+            # Best effort: any bridge error is logged and ignored.
+            # noinspection PyBroadException
             try:
                 self.bridge.reset()
             except Exception:
@@ -927,6 +956,8 @@ class AirSimEnv(BaseEnv):
         Disconnect from AirSim and release bridge resources.
         """
 
+        # Best effort: any bridge error is logged and ignored.
+        # noinspection PyBroadException
         try:
             if getattr(self, "bridge", None) is not None:
                 self.bridge.disconnect()
@@ -951,14 +982,7 @@ class AirSimEnv(BaseEnv):
                     "world_loaded",
                     save_slot=self.save_slot,
                     load_duration_s=float(time.perf_counter() - load_started_at),
-                    airsim_x=float(settled_pose["x"]) if settled_pose is not None else None,
-                    airsim_y=float(settled_pose["y"]) if settled_pose is not None else None,
-                    airsim_z=float(settled_pose["z"]) if settled_pose is not None else None,
-                    airsim_yaw_deg=(
-                        float(math.degrees(float(settled_pose["yaw"])))
-                        if settled_pose is not None
-                        else None
-                    ),
+                    **_settled_pose_event_fields(settled_pose),
                 )
             except Exception as exc:
                 logger.warning("Could not load AirSim save slot '%s': %s", self.save_slot, exc)
@@ -1222,6 +1246,8 @@ class AirSimEnv(BaseEnv):
             self._apply_parked_controls()
             return
 
+        # Best effort: any bridge error is logged and ignored.
+        # noinspection PyBroadException
         try:
             self.bridge.set_kinematics(
                 airsim_x,
@@ -1247,6 +1273,8 @@ class AirSimEnv(BaseEnv):
         Toggle paused stepping mode.
         """
 
+        # Best effort: any bridge error is logged and ignored.
+        # noinspection PyBroadException
         try:
             self.bridge.set_pause(bool(is_paused))
         except Exception:
@@ -1295,6 +1323,8 @@ class AirSimEnv(BaseEnv):
         """
 
         signature: dict[str, float | int] = {}
+        # Best effort: a failed read only leaves fields out of the signature.
+        # noinspection PyBroadException
         try:
             state = self.bridge.get_state()
         except Exception:
@@ -1303,23 +1333,26 @@ class AirSimEnv(BaseEnv):
         if isinstance(state, dict) and not bool(state.get("state_read_failed")):
             try:
                 signature["timestamp"] = int(state.get("timestamp", 0) or 0)
-                signature["pos_x"] = float(state["pos_x"])
-                signature["pos_y"] = float(state["pos_y"])
-                signature["yaw"] = float(state["yaw"])
+                signature["pos_x"] = _telemetry_float(state["pos_x"])
+                signature["pos_y"] = _telemetry_float(state["pos_y"])
+                signature["yaw"] = _telemetry_float(state["yaw"])
             except (KeyError, TypeError, ValueError):
                 signature.clear()
 
+        # noinspection PyBroadException
         try:
             pose = self.bridge.get_vehicle_pose()
         except Exception:
             pose = None
 
         if pose is not None:
+            # noinspection PyBroadException
             try:
                 signature["pose_x"] = float(pose.position.x_val)
                 signature["pose_y"] = float(pose.position.y_val)
             except Exception:
                 pass
+            # noinspection PyBroadException
             try:
                 signature["pose_yaw"] = float(yaw_from_quaternion(pose.orientation))
             except Exception:
@@ -1377,7 +1410,6 @@ class AirSimEnv(BaseEnv):
         airsim_x: float | None = None
         airsim_y: float | None = None
         airsim_yaw: float | None = None
-        pose = None
         try:
             pose = self.bridge.get_vehicle_pose()
         except _AIRSIM_READ_EXCEPTIONS:
@@ -1876,7 +1908,8 @@ class AirSimEnv(BaseEnv):
             )
         builder = getattr(self, builder_name)
         observation = builder()
-        return np.clip(observation, self.observation_space.low, self.observation_space.high)
+        box = cast(gym.spaces.Box, self.observation_space)
+        return np.clip(observation, box.low, box.high)
 
     def _build_route_relative_car_observation(self) -> np.ndarray:
         """
@@ -2363,8 +2396,8 @@ class AirSimEnv(BaseEnv):
         segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
         return np.concatenate([[0.0], np.cumsum(segment_lengths)]).astype(np.float32)
 
+    @staticmethod
     def _build_checkpoints(
-        self,
         route_points: np.ndarray,
         cumulative_distances: np.ndarray,
     ) -> list[dict[str, Any]]:

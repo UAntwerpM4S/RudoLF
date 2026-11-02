@@ -318,7 +318,7 @@ def _run_training_with_transfer(
     profile=None,
 ) -> dict[str, Any]:
     """
-    Train a SinglePPOAgent whose policy is initialised from a 2D policy.
+    Train a SinglePPOAgent whose policy is initialized from a 2D policy.
 
     Bypasses Trainer, which creates its agent inside train(), too late to
     inject weights. On a transfer failure, training continues from random

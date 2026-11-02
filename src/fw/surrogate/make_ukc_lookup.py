@@ -2,7 +2,7 @@
 Build a small UKC lookup CSV from a (large) confined_ukc dataset CSV.
 
 The UAntwerp surrogate (fw.dynamics.uantwerp_surrogate) looks up the UKC at a
-position with a nearest-neighbour search (fw.dynamics.wcu_lookup.WcuLookup).
+position with a nearest-neighbor search (fw.dynamics.wcu_lookup.WcuLookup).
 The dataset CSV has one row per simulation step (millions of rows), but
 WcuLookup only needs a few columns. This tool bins positions on a square grid
 and keeps one row per occupied cell, in the same column layout as the dataset
@@ -22,7 +22,7 @@ grid of the river is tens of MB as plain CSV, a few MB compressed; GitHub
 refuses files over 100 MB).
 
 Before writing, whole episodes (default 10 %) are held out and the UKC at their
-positions is compared with the full nearest-neighbour lookup and each grid size.
+positions is compared with the full nearest-neighbor lookup and each grid size.
 The within-cell spread shows how much UKC is not explained by position.
 
 Usage (from src):
@@ -195,7 +195,7 @@ def evaluate(data: Dict[str, np.ndarray], cells: Sequence[float], holdout_frac: 
              representative: bool = False) -> None:
     """
     Log the UKC error at held-out episodes' positions for the full
-    nearest-neighbour lookup and the grid lookup per cell size.
+    nearest-neighbor lookup and the grid lookup per cell size.
     """
 
     episodes = np.unique(data["episode_id"])

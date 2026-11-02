@@ -69,7 +69,7 @@ def calculate_perpendicular_lines(
 
     def smooth_tangent(check_points: List[dict], index: int) -> np.ndarray:
         """
-        Unit tangent at a checkpoint, averaging the neighbouring segments.
+        Unit tangent at a checkpoint, averaging the neighboring segments.
         """
 
         # Single checkpoint: arbitrary tangent (unit x-axis)

@@ -200,7 +200,7 @@ class CollisionEntity:
 
     def overlaps_with(self, other: "CollisionEntity", own_radius: float, margin: float = 0.0) -> bool:
         """
-        True if the centre distance is below both radii + 2 * own_radius + margin.
+        True if the center distance is below both radii + 2 * own_radius + margin.
         """
 
         distance = float(np.linalg.norm(self.get_position() - other.get_position()))

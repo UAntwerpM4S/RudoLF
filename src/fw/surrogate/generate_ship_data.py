@@ -329,6 +329,7 @@ def main():
 
     # Provenance is informational: a failure here is reported, never fatal.
     provenance = None
+
     try:
         provenance = generation_provenance(args, ship_model, rudder_max_deg, nbr_samples, len(x_values),
                                            started_utc=started_utc)

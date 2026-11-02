@@ -203,7 +203,7 @@ class UAntwerpSurrogate(DynamicsBase):
                 np.degrees(ship_spec.max_rudder_angle), self.rudder_max_deg, checkpoint,
             )
 
-        # UKC (and for full_env wind/current): nearest-neighbour lookup in a CSV
+        # UKC (and for full_env wind/current): nearest-neighbor lookup in a CSV
         # with the scenario's raw column layout.
         self.default_ukc = float(self.preset.default_ukc)
         self.ukc = self.default_ukc

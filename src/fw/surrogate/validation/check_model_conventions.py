@@ -140,21 +140,22 @@ def build_models(ship: ShipModel, spec, keep_lookup_env: bool) -> Dict[str, Call
             print(f"{label}: skipped ({type(exc).__name__}: {exc})")
             continue
 
-        def make(preset=preset):
+        def make(preset_name=preset):   # default arg binds this iteration's preset
             """
-            Fresh UAntwerpSurrogate for `preset`; zero wind/current unless keep_lookup_env.
+            Fresh UAntwerpSurrogate for `preset_name`; zero wind/current unless keep_lookup_env.
             """
 
-            model = UAntwerpSurrogate(spec, {"preset": preset}, ship_model=ship)
+            model = UAntwerpSurrogate(spec, {"preset": preset_name}, ship_model=ship)
             if not keep_lookup_env:
                 looked_up = model.get_env
 
-                def calm_env(pos, state=None, _get=looked_up):
+                def calm_env(*args, _get=looked_up, **kwargs):
                     """
                     The looked-up environment with wind_speed and current_speed set to 0.
+                    Forwards the caller's arguments unchanged, so it matches get_env's signature.
                     """
 
-                    env = _get(pos, state)
+                    env = _get(*args, **kwargs)
                     return dataclasses.replace(env, wind_speed=0.0, current_speed=0.0)
 
                 model.get_env = calm_env
@@ -213,7 +214,8 @@ def run_fh(ship: ShipModel, spec, start: VesselState, rudder: float, thrust: flo
 
         rows = [read(0.0)]
         for k in range(int(round(duration / SURROGATE_DT))):
-            fh.step(None, rudder, thrust, SURROGATE_DT)
+            # noinspection PyTypeChecker
+            fh.step(None, rudder, thrust, SURROGATE_DT)   # step() is typed VesselState; None is passed on purpose
             rows.append(read((k + 1) * SURROGATE_DT))
         return _track(rows)
     finally:
@@ -235,7 +237,7 @@ def sway_slope(tr: Track) -> Optional[float]:
     return float(np.linalg.lstsq(a, v_track, rcond=None)[0][0])
 
 
-def check_model(label: str, runs: Dict[str, Track], is_fh: bool) -> List[str]:
+def check_model(runs: Dict[str, Track], is_fh: bool) -> List[str]:
     """
     Returns the failures of one model and prints its lines.
     """
@@ -396,7 +398,7 @@ def main(argv=None) -> int:
             print(f"  ERROR: {type(exc).__name__}: {exc}")
             failures[label] = ["ERROR"]
             continue
-        failures[label] = check_model(label, results[label], is_fh=(label == "FH"))
+        failures[label] = check_model(results[label], is_fh=(label == "FH"))
 
     # One-glance cross-model comparison.
     print("\nSummary (heading change [deg] after the run, +R / 0 / -R; final surge at +R):")

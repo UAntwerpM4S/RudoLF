@@ -55,7 +55,7 @@ import time
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -120,7 +120,7 @@ logger = logging.getLogger(__name__)
 CURRENT_EXERCISE_PATH: Optional[Path] = None      # e.g. .../DDShip_Tripoli_scenario_windcurrent.tab
 NOCURRENT_EXERCISE_PATH: Optional[Path] = None    # e.g. .../DDShip_Tripoli_scenario_windnocurrent.tab
 
-REL_CURRENT_DIRS_DEG = [0, 45, 90, 135, 180, 225, 270, 315]   # current FROM, rel. to bow, clockwise
+REL_CURRENT_DIRS_DEG = (0, 45, 90, 135, 180, 225, 270, 315)   # current FROM, rel. to bow, clockwise
 CURRENT_LEVEL_FRACTIONS = (0.5, 1.0)        # of the strongest current found in the calibration scan
 CURRENT_SPEED_TARGETS: Optional[List[float]] = None   # [m/s]; if set, used instead of the fractions
 
@@ -493,6 +493,7 @@ def run_case(run_id: str, level: CurrentLevel, rel_deg: float, heading_deg: floa
         last_raw, held_true, held_apparent = None, None, {}
         tf_pred: Dict[str, list] = {label: [] for label in (tf_models or {})}
         tf_fh: list = []
+        tf_pre: Tuple[float, float, float] = (0.0, 0.0, 0.0)   # FH (u, v, r) before the step
 
         def keep_going():
             """
@@ -772,6 +773,7 @@ def slide_response_per_direction(d, level: str, png_path: Path) -> None:
     if plt is None:
         return
     import matplotlib as mpl
+    # noinspection PyTypeChecker
     with mpl.rc_context():
         _slide_style()
         cur = d[d["level"] == level]
@@ -819,6 +821,7 @@ def slide_example_paths(results: Dict[Tuple[str, float], RunResult], bases: Dict
     sel = [results[(level, r)] for r in rels if (level, r) in results]
     if not sel:
         return
+    # noinspection PyTypeChecker
     with mpl.rc_context():
         _slide_style()
         fig, axes = plt.subplots(1, len(sel), figsize=(13.33, 6.2), sharey=True, squeeze=False)
@@ -907,7 +910,7 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
     d = pd.read_csv(out_dir / SUMMARY_NAME)
     meta = json.loads((out_dir / RUN_META_NAME).read_text()) if (out_dir / RUN_META_NAME).is_file() else {}
     cal = pd.read_csv(out_dir / CALIBRATION_NAME) if (out_dir / CALIBRATION_NAME).is_file() else None
-    levels = sorted(d["level"].unique(), key=lambda s: float(s[1:]))
+    levels = sorted(d["level"].unique(), key=lambda name: float(name[1:]))
     models_present = [m for m in REPORT_MODELS if m in set(d["model"])]
 
     def mean_abs(col):
@@ -915,15 +918,15 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
         Mean |col| per model, per current level and over all levels, as a DataFrame.
         """
 
-        rows = []
+        out_rows = []
         for m in models_present:
             sub = d[d["model"] == m]
-            r = {"model": m}
-            for lv in levels:
-                r[f"{float(lv[1:]):.2f} m/s"] = float(sub[sub["level"] == lv][col].abs().mean())
+            r: Dict[str, object] = {"model": m}
+            for level in levels:
+                r[f"{float(level[1:]):.2f} m/s"] = float(sub[sub["level"] == level][col].abs().mean())
             r["all"] = float(sub[col].abs().mean())
-            rows.append(r)
-        return pd.DataFrame(rows)
+            out_rows.append(r)
+        return pd.DataFrame(out_rows)
 
     t_along = mean_abs("current_effect_along_error")
     t_lat = mean_abs("current_effect_lateral_error")
@@ -974,7 +977,7 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
 
     q = fh[["level", "target_rel_dir_deg", "time_start", "heading_deg", "actual_current_speed", "actual_rel_dir_deg",
             "current_speed_min_along_path", "current_speed_max_along_path", "n_steps", "fh_domain_exit_step"]].copy()
-    hits = d.groupby(["level", "target_rel_dir_deg"])["first_bank_hit_step"].apply(lambda s: int(s.notna().sum()))
+    hits = d.groupby(["level", "target_rel_dir_deg"])["first_bank_hit_step"].apply(lambda hit_steps: int(hit_steps.notna().sum()))
     q["models with bank in ray range"] = [hits.get((a, b), 0) for a, b in zip(q["level"], q["target_rel_dir_deg"])]
     q.columns = ["level", "target from [deg]", "timeStart [s]", "start heading [deg]", "current at start [m/s]",
                  "actual from [deg]", "current min on path", "current max on path", "steps",
@@ -987,12 +990,14 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
         o = o[o["with_current"] == 1]
         if not o.empty:
 
-            def grp(rd):
+            def grp(rel_dir):
                 """
                 Side group of a relative current direction [deg] for the one-step table.
                 """
 
-                return "from starboard" if 0 < rd < 180 else ("from port" if rd > 180 else "head / following")
+                if 0 < rel_dir < 180:
+                    return "from starboard"
+                return "from port" if rel_dir > 180 else "head / following"
 
             o["side"] = o["target_rel_dir_deg"].map(grp)
             rows = []
@@ -1132,7 +1137,7 @@ def _clean_output_dir(out_dir: Path) -> None:
         print(f"Removed {n} output file(s) of a previous run from {out_dir}", flush=True)
 
 
-def _check_fh_directions(lv: CurrentLevel, results: List[RunResult], bases: Dict[str, RunResult]) -> None:
+def _check_fh_directions(results: List[RunResult], bases: Dict[str, RunResult]) -> None:
     """
     Check the direction convention on FH's paths (head current reduces the distance
     ahead; current from starboard sets to port, from port to starboard). Warns only.
@@ -1176,7 +1181,7 @@ def _print_run(res: RunResult) -> None:
 def generate_current_trajectories(start_x: float, start_y: float, start_heading_deg: float,
                                   exercise_path: Optional[Path] = None,
                                   exercise_path_nocurrent: Optional[Path] = None,
-                                  rel_dirs_deg=REL_CURRENT_DIRS_DEG, speed: float = CURRENT_TRAJECTORY_SPEED,
+                                  rel_dirs_deg: Sequence[float] = REL_CURRENT_DIRS_DEG, speed: float = CURRENT_TRAJECTORY_SPEED,
                                   calibrate_only: bool = False) -> None:
     """
     Run the current test. start_heading_deg is used only for calibration; every run
@@ -1285,7 +1290,7 @@ def _generate(start_x, start_y, start_heading_deg, exercise_path, exercise_path_
                 sf.flush()
                 of.flush()
             if lv_results:
-                _check_fh_directions(lv, lv_results, bases)
+                _check_fh_directions(lv_results, bases)
                 plot_paths_for_level(lv_results, bases, CURRENT_OUTPUT_DIR / f"current_paths_{lv.name}.png",
                                      f"Paths vs. FH -- current {lv.speed:.2f} m/s (timeStart {lv.time_start} s), "
                                      f"v0={speed:g} m/s, rudder 0, no wind")
