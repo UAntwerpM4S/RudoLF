@@ -93,7 +93,7 @@ class TelemetryExporter:
             model_path: Model path recorded in metadata.
             environment_name: Environment label recorded in metadata.
             config_dict: Configuration recorded in metadata.
-            export_dir: Output directory (default: <repo>/exports).
+            export_dir: Output directory (default: <repo>/src/exports).
             flush_interval: Rows buffered before a batch goes to the writer thread.
             fieldnames: Ordered CSV columns (default: _DEFAULT_FIELDNAMES).
             csv_filename: CSV filename override.
