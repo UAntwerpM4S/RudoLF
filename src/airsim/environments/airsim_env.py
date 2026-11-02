@@ -1,11 +1,10 @@
 """
 Gymnasium AirSim environment for UE5 vessel training and inference.
 
-This environment is the missing bridge between the existing AirSim connection
-layer and the framework PPO stack. It exposes a standard Gymnasium interface,
-defines an explicit continuous observation space for PPO, and keeps the route,
-reward, and telemetry model close to the rest of the project so training,
-inference, and reporting all use the same state contract.
+Connects the AirSim bridge to the framework PPO stack through a standard
+Gymnasium interface with a continuous observation space. Route, reward and
+telemetry follow the rest of the framework, so training, inference and
+reporting share one state contract.
 """
 
 from __future__ import annotations
@@ -115,10 +114,8 @@ def _log_scale_signed(value: float, scale: float) -> float:
     """
     Map a signed distance to [-1, 1] with logarithmic compression.
 
-    Values near zero get finer resolution; the input magnitude equal to
-    `scale` maps to exactly ±1. The input magnitude equal to
-    `_LOG_SCALE_HALF_VALUE_FRACTION * scale` maps to approximately ±0.5,
-    giving the policy more precision when close to a checkpoint.
+    |value| = scale maps to ±1 and |value| = _LOG_SCALE_HALF_VALUE_FRACTION * scale
+    to about ±0.5, giving finer resolution close to a checkpoint.
     """
 
     if scale <= 1e-6:
@@ -182,8 +179,8 @@ def normalize_navigation_state(
     """
     Normalize raw ship telemetry into a compact `[-1, 1]` vector.
 
-    This helper is intended for pipelines that consume the run-log schema
-    directly (large `ship_x`/`ship_y` values and heading in degrees).
+    For pipelines that consume the run-log schema directly (absolute
+    `ship_x`/`ship_y`, heading in degrees).
     """
 
     safe_half_span = max(float(xy_half_span), 1e-6)
@@ -673,7 +670,7 @@ class AirSimEnv(BaseEnv):
         if not reset_settled:
             raise RuntimeError("AirSimEnv reset failed because the post-teleport state never stabilized.")
 
-        # Keep reset behavior unchanged while forcing a deterministic zero-velocity start state.
+        # Deterministic zero-velocity start state.
         self._enforce_zero_velocity_after_reset()
 
         self.step_count = 0
@@ -870,8 +867,8 @@ class AirSimEnv(BaseEnv):
             )
 
         if terminated or truncated:
-            # Curriculum advances only when the agent passes the frontier cleanly,
-            # offtrack counts as failure so the frontier does not advance on drift-past.
+            # Curriculum advances only on a clean pass of the frontier; off-track
+            # counts as failure, so drifting past does not advance it.
             curriculum_success = (
                 self.checkpoint_index > self._curriculum_frontier_index
                 and not collision
@@ -1698,11 +1695,9 @@ class AirSimEnv(BaseEnv):
         """
         Return the active off-track threshold for the current episode step.
 
-        The threshold follows a two-part schedule:
-            1) A curriculum anneal from a generous limit to a stricter limit
-               across early episodes.
-            2) A next-checkpoint-aware expansion so the threshold does not
-               collapse too aggressively in wide turns.
+        The larger of (a) a limit annealed from hard to soft over early episodes
+        and (b) 1.6x the distance to the next checkpoint (so wide turns are not
+        cut off), clipped to [soft, hard].
         """
 
         anneal_ratio = float(
@@ -1866,9 +1861,8 @@ class AirSimEnv(BaseEnv):
         """
         Build the PPO observation vector from the current route state.
 
-        The current car-physics training profile keeps the observation
-        route-relative while also exposing the minimum extra dynamics needed
-        for tighter turn control: yaw-rate and cross-track trend.
+        The car-physics profile is route-relative plus yaw rate and cross-track
+        trend for tighter turn control.
         """
 
         builder_name = _OBSERVATION_BUILDERS.get(
@@ -2098,12 +2092,8 @@ class AirSimEnv(BaseEnv):
             ),
             "terminated": bool(terminated),
             "truncated": bool(truncated),
-            # Plural aliases consumed by BasePPOAgent._step_envs() and its
-            # subclasses so GAE bootstrapping can distinguish a true episode
-            # termination from a time-limit truncation. Without these keys,
-            # SB3's VecEnv wrapping collapses terminated/truncated into a
-            # single `done` flag before it reaches the policy layer, and
-            # truncations get silently zeroed (treated as hard terminations).
+            # Plural aliases read by BasePPOAgent._step_envs() so GAE can tell
+            # termination from truncation (SB3's VecEnv merges them into `done`).
             "rewards": float(reward),
             "terminations": bool(terminated),
             "truncations": bool(truncated),

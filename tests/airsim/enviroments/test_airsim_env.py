@@ -1,5 +1,5 @@
 """
-Tests for the rebuilt AirSimEnv.
+Tests for AirSimEnv (with a fake AirSim bridge).
 """
 
 from __future__ import annotations

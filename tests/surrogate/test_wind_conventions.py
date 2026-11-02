@@ -14,13 +14,17 @@ from fw.dynamics.uantwerp_surrogate import apparent_wind_for_state
 
 
 def _wind(app_speed, app_dir, rec, own):
-    """apparent_wind_for_state with (heading, u, v) tuples for the recording and own ship."""
+    """
+    apparent_wind_for_state with (heading, u, v) tuples for the recording and own ship.
+    """
 
     return apparent_wind_for_state(app_speed, app_dir, *rec, *own)
 
 
 def test_identical_ships_give_the_same_wind():
-    """Same heading and velocity: the apparent wind is unchanged."""
+    """
+    Same heading and velocity: the apparent wind is unchanged.
+    """
 
     for app_dir in (-2.5, -0.3, 0.0, 1.0, 3.0):
         speed, direction = _wind(7.0, app_dir, (0.4, 3.0, -0.2), (0.4, 3.0, -0.2))
@@ -29,7 +33,9 @@ def test_identical_ships_give_the_same_wind():
 
 
 def test_calm_air_gives_head_wind_from_own_surge():
-    """No true wind (the recording ship was stopped in calm air): moving ahead makes a head wind = surge."""
+    """
+    No true wind (the recording ship was stopped in calm air): moving ahead makes a head wind = surge.
+    """
 
     speed, direction = _wind(0.0, 0.0, (1.2, 0.0, 0.0), (-0.7, 4.0, 0.0))
     assert speed == pytest.approx(4.0, abs=1e-9)
@@ -37,7 +43,9 @@ def test_calm_air_gives_head_wind_from_own_surge():
 
 
 def test_calm_air_sway_to_port_gives_wind_from_port():
-    """No true wind, own sway to PORT (v > 0): the apparent wind comes from port (negative direction)."""
+    """
+    No true wind, own sway to PORT (v > 0): the apparent wind comes from port (negative direction).
+    """
 
     speed, direction = _wind(0.0, 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 1.5))
     assert speed == pytest.approx(1.5, abs=1e-9)
@@ -45,7 +53,9 @@ def test_calm_air_sway_to_port_gives_wind_from_port():
 
 
 def test_stopped_recorder_measured_true_wind():
-    """A stopped recording ship measures the true wind; a stopped ship turned 90 deg to port sees it rotated."""
+    """
+    A stopped recording ship measures the true wind; a stopped ship turned 90 deg to port sees it rotated.
+    """
 
     # Recorder heading East, wind from starboard (i.e. from the South, blowing North).
     speed, direction = _wind(5.0, np.pi / 2, (0.0, 0.0, 0.0), (np.pi / 2, 0.0, 0.0))
@@ -55,7 +65,9 @@ def test_stopped_recorder_measured_true_wind():
 
 
 def test_rotating_both_ships_changes_nothing():
-    """Only the relative geometry matters: rotating both headings by the same angle keeps the result."""
+    """
+    Only the relative geometry matters: rotating both headings by the same angle keeps the result.
+    """
 
     a = _wind(6.0, 0.8, (0.3, 2.0, 0.1), (1.1, 3.0, -0.4))
     b = _wind(6.0, 0.8, (0.3 + 2.0, 2.0, 0.1), (1.1 + 2.0, 3.0, -0.4))
@@ -64,7 +76,9 @@ def test_rotating_both_ships_changes_nothing():
 
 
 def test_direction_range():
-    """The returned direction lies in [-pi, pi)."""
+    """
+    The returned direction lies in [-pi, pi).
+    """
 
     rng = np.random.default_rng(0)
     for _ in range(200):

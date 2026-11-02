@@ -16,21 +16,10 @@ logger = logging.getLogger(__name__)
 
 class PlotlyRenderer:
     """
-    Renders an interactive multi-ship evaluation dashboard using Plotly.
+    Interactive multi-ship evaluation dashboard (HTML, requires plotly).
 
-    Produces an HTML file containing an interactive visualization of ship
-    trajectories and associated time-series signals. The dashboard supports
-    zooming, hovering, and toggling visibility of individual ships and episodes.
-
-    Layout:
-        Each ship is shown in a separate column with four stacked panels:
-            1. Trajectory (with optional collision markers)
-            2. Cross-track error
-            3. Rudder actions
-            4. Under-keel clearance (UKC)
-
-    Requirements:
-        plotly (pip install plotly)
+    One column per ship with four panels: trajectory (with collision/near-miss
+    markers), cross-track error, rudder actions and UKC.
     """
 
     @classmethod
@@ -41,23 +30,13 @@ class PlotlyRenderer:
         save_path: str = "dashboard.html",
     ) -> None:
         """
-        Generates an interactive HTML dashboard for multi-ship evaluation.
+        Write the dashboard to save_path. Later episodes are drawn with lower
+        opacity. Logs an error and returns if plotly is not installed.
 
         Args:
-            ship_data: Mapping of ship IDs to lists of `ShipEpisodeData`.
-            metrics: Mapping of ship IDs to computed `ShipMetrics` (currently
-                not directly visualized but reserved for future extensions).
-            save_path: Output path for the generated HTML file.
-
-        Returns:
-            None.
-
-        Notes:
-            - Ships are assigned colors from a fixed palette (`SHIP_COLORS`).
-            - Each episode is rendered with decreasing opacity for readability.
-            - Collision and near-miss events are shown on the trajectory plot.
-            - Legend grouping allows toggling full ship trajectories.
-            - Requires Plotly; gracefully exits if not installed.
+            ship_data: Ship ID to list of ShipEpisodeData.
+            metrics: Ship ID to ShipMetrics (currently unused).
+            save_path: Output HTML path.
         """
 
         try:
@@ -140,8 +119,7 @@ class PlotlyRenderer:
 
                 # Rudder actions
                 if ep.rudder_actions.size:
-                    # resample_to_common_time expects common_time in [0, 1];
-                    # divide ct by 100 so the x-axis stays in [0, 100] for display.
+                    # Resample on [0, 1]; display on [0, 100].
                     ct = np.linspace(0.0, 100.0, 200)
                     resampled = resample_to_common_time(ep.rudder_actions, ct / 100.0)
                     fig.add_trace(go.Scatter(

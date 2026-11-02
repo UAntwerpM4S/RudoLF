@@ -13,10 +13,8 @@ ACTIVATIONS: Dict[str, Type[nn.Module]] = {
     "SiLU": nn.SiLU,
 }
 
-# Kaiming nonlinearity name for ReLU-family activations; anything else gets
-# Xavier init. Keys typed as the activation classes passed around (so lookups
-# with a Type[nn.Module] type-check); values as a Literal, because
-# nn.init.kaiming_uniform_ annotates `nonlinearity` with a Literal of names.
+# Kaiming nonlinearity name for ReLU-family activations (others get Xavier init).
+# Values typed as a Literal to match nn.init.kaiming_uniform_'s annotation.
 _KaimingNonlinearity = Literal["relu", "leaky_relu"]
 _KAIMING_NONLINEARITY: Dict[Type[nn.Module], _KaimingNonlinearity] = {
     nn.ReLU: "relu",
@@ -25,7 +23,9 @@ _KAIMING_NONLINEARITY: Dict[Type[nn.Module], _KaimingNonlinearity] = {
 
 
 def activation_from_name(name: str) -> Type[nn.Module]:
-    """Activation class for a name stored in a checkpoint (see ACTIVATIONS)."""
+    """
+    Activation class for a name stored in a checkpoint (see ACTIVATIONS).
+    """
 
     try:
         return ACTIVATIONS[name]
@@ -35,13 +35,10 @@ def activation_from_name(name: str) -> Type[nn.Module]:
 
 class SurrogateMLP(nn.Module):
     """
-    Configurable MLP for regression.
-
-    Default architecture (tunable):
+    Configurable regression MLP:
       input_dim -> [Linear -> (BatchNorm) -> Activation -> (Dropout)] x N -> Linear(output_dim)
 
-    Final layer has no activation (regression). With BatchNorm, the hidden
-    Linear layers have no bias (BatchNorm's own shift replaces it).
+    No output activation. With BatchNorm, hidden Linear layers default to no bias.
     """
 
     def __init__(
@@ -55,23 +52,18 @@ class SurrogateMLP(nn.Module):
         hidden_bias: Optional[bool] = None,
     ):
         """
-        Build the MLP layer stack.
-
         Args:
-            input_dim: Number of input features (required: it depends on the
-                scenario and env encoding, see schema.encoded_input_dim).
-            output_dim: Number of regression output targets.
-            hidden_sizes: Width of each hidden layer, in order.
-            activation: Activation module class applied after each hidden
-                `Linear` layer (and after `BatchNorm1d`, when enabled).
-            use_batch_norm: Whether to insert `BatchNorm1d` after each
-                hidden `Linear` layer, before the activation.
-            dropout: Dropout probability applied after each hidden layer's
-                activation. `0.0` disables dropout.
-            hidden_bias: Bias on the hidden Linear layers. None (default) =
-                `not use_batch_norm`. Inference passes what the checkpoint's
-                weights contain, so BatchNorm models trained when the bias
-                was still there keep loading.
+            input_dim: Number of input features (depends on scenario and env
+                encoding, see schema.encoded_input_dim).
+            output_dim: Number of regression targets.
+            hidden_sizes: Width of each hidden layer.
+            activation: Activation class applied after each hidden layer.
+            use_batch_norm: Insert BatchNorm1d after each hidden Linear, before
+                the activation.
+            dropout: Dropout probability after each hidden activation (0 disables).
+            hidden_bias: Bias on hidden Linear layers; None means
+                `not use_batch_norm`. Inference passes what the checkpoint contains,
+                so older BatchNorm checkpoints with biases still load.
         """
 
         super().__init__()
@@ -98,22 +90,15 @@ class SurrogateMLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Run the MLP forward pass.
-
-        Args:
-            x: Input tensor of shape `(N, input_dim)`.
-
-        Returns:
-            torch.Tensor: Output tensor of shape `(N, output_dim)`.
+        Map (N, input_dim) inputs to (N, output_dim) outputs.
         """
 
         return self.net(x)
 
     def _initialize_weights(self, activation: Type[nn.Module]):
         """
-        Hidden Linear layers: Kaiming (He) uniform for ReLU-family
-        activations, Xavier uniform otherwise. Output layer: Xavier uniform.
-        Biases zero. BatchNorm keeps PyTorch's default (weight 1, bias 0).
+        Kaiming uniform for hidden layers with ReLU-family activations, Xavier
+        uniform otherwise and for the output layer; zero biases.
         """
 
         nonlinearity = _KAIMING_NONLINEARITY.get(activation)

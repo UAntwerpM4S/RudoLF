@@ -1,22 +1,13 @@
 """
-config_profile.py – Vessel & run-time profiles for RL training and inference.
+Vessel and run-time profiles for RL training and inference.
 
-A :class:`VesselProfile` bundles every parameter that characterizes a single
-training or inference run:
+A VesselProfile bundles the settings of one run: initial speed, actuator
+limits and smoothing, thrust mode (free or fixed), rudder-angle scaling for
+sim-to-sim transfer, and ship/dynamics model selection.
 
-* initial vessel state (position, heading, body-fixed velocities)
-* actuator constraints (max rudder angle / rate overrides)
-* actuator smoothing on/off
-* thrust mode (free-range or fixed value)
-* rudder-angle conversion scale  (sim-to-sim transfer)
-* ship model and dynamics model selection
-
-All profile objects and their sub-configs are **frozen dataclasses**, meaning
-they are immutable after construction.  Use :meth:`VesselProfile.with_overrides`
-to derive modified copies without touching the original.
-
-Profiles can be serialized to/from JSON and stored as named presets in the
-:class:`ProfileRegistry`.
+Profiles and their sub-configs are frozen dataclasses; derive variants with
+`VesselProfile.with_overrides`. Profiles serialize to/from JSON and can be
+stored as named presets in ProfileRegistry.
 
 Typical usage
 -------------
@@ -78,8 +69,8 @@ class RunMode(Enum):
     Attributes:
         TRAIN: Standard reinforcement-learning training.
         INFERENCE: Running a trained policy (no weight updates).
-        TRANSFER: Inference in a *different* simulator than the one used for
-            training; typically combined with `enable_rudder_angle_scaling=True`.
+        TRANSFER: Inference in a different simulator than used for training;
+            typically with `enable_rudder_angle_scaling=True`.
     """
 
     TRAIN = auto()
@@ -97,10 +88,9 @@ class ScenarioConfig:
     Scenario-level settings.
 
     Attributes:
-        initial_speed: Override the environment's initial surge velocity [m/s].
-            Applied via the environment's `initial_speed` setter immediately
-            after each `env.reset()` call.  *None* means the environment's
-            built-in default is used.
+        initial_speed: Initial surge velocity override [m/s], applied via the
+            env's `initial_speed` setter after each reset. None keeps the
+            environment default.
     """
 
     initial_speed: Optional[float] = None
@@ -112,12 +102,11 @@ class ActuatorConfig:
     Actuator constraint overrides and smoothing toggle.
 
     Attributes:
-        max_rudder_angle_deg: Override for max rudder deflection [deg].
-            *None* keeps the ship-specification default.
-        max_rudder_rate_deg_s: Override for max rudder rate [deg/s].
-            *None* keeps the ship-specification default.
-        enable_smoothing: Whether actuator rate-limiting / smoothing is
-            active during simulation steps.
+        max_rudder_angle_deg: Max rudder angle override [deg]; None keeps the
+            ship-specification value.
+        max_rudder_rate_deg_s: Max rudder rate override [deg/s]; None keeps the
+            ship-specification value.
+        enable_smoothing: Whether actuator rate limiting/smoothing is active.
     """
 
     max_rudder_angle_deg: Optional[float] = None
@@ -153,9 +142,8 @@ class ThrustConfig:
     Thrust control settings.
 
     Attributes:
-        mode: :attr:`ThrustMode.FREE` or :attr:`ThrustMode.FIXED`.
-        fixed_value: Normalised thrust in `[0.1, 1.0]` used when
-            `mode == ThrustMode.FIXED`.  Ignored otherwise.
+        mode: ThrustMode.FREE or ThrustMode.FIXED.
+        fixed_value: Normalized thrust in [0.1, 1.0], used only in FIXED mode.
     """
 
     mode: ThrustMode = ThrustMode.FREE
@@ -168,12 +156,10 @@ class TransferConfig:
     Sim-to-sim transfer settings.
 
     Attributes:
-        enable_rudder_angle_scaling: Whether to rescale the rudder action at
-            every step to compensate for differing maximum rudder angles between
-            the original (training) and target (inference) simulators.  The
-            scale is computed internally by the simulator at runtime; no manual
-            angle configuration is required.  *False* means the raw policy
-            output is forwarded without rescaling.
+        enable_rudder_angle_scaling: Rescale the rudder action every step to
+            compensate for different max rudder angles between the training and
+            inference simulators. The scale is computed by the simulator at
+            runtime. False forwards the raw policy output.
     """
 
     enable_rudder_angle_scaling: bool = False
@@ -185,11 +171,9 @@ class ModelConfig:
     Ship and dynamics model selection.
 
     Attributes:
-        ship_model: Which :class:`~fw.ships.ship_factory.ShipModel` preset
-            to load.  *None* means no override: the framework's own default
-            is used.
-        dynamics_model: Which :class:`~fw.dynamics.dynamics_model.Model`
-            family to use inside the simulator.  *None* means no override.
+        ship_model: ShipModel preset; None keeps the framework default.
+        dynamics_model: Dynamics Model used by the simulator; None keeps the
+            framework default.
     """
 
     ship_model: Optional[ShipModel] = None
@@ -203,16 +187,13 @@ class ModelConfig:
 @dataclass(frozen=True)
 class VesselProfile:
     """
-    Complete configuration profile for one RL training or inference run.
-
-    All fields are immutable after construction.  Use
-    :meth:`with_overrides` to create modified copies.
+    Complete configuration profile for one RL training or inference run (immutable).
 
     Attributes:
         name: Human-readable identifier.
         description: Free-text description of the profile's purpose.
-        version: Schema version string for forwards-compatibility checks.
-        run_mode: Intended use-case (:class:`RunMode`).
+        version: Schema version string.
+        run_mode: Intended use case (RunMode).
         scenario: Episode start-state settings.
         actuator: Actuator constraint overrides and smoothing toggle.
         thrust: Thrust control strategy.
@@ -238,19 +219,12 @@ class VesselProfile:
 
     def with_overrides(self, **kwargs) -> "VesselProfile":
         """
-        Return a new :class:`VesselProfile` with selected top-level fields
-        replaced.
+        Return a copy with selected top-level fields replaced (dataclasses.replace).
 
-        Uses :func:`dataclasses.replace` so type safety is preserved:
-        callers must pass typed sub-config instances
-        (e.g. `ActuatorConfig(...)`) rather than plain dicts.
-        Unchanged fields are carried over from `self`, no JSON round-trip,
-        no risk of silently dropping nested fields.
+        Sub-configs must be passed as typed instances, not dicts.
 
         Raises:
-            TypeError: If any key in *kwargs* is not a valid field name, or
-                if a sub-config field receives a plain :class:`dict` instead
-                of the expected dataclass type.
+            TypeError: On an unknown field name or a plain dict value.
 
         Example::
 
@@ -270,9 +244,7 @@ class VesselProfile:
                 f"{', '.join(sorted(unknown))}"
             )
 
-        # Guard against passing a plain dict for a dataclass-typed field.
-        # dataclasses.replace would accept it silently, leading to hard-to-
-        # debug AttributeErrors later when the profile is used.
+        # dataclasses.replace would silently accept a dict, failing much later.
         for name, value in kwargs.items():
             expected = field_map[name].type
             if isinstance(value, dict):
@@ -289,11 +261,10 @@ class VesselProfile:
 
     def validate(self) -> None:
         """
-        Raise :exc:`ValueError` for any obviously invalid field combination.
+        Raise ValueError listing all invalid fields.
 
-        All violations are collected and reported together rather than
-        failing on the first one.  Suspicious-but-legal combinations emit
-        a :mod:`warnings` warning instead of raising.
+        Suspicious but legal combinations (TRANSFER without rudder scaling)
+        only emit a UserWarning.
         """
 
         errors: List[str] = []
@@ -347,10 +318,7 @@ class VesselProfile:
 
     def to_dict(self) -> Dict[str, Any]:
         """
-        Return a JSON-serializable dictionary representation.
-
-        Enum fields are stored by name/value rather than as raw Enum objects
-        so the output is safe for :func:`json.dumps` without a custom encoder.
+        Return a JSON-serializable dict (enums stored by name).
         """
 
         return {
@@ -382,13 +350,10 @@ class VesselProfile:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "VesselProfile":
         """
-        Reconstruct a :class:`VesselProfile` from a dictionary.
+        Reconstruct a VesselProfile from a dict.
 
-        Unknown keys inside each sub-config are silently ignored so that
-        profiles serialized by a newer schema version remain loadable by
-        older code.  Missing sub-config blocks (e.g. a "scenario" key
-        absent from an older serialization) fall back to their dataclass
-        defaults rather than raising :exc:`KeyError`.
+        Unknown sub-config keys are ignored and missing blocks use their
+        defaults, so other schema versions stay loadable. 'name' is required.
         """
 
         scenario_d = d.get("scenario", {})
@@ -448,13 +413,9 @@ class VesselProfile:
 
     def fingerprint(self) -> str:
         """
-        Return a stable hex digest of the profile's serialized content.
+        Return a stable MD5 hex digest (non-cryptographic) of the sorted-key JSON.
 
-        Useful for tagging model checkpoints or experiment logs.  The digest
-        is computed over the canonical JSON representation (keys sorted) so
-        it is stable across Python versions and dict insertion orders.
-
-        Note: MD5 is used purely as a fast, non-cryptographic content hash.
+        Useful for tagging checkpoints or experiment logs.
         """
 
         canonical = json.dumps(self.to_dict(), sort_keys=True)
@@ -500,10 +461,7 @@ class VesselProfile:
 
 def _filter_fields(dc_type: type, d: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Return only the keys from *d* that are declared fields on *dc_type*.
-
-    This makes :meth:`VesselProfile.from_dict` tolerant of extra keys written
-    by a newer schema version without silently dropping required ones.
+    Return only the keys of `d` that are fields of `dc_type`.
     """
 
     known = {f.name for f in dataclasses.fields(dc_type)}
@@ -516,12 +474,10 @@ def _filter_fields(dc_type: type, d: Dict[str, Any]) -> Dict[str, Any]:
 
 class ProfileRegistry:
     """
-    In-memory registry of named :class:`VesselProfile` presets.
+    In-memory registry of named VesselProfile presets.
 
-    Because :class:`VesselProfile` is a frozen dataclass, the registry stores
-    direct references (no deep-copy on write).  :meth:`get` returns a shallow
-    copy (sufficient for immutable objects), so callers can hold and pass the
-    profile freely without any risk of mutating the registry entry.
+    Profiles are frozen, so references are stored directly and `get` returns
+    a shallow copy.
     """
 
     _registry: Dict[str, VesselProfile] = {}
@@ -529,12 +485,15 @@ class ProfileRegistry:
     @classmethod
     def register(cls, profile: VesselProfile, *, overwrite: bool = False) -> None:
         """
-        Add a profile to the registry.
+        Validate and add a profile to the registry.
 
         Args:
-            profile: The :class:`VesselProfile` to register.
-            overwrite: Replace an existing entry with the same name when
-                *True*.  Raises :exc:`KeyError` on collision when *False*.
+            profile: The VesselProfile to register.
+            overwrite: Replace an existing entry with the same name.
+
+        Raises:
+            KeyError: On a name collision when `overwrite` is False.
+            ValueError: If the profile fails validation.
         """
 
         if profile.name in cls._registry and not overwrite:
@@ -542,19 +501,14 @@ class ProfileRegistry:
                 f"Profile '{profile.name}' already exists. "
                 "Pass overwrite=True to replace it."
             )
-        # Validate before committing so a mis-configured preset is caught at
-        # import time rather than silently sitting in the registry until a
-        # caller happens to call validate() themselves.
+        # Validate now so a bad preset fails at import time.
         profile.validate()
         cls._registry[profile.name] = profile
 
     @classmethod
     def get(cls, name: str) -> VesselProfile:
         """
-        Retrieve a registered profile by name.
-
-        Returns a shallow copy. That is safe because the profile and all its
-        sub-configs are frozen, so the caller can hold the object freely.
+        Return a (shallow) copy of a registered profile.
 
         Raises:
             KeyError: If no profile with that name is registered.
@@ -646,7 +600,7 @@ ProfileRegistry.register(VesselProfile(
     ),
     # Model-scale start speed [m/s], below the B01 surge limit of 1.0 m/s. Steady speed at
     # full thrust: ~0.93 m/s at 379 % UKC, ~0.91 at 153 %, ~0.77 at 100 %, ~0.41 at 35 %
-    # (lower the start speed for shallow water). NOTE: refused by the full-scale PySim environments
+    # (lower it for shallow water). Refused by the full-scale PySim environments
     # (SUPPORTS_MODEL_SCALE_SHIPS) until a towing-tank environment exists.
     scenario=ScenarioConfig(initial_speed=0.8),
     actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),

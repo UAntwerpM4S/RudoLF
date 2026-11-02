@@ -1,24 +1,15 @@
 """
-CosysAirSim bridge - robust connection manager for UE5.
+Connection manager for CosysAirSim running inside Unreal Engine 5.
 
-This bridge manages the network connection to CosysAirSim running
-inside Unreal Engine 5.  It provides:
-
-* **UE5 auto-detection** via a lightweight TCP port probe.
-* **Retry with exponential backoff** for resilient startup.
-* **Periodic health-checks** to detect stale connections.
-* **Pass-through control** - `set_controls()` forwards pre-mapped
-  `CarControls` to AirSim without any PID processing.
-
-Input mapping (framework/local model -> UE5 controls) is handled by
-:class:`~airsim.environments.airsim_env.AirSimEnv` and the
-:mod:`airsim.inference.run_inference` module.  **PID control is not
-used anywhere in this bridge.**
+Provides UE5 detection via a TCP port probe, connection retry with exponential
+backoff, periodic health checks and pass-through control: `set_controls()`
+forwards pre-mapped `CarControls` unchanged (no PID). Input mapping is done by
+AirSimEnv and airsim.inference.run_inference.
 
 Coordinate frames:
-    * **Framework:** x = east, y = north, heading from east (CCW+).
-    * **AirSim (NED):** x = north, y = east, yaw from north (CW+).
-    * **Transform:** `AirSim_yaw = pi/2 - ship_heading`.
+    * Framework: x = east, y = north, heading from east (CCW+).
+    * AirSim (NED): x = north, y = east, yaw from north (CW+).
+    * Transform: AirSim_yaw = pi/2 - ship_heading.
 
 Example::
 
@@ -61,11 +52,7 @@ logger = logging.getLogger(__name__)
 
 def _silence_library_output(callback) -> Any:
     """
-    Run a library callback while suppressing direct terminal output.
-
-    Some Cosys-AirSim builds print version banners and compatibility warnings
-    directly to stdout/stderr from native code. We suppress that noisy output
-    here so the framework logs stay readable.
+    Run a callback with stdout/stderr suppressed (Cosys-AirSim prints banners/warnings).
 
     Args:
         callback: Zero-argument callable to execute.
@@ -83,8 +70,8 @@ def _roll_pitch_from_quaternion(q) -> tuple[float, float]:
     """
     Extract roll and pitch from an AirSim quaternion.
 
-    Uses the standard ZYX Euler-angle decomposition and intentionally leaves yaw
-    to the caller so we can preserve UE5's live roll/pitch while replacing yaw.
+    ZYX decomposition; yaw is left to the caller so UE5's live roll/pitch can be
+    kept while replacing yaw.
 
     Args:
         q: A `cosysairsim.Quaternionr` instance with attributes
@@ -136,10 +123,7 @@ def _quaternion_from_euler(roll: float, pitch: float, yaw: float) -> tuple[float
 
 def is_ue5_reachable(ip: str = "", port: int = 41451, timeout: float = 2.0) -> bool:
     """
-    Probe the AirSim RPC port to check if UE5 is reachable.
-
-    Performs a lightweight TCP connect - does **not** require the
-    `cosysairsim` package.
+    Check whether the AirSim RPC port accepts a TCP connection (no cosysairsim needed).
 
     Args:
         ip: AirSim server IP.  Empty string = `127.0.0.1`.
@@ -163,10 +147,7 @@ def is_ue5_reachable(ip: str = "", port: int = 41451, timeout: float = 2.0) -> b
 
 class AirSimBridge:
     """
-    Robust connection manager and pass-through adapter for CosysAirSim.
-
-    Handles UE5 auto-detection, retry with exponential backoff,
-    periodic health checks, and forwards raw control commands.
+    Connection manager and pass-through control adapter for CosysAirSim.
 
     Attributes:
         config: The :class:`AirSimConfig` used to create this bridge.
@@ -176,15 +157,9 @@ class AirSimBridge:
         """
         Initialize the AirSim bridge and connect to the simulator.
 
-        Connection flow:
-            1. Probe the RPC port (`is_ue5_reachable`).
-            2. If reachable, attempt `CarClient.confirmConnection()`
-               with retry + exponential backoff.
-            3. On success, enable API control.
-
-        If `cosysairsim` is not installed, or UE5 is not reachable,
-        or all retries fail, the bridge stays disconnected and all
-        control methods become no-ops.
+        Probes the RPC port, then connects with retry and enables API control.
+        If cosysairsim is missing, UE5 is unreachable or all retries fail, the
+        bridge stays disconnected and control methods become no-ops.
 
         Args:
             config: Connection parameters.  Defaults to
@@ -235,10 +210,8 @@ class AirSimBridge:
         """
         Attempt to connect `max_retries + 1` times with backoff.
 
-        On each failure the wait time doubles (capped at 30 s).
-        If all attempts fail, `_connected` stays `False` and a
-        `ConnectionError` is logged (but not raised, to keep the
-        bridge non-fatal).
+        The wait doubles after each failure (max 30 s). If all attempts fail,
+        the error is logged (not raised) and the bridge stays disconnected.
 
         Args:
             airsim: The imported `cosysairsim` module.
@@ -288,10 +261,6 @@ class AirSimBridge:
     def is_connected(self) -> bool:
         """
         Whether the bridge currently has an active AirSim connection.
-
-        Returns:
-            bool: `True` when the bridge currently has a usable AirSim
-            connection.
         """
 
         return self._connected
@@ -299,7 +268,7 @@ class AirSimBridge:
     @property
     def client(self) -> Any:
         """
-        Expose the underlying CarClient for advanced environment state queries.
+        Underlying CarClient, for advanced state queries.
 
         Raises:
             ConnectionError: If the bridge is not currently connected to AirSim.
@@ -311,7 +280,7 @@ class AirSimBridge:
 
     def get_client(self) -> Any:
         """
-        Return the active AirSim client via a method-style public API.
+        Method-style access to `client`.
 
         Returns:
             Any: Active AirSim `CarClient` instance.
@@ -325,7 +294,7 @@ class AirSimBridge:
     @property
     def airsim(self) -> Any:
         """
-        Expose the imported `cosysairsim` module without using private state.
+        The imported cosysairsim module.
 
         Returns:
             Any: Imported `cosysairsim` module used by the bridge.
@@ -341,10 +310,7 @@ class AirSimBridge:
     @property
     def current_controls(self) -> Any:
         """
-        Return the latest control payload sent to AirSim, if any.
-
-        Returns:
-            Any: Most recently forwarded AirSim control object, or `None`.
+        Most recently forwarded AirSim control object, or None.
         """
 
         return self._controls
@@ -355,8 +321,7 @@ class AirSimBridge:
         """
         Verify the AirSim connection is still alive.
 
-        Calls `getCarState()` as a lightweight ping.
-        If the connection is lost, it will attempt to reconnect.
+        Pings with `getCarState()`; on failure, flushes the CSV buffer and reconnects.
 
         Returns:
             `True` if the connection is healthy or re-established,
@@ -374,7 +339,7 @@ class AirSimBridge:
             logger.info("Connection lost, attempting to reconnect...")
             self._connected = False
             
-            # T-005: State cleanup and resource release
+            # Release state before reconnecting.
             self._client = None
             self._controls = None
             self._rendering_enabled = None
@@ -385,7 +350,6 @@ class AirSimBridge:
             )
             self._flush_csv()
             
-            # T-005: Reconnect
             if self._airsim:
                 self._connect_with_retry(self._airsim)
             
@@ -393,11 +357,10 @@ class AirSimBridge:
 
     def _ensure_connected(self) -> bool:
         """
-        Run a health check if the interval has elapsed.
+        Run a health check if `health_check_interval` has elapsed.
 
         Returns:
-            `True` if connected (or still within interval), `False`
-            if a health check ran and failed.
+            False if disconnected or the health check failed, else True.
         """
 
         if not self._connected:
@@ -411,10 +374,7 @@ class AirSimBridge:
 
     def set_controls(self, controls: Any) -> None:
         """
-        Forward pre-mapped control commands directly to AirSim.
-
-        This acts as a pure middleware pass-through. Input mapping
-        must be handled by upper layers (e.g., inference module).
+        Forward pre-mapped controls to AirSim unchanged (mapping is done upstream).
 
         Args:
             controls: A populated `cosysairsim.CarControls` object.
@@ -526,10 +486,7 @@ class AirSimBridge:
 
     def is_paused(self) -> bool:
         """
-        Return whether the UE5 simulation is currently paused.
-
-        Returns:
-            bool: `True` when the UE5 simulation is paused.
+        Whether the UE5 simulation is paused (False when disconnected).
         """
 
         if not self._ensure_connected():
@@ -551,12 +508,10 @@ class AirSimBridge:
 
     def set_rendering_enabled(self, is_enabled: bool, force: bool = False) -> bool:
         """
-        Toggle full UE5 scene rendering through the Unreal console.
+        Toggle UE5 scene rendering via the `ShowFlag.Rendering` console command.
 
-        AirSim itself does not expose a dedicated high-level rendering toggle,
-        but it does provide `simRunConsoleCommand`. We use Unreal's
-        `ShowFlag.Rendering` console flag so training mode can turn scene
-        rendering off while keeping physics active.
+        AirSim has no rendering API; this lets training disable rendering while
+        physics keeps running.
 
         Args:
             is_enabled: `True` to show rendering, `False` to hide it.
@@ -633,11 +588,9 @@ class AirSimBridge:
             color_rgba: RGBA color values in the range `[0, 1]`.
             thickness: Rendered line thickness.
             duration: Seconds the line is shown in the 3D world when not
-                persistent. The new UE5 build keeps minimap/world-map
-                markers regardless and only the physical line flashes.
-            is_persistent: Whether the line should persist in the scene.
-                Defaults to `False` to avoid the per-Actor FPS cost of
-                long persistent strips.
+                persistent (minimap/world-map markers stay regardless).
+            is_persistent: Whether the line should persist. Default False,
+                as long persistent strips cost FPS.
         """
 
         if not self._ensure_connected():
@@ -682,7 +635,7 @@ class AirSimBridge:
 
     def get_camera_info(self, camera_name: str, vehicle_name: str = "") -> Any:
         """
-        Return camera extrinsics/intrinsics metadata from AirSim.
+        Return camera extrinsics/intrinsics from AirSim.
 
         Args:
             camera_name: Camera identifier configured in AirSim settings.
@@ -789,23 +742,17 @@ class AirSimBridge:
         _current_pose: Any = None,
     ) -> None:
         """
-        Forcibly set the vehicle's position and orientation in UE5.
-        
-        Useful for visualization where another physics engine
-        computes the trajectory and we only use UE5 for rendering.
-        
+        Teleport the vehicle (used when UE5 only renders an external trajectory).
+
         Args:
             x: X coordinate in AirSim NED frame.
             y: Y coordinate in AirSim NED frame.
             z: Z coordinate in AirSim NED frame.
             yaw: Yaw angle in radians in AirSim NED frame.
-            preserve_current_z: Keep the current UE5 heave value instead of
-                forcing the supplied `z` each frame.
-            preserve_roll_pitch: Keep the current UE5 roll and pitch while
-                replacing only yaw.
-            _current_pose: Optional pre-fetched `simGetVehiclePose()` result.
-                When provided the API round-trip is skipped, eliminating
-                per-sub-step RPC overhead during interpolation loops.
+            preserve_current_z: Keep the current UE5 heave instead of `z`.
+            preserve_roll_pitch: Keep the current UE5 roll and pitch; replace only yaw.
+            _current_pose: Optional pre-fetched `simGetVehiclePose()` result, to
+                save an RPC per sub-step in interpolation loops.
         """
 
         if not self._ensure_connected():
@@ -843,15 +790,11 @@ class AirSimBridge:
         yaw: float,
     ) -> None:
         """
-        Move a named UE5 actor via simSetObjectPose without triggering vehicle physics.
+        Move a named UE5 actor via simSetObjectPose, without vehicle physics.
 
-        Unlike `simSetVehiclePose`, this moves any named scene object (e.g. a
-        Static/Skeletal Mesh Actor) that has no Chaos physics body. The water
-        plugin never sees a physics body move, so there are no buoyancy reactions
-        or water ripple artifacts. This is the recommended transport for the
-        fully-external-physics visualization mode: the local framework runs in
-        Python, UE5
-        is used purely as a renderer.
+        The actor has no Chaos physics body, so the water plugin produces no
+        buoyancy reactions or ripples. Preferred when UE5 is used purely as a
+        renderer for externally simulated motion.
 
         Args:
             object_name: Exact actor name as shown in the UE5 Outliner.
@@ -955,14 +898,11 @@ class AirSimBridge:
 
     def get_state(self) -> Dict[str, Any]:
         """
-        Retrieve the full vehicle telemetry state from AirSim.
-
-        Extracts kinematics (position, velocity, orientation) and
-        validates the Euler yaw angle conversion.
+        Read vehicle telemetry from AirSim and buffer it for CSV logging.
 
         Returns:
-            A dictionary containing full telemetry when connected.
-            Empty dict otherwise.
+            Telemetry dict; {} when disconnected; on a read error, a dict with
+            'state_read_failed', 'error', 'step' and 'wall_time_utc'.
         """
 
         if not self._ensure_connected():
@@ -975,7 +915,6 @@ class AirSimBridge:
             ang_vel = kinematics.angular_velocity
             lin_acc = getattr(kinematics, "linear_acceleration", None)
             
-            # T-007: Quaternion to Yaw conversion & validation
             quat = kinematics.orientation
             roll, pitch = _roll_pitch_from_quaternion(quat)
             yaw = _yaw_from_quaternion(quat)
@@ -1009,10 +948,9 @@ class AirSimBridge:
                 "simulation_speed": self._simulation_speed,
             }
 
-            # T-008: Buffer sensor data
             self._sensor_buffer.append(state_dict)
 
-            # Flush periodically to avoid large memory buildup if not disconnecting often
+            # Flush when the buffer is full.
             if len(self._sensor_buffer) >= self._sensor_buffer.maxlen:
                 self._flush_csv()
 
@@ -1028,10 +966,7 @@ class AirSimBridge:
 
     def _flush_csv(self) -> None:
         """
-        Dump buffered sensor data to the configured CSV file.
-
-        The method is a no-op when CSV logging is disabled or the buffer is
-        empty.
+        Append buffered telemetry to the CSV file (no-op if disabled or empty).
         """
 
         if not self.config.csv_log_path or not self._sensor_buffer:
@@ -1053,11 +988,7 @@ class AirSimBridge:
 
     def _snapshot_vehicle_position(self) -> Optional[tuple[float, float, float]]:
         """
-        Return the current vehicle position when available.
-
-        Returns:
-            Optional[tuple[float, float, float]]: Current vehicle position in
-            AirSim coordinates, or `None` when it cannot be read.
+        Return the vehicle position in AirSim coordinates, or None if unreadable.
         """
 
         if self._client is None:
@@ -1078,15 +1009,7 @@ class AirSimBridge:
         after: Optional[tuple[float, float, float]],
     ) -> Optional[float]:
         """
-        Return the Euclidean distance between two vehicle positions.
-
-        Args:
-            before: Position sampled before an operation.
-            after: Position sampled after an operation.
-
-        Returns:
-            Optional[float]: Distance in meters, or `None` when either
-            position is unavailable.
+        Euclidean distance in m between two positions, or None if either is missing.
         """
 
         if before is None or after is None:
@@ -1098,7 +1021,7 @@ class AirSimBridge:
 
     def _reconnect_after_world_reload(self, reconnect_delay: float) -> None:
         """
-        Reconnect the AirSim client after a world reload or reload attempt.
+        Reset client state and reconnect after a world reload (attempt).
 
         Args:
             reconnect_delay: Delay in seconds before attempting reconnection.
@@ -1121,7 +1044,7 @@ class AirSimBridge:
 
     def _fallback_reset_after_unconfirmed_reload(self, settle_s: float = 1.0) -> None:
         """
-        Reset the active session when a save-slot reload could not be confirmed.
+        Reset the vehicle in-session when a save-slot reload could not be confirmed.
 
         Args:
             settle_s: Seconds to wait after the fallback reset.
@@ -1163,11 +1086,14 @@ class AirSimBridge:
         """
         Load a UE5 save slot and reconnect after the level reload completes.
 
-        Some UE5/CosysAirSim sessions do not always expose a clean RPC drop when
-        `simRequestLoad()` is issued. In that case this method retries the
-        reload once and, if the reload still cannot be confirmed, falls back to
-        a local vehicle reset so the caller does not continue blindly in a stale
-        moved-away session.
+        A reload is confirmed by the RPC port going down or by a vehicle pose
+        shift of at least `min_observed_pose_shift_m`. Some sessions do not drop
+        the RPC connection, so an unconfirmed reload is retried up to
+        `max_reload_attempts` times, after which the vehicle is reset in-session.
+
+        Raises:
+            ConnectionError: If disconnected or reconnection/fallback fails.
+            TimeoutError: If UE5 does not come back within `reload_timeout` s.
         """
 
         if not self._ensure_connected():
@@ -1256,8 +1182,8 @@ class AirSimBridge:
             save_slot: UE5 save slot to load before playback.
             simulation_speed: Simulation-speed multiplier to apply.
             draw_reference: Whether to draw the calibration reference overlay.
-            reference_duration: Passed to the calibration draw call. Unused
-                when `is_persistent=True` (which is the current default).
+            reference_duration: Passed to the calibration draw call; unused
+                for persistent markers (the default).
 
         Returns:
             Any: Loaded coordinate-transform object used for replay.
@@ -1276,9 +1202,8 @@ class AirSimBridge:
             duration=reference_duration,
         )
 
-        # Park vehicle immediately after world load so its physics engine does
-        # not drift around (and disturb the water surface) during the window
-        # between the save-slot reload and the first framework pose update.
+        # Park the vehicle so it does not drift (and disturb the water) before
+        # the first framework pose update.
         try:
             _park = self._airsim.CarControls()
             _park.throttle = 0.0
@@ -1304,9 +1229,8 @@ class AirSimBridge:
         `simFlushPersistentMarkers` is called or the level is reloaded.
 
         Args:
-            duration: Passed to the underlying draw call. Unused when
-                `is_persistent=True` (current default).
-            ship_pos: Optional Framework start position for the blue marker
+            duration: Passed to the draw call; unused for persistent markers.
+            ship_pos: Optional framework start position for the blue marker
                 and trajectory slicing.
             target_pos: Optional Framework target position for the red marker.
         """
@@ -1347,8 +1271,8 @@ class AirSimBridge:
         """
         Gracefully disconnect from the AirSim simulator.
 
-        Stops the vehicle, releases API control, and flushes CSV buffers.
-        Safe to call multiple times.
+        Flushes the CSV buffer, brakes the vehicle, re-enables rendering and
+        releases API control. Safe to call multiple times.
         """
 
         if not self._connected:
@@ -1358,11 +1282,10 @@ class AirSimBridge:
         self._flush_csv()
         
         try:
-            # Stop the vehicle safely using a fresh CarControls object
             stop_controls = self._airsim.CarControls()
             stop_controls.throttle = 0.0
             stop_controls.steering = 0.0
-            stop_controls.brake = 1.0 # apply full brake on disconnect
+            stop_controls.brake = 1.0
             
             self._client.setCarControls(stop_controls)
             time.sleep(0.3)

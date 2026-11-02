@@ -1,23 +1,18 @@
 """
 Surrogate error vs. time since the start of the episode, on a dataset split.
 
-Question it answers: is the error concentrated in the first seconds of the
-episodes? Every episode starts from a randomly set state with the commanded
-rudder/azipod angle and thrust; if the simulator's actual actuator state
-(e.g. an azipod still slewing to its commanded direction, a propeller still
-spinning up) lags behind the command, the surrogate -- which only sees the
-command -- cannot explain those first steps, and its error is large there
-and small later on.
+Shows whether the error is concentrated in the first seconds of the episodes.
+Episodes start from a random state with the commanded actuator values; if the
+simulator's actual actuators lag behind (an azipod still slewing, a propeller
+spinning up), the surrogate, which only sees the command, cannot explain those
+first steps.
 
-The rows of a split are shuffled and carry no step index. The time since
-episode start is taken from the file's t_episode array when present (see
-fw.surrogate.episode_time), otherwise reconstructed the same way on the fly
-(episode_time.step_index). Episodes whose order cannot be reconstructed are
-skipped (and counted).
+Split rows are shuffled, so the time since episode start comes from the file's
+t_episode array (see fw.surrogate.episode_time) or is reconstructed on the fly
+(episode_time.step_index); episodes that cannot be ordered are skipped and counted.
 
-Per time bin and target it reports the MAE in physical units, the MAE
-relative to the target's spread (MAE / std of the target over all rows), the
-gain sum(pred*true)/sum(true^2) and the number of rows.
+Per time bin and target: MAE (physical units), MAE / std of the target over
+all rows, gain sum(pred*true)/sum(true^2), row count.
 
 Usage (from src):
 
@@ -25,7 +20,7 @@ Usage (from src):
         --checkpoint tripoli_confined_A80.pth ^
         --data data\\tripoli_confined\\ship_dynamics_dataset_test.npz
 
-Relative --checkpoint paths are resolved like the presets do (fw/checkpoints).
+Relative --checkpoint paths are resolved in fw/checkpoints.
 """
 
 from __future__ import annotations
@@ -51,7 +46,9 @@ BATCH = 65536
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Command-line entry point; returns the exit code."""
+    """
+    Command-line entry point; returns the exit code.
+    """
 
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter)

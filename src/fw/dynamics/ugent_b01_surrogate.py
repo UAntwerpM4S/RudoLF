@@ -1,58 +1,39 @@
 """
-UGent 3-DOF confined-water manoeuvring model of the B01 (Myzako), MODEL SCALE.
+UGent 3-DOF confined-water manoeuvring model of the B01 (Myzako), model scale.
 
-Source: Van Damme, Delefortrie & Eloot (2026), DDSHIP WP2 D2.3, FH Reports
-23_002_6 (equations §2.3, eq. 20-26; coefficients Table 3; ship data Table 1),
-and A. Van Damme's draft B01_surrogate_model.py (2026-08-20).
+Source: Van Damme, Delefortrie & Eloot (2026), DDSHIP WP2 D2.3, FH Reports 23_002_6
+(equations §2.3, eq. 20-26; coefficients Table 3; ship data Table 1), and A. Van Damme's
+draft B01_surrogate_model.py (2026-08-20).
 
 Notes:
-    - MODEL SCALE (lambda = 25), for the towing tank: L_pp 4.32 m, m 260.8 kg.
-      The coefficients are used exactly as identified; no Froude conversion and
-      no ITTC correction. Velocities, forces, distances, the propeller rate and
-      time are all model-scale quantities. Use with ShipModel.B01.
-    - UKC: accelerations are interpolated linearly in T/(h-T) = 100/UKC[%]
-      between the tested conditions 379, 153 and 35 %, and the closest tested
-      condition is used outside that range (as calc_next_state in the draft).
-    - Bank coefficients at 379 % are not in Table 3 ('/'). The draft's values
-      are used: Y = -2.74, N = 2.08 (B01_surrogate_model.py, coeff_UKC379).
-      Note: extrapolating linearly in T/(h-T) from 153 % and 35 % (the method
-      of coef_extrapolation.py) gives Y = -2.757, N = 2.084, so the draft's Y
-      differs by 0.6 % (open question for UGent).
-    - Banks: y' = (d - B/2) / B (eq. 18), as in the draft: no upper cut-off by
-      default (max_bank_clearance = None) and no clamp in the data range. The
-      report (§3.1.2, and "analogous" for the B01 in §3.2.2) computes the
-      distances to both banks from the basin geometry. Only y' below
-      min_bank_clearance (default 0.001, i.e. the ship at or inside the bank,
-      where the draft divides by zero or flips sign) is held at that value.
-      A larger min_bank_clearance (e.g. 1.0) can be configured as a guard:
-      the B01 bank terms were identified at y' = 1.25 and 2.0 (report Table 17)
-      and validated at y' = 1.0 and 1.5 (Figures 28-31).
-    - Frames: the equations are in the report frame (y starboard); the framework
-      frame has y to port, so v and r change sign at the boundary. The rudder
-      angle needs no sign change: in the report equations a positive angle gives
-      Y > 0 and N < 0, i.e. the ship turns to port, the framework convention.
-    - Units: the draft works in degrees (rudder angle, yaw rate and yaw
-      acceleration); this class uses radians throughout, like the framework.
-    - Rudder: limited to 35 deg by ShipModel.B01 (actuator), well below 45 deg
-      where the sin(2 delta) lift model peaks. Identified at 20-25 deg only.
-    - Wheel effect and low thrust: the bias terms Y_n n and N_n n (n in rpm) do
-      not depend on speed, while the rudder force scales with u|u|; at 153 % and
-      35 % UKC the yaw damping N_r|r| is ~0 as well, so the yaw damping left
-      (N_ur u r) vanishes as u -> 0. At low thrust the ship cannot be held on a
-      straight course and spins up at almost zero speed. Steady straight
-      running with |rudder| <= 35 deg (ShipModel.B01) needs at least
-      n/n_max = 0.18 (379 %), 0.16 (153 %), 0.26 (100 %), 0.41 (60 %),
-      0.60 (35 % UKC); the rudder needed for that at 0.2 / 0.4 / 0.7 / 1.0 is
-      about 15 / 5 / 2.5 / 1.7 deg at 379 and 153 %, and -, -, 19, 7.7 deg at
-      35 %. ShipModel.B01 therefore has min_thrust = 0.2 (the lowest tested
-      propeller rate); below the UKC-specific minimum (computed at
-      construction, see min_straight_running_thrust) a warning is logged once.
-    - Validity: straight running and small manoeuvres. The model under-predicts
-      the rudder's course-changing ability in zigzags (report §5.2.2) and does
-      not predict turning circles (report §6).
-    - Wind and current: not part of the model, and EnvironmentModel's fixed
-      full-scale accelerations (0.35 m/s²) are about 9x the B01's maximum thrust
-      acceleration, so ShipSimulator refuses wind/current for this model
+    - Model scale (lambda = 25, towing tank): L_pp 4.32 m, m 260.8 kg. Coefficients are
+      used as identified (no Froude conversion, no ITTC correction); all quantities are
+      model scale. Use with ShipModel.B01.
+    - UKC: accelerations are interpolated linearly in T/(h-T) = 100/UKC[%] between the
+      tested 379, 153 and 35 %; outside that range the closest tested set is used.
+    - Bank coefficients at 379 % are missing from Table 3; the draft's Y = -2.74, N = 2.08
+      are used (linear extrapolation from 153/35 % gives Y = -2.757, N = 2.084; the 0.6 %
+      difference in Y is an open question for UGent).
+    - Banks: y' = (d - B/2) / B (eq. 18), unclamped in the data range and without upper
+      cut-off by default. Only y' < min_bank_clearance (default 0.001, ship at or inside
+      the bank) is held at that value. A guard such as 1.0 can be configured: bank terms
+      were identified at y' = 1.25 and 2.0 (Table 17) and validated at 1.0 and 1.5.
+    - Frames: equations use the report frame (y starboard); the framework has y to port,
+      so v and r flip sign at the boundary. The rudder angle does not: a positive angle
+      turns the ship to port in both.
+    - Units: radians throughout (the draft uses degrees for rudder and yaw quantities).
+    - Rudder: limited to 35 deg by ShipModel.B01, below the 45 deg peak of the sin(2 delta)
+      lift model; identified at 20-25 deg only.
+    - Low thrust: the wheel-effect terms Y_n n, N_n n do not scale with speed, while rudder
+      force scales with u|u| and yaw damping vanishes as u -> 0. Below a UKC-dependent
+      n/n_max (0.18 at 379 %, 0.16 at 153 %, 0.26 at 100 %, 0.41 at 60 %, 0.60 at 35 %)
+      the ship cannot hold a straight course with |rudder| <= 35 deg and spins up.
+      ShipModel.B01 uses min_thrust = 0.2 (lowest tested rate); a warning is logged once
+      below min_straight_running_thrust (computed per UKC).
+    - Validity: straight running and small manoeuvres; under-predicts rudder effectiveness
+      in zigzags (§5.2.2) and does not predict turning circles (§6).
+    - Wind and current are not modelled, and EnvironmentModel's full-scale accelerations
+      are about 9x the B01's maximum thrust acceleration, so ShipSimulator refuses them
       (supports_environment_model = False).
 """
 
@@ -75,14 +56,15 @@ _CONFIG_NAME = "ugent_b01_surrogate_config"
 _REQUIRED_CONFIG_KEYS = frozenset({"ukc_percent"})
 _OPTIONAL_CONFIG_KEYS = frozenset({"n_max_rpm", "min_bank_clearance", "max_bank_clearance"})
 
-# Default lower bound on y': only keeps 1/y' finite and positive (ship at or
-# inside the bank); within the data range y' is used unclamped, as in the draft.
+# Default lower bound on y': only keeps 1/y' finite and positive.
 DEFAULT_MIN_BANK_CLEARANCE = 1e-3
 
 
 @dataclass(frozen=True)
 class B01Particulars:
-    """Model-scale main particulars and propulsion data of the B01 (Table 1, §2.3)."""
+    """
+    Model-scale main particulars and propulsion data of the B01 (Table 1, §2.3).
+    """
 
     mass: float = 260.8               # kg
     length_pp: float = 4.32           # m
@@ -99,7 +81,9 @@ class B01Particulars:
 
 @dataclass(frozen=True)
 class B01Coefficients:
-    """Coefficient set for one UKC condition (Table 3, model scale, rudder in rad)."""
+    """
+    Coefficient set for one UKC condition (Table 3, model scale, rudder in rad).
+    """
 
     ukc_percent: float
     X_udot: float
@@ -122,12 +106,18 @@ class B01Coefficients:
 
     @property
     def depth_ratio(self) -> float:
-        """T/(h-T) = 100 / UKC[%]."""
+        """
+        T/(h-T) = 100 / UKC[%].
+        """
+
         return 100.0 / self.ukc_percent
 
 
 def b01_coefficient_sets() -> Tuple[B01Coefficients, ...]:
-    """Model-scale coefficient sets (Table 3), sorted by increasing T/(h-T): 379, 153, 35 %."""
+    """
+    Model-scale coefficient sets (Table 3), sorted by increasing T/(h-T): 379, 153, 35 %.
+    """
+
     ukc153 = B01Coefficients(
         ukc_percent=153.0,
         X_udot=-9.68e1, X_u=1.29e0, X_uabsu=7.99e0, X_uabsv=-7.37e1, X_deltauabsu=-1.08e1,
@@ -177,6 +167,7 @@ def interpolation_blend(ukc_percent: float) -> _Blend:
     Returns:
         One or two (coefficient set, weight) pairs; the weights sum to 1.
     """
+
     x = 100.0 / ukc_percent
     sets = B01_COEFFICIENT_SETS
     if x <= sets[0].depth_ratio:
@@ -191,7 +182,10 @@ def interpolation_blend(ukc_percent: float) -> _Blend:
 
 
 def _positive_finite(config: Mapping, key: str, default: Optional[float] = None) -> float:
-    """config[key] (or default) as a finite float > 0; raises ValueError otherwise."""
+    """
+    config[key] (or default) as a finite float > 0; raises ValueError otherwise.
+    """
+
     value = config.get(key, default)
     if isinstance(value, (bool, str)) or not isinstance(value, numbers.Real) \
             or not math.isfinite(value) or value <= 0:
@@ -203,10 +197,9 @@ class UGentB01Surrogate(DynamicsBase):
     """
     UGent manoeuvring model of the B01 (Myzako) at model scale.
 
-    UKC is set from the configuration (set_ukc_percent changes it); bank
-    distances come from a provider (set_bank_distance_provider), queried with
-    the current state at every evaluation, or else from the last
-    set_bank_distances() call. Without either, no banks are present.
+    UKC comes from the configuration (see set_ukc_percent). Bank distances come from
+    a provider queried at every evaluation (set_bank_distance_provider), else from
+    the last set_bank_distances() call; without either there are no banks.
     """
 
     supports_environment_model = False
@@ -215,20 +208,19 @@ class UGentB01Surrogate(DynamicsBase):
     def __init__(self, ship_spec: ShipSpecifications, ugent_b01_surrogate_config: Optional[Mapping] = None):
         """
         Args:
-            ship_spec: Kept for the DynamicsBase interface; the model uses
-                its own model-scale B01 particulars.
+            ship_spec: Used for max_rudder_angle; the dynamics use the model's own
+                B01 particulars.
             ugent_b01_surrogate_config:
-                ukc_percent (required): UKC [%] = (h-T)/T * 100, > 0. Interpolated
-                    between 379, 153 and 35 %, closest tested set outside.
+                ukc_percent (required): UKC [%] = (h-T)/T * 100, > 0.
                 n_max_rpm (default 1650): model-scale propeller rate at thrust 1.0.
-                min_bank_clearance (default 0.001): closer banks act as at this y'
-                    (only guards y' <= 0; e.g. 1.0 = closest validated y').
+                min_bank_clearance (default 0.001): closer banks act as at this y'.
                 max_bank_clearance (default None): farther banks are ignored;
-                    None = no cut-off (as identified in the towing tank).
+                    None means no cut-off.
 
         Raises:
             ValueError: missing, unknown or invalid configuration key.
         """
+
         config = dict(ugent_b01_surrogate_config or {})
         missing = _REQUIRED_CONFIG_KEYS - config.keys()
         if missing:
@@ -281,15 +273,11 @@ class UGentB01Surrogate(DynamicsBase):
     # ------------------------------------------------------------------ #
     def set_ukc_percent(self, ukc_percent: float) -> None:
         """
-        Set the UKC [%] = (h-T)/T * 100 (must be finite and > 0).
+        Set the UKC [%] = (h-T)/T * 100 (finite, > 0) and recompute min_straight_running_thrust.
 
-        Values outside the tested range 35-379 % use the closest tested
-        coefficient set (logged as a warning). Also recomputes
-        min_straight_running_thrust for the new UKC.
-
-        Args:
-            ukc_percent: Under-keel clearance [%].
+        Outside the tested 35-379 % the closest tested set is used (with a warning).
         """
+
         ukc_percent = _positive_finite({"ukc_percent": ukc_percent}, "ukc_percent")
         lo, hi = min(TESTED_UKC_PERCENT), max(TESTED_UKC_PERCENT)
         if not lo <= ukc_percent <= hi:
@@ -304,42 +292,35 @@ class UGentB01Surrogate(DynamicsBase):
 
     def set_bank_distance_provider(self, provider: Optional[BankDistanceProvider]) -> None:
         """
-        Set the function that returns bank distances for a state (None removes it).
+        Set the provider state -> (dist_port, dist_starboard) [m]; None removes it.
 
-        Called at every evaluation, so it must be fast. Use a bound method,
-        not a lambda: deepcopy re-binds a bound method to the copied object.
-
-        Args:
-            provider: state -> (dist_port, dist_starboard) [m], or None.
+        Called at every evaluation, so keep it fast. Use a bound method, not a lambda,
+        so deepcopy re-binds it to the copied object.
         """
+
         self._bank_distance_provider = provider
 
     def set_bank_distances(self, dist_port: Optional[float], dist_starboard: Optional[float]) -> None:
         """
-        Set bank distances from midship [m]; None or inf = no bank on that side.
-
-        Args:
-            dist_port:      Distance to the port bank [m].
-            dist_starboard: Distance to the starboard bank [m].
+        Set port/starboard bank distances from midship [m]; None or inf means no bank.
         """
+
         self._dist_port = self._validate_distance("dist_port", dist_port)
         self._dist_starboard = self._validate_distance("dist_starboard", dist_starboard)
 
     def get_ukc(self, pos: Optional[object] = None) -> float:
         """
-        Under-keel clearance of the configured condition (constant; pos ignored).
-
-        Args:
-            pos: Ignored.
-
-        Returns:
-            UKC [m, model scale].
+        UKC [m, model scale] of the configured condition; `pos` is ignored.
         """
+
         return self.ukc_percent / 100.0 * self.particulars.draft
 
     @staticmethod
     def _validate_distance(name: str, value: Optional[float]) -> float:
-        """Bank distance [m] as a float: None becomes inf (no bank); NaN raises ValueError."""
+        """
+        Bank distance [m] as a float: None becomes inf (no bank); NaN raises ValueError.
+        """
+
         if value is None:
             return math.inf
         value = float(value)
@@ -360,13 +341,9 @@ class UGentB01Surrogate(DynamicsBase):
         Accelerations (du, dv, dr) in the framework frame [m/s², m/s², rad/s²].
 
         Args:
-            state:        Vessel state (framework frame: v, r positive to port).
-            rudder_angle: Rudder angle [rad]; positive = the ship turns to PORT
-                (framework convention, see DynamicsBase).
-            thrust:       Propeller-rate command n / n_max, in [0, 1].
-
-        Returns:
-            Tuple (du, dv, dr).
+            state: Vessel state (v, r positive to port).
+            rudder_angle: Rudder angle [rad]; positive turns the ship to port.
+            thrust: Propeller-rate command n / n_max, in [0, 1].
         """
         if self._bank_distance_provider is not None:
             self.set_bank_distances(*self._bank_distance_provider(state))
@@ -385,7 +362,10 @@ class UGentB01Surrogate(DynamicsBase):
     def _blended_accelerations_report_frame(
         self, u: float, v: float, r: float, delta: float, thrust_cmd: float,
     ) -> Tuple[float, float, float]:
-        """Accelerations at the configured UKC in the report frame (y starboard), current banks."""
+        """
+        Accelerations at the configured UKC and current banks, in the report frame (y starboard).
+        """
+
         n_rpm = self._propeller_rate_rpm(thrust_cmd)
         thrust_force = self._propeller_thrust(u, n_rpm)
         bank_term = self._bank_term(u)
@@ -401,14 +381,15 @@ class UGentB01Surrogate(DynamicsBase):
 
     def _straight_running_trim(self, thrust_cmd: float) -> Tuple[float, float]:
         """
-        Steady straight running (v = r = 0, no banks) at a thrust command.
+        Steady straight running (v = r = 0) at a thrust command.
 
-        Solves du = 0 for u and dr = 0 for the rudder angle (dr is linear in
-        sin 2δ; the rudder drag couples them, so a few fixed-point iterations).
+        Solves du = 0 for u and dr = 0 for the rudder angle (linear in sin 2δ), iterating
+        because rudder drag couples them. Uses the current bank distances.
 
         Returns:
             (u [m/s], rudder angle [rad]); the angle is NaN if no |δ| <= 45 deg trims it.
         """
+
         delta, u = 0.0, 0.0
         for _ in range(20):
             lo, hi = 0.0, 5.0
@@ -433,17 +414,20 @@ class UGentB01Surrogate(DynamicsBase):
 
     def _min_straight_running_thrust(self, max_rudder_angle: float) -> float:
         """
-        Smallest thrust command for which straight running can be trimmed with |δ| <= max_rudder_angle.
+        Smallest thrust command for which straight running trims with |δ| <= max_rudder_angle.
 
-        Evaluated without banks at the configured UKC (bisection; the trim
-        angle decreases monotonically with thrust). Returns 1.0 if even full
-        thrust cannot be trimmed.
+        Bisection without banks at the configured UKC (trim angle decreases with thrust).
+        Returns 1.0 if even full thrust cannot be trimmed.
         """
+
         saved = (self._dist_port, self._dist_starboard)
         self._dist_port = self._dist_starboard = math.inf
         try:
             def trimmable(thrust_cmd: float) -> bool:
-                """True if straight running at thrust_cmd needs at most max_rudder_angle."""
+                """
+                True if straight running at thrust_cmd needs at most max_rudder_angle.
+                """
+
                 delta = self._straight_running_trim(thrust_cmd)[1]
                 return not math.isnan(delta) and abs(delta) <= max_rudder_angle
 
@@ -465,11 +449,9 @@ class UGentB01Surrogate(DynamicsBase):
         n_rpm: float, thrust_force: float, bank_term: float,
     ) -> Tuple[float, float, float]:
         """
-        Equations of motion (eq. 24-26) in the report frame (y starboard), one UKC set.
-
-        delta [rad], n_rpm [rpm], thrust_force [N] and bank_term [m²/s²] do not
-        depend on the coefficient set.
+        Equations of motion (eq. 24-26) for one UKC set, in the report frame (y starboard).
         """
+
         p = self.particulars
         u_abs_u = u * abs(u)
         sin_2d = math.sin(2.0 * delta)
@@ -497,7 +479,10 @@ class UGentB01Surrogate(DynamicsBase):
                 yaw / (p.i_zz - c.N_rdot))
 
     def _propeller_rate_rpm(self, thrust_cmd: float) -> float:
-        """Propeller rate n [rpm] from the command n / n_max; negative commands clamp to 0."""
+        """
+        Propeller rate n [rpm] from the command n / n_max; negative commands clamp to 0.
+        """
+
         if thrust_cmd < 0.0:
             if not self._warned_reverse_thrust:
                 logger.warning(
@@ -509,7 +494,10 @@ class UGentB01Surrogate(DynamicsBase):
         return thrust_cmd * self.n_max_rpm
 
     def _propeller_thrust(self, u: float, n_rpm: float) -> float:
-        """Thrust of the single ducted propeller [N] (§2.3, T = K_T ρ n² D⁴)."""
+        """
+        Thrust of the single ducted propeller [N] (§2.3, T = K_T ρ n² D⁴).
+        """
+
         p = self.particulars
         n_rps = n_rpm / 60.0
         if n_rps < 1e-6:
@@ -519,13 +507,19 @@ class UGentB01Surrogate(DynamicsBase):
         return k_t * p.rho_water * n_rps ** 2 * p.d_prop ** 4
 
     def _bank_term(self, u: float) -> float:
-        """u|u| / y'_BP - u|u| / y'_BS (eq. 25-26); 0 without banks."""
+        """
+        u|u| / y'_BP - u|u| / y'_BS (eq. 25-26); 0 without banks.
+        """
+
         u_abs_u = u * abs(u)
         return u_abs_u / self._clearance(self._dist_port) - \
             u_abs_u / self._clearance(self._dist_starboard)
 
     def _clearance(self, distance: float) -> float:
-        """y' = (d - B/2) / B, held at min_bank_clearance below it; inf (no force) above the cut-off."""
+        """
+        y' = (d - B/2) / B, held at min_bank_clearance below it; inf (no force) above the cut-off.
+        """
+
         if math.isinf(distance):
             return math.inf
         beam = self.particulars.beam

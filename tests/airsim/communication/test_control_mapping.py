@@ -14,19 +14,19 @@ from fw.ships.ship_factory import create_ship
 
 def _make_airsim_module():
     """
-    Make airsim module.
+    Build a stub airsim module exposing only CarControls.
     """
 
     module = types.SimpleNamespace()
 
     class CarControls:
         """
-        CarControls.
+        Minimal stand-in for airsim.CarControls.
         """
 
         def __init__(self):
             """
-            Initialize the instance.
+            Neutral controls.
             """
 
             self.steering = 0.0
@@ -42,7 +42,7 @@ def _make_airsim_module():
 
 def test_validate_policy_action_clips_small_numeric_overshoot():
     """
-    Test behavior for validate policy action clips small numeric overshoot.
+    Small numeric overshoot is clipped to [-1, 1].
     """
 
     action = validate_policy_action(np.array([1.0 + 1e-6, -1.0 - 1e-6], dtype=np.float32))
@@ -51,7 +51,7 @@ def test_validate_policy_action_clips_small_numeric_overshoot():
 
 def test_validate_policy_action_rejects_large_out_of_bounds():
     """
-    Test behavior for validate policy action rejects large out of bounds.
+    Large out-of-bounds actions are rejected.
     """
 
     with pytest.raises(ValueError, match=r"within \[-1, 1\]"):
@@ -60,7 +60,7 @@ def test_validate_policy_action_rejects_large_out_of_bounds():
 
 def test_validate_policy_action_rejects_non_finite_values():
     """
-    Test behavior for validate policy action rejects non finite values.
+    Non-finite actions are rejected.
     """
 
     with pytest.raises(ValueError, match="finite values"):
@@ -69,7 +69,7 @@ def test_validate_policy_action_rejects_non_finite_values():
 
 def test_map_framework_policy_action_normalizes_to_ue5_throttle_range():
     """
-    Test behavior for framework policy action normalization to UE5 throttle.
+    Framework policy actions are normalized to UE5 throttle.
     """
 
     airsim_module = _make_airsim_module()

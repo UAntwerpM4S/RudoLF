@@ -1,18 +1,16 @@
 """
 Probe FH's actuator response at the start of a dataset episode.
 
-Question it answers: when the generator starts an episode with a commanded
-rudder/azipod angle and thrust, do FH's actuators (azipod direction,
-propeller rpm, rudder angle) start AT the command, or do they first have to
-get there? The surrogate only sees the command; a lag makes the first
-seconds of every episode unexplainable (see time_error_diagnostic.py).
+Do FH's actuators (azipod direction, propeller rpm, rudder angle) start at the
+commanded value, or do they first have to get there? The surrogate only sees
+the command, so a lag makes the first seconds of every episode unexplainable
+(see time_error_diagnostic.py).
 
-It initializes FH exactly like sim_fh_dataset_generator.run_simulation (same
-initial position/heading/speeds, initial rudder angle and propeller rps from
-the action, same per-step commands) and then, every --every seconds, prints
-the ship state and EVERY parameterless get*() method of the azipod / rudder
-/ propeller control objects (found by introspection, so no API names are
-assumed). The same values go to a CSV.
+FH is initialized as in sim_fh_dataset_generator.run_simulation (initial
+pose, speeds, rudder angle and propeller rps from the action, same per-step
+commands). Every --every seconds the ship state and all parameterless
+get*/is* methods of the ship interface and the control objects (found by
+introspection) are printed and written to a CSV.
 
 Usage (from src; runs FH in this process, takes about as long as the
 simulated time):
@@ -42,7 +40,9 @@ import fw.surrogate.sim_fh_dataset_generator as gen
 
 
 def _getters(obj) -> List[str]:
-    """Names of the public get*/is* methods of a (pythonnet) control object."""
+    """
+    Names of the public get*/is* methods of a (pythonnet) control object.
+    """
 
     names = []
     for name in dir(obj):
@@ -52,7 +52,9 @@ def _getters(obj) -> List[str]:
 
 
 def _read(obj, names: Sequence[str]) -> Dict[str, str]:
-    """Call every parameterless getter; values as short strings (errors are skipped)."""
+    """
+    Call every parameterless getter; values as short strings (errors are skipped).
+    """
 
     out = {}
     for name in names:
@@ -70,7 +72,9 @@ def _read(obj, names: Sequence[str]) -> Dict[str, str]:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Command-line entry point; returns the exit code."""
+    """
+    Command-line entry point; returns the exit code.
+    """
 
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter)

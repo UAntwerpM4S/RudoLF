@@ -1,13 +1,11 @@
 """
-check_cutoffs.py -- check map cut-off detection (PySimEnv.bank_segments) for
-the river polygon the dataset generator uses.
+Check map cut-off detection (PySimEnv.bank_segments) for the river polygon
+used by the dataset generator.
 
-If the depth contour has an entry in py_sim_env.MAP_CUTOFF_LINES, the
-explicit cut-off lines are used: this lists each detected cut-off run and
-saves cutoff_check.png with the configured lines (black dashed) and the
-segments classified as cut-off (red), so the line coordinates can be
-verified. Otherwise, it compares the bounding-box heuristic over a range of
-edge tolerances, one panel per tolerance.
+With a MAP_CUTOFF_LINES entry for the depth contour, prints each detected
+cut-off run and saves cutoff_check.png with the configured lines (black
+dashed) and classified cut-off segments (red). Otherwise compares the
+bounding-box heuristic over several edge tolerances, one panel each.
 
 Usage (from the folder you run the generator from, e.g. src):
     python -m fw.surrogate.validation.check_cutoffs
@@ -19,9 +17,8 @@ import sys
 import traceback
 from pathlib import Path
 
-# Allow running by file path: put the folder that contains the `fw` package
-# (src) on the import path. Not needed with `python -m`.
-_SRC_DIR = str(Path(__file__).resolve().parents[3])     # src (this file: src/fw/surrogate/validation/)
+# Put src on the import path when run by file path (not needed with `python -m`).
+_SRC_DIR = str(Path(__file__).resolve().parents[3])
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
@@ -38,7 +35,9 @@ TOLERANCES = (0.01, 1.0, 10.0, 25.0, 50.0, 100.0)  # m; heuristic only; 0.01 is 
 
 
 def _print_runs(cutoff: np.ndarray) -> None:
-    """Print each connected cut-off run with its end points and length."""
+    """
+    Print each connected cut-off run with its end points and length.
+    """
 
     length = float(np.linalg.norm(cutoff[:, 1] - cutoff[:, 0], axis=1).sum()) if len(cutoff) else 0.0
     print(f"  {len(cutoff)} cut-off segment(s), {length:.1f} m in total")
@@ -69,8 +68,7 @@ def _draw(ax, poly, cutoff, title, lines=()) -> None:
 
 def main() -> None:
     """
-    CLI entry point: classify the map cut-offs (explicit MAP_CUTOFF_LINES, or the bounding-box
-    heuristic per tolerance in TOLERANCES), print the runs and save cutoff_check.png.
+    Classify the map cut-offs, print the runs and save cutoff_check.png.
     """
 
     env = PySimEnv(render_mode=None, time_step=0.1, wind=False, current=False)

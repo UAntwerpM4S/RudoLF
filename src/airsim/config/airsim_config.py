@@ -1,10 +1,8 @@
 """
 AirSim connection configuration with validation.
 
-Provides a validated `AirSimConfig` dataclass that centralizes all
-CosysAirSim connection parameters. PID / control-loop gains are
-intentionally **not** stored here because they belong in the
-input-mapping layer instead.
+`AirSimConfig` holds all CosysAirSim connection parameters. PID/control-loop
+gains belong in the input-mapping layer, not here.
 
 Example::
 
@@ -31,9 +29,8 @@ _THIS_DIR = Path(__file__).resolve().parent
 _RUNTIME_SETTINGS_PATH = _THIS_DIR / "runtime_settings.json"
 DEFAULT_AIRSIM_SAVE_SLOT = "simulator_1"
 DEFAULT_AIRSIM_SIMULATION_SPEED = 8.0
-# Calibrated visual gain for UE5 replay throttle animation.
-# The current ship's throttle envelope is roughly 5.6, so 5.0 / 5.6 keeps the
-# visible throttle close to the framework speed range during replay.
+# Visual gain for the UE5 replay throttle animation: the ship's throttle envelope
+# is about 5.6, so 5.0 / 5.6 keeps the visible throttle near the framework range.
 DEFAULT_THROTTLE_VISUAL_GAIN = 5.0 / 5.6
 
 
@@ -63,20 +60,18 @@ class AirSimConfig:
     """
     Validated, immutable configuration for the AirSim bridge.
 
-    All values are validated in `__post_init__`.  Invalid parameters
-    raise `ValueError` with a clear, actionable message.
+    Fields are validated in `__post_init__` (ValueError on invalid values).
 
     Attributes:
-        use_airsim: Enable the AirSim bridge. When `False` the bridge
-            is never connected, regardless of other settings.
-        ip: AirSim server IP address.  An empty string means
-            `127.0.0.1` (localhost).
-        port: AirSim RPC port (1–65 535).
+        use_airsim: Enable the AirSim bridge; when False it never connects.
+        ip: AirSim server IP address; empty means 127.0.0.1.
+        port: AirSim RPC port (1 to 65535).
         timeout: Connection timeout in seconds (must be > 0).
         max_retries: Maximum number of connection attempts before
             giving up (0 = try once, no retries).
         health_check_interval: Seconds between periodic health checks
             (must be > 0).
+        csv_log_path: CSV path for bridge telemetry; empty disables logging.
     """
 
     use_airsim: bool = True
@@ -280,9 +275,9 @@ def get_runtime_settings() -> Dict[str, Any]:
 
 def get_airsim_config() -> Dict[str, Any]:
     """
-    Return a dictionary of AirSim configuration values.
+    Return the validated AirSim configuration (runtime settings) as a dict.
 
-    Backward-compatible wrapper around :class:`AirSimConfig`.
+    Backward-compatible wrapper around `AirSimConfig`.
 
     Returns:
         A dictionary with all AirSim-specific parameters.

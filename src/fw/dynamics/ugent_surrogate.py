@@ -43,7 +43,9 @@ _OPTIONAL_CONFIG_KEYS = frozenset({"ittc_correction", "n_max_rpm", "min_bank_cle
 
 @dataclass(frozen=True)
 class TripoliParticulars:
-    """Full-scale main particulars and propulsion data of the Tripoli."""
+    """
+    Full-scale main particulars and propulsion data of the Tripoli.
+    """
 
     mass: float = 6161870.27          # kg
     length_pp: float = 110.0          # m
@@ -61,7 +63,9 @@ class TripoliParticulars:
 
 @dataclass(frozen=True)
 class ManoeuvringCoefficients:
-    """Coefficient set for one UKC condition."""
+    """
+    Coefficient set for one UKC condition.
+    """
 
     ukc_percent: float
     X_udot: float
@@ -79,17 +83,26 @@ class ManoeuvringCoefficients:
 
     @property
     def depth_ratio(self) -> float:
-        """T/(h-T) = 100 / UKC[%]."""
+        """
+        T/(h-T) = 100 / UKC[%].
+        """
+
         return 100.0 / self.ukc_percent
 
 
 def _extrapolate_linear(x0: float, y0: float, x1: float, y1: float, x: float) -> float:
-    """Straight line through (x0, y0) and (x1, y1), evaluated at x."""
+    """
+    Straight line through (x0, y0) and (x1, y1), evaluated at x.
+    """
+
     return y0 + (y1 - y0) / (x1 - x0) * (x - x0)
 
 
 def tripoli_coefficient_sets(ittc_correction: bool) -> Dict[int, ManoeuvringCoefficients]:
-    """Full-scale coefficient sets keyed by UKC [%]: Table 4, with the errata applied."""
+    """
+    Full-scale coefficient sets keyed by UKC [%]: Table 4, with the errata applied.
+    """
+
     # X_u|u|: Table 4, or Table 5 (ITTC-corrected).
     x_uabsu = {363: 2.55e3, 125: 3.85e3, 43: 5.08e3} if ittc_correction \
         else {363: 5.92e3, 125: 7.21e3, 43: 8.45e3}
@@ -133,7 +146,10 @@ def tripoli_coefficient_sets(ittc_correction: bool) -> Dict[int, ManoeuvringCoef
 
 
 def _positive_finite(config: Mapping, key: str, default: float) -> float:
-    """config[key] as a finite float > 0; raises ValueError otherwise."""
+    """
+    config[key] as a finite float > 0; raises ValueError otherwise.
+    """
+
     value = config.get(key, default)
     if isinstance(value, (bool, str)) or not isinstance(value, numbers.Real) \
             or not math.isfinite(value) or value <= 0:
@@ -169,6 +185,7 @@ class UGentSurrogate(DynamicsBase):
         Raises:
             ValueError: missing, unknown or invalid configuration key.
         """
+
         config = dict(ugent_surrogate_config or {})
         missing = _REQUIRED_CONFIG_KEYS - config.keys()
         if missing:
@@ -224,20 +241,29 @@ class UGentSurrogate(DynamicsBase):
         Called at every evaluation, so it must be fast. Use a bound method,
         not a lambda: deepcopy re-binds a bound method to the copied object.
         """
+
         self._bank_distance_provider = provider
 
     def set_bank_distances(self, dist_port: Optional[float], dist_starboard: Optional[float]) -> None:
-        """Set bank distances from midship [m]; None or inf = no bank on that side."""
+        """
+        Set bank distances from midship [m]; None or inf = no bank on that side.
+        """
+
         self._dist_port = self._validate_distance("dist_port", dist_port)
         self._dist_starboard = self._validate_distance("dist_starboard", dist_starboard)
 
     def get_ukc(self, pos: Optional[object] = None) -> float:
-        """Under-keel clearance [m] of the configured condition (constant; pos ignored)."""
+        """
+        Under-keel clearance [m] of the configured condition (constant; pos ignored).
+        """
+
         return self.coefficients.ukc_percent / 100.0 * self.particulars.draft
 
     @staticmethod
     def _validate_distance(name: str, value: Optional[float]) -> float:
-        """Bank distance [m] as a float: None becomes inf (no bank); NaN raises ValueError."""
+        """
+        Bank distance [m] as a float: None becomes inf (no bank); NaN raises ValueError.
+        """
 
         if value is None:
             return math.inf
@@ -273,7 +299,10 @@ class UGentSurrogate(DynamicsBase):
     def _accelerations_report_frame(
         self, u: float, v: float, r: float, delta: float, thrust_cmd: float,
     ) -> Tuple[float, float, float]:
-        """Equations of motion (eq. 11, 17, 19) in the report frame (y starboard)."""
+        """
+        Equations of motion (eq. 11, 17, 19) in the report frame (y starboard).
+        """
+
         p = self.particulars
         c = self.coefficients
         thrust_force = self._propeller_thrust(u, thrust_cmd)
@@ -300,7 +329,10 @@ class UGentSurrogate(DynamicsBase):
                 yaw / (p.i_zz - c.N_rdot))
 
     def _propeller_thrust(self, u: float, thrust_cmd: float) -> float:
-        """Total thrust of both Z-drives [N] (eq. 12-14)."""
+        """
+        Total thrust of both Z-drives [N] (eq. 12-14).
+        """
+
         if thrust_cmd < 0.0:
             if not self._warned_reverse_thrust:
                 logger.warning(
@@ -319,13 +351,19 @@ class UGentSurrogate(DynamicsBase):
         return p.n_propellers * k_t * p.rho_water * n_rps ** 2 * p.d_prop ** 4
 
     def _bank_term(self, u: float) -> float:
-        """u|u| / y'_BP - u|u| / y'_BS (eq. 17-18); 0 without banks."""
+        """
+        u|u| / y'_BP - u|u| / y'_BS (eq. 17-18); 0 without banks.
+        """
+
         u_abs_u = u * abs(u)
         return u_abs_u / self._clearance(self._dist_port) - \
             u_abs_u / self._clearance(self._dist_starboard)
 
     def _clearance(self, distance: float) -> float:
-        """y' = (d - B/2) / B, clamped below at min; inf (no force) above max."""
+        """
+        y' = (d - B/2) / B, clamped below at min; inf (no force) above max.
+        """
+
         if math.isinf(distance):
             return math.inf
         beam = self.particulars.beam

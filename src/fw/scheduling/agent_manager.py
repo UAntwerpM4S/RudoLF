@@ -30,10 +30,7 @@ logger = logging.getLogger(__name__)
 
 class AgentManager:
     """
-    AgentManager class for managing agents and environments during training.
-
-    This class includes methods for training, saving/loading policies, and
-    visualizing paths taken by the agent during evaluation.
+    Creates agents for environments, trains them and evaluates/visualizes them.
     """
 
     def __init__(self, agent_type: str, profile: VesselProfile, hyperparameters: dict):
@@ -54,10 +51,7 @@ class AgentManager:
     @property
     def agent_type(self) -> str:
         """
-        Get the type of agent being used by the agent manager.
-
-        Returns:
-            str: The agent type.
+        The agent type (policy name).
         """
 
         return self._agent_type
@@ -65,10 +59,7 @@ class AgentManager:
     @property
     def profile(self) -> "VesselProfile":
         """
-        Get the active VesselProfile held by this manager.
-
-        Returns:
-            VesselProfile: The profile used for training or visualization.
+        The active VesselProfile.
         """
 
         return self._profile
@@ -76,21 +67,14 @@ class AgentManager:
     @property
     def agent(self) -> BaseAgent:
         """
-        Get the agent that is used by the agent manager.
-
-        Returns:
-            BaseAgent: The agent.
+        The current agent (None before `set_environment`).
         """
 
         return self._agent
 
     def _build_single_agent(self, env):
         """
-        Create a `SinglePPOAgent` from the given environment.
-
-        If the environment exposes a `sub_environments` attribute, this method
-        ensures that exactly one sub-environment is used. Otherwise, the environment
-        itself is used directly.
+        Create a SinglePPOAgent for `env`, or for its only sub-environment.
 
         Args:
             env: Environment instance, optionally containing `sub_environments`.
@@ -115,11 +99,7 @@ class AgentManager:
 
     def _build_multi_agent(self, env: BaseEnv):
         """
-        Create a `MultiPPOAgent` composed of multiple `SinglePPOAgent` instances.
-
-        Each sub-environment in the provided `MultiSimEnv` is assigned its own
-        `SinglePPOAgent`. These agents are then combined into a `MultiPPOAgent`
-        for coordinated training.
+        Create a MultiPPOAgent with one SinglePPOAgent per sub-environment.
 
         Args:
             env (MultiSimEnv): Multi-environment containing sub-environments.
@@ -147,18 +127,18 @@ class AgentManager:
 
     def _build_multi_policy_single_agent(self, env):
         """
-        Create a `MultiPolicySingleAgent` for the given environment.
-
-        The environment must have `include_scenario_one_hot=True` so that
-        its observations carry a one-hot suffix the agent uses for policy
-        routing.
+        Create a MultiPolicySingleAgent (one policy per COLAV scenario).
 
         Args:
-            env: Environment instance (a single PySimColavEnv with one-hot
-                encoding enabled, NOT a MultiSimEnv).
+            env: A single PySimColavEnv with `include_scenario_one_hot=True`
+                (the one-hot suffix routes steps to policies), or a wrapper with
+                exactly one sub-environment.
 
         Returns:
             MultiPolicySingleAgent: Initialized multi-policy agent.
+
+        Raises:
+            RuntimeError: If more than one sub-environment is provided.
         """
 
         sub_envs = getattr(env, "sub_environments", None)
@@ -181,16 +161,9 @@ class AgentManager:
             **self._hyperparameters,
         )
 
-        # Directory holding the pre-trained per-scenario policies and the
-        # spec describing which slots to populate and whether to freeze them.
-        # File names are given without the `.zip` extension.
-        # Slot mapping (from SCENARIO_LABELS):
-        #   0 = path-following   <- pretrained_pf
-        #   1 = head-on          <- pretrained_ho
-        #   2 = overtaking       (no pretrained file, slot stays randomly initialized)
-        #   3 = crossing-right   <- pretrained_cr
-        # All loaded slots are unfrozen (frozen=False) so they continue to
-        # train from the pretrained weights as a warm start.
+        # Optional warm start from pretrained per-scenario policies in model_dir
+        # (file names without .zip). Slots follow SCENARIO_LABELS: 0 path-following,
+        # 1 head-on, 2 overtaking, 3 crossing-right. Empty: all slots start random.
         pretrained_dir = agent.model_dir
         pretrained_specs = {
             #0: {"file": "pretrained_pf", "frozen": False},
@@ -215,23 +188,16 @@ class AgentManager:
 
         Args:
             env (BaseEnv): The environment to set.
-            policy_strategy (PolicyStrategy, optional): Strategy for handling
-                policy (reset, reuse current, or reuse other).
-                Default is PolicyStrategy.RESET_POLICY.
-            other_env_name (str, optional): Name of the environment whose policy
-                should be reused (if applicable).
-            profile (VesselProfile, optional): Replace the manager's active
-                profile before building the new agent. Defaults to None,
-                which keeps whichever profile the manager already holds -
-                this preserves the exact behavior every existing caller
-                (Trainer, SimpleScheduler) relies on. `fw.pipeline_scheduler`
-                passes a different profile here per pipeline block, so one
-                AgentManager can be reused across a whole JSON-driven run
-                instead of constructing a new one per block.
-            hyperparameters (dict, optional): Replace the manager's active
-                hyperparameters before building the new agent. Defaults to
-                None, which keeps the hyperparameters already held. Same
-                rationale as `profile` above.
+            policy_strategy (PolicyStrategy, optional): Reset the policy, reuse
+                the current one, or reuse another environment's policy.
+            other_env_name (str, optional): Environment whose policy to reuse.
+            profile (VesselProfile, optional): Replaces the active profile
+                (used by the pipeline scheduler per block); None keeps it.
+            hyperparameters (dict, optional): Replace the active hyperparameters;
+                None keeps them.
+
+        If a policy file to reuse is missing or incompatible, a warning is
+        logged and the fresh (reset) policy is kept.
 
         Raises:
             RuntimeError: If an unknown policy type is specified.
@@ -251,8 +217,7 @@ class AgentManager:
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
             policy_file_name = f"{other_env_name}_{self._agent_type}_policy"
 
-        # Release resources held by the agent being replaced (e.g. the SB3
-        # VecEnv of PPO2Agent, which is built in its constructor).
+        # Release resources of the replaced agent (e.g. PPO2Agent's SB3 VecEnv).
         if self._agent is not None and callable(getattr(self._agent, "close", None)):
             try:
                 self._agent.close()
@@ -270,8 +235,7 @@ class AgentManager:
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 
-        # Always propagate profile env settings (e.g. enable_smoothing) to the
-        # environment, regardless of which entry point called set_environment.
+        # Propagate profile env settings (e.g. enable_smoothing).
         apply_profile(self._profile, env=env)
 
         if policy_file_name:
@@ -297,13 +261,10 @@ class AgentManager:
         Args:
             stop_condition (StopCondition): The condition that determines when
                 training should stop.
-            dispose_env (bool, optional): Whether to dispose the FH Simulator
-                bridge (if any) once training finishes. Defaults to True.
-                Callers that immediately follow this call with
-                `visualize_trained_agent()` on the same environment should
-                pass False here to avoid an unnecessary dispose + full
-                math-model reinitialization cycle; `visualize_trained_agent()`
-                always performs the (final) dispose itself.
+            dispose_env (bool, optional): Dispose the FH simulator bridge (if
+                any) afterwards. Pass False when `visualize_trained_agent()`
+                follows on the same env (it disposes itself), to avoid a
+                needless math-model reinitialization.
 
         Raises:
             RuntimeError: If no agent has been created yet.
@@ -312,9 +273,7 @@ class AgentManager:
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
-        # Start training. fh_sim_cleanup guarantees dispose() runs on the
-        # way out even if learn() raises (KeyboardInterrupt, training
-        # error, etc.) - not just on normal completion.
+        # fh_sim_cleanup disposes also when learn() raises.
         with fh_sim_cleanup(self.get_env, dispose=dispose_env):
             self._agent.learn(stop_condition=stop_condition)
 
@@ -339,15 +298,19 @@ class AgentManager:
         ) -> dict | None:
 
         """
-        Evaluates and visualizes the trained agent over multiple episodes.
+        Evaluate the trained agent, log metrics and save/show plots.
 
         Args:
-            num_episodes (int, optional): Number of episodes to visualize (default is 5).
-            live_animation (bool, optional): Enable live animation of the agent in the environment.
-            env_color_index (int, optional): Index of the environment color.
-            airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
-            return_summary (bool, optional): Return evaluation summary metrics when available.
-            show_plots (bool, optional): Show plot windows when visualization is generated.
+            num_episodes (int, optional): Number of evaluation episodes.
+            live_animation (bool, optional): Animate the episodes live.
+            env_color_index (int, optional): Environment color index (currently unused).
+            airsim_bridge (AirSimBridge, optional): Bridge for mirroring in Cosys-AirSim.
+            return_summary (bool, optional): Return the per-environment metric summary.
+            show_plots (bool, optional): Show plot windows.
+
+        Returns:
+            dict | None: Metric summary per environment name if `return_summary`
+            (not for LunarLander), else None.
 
         Raises:
             RuntimeError: If no agent has been created or if the collector
@@ -368,9 +331,8 @@ class AgentManager:
             elif hasattr(raw_env, "env"):   # gym Wrapper
                 raw_env = raw_env.env
 
-            # Flip on eval-time realism overrides (variable TS radii, lateral
-            # lane spawn, late head-on dodge). All overrides are opt-in via
-            # env attributes that default to no-op in training.
+            # Enable eval-only realism (variable TS radii, lateral lane spawn,
+            # late head-on dodge); these are off during training.
             if hasattr(raw_env, "set_evaluation_parameters"):
                 raw_env.set_evaluation_parameters()
             for sub in getattr(raw_env, "sub_environments", {}).values():
@@ -472,11 +434,9 @@ class AgentManager:
                             f"median={median_cri:.3f}  max={max_cri:.3f}  "
                             f"(n={n_valid})"
                         )
-                    # Baseline CRI floor - single global value, useful for
-                    # reading the per-policy CRI numbers against. Theoretical
-                    # baseline uses the CRI formula at DCPA=encounter_range,
-                    # TCPA<=0 (parting); the TCPA term collapses to 0 so only
-                    # the DCPA half remains.
+                    # Baseline CRI as reference for the per-policy values. The
+                    # theoretical value is CRI at DCPA=encounter_range with TCPA<=0
+                    # (parting), where only the DCPA term remains.
                     enc_r = float(getattr(ship_env, "encounter_range", 0.0))
                     cri_D = float(getattr(ship_env, "cri_D", 1.0))
                     cri_alpha1 = float(getattr(ship_env, "cri_alpha1", -1.0))
@@ -532,8 +492,7 @@ class AgentManager:
                     logger.info(f"Collision per side: {m.collision_side_count}")
                     logger.info(f"COLREG violation count: {m.colreg_violation_count}")
 
-                    # Scenario classification diagnostics - per encounter
-                    # (one record captured at encounter entry).
+                    # Scenario classification diagnostics (one record per encounter).
                     enc_rate = (
                         m.encounter_misclassification_count / m.num_encounters * 100
                         if m.num_encounters else 0.0

@@ -31,11 +31,10 @@ class CoordTransform:
 
         Args:
             calibration: Dictionary containing the calibration parameters.
-                Expected keys: "scale", "rotation",
-                "framework_origin", "airsim_origin".
-                Optional keys: "mirror_x" and "mirror_y".
-                Legacy calibration files with a non-AirSim origin key are also
-                accepted automatically.
+                Keys: "scale", "rotation", "framework_origin", "airsim_origin",
+                optional "mirror_x"/"mirror_y". Without "framework_origin"
+                (legacy files), the first other "*_origin" key is used.
+                None gives the default axis swap (rotation -pi/2, scale 1).
         """
 
         if calibration is not None:

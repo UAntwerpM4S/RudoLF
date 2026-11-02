@@ -1,21 +1,11 @@
 """
-plot_val_vs_simulator.py
-------------------------
-Compares surrogate model predictions on the validation set against the
-ground-truth values recorded by the FH simulator.
+Compare surrogate predictions on the validation split with the FH simulator ground truth.
 
-Layout (3 × 3 grid):
-  Row 1 – delta_surge   : scatter pred vs true  |  residual histogram  |  sorted true vs pred
-  Row 2 – delta_sway    : same
-  Row 3 – delta_yaw_rate: same
+Plots a 3 x 3 grid: one row per target (delta_surge, delta_sway, delta_yaw_rate) with
+pred-vs-true scatter, residual histogram and sorted overlay.
 
-Usage
------
-    python plot_val_vs_simulator.py
-
-Paths (edit the constants below if needed):
-    VAL_NPZ   – validation split produced by generate_ship_data.py
-    CKPT_PATH – trained surrogate checkpoint
+Usage: python plot_val_vs_simulator.py
+Edit VAL_NPZ (validation split from generate_ship_data.py) and CKPT_PATH below if needed.
 """
 
 import matplotlib
@@ -26,23 +16,17 @@ import numpy as np
 from pathlib import Path
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Paths – adjust as needed
-# ──────────────────────────────────────────────────────────────────────────────
+# --- Paths (adjust as needed) ---
 VAL_NPZ   = Path("data/ship_dynamics_dataset_val.npz")
 CKPT_PATH = Path("checkpoints/best_surrogate.pth")
 OUT_PNG   = Path("val_vs_simulator.png")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Output labels / units
-# ──────────────────────────────────────────────────────────────────────────────
+# --- Output labels / units ---
 OUTPUT_NAMES  = ["Δ Surge",    "Δ Sway",     "Δ Yaw rate"]
 OUTPUT_UNITS  = ["m/s",        "m/s",         "rad/s"]
 OUTPUT_KEYS   = ["delta_surge","delta_sway",  "delta_yaw_rate"]
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 1.  Load surrogate (its checkpoint says which scenario it expects)
-# ──────────────────────────────────────────────────────────────────────────────
+# --- 1. Load surrogate (the checkpoint defines the expected scenario) ---
 from fw.surrogate.inference_surrogate import SurrogatePredictor   # noqa: E402
 from fw.surrogate.dataset import load_raw                         # noqa: E402
 
@@ -50,15 +34,10 @@ predictor = SurrogatePredictor(str(CKPT_PATH))
 print(f"Surrogate: scenario={predictor.scenario.name}, env_encoding={predictor.env_encoding}, "
       f"ship_model={predictor.ship_model}")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 2.  Load validation split (X used for inference, Y_sim = ground truth) and
-#     run inference
-# ──────────────────────────────────────────────────────────────────────────────
+# --- 2. Load validation split (Y_sim = ground truth) and run inference ---
 print("Loading validation split …")
-# RAW rows in the checkpoint scenario's layout (projected from the file's own
-# scenario when allowed, e.g. open_water from confined_ukc data); load_raw
-# checks the file's identity. SurrogatePredictor.predict() selects and
-# encodes the columns itself -- never hand-slice X here.
+# Raw rows in the checkpoint scenario's layout; predict() selects and encodes
+# the columns itself, so never hand-slice X here.
 X_val, Y_sim, val_identity = load_raw(VAL_NPZ, predictor.scenario)
 _mismatch = predictor.data_mismatch(val_identity)
 if _mismatch:
@@ -68,54 +47,29 @@ N = X_val.shape[0]
 print(f"  {N:,} validation samples")
 
 print("Running surrogate inference …")
-Y_pred    = predictor.predict(X_val)   # batched, avoids one Python-level
-                                        # model call per row on what can be
-                                        # a 100k+ row validation split
+Y_pred    = predictor.predict(X_val)   # batched (split can exceed 100k rows)
 print(f"  Predictions shape: {Y_pred.shape}")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 3.  Per-output metrics
-# ──────────────────────────────────────────────────────────────────────────────
+# --- 3. Per-output metrics ---
 residuals = Y_pred - Y_sim       # (N, 3)
 
 def rmse(a, b):
     """
-    Root mean squared error between two arrays.
-
-    Args:
-        a: First array.
-        b: Second array, same shape as `a`.
-
-    Returns:
-        float: RMSE of `a - b`.
+    Root mean squared error of a - b.
     """
 
     return float(np.sqrt(np.mean((a - b) ** 2)))
 
 def mae(a, b):
     """
-    Mean absolute error between two arrays.
-
-    Args:
-        a: First array.
-        b: Second array, same shape as `a`.
-
-    Returns:
-        float: MAE of `a - b`.
+    Mean absolute error of a - b.
     """
 
     return float(np.mean(np.abs(a - b)))
 
 def r2(true: np.ndarray, pred: np.ndarray) -> float:
     """
-    Coefficient of determination (R²) of predictions against ground truth.
-
-    Args:
-        true: Ground-truth values.
-        pred: Predicted values, same shape as `true`.
-
-    Returns:
-        float: R², or NaN if `true` has zero variance.
+    Coefficient of determination R² (NaN if `true` has zero variance).
     """
 
     ss_res = float(np.sum((true - pred) ** 2))
@@ -139,9 +93,7 @@ for i, name in enumerate(OUTPUT_NAMES):
     print(f"  {name + ' (' + OUTPUT_UNITS[i] + ')':<18}  "
           f"{m['rmse']:12.6f}  {m['mae']:12.6f}  {m['r2']:8.5f}")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 4.  Plot
-# ──────────────────────────────────────────────────────────────────────────────
+# --- 4. Plot ---
 ALPHA_SCATTER = 0.15
 N_SORTED      = min(2000, N)   # subset for the sorted-overlay panel (speed)
 SUBSAMPLE     = max(1, N // 4000)   # thin scatter so it renders quickly
@@ -175,7 +127,7 @@ for row, i in enumerate(range(3)):
     inner = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=outer[row],
                                              wspace=0.38)
 
-    # ── Panel A: scatter true vs predicted ────────────────────────────────
+    # Panel A: scatter true vs predicted
     ax_sc = fig.add_subplot(inner[0])
     idx   = np.arange(0, N, SUBSAMPLE)
     ax_sc.scatter(y_t[idx], y_p[idx],
@@ -195,7 +147,7 @@ for row, i in enumerate(range(3)):
     ax_sc.set_aspect("equal", "box")
     ax_sc.grid(True, linewidth=0.4, alpha=0.5)
 
-    # ── Panel B: residual histogram ────────────────────────────────────────
+    # Panel B: residual histogram
     ax_h = fig.add_subplot(inner[1])
     ax_h.hist(resid, bins=80, color=COLOR_RESID, alpha=0.75, edgecolor="none")
     ax_h.axvline(0, color="k", linewidth=0.9, linestyle="--")
@@ -208,7 +160,7 @@ for row, i in enumerate(range(3)):
     ax_h.legend(fontsize=7)
     ax_h.grid(True, linewidth=0.4, alpha=0.5)
 
-    # ── Panel C: sorted true vs predicted (random subset) ─────────────────
+    # Panel C: sorted true vs predicted (random subset)
     ax_s = fig.add_subplot(inner[2])
     rng  = np.random.default_rng(42)
     idx2 = rng.choice(N, size=N_SORTED, replace=False)

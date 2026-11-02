@@ -4,15 +4,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class ActuatorCommand:
     """
-    Container for physical actuator commands.
-
-    This immutable data structure represents a single control command
-    issued to the vessel actuators. It is typically produced by an
-    action-mapping layer and consumed by the vessel dynamics or
-    simulator.
-
-    The class is intentionally lightweight and free of behavior; it
-    serves solely as a typed and self-documenting transport object.
+    Immutable actuator command (rudder, thrust), produced by the action mapping
+    and consumed by the dynamics model or simulator.
     """
 
     rudder_angle: float   # [rad]

@@ -1,8 +1,7 @@
 """
-SurrogatePredictor: loads a checkpoint written by train_surrogate.py and
-returns UNNORMALIZED one-step predictions -- one implementation for every
-scenario. The scenario, wind/current encoding, ship model and rudder scale
-are read from the checkpoint, never assumed by the caller.
+SurrogatePredictor: loads a train_surrogate.py checkpoint and returns
+unnormalized one-step predictions for any scenario. Scenario, wind/current
+encoding, ship model and rudder scale come from the checkpoint.
 """
 
 import logging
@@ -39,12 +38,10 @@ class SurrogatePredictor:
     """
     Trained surrogate MLP plus its normalization stats and identity.
 
-    `predict` / `predict_single` take RAW rows in the layout of the
-    checkpoint's scenario (`self.scenario.raw_columns`, width
-    `self.raw_input_dim`), exactly as stored in a dataset "X" array. Column
-    selection, encoding and normalization happen inside, with the same
-    `schema.select_and_encode` used at training time; callers must never
-    pre-slice or pre-encode the input themselves.
+    predict / predict_single take raw rows in the scenario's layout (width
+    raw_input_dim), as in a dataset "X" array. Selection, encoding and
+    normalization happen inside (schema.select_and_encode, as in training);
+    callers must not pre-slice or pre-encode.
 
     Attributes:
         scenario: schema.ScenarioSchema of the checkpoint.
@@ -57,16 +54,13 @@ class SurrogatePredictor:
 
     def __init__(self, checkpoint, device=None):
         """
-        Load a trained `SurrogateMLP` and its normalization stats.
-
         Args:
-            checkpoint: Path to a checkpoint saved by `train_surrogate.py`.
-            device: Device to load the model onto; defaults to
-                utils.get_device() (CUDA if available, else CPU).
+            checkpoint: Path to a train_surrogate.py checkpoint.
+            device: Torch device; default utils.get_device().
 
         Raises:
-            ValueError: If a required key is missing, or the checkpoint's
-                feature layout does not match the current schema.
+            ValueError: If a required key is missing or the feature layout does
+                not match the current schema.
         """
 
         self.checkpoint = str(checkpoint)
@@ -98,8 +92,7 @@ class SurrogatePredictor:
             if stat.shape[1] != width:
                 raise ValueError(f"Checkpoint {checkpoint}: {name} has {stat.shape[1]} columns, expected {width}.")
 
-        # Checkpoints without "activation" were all trained with ReLU (it was
-        # hardcoded in train_surrogate.py before it was stored).
+        # Checkpoints without "activation" were trained with ReLU.
         self.activation = str(ckpt.get("activation", "ReLU"))
         self.model = SurrogateMLP(
             input_dim=self.input_dim,
@@ -116,11 +109,9 @@ class SurrogatePredictor:
 
     def data_mismatch(self, identity) -> Optional[str]:
         """
-        Why data with dataset identity `identity` (schema.DatasetIdentity, e.g.
-        from dataset.load_raw) cannot be evaluated with this model, or None if
-        it can: a different ship, or a different rudder scale (rudder_action = 1
-        would stand for another angle). The scenario is checked separately
-        (schema.check_projection).
+        Reason why data with this schema.DatasetIdentity cannot be evaluated with
+        the model (other ship or rudder scale), or None. The scenario is checked
+        separately (schema.check_projection).
         """
 
         if str(identity.ship_model) != self.ship_model:
@@ -131,7 +122,9 @@ class SurrogatePredictor:
         return None
 
     def _check_feature_set(self, ckpt) -> None:
-        """Fail loudly if the checkpoint does not match the current schema."""
+        """
+        Fail loudly if the checkpoint does not match the current schema.
+        """
 
         names = list(encoded_feature_names(self.scenario, self.env_encoding))
         expected = {
@@ -156,16 +149,10 @@ class SurrogatePredictor:
 
     def predict(self, x_vals) -> np.ndarray:
         """
-        Predict outputs for one or more RAW input rows.
-
-        Args:
-            x_vals: Raw, unnormalized input in the checkpoint scenario's raw
-                layout: shape `(N, raw_input_dim)`, or `(raw_input_dim,)` for
-                a single sample.
+        Predict for raw input rows, shape (N, raw_input_dim) or (raw_input_dim,).
 
         Returns:
-            `np.ndarray` of shape `(N, output_dim)` with un-normalized
-            predictions (deltas over schema.SURROGATE_DT).
+            (N, output_dim) unnormalized deltas over schema.SURROGATE_DT.
         """
 
         x_vals = np.asarray(x_vals, dtype=np.float32)
@@ -179,10 +166,7 @@ class SurrogatePredictor:
 
     def predict_single(self, x_vals) -> np.ndarray:
         """
-        Predict outputs for a single RAW input row (length `raw_input_dim`).
-
-        Returns:
-            `np.ndarray` of shape `(output_dim,)`.
+        Predict for one raw row; returns shape (output_dim,).
         """
 
         return self.predict(np.asarray(x_vals))[0]

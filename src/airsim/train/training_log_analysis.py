@@ -1,5 +1,5 @@
 """
-Utilities for extracting training-curriculum hints from episode CSV logs.
+Extract curriculum hints from AirSim per-step episode CSV logs.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 @dataclass(frozen=True)
 class TrainingLogSummary:
     """
-    Compact summary of an AirSim training episode log.
+    Summary of an AirSim training episode log.
     """
 
     path: Path
@@ -37,17 +37,15 @@ def analyze_training_log(
     """
     Summarize an AirSim episode log and recommend a curriculum frontier.
 
-    The training log stores one row per environment step. For curriculum
-    seeding we care primarily about the furthest checkpoint each episode
-    reached and whether the policy tends to overspeed while already off track.
+    The log has one row per step. The summary uses the furthest checkpoint per
+    episode and how often the policy overspeeds while already off track.
 
     Args:
         path: CSV file path.
-        route_total_checkpoints: Optional upper bound used to clamp the
-            curriculum recommendation to the real route length.
+        route_total_checkpoints: Optional cap (route length) for the recommendation.
 
     Returns:
-        A :class:`TrainingLogSummary` with conservative curriculum defaults.
+        TrainingLogSummary; conservative defaults if the file is missing or empty.
     """
 
     resolved_path = Path(path)

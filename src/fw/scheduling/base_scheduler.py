@@ -9,9 +9,8 @@ class BaseScheduler:
 
         Args:
             agent_mgr: The agent manager instance responsible for training.
-            envs: Optional list of environments to be used during training.
-                Defaults to an empty list for schedulers that build their
-                environments lazily instead of receiving them up front.
+            envs: Optional list of training environments; empty for schedulers
+                that build their environments lazily.
         """
 
         self.agent_mgr = agent_mgr
@@ -19,19 +18,15 @@ class BaseScheduler:
 
     def execute(self, configuration=None):
         """
-        Executes the scheduling process.
-
-        This method coordinates training across multiple environments. A typical implementation
-        could include switching environments based on the number of steps, performance thresholds,
-        curriculum strategies, or a predefined schedule.
+        Run the schedule, e.g. switching environments on step counts,
+        performance thresholds or a curriculum.
 
         Args:
-            configuration: Optional configuration specifying how the agent should train
-                in a given environment. May include step limits, switching conditions,
-                or curriculum parameters.
+            configuration: Optional training configuration (step limits,
+                switching conditions, curriculum parameters, ...).
 
         Raises:
-            NotImplementedError: Always, since this method must be overridden in a subclass.
+            NotImplementedError: Must be overridden in a subclass.
         """
 
         # Example logic in a subclass:

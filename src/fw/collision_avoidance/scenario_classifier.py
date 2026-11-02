@@ -1,11 +1,14 @@
 """
+COLREG encounter classification for the own ship (OS).
+
 Source: https://www.samgongustofa.is/media/log-og-reglur/COLREG-Consolidated-2018.pdf
 Scenarios:
-  0  "path-following"   – no dynamic TS within range
-  1  "head-on"          – Rule 14
-  2  "overtaking"       – Rule 13
-  3  "crossing-right"   – Rule 15, 16, TS on starboard (OS give-way)
-  4  "crossing-left"    – Rule 15, 17, TS on port (OS stand-on) --> Omitted, because desired behavior is "path-following"
+  0  "path-following"   no dynamic TS within range
+  1  "head-on"          Rule 14
+  2  "overtaking"       Rule 13
+  3  "crossing-right"   Rules 15, 16: TS on starboard (OS give-way)
+  4  "crossing-left"    Rules 15, 17: TS on port (OS stand-on); metrics only, the
+                        policy treats it as path-following
 """
 
 import math
@@ -17,19 +20,13 @@ SCENARIO_LABELS = ["path-following", "head-on", "overtaking", "crossing-right"]
 NUM_SCENARIOS = len(SCENARIO_LABELS)
 SCENARIO_INDEX = {label: i for i, label in enumerate(SCENARIO_LABELS)}
 
-# Extended labels used purely for metrics/diagnostics. The policy and reward
-# shaping use the reduced 4-way space above
-# The extended space lets us *measure* how often the geometric classifier's
-# port-side crossing branch fires (which is otherwise indistinguishable from
-# a genuine path-following classification in the reduced space).
+# Extended 5-way labels for metrics only (policy and reward use the 4-way space);
+# they make crossing-left measurable, which the reduced space folds into path-following.
 EXTENDED_SCENARIO_LABELS = ["path-following", "head-on", "overtaking", "crossing-right", "crossing-left"]
 EXTENDED_SCENARIO_INDEX = {label: i for i, label in enumerate(EXTENDED_SCENARIO_LABELS)}
 
-# Map the scenario_builder's full label set onto the classifier's reduced
-# label set. "static" means no dynamic TS is present, so the agent should
-# simply follow its path. "crossing-left" is treated as path-following as well
-# because OS is the stand-on vessel and the desired behavior is to maintain
-# course and speed.
+# Builder label to reduced label. "static" (no dynamic TS) and "crossing-left"
+# (OS is stand-on: keep course and speed) both map to path-following.
 _BUILDER_TO_CLASSIFIER = {
     "path-following": "path-following",
     "static": "path-following",
@@ -39,9 +36,7 @@ _BUILDER_TO_CLASSIFIER = {
     "crossing-left": "path-following",
 }
 
-# Builder-label -> extended-metric-label. Unlike the reduced mapping above,
-# this preserves crossing-left as a distinct class so confusion matrices
-# can show e.g. head-on <-> crossing-left mix-ups.
+# Builder label to extended label; keeps crossing-left for confusion matrices.
 _BUILDER_TO_EXTENDED = {
     "path-following": "path-following",
     "static": "path-following",
@@ -97,26 +92,20 @@ class ScenarioClassifier:
         self._overtaking_locked: bool = False
         self._headon_locked: bool = False
         self._crossing_right_locked: bool = False
-        # When set, classification bypasses the geometric result for the
-        # returned label and always returns this scenario. Used when
-        # ground_truth_classification=True: the ScenarioBuilder commits to a
-        # scenario at spawn time, so the classifier honors that choice rather
-        # than risk misclassifying e.g. a head-on as crossing-right (which
-        # would poison reward shaping during training).
+        # Ground-truth lock (ground_truth_classification=True): return the
+        # builder's spawn-time scenario instead of the geometric result, so a
+        # misclassification cannot corrupt reward shaping.
         self._episode_scenario_label: Optional[str] = None
 
         # Last geometric classification output
         self._last_geometric_scenario: int = 0            # 4-way index
         self._last_geometric_extended: int = 0            # 5-way index
 
-        # Cached reference to the last-classified collision_entities list, so
-        # ground_truth_label can look up the tracked TS's spawn scenario.
+        # Last collision_entities list, used to look up the tracked TS's spawn label.
         self._last_entities: Optional[list] = None
 
-        # Path geometry (set once per env via set_path_segments). When
-        # available, classify_path_projected() uses it to project OS onto
-        # the path segment nearest the tracked TS before running the
-        # geometric branch, eliminating curvature-induced misclassification.
+        # Path geometry from set_path_segments(), used by classify_path_projected()
+        # to avoid curvature-induced misclassification.
         self._seg_starts: Optional[np.ndarray] = None
         self._seg_tangents: Optional[np.ndarray] = None
         self._seg_lengths: Optional[np.ndarray] = None
@@ -155,12 +144,10 @@ class ScenarioClassifier:
 
     def set_episode_scenario(self, scenario_label: Optional[str]) -> None:
         """
-        Lock the classifier to a ground-truth scenario.
+        Lock the classifier to a ground-truth scenario label (builder label set).
 
-        When a label is set, classification short-circuits the geometric
-        result and always returns this scenario's index.
-
-        Pass None to release the lock and resume geometric classification.
+        While a TS is tracked, classification then returns this scenario instead
+        of the geometric result. Pass None to release the lock.
         """
 
         if scenario_label is None:
@@ -184,15 +171,15 @@ class ScenarioClassifier:
         approach_offset: float = 20.0,
     ) -> int:
         """
-        Path-aware classification. Uses the heading of the path segment
-        nearest the tracked TS in place of the OS heading, and a virtual
-        OS position projected onto that segment, so curvature does not
-        skew the heading-difference bucket or the port/starboard bearing
-        check: a head-on scenario sees delta=180° regardless of where the
-        OS is along an arc, crossings see delta=90°, etc.
+        Path-aware classification.
 
-        Falls back to raw-geometry classification if set_path_segments()
-        has not been called.
+        Replaces the OS heading and position by the heading of the path segment
+        nearest the tracked TS and a virtual OS on that segment, so path
+        curvature does not skew the result (head-on always gives delta=180°,
+        crossings 90°). Falls back to raw geometry without set_path_segments().
+
+        Returns:
+            Reduced 4-way scenario index.
         """
 
         self._last_entities = collision_entities
@@ -213,9 +200,8 @@ class ScenarioClassifier:
         else:
             tangent = self._seg_tangents[seg_idx]
             virtual_heading = float(math.atan2(float(tangent[1]), float(tangent[0])))
-            # Place the virtual OS one approach_offset behind the TS's foot
-            # on the segment so the perpendicular bearing check reads the
-            # TS's path-relative side rather than the OS's current side.
+            # Virtual OS approach_offset behind the TS's foot point, so the side
+            # check uses the TS's path-relative side.
             virtual_os_pos = foot - tangent * float(approach_offset)
             ext = self._classify_geometry_extended(
                 virtual_os_pos, virtual_heading, ts_pos, ts_heading
@@ -225,13 +211,12 @@ class ScenarioClassifier:
 
     def _finalize_scenario(self, ext: Optional[int]) -> int:
         """
-        Apply the ts-in-range, GT-lock, and hysteresis logic given the
-        extended geometric label just computed (or None if no TS tracked).
+        Apply the no-TS, GT-lock and hysteresis logic to an extended geometric
+        label (None if no TS is tracked) and return the reduced index.
         """
 
-        # No TS in range -> path-following, regardless of any GT lock. The GT
-        # lock must only override geometry during an encounter; otherwise the
-        # agent would spend the approach phase routed to the wrong policy
+        # No TS in range gives path-following, even under a GT lock; otherwise
+        # the approach phase would be routed to the wrong policy.
         if ext is None:
             self._last_geometric_scenario = 0
             self._last_geometric_extended = 0
@@ -245,13 +230,12 @@ class ScenarioClassifier:
         reduced_label = _BUILDER_TO_CLASSIFIER[EXTENDED_SCENARIO_LABELS[ext]]
         self._last_geometric_scenario = SCENARIO_INDEX[reduced_label]
 
-        # GT lock: with a tracked TS, return the pre-committed label regardless
-        # of geometry (prevents misclassification from poisoning reward shaping).
+        # GT lock: return the pre-committed label.
         if self._episode_scenario_label is not None:
             self._scenario = SCENARIO_INDEX[self._episode_scenario_label]
             return self._scenario
 
-        # Geometric mode: honor scenario locks for hysteresis.
+        # Geometric mode: once detected, a scenario stays locked until the TS is lost.
         if self._overtaking_locked:
             self._scenario = 2
             return 2
@@ -279,9 +263,8 @@ class ScenarioClassifier:
 
     def _find_nearest_segment(self, ts_pos: np.ndarray):
         """
-        Return (seg_idx, foot_point) for the path segment whose clamped
-        foot-of-perpendicular to ts_pos is nearest. Returns (None, None) if
-        no path is registered.
+        Return (seg_idx, foot_point) of the segment whose clamped foot point is
+        nearest to ts_pos, or (None, None) without a registered path.
         """
 
         if self._seg_starts is None or len(self._seg_starts) == 0:
@@ -335,9 +318,7 @@ class ScenarioClassifier:
     @property
     def ground_truth_extended_label(self) -> Optional[str]:
         """
-        5-way GT label from the tracked TS's spawn_scenario_label.
-
-        Preserves crossing-left as a distinct class for diagnostics.
+        5-way GT label from the tracked TS's spawn_scenario_label (diagnostics).
         """
 
         if self._tracked_ts is None or self._last_entities is None:
@@ -352,8 +333,8 @@ class ScenarioClassifier:
 
     def _select_ts(self, os_pos: np.ndarray, collision_entities: list) -> Optional[int]:
         """
-        Pick nearest dynamic TS within range, with hysteresis on the tracked one.
-        Hysteresis makes sure that TS don't oscillate in and out of classification range
+        Pick the nearest dynamic TS within classify_range. The tracked TS is kept
+        while within forget_range, so it does not flicker in and out of range.
         """
 
         if not collision_entities:
@@ -380,34 +361,20 @@ class ScenarioClassifier:
     @staticmethod
     def _classify_geometry_extended(os_pos, os_heading: float, ts_pos, ts_heading: float) -> int:
         """
-        Classifies a tracked TS by *heading difference*. The difference is
-        folded to [0, pi] and bucketed by which canonical angle it is
-        nearest:
+        Classify a tracked TS by heading difference, folded to [0, pi] and
+        matched to the nearest canonical angle (boundaries at pi/4, 3*pi/4):
 
-          * near pi   -> head-on   (reciprocal courses)
-          * near 0    -> overtaking (aligned courses)
-          * near pi/2 -> crossing  (perpendicular courses; left/right
-                                    disambiguated by which side of OS
-                                    the TS lies on; the one remaining
-                                    use of relative bearing)
+          * pi:   head-on (reciprocal courses)
+          * 0:    overtaking (aligned courses)
+          * pi/2: crossing; right or left depending on the side of OS the TS is on
 
-        Bucket boundaries fall naturally at pi/4 and 3*pi/4 from taking the
-        nearest of the three canonical angles.
-
-        This function never returns "path-following": the caller has already
-        confirmed a TS is tracked. The "no TS in range" path-following case
-        is handled in _finalize_scenario when ext is None.
-
-        Returns an *extended* 5-way index. The reduced 4-way output
-        (which collapses crossing-left to path-following per the Rule 17
-        "stand-on" convention) is produced downstream via
-        `_BUILDER_TO_CLASSIFIER[EXTENDED_SCENARIO_LABELS[ext]]`.
+        Never returns path-following (a TS is tracked). Returns the extended
+        5-way index; the caller reduces it to the 4-way space.
         """
 
         # Heading difference, folded to [0, pi].
         delta_heading = abs(_normalize_angle(ts_heading - os_heading))
 
-        # Distance to each canonical heading-difference value.
         dist_reciprocal    = abs(delta_heading - math.pi)
         dist_aligned       = delta_heading
         dist_perpendicular = abs(delta_heading - math.pi / 2.0)
@@ -420,9 +387,8 @@ class ScenarioClassifier:
         if closest == dist_aligned:
             return EXTENDED_SCENARIO_INDEX["overtaking"]
 
-        # Perpendicular bucket: TS on OS-starboard -> crossing-right,
-        # TS on OS-port -> crossing-left. Math convention: rel_bearing_os
-        # is CCW-positive in OS body frame, so negative means starboard.
+        # Crossing: rel_bearing_os is CCW-positive, so negative means starboard
+        # (crossing-right), positive means port (crossing-left).
         dx = float(ts_pos[0] - os_pos[0])
         dy = float(ts_pos[1] - os_pos[1])
         rel_bearing_os = _normalize_angle(math.atan2(dy, dx) - os_heading)

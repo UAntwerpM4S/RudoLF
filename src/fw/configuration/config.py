@@ -52,9 +52,8 @@ AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME = "trajectory_2d_vs_3d.png"
 
 
 """
-Following (hyper)parameters are for fine-tuning the agent. The key of the dictionary
-that they are linked to, is the name of the environment that they're associated with.
-In the long term this should be moved to a config-file which will then be read.
+Agent hyperparameters, keyed by policy name. AirSimEnv overrides are applied on top
+by get_hyperparameters(). To be moved to a config file eventually.
 """
 
 DEFAULT_HYPERPARAMETERS = {
@@ -143,20 +142,16 @@ AIRSIM_HYPERPARAMETER_OVERRIDES = {
         'learning_rate': 3e-4,
         'gamma': 0.99,
         'clip_range': 0.2,
-        'device': 'cuda', # AirSim training benefits from GPU acceleration, can be switched to 'cpu' if CUDA is not available or not applicable.
+        'device': 'cuda',  # switch to 'cpu' if CUDA is unavailable
     },
 }
 
 CONFIG_PARAMETERS = {
-    # Valid env_type values: "PySimEnv", "FhSimEnv", "MultiSimEnv",
-    # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander"
-    # Can also be a list of environment names, e.g. ["PySimEnv", "FhSimEnv"],
-    # to train or visualize across multiple environments simultaneously.
+    # One or a list of: "PySimEnv", "FhSimEnv", "MultiSimEnv",
+    # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander".
     'env_type': ["PySimEnv"],
-    'profile': "default_profile",       # Possible options: "default_profile",
-                                        # "myzako_pysim_to_fhsim_transfer_profile",
-                                        # "tripoli_pysim_to_fhsim_transfer_profile",
-                                        # "ugent_surrogate_training_profile", ...
+    'profile': "default_profile",       # see ProfileRegistry, e.g.
+                                        # "myzako_pysim_to_fhsim_transfer_profile"
     'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     'wind': False,
@@ -171,22 +166,17 @@ CONFIG_PARAMETERS = {
     'depth_contour': "env_Sche_250cm_no_scale.csv",
     'trajectory': "trajectory_points_no_scale.csv",
     'scenario': "DDShip_scenario1_nowindnocurrent",
-    # UAntwerp surrogate (dynamics_model = Model.UANTWERP). "preset" selects
-    # ship, scenario, checkpoint and lookup (fw/surrogate/presets.py):
-    #   "tripoli_clean", "tripoli_confined", "tripoli_full",
-    #   "myzako_clean",  "myzako_confined",  "myzako_full".
-    # clean = open water (no lookup); confined = UKC lookup;
-    # full = environment lookup (UKC, wind and current). Lookups are .csv.gz.
-    # Optional overrides: "checkpoint", "lookup_csv". The preset's ship must
-    # equal 'ship_model' below (a mismatch is refused at startup), and the
-    # environment time step must be a whole multiple of 0.1 s.
+    # UAntwerp surrogate (Model.UANTWERP). "preset" (fw/surrogate/presets.py) is
+    # {tripoli,myzako}_{clean,confined,full}: clean = open water, confined = UKC
+    # lookup, full = UKC + wind + current lookup (.csv.gz). Optional overrides:
+    # "checkpoint", "lookup_csv". The preset's ship must equal 'ship_model' and
+    # the env time step must be a multiple of 0.1 s.
     'ua_surrogate_config': {"preset": "myzako_confined"},
     'ugent_surrogate_config': {"ukc_percent": 363},
-    # UGent B01 MODEL-SCALE surrogate (dynamics_model = Model.UGENT_B01_SURROGATE,
-    # ship_model = ShipModel.B01, towing tank). "ukc_percent" (required): tested
-    # 379, 153, 35; other values are interpolated, outside 35-379 the closest
-    # tested set is used. Optional: "n_max_rpm" (1650), "min_bank_clearance"
-    # (0.001, only guards y' <= 0), "max_bank_clearance" (None = no cut-off). See fw.dynamics.ugent_b01_surrogate.
+    # UGent B01 model-scale surrogate (Model.UGENT_B01_SURROGATE, ShipModel.B01).
+    # "ukc_percent" required (tested 379, 153, 35; interpolated in between, clamped
+    # outside). Optional: "n_max_rpm", "min_bank_clearance", "max_bank_clearance";
+    # see fw.dynamics.ugent_b01_surrogate.
     'ugent_b01_surrogate_config': {"ukc_percent": 379},
     'ship_model': ShipModel.MYZAKO_37,
     'dynamics_model': Model.FOSSEN,
@@ -224,11 +214,11 @@ CONFIG_PARAMETERS = {
 
 def get_hyperparameters(agent_name, env_name=None):
     """
-    Get validated hyperparameters.
+    Return a copy of DEFAULT_HYPERPARAMETERS[agent_name]; for "AirSimEnv" the
+    AIRSIM_HYPERPARAMETER_OVERRIDES are applied on top.
 
-    AirSim uses the base PPO tuning set. Other environments get the legacy
-    PPO settings through the override map so their training behavior stays
-    separate from the AirSim tuning.
+    Raises:
+        ValueError: For an unknown agent name.
     """
 
     try:
@@ -242,11 +232,7 @@ def get_hyperparameters(agent_name, env_name=None):
 
 def load_config_parameters() -> dict:
     """
-    Return a raw copy of CONFIG_PARAMETERS without applying any profile.
-
-    Use this when you need the plain configuration data and will handle
-    profile application yourself (e.g. in get_config_parameters below, or
-    in tests that want to control the profile step explicitly).
+    Return a deep copy of CONFIG_PARAMETERS without applying a profile.
     """
 
     return deepcopy(CONFIG_PARAMETERS)
@@ -254,15 +240,9 @@ def load_config_parameters() -> dict:
 
 def get_config_parameters() -> dict:
     """
-    Return configuration parameters with the configured profile applied.
-
-    Resolves the profile name from the config, validates it, applies it to
-    the config dict, and returns the result. This is the single authoritative
-    place where profile application onto the config happens. Callers should
-    not re-apply the profile to the config dict after calling this function.
-
-    Returns:
-        dict: A copy of CONFIG_PARAMETERS with the profile's overrides applied.
+    Return a copy of CONFIG_PARAMETERS with the configured profile validated and
+    applied. This is the only place the profile is applied; callers must not
+    re-apply it.
     """
 
     framework_config = load_config_parameters()

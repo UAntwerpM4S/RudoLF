@@ -1,41 +1,22 @@
 """
 Transfer learning from 2D PPO policies to AirSimEnv (3D).
 
-Only used by AirSimEnv training; it has no effect on 2D environment training.
+Used only by AirSimEnv training; 2D training is unaffected.
 
-Tasks implemented:
-    T-054: Network topology comparison (2D vs 3D input dims, layers, neurons, activations).
-    T-055: Incompatibility reporting with clear error messages.
-    T-056: 2D weight loading with layer matching and selective backbone freezing.
-    T-057: Implicit mapping layer for extra 3D inputs via the untrained first linear
-           layer, controlled by the `transfer_learning` config block.
+Tasks: T-054 topology comparison, T-055 incompatibility reporting, T-056 weight
+loading with backbone freezing, T-057 implicit mapping layer (configured by the
+`transfer_learning` config block).
 
-Mapping layer strategy
-----------------------
-The `ActorCriticNetwork` first layer `shared_network[0]: Linear(input_dim -> 256)`
-differs in shape between 2D (e.g. input_dim=10) and 3D (input_dim=18), so it is
-**not** transferred.  Instead, it is left randomly initialized and kept trainable,
-acting as the implicit mapping layer that learns to project the extra AirSim
-observation dimensions into the feature space that the pretrained deeper layers
-already understand.
-
-Freeze strategy
----------------
-When `freeze_shared=True`, only the backbone layer `shared_network[2]: 256->128`
-is frozen so the pre-trained feature representation is preserved.  The actor and
-critic heads (`actor_mean`, `critic`) remain **trainable** so they can
-fine-tune to the new environment's reward structure and 3D physics. Freezing
-the heads would prevent the policy distribution from adapting, causing
-convergence failure.
-
-Exploration strategy
---------------------
-`actor_log_std` is **not** transferred. A converged 2D policy can collapse
-the log_std for some action dimensions (e.g. rudder) to highly negative values,
-producing near-deterministic actions. Loading that into AirSim freezes
-exploration on those dimensions and PPO's small clip_range cannot recover.
-The target policy keeps its freshly-initialized `log_std = -0.5` so it
-re-explores in the new environment.
+- Mapping layer: `shared_network[0]` (input_dim to 256) differs in shape between
+  2D and 3D, so it is not transferred. It stays randomly initialized and
+  trainable, and learns to project the extra AirSim inputs into the feature
+  space of the pretrained deeper layers.
+- Freezing: with `freeze_shared=True` only the backbone `shared_network[2]`
+  (256 to 128) is frozen. The actor and critic heads stay trainable so the
+  policy can adapt to AirSim's reward and 3D physics.
+- Exploration: `actor_log_std` is not transferred. A converged 2D policy may
+  have collapsed log_std (near-deterministic actions), which PPO's small
+  clip_range cannot recover from; the target keeps its fresh log_std = -0.5.
 """
 
 from __future__ import annotations
@@ -163,7 +144,7 @@ def validate_transfer_compatibility(report: TopologyReport) -> None:
     Raise `TransferIncompatibilityError` with a clear message if transfer is blocked.
 
     Args:
-        report: Topology comparison from :func:`compare_network_topology`.
+        report: Topology comparison from `compare_network_topology`.
 
     Raises:
         TransferIncompatibilityError: When action dimensions differ or the target
@@ -197,13 +178,7 @@ def validate_transfer_compatibility(report: TopologyReport) -> None:
 # T-056 - weight loading with layer matching and freezing
 # ---------------------------------------------------------------------------
 
-# NOTE: `actor_log_std` is intentionally NOT transferred. A converged 2D
-# policy can collapse its log_std for some action dimensions to very negative
-# values (near-deterministic actions). Copying that into AirSim freezes
-# exploration on those dimensions, the agent then dies at the same pose every
-# episode, advantage estimates flatten to ~0, and PPO (with its small
-# clip_range) cannot recover. Keeping the target's freshly-initialized
-# `log_std = -0.5` restores exploration in the new environment.
+# `actor_log_std` is deliberately absent (see module docstring).
 _TRANSFERABLE_KEYS = (
     "shared_network.0.weight",
     "shared_network.0.bias",
@@ -215,9 +190,7 @@ _TRANSFERABLE_KEYS = (
     "critic.bias",
 )
 
-# Only the backbone hidden layer is frozen when freeze_shared=True.
-# The actor and critic heads must stay trainable so the policy distribution
-# can adapt to AirSim's reward structure and 3D physics.
+# Frozen when freeze_shared=True; the heads stay trainable.
 _BACKBONE_KEYS = frozenset({"shared_network.2.weight", "shared_network.2.bias"})
 
 
@@ -229,19 +202,14 @@ def apply_transfer_weights(
     """
     Copy matching weights from *source_policy* to *target_policy*.
 
-    Only layers whose parameter tensors have identical shapes in source and
-    target are transferred. The first layer `shared_network[0]` (the mapping
-    layer) is intentionally skipped because it differs in input dimension,
-    it remains randomly initialized and trainable to adapt the extra 3D inputs.
+    Only tensors with identical shapes are copied, so the mapping layer
+    `shared_network[0]` is skipped when the input dimensions differ.
 
     Args:
         source_policy: Pretrained 2D policy.
         target_policy: Freshly initialized 3D AirSimEnv policy.
-        freeze_shared: If `True`, freeze only `shared_network[2]` (the
-            backbone hidden layer) so the pretrained feature representation is
-            preserved. The actor and critic heads remain trainable so the policy
-            distribution can adapt to AirSim's reward structure and 3D physics.
-            If `False`, all layers remain trainable for full fine-tuning.
+        freeze_shared: If True, freeze only the backbone `shared_network[2]`;
+            if False, everything stays trainable.
 
     Returns:
         List of state-dict keys that were successfully transferred.
@@ -256,7 +224,7 @@ def apply_transfer_weights(
             continue
         if src_sd[key].shape != tgt_sd[key].shape:
             continue
-        # Move to target device before copying so CPU->CUDA transfers work correctly.
+        # Move to the target device first (CPU to CUDA transfers).
         tgt_sd[key] = src_sd[key].to(tgt_sd[key].device).clone()
         transferred.append(key)
 
@@ -285,28 +253,18 @@ def build_transfer_policy(
     """
     Build an AirSimEnv policy initialized from a pretrained 2D checkpoint.
 
-    Pipeline:
-        1. Load the 2D source policy on CPU (weight extraction only, no GPU needed).
-        2. Compare topology and validate compatibility (raises on mismatch).
-        3. Initialize a fresh target `PPOPolicy` on *target_device*.
-        4. Transfer all matching hidden layers, moving tensors to *target_device* automatically.
-        5. The first linear layer `shared_network[0]: Linear(target_input_dim -> 256)`
-           remains randomly initialized and trainable. This is the mapping layer
-           that learns to project the extra 3D observation dimensions into the feature
-           space that the pretrained deeper layers understand.
-
-    The source checkpoint is always loaded on CPU regardless of *target_device*, so any
-    checkpoint (CPU or CUDA) can be transferred to any training device without manual
-    conversion.  When *target_device* is `None` the device is auto-detected (CUDA if
-    available, otherwise CPU).
+    Loads the source on CPU (so any checkpoint works on any device), validates
+    the topology, creates a fresh target policy and copies the matching layers.
+    The first layer stays untrained as the mapping layer (see module docstring).
 
     Args:
         source_zip_path: Path to the 2D `.zip` policy checkpoint.
         target_input_dim: Observation dimension of AirSimEnv (3D).
         target_output_dim: Action dimension of AirSimEnv.
-        target_device: PyTorch device for the target policy.  `None` triggers
-            auto-detection via :func:`~fw.policies.ppo_policy.get_device`.
-        freeze_shared: Freeze transferred layers so only the mapping layer trains.
+        target_device: PyTorch device for the target policy; None auto-detects
+            (CUDA if available) via `fw.policies.ppo_policy.get_device`.
+        freeze_shared: Freeze the backbone `shared_network[2]`; the mapping
+            layer and the heads stay trainable.
 
     Returns:
         `PPOPolicy` on *target_device*, configured for AirSimEnv fine-tuning.

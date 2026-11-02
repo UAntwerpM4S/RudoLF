@@ -1,9 +1,8 @@
 """
-The COLAV environments (PySimColavEnv / MultiPolicyColavEnv, built on
-PySimBaseEnv) pass the UGent surrogate configuration through to the dynamics
-model, refuse UGent for ships other than the Tripoli, and compute the signed
-cross-track error without np.cross (deprecated for 2-D vectors since NumPy 2.0;
-NumPy 2.5 raises).
+The COLAV environments (built on PySimBaseEnv) pass the UGent surrogate
+configuration to the dynamics model, refuse UGent for ships other than the
+Tripoli, and avoid np.cross on 2-D vectors (deprecated in NumPy 2.0, an error
+in 2.5).
 """
 
 import numpy as np
@@ -18,7 +17,9 @@ TARGET = np.array([-1559.0, 11990.0], dtype=np.float32)
 
 
 def _colav(**kwargs):
-    """A small PySimColavEnv (no rendering)."""
+    """
+    A small PySimColavEnv (no rendering).
+    """
 
     from fw.environments.py_sim_colav_env import PySimColavEnv
 
@@ -26,7 +27,9 @@ def _colav(**kwargs):
 
 
 def test_colav_ugent_uses_the_given_config():
-    """UGent in a COLAV env gets the configured UKC and runs."""
+    """
+    UGent in a COLAV env gets the configured UKC and runs.
+    """
 
     env = _colav(dynamics_model=Model.UGENT_SURROGATE, ship_model=ShipModel.TRIPOLI,
                  ugent_surrogate_config={"ukc_percent": 125})
@@ -38,14 +41,18 @@ def test_colav_ugent_uses_the_given_config():
 
 
 def test_colav_ugent_without_config_names_the_missing_key():
-    """Without a config, the UGent error says what is missing."""
+    """
+    Without a config, the UGent error says what is missing.
+    """
 
     with pytest.raises(ValueError, match="ukc_percent"):
         _colav(dynamics_model=Model.UGENT_SURROGATE, ship_model=ShipModel.TRIPOLI)
 
 
 def test_colav_ugent_refuses_other_ships():
-    """UGent's coefficients are for the Tripoli only."""
+    """
+    UGent's coefficients are for the Tripoli only.
+    """
 
     with pytest.raises(ValueError, match="TRIPOLI"):
         _colav(dynamics_model=Model.UGENT_SURROGATE, ship_model=ShipModel.MYZAKO_37,
@@ -53,7 +60,9 @@ def test_colav_ugent_refuses_other_ships():
 
 
 def test_colav_fossen_unchanged():
-    """The default (Fossen) COLAV env still builds and steps without a UGent config."""
+    """
+    The default (Fossen) COLAV env still builds and steps without a UGent config.
+    """
 
     env = _colav(dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
     env.reset(seed=0)
@@ -62,7 +71,9 @@ def test_colav_fossen_unchanged():
 
 
 def test_build_colav_config_carries_ugent_config():
-    """env_factory's COLAV config builder forwards ugent_surrogate_config."""
+    """
+    env_factory's COLAV config builder forwards ugent_surrogate_config.
+    """
 
     from fw.configuration.config import load_config_parameters
     from fw.configuration.env_factory import build_colav_config, build_multi_policy_colav_config
@@ -74,7 +85,9 @@ def test_build_colav_config_carries_ugent_config():
 
 
 def test_line_intersection_cross_product():
-    """tools.is_ship_heading_correct (2-D cross products) still finds a crossing ahead."""
+    """
+    tools.is_ship_heading_correct (2-D cross products) still finds a crossing ahead.
+    """
 
     from fw.environments.tools import is_ship_heading_correct
 
@@ -84,7 +97,9 @@ def test_line_intersection_cross_product():
 
 
 def test_planner_env_forwards_ugent_config():
-    """PySimColavPlannerEnv also passes the UGent configuration through."""
+    """
+    PySimColavPlannerEnv also passes the UGent configuration through.
+    """
 
     from fw.environments.py_sim_colav_planner import PySimColavPlannerEnv
 

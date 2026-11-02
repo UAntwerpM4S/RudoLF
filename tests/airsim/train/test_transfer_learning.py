@@ -368,12 +368,8 @@ class TestApplyTransferWeights:
 
     def test_actor_log_std_is_not_transferred(self):
         """
-        `actor_log_std` must keep the target's fresh init so exploration is preserved.
-
-        A converged 2D policy can collapse log_std to highly negative values for
-        some action dimensions, producing near-deterministic actions. Copying
-        that into the target freezes exploration and PPO cannot recover. The
-        target must retain its default `log_std = -0.5`.
+        actor_log_std keeps the target's fresh init (-0.5): a converged source
+        policy's collapsed log_std would freeze exploration in the target.
         """
 
         src = _make_policy(input_dim=18, output_dim=2)

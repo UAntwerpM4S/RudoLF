@@ -1,15 +1,11 @@
 """
-AirSim-focused runtime entrypoint for training and visualization.
+AirSim entry point for training and visualization, driven by the AirSim runtime settings.
 
-This module centralizes AirSim orchestration from AirSim-specific runtime
-settings:
-- Training with AirSimEnv through the framework trainer.
-- Visualization dispatch to either modular framework-model replay or
-  AirSimEnv inference.
+- Training: AirSimEnv via train_airsim.run_training.
+- Visualization: framework-model replay, AirSimEnv inference, or the generic Trainer.visualize.
 
-It is intended to be called directly (`python -m fw.main_with_airsim`) or via
-delegation from `fw.main` when `fw.config.CONFIG_PARAMETERS['env_type']` is
-set to "AirSimEnv".
+Run directly (`python -m fw.main_with_airsim`) or via delegation from `fw.main` when
+env_type is "AirSimEnv".
 """
 
 if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
@@ -25,10 +21,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     from fw.common.tools.logging_utils import create_logfile_handler
     from fw.common.airsim.classes.asyncio_win995_filter import AsyncioWin995Filter
 
-    # AirSim runtime only controls AirSim-specific behavior.
-    # The selected framework environment is handled by fw.main / fw.config.
-    # Resolved early (before logging setup) purely so the per-run log
-    # filename below can embed the actual run_type instead of a placeholder.
+    # Resolved before logging setup so the log filename can include the action.
     _action_was_explicit = "FW_MAIN_ACTION_OVERRIDE" in os.environ
     _SRC_DIR = Path(__file__).resolve().parents[1]
     action = str(os.environ.get("FW_MAIN_ACTION_OVERRIDE", "train")).strip().lower()
@@ -54,11 +47,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
     logging.getLogger("asyncio").addFilter(AsyncioWin995Filter())
 
-    # Additionally write a per-run log file, matching the other entry
-    # points. Console verbosity above stays governed by FW_AIRSIM_VERBOSE
-    # (deliberately separate, since AirSim/UE5 logs are noisy); the file
-    # handler always captures at least INFO so a run can be reconstructed
-    # afterward regardless of what was shown on screen.
+    # Per-run log file. Console verbosity follows FW_AIRSIM_VERBOSE (AirSim/UE5 logs
+    # are noisy); the file always captures at least INFO.
     from fw.common.tools.path_utils import resolve_path_relative_to_src as _resolve_log_dir
     from fw.configuration.config import PPO_POLICY_NAME as _PPO_POLICY_NAME
     from datetime import datetime, timezone as _timezone
@@ -69,9 +59,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
     _log_file_path = _log_dir / f"AirSimEnv_{_PPO_POLICY_NAME}_{action}_{_log_ts}.log"
 
     root_logger = logging.getLogger()
-    # Keep a reference to THIS run's handler: the rename below must touch only
-    # it, not the first FileHandler on the root logger (when delegated from
-    # fw.main that is fw.main's own run log).
+    # Keep this run's handler: the rename below must not touch fw.main's own log
+    # handler when delegated.
     _own_file_handler = create_logfile_handler(_log_file_path, _file_level)
     root_logger.addHandler(_own_file_handler)
     root_logger.setLevel(min(root_logger.level, _file_level))
@@ -98,7 +87,6 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     runtime_settings = get_default_runtime_settings()
 
-    # Visualization flags switch the AirSim entrypoint into visualize mode.
     try:
         runtime_settings = merge_runtime_settings(get_runtime_settings())
     except Exception as exc:
@@ -143,20 +131,15 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
                 "Step mode: simContinueForFrames(%d)",
                 int(effective_training_cfg.get('frames_per_step', 1)),
             )
-    # Runtime visualization flags may promote the AirSim entrypoint into
-    # visualize mode only when fw.main did not pass an explicit action override.
-    # This keeps ordered framework execution honest: a delegated AirSim train
-    # step must remain a train step even though runpy executes this module with
-    # __name__ == "__main__".
+    # Visualization flags switch to visualize mode only without an explicit action
+    # override, so a train step delegated from fw.main stays a train step.
     if not _action_was_explicit and (
         get_validated_bool(visualization_cfg, "model_visualise", False)
         or get_validated_bool(visualization_cfg, "inference_visualise", False)
     ):
         if action != "visualize":
             action = "visualize"
-            # The log file was created above with the pre-promotion action
-            # ("train") baked into its filename; rename it now so the
-            # filename accurately reflects what this run actually did.
+            # Rename the log file, which was created with "train" in its name.
             _new_log_file_path = _log_dir / f"AirSimEnv_{_PPO_POLICY_NAME}_{action}_{_log_ts}.log"
             _root_logger = logging.getLogger()
             _old_file_handler = _own_file_handler if _own_file_handler in _root_logger.handlers else None
@@ -177,11 +160,11 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     def _run_airsim_visualization_from_runtime() -> bool:
         """
-        Dispatch AirSim-specific visualize runners driven by runtime settings.
+        Run the AirSim visualizer selected in the runtime settings.
 
         Returns:
-            bool: True when a dedicated AirSim visualize runner was executed,
-            False when caller should continue with generic trainer.visualize.
+            True if a dedicated runner was executed, False if the caller should use
+            the generic trainer.visualize path.
         """
 
         model_visualise = get_validated_bool(visualization_cfg, "model_visualise", False)
@@ -269,28 +252,16 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     def _is_airsim_selected(env_wrappers) -> bool:
         """
-        Check if any wrapped environment is AirSimEnv.
-
-        Args:
-            env_wrappers: Iterable of framework environment wrappers exposing
-                `gym_env`.
-
-        Returns:
-            bool: True if at least one wrapped environment has type
-            `AirSimEnv`.
+        True if any of the environment wrappers (with `gym_env`) wraps an AirSimEnv.
         """
 
         return any(getattr(env.gym_env, "type_name", "") == airsim_env_name for env in env_wrappers)
 
-    # AirSim visualize dispatch from runtime settings.
-    # This makes fw.main_with_airsim a single entrypoint for both AirSim visualize modes.
     if action == "visualize":
         try:
             if _run_airsim_visualization_from_runtime():
                 raise SystemExit(0)
-            # _run_airsim_visualization_from_runtime() returned False, neither
-            # model_visualise nor inference_visualise was set in runtime_settings.
-            # Fall through to the generic trainer.visualize path below.
+            # No dedicated visualizer selected: fall through to trainer.visualize below.
         except ConnectionError as exc:
             print(f"[main_with_airsim] {exc}")
             print(
@@ -315,15 +286,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
         raise SystemExit(0)
 
-    # -------------------------------------------------------------------------
-    # Generic trainer-based visualize path.
-    #
-    # Reached when action == "visualize" AND neither model_visualise nor
-    # inference_visualise was enabled in runtime_settings, i.e. the caller
-    # wants a live AirSim episode rendered through the standard Trainer API.
-    # -------------------------------------------------------------------------
-
-    # Ensure all environments are registered once
+    # --- Generic Trainer.visualize path (visualize without model/inference_visualise) ---
     from fw.scheduling.trainer import Trainer
     from fw.configuration.config import PPO_POLICY_NAME
     from fw.configuration.env_factory import (
@@ -334,7 +297,6 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     initialize_all_environments()
 
-    # This entrypoint always orchestrates the AirSim environment itself.
     is_training = action == "train"
     airsim_env_cfg = dict(airsim_runtime_cfg)
     effective_max_steps = (
@@ -390,9 +352,8 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         airsim_env_cfg["latency_warning_threshold"] = float(effective_training_cfg["latency_warning_threshold"])
     envs = [get_environment(airsim_env_name, configuration=airsim_env_cfg)]
 
-    # When delegated from fw.main as an ordered AirSim step, fail fast if
-    # AirSim resolved to a framework fallback environment (e.g. PySimEnv).
-    # This prevents duplicate training/visualization of a non-Airsim env.
+    # When delegated from fw.main, stop if env_factory fell back to a non-AirSim env
+    # (e.g. PySimEnv), to avoid running that env twice.
     if _action_was_explicit and not _is_airsim_selected(envs):
         logger.warning(
             "AirSimEnv requested via fw.main, but UE5 is unavailable and "
@@ -400,7 +361,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
         )
         raise SystemExit(1)
 
-    # Create a Trainer and pass on a list of agents that you want to train
+    # Apply the configured profile and create the Trainer.
     _airsim_fw_config = get_config_parameters()
     _airsim_profile_name = _airsim_fw_config.get("profile", "default_airsim_profile")
     _airsim_profile = ProfileRegistry.get(_airsim_profile_name)
@@ -417,7 +378,7 @@ if __name__ == "__main__" or __name__ == "fw.main_with_airsim":
 
     trainer = Trainer(PPO_POLICY_NAME, envs, _airsim_profile, "SimpleScheduler")
 
-    # Optionally create AirSim bridge for simultaneous vehicle control
+    # Optional AirSim bridge to mirror a non-AirSim env in UE5.
     airsim_cfg = get_airsim_config()
     airsim_bridge = None
     if get_validated_bool(airsim_cfg, "use_airsim", False) and not _is_airsim_selected(envs):

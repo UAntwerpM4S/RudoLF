@@ -38,14 +38,19 @@ TOL = 1e-9
 
 
 def _close(a, b, tol=TOL):
-    """Assert that `a` and `b` are equal within `tol`."""
+    """
+    Assert that `a` and `b` are equal within `tol`.
+    """
+
     assert np.allclose(a, b, atol=tol), f"{a} != {b}"
 
 
 # ---------------------------------------------------------------- heading frame
 
 def test_bow_and_starboard_frame():
-    """Heading 0 points East with starboard South; heading +90 deg points North with starboard East."""
+    """
+    Heading 0 points East with starboard South; heading +90 deg points North with starboard East.
+    """
 
     bow, stbd = _bow_and_starboard(0.0)
     _close(bow, [1.0, 0.0])            # heading 0 = East
@@ -73,7 +78,9 @@ def _wind(heading, u=0.0, v=0.0, rec=REC):
 
 
 def test_wind_same_ship_unchanged():
-    """Re-expressing a wind for the recording ship itself returns it unchanged."""
+    """
+    Re-expressing a wind for the recording ship itself returns it unchanged.
+    """
 
     rec = dict(app_speed=7.0, app_dir=0.4, rec_heading=0.7, rec_u=4.0, rec_v=0.3)
     speed, direction = _wind(0.7, 4.0, 0.3, rec=rec)
@@ -136,7 +143,9 @@ def test_wind_recording_ship_motion_removed():
 # ---------------------------------------------------------------- FH rudder / sway
 
 def test_fh_rudder_sign_values():
-    """fh_rudder_sign: +1 for the TRIPOLI, -1 for the MYZAKO_37, ValueError for an unknown ship."""
+    """
+    fh_rudder_sign: +1 for the TRIPOLI, -1 for the MYZAKO_37, ValueError for an unknown ship.
+    """
 
     assert fh_rudder_sign(ShipModel.TRIPOLI) == 1.0       # azipod: + turns to port
     assert fh_rudder_sign(ShipModel.MYZAKO_37) == -1.0    # rudder control: + turns to starboard
@@ -149,10 +158,15 @@ def test_fh_rudder_sign_values():
 
 
 class _Recorder:
-    """Mock FH control: records every value it is given."""
+    """
+    Mock FH control: records every value it is given.
+    """
 
     def __init__(self, max_angle=35.0):
-        """Start with no recorded calls; `max_angle` is what getMaximumAngle returns."""
+        """
+        Start with no recorded calls; `max_angle` is what getMaximumAngle returns.
+        """
+
         self.calls = []
         self._max = max_angle
 
@@ -187,7 +201,9 @@ def _mock_engine(ship_model, vog=(5.0, 0.4), yaw_deg=1.5):
 
 
 def _sent(rudder, method):
-    """First argument of every recorded call of `method` on the recorder."""
+    """
+    First argument of every recorded call of `method` on the recorder.
+    """
     return [a[0] for name, a in rudder.calls if name == method]
 
 
@@ -220,16 +236,22 @@ def test_fh_tabular_myzako_rudder_both_scalings():
 # ---------------------------------------------------------------- dataset identity
 
 class _Npz(dict):
-    """dict standing in for a loaded .npz file (adds the `files` attribute)."""
+    """
+    dict standing in for a loaded .npz file (adds the `files` attribute).
+    """
 
     @property
     def files(self):
-        """Keys, like NpzFile.files."""
+        """
+        Keys, like NpzFile.files.
+        """
         return list(self)
 
 
 def _identity_npz(**override):
-    """Mock .npz with the metadata of a valid full_env identity; `override` replaces or adds keys."""
+    """
+    Mock .npz with the metadata of a valid full_env identity; `override` replaces or adds keys.
+    """
 
     ident = schema.DatasetIdentity(schema.FULL_ENV.name, schema.RAY_LAYOUT_VERSION, "TRIPOLI", 35.0)
     data = _Npz(schema.npz_metadata(ident))

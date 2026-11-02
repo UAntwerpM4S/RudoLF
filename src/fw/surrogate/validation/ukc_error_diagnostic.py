@@ -1,15 +1,14 @@
 """
 Surrogate error vs. under-keel clearance (UKC), on bank-free rows of a split.
 
-Question it answers: how much accuracy does a model WITHOUT a UKC input
-(open_water, "clean") lose against one WITH it (confined_ukc), and at which
-water depths? On rows without any bank in ray range the confined model's
-rays are all zero, so the only information it has that the clean model lacks
-is the UKC: the difference between the two is the effect of water depth.
+Shows how much accuracy a model without UKC input (open_water, "clean") loses
+against one with it (confined_ukc), per water depth. Without a bank in ray
+range the confined model's rays are all zero, so the UKC is the only extra
+information it has.
 
-Rows of the split are filtered on the nearest bank (from their own ray
-features, all rays, like train_surrogate --min-bank-distance) and binned by
-their UKC. Per bin and per target, for every checkpoint:
+Rows are filtered on the nearest bank (from their ray features, like
+train_surrogate --min-bank-distance) and binned by UKC. Per bin, target and
+checkpoint:
 
     MAE     mean |pred - true|
     gain    sum(pred * true) / sum(true^2) (1 = right size, < 1 = too small)
@@ -48,13 +47,17 @@ BATCH = 65536
 
 
 def predict(predictor, x_raw: np.ndarray) -> np.ndarray:
-    """Predictions for all rows, in batches."""
+    """
+    Predictions for all rows, in batches.
+    """
 
     return np.concatenate([predictor.predict(x_raw[i:i + BATCH]) for i in range(0, len(x_raw), BATCH)])
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Command-line entry point; returns the exit code."""
+    """
+    Command-line entry point; returns the exit code.
+    """
 
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -91,8 +94,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 float(ukc.max()), float(np.median(ukc)))
 
     bins = sorted(args.bins)
-    # Last bin closed on the right ([lo, hi]), like column_error_diagnostic: a UKC
-    # equal to the last edge belongs to the last bin.
+    # Last bin is closed on the right, like column_error_diagnostic
     edges = np.array(bins, dtype=np.float64)
     edges[-1] = np.nextafter(edges[-1], np.inf)
     which = np.digitize(ukc, edges) - 1

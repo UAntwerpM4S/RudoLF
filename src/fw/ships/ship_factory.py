@@ -4,10 +4,9 @@ from enum import auto, Enum
 from fw.ships.ship_specs import ShipSpecifications
 
 
-# Maximum rudder deflection per ship family [deg]. This is the single source of
-# truth for the rudder limit: actuators, PySimEnv action scaling and the
-# UAntwerp surrogate's rudder normalisation all read
-# `ShipSpecifications.max_rudder_angle`, which is set from these values.
+# Maximum rudder deflection per ship family [deg]: the single source of truth for
+# ShipSpecifications.max_rudder_angle (actuators, PySimEnv action scaling, UAntwerp
+# surrogate rudder normalisation).
 MYZAKO_MAX_RUDDER_ANGLE_DEG = 75.0
 TRIPOLI_MAX_RUDDER_ANGLE_DEG = 35.0
 B01_MAX_RUDDER_ANGLE_DEG = 35.0
@@ -15,29 +14,23 @@ B01_MAX_RUDDER_ANGLE_DEG = 35.0
 # Geometric scale of the B01 towing-tank model (Myzako, full scale / model).
 B01_MODEL_SCALE = 25.0
 
-# Minimum thrust command (n / n_max) of the B01: 20 % n_max is the lowest
-# propeller rate in every B01 test of the DDSHIP report (Appendix B). Below it
-# the wheel effect cannot be trimmed with 35 deg rudder at deep water either,
-# and the model spins up at almost zero speed (see fw.dynamics.ugent_b01_surrogate).
+# Minimum B01 thrust command (n / n_max): the lowest propeller rate tested in the
+# DDSHIP report (Appendix B). Below it the wheel effect cannot be trimmed with
+# 35 deg rudder and the model spins up at near-zero speed (see ugent_b01_surrogate).
 B01_MIN_THRUST = 0.2
 
 
 class ShipModel(Enum):
     """
-    Enumeration of supported ship specification presets.
+    Ship specification presets.
 
-    MYZAKO_29 / MYZAKO_37 and TRIPOLI_38 / TRIPOLI_45 carry the FH-identified
-    Fossen hull coefficients for one draft each (T = 2.85 / 3.65 m and
-    T = 3.78 / 4.50 m). MYZAKO_DEFAULT and TRIPOLI are heuristic presets.
-
-    TRIPOLI_38 / TRIPOLI_45 are Fossen/Nomoto-only for now, see
-    FOSSEN_ONLY_SHIP_MODELS.
-
-    B01 is the MODEL-SCALE (lambda = 25) Myzako towing-tank model used by
-    UGentB01Surrogate (L_pp 4.32 m, m 260.8 kg, I_zz 307.4 kg m^2). Its
-    actuator and kinematic envelope is Froude-scaled from the full-scale
-    defaults (see _MODEL_SCALE_HULLS); it is intended for the towing tank,
-    not for the full-scale Scheldt environment, and has no FH model.
+    - MYZAKO_29 / MYZAKO_37 (T = 2.85 / 3.65 m) and TRIPOLI_38 / TRIPOLI_45
+      (T = 3.78 / 4.50 m): FH-identified Fossen hull coefficients. The Tripoli
+      drafts are Fossen/Nomoto-only for now (FOSSEN_ONLY_SHIP_MODELS).
+    - MYZAKO_DEFAULT, TRIPOLI: heuristic presets.
+    - B01: model-scale (lambda = 25) Myzako towing-tank model for
+      UGentB01Surrogate; Froude-scaled envelope, no FH model, not for the
+      full-scale Scheldt environment.
     """
 
     MYZAKO_DEFAULT = auto()
@@ -49,16 +42,14 @@ class ShipModel(Enum):
     B01 = auto()
 
 
-# TEMPORARY (until the ShipModel refactor): the FH code paths, the dataset
-# generators and the validation tools identify the Tripoli hull with
-# `ship_model == ShipModel.TRIPOLI` (azipod controls, exercise file, FH
-# rudder sign). These presets are Tripoli hulls but would take the
-# conventional-rudder branch there, so they are rejected up front by every
-# FH entry point (FhSimBridge, FhTabularModel) via require_fh_supported().
-# UGentSurrogate and UAntwerpSurrogate reject them through their own checks.
+# Temporary, until the ShipModel refactor: FH code, dataset generators and
+# validation tools recognise the Tripoli hull only as ShipModel.TRIPOLI (azipods,
+# exercise file, rudder sign). These Tripoli presets would take the rudder branch
+# there, so FH entry points reject them via require_fh_supported(); UGentSurrogate
+# and UAntwerpSurrogate reject them with their own checks.
 FOSSEN_ONLY_SHIP_MODELS = frozenset({ShipModel.TRIPOLI_38, ShipModel.TRIPOLI_45})
 
-# Model-scale presets: there is no FH ship model for them at all.
+# Model-scale presets: no FH ship model exists.
 MODEL_SCALE_SHIP_MODELS = frozenset({ShipModel.B01})
 
 # Every preset the FH entry points refuse (see require_fh_supported).
@@ -67,11 +58,8 @@ FH_UNSUPPORTED_SHIP_MODELS = FOSSEN_ONLY_SHIP_MODELS | MODEL_SCALE_SHIP_MODELS
 
 def require_full_scale_ship(ship_model: ShipModel, where: str) -> None:
     """
-    Fail fast if a model-scale preset is used in a full-scale environment.
-
-    The PySim environments use the full-scale Western Scheldt map, distances,
-    speeds and rewards; a model-scale ship (ShipModel.B01, towing tank) needs
-    a towing-tank environment instead.
+    Fail fast if a model-scale preset (towing tank) is used in a full-scale
+    (Western Scheldt) environment.
 
     Args:
         ship_model: The ship model about to be used.
@@ -91,12 +79,9 @@ def require_full_scale_ship(ship_model: ShipModel, where: str) -> None:
 
 def require_hull_coefficients(ship_model: ShipModel, where: str) -> None:
     """
-    Fail fast if a model-scale preset is used with a coefficient-based model.
-
-    Fossen and Nomoto read the hull coefficients in ShipSpecifications. For
-    model-scale presets (ShipModel.B01) those are the full-scale heuristic
-    placeholders, which are not meaningful at model scale; such presets are
-    only supported by their own surrogate (Model.UGENT_B01_SURROGATE).
+    Fail fast if a model-scale preset is used with Fossen/Nomoto: its hull
+    coefficients are full-scale placeholders, only its own surrogate
+    (Model.UGENT_B01_SURROGATE) supports it.
 
     Args:
         ship_model: The ship model about to be used.
@@ -115,7 +100,7 @@ def require_hull_coefficients(ship_model: ShipModel, where: str) -> None:
 
 def require_fh_supported(ship_model: ShipModel, where: str) -> None:
     """
-    Fail fast if `ship_model` cannot be used with the FH simulator (yet).
+    Fail fast if ship_model cannot be used with the FH simulator (yet).
 
     Args:
         ship_model: The ship model about to be used with FH.
@@ -139,15 +124,13 @@ def require_fh_supported(ship_model: ShipModel, where: str) -> None:
         )
 
 
-# FH "Fossen model" identification in full scale, dimensional values as
-# delivered in WL memo WL2026M23_002_03 v4.0 (FH columns of Tables 1-4).
-# Units: Xudot, Yvdot [kg]; Nrdot [kg m^2]; Xu, Yv [kg/s]; Xuu, Yvv, Yuv [kg/m];
-# Nr [kg m^2/s]; Nrr [kg m^2]; Nuv [kg].
-# length = LPP. The coefficients are converted with this same length, so the
-# scaling in fw.dynamics.fossen reproduces the FH values (to machine precision).
-# I_z = None on purpose: FH identified the coefficients with the slender-rod
-# inertia m * L^2 / 12 used by fw.dynamics.fossen, so the measured RIZZ (kept
-# in the comments for reference) must not be used with these coefficients.
+# FH full-scale Fossen identification, dimensional values from WL memo
+# WL2026M23_002_03 v4.0 (FH columns of Tables 1-4). Units: Xudot, Yvdot [kg];
+# Nrdot [kg m^2]; Xu, Yv [kg/s]; Xuu, Yvv, Yuv [kg/m]; Nr [kg m^2/s]; Nrr [kg m^2];
+# Nuv [kg]. length = LPP, the same length fw.dynamics.fossen scales with, so the FH
+# values are reproduced exactly. I_z = None on purpose: FH identified the
+# coefficients with the slender-rod inertia m L^2 / 12, so the measured RIZZ
+# (in the comments) must not be used.
 _FH_FOSSEN_HULLS = {
     # Myzako, scale model B01, T = 2.85 m (B0102A01.xml), 200 % UKC
     ShipModel.MYZAKO_29: dict(
@@ -190,17 +173,9 @@ _FH_FOSSEN_HULLS = {
 
 def _fossen_coeffs_from_fh(hull: dict) -> dict:
     """
-    Convert dimensional FH Fossen derivatives to the ShipSpecifications ratios.
-
-    Mirrors the scaling in fw.dynamics.fossen.Fossen._initialize_coefficients:
-    mass for surge/sway terms, mass*length for N_uv, mass*length^2 for the
-    other yaw terms.
-
-    Args:
-        hull: One entry of _FH_FOSSEN_HULLS.
-
-    Returns:
-        dict: The *_coeff keyword arguments for ShipSpecifications.
+    Convert one _FH_FOSSEN_HULLS entry to the ShipSpecifications *_coeff ratios,
+    mirroring Fossen._initialize_coefficients: divide by m for surge/sway terms,
+    m L for N_uv and m L^2 for the other yaw terms.
     """
 
     m = hull["mass"]
@@ -224,8 +199,8 @@ def _fossen_coeffs_from_fh(hull: dict) -> dict:
     )
 
 
-# Heuristic (not identified) Fossen coefficient set, already in the
-# ShipSpecifications ratio form. Shared by all heuristic presets.
+# Heuristic (not identified) Fossen coefficients in ratio form, shared by the
+# heuristic and model-scale presets.
 _HEURISTIC_FOSSEN_COEFFS = dict(
     X_udot_coeff=-0.05,
     Y_vdot_coeff=-0.5,
@@ -240,14 +215,13 @@ _HEURISTIC_FOSSEN_COEFFS = dict(
     N_uv_coeff=-0.0005,
 )
 
-# Heuristic presets: hull data only; they all use _HEURISTIC_FOSSEN_COEFFS.
+# Heuristic presets: hull data only.
 _HEURISTIC_HULLS = {
     ShipModel.MYZAKO_DEFAULT: dict(
         mass=3.86e6, length=110.0,
         max_rudder_angle_deg=MYZAKO_MAX_RUDDER_ANGLE_DEG,
     ),
-    # Alternative values noted in the original code (origin not documented):
-    # mass 7.16e6 kg (equals the TRIPOLI_45 mass), length 109.0 m.
+    # Alternative values of unknown origin: mass 7.16e6 kg (= TRIPOLI_45), length 109.0 m.
     ShipModel.TRIPOLI: dict(
         mass=6161870.27,
         length=110.0,
@@ -255,14 +229,12 @@ _HEURISTIC_HULLS = {
     ),
 }
 
-# Model-scale presets (hull data plus an explicit actuator / kinematic envelope).
-# The hydrodynamics live in UGentB01Surrogate; the Fossen coefficients in the
-# specifications are the heuristic placeholders and are not used by that model.
-# Envelope = full-scale defaults Froude-scaled with sqrt(lambda) = 5:
-#   velocities / sqrt(lambda): surge 5 m/s -> 1.0 m/s, sway 2 m/s -> 0.4 m/s
-#   rates * sqrt(lambda): rudder rate, thrust rate, yaw rate.
-# ASSUMPTION: derived, not taken from the DDSHIP report. Jitter thresholds and
-# max_thrust are scale-free and unchanged; min_thrust is B01_MIN_THRUST.
+# Model-scale presets: hull data plus an actuator/kinematic envelope (hydrodynamics
+# live in UGentB01Surrogate; the Fossen coefficients are unused placeholders).
+# Envelope = full-scale defaults Froude-scaled with sqrt(lambda) = 5: velocities
+# divided (surge 5 to 1.0 m/s, sway 2 to 0.4 m/s), rudder/thrust/yaw rates
+# multiplied. Assumption: derived, not from the DDSHIP report. Jitter thresholds
+# and max_thrust are scale-free; min_thrust is B01_MIN_THRUST.
 _SQRT_LAMBDA = B01_MODEL_SCALE ** 0.5
 _MODEL_SCALE_HULLS = {
     # B01 (Myzako model), Table 1 of the DDSHIP WP2.2 SI report.
@@ -293,11 +265,9 @@ _ENVELOPE_OVERRIDE_KEYS = frozenset({
 
 def _validate_preset_tables() -> None:
     """
-    Fail fast at import if the preset tables are inconsistent.
-
-    Checks that every ShipModel member is in exactly one table, that every
-    table entry has exactly the expected keys (so a misspelled or extra key
-    cannot be silently ignored), and that mass and length are positive.
+    Fail fast at import if the preset tables are inconsistent: every ShipModel in
+    exactly one table, exactly the expected keys per entry (no silently ignored
+    typos), positive mass, length and (model scale) I_z.
 
     Raises:
         RuntimeError: If any check fails.
@@ -338,72 +308,23 @@ _validate_preset_tables()
 
 class MyzakoShip:
     """
-    Minimal ship model with predefined specifications for simulation.
-
-    This class defines a simple, self-contained ship model suitable
-    for use in simulators and control experiments. It provides only
-    the vessel specifications and does not include dynamics, actuators,
-    or environmental effects.
+    Holder of the ShipSpecifications of a preset (no dynamics, actuators or environment).
+    Despite the name it serves every ShipModel, not only Myzako.
 
     Attributes:
-        specifications: ShipSpecifications object containing physical
-            properties, actuator limits, and operational constraints.
+        specifications: Physical properties, actuator limits and constraints.
     """
 
     def __init__(self, ship_model: ShipModel):
         """
-        Initialize the ship model with parameters specific to *ship_model*.
-
-        Hydrodynamic coefficients (mass, length, added-mass, damping) and the
-        maximum rudder angle differ per variant:
-
-            - Maximum rudder angle : Myzako 75.0 deg (MYZAKO_MAX_RUDDER_ANGLE_DEG),
-                                     Tripoli 35.0 deg (TRIPOLI_MAX_RUDDER_ANGLE_DEG),
-                                     B01 35.0 deg (B01_MAX_RUDDER_ANGLE_DEG)
-
-        The remaining actuator and kinematic limits are shared across all
-        full-scale variants (B01 overrides the rate and velocity limits with
-        Froude-scaled values and sets min thrust 0.2, see _MODEL_SCALE_HULLS):
-
-            - Maximum rudder rate  : 6.0 deg/s (≈ 0.105 rad/s)
-            - Rudder jitter threshold : 0.6 deg
-            - Thrust               : min 0.1, max 1.0 (normalized)
-            - Maximum thrust rate  : 0.07 /s
-            - Thrust jitter threshold : 0.005
-            - Surge velocity limits: 0 – 5 m/s
-            - Sway velocity limits : -2 – 2 m/s
-            - Yaw rate limits      : -0.5 – 0.5 rad/s
-
-        Per-variant hull parameters:
-
-            MYZAKO_29 / MYZAKO_37 (T = 2.85 / 3.65 m):
-                LPP 108 m, mass 3.13 / 4.19 × 10⁶ kg, I_z = m L² / 12,
-                FH-identified Fossen hull coefficients.
-
-            TRIPOLI_38 / TRIPOLI_45 (T = 3.78 / 4.50 m):
-                LPP 106 m, mass 5.85 / 7.16 × 10⁶ kg, I_z = m L² / 12,
-                FH-identified Fossen hull coefficients.
-
-            MYZAKO_DEFAULT:
-                Length 110 m, mass 3.86 × 10⁶ kg, I_z = m L² / 12,
-                heuristic coefficients.
-
-            TRIPOLI:
-                Length 110 m, mass 6.16 × 10⁶ kg, I_z = m L² / 12,
-                heuristic coefficients.
-
-            B01 (model scale, lambda = 25, T = 0.146 m):
-                LPP 4.32 m, mass 260.8 kg, I_zz 307.4 kg m^2 (report Table 1),
-                min thrust 0.2 (B01_MIN_THRUST),
-                heuristic Fossen placeholders (unused by UGentB01Surrogate).
-
-        Rudder and thrust coefficients (Y_rudder, N_rudder, X_thrust) are the
-        heuristic ShipSpecifications defaults for every variant.
+        Build the specifications from the preset tables above (hull data, Fossen
+        coefficients, max rudder angle). Full-scale presets share the default
+        envelope below; I_z = m L^2 / 12 unless the preset sets it (B01: 307.4
+        kg m^2). B01 also overrides rates, velocity limits and min thrust. Rudder
+        and thrust coefficients are the ShipSpecifications defaults for all presets.
         """
 
-        # Shared limits. max_rudder_angle is deliberately NOT in here: every
-        # preset must set it explicitly, so a new ship model can never
-        # silently inherit another ship's rudder limit.
+        # max_rudder_angle is deliberately not shared: every preset sets its own.
         default_actuator_envelope = dict(
             max_rudder_rate=np.radians(6.0),
             min_thrust=0.1,
@@ -444,14 +365,10 @@ class MyzakoShip:
 
 def create_ship(ship_model: ShipModel = ShipModel.MYZAKO_DEFAULT) -> MyzakoShip:
     """
-    Factory function to create a MyzakoShip instance.
+    Create the ship (specifications holder) for a ShipModel preset.
 
-    Args:
-        ship_model (ShipModel, optional): Ship model to use. Defaults to MYZAKO_DEFAULT.
-
-    Returns:
-        MyzakoShip: A new ship object with default specifications
-        suitable for use in simulators and experiments.
+    Raises:
+        ValueError: If ship_model is not a ShipModel.
 
     Example:
         >>> ship = create_ship(ShipModel.MYZAKO_DEFAULT)

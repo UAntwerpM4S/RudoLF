@@ -22,11 +22,8 @@ class SimpleScheduler(BaseScheduler):
             envs (list): List of environments used for training.
 
         Raises:
-            RuntimeError: If the provided environment list is empty. Unlike
-                `PipelineScheduler`, this scheduler trains over a fixed,
-                pre-built list, so a non-empty `envs` is a real precondition
-                here - checked in this class rather than in `BaseScheduler`,
-                since it isn't a precondition for every scheduler.
+            RuntimeError: If `envs` is empty (checked here, not in BaseScheduler,
+                because PipelineScheduler does not need a pre-built list).
         """
 
         super().__init__(agent_mgr, envs)
@@ -57,7 +54,7 @@ class SimpleScheduler(BaseScheduler):
         other_policy_name: str = None
     ):
         """
-        Switches to a different environment.
+        Switch to the environment at `env_index` and prepare the policy.
 
         Args:
             env_index (int): Index of the environment to switch to.
@@ -91,7 +88,6 @@ class SimpleScheduler(BaseScheduler):
             if sim_name:
                 logger.info("Setting up a %s for a %s ship.", sim_name, gym_env.ship_model.name)
 
-        # Set the desired environment and prepare policy according to the strategy
         self.agent_mgr.set_environment(
             env=self.current_env.gym_env,
             policy_strategy=policy_strategy,
@@ -103,39 +99,32 @@ class SimpleScheduler(BaseScheduler):
 
     def execute(self, configuration=None):
         """
-        Executes the training process across all environments.
+        Train the agent on each environment in turn, reusing the previous policy.
 
         Args:
-            configuration (dict, optional): A dictionary where each key is an environment name
-                and each value specifies the number of training steps (under "num_steps").
+            configuration (dict, optional): Maps environment name (str(env)) to its
+                stop condition. With no exact match, the first entry is reused.
 
         Returns:
-            dict: Metrics for each environment, including training status and duration.
-
-        Raises:
-            ValueError: If no environment stop condition can be found in the configuration
-                or if the configuration is empty.
+            dict: Per environment, {"status": "success", "duration"} or
+                {"status": "failure", "error"}. Errors per environment (e.g. an
+                empty configuration, a failed save) are logged and recorded, not raised.
         """
 
         metrics = {}
         policy_strategy = PolicyStrategy.REUSE_OTHER_POLICY
 
-        # Treat a missing configuration the same as an empty one so callers that
-        # don't need per-environment stop-condition overrides can omit the argument
-        # without hitting a TypeError on the `if env_key in configuration` check.
         if configuration is None:
             configuration = {}
 
         for i in range(len(self.envs)):
             try:
-                # Switch to the next environment
                 self._switch_environment(i, policy_strategy, self._previous_env_name)
 
                 logger.info("Training agent '%s' in environment '%s'.", getattr(self.agent_mgr, 'agent', 'Unknown'), self.current_env)
 
                 env_key = str(self.current_env)
                 if env_key in configuration:
-                    # Look up how many steps to train in this environment
                     stop_condition = configuration[env_key]
                 elif len(configuration) == 1:
                     # Single-entry dict whose key no longer matches the active env.
@@ -161,21 +150,18 @@ class SimpleScheduler(BaseScheduler):
 
                 logger.info("[Scheduler] Training to reach %s in %s.", stop_condition, self.current_env)
 
-                # Reset the patience counter so it doesn't carry over
-                # from the previous environment and trigger a premature stop.
+                # Reset patience so it does not carry over from the previous env.
                 if hasattr(stop_condition, "reset"):
                     stop_condition.reset()
 
-                # Indicate if starting from scratch
                 if not self._previous_env_name:
                     logger.info("Starting to train a new %s policy.", self.agent_mgr.agent_type)
 
-                # Train the agent
                 start_time = time.time()
                 self.agent_mgr.train(stop_condition=stop_condition)
                 duration = time.time() - start_time
 
-                # Save policy if reusing it later
+                # Save the policy so the next environment can reuse it
                 self._previous_env_name = (
                     self.current_env.gym_env.training_name
                     if policy_strategy != PolicyStrategy.RESET_POLICY
@@ -189,20 +175,15 @@ class SimpleScheduler(BaseScheduler):
 
                         reward_weights = getattr(self.current_env.gym_env, "reward_weights", None)
                         weight_suffix = self._format_reward_weight_suffix(reward_weights)
-                        # The canonical name is what AgentManager.set_environment
-                        # (REUSE_*), Trainer.visualize and the next scheduled env
-                        # look up, so it is always written. Envs with reward
-                        # weights (e.g. every colav env) additionally get a
-                        # weight-suffixed copy for reward-weight bookkeeping;
-                        # previously ONLY the suffixed file was written, so the
-                        # follow-up load silently fell back to a random policy.
+                        # The canonical name is what AgentManager.set_environment,
+                        # Trainer.visualize and the next env load. Envs with reward
+                        # weights also get a weight-suffixed copy for bookkeeping.
                         self.agent_mgr.agent.save_policy(save_name)
                         if weight_suffix != "default":
                             self.agent_mgr.agent.save_policy(f"{save_name}_{weight_suffix}")
 
-                        # Persist the active profile alongside the checkpoint so
-                        # inference / transfer runs can always reconstruct the
-                        # exact training configuration without guessing.
+                        # Save the active profile next to the checkpoint for
+                        # inference / transfer runs.
                         profile = getattr(self.agent_mgr, "profile", None)
                         if profile is not None:
                             model_dir = getattr(self.agent_mgr.agent, "model_dir", None) or "models"
@@ -221,7 +202,6 @@ class SimpleScheduler(BaseScheduler):
                         self._previous_env_name = None
                         raise RuntimeError("Failed to save the policy.") from e
 
-                # Log successful training
                 metrics[str(self.current_env)] = {"status": "success", "duration": duration}
 
             except Exception as e:

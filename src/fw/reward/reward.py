@@ -3,10 +3,8 @@ from typing import Callable, Dict, Optional
 
 class Reward:
     """
-    Configurable reward calculator for PySimEnv.
-
-    Reward profiles select which component functions are combined.
-    Component weights can be overridden at runtime.
+    Configurable reward calculator for PySimEnv: a profile selects the components,
+    the reward is their weighted sum. Weights can be overridden per instance.
     """
 
     # Default per-component weights (negative values act as penalties).
@@ -19,7 +17,7 @@ class Reward:
         "thrust_change": 0.0,
     }
 
-    # Mapping from profile name to the ordered list of components to evaluate.
+    # Profile name to the ordered components it evaluates.
     PROFILE_COMPONENTS: Dict[str, tuple] = {
         "default": (
             "forward",
@@ -33,29 +31,24 @@ class Reward:
 
     def __init__(self, reward_name: str = "default", reward_weights: Optional[Dict[str, float]] = None) -> None:
         """
-        Initialize the Reward calculator with a specified profile and optional weight overrides.
-        
         Args:
-            reward_name: Name of the reward profile to use. Must be a key in PROFILE_COMPONENTS.
-            reward_weights: Optional dictionary of component weights to override defaults.
-                           Missing keys default to DEFAULT_WEIGHTS values.
-        
+            reward_name: Reward profile, a key of PROFILE_COMPONENTS.
+            reward_weights: Optional weight overrides; missing keys use DEFAULT_WEIGHTS.
+
         Raises:
             ValueError: If reward_name is not in PROFILE_COMPONENTS.
         """
 
         self.reward_name = reward_name
-        # Start from defaults and allow caller overrides for quick experimentation.
         self.reward_weights: Dict[str, float] = dict(self.DEFAULT_WEIGHTS)
         if reward_weights is not None:
             self.reward_weights.update(reward_weights)
 
-        # Fail fast if an unknown profile is requested.
         if self.reward_name not in self.PROFILE_COMPONENTS:
             supported = ", ".join(sorted(self.PROFILE_COMPONENTS.keys()))
             raise ValueError(f"Unknown reward_name '{self.reward_name}'. Supported reward profiles: {supported}")
 
-        # Registry of component name -> computation function.
+        # Component name to its function.
         self._component_functions: Dict[str, Callable[..., float]] = {
             "forward": self.r_forward,
             "heading_alignment": self.r_heading_alignment,
@@ -68,17 +61,9 @@ class Reward:
     @staticmethod
     def r_forward(velocity: float, target_velocity: float, **_: float) -> float:
         """
-        Calculate penalty for deviation from target speed.
-        
-        Penalizes the normalized difference between actual and target velocity.
-        
-        Args:
-            velocity: Current velocity of the vessel.
-            target_velocity: Desired velocity of the vessel.
-            **_: Unused keyword arguments (for compatibility with component interface).
-        
-        Returns:
-            float: Normalized speed deviation penalty (non-negative).
+        Normalized speed deviation |target - velocity| / target (0 if target is 0).
+
+        Extra keyword arguments (**_) are ignored by all components; they share one input dict.
         """
 
         if target_velocity == 0:
@@ -89,16 +74,7 @@ class Reward:
     @staticmethod
     def r_heading_alignment(heading_error: float, **_: float) -> float:
         """
-        Calculate penalty for heading error.
-        
-        Penalizes the absolute difference between desired and actual heading.
-        
-        Args:
-            heading_error: Angular difference from desired heading.
-            **_: Unused keyword arguments (for compatibility with component interface).
-        
-        Returns:
-            float: Absolute heading error penalty.
+        Absolute heading error.
         """
 
         return abs(heading_error)
@@ -106,39 +82,21 @@ class Reward:
     @staticmethod
     def r_cross_track(cross_track_error: float, **_: float) -> float:
         """
-        Calculate penalty for lateral path deviation.
-        
-        Penalizes deviation from the intended trajectory path.
-        
-        Args:
-            cross_track_error: Lateral distance from the desired path.
-            **_: Unused keyword arguments (for compatibility with component interface).
-        
-        Returns:
-            float: Cross-track error penalty.
+        Cross-track error, returned as passed in (not abs'd here).
         """
 
         return cross_track_error
 
     def r_rudder_angle_change(self, rudder_change: float, max_rudder_change: float, **_: float) -> float:
         """
-        Calculate penalty for sudden rudder angle changes.
-        
-        Penalizes large changes in rudder angle, with hard penalty for exceeding max change.
-        Respects weight setting to allow component disable via zero weight.
-        
-        Args:
-            rudder_change: Magnitude of change in rudder angle.
-            max_rudder_change: Maximum allowed rudder change per timestep.
-            **_: Unused keyword arguments (for compatibility with component interface).
-        
-        Returns:
-            float: Rudder change penalty, or 0 if component is disabled (weight=0).
+        Rudder change relative to max_rudder_change (per step). At or above the
+        maximum it returns -1/weight, so the weighted contribution is exactly -1.
+        Returns 0 when the component weight is 0.
         """
 
         weight = self.reward_weights.get("rudder_change", 1.0)
         if weight == 0.0:
-            return 0.0  # No penalty if the component is disabled, even if the function is called.
+            return 0.0
         max_rudder_change = max(float(max_rudder_change), 1e-6)
 
         return (rudder_change / max_rudder_change) if rudder_change < max_rudder_change else (-1/weight)
@@ -146,34 +104,15 @@ class Reward:
     @staticmethod
     def r_rudder_angle(rudder_angle: float, **_: float) -> float:
         """
-        Calculate penalty for large rudder angles.
-        
-        Uses a piecewise function with threshold at 0.2 radians to penalize large angles more steeply.
-        
-        Args:
-            rudder_angle: Current rudder angle in radians.
-            **_: Unused keyword arguments (for compatibility with component interface).
-        
-        Returns:
-            float: Rudder angle penalty with quadratic growth below 0.2 and quartic growth above.
+        Rudder angle penalty (|angle| / 0.2 rad) ** p, with p = 2 below 0.2 rad
+        and p = 4 above.
         """
 
         return (abs(rudder_angle) / 0.2) ** (2 if abs(rudder_angle) < 0.2 else 4)
 
     def r_thrust_change(self, thrust_change: float, max_thrust_change: float, **_: float) -> float:
         """
-        Calculate penalty for thrust changes.
-        
-        Penalizes rapid changes in thrust, with hard penalty for exceeding max change.
-        Respects weight setting to allow component disable via zero weight.
-        
-        Args:
-            thrust_change: Magnitude of change in thrust.
-            max_thrust_change: Maximum allowed thrust change per timestep.
-            **_: Unused keyword arguments (for compatibility with component interface).
-        
-        Returns:
-            float: Thrust change penalty, or 0 if component is disabled (weight=0).
+        Thrust change counterpart of r_rudder_angle_change (same formula and limits).
         """
 
         weight = self.reward_weights.get("thrust_change", 1.0)
@@ -185,18 +124,9 @@ class Reward:
 
     def r_thrust_change_quadratic(self, thrust_change: float, max_thrust_change: float, **_: float) -> float:
         """
-        Calculate smooth quadratic penalty for thrust changes.
-        
-        Uses piecewise quadratic function that increases in steepness as thrust change approaches max.
-        Provides smoother penalty curve compared to r_thrust_change.
-        
-        Args:
-            thrust_change: Magnitude of change in thrust.
-            max_thrust_change: Maximum allowed thrust change per timestep.
-            **_: Unused keyword arguments (for compatibility with component interface).
-        
-        Returns:
-            float: Smooth quadratic penalty, or 0 if component is disabled (weight=0).
+        Smoother alternative to r_thrust_change (not used by any profile): piecewise
+        quadratic in the normalized change, -1/weight at or above the maximum,
+        0 when the weight is 0.
         """
 
         weight = self.reward_weights.get("thrust_change", 1.0)
@@ -206,13 +136,12 @@ class Reward:
         max_thrust_change = max(float(max_thrust_change), 1e-6)
         normalized_change = abs(thrust_change) / max_thrust_change
         
-        # Smooth quadratic penalty that steepens near the limit
         if normalized_change < 0.5:
-            return normalized_change ** 2  # Gentle for small changes
+            return normalized_change ** 2
         elif normalized_change < 1.0:
-            return 0.25 + 2 * (normalized_change - 0.5) ** 2  # Steeper
+            return 0.25 + 2 * (normalized_change - 0.5) ** 2
         else:
-            return -1 / weight  # Hard violation penalty
+            return -1 / weight
 
     def calculate_reward(
         self,
@@ -227,28 +156,11 @@ class Reward:
         max_thrust_change: float
     ) -> float:
         """
-        Calculate total reward as weighted sum of component penalties.
-        
-        Evaluates all components in the active reward profile, applies learned weights,
-        and returns aggregate reward value. Components are processed in profile order.
-        
-        Args:
-            velocity: Current vessel velocity.
-            target_velocity: Desired vessel velocity.
-            heading_error: Angular error from desired heading.
-            cross_track_error: Lateral deviation from intended path.
-            rudder_change: Change in rudder angle this timestep.
-            max_rudder_change: Maximum allowed rudder change.
-            rudder_angle: Current rudder angle.
-            thrust_change: Change in thrust this timestep.
-            max_thrust_change: Maximum allowed thrust change.
-        
-        Returns:
-            float: Weighted sum of all enabled component penalties for this timestep.
+        Return the weighted sum of the active profile's components for one step.
+        Arguments are passed to every component (see the r_* methods).
         """
 
         reward = 0.0
-        # Shared inputs for all component functions.
         component_inputs = {
             "velocity": velocity,
             "target_velocity": target_velocity,
@@ -261,7 +173,6 @@ class Reward:
             "max_thrust_change": max_thrust_change,
         }
 
-        # Compute each component in order and apply its weight.
         for component_name in self.PROFILE_COMPONENTS[self.reward_name]:
             component_fn = self._component_functions[component_name]
             weight = self.reward_weights.get(component_name, 1.0)

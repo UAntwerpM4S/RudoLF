@@ -72,33 +72,21 @@ def class_name_to_filename(class_name: str, style: FilenameStyle) -> str:
 
 def find_existing_filename(class_name: str, directory: str = ".") -> str:
     """
-    Finds the filename corresponding to a class name based on existing files.
+    Find the file name of a class by trying the naming styles (snake_case,
+    lowercase, kebab-case).
 
-    Tries different naming styles (snake_case, lowercase, kebab-case) until it finds a match.
-
-    Search order, for each naming style:
-      1. `directory` (defaults to the caller's current working directory -
-         kept for backward compatibility with any existing callers/cwd-based
-         layouts, e.g. running scripts from a repo root).
-      2. `<directory>/fw/` (also cwd-relative, same backward-compat reason -
-         predates the fw.configuration/fw.scheduling package split).
-      3. The directory this module (`trainer.py`) itself lives in - i.e.
-         `fw/scheduling/`, now that trainer.py has moved there. Scheduler
-         classes (`simple_scheduler.py`, `pipeline_scheduler.py`, ...) are
-         siblings of trainer.py in that same folder, so this makes
-         resolution independent of wherever `main.py`/`main_pipeline.py`
-         happens to be launched from.
+    Per style, it looks in `directory`, `<directory>/fw/` (both cwd-relative,
+    for older layouts) and this module's folder `fw/scheduling/`, where the
+    scheduler modules live (independent of the launch directory).
 
     Args:
         class_name (str): The name of the class to search for.
-        directory (str, optional): The directory to search in. Defaults to
-            the current directory (see search order above).
+        directory (str, optional): Directory to search first; defaults to the
+            current directory.
 
     Returns:
-        str: The filename that matched (no directory prefix - the caller
-            only ever uses `Path(...).stem`, and always imports via the
-            fixed `fw.scheduling.` package path regardless of which
-            directory the match was actually found in).
+        str: The matching file name without directory (the caller imports
+            it from `fw.scheduling.`).
 
     Raises:
         FileNotFoundError: If no matching file is found using any style.
@@ -116,7 +104,7 @@ def find_existing_filename(class_name: str, directory: str = ".") -> str:
         ]
         for candidate in candidates:
             if os.path.isfile(candidate):
-                return filename  # Match found - caller resolves the module path itself
+                return filename
 
     raise FileNotFoundError(
         f"No file found for class '{class_name}' in '{directory}' or "
@@ -129,24 +117,22 @@ class Trainer:
     """
     Handles the training of an agent across multiple environments.
 
-    Responsible for creating the agent manager, initializing the scheduler, and managing the training loop.
+    Creates the agent manager and the scheduler, and runs the training loop.
     """
 
     def __init__(self, agent_type: str, envs, profile: VesselProfile, scheduler_type: str,
                  config: dict = None):
         """
-        Initializes the Trainer.
+        Initialize the Trainer.
 
         Args:
             agent_type (str): The type of agent to create (e.g., 'PPO', 'DQN').
             envs (Gym.Env): List of environments for the agent to train in.
             profile (VesselProfile): Profile that will be used for training or visualization.
             scheduler_type (str): The name of the scheduler class to use.
-            config (dict, optional): Pre-built configuration dict from
-                :func:`~fw.config.get_config_parameters`.  When *None* (default)
-                the Trainer calls `get_config_parameters()` itself.  Callers
-                that have already built the config (e.g. `main.py`) should
-                pass it here to avoid applying the profile a second time.
+            config (dict, optional): Pre-built config from
+                `get_config_parameters()`; None builds it here. Pass it when
+                already built (e.g. main.py) to avoid applying the profile twice.
 
         Raises:
             RuntimeError: If the scheduler class cannot be found or initialized.
@@ -193,8 +179,8 @@ class Trainer:
         """
         Return a shared environment name when all selected envs match.
 
-        If the run mixes environment families, keep the shared PPO defaults so
-        one environment does not silently change the tuning of the others.
+        Mixed environment families give None (shared PPO defaults), so one env
+        does not change the tuning of the others.
         """
 
         env_names = []
@@ -219,23 +205,13 @@ class Trainer:
         Args:
             configuration (dict, optional): Additional configuration parameters
                 for training, such as number of steps per environment.
-            show_plots (bool, optional): Whether to run the automatic
-                post-training evaluation/visualization at all. When False,
-                the entire step - episode rollout, metrics computation,
-                figure saving, and any interactive window - is skipped
-                entirely, not just the interactive window. Running a full
-                evaluation episode costs real time and clutters logs for a
-                step nobody's going to look at (e.g. an intermediate stage
-                of a multi-stage run). Defaults to True, matching existing
-                behavior exactly - nothing changes for existing callers
-                that never pass this.
-            evaluate (bool, optional): Run the post-training evaluation
-                episode (and store `evaluation_summary`) independently of
-                `show_plots`. None (default) keeps the old coupling
-                (evaluate only when show_plots is True). `evaluate_reward`
-                passes evaluate=True with show_plots=False: it needs the
-                metrics but no interactive windows; before, its exported
-                metric columns were always empty.
+            show_plots (bool, optional): Show interactive figures. Also decides
+                whether the post-training evaluation (rollout, metrics,
+                figures) runs at all when `evaluate` is None. Default True.
+            evaluate (bool, optional): Run the post-training evaluation episode
+                and store `evaluation_summary` in the metrics. None follows
+                `show_plots`; `evaluate_reward` passes True with
+                show_plots=False. Skipped for AirSimEnv.
 
         Returns:
             dict: Training metrics collected during execution.
@@ -331,12 +307,8 @@ class Trainer:
                     if collect_evaluation_summary and env_summary is not None:
                         if isinstance(env_summary, dict):
                             if gym_env.type_name in env_summary:
-                                # env_summary's own keys come from the underlying gym
-                                # implementation (e.g. an agent's internal per-class
-                                # bookkeeping), so this lookup intentionally stays on
-                                # type_name. What we STORE it under must be the logical
-                                # training identity so trainer.train()'s str(wrapper)
-                                # lookup (env_type) can find it.
+                                # Look up by type_name (the gym env's key), store
+                                # under training_name (what train() looks up).
                                 summaries[gym_env.training_name] = env_summary[gym_env.type_name]
                             else:
                                 # For composite envs (e.g. MultiSimEnv), collect summaries for all
@@ -380,11 +352,9 @@ class Trainer:
         """
         Build a fresh environment wrapper for reward evaluation.
 
-        This bypasses the factory cache so each reward configuration gets
-        its own independent environment instance.
+        Bypasses the factory cache so each reward configuration is isolated.
         """
 
-        # Avoid factory-level caching so each reward config is isolated.
         if canonical_name == py_sim_env_name:
             return PySimEnvironment(canonical_name, config)
         if canonical_name == fh_sim_env_name:
@@ -407,8 +377,7 @@ class Trainer:
         """
         Evaluate and compare different reward configurations.
 
-        Trains a separate, independent policy for each reward configuration.
-        Stores and displays metrics for comparison.
+        Trains an independent policy per reward configuration, sequentially.
 
         Args:
             reward_configs (List[Dict[str, Any]]): List of environment configuration dicts.
@@ -431,7 +400,8 @@ class Trainer:
                     "reward_name": reward profile name,
                     "reward_weights": weights used,
                     "metrics": training metrics dict,
-                    "status": success/failure status
+                    "trajectory_file": saved trajectory image or None,
+                    "status": "success" or "failed: <error>"
                 }
         """
 
@@ -443,15 +413,13 @@ class Trainer:
         if training_configuration is None:
             training_configuration = {}
 
-        # Print a header once to make multi-config output readable.
         if verbose:
             print(f"\n{'='*80}")
             print(f"Starting Reward Evaluation: {len(reward_configs)} configurations")
             print(f"{'='*80}\n")
 
-        # Accumulate results keyed by config index for stable reporting.
         results = {}
-        # Track success order for summaries (only successful configs).
+        # Indices of successful configs.
         evaluation_order = []
 
         def _evaluate_single_config(config_idx: int, config: Dict[str, Any]) -> tuple[int, Dict[str, Any], bool]:
@@ -460,7 +428,6 @@ class Trainer:
             """
 
             try:
-                # Extract environment type (required for building the env).
                 if "type" not in config:
                     raise ValueError("Configuration missing required 'type' key")
 
@@ -473,26 +440,20 @@ class Trainer:
                     print(f"\n[{config_idx + 1}] Environment: {canonical_name}")
                     print(f"    Reward Profile: {reward_name}")
                     if reward_weights:
-                        # Print custom weights so differences are visible in logs.
                         for key, value in reward_weights.items():
                             print(f"      - {key}: {value}")
                     print("    Starting training...")
 
-                # Build a fresh environment per configuration (no factory cache reuse).
                 env = self._build_eval_environment(canonical_name, config)
 
-                # Create an independent trainer to avoid shared state.
                 trainer = Trainer(self._agent_type, [env], self._profile, "SimpleScheduler")
 
-                # Deep-copy the stop-condition dict so that StopCondition._counter
-                # mutations from this run never bleed into subsequent configurations.
+                # Deep copy, so StopCondition counters do not carry over to later configs.
                 isolated_configuration = copy.deepcopy(training_configuration)
 
-                # Train once and keep interactive plots off, but DO run the
-                # evaluation episode: export_evaluation_results reads its
-                # evaluation_summary, and the trajectory snapshot below needs
-                # the image it renders (otherwise a stale image from an earlier
-                # run was picked up).
+                # No interactive plots, but run the evaluation episode: the CSV
+                # export reads its evaluation_summary and the snapshot below
+                # needs the image it renders.
                 metrics = trainer.train(isolated_configuration, show_plots=False, evaluate=True)
                 # Snapshot the trajectory image with a unique name per config.
                 trajectory_file = self._save_evaluation_trajectory_snapshot(trainer, reward_weights)
@@ -502,7 +463,6 @@ class Trainer:
                         print(f"    Saved trajectory: {trajectory_file}")
                     print("    Training completed")
 
-                # Return a normalized success payload for downstream summary/export.
                 return config_idx, {
                     "config": config,
                     "env_type": canonical_name,
@@ -517,7 +477,7 @@ class Trainer:
                     print(f"    Training failed: {e}")
                 logger.error("Reward evaluation config %d failed: %s", config_idx, e)
 
-                # Keep a consistent shape on failure so downstream code can continue.
+                # Same shape on failure, so downstream code can continue.
                 return config_idx, {
                     "config": config,
                     "env_type": config.get("type", "Unknown"),
@@ -528,18 +488,16 @@ class Trainer:
                     "status": f"failed: {str(e)}"
                 }, False
 
-        # Run reward configurations sequentially to preserve a single environment execution flow.
+        # Sequential: one environment execution flow at a time.
         job_results = []
         for conf_idx, conf in enumerate(reward_configs):
             job_results.append(_evaluate_single_config(conf_idx, conf))
 
-        # Collect results from parallel execution.
         for idx, result, is_success in job_results:
             results[idx] = result
             if is_success:
                 evaluation_order.append(idx)
 
-        # Normalize ordering so summaries are deterministic.
         evaluation_order.sort()
 
         if verbose:
@@ -557,7 +515,6 @@ class Trainer:
             evaluation_order: Order in which configs were evaluated.
         """
 
-        # Human-friendly summary header.
         print(f"\n{'='*80}")
         print("REWARD CONFIGURATION COMPARISON SUMMARY")
         print(f"{'='*80}\n")
@@ -566,7 +523,6 @@ class Trainer:
             print("No configurations evaluated.")
             return
 
-        # Print detailed results for each successful configuration.
         for idx in evaluation_order:
             result = results[idx]
             print(f"Configuration {idx}: {result['env_type']}")
@@ -585,8 +541,7 @@ class Trainer:
 
             print("-" * 80)
 
-        # Print a clearly separated section for any failed configurations so
-        # they are never silently omitted from the report.
+        # Failed configurations get their own section, never omitted.
         failed_ids = [i for i in sorted(results) if i not in evaluation_order]
         if failed_ids:
             print(f"\n{'='*80}")
@@ -609,7 +564,6 @@ class Trainer:
             metrics: Metrics dictionary from training.
         """
 
-        # Guard against empty metrics so the summary doesn't crash.
         if not metrics:
             print("  Metrics: None")
             return
@@ -638,13 +592,12 @@ class Trainer:
             Saved file path or None when no trajectory file exists.
         """
 
-        # Access the agent model directory to locate the latest trajectory output.
         agent = getattr(eval_trainer._agent_mgr, "agent", None)
         model_dir = getattr(agent, "model_dir", None) if agent is not None else None
         if not model_dir:
             model_dir = "models"
         os.makedirs(model_dir, exist_ok=True)
-        # Look for possible produced image files inside the model dir or cwd.
+        # Candidate images in the model dir or cwd.
         candidates = [
             os.path.join(model_dir, "trajectory.png"),
             os.path.join(model_dir, "image_trajectory.png"),
@@ -665,7 +618,7 @@ class Trainer:
         if not found:
             return None
 
-        # Create compact weights string used as suffix: replace dots in values.
+        # Compact weights suffix (dots in values replaced).
         if reward_weights:
             weights_str = "_".join(
                 f"{str(value).replace('.', '')}"
@@ -674,14 +627,11 @@ class Trainer:
         else:
             weights_str = "default"
 
-        # Helper to move a single file with suffix handling.
         def _move_with_suffix(src_path: str, prefix: str) -> str:
             """
-            Move a file to a new location with weights suffix and timestamp collision handling.
-            
-            Constructs target filename as prefix_weights_str.png. If target already exists,
-            appends timestamp to avoid overwriting. Uses os.replace to atomically move the file.
-            
+            Move a file to `<prefix>_<weights>.png` (timestamp appended if the
+            target exists) with os.replace.
+
             Args:
                 src_path: Source file path to move.
                 prefix: Filename prefix (e.g., 'trajectory', 'image_metrics').
@@ -699,7 +649,6 @@ class Trainer:
             os.replace(src_path, target_path)
             return target_path
 
-        # Prefer to return the trajectory image path if available.
         trajectory_target = None
 
         # If a canonical 'trajectory.png' or 'image_trajectory.png' exists, move it.
@@ -708,10 +657,10 @@ class Trainer:
         elif 'image_trajectory.png' in found:
             trajectory_target = _move_with_suffix(found['image_trajectory.png'], 'image_trajectory')
         elif 'image.png' in found:
-            # image.png may be a combined file; move as trajectory fallback
+            # image.png may be a combined file: fall back to it as trajectory
             trajectory_target = _move_with_suffix(found['image.png'], 'trajectory')
 
-        # Also move metrics image if present
+        # Metrics image, if present
         if 'image_metrics.png' in found:
             _move_with_suffix(found['image_metrics.png'], 'image_metrics')
 
@@ -733,11 +682,10 @@ class Trainer:
             return
 
         try:
-            # Create models folder if it doesn't exist and prepare filepath with timestamp
             models_dir = Path("models")
             models_dir.mkdir(exist_ok=True)
             
-            # Extract filename and add timestamp
+            # Timestamped file name
             base_path = Path(filepath)
             stem = base_path.stem
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -763,7 +711,7 @@ class Trainer:
                 "Mean LOS Guidance Heading Error (mHE)",
             ]
 
-            # Preserve weight column order from configuration insertion order.
+            # Weight columns in configuration insertion order.
             weight_keys = []
             for idx in sorted(results.keys()):
                 weights = results[idx].get("reward_weights") or {}
@@ -788,7 +736,7 @@ class Trainer:
                 for idx in sorted(results.keys()):
                     result = results[idx]
 
-                    # Extract final evaluation summary from train metrics.
+                    # Final evaluation summary from the train metrics.
                     summary = {}
                     metrics = result.get("metrics") or {}
                     if isinstance(metrics, dict):

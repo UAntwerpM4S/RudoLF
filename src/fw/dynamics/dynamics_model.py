@@ -20,51 +20,29 @@ class Model(Enum):
 
 class DynamicsBase:
     """
-    Abstract base class for vessel dynamics models.
+    Abstract base class for 3-DOF (surge, sway, yaw) vessel dynamics in the body frame.
 
-    This interface defines the contract for vessel dynamics formulated in
-    the body-fixed reference frame. Concrete implementations model the
-    surge–sway–yaw (3-DOF) dynamics of a marine vessel.
+    `step()` advances the body-fixed velocities (u, v, r) by one time step;
+    world-frame position and heading are integrated by ShipSimulator.integrate(),
+    which also applies velocity clipping.
 
-    The model exposes a single `step()` method that advances the body-fixed
-    velocities (u, v, r) by one time step. World-frame position and heading
-    integration is handled externally by ShipSimulator.integrate().
+    Implementation families:
+    - Physics-based (Fossen, Nomoto, UGentSurrogate, UGentB01Surrogate): implement
+      `_compute_accelerations` and use the default Euler `step()`.
+    - Engine-backed (FhTabularModel): override `step()` and return the engine's
+      (u, v, r) after dt directly.
+    - Surrogate (UAntwerpSurrogate): converts a predicted velocity delta to an
+      acceleration (delta / dt) and uses the default `step()`; only valid when dt
+      equals the training step, which the subclass enforces.
 
-    Two families of implementations exist:
+    `models_own_wind_current`: True for models with wind and current in their own
+    dynamics (FhTabularModel, UAntwerpSurrogate full_env), so ShipSimulator does
+    not add EnvironmentModel accelerations twice.
 
-    - Physics-based models (Fossen, Nomoto, UGentSurrogate, UGentB01Surrogate):
-        Compute accelerations (du, dv, dr) from equations of motion and
-        return (u + du*dt, v + dv*dt, r + dr*dt) via this class's default
-        `step()` implementation. Velocity clipping is applied by
-        ShipSimulator after the call.
-
-    - Engine-backed models (FhTabularModel):
-        Advance an internal engine by dt seconds and return the resulting
-        (u, v, r) directly, bypassing this class's `step()` entirely (the
-        subclass overrides `step()` and never calls `_compute_accelerations`).
-
-    - Surrogate models (UAntwerpSurrogate):
-        Predict an absolute velocity delta over a fixed training time step
-        and convert it to an equivalent acceleration (delta / dt), then
-        still go through this class's default Euler-integration `step()`.
-        This only reproduces the surrogate's intended behavior when dt
-        equals the surrogate's training step size, which the subclass
-        enforces explicitly.
-
-    Wind and current (`models_own_wind_current`):
-        Some models already include wind and current in their own dynamics
-        (FhTabularModel; UAntwerpSurrogate with a full_env checkpoint). For
-        them ShipSimulator must NOT add EnvironmentModel's accelerations as
-        well, or the effect is applied twice. All other models (Fossen,
-        Nomoto, UGentSurrogate, UGentB01Surrogate, UAntwerpSurrogate
-        open_water/confined_ukc) get their wind/current from EnvironmentModel
-        via ShipSimulator, except UGentB01Surrogate (see below).
-
-    EnvironmentModel support (`supports_environment_model`):
-        EnvironmentModel adds fixed full-scale accelerations. A model for which
-        they make no sense (UGentB01Surrogate, model scale: they are about 9x
-        its maximum thrust acceleration) sets this to False, and ShipSimulator
-        then refuses wind=True / current=True instead of adding them.
+    `supports_environment_model`: False when EnvironmentModel's full-scale
+    accelerations make no sense for the model (UGentB01Surrogate, model scale:
+    about 9x its maximum thrust acceleration); ShipSimulator then refuses
+    wind=True / current=True.
     """
 
     models_own_wind_current: bool = False
@@ -109,8 +87,7 @@ class DynamicsBase:
         Query the current under-keel clearance.
 
         Args:
-            pos (np.array, optional): The position for which
-                to query the keel clearance.
+            pos (np.array, optional): Position to query.
 
         Returns:
             float: Keel clearance in metres.
@@ -129,8 +106,7 @@ class DynamicsBase:
         """
         Advance body-fixed velocities by dt seconds using Euler integration.
 
-        Velocity clipping is applied by ShipSimulator after this call and
-        must not be duplicated here.
+        Velocity clipping is done by ShipSimulator; do not duplicate it here.
 
         Args:
             state:                       Current vessel state.
@@ -139,13 +115,9 @@ class DynamicsBase:
             thrust:                      Normalized thrust command (dimensionless),
                                          positive forward.
             dt:                          Integration time step [s].
-            enable_rudder_angle_scaling: When True, rescales the rudder command to
-                                         compensate for a difference between this
-                                         framework's maximum rudder angle and a
-                                         target engine's maximum rudder angle (used
-                                         for sim-to-sim transfer). Currently only
-                                         consumed by FhTabularModel; other models
-                                         accept but ignore this flag.
+            enable_rudder_angle_scaling: Rescale the rudder command to the target
+                                         engine's maximum rudder angle (sim-to-sim
+                                         transfer). Only used by FhTabularModel.
 
         Returns:
             Tuple (u, v, r): un-clipped updated body-fixed velocities.

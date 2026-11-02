@@ -1,9 +1,6 @@
 """
-Headless verification script for the AirSim path-reconstruction plot.
-
-Imports `plot_airsim_path`, forces the `Agg` (non-interactive) backend,
-runs a single update cycle, and saves the resulting figure to disk.
-This is useful for CI pipelines or servers without a display.
+Headless check of the AirSim path-reconstruction plot: forces the Agg backend,
+runs one LivePlotter update and saves the figure (for CI or display-less servers).
 """
 
 import os
@@ -11,7 +8,7 @@ import sys
 import matplotlib
 matplotlib.use('Agg')
 
-# Add src to path just in case
+# Allow running from the src directory.
 sys.path.append(os.getcwd())
 
 try:
@@ -32,11 +29,9 @@ def main():
     if airsim_plotter is not None:
         plotter = airsim_plotter.LivePlotter()
 
-        # Force single update to process data
         print("Processing telemetry data...")
         plotter.update(0)
 
-        # Save
         print("Saving plot...")
         plotter.save_plot()
         print("Done.")

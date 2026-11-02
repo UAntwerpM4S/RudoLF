@@ -1,10 +1,7 @@
 """
-Strict success early stopping callback for Stable Baselines3.
-
-The callback stops training once the agent achieves N consecutive episodes
-where all checkpoints are passed, the episode never violates the strict
-cross-track bound, and the average episode reward is near its normalized
-maximum.
+Stable Baselines3 callback that stops training after N consecutive strict-success episodes:
+all checkpoints passed, strict cross-track bound never violated, and average per-step
+reward near its normalized maximum.
 """
 
 from __future__ import annotations
@@ -24,11 +21,9 @@ class StrictSuccessStoppingCallback(BaseCallback):
     Args:
         required_consecutive_episodes: Number of strict-success episodes
             required in a row before stopping.
-        min_average_episode_reward: Threshold for the average episode reward.
-            With a normalized reward in [-1, 1], values close to 1.0 enforce
-            near-perfect episodes.
-        strict_cte_limit_m: Maximum allowed absolute CTE during successful
-            episodes.
+        min_average_episode_reward: Threshold for the average per-step reward; with a
+            normalized reward in [-1, 1], values near 1.0 demand near-perfect episodes.
+        strict_cte_limit_m: Maximum absolute CTE (m) allowed during a successful episode.
         verbose: SB3 callback verbosity.
     """
 
@@ -40,7 +35,7 @@ class StrictSuccessStoppingCallback(BaseCallback):
         verbose: int = 0,
     ) -> None:
         """
-        Initialize strict stopping thresholds and episode trackers.
+        Initialize thresholds and per-env episode trackers.
         """
 
         super().__init__(verbose=verbose)

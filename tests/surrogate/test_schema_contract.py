@@ -42,7 +42,9 @@ def test_ray_layout():
                          "rudder_action", "thrust_action") + RAYS),
 ])
 def test_raw_column_order(name, expected):
-    """The raw row layout (= dataset X columns = UAntwerpSurrogate's input row)."""
+    """
+    The raw row layout (= dataset X columns = UAntwerpSurrogate's input row).
+    """
 
     sc = get_scenario(name)
     assert sc.raw_columns == expected
@@ -54,7 +56,9 @@ def test_raw_column_order(name, expected):
     ("full_env", ENV_ENCODING_BODY, 36), ("full_env", ENV_ENCODING_ANGLES, 38),
 ])
 def test_encoded_width_and_names(name, encoding, width):
-    """Encoded feature count; x/y are never inputs; heading is encoded as sin/cos."""
+    """
+    Encoded feature count; x/y are never inputs; heading is encoded as sin/cos.
+    """
 
     sc = get_scenario(name)
     names = list(encoded_feature_names(sc, encoding))
@@ -65,7 +69,9 @@ def test_encoded_width_and_names(name, encoding, width):
 
 
 def test_heading_encoding_is_continuous_across_pi():
-    """Headings just below +pi and just above -pi are almost the same direction: nearly equal features."""
+    """
+    Headings just below +pi and just above -pi are almost the same direction: nearly equal features.
+    """
 
     sc = get_scenario("open_water")
     x = np.zeros((2, sc.raw_input_dim), dtype=np.float32)
@@ -76,7 +82,9 @@ def test_heading_encoding_is_continuous_across_pi():
 
 
 def _body(heading, wind_speed=0.0, wind_dir=0.0, current_speed=0.0, current_dir=0.0):
-    """Encoded body components (wind_from_ahead, wind_from_stbd, current_to_ahead, current_to_stbd)."""
+    """
+    Encoded body components (wind_from_ahead, wind_from_stbd, current_to_ahead, current_to_stbd).
+    """
 
     sc = get_scenario("full_env")
     x = np.zeros((1, sc.raw_input_dim), dtype=np.float32)
@@ -90,7 +98,9 @@ def _body(heading, wind_speed=0.0, wind_dir=0.0, current_speed=0.0, current_dir=
 
 
 def test_current_body_components():
-    """Current: earth-fixed direction it flows TOWARD; components in the ship frame (starboard +)."""
+    """
+    Current: earth-fixed direction it flows TOWARD; components in the ship frame (starboard +).
+    """
 
     # Heading East (0), current flowing East: straight ahead.
     b = _body(heading=0.0, current_speed=1.0, current_dir=0.0)
@@ -106,7 +116,9 @@ def test_current_body_components():
 
 
 def test_wind_body_components():
-    """Wind: apparent, direction it comes FROM relative to the bow, positive = from starboard."""
+    """
+    Wind: apparent, direction it comes FROM relative to the bow, positive = from starboard.
+    """
 
     b = _body(heading=1.0, wind_speed=2.0, wind_dir=0.0)            # head wind
     assert b["wind_from_ahead"] == pytest.approx(2.0, abs=1e-6)
@@ -124,7 +136,9 @@ def test_wind_body_components():
     ("open_water", "confined_ukc", False), ("confined_ukc", "full_env", False),
 ])
 def test_projection_rules(source, target, allowed):
-    """A poorer model only from richer data, and never dropping wind/current (their effect is in the targets)."""
+    """
+    A poorer model only from richer data, and never dropping wind/current (their effect is in the targets).
+    """
 
     src, tgt = get_scenario(source), get_scenario(target)
     if allowed:
@@ -135,7 +149,9 @@ def test_projection_rules(source, target, allowed):
 
 
 def test_projection_keeps_values():
-    """confined_ukc -> open_water keeps exactly the shared columns."""
+    """
+    confined_ukc -> open_water keeps exactly the shared columns.
+    """
 
     src, tgt = get_scenario("confined_ukc"), get_scenario("open_water")
     x = np.arange(2 * src.raw_input_dim, dtype=np.float32).reshape(2, -1)
@@ -145,7 +161,9 @@ def test_projection_keeps_values():
 
 
 def test_identity_roundtrip_and_checks(tmp_path):
-    """The identity written with the data is read back; a wrong sway convention or mixed identities are refused."""
+    """
+    The identity written with the data is read back; a wrong sway convention or mixed identities are refused.
+    """
 
     from fw.surrogate.dataset import check_same_identity, load_raw, read_identity
 
@@ -174,7 +192,9 @@ def test_identity_roundtrip_and_checks(tmp_path):
 
 
 def test_provenance_roundtrip(tmp_path):
-    """Provenance is stored as JSON text (no pickle) and is optional."""
+    """
+    Provenance is stored as JSON text (no pickle) and is optional.
+    """
 
     from fw.surrogate.dataset import read_provenance
 

@@ -71,11 +71,9 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
                 )
                 raise SystemExit(1)
 
-            # The pipeline runs one AgentManager with the single-policy PPO
-            # agent. MultiSimEnv needs MPPO and MultiPolicyColavEnv needs MPSA
-            # (fw.main selects these automatically); under PPO the first
-            # crashes and the second silently trains ONE policy on the
-            # one-hot observation. Refuse them up front.
+            # The pipeline only runs single-policy PPO. MultiSimEnv (needs MPPO)
+            # would crash and MultiPolicyColavEnv (needs MPSA) would silently
+            # train one policy on the one-hot observation, so refuse both.
             if resolve_environment_name(block.env_type) in (multi_sim_env_name, multi_policy_colav_env_name):
                 logger.error(
                     "Block '%s' uses %s, which needs a multi-policy agent (MPPO/MPSA); "

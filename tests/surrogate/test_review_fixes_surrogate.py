@@ -1,7 +1,7 @@
 """
-Regression tests for the review fixes on the UAntwerp surrogate integration:
-lookup CSV layout check, position-aware get_ukc, non-finite input guard and
-the ShipSimulator sub-step grid.
+Regression tests for the UAntwerp surrogate integration: lookup CSV layout
+check, position-aware get_ukc, non-finite input guard and the ShipSimulator
+sub-step grid.
 """
 
 import numpy as np
@@ -17,7 +17,9 @@ FULL = get_scenario("full_env")
 
 
 def _csv(path, scenario, points):
-    """A lookup CSV in `scenario`'s dataset layout (raw row, 3 targets, episode_id)."""
+    """
+    A lookup CSV in `scenario`'s dataset layout (raw row, 3 targets, episode_id).
+    """
 
     rows = np.zeros((len(points), scenario.raw_input_dim + 4))
     for i, (x, y, ukc) in enumerate(points):
@@ -28,7 +30,9 @@ def _csv(path, scenario, points):
 
 
 def _confined(tiny_models, lookup):
-    """A myzako_confined UAntwerpSurrogate on the tiny checkpoint."""
+    """
+    A myzako_confined UAntwerpSurrogate on the tiny checkpoint.
+    """
 
     from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 
@@ -38,7 +42,9 @@ def _confined(tiny_models, lookup):
 
 
 def test_lookup_with_wrong_layout_is_refused(tiny_models, tmp_path):
-    """A full_env-layout CSV given to a confined_ukc preset is refused (layout identified by width)."""
+    """
+    A full_env-layout CSV given to a confined_ukc preset is refused (layout identified by width).
+    """
 
     wrong = _csv(tmp_path / "full.csv", FULL, [(0.0, 0.0, 5.0)])
     with pytest.raises(ValueError, match="full_env"):
@@ -46,7 +52,9 @@ def test_lookup_with_wrong_layout_is_refused(tiny_models, tmp_path):
 
 
 def test_get_ukc_uses_the_position(tiny_models, tmp_path):
-    """get_ukc(pos) looks up pos instead of returning the last model input."""
+    """
+    get_ukc(pos) looks up pos instead of returning the last model input.
+    """
 
     model = _confined(tiny_models, _csv(tmp_path / "lk.csv", CONFINED,
                                         [(0.0, 0.0, 5.0), (100.0, 0.0, 9.0)]))
@@ -56,7 +64,9 @@ def test_get_ukc_uses_the_position(tiny_models, tmp_path):
 
 
 def test_non_finite_input_fails_fast(tiny_models, tmp_path):
-    """A NaN in the state raises instead of silently producing NaN velocities."""
+    """
+    A NaN in the state raises instead of silently producing NaN velocities.
+    """
 
     model = _confined(tiny_models, _csv(tmp_path / "lk.csv", CONFINED, [(0.0, 0.0, 5.0)]))
     state = make_state(x=0.0, y=0.0, heading=0.0, u=1.0, v=float("nan"), r=0.0)
@@ -65,9 +75,10 @@ def test_non_finite_input_fails_fast(tiny_models, tmp_path):
 
 
 def test_nan_position_with_lookup_raises_the_clear_error(tiny_models, tmp_path):
-    """A NaN position (velocity and position turn NaN in the same sub-step) must
-    give the clear FloatingPointError, not scipy's KD-tree "'x' must be finite";
-    get_ukc at a NaN position returns the default instead of raising."""
+    """
+    A NaN position raises the clear FloatingPointError (not scipy's KD-tree
+    error); get_ukc at a NaN position returns the default UKC.
+    """
 
     model = _confined(tiny_models, _csv(tmp_path / "lk.csv", CONFINED, [(0.0, 0.0, 5.0)]))
     state = make_state(x=float("nan"), y=float("nan"), heading=0.0, u=1.0, v=0.0, r=0.0)
@@ -77,7 +88,9 @@ def test_nan_position_with_lookup_raises_the_clear_error(tiny_models, tmp_path):
 
 
 def test_ship_simulator_sub_step_grid():
-    """dt is validated at construction: UA needs a multiple of 0.1 s; other models get a remainder step."""
+    """
+    dt is validated at construction: UA needs a multiple of 0.1 s; other models get a remainder step.
+    """
 
     from fw.dynamics.fossen import Fossen
     from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate

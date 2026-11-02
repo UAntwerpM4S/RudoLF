@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -57,7 +57,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     """
-    Connect to AirSim, apply calibration drift correction, and print the pose.
+    Connect to AirSim, apply the calibration drift correction and print the pose.
+
+    Returns:
+        int: Exit code (1 if AirSim is unreachable).
     """
 
     args = _build_parser().parse_args()

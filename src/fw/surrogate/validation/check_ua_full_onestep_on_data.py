@@ -1,32 +1,26 @@
 """
-One-step accuracy of UA_full ON ITS OWN DATASET, with the same metric as section
-4b of the wind report (RMS error / RMS FH signal, and the mean yaw bias).
+One-step accuracy of UA_full on its own dataset, with the metric of section 4b
+of the wind report (RMS error / RMS FH signal, mean yaw bias).
 
-Question it answers: is UA_full's large one-step error in the wind test
-(e.g. 132 % RMS yaw-acceleration error, -0.0052 deg/s^2 yaw bias without wind)
-  - also present on the training data in the same kind of situation
-    (rudder ~0, small yaw rate, open water, low wind, low current)
-    -> the model itself is not accurate enough there (capacity / training /
-       loss weighting), or
-  - absent on the training data
-    -> something in the wind test differs from the training rows
-       (an input that is outside the training distribution, or fed differently).
+Is UA_full's large one-step error in the wind test (e.g. 132 % RMS yaw
+acceleration error, -0.0052 deg/s^2 yaw bias without wind) also present on the
+training data in similar situations (rudder ~0, small yaw rate, open water,
+low wind and current)? If yes, the model itself is not accurate enough there;
+if not, the wind test feeds inputs differently or outside the training
+distribution. The dataset includes the training split, so these numbers are
+an optimistic lower bound.
 
-The dataset contains the training split too, so these numbers are a LOWER bound
-for the model's real error (optimistic). If they are already bad, that settles it.
+Rows are fed to SurrogatePredictor as stored (cols 0-36: the raw 37-column
+full_env input, as UAntwerpSurrogate builds it for tripoli_full); targets are
+cols 37-39 (delta u, v, r over 0.1 s).
 
-Rows are fed to SurrogatePredictor exactly as stored (cols 0..36 = the raw
-37-column full_env input vector, the same thing UAntwerpSurrogate builds for the
-tripoli_full preset);
-targets are cols 37..39 (delta u, v, r over 0.1 s).
-
-Usage (from src, with the RudoLF venv):
+Usage (from src):
     python -m fw.surrogate.validation.check_ua_full_onestep_on_data <dataset.csv> [--checkpoint PATH] [--sample N]
 
---checkpoint: an existing path is used as given; otherwise it is resolved like
-the presets do (relative = in fw/checkpoints). Default: the tripoli_full
-preset's checkpoint. The CSV carries no ship identity: use the dataset of the
-checkpoint's ship (the checkpoint's ship is printed).
+--checkpoint: an existing path is used as given, otherwise resolved like the
+presets (relative to fw/checkpoints). Default: the tripoli_full preset's
+checkpoint. The CSV has no ship identity, so use the dataset of the
+checkpoint's ship (printed).
 """
 
 import argparse
@@ -35,8 +29,7 @@ import sys
 import time
 from pathlib import Path
 
-# Make `import fw...` work when run as a plain script
-# (this file lives in src/fw/surrogate/validation -> src is three levels up).
+# Make `import fw...` work when run as a plain script.
 _SRC = Path(__file__).resolve().parents[3]     # src (this file: src/fw/surrogate/validation/)
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
@@ -61,17 +54,21 @@ LOW_CURRENT = 0.1          # m/s
 
 
 def _true_wind_speed(a):
-    """True wind speed [m/s] per row: apparent wind minus (u, -v), with sway v port positive."""
-    # true = apparent - (u, -v) in (ahead, starboard) components: WindState angle
-    # positive = from starboard, sway v PORT positive (dataset convention since
-    # 2026-10-19; model_comparison_wind: TRUE_WIND_SWAY_SIGN = -1;
-    # analyze_wind_training_data uses the same formula).
+    """
+    True wind speed [m/s] per row: apparent wind minus (u, -v), with sway v port positive.
+    """
+
+    # (ahead, starboard) components: wind angle positive from starboard, v port
+    # positive (same as model_comparison_wind and analyze_wind_training_data).
     ws, wd, u, v = a[:, COL_WS], a[:, COL_WD], a[:, COL_U], a[:, COL_V]
     return np.hypot(ws * np.cos(wd) - u, ws * np.sin(wd) + v)
 
 
 def _count_rows(path: Path) -> int:
-    """Number of non-empty lines of the CSV (one cheap pass, for the sampling rate)."""
+    """
+    Number of non-empty lines of the CSV (one cheap pass, for the sampling rate).
+    """
+
     n = 0
     with open(path, "rb") as f:
         for line in f:
@@ -81,7 +78,10 @@ def _count_rows(path: Path) -> int:
 
 
 def _load(path: Path, sample: int, seed: int):
-    """Random row sample (about `sample` rows) + ALL test-like rows (they are rare), chunked to save memory."""
+    """
+    Random row sample (about `sample` rows) + ALL test-like rows (they are rare), chunked to save memory.
+    """
+
     rng = np.random.default_rng(seed)
     n_cols = len(pd.read_csv(path, header=None, nrows=1).columns)
     if n_cols != N_IN + len(TARGET_COLS) + 1:
@@ -102,7 +102,10 @@ def _load(path: Path, sample: int, seed: int):
 
 
 def _predict(predictor, x: np.ndarray) -> np.ndarray:
-    """Batch predict if SurrogatePredictor supports it (verified against predict_single), else loop."""
+    """
+    Batch predict if SurrogatePredictor supports it (verified against predict_single), else loop.
+    """
+
     singles = np.array([predictor.predict_single(x[i]) for i in range(min(5, len(x)))], dtype=np.float64)
     try:
         batch = np.asarray(predictor.predict(x), dtype=np.float64)
@@ -123,8 +126,7 @@ def _predict(predictor, x: np.ndarray) -> np.ndarray:
 
 def _report(name: str, a: np.ndarray, pred: np.ndarray) -> None:
     """
-    Print one line of one-step metrics for the rows `a` and predictions `pred`: RMS error as a
-    percentage of the RMS FH signal per target, and the mean yaw-acceleration bias.
+    Print RMS error as % of RMS FH signal per target, and the mean yaw-acceleration bias.
     """
 
     n = len(a)
@@ -144,8 +146,7 @@ def _report(name: str, a: np.ndarray, pred: np.ndarray) -> None:
 
 def main():
     """
-    CLI entry point: load the UA_full checkpoint and the dataset, predict a random sample and the
-    test-like rows, and print the metrics per subset (wind, current, thrust).
+    CLI entry point: print the metrics for a random sample and for test-like row subsets.
     """
 
     ap = argparse.ArgumentParser()
@@ -170,7 +171,7 @@ def main():
         ckpt = Path(args.checkpoint)
         if not ckpt.exists():
             ckpt = resolve_checkpoint(args.checkpoint)
-        if not ckpt.exists():      # e.g. the old default "checkpoints/<name>.pth": try the bare name
+        if not ckpt.exists():      # e.g. "checkpoints/<name>.pth": try the bare name
             ckpt = resolve_checkpoint(Path(args.checkpoint).name)
     if not ckpt.exists():
         raise SystemExit(f"Checkpoint not found: {ckpt} (cwd {Path.cwd()}); pass --checkpoint <path>.")

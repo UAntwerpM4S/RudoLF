@@ -8,7 +8,7 @@ from fw.ships.ship_factory import ShipModel, require_fh_supported
 
 _logger = logging.getLogger(__name__)
 
-# Define paths for simulation environment
+# FH installation root and user name for the default paths
 try:
     simexe_path = os.environ['SIMEXE_REPO_FOLDER']
 except KeyError:
@@ -24,12 +24,9 @@ class FhSimBridge:
     """
     Bridge to the FH Simulator math model and ship interface.
 
-    Manages the lifecycle of the FH Simulator: initialization, per-episode
-    rewind, and final disposal. Interaction with the black-box simulator is
-    limited to:
-        - Setting initial position, heading, and velocities before init.
-        - Rewinding to a fixed time point between episodes.
-        - Reading position, velocity, heading, and keel clearance after each step.
+    Manages initialization, per-episode rewind and disposal of the black-box
+    simulator: initial conditions are set before init, the model is rewound
+    between episodes, and the state is read after each step.
 
     Attributes:
         initialize_math_model (bool): True when the math model needs (re)initialization.
@@ -49,11 +46,8 @@ class FhSimBridge:
                  output_path=None,
                  rewind_enabled: bool = True):
         """
-        Initialize the FhSimBridge.
-
-        Resolves all file paths and sets up instance logging. The math model
-        itself is not initialized here; it is initialized lazily on the first
-        call to reset().
+        Resolve file paths and set up logging. The math model itself is
+        initialized lazily on the first reset().
 
         Args:
             ship_model (ShipModel): Determines the scenario file suffix.
@@ -62,19 +56,17 @@ class FhSimBridge:
             config_path (str, optional): Path to simXdrive.config.xml.
             exercise_path (str, optional): Explicit path to the .tab exercise file.
             output_path (str, optional): Directory for simulation output / logs.
-            rewind_enabled (bool): True (default): FH snapshots are kept so
-                reset() can rewind between episodes. False: configured like
-                sim_fh_dataset_generator (SetRewindEnabled(False), no
-                SetRewindConfig); reset() then only works once.
+            rewind_enabled (bool): Keep FH snapshots so reset() can rewind
+                between episodes. If False (as in sim_fh_dataset_generator),
+                reset() works only once.
 
-        Initial-condition hooks (set them before the first reset(); None =
-        leave the exercise's own value):
-            initial_propeller_rps (float): ship_config.setInitialPropellerRps.
-            initial_rudder_angle (float): ship_config.setInitialRudderAngle [deg].
+        Initial-condition attributes (set before the first reset(); None keeps
+        the exercise's value):
+            initial_propeller_rps (float): Initial propeller rps.
+            initial_rudder_angle (float): Initial rudder angle [deg].
             initial_wind_field_transform (tuple): (rotation_deg, scale, offset)
-                for the exercise's wind field, applied right after
-                enableBridge() and before the first simulateSeconds() (FH
-                ignores a transform set later).
+                of the exercise's wind field, applied after enableBridge() and
+                before the first simulateSeconds() (FH ignores it later).
         """
 
         require_fh_supported(ship_model, "FhSimBridge")
@@ -86,7 +78,6 @@ class FhSimBridge:
             "database/areas/ScheldeSaeftinge_23_002/invoer/tra"
         )
 
-        # Determine scenario suffix
         if ship_model == ShipModel.MYZAKO_DEFAULT:
             scenario_suffix = f"{scenario}_default"
         elif ship_model == ShipModel.TRIPOLI:
@@ -96,7 +87,7 @@ class FhSimBridge:
 
         self._initial_vessel_state = None
         self.rewind_enabled = bool(rewind_enabled)
-        # Initial-condition hooks (see the __init__ docstring); None = exercise default.
+        # Initial-condition hooks (see __init__ docstring); None = exercise default.
         self.initial_propeller_rps: Optional[float] = None
         self.initial_rudder_angle: Optional[float] = None          # degrees
         self.initial_wind_field_transform: Optional[tuple] = None  # (rotation_deg, scale, offset)
@@ -124,9 +115,8 @@ class FhSimBridge:
         self._ship_interface = None
         self._math_model = None
 
-        # Per-instance named logger instead of root logger.
-        # Each instance gets a unique logger so output_path changes between
-        # instances don't interfere, and the root logger is never touched.
+        # Per-instance logger, so instances with different output_path do not
+        # interfere and the root logger is untouched.
         self._logger = logging.getLogger(f"FhSimBridge.{id(self)}")
         self._logger.setLevel(logging.INFO)
 
@@ -138,11 +128,11 @@ class FhSimBridge:
                 handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
                 self._logger.addHandler(handler)
 
-                # Also route SimAPI's own logger to the same file
+                # Route SimAPI's own logger to the same file
                 sim_logger = logging.getLogger("sim")
                 sim_logger.setLevel(logging.INFO)
                 sim_logger.addHandler(handler)
-                sim_logger.propagate = False  # prevent it reaching main's root handler
+                sim_logger.propagate = False  # keep it out of the root handler
             except (OSError, FileNotFoundError) as exc:
                 # Fallback to console if the log directory cannot be created.
                 self._logger.addHandler(logging.StreamHandler())
@@ -154,11 +144,7 @@ class FhSimBridge:
     @property
     def ship_model(self):
         """
-        Model type of the ship.
-
-        Returns:
-            ShipModel: Ship model enum value (e.g. ShipModel.MYZAKO_DEFAULT,
-                ShipModel.TRIPOLI).
+        ShipModel of the simulated ship.
         """
 
         return self._ship_model
@@ -176,11 +162,7 @@ class FhSimBridge:
     @initial_vessel_state.setter
     def initial_vessel_state(self, value):
         """
-        Set the initial vessel state used to seed the math model on first reset().
-
-        Must be assigned before the first call to reset().  The value is used
-        by _initialize_math_model() to set the FH engine's starting position,
-        heading, and velocities.
+        Set the initial vessel state; required before the first reset().
 
         Args:
             value (VesselState): Initial state to set.  Positions (x, y) in
@@ -194,11 +176,7 @@ class FhSimBridge:
 
     def __repr__(self):
         """
-        Return a short identifier string for this bridge.
-
-        Returns:
-            str: "FH" identifies the FH Simulator bridge in log output
-                and debug representations.
+        Return "FH", the bridge identifier used in logs.
         """
 
         return "FH"
@@ -233,14 +211,12 @@ class FhSimBridge:
                 "Assign FhSimBridge.initial_vessel_state before calling reset()."
             )
 
-        # Save the original sys.path
         original_sys_path = sys.path.copy()
 
         try:
             sys.path.append(self.library_path)
             from sim import Config, Exercise, MathModel, SimException
 
-            # Configure the math model
             config = Config(self.config_path)
             config.SetOutputDir(self.output_path)
             if self.rewind_enabled:
@@ -254,7 +230,6 @@ class FhSimBridge:
             exercise = Exercise(str(self.exercise_path), config)  # .NET ctor needs a str, not a Path
             ship_config = exercise.getShipConfig()
 
-            # Set initial vessel state
             ship_config.setInitialPosition(float(self._initial_vessel_state.x), float(self._initial_vessel_state.y))
             ship_config.setInitialHeading(float(np.degrees(self._initial_vessel_state.heading)))
             ship_config.setInitialSurgeVelocity(float(self._initial_vessel_state.u))
@@ -266,11 +241,9 @@ class FhSimBridge:
             if self.initial_rudder_angle is not None:
                 ship_config.setInitialRudderAngle(float(self.initial_rudder_angle))
 
-            # Initialize the math model and enable the bridge
             self._math_model = MathModel()
 
-            # A model whose Initialize() raised or returned False is released
-            # too (best effort), so failing grid points do not leak native models.
+            # Release a model whose Initialize() failed, so no native model leaks.
             try:
                 initialized = self._math_model.Initialize(config, exercise)
             except BaseException:
@@ -283,26 +256,22 @@ class FhSimBridge:
                     "Check the exercise file, config, and SimAPI installation."
                 )
 
-            # From here on the native model exists: any failure disposes it
-            # (Terminate/Dispose) before the exception propagates.
+            # From here on, any failure disposes the native model before raising.
             self.math_model_initialized = True
             self.initialize_math_model = False
             try:
                 self._math_model.enableBridge()
 
-                # Get the ship interface
                 self._ship_interface = self._math_model.getShipInterface(0)
                 self._logger.info("Math model initialised successfully.")
 
-                # Wind-field transform: after enableBridge(), before the first
-                # simulateSeconds() -- the same order as sim_fh_dataset_generator.
+                # After enableBridge(), before the first simulateSeconds().
                 if self.initial_wind_field_transform is not None:
                     self._apply_wind_field_transform(*self.initial_wind_field_transform)
 
                 self.math_model.simulateSeconds(0.125)  # initialize velocities
             except BaseException:
-                # Release the model only: the log handlers stay, so the error
-                # (and a retry with this bridge) is still logged.
+                # Keep the log handlers, so the error and a retry are still logged.
                 self._dispose_math_model()
                 raise
 
@@ -312,12 +281,13 @@ class FhSimBridge:
             self._ship_interface = None
             raise RuntimeError(f"SimException during math model initialisation: {e.ToString()}") from e
         finally:
-            # Restore the original sys.path
             sys.path = original_sys_path
 
 
     def _release_uninitialized_model(self) -> None:
-        """Best-effort Terminate/Dispose of a MathModel whose Initialize() failed."""
+        """
+        Best-effort Terminate/Dispose of a MathModel whose Initialize() failed.
+        """
 
         model, self._math_model = self._math_model, None
         if model is not None:
@@ -326,9 +296,8 @@ class FhSimBridge:
 
     def _terminate_and_dispose(self, model, context: str) -> None:
         """
-        Terminate() and Dispose() `model`, each attempted on its own: a failing
-        Terminate() must not skip Dispose(). Failures are logged, not raised
-        (the caller is cleaning up; the original error, if any, is what matters).
+        Call Terminate() and Dispose() on `model` independently; failures are
+        logged, not raised, so cleanup never masks the original error.
         """
 
         for step in ("Terminate", "Dispose"):
@@ -343,8 +312,7 @@ class FhSimBridge:
         Set the exercise's wind-field transform (Rotation [deg], Scale, Offset).
 
         Raises:
-            RuntimeError: If the exercise has no wind field control (the
-                caller, _initialize_math_model, then disposes the model).
+            RuntimeError: If the exercise has no wind field control.
         """
 
         control = self._math_model.getEnvironmentInterface().getWindFieldControl()
@@ -392,20 +360,19 @@ class FhSimBridge:
 
     def reset(self, time_point: float = 0.25):
         """
-        Reset the simulation to a specific time point.
+        Reset the simulation.
 
-        On the first call, the math model is fully initialized using the
-        initial_vessel_state. On subsequent calls, the simulation is rewound
-        to time_point using the snapshot mechanism.
+        The first call initializes the math model from initial_vessel_state;
+        later calls rewind to time_point using the snapshots.
 
         Args:
-            time_point (float): Target simulation time [s] to rewind to.
-                Must be in [0.25, current_simulation_time]. Defaults to 0.25 s
-                (the earliest supported rewind point; t=0 is not supported by
-                the SimAPI rewind mechanism).
+            time_point (float): Simulation time [s] to rewind to, at least
+                0.25 s (SimAPI cannot rewind to t=0) and at most the current
+                simulation time (not checked here).
 
         Raises:
-            RuntimeError: If time_point is out of bounds or the rewind fails.
+            RuntimeError: If time_point < 0.25 s, rewind is disabled, or
+                initialization fails.
         """
 
         if self.initialize_math_model:
@@ -416,9 +383,6 @@ class FhSimBridge:
                 "dispose() it and create a new bridge for the next episode."
             )
         else:
-            # Validate time_point against both lower and upper bounds.
-            # Previously only the lower bound was checked; passing a time_point beyond
-            # the current simulation time would silently fail or crash inside the SimAPI.
             if time_point < 0.25:
                 raise RuntimeError(
                     f"time_point must be >= 0.25 s (got {time_point:.3f} s). "
@@ -439,22 +403,14 @@ class FhSimBridge:
 
     def dispose(self):
         """
-        Terminate and dispose the math model, releasing all SimAPI resources.
+        Release all SimAPI resources and close this bridge's log handlers.
 
-        After this call the bridge is in a clean state: math_model_initialized
-        is False, _math_model and _ship_interface are None, and initialize_math_model
-        is True so a subsequent reset() will re-initialize from scratch.
-
-        Also closes this bridge's log handlers: call it when the bridge is no
-        longer needed.
-
-        Safe to call multiple times (idempotent).
+        A later reset() re-initializes from scratch. Idempotent.
         """
 
         self._dispose_math_model()
 
-        # The file handler was also attached to SimAPI's global "sim" logger
-        # (see __init__); remove it there too, or every new bridge adds one more.
+        # Also remove the handler from SimAPI's global "sim" logger.
         sim_logger = logging.getLogger("sim")
         for handler in self._logger.handlers[:]:
             try:
@@ -476,9 +432,7 @@ class FhSimBridge:
             try:
                 self._terminate_and_dispose(self._math_model, "disposing")
             finally:
-                # Always clear state after dispose so the dead references
-                # are not accessible via math_model / ship_interface properties,
-                # and a subsequent reset() correctly re-initialises.
+                # Clear dead references; the next reset() re-initializes.
                 self._math_model = None
                 self._ship_interface = None
                 self.math_model_initialized = False

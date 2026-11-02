@@ -1,42 +1,27 @@
 """
-Scenario schema definitions for the ship-dynamics surrogate pipeline.
+Scenario schemas for the ship-dynamics surrogate pipeline (numpy only).
 
-This module (numpy only, no torch) is the single source of truth for:
+Single source of truth for:
+  * the raw columns of each scenario and which become model inputs;
+  * raw row to model features (`select_and_encode`, `encoded_feature_names`),
+    including the wind/current encoding (`env_encoding`);
+  * which poorer scenario may be derived from a richer one (`check_projection`,
+    `project_raw_columns`);
+  * the identity every dataset .npz carries (`DatasetIdentity`).
 
-  * which raw columns a training scenario collects, and which of them
-    become model inputs (`ScenarioSchema`, `OPEN_WATER`, `CONFINED_UKC`,
-    `FULL_ENV`);
-  * how a raw row is turned into model features (`select_and_encode`,
-    `encoded_feature_names`), including how wind and current are encoded
-    (`env_encoding`);
-  * which poorer scenario may be derived from a richer one by dropping
-    columns (`check_projection`, `project_raw_columns`);
-  * the identity every dataset .npz carries (`DatasetIdentity`,
-    `npz_metadata`, `read_npz_identity`).
+dataset.py, inference_surrogate.py, train_surrogate.py and
+fw/dynamics/uantwerp_surrogate.py all use these functions, so they cannot
+disagree about a scenario's feature layout.
 
-Dataset (dataset.py), predictor (inference_surrogate.py), training
-(train_surrogate.py) and the UAntwerp surrogate dynamics model
-(fw/dynamics/uantwerp_surrogate.py) all go through these functions, so
-they cannot disagree about the feature layout of a scenario.
+Scenarios (raw widths 8 / 33 / 37, unique, see `scenario_for_raw_width`):
+  open_water   - dynamics only: no rays, UKC, wind or current.
+  confined_ukc - adds bank rays and under-keel clearance.
+  full_env     - rays, UKC, wind and current (the layout of
+                 sim_fh_dataset_generator.collect_supervised_dataset).
+x and y are in every raw row (trajectory logging) but never a model input.
 
-Three scenarios are defined:
-
-  open_water   - plain dynamics only. No bank/collision rays, no UKC, no
-                 wind or current. x, y are still collected in the raw row
-                 (for trajectory logging) but are dropped before the model
-                 sees them, same as every other scenario.
-  confined_ukc - adds bank-collision ray features and under-keel clearance.
-                 Still no wind or current.
-  full_env     - everything: rays, UKC, wind, and current (37 raw columns,
-                 matching sim_fh_dataset_generator.collect_supervised_dataset's
-                 column layout exactly).
-
-The raw widths of the three scenarios are all different (8 / 33 / 37), so a
-raw width identifies its scenario (`scenario_for_raw_width`).
-
-How wind and current are ENCODED for the model is a separate, model-side
-choice (`env_encoding`, see ENV_ENCODING_* below): the raw data layout and
-the .npz identity do not depend on it.
+The wind/current encoding is a model-side choice; the raw layout and the .npz
+identity do not depend on it.
 """
 
 from __future__ import annotations
@@ -53,33 +38,24 @@ from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_LAYOUT_VERSION
 
 def _ray_column_names() -> Tuple[str, ...]:
     """
-    Ray column names in generation order, from the shared ray definition
-    (fw.environments.ray_features.RAY_ANGLES_DEG: 0, 15, ..., 345 deg,
-    clockwise from the bow).
-
-    Returns:
-        Tuple of column names, e.g. ("ray_0", "ray_15", ..., "ray_345").
+    Ray column names ("ray_0", ..., "ray_345") in RAY_ANGLES_DEG order (clockwise from the bow).
     """
 
     return tuple(f"ray_{int(a)}" for a in RAY_ANGLES_DEG)
 
 
-# Public: same order as ray_features.RAY_ANGLES_DEG, which the dataset
-# generators and the surrogate use to compute the rays.
 RAY_COLUMN_NAMES = _ray_column_names()
 
 # Model outputs: one-step body-frame velocity changes over SURROGATE_DT.
 TARGET_NAMES = ("delta_surge", "delta_sway", "delta_yaw_rate")
 
-# Sign convention of "sway" (and "delta_sway") in dataset rows and model
-# outputs: the framework's (fw.ships.vessel_state) -- positive to PORT, as
-# FH's own getShipVelocityOverGround().y and ShipSimulator.integrate. Stored in
-# every dataset .npz and checkpoint and checked on load, so data written with
-# the earlier starboard-positive sway can never be mixed in.
+# Sign of "sway" and "delta_sway" in datasets and model outputs: positive to
+# port (framework convention, as FH's getShipVelocityOverGround().y). Stored in
+# every .npz and checkpoint and checked on load, so starboard-positive data
+# cannot be mixed in.
 SWAY_CONVENTION = "port_positive"
 
-# Time step all surrogate datasets are generated with, and the step the
-# surrogate predicts deltas over [s].
+# Dataset time step and the step the surrogate predicts deltas over [s].
 SURROGATE_DT = 0.1
 
 
@@ -89,18 +65,13 @@ class ScenarioSchema:
     Column layout for one training scenario.
 
     Attributes:
-        name: Scenario identifier, e.g. "open_water". Stored in dataset
-            files and checkpoints, so data and models always carry their own
-            schema rather than relying on the caller to guess it.
-        raw_columns: Every column in the raw dataset row, in order. Defines
-            `raw_input_dim`.
-        input_columns: Ordered subset of `raw_columns` that becomes model
-            input (before encoding). x/y are intentionally excluded in every
-            scenario -- see module docstring.
-        angle_columns: Subset of `input_columns` that are angles in
-            [-pi, pi] and must be sin/cos encoded rather than passed raw,
-            since a raw radian value has a discontinuity at +-pi that an
-            MLP cannot represent.
+        name: Scenario identifier, e.g. "open_water"; stored in datasets and
+            checkpoints.
+        raw_columns: All columns of a raw dataset row, in order.
+        input_columns: Ordered subset of `raw_columns` used as model input
+            (before encoding); never x/y.
+        angle_columns: Subset of `input_columns` that are angles in [-pi, pi],
+            sin/cos encoded because of the discontinuity at +-pi.
     """
 
     name: str
@@ -110,12 +81,9 @@ class ScenarioSchema:
 
     def __post_init__(self):
         """
-        Validate internal consistency of the schema at construction time.
-
         Raises:
-            ValueError: If `raw_columns`/`input_columns` contain duplicates,
-                or if `input_columns`/`angle_columns` reference a column not
-                present in `raw_columns`/`input_columns` respectively.
+            ValueError: On duplicate columns, input_columns not in raw_columns,
+                or angle_columns not in input_columns.
         """
 
         if len(set(self.raw_columns)) != len(self.raw_columns):
@@ -140,7 +108,7 @@ class ScenarioSchema:
     @property
     def raw_input_dim(self) -> int:
         """
-        Width of the raw dataset row this schema expects.
+        Width of the raw dataset row.
         """
 
         return len(self.raw_columns)
@@ -148,8 +116,7 @@ class ScenarioSchema:
     @property
     def includes_rays(self) -> bool:
         """
-        True if the raw row holds the ray proximity features (the surrogate
-        then has to ray-cast at inference time).
+        True if the raw row holds the ray features (ray-casting needed at inference).
         """
 
         return all(c in self.raw_columns for c in RAY_COLUMN_NAMES)
@@ -199,7 +166,7 @@ class ScenarioSchema:
 
     def angle_mask(self) -> Tuple[bool, ...]:
         """
-        Per-`input_columns` boolean mask, True where the column is an angle.
+        Per-`input_columns` mask, True where the column is an angle.
         """
 
         return tuple(c in self.angle_columns for c in self.input_columns)
@@ -209,11 +176,9 @@ class ScenarioSchema:
         Assemble one raw row in this scenario's column order.
 
         Args:
-            values: Mapping column name -> value. Every column of
-                `raw_columns` must be present, except the ray columns, which
-                may instead be given at once as values["rays"] (a sequence
-                of len(RAY_COLUMN_NAMES), in RAY_COLUMN_NAMES order). Keys
-                for columns this scenario does not have are ignored.
+            values: Column name to value for every raw column; the rays may
+                instead be given as values["rays"] in RAY_COLUMN_NAMES order.
+                Keys of columns this scenario lacks are ignored.
 
         Returns:
             float32 array of shape (raw_input_dim,).
@@ -275,14 +240,7 @@ if len({s.raw_input_dim for s in SCENARIOS.values()}) != len(SCENARIOS):
 
 def get_scenario(name: str) -> ScenarioSchema:
     """
-    Look up a scenario schema by name.
-
-    Args:
-        name: Scenario identifier -- "open_water", "confined_ukc", or
-            "full_env".
-
-    Returns:
-        The matching `ScenarioSchema`.
+    Scenario schema by name ("open_water", "confined_ukc" or "full_env").
 
     Raises:
         ValueError: If `name` is not a registered scenario.
@@ -312,39 +270,24 @@ def scenario_for_raw_width(width: int) -> ScenarioSchema:
 
 
 # ----------------------------------------------------------------------
-# Environment encoding (model side; the RAW data layout above is unchanged)
+# Environment encoding (model side only)
 # ----------------------------------------------------------------------
-# How the wind/current columns of a raw row become model inputs:
-#
-#   "angles"          - wind_speed and current_speed raw, wind_direction and
-#                       current_direction sin/cos encoded like the heading.
-#                       Wind is ship-relative (apparent, from FH's WindState),
-#                       current earth-fixed, so the model has to learn the
-#                       current's rotation by the heading itself (encoded
-#                       width 38 for full_env).
-#   "body_components" - wind and current as components in the SHIP frame:
-#                         wind_from_ahead = ws * cos(wd)
-#                         wind_from_stbd  = ws * sin(wd)
-#                       (wd: WindState direction relative to the bow, positive
-#                       = from starboard; apparent wind, unchanged frame) and
+#   "angles"          - speeds raw, directions sin/cos encoded. Wind is apparent
+#                       (ship-relative, FH WindState), current earth-fixed
+#                       (encoded width 38 for full_env).
+#   "body_components" - ship-frame components replacing the four columns in place:
+#                         wind_from_ahead  =  ws * cos(wd)
+#                         wind_from_stbd   =  ws * sin(wd)   (wd: from bow, + from stbd)
 #                         current_to_ahead =  cs * cos(cd - heading)
 #                         current_to_stbd  = -cs * sin(cd - heading)
-#                       (cd: earth-fixed, 0 = East, counter-clockwise, flowing
-#                       toward; heading counter-clockwise, so the relative
-#                       angle is counter-clockwise = towards port, hence the
-#                       minus sign for starboard). The four columns replace
-#                       wind_speed/wind_direction/current_speed/current_direction
-#                       in place; only the heading stays sin/cos encoded
-#                       (encoded width 36 for full_env). Components go
-#                       smoothly to 0 at low speed, where an angle is noise.
-#
-# For scenarios without wind/current (open_water, confined_ukc) both
-# encodings give identical features.
+#                       (cd: earth-fixed, 0 = East, CCW, flowing toward). Only the
+#                       heading stays sin/cos encoded (width 36 for full_env), and
+#                       components go smoothly to 0 at low speed.
+# Without wind/current (open_water, confined_ukc) both give identical features.
 ENV_ENCODING_ANGLES = "angles"
 ENV_ENCODING_BODY = "body_components"
 ENV_ENCODINGS = (ENV_ENCODING_ANGLES, ENV_ENCODING_BODY)
-# Encoding for NEW training runs. Inference always uses the encoding stored
-# in the checkpoint.
+# Encoding for new training runs; inference uses the checkpoint's encoding.
 DEFAULT_ENV_ENCODING = ENV_ENCODING_BODY
 
 _ENV_RAW_COLS = ("wind_speed", "wind_direction", "current_speed", "current_direction")
@@ -353,7 +296,7 @@ _ENV_BODY_NAMES = ("wind_from_ahead", "wind_from_stbd", "current_to_ahead", "cur
 
 def check_env_encoding(env_encoding: str) -> str:
     """
-    Return `env_encoding` if it is known.
+    Return `env_encoding` if known.
 
     Raises:
         ValueError: If it is not one of ENV_ENCODINGS.
@@ -365,7 +308,9 @@ def check_env_encoding(env_encoding: str) -> str:
 
 
 def _uses_body_env(scenario: ScenarioSchema, env_encoding: str) -> bool:
-    """True if `env_encoding` is body_components AND the scenario has wind/current inputs."""
+    """
+    True if `env_encoding` is body_components AND the scenario has wind/current inputs.
+    """
 
     check_env_encoding(env_encoding)
     if env_encoding != ENV_ENCODING_BODY:
@@ -381,8 +326,7 @@ def _uses_body_env(scenario: ScenarioSchema, env_encoding: str) -> bool:
 
 def encoded_feature_names(scenario: ScenarioSchema, env_encoding: str) -> Tuple[str, ...]:
     """
-    Names of the encoded model-input features, in the exact order produced by
-    `select_and_encode(x_raw, scenario, env_encoding)`.
+    Names of the encoded features, in `select_and_encode` output order.
     """
 
     body = _uses_body_env(scenario, env_encoding)
@@ -407,13 +351,11 @@ def encoded_input_dim(scenario: ScenarioSchema, env_encoding: str) -> int:
 
 def select_and_encode(x_raw: np.ndarray, scenario: ScenarioSchema, env_encoding: str) -> np.ndarray:
     """
-    Select `scenario.input_columns` from a raw X block and sin/cos-encode
-    the angular columns; with env_encoding="body_components", wind and
-    current become ship-frame components (see ENV_ENCODING_BODY above).
+    Select `scenario.input_columns` from raw X and encode them (angles sin/cos;
+    with "body_components" wind/current as ship-frame components).
 
-    This is the ONLY place raw-column selection happens. The dataset, the
-    normalization stats and `SurrogatePredictor.predict` all call this, so
-    they are guaranteed to agree on the feature set.
+    The only place raw columns are selected: the dataset, normalization stats
+    and SurrogatePredictor.predict all call this.
 
     Args:
         x_raw: Raw input array, shape `(N, scenario.raw_input_dim)`.
@@ -421,12 +363,8 @@ def select_and_encode(x_raw: np.ndarray, scenario: ScenarioSchema, env_encoding:
         env_encoding: "angles" or "body_components".
 
     Returns:
-        float32 feature array, shape `(N, encoded_input_dim(scenario, env_encoding))`,
-        in the order of `encoded_feature_names(scenario, env_encoding)`:
-        non-angle `input_columns` in order (with body_components: the four
-        wind/current columns replaced in place by their components),
-        followed by sin(angle) for each angle column (in `input_columns`
-        order), followed by cos(angle) for each angle column.
+        float32 array (N, encoded_input_dim), ordered as encoded_feature_names:
+        non-angle inputs, then sin of each angle column, then cos.
 
     Raises:
         ValueError: If `x_raw` is not shaped `(N, scenario.raw_input_dim)`.
@@ -483,17 +421,11 @@ def check_projection(source: ScenarioSchema, target: ScenarioSchema) -> None:
     """
     Raise if data generated for `source` may not be used for a `target` model.
 
-    Allowed: `source == target`, or `target.raw_columns` is an ordered subset
-    of `source.raw_columns` AND `source` has no wind/current that `target`
-    lacks. So open_water <- confined_ukc is allowed (rays and UKC dropped),
-    but nothing <- full_env except full_env itself: wind and current change
-    the SIMULATED dynamics, not just which columns get logged, so a full_env
-    run's Y targets contain effects that a model without wind/current inputs
-    cannot explain.
-
-    Caveat for the allowed case: confined_ukc episodes ran against real river
-    geometry, so the Y deltas may contain some bank/shallow-water influence
-    that the open_water inputs cannot explain.
+    Allowed: source == target, or target's raw columns are an ordered subset of
+    source's and source has no wind/current that target lacks. So confined_ukc
+    data may feed open_water, but full_env data only full_env: wind and current
+    change the simulated dynamics, not just the logged columns. (confined_ukc
+    targets may still hold some bank/shallow-water influence.)
 
     Raises:
         ValueError: If the projection is not allowed.
@@ -516,18 +448,16 @@ def check_projection(source: ScenarioSchema, target: ScenarioSchema) -> None:
 
 def project_raw_columns(x_raw: np.ndarray, from_scenario: ScenarioSchema, to_scenario: ScenarioSchema) -> np.ndarray:
     """
-    Derive `to_scenario`'s raw X columns from `from_scenario` raw X by
-    dropping columns -- no new simulation needed. Only allowed combinations
-    (see `check_projection`) are accepted.
+    Derive `to_scenario` raw X from `from_scenario` raw X by dropping columns
+    (only combinations allowed by `check_projection`).
 
     Args:
-        x_raw: Raw X array generated for `from_scenario`, shape
-            `(N, from_scenario.raw_input_dim)`.
-        from_scenario: The scenario `x_raw` was generated for.
-        to_scenario: The scenario to project `x_raw` down to.
+        x_raw: Raw X of shape (N, from_scenario.raw_input_dim).
+        from_scenario: Scenario `x_raw` was generated for.
+        to_scenario: Target scenario.
 
     Returns:
-        Raw X array for `to_scenario`, shape `(N, to_scenario.raw_input_dim)`.
+        Raw X of shape (N, to_scenario.raw_input_dim).
 
     Raises:
         ValueError: If `x_raw`'s width doesn't match `from_scenario`, or the
@@ -549,17 +479,15 @@ def project_raw_columns(x_raw: np.ndarray, from_scenario: ScenarioSchema, to_sce
 # ----------------------------------------------------------------------
 # Dataset identity (.npz)
 # ----------------------------------------------------------------------
-# Stored in every dataset .npz (generate_ship_data.py), required and checked
-# when it is read (dataset.load_raw), and copied into every checkpoint
-# (train_surrogate.py).
+# Written by generate_ship_data.py, checked by dataset.load_raw, copied into
+# every checkpoint by train_surrogate.py.
 NPZ_SCENARIO_KEY = "scenario"
 NPZ_RAY_LAYOUT_KEY = "ray_layout"
 NPZ_SHIP_MODEL_KEY = "ship_model"            # fw.ships.ship_factory.ShipModel name, e.g. "TRIPOLI"
 NPZ_RUDDER_MAX_DEG_KEY = "rudder_max_deg"    # rudder_action = +-1 <-> +-this many degrees
 NPZ_SWAY_CONVENTION_KEY = "sway_convention"  # SWAY_CONVENTION at generation time
-# Optional provenance (how the data was generated: generator settings, seed,
-# exercises, ...), a JSON string. NOT part of the identity: datasets with
-# different provenance may still be combined; training only logs it.
+# Optional provenance (generator settings, seed, exercises, ...) as JSON. Not
+# part of the identity: datasets of different provenance may be combined.
 NPZ_PROVENANCE_KEY = "generation_json"
 
 
@@ -572,9 +500,8 @@ class DatasetIdentity:
         scenario: Scenario name of the raw X layout in the file.
         ray_layout: ray_features.RAY_LAYOUT_VERSION at generation time.
         ship_model: ShipModel name of the simulated ship, e.g. "TRIPOLI".
-        rudder_max_deg: Rudder angle [deg] that rudder_action = 1 stands for
-            (the generator's RUDDER_MAX_DEG). The surrogate converts a rudder
-            angle to its input with this value.
+        rudder_max_deg: Rudder angle [deg] for rudder_action = 1; the surrogate
+            scales rudder angles to its input with it.
         sway_convention: Sign convention of the sway columns (SWAY_CONVENTION).
     """
 
@@ -600,8 +527,7 @@ def npz_metadata(identity: DatasetIdentity) -> dict:
 
 def provenance_metadata(provenance: dict) -> dict:
     """
-    The provenance entry to store in a dataset .npz (a 0-d string array with
-    the JSON text, so np.load needs no pickle).
+    Provenance entry for a dataset .npz (0-d JSON string array, no pickle needed).
     """
 
     return {NPZ_PROVENANCE_KEY: np.array(json.dumps(provenance, sort_keys=True))}
@@ -609,8 +535,7 @@ def provenance_metadata(provenance: dict) -> dict:
 
 def read_npz_provenance(data) -> Optional[dict]:
     """
-    Provenance of an opened .npz (`np.load` result), or None if the file has
-    none (datasets written before it was recorded).
+    Provenance of an opened .npz, or None if it has none.
     """
 
     if NPZ_PROVENANCE_KEY not in data.files:

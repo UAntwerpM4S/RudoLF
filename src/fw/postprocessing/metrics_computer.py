@@ -15,38 +15,29 @@ from fw.postprocessing.ship_episode_data import RunData, ShipEpisodeData
 @dataclass
 class ShipMetrics:
     """
-    Aggregated performance metrics for a single ship over multiple episodes.
+    Metrics for one ship, aggregated over episodes.
 
-    This dataclass stores summary statistics computed from a set of episodes,
-    including tracking performance, control effort, motion behavior, and reward
-    statistics.
+    Per-episode values are averaged over episodes; maxima (MTE, MRA, MT, Mu)
+    are the maximum over all episodes. Rewards are per step.
 
     Attributes:
-        ship_id: Identifier of the ship.
+        mTEI: Mean absolute cross-track error ("track error integral").
+        MTE: Maximum absolute cross-track error.
+        mRA / MRA: Mean / maximum absolute rudder command.
+        mRAC: Mean absolute rudder change (smoothness).
+        mT / MT: Mean / maximum absolute thrust command.
+        mTC: Mean absolute thrust change.
+        vRA: Variance of the rudder command.
+        sCF: Rudder sign-change frequency (oscillation).
+        mHE: Mean absolute heading error.
+        mu / Mu: Mean / maximum absolute surge velocity.
+        avg_reward / best_reward / worst_reward: Mean, best and worst
+            per-step episode reward.
 
-        mTEI: Mean Track Error Integral (average integrated cross-track error).
-        MTE: Maximum Track Error (peak absolute cross-track error).
-
-        mRA: Mean Rudder Angle (average absolute rudder command).
-        MRA: Maximum Rudder Angle.
-
-        mRAC: Mean Rudder Angle Change (control smoothness indicator).
-
-        mT: Mean Thrust (average absolute thrust command).
-        MT: Maximum Thrust.
-        mTC: Mean Thrust Change (thrust smoothness indicator).
-
-        vRA: Steering Variance (spread of rudder commands).
-        sCF: Steering Sign-Change Frequency (oscillation indicator).
-
-        mHE: Mean Heading Error (average absolute heading deviation).
-
-        mu: Mean surge velocity magnitude.
-        Mu: Maximum surge velocity magnitude.
-
-        avg_reward: Mean per-step reward averaged across episodes.
-        best_reward: Best (highest) normalized episode reward.
-        worst_reward: Worst (lowest) normalized episode reward.
+    The remaining fields are COLAV metrics. "Per policy" means per
+    ground-truth scenario (gt). A valid encounter resolved normally (OS passed
+    the TS and the TS left forget_range) without collision; CRI, CTE and
+    time-to-first-action (TFA) aggregates use valid encounters only.
     """
 
     ship_id: str
@@ -66,70 +57,47 @@ class ShipMetrics:
     avg_reward: float = 0.0
     best_reward: float = 0.0
     worst_reward: float = 0.0
-    # Env-reported collision / COLREG metrics, aggregated across episodes.
+    # Env-reported collision / COLREG counts
     num_episodes: int = 0
     collision_count: int = 0
     collision_type_count: dict = field(default_factory=dict)
     collision_side_count: dict = field(default_factory=dict)
     colreg_violation_count: int = 0
-    # Scenario classification diagnostics, aggregated per-encounter across
-    # all episodes (5-way extended label space). In step-level generation an
-    # episode may contain multiple encounters; each contributes one record.
+    # Scenario classification, one record per encounter (5-way extended labels)
     num_encounters: int = 0
     encounter_misclassification_count: int = 0
     encounter_confusion: dict = field(default_factory=dict)   # {(gt, pred): count}
-    # Per-policy (gt scenario) collision counts and encounter denominators.
-    # Outside-encounter collisions (e.g. bank groundings while path-following)
-    # are tracked separately since they have no encounter denominator.
-    # encounters_per_policy is the *valid-outcome* denominator used by the
-    # collision rate: collided OR (passed AND tracked_lost). Encounters cut
-    # off by episode termination/truncation are excluded since they weren't
-    # exposed to the full range of dangers. total_encounters_per_policy
-    # retains the raw count of all encounter starts for diagnostics.
+    # Collision-rate denominators. encounters_per_policy counts encounters with
+    # a determined outcome (collided, or passed and tracked_lost); encounters
+    # cut off by episode end are excluded. Collisions outside encounters (e.g.
+    # groundings while path-following) are counted separately.
     encounters_per_policy: dict = field(default_factory=dict)         # {gt: valid_outcome_count}
     total_encounters_per_policy: dict = field(default_factory=dict)   # {gt: all_encounter_starts}
     collisions_per_policy: dict = field(default_factory=dict)         # {gt: collided_encounter_count}
     collisions_outside_encounters: int = 0
-    # Per-policy outcome breakdown over all encounter starts. Categories:
-    # "collided", "resolved", "passed_not_tracked_lost",
-    # "tracked_lost_not_passed", "neither". Sums to total_encounters_per_policy.
+    # Outcome categories: "collided", "resolved", "passed_not_tracked_lost",
+    # "tracked_lost_not_passed", "neither"; sums to total_encounters_per_policy.
     encounter_outcomes_per_policy: dict = field(default_factory=dict) # {gt: {category: count}}
-    # Per-policy CRI aggregates over *valid* encounters only. An encounter
-    # is "valid" when it resolved normally (OS passed the TS and the TS
-    # subsequently left the forget range) and did not end in collision.
-    # mean_cri_per_policy is the average of per-encounter mean-CRI samples,
-    # median_cri_per_policy the median of those same samples, and
-    # max_cri_per_policy the maximum of per-encounter max-CRI samples.
-    # valid_encounters_per_policy gives the sample count behind each entry.
+    # CRI over valid encounters
     mean_cri_per_policy: dict = field(default_factory=dict)           # {gt: mean of per-encounter mean CRI}
     median_cri_per_policy: dict = field(default_factory=dict)         # {gt: median of per-encounter mean CRI}
     max_cri_per_policy: dict = field(default_factory=dict)            # {gt: max of per-encounter max CRI}
     valid_encounters_per_policy: dict = field(default_factory=dict)   # {gt: valid encounter count}
-    # Per-policy cross-track error aggregates over the same *valid*
-    # encounters as the CRI metrics. mean_cte_per_policy / median_cte_per_policy
-    # are computed from per-encounter mean-CTE samples; max_cte_per_policy
-    # takes the maximum of per-encounter max-CTE samples.
+    # Cross-track error over valid encounters
     mean_cte_per_policy: dict = field(default_factory=dict)           # {gt: mean of per-encounter mean CTE [m]}
     median_cte_per_policy: dict = field(default_factory=dict)         # {gt: median of per-encounter mean CTE [m]}
     max_cte_per_policy: dict = field(default_factory=dict)            # {gt: max of per-encounter max CTE [m]}
-    # Per-policy time-to-first-action aggregates, in seconds. Restricted to
-    # valid encounters where the OS commanded a rudder above the configured
-    # threshold (default 10 deg). reactive_encounters_per_policy gives the
-    # sample count; non_reactive_encounters_per_policy counts valid encounters
-    # in which no rudder command crossed the threshold (excluded from the
-    # mean/median aggregates to avoid skewing them with a fall-back value).
+    # Time to first rudder command above the threshold (default 10 deg), over
+    # valid encounters. Encounters without such a command are only counted
+    # in non_reactive_encounters_per_policy.
     mean_tfa_per_policy: dict = field(default_factory=dict)           # {gt: mean time-to-first-action [s]}
     median_tfa_per_policy: dict = field(default_factory=dict)         # {gt: median time-to-first-action [s]}
     reactive_encounters_per_policy: dict = field(default_factory=dict)     # {gt: count with reaction}
     non_reactive_encounters_per_policy: dict = field(default_factory=dict) # {gt: count without reaction}
-    # Baseline CRI: a "floor" against which the per-policy CRI numbers can
-    # be read. Empirical baseline is the mean (and absolute min) of the
-    # per-encounter MIN-CRI samples across all valid encounters from every
-    # policy - i.e. "the lowest CRI value samples typically hit in any
-    # encounter, regardless of policy". Theoretical baseline is what the
-    # CRI formula yields when a TS sits exactly at encounter_range with
-    # TCPA = 0 (parting). Together they bound where the policy mean CRI
-    # *could* possibly land if the OS perfectly disengaged.
+    # Baseline CRI floor for reading the per-policy values. Empirical: mean
+    # and min of per-encounter minimum CRI over all valid encounters (all
+    # policies). Theoretical: CRI of a TS at encounter_range with TCPA = 0,
+    # filled in by the caller (agent_manager).
     baseline_cri_empirical_mean: float = 0.0
     baseline_cri_empirical_min: float = 0.0
     baseline_cri_theoretical: float = 0.0
@@ -138,26 +106,16 @@ class ShipMetrics:
 
 class MetricsComputer:
     """
-    Computes aggregated per-ship metrics from evaluation run data.
+    Compute per-ship metrics from evaluation RunData.
 
-    This class processes `RunData` (containing multiple episodes per ship)
-    and computes summary statistics such as tracking error, control effort,
-    velocity statistics, and reward performance.
-
-    Typical usage:
+    Usage:
         metrics = MetricsComputer.compute(run_data)
     """
 
     @staticmethod
     def compute(run_data: RunData) -> dict[str, ShipMetrics]:
         """
-        Computes metrics for all ships in a run.
-
-        Args:
-            run_data: Evaluation output containing per-ship episode data.
-
-        Returns:
-            Dictionary mapping ship IDs to computed `ShipMetrics`.
+        Return {ship_id: ShipMetrics} for all ships in run_data.
         """
 
         result = {}
@@ -168,21 +126,7 @@ class MetricsComputer:
     @staticmethod
     def _compute_ship(ship_id: str, episodes: list[ShipEpisodeData]) -> ShipMetrics:
         """
-        Computes aggregate metrics for a single ship.
-
-        Args:
-            ship_id: Identifier of the ship.
-            episodes: List of `ShipEpisodeData` objects for that ship.
-
-        Returns:
-            ShipMetrics containing aggregated statistics.
-
-        Notes:
-            - Metrics are averaged across episodes where applicable.
-            - Cross-track error is averaged per episode (nanmean).
-            - mTEI is a mean absolute cross-track error.
-            - Reward metrics are normalized by number of steps per episode.
-            - Episodes with zero steps are excluded from reward normalization.
+        Aggregate the metrics of one ship over its episodes (see ShipMetrics).
         """
 
         m = ShipMetrics(ship_id=ship_id)
@@ -191,14 +135,13 @@ class MetricsComputer:
 
         rewards = np.array([ep.reward for ep in episodes], dtype=float)
 
-        # Use rudder_actions length as step count proxy; fall back to path length.
+        # Step count: number of rudder actions, else path length (at least 1)
         step_counts = np.array([
             ep.rudder_actions.shape[0] if ep.rudder_actions.size > 0
             else max(ep.path.shape[0], 1)
             for ep in episodes
         ], dtype=float)
 
-        # Guard against zero-length episodes to avoid division by zero.
         safe_steps = np.where(step_counts > 0, step_counts, 1.0)
         normalized_rewards = rewards / safe_steps
 
@@ -215,7 +158,7 @@ class MetricsComputer:
         for ep in episodes:
             if ep.cross_errors.size:
                 abs_cte = np.abs(ep.cross_errors)
-                per_ep_mTEI.append(float(np.nanmean(abs_cte)))   # correct mean
+                per_ep_mTEI.append(float(np.nanmean(abs_cte)))
                 per_ep_MTE.append(float(np.nanmax(abs_cte)))
             if ep.rudder_actions.size:
                 ra_raw = ep.rudder_actions
@@ -227,7 +170,7 @@ class MetricsComputer:
                 # Sign-change frequency
                 if ra_raw.size > 1:
                     signs = np.sign(ra_raw)
-                    # Filter out zeros to avoid double counting zero-crossings
+                    # Ignore zeros so passing through 0 counts once
                     nz_signs = signs[signs != 0]
                     if nz_signs.size > 1:
                         sign_changes = np.sum(nz_signs[:-1] != nz_signs[1:])
@@ -254,32 +197,14 @@ class MetricsComputer:
 
         def safe_mean(lst: list) -> float:
             """
-            Compute mean of list, returning 0.0 for empty lists.
-            
-            Uses np.nanmean to ignore NaN values. Returns 0.0 if list is empty
-            to avoid warnings and ensure consistent behavior across episodes.
-            
-            Args:
-                lst: List of numeric values (may contain NaN).
-            
-            Returns:
-                float: Mean of non-NaN values, or 0.0 if list is empty.
+            NaN-ignoring mean; 0.0 for an empty list.
             """
 
             return float(np.nanmean(lst)) if lst else 0.0
 
         def safe_max(lst: list) -> float:
             """
-            Compute maximum of list, returning 0.0 for empty lists.
-            
-            Uses np.nanmax to ignore NaN values. Returns 0.0 if list is empty
-            to avoid warnings and ensure consistent behavior across episodes.
-            
-            Args:
-                lst: List of numeric values (may contain NaN).
-            
-            Returns:
-                float: Maximum of non-NaN values, or 0.0 if list is empty.
+            NaN-ignoring max; 0.0 for an empty list.
             """
 
             return float(np.nanmax(lst)) if lst else 0.0
@@ -298,7 +223,6 @@ class MetricsComputer:
         m.mu   = safe_mean(per_ep_mu)
         m.Mu   = safe_max(per_ep_Mu)
 
-        # Aggregate env-reported collision / COLREG info.
         m.num_episodes = len(episodes)
         m.collision_type_count = dict(
             Counter(ep.collision_type for ep in episodes if ep.collision and ep.collision_type)
@@ -308,13 +232,9 @@ class MetricsComputer:
         )
         m.colreg_violation_count = sum(int(ep.colreg_violations) for ep in episodes)
 
-        # Classification diagnostics - one record per encounter.
-        # num_encounters counts all encounter starts (including those without
-        # a gt label); classification accuracy metrics only use labeled ones.
-        # collision_count is the total: collided encounters + episode-terminating
-        # collisions that happened outside any encounter (e.g. bank groundings
-        # while path-following). Per-policy counts use only encounter-level
-        # collisions since outside-encounter collisions have no gt scenario.
+        # Per-encounter records. num_encounters counts all encounter starts;
+        # classification metrics use labeled ones only. collision_count also
+        # includes collisions outside encounters, which have no gt scenario.
         confusion: dict[tuple[str, str], int] = {}
         mismatches = 0
         total = 0
@@ -331,8 +251,7 @@ class MetricsComputer:
         max_cte_per_policy: dict[str, float] = {}
         tfa_samples_per_policy: dict[str, list[float]] = {}
         non_reactive_per_policy: dict[str, int] = {}
-        # Pool of per-encounter min-CRI samples across *all* policies - used
-        # to compute the empirical baseline CRI floor reported globally.
+        # Per-encounter min CRI over all policies (empirical baseline)
         min_cri_samples_all_policies: list[float] = []
         for ep in episodes:
             encounter_collision_in_ep = False
@@ -342,16 +261,12 @@ class MetricsComputer:
                 collided = bool(enc.get("collided", False))
                 passed = bool(enc.get("passed", False))
                 tracked_lost = bool(enc.get("tracked_lost", False))
-                # An encounter has a fully determined outcome when it either
-                # ended in collision or fully resolved (OS passed and TS left
-                # forget range). Truncated / mid-encounter records are skipped
-                # since they weren't exposed to the full set of dangers.
+                # Determined outcome: collision, or fully resolved
                 valid_outcome = collided or (passed and tracked_lost)
                 if gt is not None:
                     total_encounters_per_policy[gt] = total_encounters_per_policy.get(gt, 0) + 1
                     if valid_outcome:
                         valid_encounters_per_policy[gt] = valid_encounters_per_policy.get(gt, 0) + 1
-                    # Outcome category for the diagnostic breakdown.
                     if collided:
                         cat = "collided"
                     elif passed and tracked_lost:
@@ -369,10 +284,7 @@ class MetricsComputer:
                     encounter_collision_in_ep = True
                     if gt is not None:
                         collisions_per_policy[gt] = collisions_per_policy.get(gt, 0) + 1
-                # CRI samples are restricted to *valid* encounters: those
-                # that resolved (OS passed and TS left forget range) and
-                # did not end in collision. Unresolved encounters give a
-                # truncated view of CRI and would skew the aggregate.
+                # CRI, CTE and TFA samples from valid encounters only
                 if (
                     gt is not None
                     and enc.get("resolved", False)
@@ -383,21 +295,15 @@ class MetricsComputer:
                     mean_cri_samples_per_policy.setdefault(gt, []).append(enc_mean_cri)
                     if enc_max_cri > max_cri_per_policy.get(gt, 0.0):
                         max_cri_per_policy[gt] = enc_max_cri
-                    # Per-encounter min CRI contributes to the global baseline
-                    # (pooled across all policies - that's the user-requested
-                    # "lowest CRI value typically attainable" reference).
                     enc_min_cri = float(enc.get("min_cri", 0.0))
                     if math.isfinite(enc_min_cri):
                         min_cri_samples_all_policies.append(enc_min_cri)
-                    # Same valid-encounter gate for per-policy CTE samples.
                     enc_mean_cte = float(enc.get("mean_cte", 0.0))
                     enc_max_cte = float(enc.get("max_cte", 0.0))
                     mean_cte_samples_per_policy.setdefault(gt, []).append(enc_mean_cte)
                     if enc_max_cte > max_cte_per_policy.get(gt, 0.0):
                         max_cte_per_policy[gt] = enc_max_cte
-                    # Time-to-first-action: None means the OS never commanded
-                    # a rudder above threshold during the encounter - bucket
-                    # those separately so they don't skew the mean/median.
+                    # None: no rudder command above the threshold
                     tfa = enc.get("time_to_first_action", None)
                     if tfa is None:
                         non_reactive_per_policy[gt] = non_reactive_per_policy.get(gt, 0) + 1
@@ -411,9 +317,7 @@ class MetricsComputer:
                 confusion[key] = confusion.get(key, 0) + 1
                 if gt != pred:
                     mismatches += 1
-            # Episode-terminating collisions that didn't occur in any encounter
-            # (e.g. bank groundings while path-following) are counted separately
-            # so total collisions aren't underreported.
+            # Collision outside any encounter (e.g. grounding while path-following)
             if ep.collision and not encounter_collision_in_ep:
                 collisions_outside_encounters += 1
 
@@ -453,13 +357,10 @@ class MetricsComputer:
             gt: len(samples) for gt, samples in tfa_samples_per_policy.items()
         }
         m.non_reactive_encounters_per_policy = non_reactive_per_policy
-        # Empirical baseline CRI - pooled across all policies.
         if min_cri_samples_all_policies:
             m.baseline_cri_empirical_mean = float(np.mean(min_cri_samples_all_policies))
             m.baseline_cri_empirical_min = float(np.min(min_cri_samples_all_policies))
             m.baseline_cri_sample_count = len(min_cri_samples_all_policies)
-        # Theoretical baseline is left at 0.0 here - it depends on env-side
-        # CRI/encounter-range constants the metric layer doesn't see. The
-        # caller (agent_manager) fills it in before printing.
+        # baseline_cri_theoretical needs env constants; agent_manager sets it.
 
         return m

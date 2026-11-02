@@ -1,5 +1,5 @@
 """
-Unit tests for the AirSim Bridge refactoring (Max 12 tests).
+Unit tests for AirSimConfig and AirSimBridge (cosysairsim mocked).
 """
 
 import pytest
@@ -11,12 +11,12 @@ from airsim.communication.airsim_bridge import AirSimBridge, is_ue5_reachable
 @pytest.fixture
 def mock_car_client():
     """
-    Mock car client.
+    Mocked CarClient with a fixed car state and kinematics.
     """
 
     from unittest.mock import MagicMock
     client_mock = MagicMock()
-    # Ensure client.getCarState() works for health check
+    # getCarState() is used by the health check
     state_mock = MagicMock()
     state_mock.speed = 0.0
     state_mock.gear = 1
@@ -44,10 +44,7 @@ def mock_car_client():
 @pytest.fixture
 def mock_cosysairsim_module(mock_car_client):
     """
-    Mock cosysairsim module.
-
-    Args:
-        mock_car_client: Description.
+    Install a mocked cosysairsim module returning mock_car_client.
     """
 
     from unittest.mock import MagicMock
@@ -63,11 +60,11 @@ def mock_cosysairsim_module(mock_car_client):
         del sys.modules["cosysairsim"]
 
 
-# ── T-003: API-parameter validatie & foutmeldingen ──
+# T-003: API parameter validation and error messages
 
 def test_config_valid_defaults():
     """
-    Test 1: Check if the default IP and ports are properly assigned without PID values.
+    Check if the default IP and ports are properly assigned without PID values.
     """
 
     cfg = AirSimConfig()
@@ -78,7 +75,7 @@ def test_config_valid_defaults():
 
 def test_config_invalid_port():
     """
-    Test 2: Check if invalid ports throw ValueError.
+    Check if invalid ports throw ValueError.
     """
 
     with pytest.raises(ValueError, match="Port must be an integer in range"):
@@ -86,19 +83,19 @@ def test_config_invalid_port():
 
 def test_config_invalid_ip():
     """
-    Test 3: Check if bad IP formats throw ValueError.
+    Check if bad IP formats throw ValueError.
     """
 
     with pytest.raises(ValueError, match="Invalid IP address"):
         AirSimConfig(ip="invalid_address")
 
 
-# ── T-004: UE5 detectie ──
+# T-004: UE5 detection
 
 @patch("socket.create_connection")
 def test_ue5_reachable(mock_socket):
     """
-    Test 4: TCP probe returns True when connection succeeds.
+    TCP probe returns True when connection succeeds.
     """
 
     assert is_ue5_reachable("127.0.0.1", 41451) is True
@@ -106,7 +103,7 @@ def test_ue5_reachable(mock_socket):
 @patch("socket.create_connection", side_effect=ConnectionRefusedError)
 def test_ue5_unreachable(mock_socket):
     """
-    Test 5: TCP probe returns False when connection is refused.
+    TCP probe returns False when connection is refused.
     """
 
     assert is_ue5_reachable("127.0.0.1", 41451) is False
@@ -114,7 +111,7 @@ def test_ue5_unreachable(mock_socket):
 @patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=False)
 def test_bridge_init_ue5_unreachable(mock_reachable):
     """
-    Test 6: Bridge disables itself immediately if UE5 is unreachable.
+    Bridge disables itself immediately if UE5 is unreachable.
     """
 
     bridge = AirSimBridge()
@@ -122,13 +119,13 @@ def test_bridge_init_ue5_unreachable(mock_reachable):
     mock_reachable.assert_called_once()
 
 
-# ── T-001: Retry-logica & health-check ──
+# T-001: retry logic and health check
 
 @patch("airsim.communication.airsim_bridge.time.sleep")
 @patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True)
 def test_bridge_retry_success(_, mock_sleep, mock_cosysairsim_module, mock_car_client):
     """
-    Test 7: Bridge successfully connects after a failure via exponential backoff.
+    Bridge successfully connects after a failure via exponential backoff.
     """
 
     mock_car_client.confirmConnection.side_effect = [ConnectionError("Fail 1"), None]
@@ -142,7 +139,7 @@ def test_bridge_retry_success(_, mock_sleep, mock_cosysairsim_module, mock_car_c
 @patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True)
 def test_bridge_retry_exhausted(_, mock_sleep, mock_cosysairsim_module, mock_car_client):
     """
-    Test 8: Bridge disables itself if all connection retries fail.
+    Bridge disables itself if all connection retries fail.
     """
 
     mock_car_client.confirmConnection.side_effect = Exception("Fail")
@@ -155,17 +152,13 @@ def test_bridge_retry_exhausted(_, mock_sleep, mock_cosysairsim_module, mock_car
 
 class TestBridgeHealthAndControl:
     """
-    TestBridgeHealthAndControl.
+    Health check and control forwarding of a connected bridge.
     """
 
     @pytest.fixture(autouse=True)
     def setup_bridge(self, mock_cosysairsim_module, mock_car_client):
         """
-        Setup bridge.
-
-        Args:
-            mock_cosysairsim_module: Description.
-            mock_car_client: Description.
+        Create a connected bridge on the mocked client.
         """
 
         with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True), patch(
@@ -179,7 +172,7 @@ class TestBridgeHealthAndControl:
 
     def test_health_check_success(self):
         """
-        Test 9: Health check returns True and keeps bridge connected.
+        Health check returns True and keeps bridge connected.
         """
 
         assert self.bridge.health_check() is True
@@ -188,17 +181,17 @@ class TestBridgeHealthAndControl:
 
     def test_health_check_failure(self):
         """
-        Test 10: Health check disables bridge on failure.
+        Health check disables bridge on failure.
         """
 
         self.mock_client.getCarState.side_effect = Exception("Disconnected")
-        self.mock_client.confirmConnection.side_effect = Exception("Reconnection Fail") # To prevent successful reconnect
+        self.mock_client.confirmConnection.side_effect = Exception("Reconnection Fail") # prevent a successful reconnect
         assert self.bridge.health_check() is False
         assert self.bridge.is_connected is False
 
     def test_set_controls(self, mock_cosysairsim_module):
         """
-        Test 11: set_controls forwards predefined CarControls (T-001 pass-through constraint modified to pure middleware).
+        set_controls forwards the given CarControls unchanged (pure pass-through).
         """
 
         controls = mock_cosysairsim_module.CarControls()
@@ -210,25 +203,24 @@ class TestBridgeHealthAndControl:
         assert self.bridge._controls is controls
         self.mock_client.setCarControls.assert_called_once_with(controls)
 
-# ── T-005: AirSimEnv & AirSimBridge Integratie ──
+# T-005: AirSimEnv and AirSimBridge integration
 
 def test_client_property_exposure(mock_cosysairsim_module, mock_car_client):
     """
-    Test 12: Ensure AirSimEnv can safely access the underlying UE5 client.
+    The client property exposes the UE5 client, and raises when disconnected.
     """
 
     with patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True):
         bridge = AirSimBridge()
-        # Ensure it works
         client = bridge.client
         assert client is mock_car_client
         
-        # Test failure state
+        # Disconnected
         bridge._connected = False
         with pytest.raises(ConnectionError, match="Cannot access AirSim client"):
             _ = bridge.client
 
-# ── Extension Tests (T-005 - T-008) ──
+# Extension tests (T-005 to T-008)
 
 @patch("airsim.communication.airsim_bridge.AirSimBridge._connect_with_retry")
 @patch("airsim.communication.airsim_bridge.is_ue5_reachable", return_value=True)
@@ -243,11 +235,9 @@ def test_health_check_reconnect(mock_reachable, mock_connect, mock_cosysairsim_m
     # Fake being connected so health_check can try
     bridge._connected = True
     
-    # Act
     mock_connect.reset_mock()
     bridge.health_check()
     
-    # Assert
     assert mock_connect.call_count == 1
     assert bridge._client is None  # Should be cleared before reconnect
     assert bridge._controls is None
@@ -264,10 +254,9 @@ def test_disconnect_behavior(mock_cosysairsim_module, mock_car_client):
         with patch("airsim.communication.airsim_bridge.AirSimBridge._flush_csv") as mock_flush:
             bridge.disconnect()
             
-            # Assert flush was called
             mock_flush.assert_called_once()
             
-            # Assert brakes were applied
+            # Brakes applied
             args, kwargs = mock_car_client.setCarControls.call_args
             controls = args[0]
             assert controls.throttle == 0.0
@@ -283,12 +272,11 @@ def test_get_state_telemetry_and_yaw(mock_cosysairsim_module, mock_car_client):
         bridge = AirSimBridge()
         state = bridge.get_state()
         
-        # Validate positions
         assert state["pos_x"] == 1.0
         assert state["pos_y"] == 2.0
         assert state["pos_z"] == 3.0
         
-        # Validate yaw (w=0.7071, z=0.7071 -> ~90 degrees or pi/2 radians)
+        # Quaternion w = z = 0.7071 gives yaw pi/2
         assert state["yaw"] == pytest.approx(1.5707, abs=0.01)
 
 @patch("os.path.isfile", return_value=False)
@@ -303,13 +291,10 @@ def test_csv_logging_buffer(mock_open, mock_isfile, mock_cosysairsim_module, moc
         with patch("csv.DictWriter") as mock_writer_cls:
             mock_writer_inst = mock_writer_cls.return_value
             
-            # Add one item to buffer
             bridge._sensor_buffer.append({"a": 1, "b": 2})
             
-            # Flush
             bridge._flush_csv()
             
-            # Assert empty buffer and file opened
             assert len(bridge._sensor_buffer) == 0
             mock_open.assert_called_once_with("test_log.csv", mode='a', newline='')
             mock_writer_inst.writeheader.assert_called_once()

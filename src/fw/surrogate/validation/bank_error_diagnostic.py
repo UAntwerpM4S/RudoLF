@@ -1,34 +1,28 @@
 """
 Surrogate error vs. distance to the bank, on a dataset split.
 
-Question it answers: does a confined/full surrogate under-predict the bank
-effect close to the bank, and is that a data problem (few samples there) or
-a model/loss problem (enough samples, but predictions shrunk)?
+Shows whether a confined/full surrogate under-predicts the bank effect close
+to the bank, and whether that is a data problem (few samples there) or a
+model/loss problem (enough samples, but shrunk predictions).
 
-For every row of the split, the distance to the nearest bank is taken from
-the row's own ray features (d = RAY_MAX_DISTANCE * (1 - feature); rows
-without a bank within range get d = RAY_MAX_DISTANCE). By default only the
-beam rays count (60-120 and 240-300 deg from the bow: a bank alongside, as in
-the model_comparison ship-bank test); --rays all uses the minimum over all
-24 rays (also a bank ahead or astern).
-Rows are binned by that distance and, per bin and per target, it reports:
+The bank distance per row comes from its ray features,
+d = RAY_MAX_DISTANCE * (1 - feature) (RAY_MAX_DISTANCE if no bank in range).
+By default only beam rays count (60-120 and 240-300 deg from the bow, a bank
+alongside as in the model_comparison ship-bank test); --rays all uses all 24.
+Per distance bin and target it reports:
 
     n        rows in the bin (and in the training split, with --train)
     MAE      mean |pred - true|
     bias     mean (pred - true)
-    gain     sum(pred * true) / sum(true^2): the least-squares scale of the
-             prediction relative to the truth (1 = right size, < 1 =
-             predictions too small, i.e. shrunk towards zero)
+    gain     sum(pred * true) / sum(true^2): least-squares scale of the
+             prediction (< 1 = predictions shrunk towards zero)
     R2       1 - SSE / SST within the bin
-    |true| p99, |pred| p99   size of the large values (tails)
+    |true| p99, |pred| p99   size of the tails
 
-Bank suction pushes sway and yaw rate in a direction that depends on which
-side the bank is, so `bias` mostly cancels; `gain` and the p99 columns show
-an under-prediction regardless of side.
-
-A second table repeats this for the rows with a (nearly) centred rudder
-(|rudder_action| <= --straight-rudder), where the bank is the main cause of
-sway and yaw -- the situation of the model_comparison ship-bank test.
+Bank suction acts in a direction that depends on the bank side, so bias
+mostly cancels; gain and p99 show under-prediction regardless of side.
+A second table covers rows with a near-centred rudder
+(|rudder_action| <= --straight-rudder), where the bank dominates sway and yaw.
 
 Usage (from src):
 
@@ -37,14 +31,13 @@ Usage (from src):
         --data data\\myzako_confined\\ship_dynamics_dataset_test.npz ^
         --train data\\myzako_confined\\ship_dynamics_dataset_train.npz
 
---min-time / --max-time keep only the rows at that time since the start of
-their episode [s] (from the file's t_episode array, or reconstructed as in
-fw.surrogate.episode_time; episodes that cannot be ordered are dropped). Use it to separate the bank
-effect from the start-of-episode transient: bank-straight episodes start next
-to the bank, so near-bank rows are mostly early rows.
+--min-time / --max-time keep only rows in that time window since episode start
+[s] (from t_episode or reconstructed as in fw.surrogate.episode_time; episodes
+that cannot be ordered are dropped). This separates the bank effect from the
+start transient, since bank-straight episodes start next to the bank.
 
-A relative --checkpoint is resolved like the presets do (fw/checkpoints).
-Writes <checkpoint stem>_bank_error.png next to --data unless --plot is given.
+A relative --checkpoint is resolved in fw/checkpoints. Writes
+<checkpoint stem>_bank_error.png next to --data unless --plot is given.
 """
 
 from __future__ import annotations
@@ -74,8 +67,7 @@ BEAM_RAY_SECTORS_DEG = ((60, 120), (240, 300))
 
 def bank_distance(x_raw: np.ndarray, scenario: ScenarioSchema, rays: str = "beam") -> np.ndarray:
     """
-    Distance [m] to the nearest bank per row, from the row's ray features:
-    minimum over the beam rays (`rays="beam"`) or over all rays (`"all"`).
+    Distance [m] to the nearest bank per row, over the beam rays ("beam") or all rays ("all").
     """
 
     names = RAY_COLUMN_NAMES
@@ -90,13 +82,17 @@ def bank_distance(x_raw: np.ndarray, scenario: ScenarioSchema, rays: str = "beam
 
 
 def predict(predictor, x_raw: np.ndarray) -> np.ndarray:
-    """Predictions for all rows, in batches."""
+    """
+    Predictions for all rows, in batches.
+    """
 
     return np.concatenate([predictor.predict(x_raw[i:i + BATCH]) for i in range(0, len(x_raw), BATCH)])
 
 
 def bin_stats(true: np.ndarray, pred: np.ndarray) -> Dict[str, float]:
-    """MAE, bias, gain, R2 and the p99 of |true| and |pred| of one bin and target."""
+    """
+    MAE, bias, gain, R2 and the p99 of |true| and |pred| of one bin and target.
+    """
 
     err = pred - true
     sst = float(np.sum((true - true.mean()) ** 2))
@@ -112,7 +108,9 @@ def bin_stats(true: np.ndarray, pred: np.ndarray) -> Dict[str, float]:
 
 
 def _label(lo: float, hi: float) -> str:
-    """Bin label; the last bin (no bank within ray range) is shown as 'none'."""
+    """
+    Bin label; the last bin (no bank within ray range) is shown as 'no bank'.
+    """
 
     if lo >= RAY_MAX_DISTANCE - 1e-3:
         return "no bank"
@@ -121,7 +119,9 @@ def _label(lo: float, hi: float) -> str:
 
 def report(title: str, d: np.ndarray, true: np.ndarray, pred: np.ndarray, bins: Sequence[float],
            d_train: Optional[np.ndarray]) -> Dict[str, list]:
-    """Log one table (all targets, per distance bin); return the gains per target for the plot."""
+    """
+    Log one table (all targets, per distance bin); return the gains per target for the plot.
+    """
 
     which = np.digitize(d, bins) - 1
     counts_train = None if d_train is None else np.bincount(np.digitize(d_train, bins) - 1, minlength=len(bins))
@@ -149,7 +149,9 @@ def report(title: str, d: np.ndarray, true: np.ndarray, pred: np.ndarray, bins: 
 
 def plot(path: Path, bins: Sequence[float], gains_all: Dict[str, list], gains_straight: Dict[str, list],
          counts: np.ndarray, title: str) -> None:
-    """Gain per distance bin (all rows and straight rudder) and the row counts, as a PNG."""
+    """
+    Gain per distance bin (all rows and straight rudder) and the row counts, as a PNG.
+    """
 
     try:
         import matplotlib
@@ -185,7 +187,9 @@ def plot(path: Path, bins: Sequence[float], gains_all: Dict[str, list], gains_st
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Command-line entry point; returns the exit code."""
+    """
+    Command-line entry point; returns the exit code.
+    """
 
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -235,8 +239,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         with np.load(args.data) as z:
             episode_id = z["episode_id"].astype(np.int64)
             stored = z[T_EPISODE_KEY] if T_EPISODE_KEY in z.files else None
-        # Compared in whole steps, the same whether the time is stored (float32) or
-        # reconstructed: [min_time, max_time) -> steps [step_threshold(min), step_threshold(max)).
+        # Compare in whole steps (stored float32 or reconstructed times alike):
+        # [min_time, max_time) maps to [step_threshold(min), step_threshold(max)).
         if stored is not None:      # written by fw.surrogate.episode_time
             steps = steps_from_times(stored)
             n_ok, n_bad = len(np.unique(episode_id[steps >= 0])), len(np.unique(episode_id[steps < 0]))

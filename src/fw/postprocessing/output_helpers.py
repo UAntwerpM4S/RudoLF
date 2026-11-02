@@ -32,16 +32,11 @@ SHIP_COLORS = [
 
 def compute_heading_error(ship_env) -> float:
     """
-    Computes heading error relative to the next waypoint segment.
-
-    This function replicates the heading error computation used in the agent
-    manager for a single ship sub-environment.
+    Compute the heading error relative to the current checkpoint segment.
 
     Args:
-        ship_env: Ship environment containing:
-            - checkpoints (list of dicts with "pos")
-            - checkpoint_index (int)
-            - phys_sim.state.heading (float)
+        ship_env: Ship environment with checkpoints (dicts with "pos"),
+            checkpoint_index and phys_sim.state.heading.
 
     Returns:
         float: Angular error in radians, wrapped to [-pi, pi].
@@ -79,16 +74,13 @@ def compute_heading_error(ship_env) -> float:
 
 def normalized_time_axis(length: int) -> np.ndarray:
     """
-    Creates a normalized time axis for a sequence.
-
-    Maps sequence indices to percentage progress in [0, 100].
+    Map sequence indices to percentage progress in [0, 100].
 
     Args:
-        length: Number of timesteps. Must be a non-negative integer.
+        length: Number of timesteps (non-negative).
 
     Returns:
-        np.ndarray: Array of shape (length,) with values in [0, 100].
-            Returns an empty array when length is 0.
+        np.ndarray: Array of shape (length,); [0.0] for length 1.
 
     Raises:
         ValueError: If length is negative.
@@ -105,19 +97,16 @@ def normalized_time_axis(length: int) -> np.ndarray:
 
 def shade_color(base_color, n: int, lo: float = 0.45, hi: float = 1.0) -> list[tuple]:
     """
-    Generates shaded variations of a base color.
-
-    Creates a gradient of `n` colors by scaling the RGB intensity.
+    Return `n` shades of a color, scaling RGB from `hi` down to `lo`.
 
     Args:
-        base_color: Matplotlib-compatible color string or RGB tuple.
-        n: Number of shaded variants to generate. Must be non-negative.
-        lo: Minimum brightness scaling factor. Must be in [0, 1].
-        hi: Maximum brightness scaling factor. Must be in [0, 1].
+        base_color: Matplotlib color string or RGB tuple.
+        n: Number of shades; n <= 0 gives [].
+        lo: Minimum brightness factor in [0, 1].
+        hi: Maximum brightness factor in [0, 1].
 
     Returns:
-        list[tuple]: List of RGB tuples representing shaded colors.
-            Returns an empty list when n <= 0.
+        list[tuple]: RGB tuples.
 
     Raises:
         ValueError: If lo or hi are outside [0, 1], or if lo >= hi.
@@ -137,27 +126,20 @@ def shade_color(base_color, n: int, lo: float = 0.45, hi: float = 1.0) -> list[t
 
 def resample_to_common_time(signal: np.ndarray, common_time: np.ndarray) -> np.ndarray:
     """
-    Resamples a signal to a shared normalized time axis.
+    Linearly resample a signal to a normalized time axis in [0, 1].
 
-    Supports both 1D and multi-dimensional signals. Used to align episode
-    data of varying lengths for averaging and comparison.
+    Aligns episodes of different lengths for averaging. Single-sample signals
+    are repeated.
 
     Args:
-        signal: Input array of shape (T,) or (T, ...).
-        common_time: Target time axis in normalized coordinates [0, 1].
-            Must be a 1-D array with at least one element.
+        signal: Array of shape (T,) or (T, ...).
+        common_time: Non-empty 1-D target time axis in [0, 1].
 
     Returns:
-        np.ndarray: Resampled signal with shape (len(common_time), ...).
+        np.ndarray: Resampled signal of shape (len(common_time), ...).
 
     Raises:
-        ValueError: If signal is empty (shape[0] == 0).
-        ValueError: If common_time is empty or not 1-D.
-
-    Notes:
-        - Single-sample signals are repeated across the full time axis.
-        - Multi-dimensional signals are flattened internally for interpolation
-          and reshaped back after processing.
+        ValueError: If `signal` is empty or `common_time` is empty or not 1-D.
     """
 
     signal = np.asarray(signal)

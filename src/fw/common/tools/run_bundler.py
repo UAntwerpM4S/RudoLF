@@ -165,36 +165,22 @@ def bundle_run_output(
     Create a ZIP bundle containing this run's inputs and outputs.
 
     Args:
-        run_started: Timestamp marking the start of the run/batch being
-            bundled. Used both as the mtime cutoff for output files and to
-            derive the bundle's filename timestamp (so it lines up with
-            the run's log filename, which uses the same convention).
-        src_dir: Project src directory (same root used to resolve
-            model_dir/log_dir elsewhere in the framework).
-        model_dirs: One or more model_dir values (as configured/resolved
-            for the agent type(s) involved) to scan for changed output
-            files.
-        log_dirs: One or more log_dir values to scan for changed output
-            files (typically just "logs").
-        input_files: Paths to raw input file(s) to embed verbatim, e.g.
-            config.py or a pipeline spec JSON file. Missing files are
-            skipped with a warning, not an error.
-        resolved_config: Optional dict of the fully-resolved effective
-            configuration (profile applied) to embed as
+        run_started: Start of the run; mtime cutoff for outputs and the bundle
+            filename timestamp (matches the log filename convention).
+        src_dir: Project src directory used to resolve relative paths.
+        model_dirs: model_dir value(s) to scan for changed outputs.
+        log_dirs: log_dir value(s) to scan for changed outputs.
+        input_files: Raw input files to embed verbatim (e.g. config.py, a
+            pipeline JSON). Missing files are skipped with a warning.
+        resolved_config: Effective configuration (profile applied), written as
             input/resolved_config.json. Enums are encoded by name.
-        env_name: Used in the bundle filename (matches log naming).
-        agent_type: Used in the bundle filename (matches log naming).
-        run_type: Used in the bundle filename (matches log naming), e.g.
-            "train", "visualize", "evaluate_reward", "pipeline".
-        bundle_dir: Directory (relative to src_dir, or absolute) to write
-            the bundle under. Defaults to "run_archives".
-        additional_model_files: Specific files to include under
-            output/models regardless of mtime, for output that exists
-            but wasn't (re)written during this run - e.g. a "visualize"
-            run/block only *loads* an existing policy checkpoint via
-            `Trainer.visualize()`, so it would never be picked up by the
-            mtime scan on its own. Missing files are skipped with a
-            warning, not an error.
+        env_name: Bundle filename part.
+        agent_type: Bundle filename part.
+        run_type: Bundle filename part, e.g. "train", "visualize", "pipeline".
+        bundle_dir: Output directory (relative to src_dir, or absolute).
+        additional_model_files: Files to add under output/models regardless of
+            mtime, e.g. a policy only loaded by a "visualize" run. Missing
+            files are skipped with a warning.
 
     Returns:
         Path to the created ZIP file, or None if bundling failed or

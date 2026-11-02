@@ -16,13 +16,17 @@ from fw.postprocessing.plot_training_reward import load_data, plot_reward
 
 
 def _labels(fig):
-    """Legend labels of all lines on the figure's axes."""
+    """
+    Legend labels of all lines on the figure's axes.
+    """
 
     return [line.get_label() for line in fig.axes[0].get_lines()]
 
 
 def test_single_agent_csv_gives_one_curve(tmp_path):
-    """No agent_id column: unchanged single curve, synthetic iteration index."""
+    """
+    No agent_id column: unchanged single curve, synthetic iteration index.
+    """
 
     csv = tmp_path / "training_metrics.csv"
     pd.DataFrame({"loss": np.ones(20), "advantage": np.zeros(20), "reward": np.linspace(0, 1, 20)}).to_csv(csv, index=False)
@@ -33,7 +37,9 @@ def test_single_agent_csv_gives_one_curve(tmp_path):
 
 
 def test_multi_agent_csv_gives_one_curve_per_agent_and_freeze_marker(tmp_path):
-    """Interleaved agent rows are split per agent; agent 0's freeze is marked, agent 1 never froze."""
+    """
+    Interleaved agent rows are split per agent; agent 0's freeze is marked, agent 1 never froze.
+    """
 
     rows = []
     for it in range(10):

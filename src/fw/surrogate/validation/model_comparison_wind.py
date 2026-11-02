@@ -1,107 +1,67 @@
 """
-Wind counterpart of model_comparison.generate_trajectories(): compares the
-trajectories of all dynamics models against FH (ground truth) for a ship
-sailing a straight line (rudder 0, fixed thrust) in OPEN WATER under wind,
-for a grid of (wind speed x relative wind direction).
+Wind counterpart of model_comparison.generate_trajectories(): compares all
+dynamics models against FH (ground truth) for a ship sailing straight (rudder
+0, fixed thrust) in open water, over a grid of wind speed x relative wind
+direction.
 
-Models (same six as model_comparison.py, plus one extra FH reference):
-    FH          -- real simexe engine with the wind field applied
-    FH_nowind   -- the same FH exercise with wind-field Scale = 0. Shows how
-                   straight FH sails at rudder 0 WITHOUT wind, i.e. how much
-                   of FH's deviation is wind and how much FH shows anyway.
-                   Run once and drawn in every subplot.
-    UGent, Fossen, UA_clean, UA_confined -- wind-agnostic models
-    UA_full     -- the only non-FH model with wind inputs. Every step it gets
-                   the apparent wind for ITS OWN state: FH's true wind (world
-                   frame) seen from UA_full's own heading, plus its own head
-                   wind from its own surge/sway -- so a UA_full that sails a
-                   different path than FH is not steered by FH's wind input.
-                   UKC comes from the WcuLookup CSV data at the model's own
-                   position (UkcSource); current from FH (current off).
-                   Injected via _inject_live_environment.
+Models:
+    FH          - simexe engine with the wind field applied.
+    FH_nowind   - same exercise with wind-field Scale = 0: how straight FH
+                  sails without wind (run once, drawn in every subplot).
+    UGent, Fossen, UA_clean, UA_confined - wind-agnostic models.
+    UA_full     - the only non-FH model with wind inputs. Each step it gets
+                  FH's world-frame true wind seen from its own state (heading,
+                  surge, sway), so a diverging UA_full is not steered by FH's
+                  apparent wind. UKC from the lookup CSV at its own position
+                  (UkcSource); current from FH (off). Injected via
+                  _inject_live_environment.
 
-No-wind baseline: one extra run with Scale=0 for ALL models ("nowind",
-wind speed 0 in the CSV, its own PNGs). Its FH and UA_full paths are drawn
-in every wind subplot as FH_nowind and UA_full_nowind, and the summary's
-paired columns compare each model's wind effect (model in wind - same model
-in the baseline) with FH's (FH - FH_nowind), at the same step. Per run, an
-env_*.csv logs FH's true/apparent wind, UKC, sway and yaw rate per step, and
-the apparent wind and UKC each UA_* model was given.
+A no-wind baseline run (Scale = 0) for all models gives FH_nowind and
+UA_full_nowind; the summary's paired columns compare each model's wind effect
+(model in wind minus the same model in the baseline) with FH's. Every run
+also writes an env_*.csv with FH's true/apparent wind, UKC, sway and yaw rate
+and the inputs each UA_* model got.
 
-Every non-FH model runs in its own ShipSimulator with wind=False,
-current=False, so EnvironmentModel adds nothing on top: the four wind-
-agnostic models stay wind-blind, and UA_full gets wind exactly once (from
-its own learned response). This sidesteps the ShipSimulator isinstance
-double-counting issue noted in model_comparison.py.
+Non-FH models run in their own ShipSimulator with wind=False, current=False,
+so EnvironmentModel adds nothing: wind-agnostic models stay wind-blind and
+UA_full gets wind exactly once.
 
-UA_* models: fw.dynamics.uantwerp_surrogate.UAntwerpSurrogate, one per preset
-(model_comparison.UA_PRESETS_BY_SHIP / build_ua_models).
+Test layout: one open-water start pose; initial surge WIND_TRAJECTORY_SPEED,
+thrust = min(1, v/6), rudder 0 (as model_comparison.py); per wind speed one
+PNG with a subplot per direction in REL_WIND_DIRS_DEG plus a lateral
+deviation PNG; every model runs as many steps as FH needs for
+TARGET_PATH_LENGTH (capped at MAX_STEPS).
 
-Test layout:
-  - one start pose (x, y, heading) in open water, supplied by the caller;
-  - fixed initial surge speed (WIND_TRAJECTORY_SPEED), thrust = min(1, v/6),
-    rudder 0 -- same mapping as model_comparison.py;
-  - for each wind speed in WIND_SPEEDS: one PNG with one subplot per
-    relative wind direction in REL_WIND_DIRS_DEG (trajectories in world
-    coordinates), plus one PNG with lateral deviation vs. time;
-  - every model is stepped for the SAME number of steps as FH needed to
-    cover TARGET_PATH_LENGTH (capped at MAX_STEPS), as generate_trajectories.
-
-Wind quantities (measured with diagnose_fh_wind_standalone.py):
-    FH's WindState is the APPARENT wind with Direction relative to the bow
-    (0 deg = from ahead: Scale=0 at 5 m/s gives ~4.99 m/s @ ~0 deg). The
-    grid's speeds/directions are TRUE wind = apparent - own motion (u, v),
-    direction relative to the bow in the same WindState sign convention.
-    Positive angles = wind from STARBOARD (clockwise from the bow). Measured
-    2026-10-14 on generator episodes that turn (heading ranges up to 80 deg):
-    the earth-fixed true wind stays constant within an episode (median spread
-    3.4 deg) only with this convention; with "positive = from port" it spreads
-    17.9 deg; the remaining spread is a gust signal FH applies identically in
-    every episode (it drops to ~0.6 deg once that is removed). In episodes
-    with zero true wind, WindState equals the ship's own (u, v) over ground
-    exactly under this convention (with the sway then stored as starboard
-    positive). Lateral acceleration vs ws*|ws|*sin(dir) pointed away from
-    the side the wind came from in all 26 episodes with wind.
-    (An earlier "from port" reading of FH's drift in the wind runs
-    was wrong: FH also turned 38-90 deg there, and the turn, not the leeway,
-    set the lateral offset.) The ship's own motion adds an apparent wind from
-    ahead and from the side it moves to: apparent = true + (u, -v) in (ahead,
-    starboard) components, because sway v is positive to PORT
-    (fw.ships.vessel_state; FhSession.state() returns FH's own vog.y). Hence
-    TRUE_WIND_SWAY_SIGN = -1. (Until 2026-10-19 the sway was negated to
-    starboard positive and the sign was +1 -- the same physics.)
-    UA_full gets an apparent wind in the same convention as its training data.
+Wind conventions (measured with diagnose_fh_wind_standalone.py):
+    FH's WindState is the apparent wind, direction relative to the bow,
+    positive = from starboard (clockwise). Only with this convention does the
+    earth-fixed true wind stay constant in turning generator episodes. Grid
+    speeds and directions are true wind: apparent = true + (u, -v) in (ahead,
+    starboard) components, since sway v is positive to port; hence
+    TRUE_WIND_SWAY_SIGN = -1. UA_full gets apparent wind in the convention of
+    its training data.
 
 Setting a target wind in FH:
-    FH has no direct "wind speed / direction" setter -- the exercise has a
-    wind FIELD that is rotated/scaled via WindFieldTransform (as the dataset
-    generator does). It is passed to FhSession(wind_field=(rotation, scale)),
-    which hands it to FhSimBridge.initial_wind_field_transform before
-    reset(), so every probe and every run is its own FH session. WindState
-    lags: right after reset() it still shows the exercise's default
-    transform, so every session is first advanced WIND_WARMUP_TIME (rudder 0,
-    fixed thrust) and all models start from FH's state after that.
-    calibrate_wind_field() probes the true wind at the start pose (Rotation/
-    Scale 0/1, 90/1, 0/2, 0/0, and 0/1 again after CAL_STEADY_CHECK_TIME) to
-    derive the base true wind per unit Scale, the rotation sign, and to check
-    linearity, Scale=0 -> no wind and steadiness. Each run logs the true and
-    apparent wind FH ACTUALLY delivered; labels/CSVs use those values.
+    FH has no wind speed/direction setter; the exercise's wind field is
+    rotated/scaled via WindFieldTransform, passed as
+    FhSession(wind_field=(rotation, scale)) before reset(), so each probe and
+    run is its own FH session. WindState lags after reset(), so every session
+    first runs WIND_WARMUP_TIME and all models start from FH's state after
+    that. calibrate_wind_field() derives the true wind per unit Scale and the
+    rotation sign, and checks linearity, zero wind at Scale = 0 and
+    steadiness. Labels and CSVs use the wind FH actually delivered.
 
-Open-water / domain checks (diagnostic, the trajectory is not cut short):
-    - start pose: every one of the 24 ray features must be 0 (no hit within
-      RAY_MAX_DISTANCE), otherwise RuntimeError (REQUIRE_OPEN_WATER_START);
-    - every OPEN_WATER_CHECK_EVERY steps, every model's own pose is checked
-      the same way; the first hit per model is reported and written to the
-      summary CSV;
-    - FH's state is checked against the dataset generator's stop limits
-      (model_comparison._training_domain_issue), as in generate_trajectories;
-    - FH's current speed must stay below MAX_CURRENT_SPEED (the wind-only
-      exercise should have current disabled), checked after the warm-up and
-      at every step -- WindTestSetupError otherwise.
+Open-water and domain checks (diagnostic; trajectories are not cut short):
+    - start pose: all ray features 0, else RuntimeError (REQUIRE_OPEN_WATER_START);
+    - every OPEN_WATER_CHECK_EVERY steps each model's pose is checked the same
+      way; the first hit per model goes to the summary CSV;
+    - FH's state against the generator's stop limits (_training_domain_issue);
+    - FH's current below MAX_CURRENT_SPEED after warm-up and every step,
+      else WindTestSetupError.
 
-Tested against the real FH engine (wind calibration, full grid runs); the
-no-wind baseline / paired metrics / own-position UKC were added after the
-last real run and have only been exercised with stubbed fw modules.
+Validated against FH for calibration and the full grid; the no-wind
+baseline, paired metrics and own-position UKC were only run with stubbed fw
+modules.
 
 Usage:
     from fw.surrogate.validation.model_comparison_wind import generate_wind_trajectories
@@ -109,8 +69,8 @@ Usage:
         start_x=..., start_y=..., start_heading_deg=...,
         exercise_path=Path(".../DDShip_Tripoli_scenario_windonly.tab"),
     )
-start_heading_deg uses the same convention model_comparison.py passes to
-FhSession (degrees of PySimEnv.ship_heading).
+start_heading_deg uses the convention model_comparison.py passes to FhSession
+(degrees of PySimEnv.ship_heading).
 """
 
 import csv
@@ -163,19 +123,14 @@ MAX_STEPS = 8000                                      # safety cap (8000 * 0.1 s
 CAL_STEADY_CHECK_TIME = 5.0        # [s] first calibration probe is read again after this long
 WIND_WARMUP_TIME = 1.0             # [s] FH time after reset() before WindState shows the transform
 
-# Sign linking FH's sway v (fh.state(), PORT positive) to the lateral
-# (starboard) component of WindState in its own angle convention: apparent =
-# true + (u, TRUE_WIND_SWAY_SIGN * v). None = sway not corrected (only u). The
-# calibration prints an estimate ("sway check").
-TRUE_WIND_SWAY_SIGN: Optional[float] = -1.0   # WindState angle + = from starboard, sway + = to port; see module docstring
+# apparent = true + (u, TRUE_WIND_SWAY_SIGN * v) in (ahead, starboard) components;
+# v is port positive. None = sway not corrected. The calibration prints an estimate.
+TRUE_WIND_SWAY_SIGN: Optional[float] = -1.0
 
-# FH rewind for every wind-test session. False = configured like
-# sim_fh_dataset_generator (SetRewindEnabled(False)), where the wind-field
-# transform demonstrably works; FhSession never rewinds, so nothing is lost.
+# As sim_fh_dataset_generator, where the wind-field transform works; FhSession never rewinds.
 FH_REWIND_ENABLED = False
 
-# Path to the wind-only (no current) Tripoli exercise. Can also be passed as an
-# argument to generate_wind_trajectories(); one of both is required.
+# Wind-only (no current) Tripoli exercise; or pass exercise_path to generate_wind_trajectories().
 WIND_EXERCISE_PATH: Optional[Path] = None
 
 REQUIRE_OPEN_WATER_START = True    # RuntimeError if any ray hits at the start pose
@@ -194,30 +149,27 @@ RUN_SPEED_TOL = 0.05               # per-run actual vs. target wind speed (relat
 RUN_ABORT_DIR_DEG = 15.0           # per-run true wind further off its target than this -> WindTestSetupError
 RUN_ABORT_SPEED_REL = 0.2          # (the transform did not produce the requested wind)
 
-# Optional: upper wind speed covered by the UA_full training data (e.g. the
-# 95th percentile of column 7 in the full dataset). None disables the flag.
+# Upper wind speed of the UA_full training data (e.g. p95 of column 7); None disables the flag.
 UA_FULL_MAX_TRAINED_WIND_SPEED: Optional[float] = None
 
 WIND_OUTPUT_DIR = OUTPUT_DIR / "wind_trajectories"
 
-# UKC for UA_confined/UA_full at their OWN position (see UkcSource). None =
-# each UA model's own WcuLookup (its preset's lookup CSV); a path = one
-# explicit WcuLookup on that CSV for all of them.
+# UKC for UA_confined/UA_full at their own position (UkcSource): None = each
+# model's preset lookup CSV; a path = that CSV for all of them.
 UKC_LOOKUP_CSV: Optional[str] = None
 CLEAN_OUTPUT_DIR = True            # remove this script's previous outputs at the start of a run
 ONESTEP_CHECK = True               # teacher-forced one-step check of every model at FH's states
 UKC_LOOKUP_MAX_DISTANCE: Optional[float] = 50.0   # [m] UKC_LOOKUP_CSV only: farther -> miss
 
-# FH_nowind is drawn in every subplot as an extra reference line.
 COLORS = {**TRAJECTORY_COLORS, "FH_nowind": "#6b6b6b", "UA_full_nowind": "#7fbf7f"}
 LINESTYLES = {**TRAJECTORY_LINESTYLES, "FH_nowind": (0, (8, 3)), "UA_full_nowind": (0, (8, 3))}
 MODEL_ORDER = ["FH", "FH_nowind", "UGent", "Fossen", "UA_clean", "UA_confined", "UA_full", "UA_full_nowind"]
 
 class WindTestSetupError(RuntimeError):
-    """Raised by the fail-fast setup checks (current present, start pose not in
-    open water, no wind field). These apply to every run identically, so the
-    driver re-raises them instead of skipping one run."""
-
+    """
+    Fail-fast setup error (current present, start not in open water, no wind
+    field); applies to every run, so the driver re-raises instead of skipping.
+    """
 
 _RAY_IDX_BOW = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=float), 0.0))[0])
 _RAY_IDX_STBD = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=float), 90.0))[0])
@@ -228,21 +180,26 @@ _RAY_IDX_STBD = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=f
 # --------------------------------------------------------------------------
 
 def _wrap180(angle_deg: float) -> float:
-    """Wrap to (-180, 180]."""
+    """
+    Wrap to (-180, 180].
+    """
+
     a = (float(angle_deg) + 180.0) % 360.0 - 180.0
     return 180.0 if a == -180.0 else a
 
 
 def _wrap360(angle_deg: float) -> float:
-    """Wrap an angle in degrees to [0, 360)."""
+    """
+    Wrap an angle in degrees to [0, 360).
+    """
+
     return float(angle_deg) % 360.0
 
 
 @dataclass
 class TrackPoint:
     """
-    One point of a model's path: time [s], position [m], heading [rad, PySimEnv convention]
-    and surge [m/s].
+    One point of a model's path.
     """
 
     t: float
@@ -253,9 +210,10 @@ class TrackPoint:
 
 
 def _bow_and_starboard(heading_rad: float) -> Tuple[np.ndarray, np.ndarray]:
-    """World-frame unit vectors of the bow (ray_0) and starboard (ray_90)
-    directions, taken from the shared ray module so no heading convention is
-    assumed here."""
+    """
+    World-frame bow (ray_0) and starboard (ray_90) unit vectors, from the shared ray module.
+    """
+
     angles = ray_world_angles(float(heading_rad))
     bow = np.array([np.cos(angles[_RAY_IDX_BOW]), np.sin(angles[_RAY_IDX_BOW])])
     stbd = np.array([np.cos(angles[_RAY_IDX_STBD]), np.sin(angles[_RAY_IDX_STBD])])
@@ -263,12 +221,14 @@ def _bow_and_starboard(heading_rad: float) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def track_metrics(start: TrackPoint, point: TrackPoint) -> Dict[str, float]:
-    """Position/heading of `point` relative to the start pose's straight track.
-
-    along   -- distance along the initial heading [m]
-    lateral -- distance off the initial track, starboard positive [m]
-    turn    -- heading change, turn to starboard positive [deg]
     """
+    Position/heading of `point` relative to the start pose's straight track.
+
+    along: distance along the initial heading [m]; lateral: off the initial
+    track, starboard positive [m]; turn: heading change, starboard positive
+    [deg]; u: surge [m/s].
+    """
+
     bow0, stbd0 = _bow_and_starboard(start.heading)
     d = np.array([point.x - start.x, point.y - start.y])
     bow1, _ = _bow_and_starboard(point.heading)
@@ -281,19 +241,27 @@ def track_metrics(start: TrackPoint, point: TrackPoint) -> Dict[str, float]:
 
 
 def _rays_hit(ray_env: PySimEnv, x: float, y: float, heading_rad: float) -> bool:
-    """True if any ray at this pose sees a bank within RAY_MAX_DISTANCE (any feature > 1e-6)."""
+    """
+    True if any ray at this pose sees a bank within RAY_MAX_DISTANCE (any feature > 1e-6).
+    """
+
     features = compute_ray_features(ray_env, (float(x), float(y)), float(heading_rad))
     return bool(np.any(np.asarray(features) > 1e-6))
 
 
 def _fh_point(fh: FhSession, t: float) -> TrackPoint:
-    """FH's current state as a TrackPoint at time `t`."""
+    """
+    FH's current state as a TrackPoint at time `t`.
+    """
+
     x, y, h, u, _v, _r = fh.state()
     return TrackPoint(t=t, x=x, y=y, heading=h, u=u)
 
 
 def _check_current(fh: FhSession, where: str) -> Tuple[float, float]:
-    """FH's current (speed, direction); raises WindTestSetupError above MAX_CURRENT_SPEED."""
+    """
+    FH's current (speed, direction); raises WindTestSetupError above MAX_CURRENT_SPEED.
+    """
 
     speed, direction = fh.get_current()
     if speed > MAX_CURRENT_SPEED:
@@ -308,31 +276,31 @@ def _check_current(fh: FhSession, where: str) -> Tuple[float, float]:
 # --------------------------------------------------------------------------
 # Wind-field calibration
 # --------------------------------------------------------------------------
-#
-# What FH reports (diagnose_fh_wind_standalone.py, 2026-10-13):
-#   - WindState is the APPARENT wind, Direction relative to the bow
-#     (Scale=0 at 5 m/s ship speed -> ~4.99 m/s @ ~0 deg = own head wind).
-#   - WindState lags: right after reset() it still shows the exercise's
-#     default transform (R=-45, S=9.4 -> 11.174 m/s @ 63.29 deg); by t=1 s it
-#     shows the requested transform. Hence WIND_WARMUP_TIME.
-#   - True wind (apparent minus own head wind) is linear in Scale (~1.11 m/s
-#     per unit at the test pose) and Rotation=90 turns it by -90 deg.
-# True wind here = apparent - (u, k*v): u, v = FH surge/sway over ground (no
-# current), k = TRUE_WIND_SWAY_SIGN (None -> sway not corrected).
+# Measured: true wind is linear in Scale (~1.11 m/s per unit at the test pose)
+# and Rotation=90 turns it by -90 deg; WindState shows the requested transform
+# by t = 1 s after reset(). True wind = apparent - (u, k*v), k = TRUE_WIND_SWAY_SIGN.
 
 def _vec(speed: float, dir_deg: float) -> np.ndarray:
-    """2-D vector of length `speed` at angle `dir_deg` [deg] (cos, sin components)."""
+    """
+    2-D vector of length `speed` at angle `dir_deg` [deg] (cos, sin components).
+    """
+
     return float(speed) * np.array([np.cos(np.radians(dir_deg)), np.sin(np.radians(dir_deg))])
 
 
 def _speed_dir(vec: np.ndarray) -> Tuple[float, float]:
-    """(length, angle [deg, 0-360)) of a 2-D vector; inverse of _vec."""
+    """
+    (length, angle [deg, 0-360)) of a 2-D vector; inverse of _vec.
+    """
+
     return float(np.hypot(vec[0], vec[1])), _wrap360(np.degrees(np.arctan2(vec[1], vec[0])))
 
 
 def _true_wind(fh: FhSession) -> Tuple[float, float, float, float]:
-    """(true_speed, true_rel_dir_deg, apparent_speed, apparent_rel_dir_deg),
-    directions relative to the bow in FH's WindState convention."""
+    """
+    (true speed, true dir, apparent speed, apparent dir); directions [deg] relative to the bow.
+    """
+
     app_speed, app_dir = fh.get_wind_raw()
     _, _, _, u, v, _ = fh.state()
     lateral = 0.0 if TRUE_WIND_SWAY_SIGN is None else TRUE_WIND_SWAY_SIGN * v
@@ -341,15 +309,18 @@ def _true_wind(fh: FhSession) -> Tuple[float, float, float, float]:
 
 
 def _sway_sign() -> float:
-    """TRUE_WIND_SWAY_SIGN as a float; 0.0 when it is None (sway not corrected)."""
+    """
+    TRUE_WIND_SWAY_SIGN as a float; 0.0 when it is None (sway not corrected).
+    """
+
     return 0.0 if TRUE_WIND_SWAY_SIGN is None else float(TRUE_WIND_SWAY_SIGN)
 
 
 def _true_wind_world(fh: FhSession) -> np.ndarray:
-    """FH's true wind as a world-frame 'coming from' vector [m/s]:
-    (ahead, starboard) components of _true_wind (WindState: positive angle =
-    from starboard), mapped with the shared ray module's bow/starboard vectors
-    at FH's heading."""
+    """
+    FH's true wind as a world-frame 'coming from' vector [m/s].
+    """
+
     app_speed, app_dir = fh.get_wind_raw()
     _, _, heading, u, v, _ = fh.state()
     t = _vec(app_speed, app_dir) - np.array([u, _sway_sign() * v])
@@ -358,10 +329,11 @@ def _true_wind_world(fh: FhSession) -> np.ndarray:
 
 
 def _apparent_wind_for(state, w_world: np.ndarray) -> Tuple[float, float]:
-    """Apparent wind (speed [m/s], direction [rad], WindState convention as
-    returned by FhSession.get_wind()) for a ship in `state`, given the world-
-    frame true wind: the inverse of _true_wind_world for that ship's own
-    heading, surge and sway."""
+    """
+    Apparent wind (speed [m/s], direction [rad], as FhSession.get_wind()) for a
+    ship in `state` given the world-frame true wind (inverse of _true_wind_world).
+    """
+
     bow, stbd = _bow_and_starboard(float(state.heading))
     rel = np.array([w_world @ bow, w_world @ stbd]) + np.array([float(state.u), _sway_sign() * float(state.v)])
     speed, dir_deg = _speed_dir(rel)
@@ -370,7 +342,9 @@ def _apparent_wind_for(state, w_world: np.ndarray) -> Tuple[float, float]:
 
 @dataclass
 class WindCalibration:
-    """Linear mapping from a target true wind to the FH wind-field transform, from calibrate_wind_field."""
+    """
+    Linear mapping from a target true wind to the FH wind-field transform, from calibrate_wind_field.
+    """
 
     base_speed: float       # true wind speed at Scale=1, Rotation=0 [m/s]
     base_dir_deg: float     # its direction relative to the bow [deg, WindState convention]
@@ -378,8 +352,10 @@ class WindCalibration:
     summary: str = ""       # one-line description for the report
 
     def transform_for(self, wind_speed: float, rel_dir_deg: float) -> Tuple[float, float]:
-        """(Rotation [deg], Scale) expected to give a true wind of `wind_speed`
-        at `rel_dir_deg` relative to the bow (WindState convention)."""
+        """
+        (Rotation [deg], Scale) for a true wind of `wind_speed` at `rel_dir_deg` from the bow.
+        """
+
         rotation = _wrap360(self.rotation_sign * _wrap180(rel_dir_deg - self.base_dir_deg))
         scale = float(wind_speed) / self.base_speed
         return rotation, scale
@@ -388,16 +364,17 @@ class WindCalibration:
 def derive_calibration(t_0: Tuple[float, float], t_90: Tuple[float, float],
                        t_scale2: Tuple[float, float], t_zero: Tuple[float, float],
                        t_repeat: Tuple[float, float], heading_change_deg: float = 0.0) -> WindCalibration:
-    """Pure maths of calibrate_wind_field(): each argument is a TRUE wind
-    (speed, rel_dir_deg) after WIND_WARMUP_TIME. Raises if the transform has
-    no effect; warns on anything that breaks the assumptions."""
+    """
+    Calibration from five probes, each a true wind (speed, rel_dir_deg) after
+    WIND_WARMUP_TIME. Raises if the transform has no effect; warns on broken assumptions.
+    """
+
     s0, d0 = t_0
     delta = _wrap180(t_90[1] - d0)
 
     def same(a, b):
         """
-        True if two (speed, direction) true winds agree within CAL_STEADY_TOL_SPEED (relative) and
-        CAL_STEADY_TOL_DEG.
+        True if two (speed, dir) winds agree within the CAL_STEADY tolerances.
         """
 
         return abs(a[0] - b[0]) <= CAL_STEADY_TOL_SPEED * max(a[0], 1e-6) and abs(_wrap180(a[1] - b[1])) <= CAL_STEADY_TOL_DEG
@@ -428,10 +405,8 @@ def derive_calibration(t_0: Tuple[float, float], t_90: Tuple[float, float],
             "calibrate_wind_field: Scale=0 still leaves %.3f m/s of true wind -- FH_nowind is not "
             "a clean no-wind reference.", t_zero[0],
         )
-    # The direction is relative to the bow, so the ship's own heading change
-    # over CAL_STEADY_CHECK_TIME shifts it: env heading is counter-clockwise,
-    # WindState angles clockwise (positive = from starboard), so a steady
-    # earth-fixed wind gives d_rel = +heading_change.
+    # Heading is CCW and WindState angles CW, so a steady earth-fixed wind
+    # shifts the bow-relative direction by +heading_change.
     d_rel = _wrap180(t_repeat[1] - d0)
     dir_dev = abs(_wrap180(d_rel - heading_change_deg))
     if dir_dev > CAL_STEADY_TOL_DEG or abs(t_repeat[0] - s0) > CAL_STEADY_TOL_SPEED * s0:
@@ -446,9 +421,11 @@ def derive_calibration(t_0: Tuple[float, float], t_90: Tuple[float, float],
 
 def _wind_session(start_x, start_y, start_heading_deg, v_init, thrust, ship_spec, exercise_path,
                   rotation: float, scale: float, where: str) -> FhSession:
-    """FH session with the wind-field transform set before reset(), advanced
-    WIND_WARMUP_TIME so WindState (and the wind itself) reflect the transform.
-    Raises if WindState still shows its value from right after reset()."""
+    """
+    FH session with the wind-field transform, advanced WIND_WARMUP_TIME.
+    Raises if WindState is still unchanged since reset().
+    """
+
     fh = FhSession(x=start_x, y=start_y, heading_deg=start_heading_deg, v_init=v_init,
                    thrust=thrust, ship_spec=ship_spec, exercise_path=exercise_path,
                    wind_field=(rotation, scale), rewind_enabled=FH_REWIND_ENABLED)
@@ -456,10 +433,8 @@ def _wind_session(start_x, start_y, start_heading_deg, v_init, thrust, ship_spec
         initial = fh.get_wind_raw()
         fh.advance(WIND_WARMUP_TIME)
         after = fh.get_wind_raw()
-        # A lagging WindState is frozen (bit-identical; measured 11.173774719238281
-        # in every session), so exact equality is the right test for "still
-        # stale". A live WindState that ignores the transform is caught by the
-        # calibration's no-effect check and run_case's RUN_ABORT_* check.
+        # A stale WindState is bit-identical, so exact equality is the test. A
+        # live one ignoring the transform is caught by the calibration and RUN_ABORT_* checks.
         if initial == after:
             raise WindTestSetupError(
                 f"{where}: WindState is unchanged after WIND_WARMUP_TIME={WIND_WARMUP_TIME} s "
@@ -476,9 +451,11 @@ def _wind_session(start_x, start_y, start_heading_deg, v_init, thrust, ship_spec
 def calibrate_wind_field(start_x: float, start_y: float, start_heading_deg: float,
                          v_init: float, thrust: float, ship_spec,
                          exercise_path: Path) -> WindCalibration:
-    """Probe the true wind at the start pose for Rotation/Scale = 0/1, 90/1,
-    0/2 and 0/0, each in its own FH session (see _wind_session). The 0/1
-    session is advanced CAL_STEADY_CHECK_TIME more to check steadiness."""
+    """
+    Probe the true wind at the start pose for Rotation/Scale 0/1, 90/1, 0/2 and
+    0/0, each in its own FH session; 0/1 is re-read after CAL_STEADY_CHECK_TIME.
+    """
+
     common = (start_x, start_y, start_heading_deg, v_init, thrust, ship_spec, exercise_path)
 
     fh = _wind_session(*common, 0.0, 1.0, "calibrate_wind_field R0/S1")
@@ -491,8 +468,7 @@ def calibrate_wind_field(start_x: float, start_y: float, start_heading_deg: floa
         trep = _true_wind(fh)
         _, _, h1, u1, v1, _ = fh.state()
         dpsi = _wrap180(np.degrees(h1 - h0))
-        # Sway check: if the field itself is steady, the change in the apparent
-        # wind's lateral component equals +-(change in v); the ratio gives the sign.
+        # Sway check: in a steady field the apparent lateral wind changes by +-dv.
         a0, a1 = _vec(t0[2], t0[3]), _vec(trep[2], trep[3])
         d_lat, dv = float(a1[1] - a0[1]), float(v1 - v0)
         ratio = d_lat / dv if abs(dv) > 1e-3 else float("nan")
@@ -505,7 +481,9 @@ def calibrate_wind_field(start_x: float, start_y: float, start_heading_deg: floa
         fh.close()
 
     def probe(rotation: float, scale: float):
-        """True wind (as _true_wind) of a fresh session with the given wind-field transform."""
+        """
+        True wind (as _true_wind) of a fresh session with the given wind-field transform.
+        """
 
         fh_probe = _wind_session(*common, rotation, scale, f"calibrate_wind_field R{rotation:g}/S{scale:g}")
         try:
@@ -519,7 +497,10 @@ def calibrate_wind_field(start_x: float, start_y: float, start_heading_deg: floa
                    f"Rotation 0; rotation sign {cal.rotation_sign:+.0f}; Scale 0 leaves {tz[0]:.3f} m/s")
 
     def fmt(t):
-        """Text of a _true_wind tuple for the calibration log line."""
+        """
+        Text of a _true_wind tuple for the calibration log line.
+        """
+
         return f"true {t[0]:.3f}@{t[1]:.1f} (apparent {t[2]:.3f}@{t[3]:.1f})"
 
     print(
@@ -533,29 +514,23 @@ def calibrate_wind_field(start_x: float, start_y: float, start_heading_deg: floa
 
 
 # --------------------------------------------------------------------------
-# UKC at each model's OWN position
+# UKC at each model's own position
 # --------------------------------------------------------------------------
 
 class UkcSource:
-    """UKC for the UA_* models at their own (x, y), from the lookup CSV data
-    rather than from FH's position (which would steer a model that sails a
-    different path than FH).
+    """
+    UKC for the UA_* models at their own (x, y), so a model on a different
+    path than FH is not steered by FH's UKC.
 
-      - UKC_LOOKUP_CSV set: one explicit fw.dynamics.wcu_lookup.WcuLookup on
-        that CSV, for every model with a UKC input.
-      - otherwise: each model's own WcuLookup (`model.wcu_lookup`, from its
-        preset's lookup CSV).
-    Models without a UKC input (UA_clean), or without a lookup, get FH's UKC
-    (the latter is printed once by validate()). With UKC_LOOKUP_CSV, a row
-    farther than UKC_LOOKUP_MAX_DISTANCE is a miss: FH's UKC is used and the
-    step is counted in ukc_misses. A model's own lookup uses the nearest row
-    however far away it is (as before).
+    Source: the shared UKC_LOOKUP_CSV if set (rows farther than
+    UKC_LOOKUP_MAX_DISTANCE are misses: FH's UKC is used and counted), else each
+    model's own wcu_lookup (nearest row, no distance limit). Models without a
+    UKC input or without a lookup get FH's UKC.
     """
 
     def __init__(self, ua_models: dict):
         """
-        Pick a UKC lookup for each UA model with a UKC input: the shared UKC_LOOKUP_CSV lookup if
-        set, otherwise the model's own wcu_lookup.
+        Pick a lookup per UA model with a UKC input (shared CSV, else its own).
         """
 
         self._shared = None
@@ -573,13 +548,15 @@ class UkcSource:
         self._models = ua_models
 
     def uses_ukc(self, label: str) -> bool:
-        """True if model `label` has a UKC lookup."""
+        """
+        True if model `label` has a UKC lookup.
+        """
+
         return label in self._lookups
 
     def ukc(self, label: str, x: float, y: float) -> Optional[float]:
         """
-        UKC [m] for model `label` at (x, y), or None if it has no lookup or the shared lookup finds
-        no row within UKC_LOOKUP_MAX_DISTANCE.
+        UKC [m] for `label` at (x, y); None without a lookup or on a shared-lookup miss.
         """
 
         lookup = self._lookups.get(label)
@@ -589,7 +566,10 @@ class UkcSource:
         return lookup.get_ukc(float(x), float(y), max_distance=max_distance)
 
     def validate(self, x: float, y: float) -> None:
-        """Fail fast if a UKC-using model gets no UKC at the start position."""
+        """
+        Fail fast if a UKC-using model gets no UKC at the start position.
+        """
+
         for label, model in self._models.items():
             scenario = getattr(model, "scenario", None)
             if not self.uses_ukc(label):
@@ -617,7 +597,9 @@ class UkcSource:
 
 @dataclass
 class RunResult:
-    """Result of one wind-test run (or the no-wind baseline): FH and every model on one start pose."""
+    """
+    Result of one wind-test run (or the no-wind baseline): FH and every model on one start pose.
+    """
 
     run_id: str
     target_wind_speed: float          # 0 for the no-wind baseline
@@ -647,12 +629,11 @@ def run_case(
         is_baseline: bool = False, tf_models: Optional[dict] = None,
 ) -> RunResult:
     """
-    Run FH with the given wind-field transform and every other model alongside it, from the same
-    start state, until FH has sailed TARGET_PATH_LENGTH (at most MAX_STEPS).
+    Run FH with the given wind-field transform and every other model from the same
+    start state until FH has sailed TARGET_PATH_LENGTH (at most MAX_STEPS).
 
-    Each step, the UA_* models get the apparent wind (sampled when FH's 1 Hz WindState changes)
-    and UKC for their own state; with `tf_models`, a teacher-forced one-step check runs on FH's
-    state as well.
+    UA_* models get apparent wind (sampled on FH's 1 Hz WindState updates) and UKC
+    for their own state; `tf_models` also get a teacher-forced one-step check.
 
     Raises:
         WindTestSetupError: If the actual true wind is far from the target (not for the
@@ -724,11 +705,9 @@ def run_case(
                     f"{run_id}: FH current {fh_cs:.3f} m/s at step {step_i} (> MAX_CURRENT_SPEED="
                     f"{MAX_CURRENT_SPEED}) -- the wind-only exercise should have current disabled."
                 )
-            # FH's WindState updates at 1 Hz (measured: constant for 10 steps of
-            # 0.1 s). Sample-and-hold: only when it changes, recompute the true
-            # wind (with FH's state at that step) and each UA model's apparent
-            # wind (with ITS state at that step), and hold both until the next
-            # update -- the same timing UA_full saw in its training data.
+            # WindState updates at 1 Hz: on a change, recompute the true wind (FH's
+            # state) and each UA model's apparent wind (its own state) and hold
+            # them, the same timing as in UA_full's training data.
             raw = fh.get_wind_raw()
             windstate_update = raw != last_raw
             if windstate_update:
@@ -752,10 +731,9 @@ def run_case(
                        fh_apparent_wind_speed=a_ws, fh_apparent_wind_dir_deg=a_wd, fh_ukc=fh_ukc,
                        fh_sway=fh_v, fh_yaw_rate=fh_r)
 
-            # Teacher-forced one-step check: every model gets exactly FH's state
-            # and FH's own environment (WindState, UKC, current, rays at FH's
-            # pose) -- what a training row contains -- and predicts the
-            # accelerations; compared below with FH's change over this step.
+            # Teacher-forced one-step check: each model gets FH's state and
+            # environment (as a training row) and its accelerations are compared
+            # with FH's change over this step.
             if tf_models:
                 _, _, fh_h, fh_u, _, _ = fh.state()
                 fs = VesselState(terminated=False, truncated=False, x=cur.x, y=cur.y, heading=fh_h,
@@ -767,9 +745,8 @@ def run_case(
                     tf_pred[label].append(tuple(float(a) for a in model._compute_accelerations(fs, RUDDER_ANGLE_RAD, thrust)))
                 tf_pre = (fh_u, fh_v, fh_r)
 
-            # Each UA_* model gets the apparent wind (held, see above) and UKC for
-            # its OWN state (only UA_full uses the wind; UA_clean uses neither,
-            # UA_confined only UKC).
+            # Held apparent wind and own-position UKC per UA model (only UA_full
+            # uses wind, UA_confined only UKC).
             for label, model in ua_models.items():
                 st = sims[label].state
                 own_ws, own_wd = held_apparent[label]
@@ -822,8 +799,10 @@ def run_case(
 
 
 def _all_paths(result: RunResult, base: Optional[RunResult]) -> Dict[str, List[TrackPoint]]:
-    """The run's own paths plus the no-wind reference lines FH_nowind and
-    UA_full_nowind (from the baseline run), for wind runs only."""
+    """
+    The run's paths plus FH_nowind and UA_full_nowind from the baseline (wind runs only).
+    """
+
     paths = dict(result.paths)
     if base is not None and not result.is_baseline:
         paths["FH_nowind"] = base.paths["FH"]
@@ -833,9 +812,11 @@ def _all_paths(result: RunResult, base: Optional[RunResult]) -> Dict[str, List[T
 
 
 def _onestep_stats(tf_pred: Dict[str, list], tf_fh: list) -> Dict[str, dict]:
-    """Per model: mean (bias) and RMS of the one-step acceleration error vs FH
-    (FH's change over the step / dt), and RMS of FH's own accelerations as scale.
-    du, dv in m/s^2, dr in rad/s^2. Duration T of the run in s."""
+    """
+    Per model: bias and RMS of the one-step acceleration error vs FH, plus FH's
+    own RMS as scale (du, dv [m/s^2], dr [rad/s^2]; T [s]).
+    """
+
     out = {}
     if not tf_fh:
         return out
@@ -856,7 +837,9 @@ ONESTEP_HEADER = ["target_wind_speed", "target_rel_dir_deg", "model", "n_steps",
 
 
 def onestep_rows(result: "RunResult") -> List[list]:
-    """Rows for the one-step CSV (ONESTEP_HEADER), one per model with teacher-forced statistics."""
+    """
+    Rows for the one-step CSV (ONESTEP_HEADER), one per model with teacher-forced statistics.
+    """
 
     rows = []
     for label in MODEL_ORDER:
@@ -888,18 +871,24 @@ SUMMARY_HEADER = [
 
 
 def _metrics_at(pts: List[TrackPoint], n: int) -> Dict[str, float]:
-    """track_metrics of point `n` relative to the path's start."""
+    """
+    track_metrics of point `n` relative to the path's start.
+    """
+
     return track_metrics(pts[0], pts[n])
 
 
 def summary_rows(result: RunResult, base: Optional[RunResult]) -> List[list]:
-    """One row per model. Errors are vs. FH of the same run over the common
-    step count. For wind runs, the paired wind-effect columns compare
-    (model - model in baseline) with (FH - FH in baseline), all at the same
-    step (the shortest of the four paths). The baseline's own rows (target
-    wind 0) show each model's no-wind error vs. FH_nowind. In wind runs, the
-    FH_nowind / UA_full_nowind rows' *_error_vs_fh columns are therefore
-    (no-wind path - FH in wind), i.e. FH's wind effect, not a model error."""
+    """
+    One row per model; errors are vs FH of the same run over the common steps.
+
+    Wind runs: the paired wind-effect columns compare (model - model in
+    baseline) with (FH - FH in baseline) at the shortest of the four paths. In
+    wind runs the FH_nowind / UA_full_nowind *_error_vs_fh columns therefore
+    show FH's wind effect, not a model error. Baseline rows (target wind 0)
+    show each model's no-wind error vs FH_nowind.
+    """
+
     rows = []
     fh_path = result.paths["FH"]
     fh_metrics = [track_metrics(fh_path[0], p) for p in fh_path]
@@ -945,7 +934,9 @@ def summary_rows(result: RunResult, base: Optional[RunResult]) -> List[list]:
 
 
 def write_trajectory_csv(path: Path, result: RunResult, base: Optional[RunResult]) -> None:
-    """Write every model's path (including the no-wind reference lines) with its track metrics."""
+    """
+    Write every model's path (including the no-wind reference lines) with its track metrics.
+    """
 
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -959,8 +950,10 @@ def write_trajectory_csv(path: Path, result: RunResult, base: Optional[RunResult
 
 
 def write_env_csv(path: Path, result: RunResult) -> None:
-    """Per step: FH's true/apparent wind, UKC, sway, yaw rate, and the apparent
-    wind and UKC each UA_* model was given for its own state."""
+    """
+    Write the per-step environment log (FH's wind/UKC/sway/yaw rate, each UA model's inputs).
+    """
+
     if not result.env_log:
         return
     with open(path, "w", newline="") as f:
@@ -974,7 +967,9 @@ def write_env_csv(path: Path, result: RunResult) -> None:
 # --------------------------------------------------------------------------
 
 def _save(fig, png_path: Path) -> None:
-    """Save the figure as a PNG and close it; a failed save is printed, not raised."""
+    """
+    Save the figure as a PNG and close it; a failed save is printed, not raised.
+    """
 
     try:
         fig.savefig(str(png_path), dpi=150)   # str(): Windows/Pillow Path quirk, see model_comparison.py
@@ -986,7 +981,9 @@ def _save(fig, png_path: Path) -> None:
 
 
 def _grid(n: int):
-    """Figure with at most 4 columns of subplots for `n` panels: (fig, flat array of axes)."""
+    """
+    Figure with at most 4 columns of subplots for `n` panels: (fig, flat array of axes).
+    """
 
     ncols = min(4, n)
     nrows = -(-n // ncols)
@@ -995,7 +992,9 @@ def _grid(n: int):
 
 
 def _legend_and_layout(fig, ax0, title: str) -> None:
-    """Shared legend below the panels (from `ax0`), figure title and layout."""
+    """
+    Shared legend below the panels (from `ax0`), figure title and layout.
+    """
 
     handles, labels = ax0.get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=len(labels), frameon=False)
@@ -1005,7 +1004,9 @@ def _legend_and_layout(fig, ax0, title: str) -> None:
 
 
 def _subplot_title(result: RunResult) -> str:
-    """Panel title: target and actual relative wind direction and speed, or 'no wind' for the baseline."""
+    """
+    Panel title: target and actual relative wind direction and speed, or 'no wind' for the baseline.
+    """
 
     if result.is_baseline:
         return f"no wind (Scale=0)\ntrue wind {result.actual_wind_speed:.2f} m/s"
@@ -1014,7 +1015,9 @@ def _subplot_title(result: RunResult) -> str:
 
 
 def _line_kwargs(label: str) -> dict:
-    """Plot style for a model label (FH drawn thicker and on top)."""
+    """
+    Plot style for a model label (FH drawn thicker and on top).
+    """
     return dict(color=COLORS.get(label, "#000000"), linestyle=LINESTYLES.get(label, "-"),
                 linewidth=2.0 if label == "FH" else 1.4, label=label, zorder=3 if label == "FH" else 2)
 
@@ -1022,8 +1025,7 @@ def _line_kwargs(label: str) -> dict:
 def plot_trajectories_for_speed(results: List[RunResult], base: Optional[RunResult],
                                 ray_env: Optional[PySimEnv], png_path: Path, title: str) -> None:
     """
-    Save one panel per run with every model's x/y path (plus the river boundary when `ray_env`
-    is given). Skipped, with a message, if matplotlib is not available.
+    One panel per run with every model's x/y path (and the river boundary if `ray_env`).
     """
 
     if plt is None:
@@ -1062,8 +1064,7 @@ def plot_trajectories_for_speed(results: List[RunResult], base: Optional[RunResu
 def plot_lateral_for_speed(results: List[RunResult], base: Optional[RunResult],
                            png_path: Path, title: str) -> None:
     """
-    Save one panel per run with every model's lateral deviation from the initial track over time.
-    Skipped if matplotlib is not available.
+    One panel per run with every model's lateral deviation from the initial track over time.
     """
 
     if plt is None:
@@ -1132,7 +1133,9 @@ figcaption { color: var(--text2); font-size: 13px; margin-top: 4px; max-width: 9
 
 
 def _fig_to_data_uri(fig) -> str:
-    """The figure as a PNG data URI (the figure is closed)."""
+    """
+    The figure as a PNG data URI (the figure is closed).
+    """
 
     import base64
     import io
@@ -1143,7 +1146,9 @@ def _fig_to_data_uri(fig) -> str:
 
 
 def _png_to_data_uri(path: Path) -> Optional[str]:
-    """The PNG file at `path` as a data URI, or None if it does not exist."""
+    """
+    The PNG file at `path` as a data URI, or None if it does not exist.
+    """
 
     import base64
     if not path.is_file():
@@ -1152,8 +1157,10 @@ def _png_to_data_uri(path: Path) -> Optional[str]:
 
 
 def _table_html(df, float_fmt: str = "{:.2f}", int_cols=(), col_fmts=None) -> str:
-    """int_cols: columns shown without decimals (steps, counts, grid values);
-    col_fmts: optional {column: format} overriding float_fmt per column."""
+    """
+    DataFrame as an HTML table; int_cols without decimals, col_fmts overrides float_fmt per column.
+    """
+
     col_fmts = col_fmts or {}
     import html
     head = "".join(f"<th>{html.escape(str(c))}</th>" for c in df.columns)
@@ -1178,8 +1185,10 @@ def _table_html(df, float_fmt: str = "{:.2f}", int_cols=(), col_fmts=None) -> st
 
 
 def _effect_plot(d, value_col: str, fh_col: str, ylabel: str, title: str) -> str:
-    """Small multiples (one panel per wind speed): wind effect vs relative wind
-    direction, FH (reference) and every model, on one y-axis per panel."""
+    """
+    One panel per wind speed: wind effect vs relative direction, FH and every model.
+    """
+
     speeds = sorted(d["target_wind_speed"].unique())
     fig, axes = plt.subplots(1, len(speeds), figsize=(4.2 * len(speeds), 3.8), squeeze=False, sharey=True)
     for ax, ws in zip(axes[0], speeds):
@@ -1209,7 +1218,10 @@ def _effect_plot(d, value_col: str, fh_col: str, ylabel: str, title: str) -> str
 
 
 def _error_bar_plot(err_table, title: str, ylabel: str) -> str:
-    """Grouped bars: mean |wind-effect error| per model, per wind speed (one axis)."""
+    """
+    Grouped bars: mean |wind-effect error| per model, per wind speed (one axis).
+    """
+
     speeds = [c for c in err_table.columns if c != "model"]
     models = list(err_table["model"])
     x = np.arange(len(speeds))
@@ -1230,7 +1242,10 @@ def _error_bar_plot(err_table, title: str, ylabel: str) -> str:
 
 
 def _onestep_section(out_dir: Path, d) -> str:
-    """Report section for the teacher-forced one-step check (empty if not run)."""
+    """
+    Report section for the teacher-forced one-step check (empty if not run).
+    """
+
     import pandas as pd
     path = out_dir / ONESTEP_NAME
     if not path.is_file():
@@ -1240,12 +1255,9 @@ def _onestep_section(out_dir: Path, d) -> str:
         return ""
     u0 = float(WIND_TRAJECTORY_SPEED)
     T = o["duration_s"]
-    # Constant-bias estimates over the run duration (rough indicator; the bias is
-    # measured along FH's path, while a rollout leaves that path). The biases are
-    # in the state convention (yaw rate counter-clockwise = to port positive, sway
-    # port positive); the rollout errors they are compared with (track_metrics:
-    # turn_error_vs_fh_deg, lateral_error_vs_fh) are STARBOARD positive, hence the
-    # minus signs -- a pure bias then lies on the diagonal of Figure 4.
+    # Errors a constant bias would cause over the run (rough). Biases are port
+    # positive, the rollout errors starboard positive, hence the minus signs (a
+    # pure bias then lies on Figure 4's diagonal).
     o["implied_turn_deg"] = -np.degrees(0.5 * o["bias_dr"] * T ** 2)
     o["implied_lateral_m"] = -(0.5 * o["bias_dv"] * T ** 2 + u0 * o["bias_dr"] * T ** 3 / 6.0)
     key = ["target_wind_speed", "target_rel_dir_deg", "model"]
@@ -1254,7 +1266,9 @@ def _onestep_section(out_dir: Path, d) -> str:
     m = o.merge(roll, on=key, how="left")
 
     def group(row):
-        """Group of a one-step row: 'no wind', 'from starboard', 'from port' or 'head / tail'."""
+        """
+        Group of a one-step row: 'no wind', 'from starboard', 'from port' or 'head / tail'.
+        """
 
         if row["target_wind_speed"] == 0:
             return "no wind"
@@ -1335,9 +1349,11 @@ while a rollout drifts away from it; bias that changes sign during a run partly 
 
 
 def write_report(out_dir: Path = None) -> Path:
-    """Build WIND_OUTPUT_DIR/wind_comparison_report.html from wind_summary.csv,
-    run_meta.json and the PNGs of a finished run. All numbers in it come from
-    those files; nothing is re-simulated."""
+    """
+    Build wind_comparison_report.html from a finished run's wind_summary.csv,
+    run_meta.json and PNGs (nothing is re-simulated).
+    """
+
     import html
     import json
     import pandas as pd
@@ -1355,7 +1371,9 @@ def write_report(out_dir: Path = None) -> Path:
 
     # --- key tables ----------------------------------------------------------
     def mean_abs(col):
-        """Mean |col| per model, per target wind speed and over all speeds, as a DataFrame."""
+        """
+        Mean |col| per model, per target wind speed and over all speeds, as a DataFrame.
+        """
 
         rows = []
         for m in models_present:
@@ -1375,8 +1393,12 @@ def write_report(out_dir: Path = None) -> Path:
     fh_eff_max = float(fh["fh_wind_effect_lateral"].abs().max()) if not fh.empty else float("nan")
     fh_turn_max = float(fh["fh_wind_effect_turn_deg"].abs().max()) if not fh.empty else float("nan")
     ua = wind[wind["model"] == "UA_full"]
+
     def side_of(rd):
-        """Side group of a relative wind direction [deg]."""
+        """
+        Side group of a relative wind direction [deg].
+        """
+
         return "from starboard (45-135 deg)" if 0 < rd < 180 else ("from port (225-315 deg)" if rd > 180 else
                                                               "head / tail wind (0, 180 deg)")
     side_rows = []
@@ -1406,8 +1428,7 @@ def write_report(out_dir: Path = None) -> Path:
     q = d[d["model"] == "FH"][["target_wind_speed", "target_rel_dir_deg", "actual_wind_speed", "actual_rel_dir_deg",
                                "true_wind_speed_min_along_path", "true_wind_speed_max_along_path", "n_steps",
                                "fh_domain_exit_step"]].copy()
-    # The no-wind run has target_rel_dir_deg NaN, and NaN never equals NaN as a
-    # lookup key: group and look up on a sentinel instead.
+    # The no-wind run's direction is NaN (NaN != NaN): use a sentinel key.
     _NO_DIR = -999.0
     keyed = d.assign(_dir=d["target_rel_dir_deg"].fillna(_NO_DIR))
     hits = keyed.groupby(["target_wind_speed", "_dir"])["first_bank_hit_step"].apply(
@@ -1460,7 +1481,10 @@ def write_report(out_dir: Path = None) -> Path:
                               "mean |error| [m]")
 
     def kpi(v, label, fmt="{:.1f}"):
-        """HTML KPI tile for value `v`, formatted with `fmt` ("n/a" for None/NaN)."""
+        """
+        HTML KPI tile for value `v`, formatted with `fmt` ("n/a" for None/NaN).
+        """
+
         return f'<div class="kpi"><div class="v">{"n/a" if v is None or (isinstance(v, float) and np.isnan(v)) else fmt.format(v)}</div><div class="l">{html.escape(label)}</div></div>'
 
     setup_rows = [
@@ -1590,10 +1614,11 @@ def write_report(out_dir: Path = None) -> Path:
 def diagnose_wind_transform(start_x: float, start_y: float, start_heading_deg: float,
                             exercise_path: Path, speed: float = WIND_TRAJECTORY_SPEED,
                             rewind_enabled: Optional[bool] = FH_REWIND_ENABLED) -> None:
-    """Diagnostic, no current check: for a few (Rotation, Scale) settings,
-    start an FH session with that transform and print (a) the transform FH
-    reports back from its wind-field control and (b) the apparent wind right
-    after reset() and after WIND_WARMUP_TIME."""
+    """
+    Diagnostic: per (Rotation, Scale), print the transform FH reports back and
+    the apparent wind right after reset() and after WIND_WARMUP_TIME.
+    """
+
     ship_spec = create_ship(SHIP_MODEL).specifications
     thrust = float(min(1.0, speed / 6.0))
     print(f"diagnose_wind_transform: {exercise_path} (rewind_enabled={rewind_enabled})", flush=True)
@@ -1621,8 +1646,7 @@ def diagnose_wind_transform(start_x: float, start_y: float, start_heading_deg: f
 
 def _report(res: RunResult) -> None:
     """
-    Print a summary of one run: wind, FH's final lateral offset and turn, and any MAX_STEPS stop,
-    domain exit, bank hits or UKC lookup misses.
+    Print a one-run summary: wind, FH's final offset and turn, and any warnings.
     """
 
     fh_final = track_metrics(res.paths["FH"][0], res.paths["FH"][-1])
@@ -1656,15 +1680,14 @@ def generate_wind_trajectories(
         speed: float = WIND_TRAJECTORY_SPEED,
 ) -> None:
     """
-    Run the wind comparison: calibrate the wind field, run the no-wind baseline and every
-    (wind speed, relative direction) case, and write CSVs, plots, run_meta.json and the report
-    to WIND_OUTPUT_DIR.
+    Calibrate the wind field, run the no-wind baseline and every (speed, direction)
+    case, and write CSVs, plots, run_meta.json and the report to WIND_OUTPUT_DIR.
 
     Args:
         start_x: Start x [m].
         start_y: Start y [m].
         start_heading_deg: Start heading [deg].
-        exercise_path: Wind-only Tripoli .tab file; None = WIND_EXERCISE_PATH.
+        exercise_path: Wind-only .tab file; None = WIND_EXERCISE_PATH.
         wind_speeds: Target true wind speeds [m/s].
         rel_dirs_deg: Target wind directions relative to the bow [deg].
         speed: Initial ship speed [m/s]; the thrust is min(1, speed / 6).
@@ -1692,26 +1715,34 @@ def generate_wind_trajectories(
 
 
 class _ListHandler(logging.Handler):
-    """Collects this module's warnings for the report."""
+    """
+    Collects this module's warnings for the report.
+    """
 
     def __init__(self):
-        """Collect messages of level WARNING and above."""
+        """
+        Collect messages of level WARNING and above.
+        """
+
         super().__init__(level=logging.WARNING)
         self.messages: List[str] = []
 
     def emit(self, record):
-        """Store the message and echo it to stderr."""
+        """
+        Store the message and echo it to stderr.
+        """
 
         msg = record.getMessage()
         self.messages.append(msg)
-        # Attaching this handler stops Python's last-resort console output for
-        # this logger, so echo the warning to the console as before.
+        # This handler disables the last-resort console output, so echo it.
         print(f"WARNING: {msg}", file=sys.stderr, flush=True)
 
 
 def _clean_output_dir(out_dir: Path) -> None:
-    """Remove this script's own outputs from a previous run (only these patterns),
-    so the report never mixes runs."""
+    """
+    Remove this script's outputs of a previous run, so the report never mixes runs.
+    """
+
     patterns = ("trajectory_*.csv", "env_*.csv", "wind_trajectories_*ms.png", "wind_lateral_*ms.png",
                 "wind_summary.csv", ONESTEP_NAME, RUN_META_NAME, REPORT_NAME)
     n = 0
@@ -1726,8 +1757,7 @@ def _clean_output_dir(out_dir: Path) -> None:
 def _generate(start_x, start_y, start_heading_deg, exercise_path, wind_speeds, rel_dirs_deg, speed,
               started, warn_handler) -> None:
     """
-    Body of generate_wind_trajectories, run while `warn_handler` collects the warnings for
-    run_meta.json.
+    Body of generate_wind_trajectories; `warn_handler` collects warnings for run_meta.json.
     """
 
     import json
@@ -1739,15 +1769,13 @@ def _generate(start_x, start_y, start_heading_deg, exercise_path, wind_speeds, r
                        start_pos=np.array([start_x, start_y], dtype=np.float32), ship_model=SHIP_MODEL)
     cutoff_geom = _cutoff_geometry(ray_env)
 
-    # Models are stateless w.r.t. the trajectory (state lives in ShipSimulator), so
-    # they are built once and reused, as run_comparison does.
+    # Models are stateless (state lives in ShipSimulator), so built once and reused.
     ua_models = build_ua_models(ship_spec)          # the UA_* slots SHIP_MODEL has a preset for
     non_fh_models = {**build_reference_models(ship_spec, ray_env), **ua_models}
     ukc_source = UkcSource(ua_models)
     ukc_source.validate(start_x, start_y)
 
-    # Separate instances for the teacher-forced one-step check, so its extra
-    # calls can never affect the rollout models (in case a class keeps state).
+    # Separate instances for the one-step check, so it cannot affect the rollouts.
     tf_models = None
     if ONESTEP_CHECK:
         tf_models = {**build_reference_models(ship_spec, ray_env), **build_ua_models(ship_spec)}
@@ -1760,8 +1788,7 @@ def _generate(start_x, start_y, start_heading_deg, exercise_path, wind_speeds, r
     cal = calibrate_wind_field(**common)
     updates: Dict[str, int] = {}
 
-    # No-wind baseline: every model, Scale=0. Gives FH_nowind / UA_full_nowind
-    # and each model's no-wind path for the paired wind-effect metrics.
+    # No-wind baseline (Scale=0) for all models, for the paired wind-effect metrics.
     base = run_case("nowind", 0.0, 0.0, 0.0, float("nan"), is_baseline=True, **run_kwargs)
     _report(base)
     updates[base.run_id] = base.windstate_updates
@@ -1849,9 +1876,8 @@ if __name__ == "__main__":
     if "--report-only" in sys.argv:
         write_report(WIND_OUTPUT_DIR)          # rebuild the report from an existing output folder
     else:
-        # The wind-only (no-current) full exercise of SHIP_MODEL (model_comparison.SHIP_MODEL):
-        # Tripoli -> DDShip_Tripoli_scenario_windnocurrent.tab,
-        # MYZAKO_37 -> DDShip_scenario2_windnocurrent_myzako_37.tab (sim_fh_dataset_generator.SHIP_PROFILES).
+        # Wind-only (no current) exercise of SHIP_MODEL, e.g.
+        # DDShip_Tripoli_scenario_windnocurrent.tab (see sim_fh_dataset_generator.SHIP_PROFILES).
         from fw.surrogate.sim_fh_dataset_generator import exercise_paths
         _, _wind_only_exercise = exercise_paths(SHIP_MODEL, "full")
         generate_wind_trajectories(

@@ -16,7 +16,9 @@ from surrogate_test_helpers import identity, synthetic_rows, train_tiny
 
 
 def test_split_and_save_writes_provenance(tmp_path):
-    """split_and_save stores the provenance in all three splits; without it, the files are as before."""
+    """
+    split_and_save stores the provenance in all three splits; the data itself is unchanged.
+    """
 
     from fw.surrogate.generate_ship_data import split_and_save
 
@@ -33,7 +35,9 @@ def test_split_and_save_writes_provenance(tmp_path):
 
 
 def test_generation_provenance_contents():
-    """generation_provenance records the CLI settings, ship, exercises and generator data version."""
+    """
+    generation_provenance records the CLI settings, ship, exercises and generator data version.
+    """
 
     from fw.ships.ship_factory import ShipModel
     from fw.surrogate.generate_ship_data import generation_provenance
@@ -53,7 +57,9 @@ def test_generation_provenance_contents():
 
 
 def test_training_logs_and_stores_provenance(tmp_path, caplog):
-    """Training stores the provenance of every file in the checkpoint and logs differing settings."""
+    """
+    Training stores the provenance of every file in the checkpoint and logs differing settings.
+    """
 
     prov = {"created_utc": "x", "ship_model": "MYZAKO_37", "configuration": "confined",
             "cli_settings": {"seed": 1, "bank_straight_fraction": 0.0}}
@@ -65,7 +71,9 @@ def test_training_logs_and_stores_provenance(tmp_path, caplog):
 
 
 def test_combining_datasets_lists_differing_settings(tmp_path, caplog):
-    """Two training datasets generated with different settings: training runs and names the differences."""
+    """
+    Two training datasets generated with different settings: training runs and names the differences.
+    """
 
     from fw.surrogate import train_surrogate
     from surrogate_test_helpers import write_splits
@@ -86,7 +94,9 @@ def test_combining_datasets_lists_differing_settings(tmp_path, caplog):
 
 
 def test_training_survives_malformed_provenance(tmp_path, caplog):
-    """Provenance that is not a JSON object (or cli_settings that is not one) never stops training."""
+    """
+    Provenance that is not a JSON object (or cli_settings that is not one) never stops training.
+    """
 
     from fw.surrogate import train_surrogate
     from fw.surrogate.schema import NPZ_PROVENANCE_KEY

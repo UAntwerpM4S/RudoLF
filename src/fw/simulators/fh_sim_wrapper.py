@@ -14,51 +14,28 @@ logger = logging.getLogger(__name__)
 
 class FhSimWrapper(BaseSimulator):
     """
-    Wrapper for the FH Simulator integrating with the unified BaseSimulator interface.
+    BaseSimulator wrapper around the FH Simulator (deprecated; use ShipSimulator).
 
-    Handles all coordinate-frame and sign-convention conversions between the
-    framework and the FH Simulator black box:
-
-    Rudder sign convention:
-        Framework (every ship): +1 = turn to port, -1 = turn to starboard.
-        FH azipod (Tripoli), setDesiredDirection(+deg): turns to port      -> sent as is.
-        FH rudder (Myzako),  setControlValue(+):        turns to starboard -> negated.
-        Both via fh_rudder_sign() (fw.dynamics.fh_tabular_model), measured
-        with check_rudder_sign.py.
-
-    Rudder angle units:
-        The framework stores max_rudder_angle in radians; getMaximumAngle()
-        returns degrees. The conversion factor np.rad2deg(max_rudder_angle)
-        normalizes the policy output [-1, 1] to the FH engine's degree scale.
-        If the SimAPI ever changes getMaximumAngle() to return radians, this
-        line must be updated.
-
-    Velocity frame:
-        getShipVelocityOverGround() values are used directly as body-fixed
-        surge (u) and sway (v) - no earth-to-body rotation by heading is
-        applied. This mirrors FhTabularModel's documented empirical finding
-        that this FH engine call returns velocities already expressed in the
-        body-fixed frame despite its name.
-
-    Sway sign:
-        The FH engine returns y-velocity with positive = port, which is also the
-        framework convention (fw.ships.vessel_state), so vy is used as is.
+    Conventions handled here:
+        - Rudder sign: framework +1 turns to port for every ship. Tripoli azipod
+          setDesiredDirection(+deg) also turns to port (sent as is); Myzako rudder
+          setControlValue(+) turns to starboard (negated). Both via fh_rudder_sign(),
+          measured with check_rudder_sign.py.
+        - Units: max_rudder_angle is in radians, getMaximumAngle() in degrees.
+        - Velocities: getShipVelocityOverGround() is already body-fixed despite
+          its name (as found for FhTabularModel), so it is used as (u, v) without
+          rotation; its y is positive to port, like the framework.
     """
 
     def __init__(self, specs: ShipSpecifications, fh_engine, dt: float):
         """
-        Initialize the FH Simulator wrapper.
-
-        .. deprecated::
-            FhSimWrapper is deprecated; use ShipSimulator instead.
-
         Args:
-            specs: ShipSpecifications defining vessel and actuator limits.
-            fh_engine: FhSimBridge instance (the FH engine handle).
-            dt: Simulation time step [s]. Must be positive.
+            specs: Vessel and actuator limits.
+            fh_engine: FhSimBridge instance.
+            dt: Time step [s], must be positive.
 
         Raises:
-            ValueError: If dt <= 0 (enforced by BaseSimulator).
+            ValueError: If dt <= 0 (from BaseSimulator).
         """
 
         logger.warning(
@@ -73,108 +50,69 @@ class FhSimWrapper(BaseSimulator):
 
     def __deepcopy__(self, memo):
         """
-        Deep copy this wrapper, sharing the FH engine reference.
-
-        The FH engine (_engine) holds non-picklable native library handles
-        and is shared between copies. All other attributes are deep-copied.
-
-        Args:
-            memo: Memoization dict used by copy.deepcopy.
-
-        Returns:
-            FhSimWrapper: Deep copy with shared _engine reference.
+        Deep copy that shares _engine (non-picklable native handles).
         """
 
         new_instance = self.__class__.__new__(self.__class__)
 
         for key, value in self.__dict__.items():
             if key == '_engine':
-                setattr(new_instance, key, value)   # Retain the original reference
+                setattr(new_instance, key, value)
             else:
-                setattr(new_instance, key, copy.deepcopy(value, memo))  # Deep copy all other attributes
+                setattr(new_instance, key, copy.deepcopy(value, memo))
 
         return new_instance
 
 
     def step(self, action: np.ndarray, enable_smoothing: bool = False, enable_rudder_angle_scaling: bool = False) -> None:
         """
-        Advance the FH Simulator by one time step using a normalized action.
+        Send a normalized action to FH, advance dt seconds and read back the state.
 
-        Workflow:
-            1. Apply exponential smoothing to the raw policy action.
-            2. Convert the smoothed action to FH engine control values and
-               send them to the rudder and propeller interfaces.
-            3. Advance the physics by dt seconds.
-            4. Read the updated state from the FH engine.
-            5. Transform earth-fixed velocities to body-fixed frame.
-            6. Store the result as a VesselState.
+        The action is sent without smoothing or rate limiting: FH's own actuator
+        model handles the physical rate limits.
 
         Args:
-            action: Normalized action array [rudder, thrust] in [-1, 1].
-            enable_smoothing: If True, apply exponential smoothing to the
-                action before forwarding to the FH engine. If False, the
-                raw action is sent directly (used during visualization to
-                ensure full thrust).
-            enable_rudder_angle_scaling: If True, rescale the rudder action
-                to compensate for the difference between the framework's
-                maximum rudder angle (from ShipSpecifications, used during
-                training) and the FH engine's own rudder limit (from
-                getMaximumAngle()). If False, the framework angle is used
-                directly as the FH engine target, which is correct when both
-                simulators share the same rudder limit. Myzako (rudder) only:
-                for the Tripoli the azipod direction is always the policy
-                output times the framework maximum (as FhTabularModel).
-
-        Note on actuator model:
-            apply_smoothing() (EMA only) is used rather than ActuatorModel.step()
-            (full rate-limiting + saturation) because the FH Simulator's own
-            actuator model handles physical rate limits internally. Applying
-            our rate limiter on top would double-constrain the actuator and
-            produce overly conservative maneuvers. If the FH engine does not
-            have internal actuator dynamics, switch to self._actuators.step().
+            action: [rudder, thrust] in [-1, 1].
+            enable_smoothing: Currently ignored.
+            enable_rudder_angle_scaling: Myzako only. If True, scale the rudder
+                command by framework_max_deg / getMaximumAngle(); if False, send
+                the policy output unscaled (correct when both share the same
+                limit). The Tripoli azipod direction is always the policy output
+                times the framework maximum (as in FhTabularModel).
         """
 
-        # Step 1: smooth the policy action
+        # Map thrust from [-1, 1] to [min_thrust, max_thrust]
         thrust = (self._specs.min_thrust + 0.5 * (action[1] + 1.0) *
                   (self._specs.max_thrust - self._specs.min_thrust))
         actuator = ActuatorState(action[0], thrust)
 
-        sign = fh_rudder_sign(self._engine.ship_model)   # framework -> FH command sign
+        sign = fh_rudder_sign(self._engine.ship_model)   # framework to FH command sign
 
         if self._engine.ship_model == ShipModel.TRIPOLI:
-            # The policy output in [-1, 1] spans the ship's own rudder limit
-            # (ShipSpecifications.max_rudder_angle, 35 deg for the Tripoli), the
-            # same physical angle FhTabularModel sends to the azipods.
+            # [-1, 1] spans the ship's own rudder limit (35 deg for the Tripoli),
+            # as FhTabularModel sends to the azipods.
             framework_max_deg = np.rad2deg(self._specs.max_rudder_angle)
             for rudder in self._engine.ship_interface.getAzipodControls():
                 rudder.setDesiredDirection(float(sign * actuator.rudder_angle * framework_max_deg))
                 rudder.setEngineLeverValue(float(actuator.thrust))
         else:
-            # Step 2a: rudder
-            # actuator.rudder_angle is the (potentially smoothed) policy output in [-1, 1].
+            # Rudder (policy output in [-1, 1])
             for rudder in self._engine.ship_interface.getRudderControls():
                 if enable_rudder_angle_scaling:
-                    # Rescale the rudder angle relative to FH simulator's rudder angle range.
-                    # Value mapping [-1, 1] -> [-max_deg, +max_deg] in the FH degree scale.
-                    fh_max_deg = rudder.getMaximumAngle()   # FH engine's rudder limit in degrees
+                    fh_max_deg = rudder.getMaximumAngle()   # [deg]
                     framework_max_deg = np.rad2deg(self._specs.max_rudder_angle)
-                                                            # convert to degrees as max_rudder_angle
-                                                            # is stored in radians in ShipSpecifications
                     val = (actuator.rudder_angle * framework_max_deg) / fh_max_deg
                 else:
-                    # No rescaling: treat the policy output as already in the FH range.
                     val = actuator.rudder_angle
                 rudder.setControlValue(float(sign * val))   # Myzako: sign = -1
 
-            # Step 2b: propeller
+            # Propeller
             for propeller in self._engine.ship_interface.getPropellerControls():
                 propeller.engage()
                 propeller.setEngineLeverValue(float(actuator.thrust))
 
-        # Step 3: advance FH physics
         self._engine.math_model.simulateSeconds(self.dt)
 
-        # Step 4: read updated state from FH engine
         new_ship_pos          = self._engine.ship_interface.getShipPosition()
         velocity_over_ground  = self._engine.ship_interface.getShipVelocityOverGround()
         heading_deg           = self._engine.ship_interface.getShipHeading()
@@ -183,7 +121,6 @@ class FhSimWrapper(BaseSimulator):
         heading_rad = float(np.radians(heading_deg))
         yaw_rate    = float(np.radians(yaw_rate_deg_per_s))
 
-        # Step 5: store VesselState
         self._state = VesselState(
             terminated=False,
             truncated=False,

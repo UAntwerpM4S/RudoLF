@@ -10,15 +10,9 @@ class BaseSimulator(ABC):
     """
     Abstract base class defining a unified simulator interface for vessels.
 
-    This interface is intended for both control loops and reinforcement
-    learning environments. It standardizes the interaction with:
-
-        - Vessel state representation (VesselState)
-        - Actuator dynamics (ActuatorModel)
-        - Time stepping with fixed simulation interval
-
-    Subclasses must implement the `step` method to define the vessel
-    dynamics and environmental effects.
+    Used by control loops and RL environments; standardizes vessel state
+    (VesselState), actuator dynamics (ActuatorModel) and fixed-dt stepping.
+    Subclasses implement `step`.
     """
 
     def __init__(self, specs: ShipSpecifications, dt: float):
@@ -92,18 +86,14 @@ class BaseSimulator(ABC):
         """
         Advance the simulation by one time step using a normalized action.
 
-        Subclasses must implement this method to update the vessel
-        state according to the chosen dynamics model, environmental
-        effects, and actuator commands.
-
         Args:
             action: Normalized action array [rudder, thrust] in the
                 range [-1, 1].
             enable_smoothing: Enable actuator rate limiting and smoothing
                 to prevent unrealistic instantaneous changes.
-            enable_rudder_angle_scaling: If True, rescale the rudder action
-                to compensate for the difference between the original simulator's
-                and the target simulator's maximum rudder angles.
+            enable_rudder_angle_scaling: If True, rescale the rudder action for
+                the difference in maximum rudder angle between the source and
+                target simulator.
         """
 
         pass

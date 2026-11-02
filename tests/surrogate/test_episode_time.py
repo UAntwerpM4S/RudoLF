@@ -14,7 +14,9 @@ from fw.surrogate.schema import SURROGATE_DT
 
 
 def _episode(n, u0, v0=0.0, r0=0.0, x0=100.0, y0=200.0, h0=0.3, decel=0.0, sub=10):
-    """FH-like episode: integrated with `sub` substeps; returns float32 (state (n, 6), delta (n, 3))."""
+    """
+    FH-like episode: integrated with `sub` substeps; returns float32 (state (n, 6), delta (n, 3)).
+    """
 
     x, y, h, u, v, r = x0, y0, h0, u0, v0, r0
     states, deltas = [], []
@@ -34,7 +36,9 @@ def _episode(n, u0, v0=0.0, r0=0.0, x0=100.0, y0=200.0, h0=0.3, decel=0.0, sub=1
 
 
 def _shuffled(episodes, seed=0):
-    """Concatenate episodes, shuffle all rows; returns (state, delta, episode_id, true step)."""
+    """
+    Concatenate episodes, shuffle all rows; returns (state, delta, episode_id, true step).
+    """
 
     st = np.concatenate([e[0] for e in episodes])
     de = np.concatenate([e[1] for e in episodes])
@@ -53,7 +57,9 @@ def _shuffled(episodes, seed=0):
     ("one_row", dict(n=1, u0=3.0)),
 ])
 def test_order_is_rebuilt_exactly(name, kwargs):
-    """Every row gets its true step index (several episodes mixed and shuffled)."""
+    """
+    Every row gets its true step index (several episodes mixed and shuffled).
+    """
 
     st, de, ep, true = _shuffled([_episode(**kwargs), _episode(n=150, u0=3.0, x0=900.0), _episode(**kwargs)])
     steps, n_ok, n_bad = step_index(st, de, ep)
@@ -62,7 +68,9 @@ def test_order_is_rebuilt_exactly(name, kwargs):
 
 
 def test_full_turning_circle_is_ordered_or_skipped_never_misordered():
-    """A steady circle that closes on itself: exact order, or skipped (-1) -- never a wrong order."""
+    """
+    A steady circle that closes on itself: exact order, or skipped (-1) -- never a wrong order.
+    """
 
     r0 = 0.1
     n = int(round(3 * 2 * np.pi / r0 / SURROGATE_DT))         # three full loops
@@ -113,7 +121,9 @@ def test_slow_ship_far_from_origin_is_ordered():
 
 
 def test_stopped_ship_is_skipped():
-    """Identical rows (a ship at rest): the order is ambiguous -> skipped, all -1."""
+    """
+    Identical rows (a ship at rest): the order is ambiguous -> skipped, all -1.
+    """
 
     st, de, ep, _ = _shuffled([_episode(n=50, u0=0.0)])
     steps, n_ok, n_bad = step_index(st, de, ep)
@@ -121,7 +131,9 @@ def test_stopped_ship_is_skipped():
 
 
 def test_whole_step_helpers():
-    """Stored float32 times map back to exact steps; thresholds are robust to float rounding."""
+    """
+    Stored float32 times map back to exact steps; thresholds are robust to float rounding.
+    """
 
     t = (np.arange(5000) * SURROGATE_DT).astype(np.float32)
     assert np.array_equal(steps_from_times(t), np.arange(5000))

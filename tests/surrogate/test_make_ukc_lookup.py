@@ -18,9 +18,9 @@ CELL = 5.0
 
 def _write_csv(path, scenario_name, seed=0):
     """
-    A dataset-layout CSV (raw row, 3 targets, episode_id) with many rows per
-    5 m cell and UKC / wind / current that vary from row to row (so a median or
-    a wrong row choice shows); returns the array as written.
+    Write a dataset-layout CSV (raw row, 3 targets, episode_id) with many rows
+    per 5 m cell and per-row varying UKC/wind/current, so a wrong median or row
+    choice shows. Returns the array as written.
     """
 
     sc = get_scenario(scenario_name)
@@ -43,7 +43,9 @@ def _write_csv(path, scenario_name, seed=0):
 
 
 def _cells(rows, sc):
-    """Row indices per occupied CELL x CELL square."""
+    """
+    Row indices per occupied CELL x CELL square.
+    """
 
     cells = {}
     for i, (x, y) in enumerate(zip(rows[:, sc.col("x")], rows[:, sc.col("y")])):
@@ -52,13 +54,17 @@ def _cells(rows, sc):
 
 
 def _cell_of(row, sc):
-    """The cell key of an output row."""
+    """
+    The cell key of an output row.
+    """
 
     return int(np.floor(row[sc.col("x")] / CELL)), int(np.floor(row[sc.col("y")] / CELL))
 
 
 def test_confined_grid_median(tmp_path):
-    """Confined: per occupied cell the mean position and the MEDIAN UKC of its rows."""
+    """
+    Confined: per occupied cell the mean position and the MEDIAN UKC of its rows.
+    """
 
     sc = get_scenario("confined_ukc")
     rows = _write_csv(tmp_path / "c.csv", "confined_ukc")
@@ -75,7 +81,9 @@ def test_confined_grid_median(tmp_path):
 
 
 def test_full_env_keeps_the_real_row_closest_to_the_cell_mean(tmp_path):
-    """Full: per cell the input row closest to the cell's mean position (lookup columns), the rest 0; .gz stable."""
+    """
+    Full: per cell the input row closest to the cell's mean position (lookup columns), the rest 0; .gz stable.
+    """
 
     sc = get_scenario("full_env")
     rows = _write_csv(tmp_path / "f.csv", "full_env")

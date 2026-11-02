@@ -2,24 +2,16 @@
 Central logging setup for the framework.
 
 Every entry point (fw.main, fw.main_pipeline, fw.main_with_airsim,
-airsim.train.train_airsim, ...) should call `setup_logging()` exactly once,
-before importing anything that logs. This replaces the ad-hoc
-`logging.basicConfig(...)` calls that used to be duplicated in each entry
-point.
+airsim.train.train_airsim, ...) calls `setup_logging()` once, before importing
+anything that logs. The level comes from the run configuration
+(CONFIG_PARAMETERS['log_level'] or PipelineSpec.log_level), not from an
+environment variable.
 
-Log level comes from the framework config (`CONFIG_PARAMETERS['log_level']`)
-or a pipeline spec (`PipelineSpec.log_level`) - not from an environment
-variable - so it is versioned alongside the rest of the run configuration.
+Log files follow the TrainingIterationLogger CSV naming; pass the same
+`timestamp` to match a run's .log and .csv files by name.
 
-File output uses the same naming convention as `TrainingIterationLogger`'s
-CSVs, and - when a `timestamp` is passed in - shares that exact timestamp,
-so the .log file and the per-run .csv file for a given run can be matched
-up by filename.
-
-Note on multiprocessing (spawn mode): this only configures the *current*
-process. Worker processes started via `SubprocVecEnv` (spawn) do not
-inherit this configuration and must call `configure_worker_logging()`
-themselves (console-only by design - see module docstring section below).
+SubprocVecEnv workers (spawn mode) do not inherit this configuration and call
+`configure_worker_logging()` themselves (console only).
 """
 
 from __future__ import annotations
@@ -37,14 +29,11 @@ _FILE_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 
 _VALID_LEVEL_NAMES = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
-# Third-party/verbose loggers that are noisy at INFO and below by default.
+# Noisy third-party loggers, silenced up to CRITICAL.
 _DEFAULT_SUPPRESSED_LOGGERS = ("airsim", "sim", "matplotlib")
 
-# Naming components of the most recent setup_logging(..., to_file=True)
-# call in this process, kept so update_log_file_agent_type() can rebuild
-# the filename without fragile parsing of the path itself. None if no
-# file-backed run is active (to_file=False, or setup_logging not yet
-# called).
+# Filename parts of the active file-backed run, used by
+# update_log_file_agent_type(); None if no log file is active.
 _active_run_context: "dict | None" = None
 
 
@@ -54,14 +43,12 @@ def resolve_log_level(level: "int | str", *, where: str = "log_level") -> int:
     or one of the standard level names (case-insensitive).
 
     Raises:
-        ValueError: If `level` is a string that isn't a recognized level
-            name, so a typo in config/JSON fails at load time rather than
-            silently falling back to WARNING (logging's own default when
-            given an unrecognized name).
+        ValueError: If `level` is a bool, an unknown level name or another
+            type, so config typos fail at load time.
     """
 
     if isinstance(level, bool):
-        # bool is an int subclass; guard against accidental True/False.
+        # bool is an int subclass.
         raise ValueError(f"{where}: expected a log level, got bool {level!r}.")
 
     if isinstance(level, int):
@@ -95,25 +82,15 @@ def setup_logging(
     unless `to_file` is False, a per-run file handler.
 
     Args:
-        run_type: Short label for what's running, e.g. "train", "visualize",
-            "evaluate_reward", "inference", "pipeline". Used in the log
-            filename.
-        env_name: Environment name, used in the log filename to match the
-            existing TrainingIterationLogger convention.
+        run_type: Label for the run, e.g. "train", "visualize", "inference",
+            "pipeline". Used in the log filename.
+        env_name: Environment name, used in the log filename.
         agent_type: Agent type, used in the log filename.
-        src_dir: Project src directory, required if `to_file` is True (same
-            role as TrainingIterationLogger's `src_dir`).
-        log_dir: Directory (relative to src_dir, or absolute) to write the
-            log file under. Defaults to "logs", matching
-            TrainingIterationLogger.
-        level: Log level, as an int or standard level name string. Applies
-            to both handlers.
-        timestamp: Timestamp to embed in the filename. Defaults to now
-            (UTC). Pass the same timestamp used for a run's
-            TrainingIterationLogger/TrainingSession to keep filenames
-            correlated.
-        to_file: Whether to also write a file handler. Set False for
-            short-lived tools that only want console output.
+        src_dir: Project src directory; required if `to_file` is True.
+        log_dir: Log directory, relative to src_dir or absolute.
+        level: Log level (int or level name); applies to both handlers.
+        timestamp: Timestamp for the filename. Defaults to now (UTC).
+        to_file: Whether to add the file handler.
 
     Returns:
         The resolved log file path, or None if `to_file` is False.
@@ -129,8 +106,7 @@ def setup_logging(
 
     root_logger = logging.getLogger()
     root_logger.setLevel(resolved_level)
-    # Avoid duplicate handlers if setup_logging is called more than once
-    # in the same process (e.g. in tests, or a REPL).
+    # Avoid duplicate handlers on repeated calls (tests, REPL).
     root_logger.handlers.clear()
 
     console_handler = logging.StreamHandler(stream=sys.stdout)
@@ -170,26 +146,16 @@ def setup_logging(
 
 def update_log_file_agent_type(agent_type: str) -> Optional[Path]:
     """
-    Rename the currently active per-run log file to embed a now-known
-    agent_type, replacing the placeholder used when setup_logging() had to
-    be called before the agent type could be resolved (e.g. fw.main, where
-    the agent type - PPO/MPPO/MPSA - depends on which environments end up
-    configured, and is only known once that resolution has happened).
+    Rename the active log file to embed the agent type once it is known.
 
-    Safe to call more than once (e.g. once per batch in a multi-batch
-    run); each call renames from whatever the file's current name is. In
-    a run with multiple standard batches using different agent types, the
-    final filename reflects the *last* batch's agent type - the file's
-    *contents* always cover the full run regardless.
-
-    A failure here (e.g. filesystem issue) is logged as a warning and
-    never propagates - a purely cosmetic filename update must not be able
-    to crash an otherwise-successful training/visualize run.
+    Used when setup_logging() runs before the agent type (PPO/MPPO/MPSA) is
+    resolved, e.g. in fw.main. Safe to call repeatedly; with several batches
+    the filename reflects the last agent type. Failures are only logged as a
+    warning, since a cosmetic rename must not crash a run.
 
     Returns:
-        The new log file path if a rename actually happened. None if no
-        file-backed run is active, the filename already matches (nothing
-        to rename), or the update failed.
+        The new log file path, or None if no file-backed run is active, the
+        name already matches, or the update failed.
     """
 
     global _active_run_context
@@ -218,9 +184,7 @@ def update_log_file_agent_type(agent_type: str) -> Optional[Path]:
         try:
             old_path.rename(target_path)
         except OSError:
-            # Rename failed (e.g. cross-device, permissions) - keep
-            # logging to the original file rather than losing the run's
-            # log entirely.
+            # Keep logging to the original file.
             final_path = old_path
 
         new_handler = logging.FileHandler(final_path, encoding="utf-8")
@@ -237,20 +201,17 @@ def update_log_file_agent_type(agent_type: str) -> Optional[Path]:
 
 def configure_worker_logging(level: "int | str" = logging.INFO) -> None:
     """
-    Minimal console-only logging setup for SubprocVecEnv worker processes.
+    Console-only logging setup for SubprocVecEnv worker processes.
 
-    Worker processes (multiprocessing "spawn" mode) do not inherit the main
-    process's logging configuration, so each worker calls this once on
-    startup. Output goes to the worker's own stdout only; per-worker output
-    may interleave across processes and is not centralized into the main
-    run's log file. If centralized worker logging is ever needed, this is
-    the place to introduce a QueueHandler/QueueListener instead.
+    Spawned workers do not inherit the main process's configuration, so each
+    calls this once on startup. Output goes to the worker's stdout and is not
+    written to the run's log file (a QueueHandler would be needed for that).
     """
 
     resolved_level = resolve_log_level(level)
     root_logger = logging.getLogger()
     if root_logger.handlers:
-        # Already configured (e.g. re-entrant call) - just adjust the level.
+        # Already configured: only adjust the level.
         root_logger.setLevel(resolved_level)
         return
 

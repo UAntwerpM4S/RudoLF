@@ -35,12 +35,10 @@ def normalize_configuration(configuration: Any) -> Any:
 def get_validated_bool(mapping: Mapping, key: str, default: bool) -> bool:
     """
     Fetch a boolean flag from a JSON-sourced config mapping, failing fast on
-    non-bool values instead of silently coercing them.
+    non-bool values.
 
-    Guards against the `bool("false") == True` foot-gun: a JSON config file
-    that (incorrectly) quotes a boolean as a string, e.g. "use_airsim":
-    "false", would otherwise be silently truthy if passed through
-    `bool(mapping.get(key, default))`.
+    Guards against `bool("false") == True`: a quoted "false" in a JSON config
+    would otherwise be silently truthy.
 
     Args:
         mapping: Configuration dict (or other Mapping) to read from.

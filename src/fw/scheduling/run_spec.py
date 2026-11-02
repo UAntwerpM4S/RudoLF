@@ -1,5 +1,5 @@
 """
-Dataclasses describing validated JSON-driven pipeline runs.
+Dataclasses describing JSON-driven pipeline runs (validated by run_loader).
 """
 
 from __future__ import annotations
@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
-# These containers are validated by run_loader before execution.
 @dataclass
 class StopConditionSpec:
     """
@@ -37,7 +36,7 @@ class TransferSpec:
 @dataclass
 class PipelineBlock:
     """
-    One train, visualize, or evaluate_reward pipeline step.
+    One train, visualize or evaluate_reward pipeline step.
     """
 
     name: str

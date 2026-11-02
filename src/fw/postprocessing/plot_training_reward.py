@@ -1,17 +1,9 @@
 """
-plot_training_reward.py
------------------------
-Plots average reward vs. training iteration in the style typical of
-Deep Reinforcement Learning publications:
+Plot training reward vs. iteration in DRL-publication style: the raw reward
+as a faint line, a rolling mean, and a +/-1 std band around it.
 
-  - Raw per-step reward shown as a faint shaded area (or scatter).
-  - A running/rolling mean overlaid as a solid line (the "smooth" curve).
-  - A shaded ±1 std-dev band around the running mean to convey variance.
-
-Multi-agent CSVs (MultiPPOAgent, with an `agent_id` column) get one curve per
-agent, each with its own rolling statistics, and a dashed vertical line where
-an agent met its stop condition and was frozen (`frozen` column). Before,
-the rows of all agents were interleaved into one curve.
+Multi-agent CSVs (MultiPPOAgent, with an agent_id column) get one curve per
+agent, plus a dashed vertical line where an agent was frozen (frozen column).
 
 Usage
 -----
@@ -37,11 +29,10 @@ DEFAULT_CSV    = "training_metrics.csv"
 DEFAULT_WINDOW = 50          # rolling-window size (iterations)
 DEFAULT_OUT    = "reward_curve.pdf"
 
-# Color palette: a single accent color keeps the figure clean and readable
-# in both color and greyscale print.
-COLOR_RAW    = "#a8c7e8"     # light blue  -> raw reward
-COLOR_SMOOTH = "#1a5fa8"     # dark blue   -> rolling mean
-COLOR_BAND   = "#a8c7e8"     # same as raw -> +/- 1 σ band
+# Single accent colour: readable in colour and greyscale print
+COLOR_RAW    = "#a8c7e8"     # light blue: raw reward
+COLOR_SMOOTH = "#1a5fa8"     # dark blue: rolling mean
+COLOR_BAND   = "#a8c7e8"     # same as raw: +/-1 std band
 
 # Per-agent (light, dark) color pairs for multi-agent CSVs.
 AGENT_COLORS = [
@@ -57,7 +48,7 @@ FONT_SIZE_TICK   = 12
 FONT_SIZE_LEGEND = 12
 FONT_SIZE_TITLE  = 15
 
-FIG_W, FIG_H = 8, 4.5       # inches, fits a single-column thesis layout
+FIG_W, FIG_H = 8, 4.5       # inches, single-column thesis layout
 
 
 # ---------------------------------------------------------------------------
@@ -66,23 +57,11 @@ FIG_W, FIG_H = 8, 4.5       # inches, fits a single-column thesis layout
 
 def load_data(csv_path: str) -> pd.DataFrame:
     """
-    Load training reward data from a CSV file and normalize its structure.
-
-    The function ensures a consistent format by:
-    - Lowercasing column names
-    - Ensuring an 'iteration' column exists
-    - Creating a synthetic iteration index if necessary
-
-    Args:
-        csv_path (str): Path to the CSV file containing training data.
-
-    Returns:
-        pd.DataFrame: DataFrame containing at least:
-            - iteration (int)
-            - reward (float)
+    Load a training CSV with lowercased columns and an 'iteration' column
+    (renamed from 'step', or a row index, per agent for multi-agent CSVs).
 
     Raises:
-        ValueError: If the required 'reward' column is missing.
+        ValueError: If there is no 'reward' column.
     """
 
     df = pd.read_csv(csv_path)
@@ -94,11 +73,8 @@ def load_data(csv_path: str) -> pd.DataFrame:
             f"CSV must contain a 'reward' column. Found: {list(df.columns)}"
         )
 
-    # Normalize column names to lowercase
     df.columns = df.columns.str.lower()
 
-    # Use explicit iteration column if present, else use row index (per
-    # agent for a multi-agent CSV, whose rows interleave the agents)
     if "iteration" not in df.columns and "step" not in df.columns:
         if "agent_id" in df.columns:
             df.insert(0, "iteration", df.groupby("agent_id").cumcount())
@@ -114,17 +90,7 @@ def rolling_stats(
     series: pd.Series, window: int
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
     """
-    Compute rolling mean and ±1 standard deviation envelope.
-
-    Args:
-        series (pd.Series): Input numeric series (e.g., rewards).
-        window (int): Rolling window size.
-
-    Returns:
-        tuple:
-            - rolling mean (pd.Series)
-            - lower bound (mean - std)
-            - upper bound (mean + std)
+    Return the rolling mean and the mean -/+ 1 std bounds.
     """
 
     rm   = series.rolling(window, min_periods=1).mean()
@@ -139,22 +105,13 @@ def rolling_stats(
 def _plot_curve(ax, iterations, reward: pd.Series, window: int,
                 color_raw: str, color_smooth: str, label: str = "") -> None:
     """
-    Draw one reward curve: raw signal, ±1 σ rolling band and rolling mean.
-
-    Args:
-        ax: Matplotlib axes to draw on.
-        iterations: X values (training iterations).
-        reward (pd.Series): Reward per iteration.
-        window (int): Rolling window size for smoothing.
-        color_raw (str): Color of the raw signal and band.
-        color_smooth (str): Color of the rolling mean.
-        label (str): Prefix for the legend entries ("" for a single curve).
+    Draw one curve: raw reward, rolling +/-1 std band and rolling mean.
+    label prefixes the legend entries ("" for a single curve).
     """
 
     prefix = f"{label}: " if label else ""
     rm, rm_lo, rm_hi = rolling_stats(reward.reset_index(drop=True), window)
 
-    # 1. Raw reward: semi-transparent to keep focus on the smooth curve
     ax.plot(
         iterations, reward.values,
         color=color_raw, alpha=0.35, linewidth=0.7,
@@ -162,7 +119,6 @@ def _plot_curve(ax, iterations, reward: pd.Series, window: int,
         zorder=1,
     )
 
-    # 2. ±1 σ shaded band
     ax.fill_between(
         iterations, rm_lo, rm_hi,
         color=color_raw, alpha=0.25,
@@ -170,7 +126,6 @@ def _plot_curve(ax, iterations, reward: pd.Series, window: int,
         zorder=2,
     )
 
-    # 3. Rolling mean: the star of the show
     ax.plot(
         iterations, rm,
         color=color_smooth, linewidth=2.0,
@@ -181,30 +136,17 @@ def _plot_curve(ax, iterations, reward: pd.Series, window: int,
 
 def plot_reward(df: pd.DataFrame, window: int, out_path: str):
     """
-    Plot DRL training reward curve with smoothing and variance visualization.
-
-    The plot includes:
-        - Raw reward signal (low-opacity line)
-        - Rolling mean reward (main curve)
-        - ±1 standard deviation band around rolling mean
-
-    With an `agent_id` column (multi-agent CSV), every agent gets its own
-    curve and rolling statistics, plus a dashed vertical line at the first
-    iteration it was frozen (`frozen` column), if any.
+    Plot the reward curve(s), save to out_path (300 dpi) and show it.
 
     Args:
-        df (pd.DataFrame): Input dataframe containing:
-            - iteration (int)
-            - reward (float)
-            - agent_id (int, optional), frozen (bool, optional)
-        window (int): Rolling window size for smoothing.
-        out_path (str): Output file path for saving the figure.
+        df: Columns iteration, reward, and optionally agent_id and frozen.
+        window: Rolling window size.
+        out_path: Output file; format from the extension.
 
     Returns:
-        matplotlib.figure.Figure: The figure (also saved to `out_path`).
+        The matplotlib Figure.
     """
 
-    # --- Figure & axes ---------------------------------------------------
     fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
 
     if "agent_id" in df.columns:
@@ -224,7 +166,6 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str):
         iterations = df["iteration"].values
         _plot_curve(ax, iterations, df["reward"], window, COLOR_RAW, COLOR_SMOOTH)
 
-    # --- Labels & formatting --------------------------------------------
     ax.set_xlabel("Iteration", fontsize=FONT_SIZE_LABEL)
     ax.set_ylabel("Average Reward", fontsize=FONT_SIZE_LABEL)
     ax.set_title("Training Reward Curve", fontsize=FONT_SIZE_TITLE, pad=10)
@@ -234,13 +175,10 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str):
         lambda x, _: f"{int(x):,}"
     ))
 
-    # Tight x-limits: no unnecessary whitespace
     ax.set_xlim(iterations[0], iterations[-1])
 
-    # Horizontal guide line at y = 0 for reference
     ax.axhline(0, color="grey", linewidth=0.6, linestyle="--", alpha=0.5, zorder=0)
 
-    # Legend inside the plot, upper-left (common DRL convention)
     ax.legend(
         fontsize=FONT_SIZE_LEGEND,
         loc="best",
@@ -248,13 +186,12 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str):
         edgecolor="lightgrey",
     )
 
-    # Clean spine style (no top / right frame), widely used in ML papers
+    # No top/right frame
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
     fig.tight_layout()
 
-    # --- Save ------------------------------------------------------------
     out = Path(out_path)
     fig.savefig(out, dpi=300, bbox_inches="tight")
     print(f"[✓] Figure saved -> {out.resolve()}")
@@ -268,20 +205,7 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str):
 
 def main() -> None:
     """
-    Command-line entry point for DRL reward curve visualization.
-
-    Workflow:
-        1. Parse CLI arguments
-        2. Load and normalize training CSV
-        3. Generate and save reward plot
-
-    CLI Arguments:
-        --csv (str): Path to input CSV file.
-        --window (int): Rolling window size for smoothing.
-        --out (str): Output file path.
-
-    Returns:
-        None
+    CLI entry point: --csv, --window, --out.
     """
 
     parser = argparse.ArgumentParser(

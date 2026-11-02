@@ -1,47 +1,40 @@
 #!/usr/bin/env python3
 """
-plot_environment_coverage.py -- which environmental conditions does a
-surrogate dataset cover?
+Summarize which environmental conditions a surrogate dataset covers.
 
-Reads a dataset CSV (the generator's layout: raw row, 3 targets, episode_id;
-plain or .csv.gz) in chunks, so files of any size work, and summarizes the
-distribution of:
+Reads a dataset CSV (generator layout: raw row, 3 targets, episode_id; .csv or .csv.gz)
+in chunks and summarizes the distribution of:
 
-    UKC                         (confined and full datasets)
-    true wind speed / direction (full)   -- the weather the ship sailed in
-    apparent wind speed / angle (full)   -- what the surrogate is given
-    current speed / direction   (full)   -- earth-fixed
-    current relative to the ship (full)  -- following / head / beam current
+    UKC                          (confined and full datasets)
+    true wind speed / direction  (full; the weather the ship sailed in)
+    apparent wind speed / angle  (full; what the surrogate is given)
+    current speed / direction    (full; earth-fixed)
+    current relative to the ship (full; following / head / beam)
 
-Every row is one 0.1 s step, so every share below is a share of simulated
-time.
+Every row is one 0.1 s step, so all shares are shares of simulated time.
 
-Conventions of the figures (the dataset's own conventions are in
-fw/CONVENTIONS.md):
+Figure conventions (dataset conventions are in fw/CONVENTIONS.md):
     true wind     compass direction the wind comes FROM (N = 0 deg, clockwise)
     apparent wind angle off the bow it comes FROM (0 = ahead, + = starboard)
     current       compass direction it flows TOWARD (N = 0 deg, clockwise)
     current rel.  angle off the bow it flows TOWARD (0 = following current,
                   180 = head current, + = toward starboard)
 
-True wind is reconstructed from the stored apparent wind and the ship's
-motion: apparent = true + (u, -v) in (ahead, starboard) components (sway is
-port positive). FH updates its wind state at 1 Hz, so a row's apparent wind
-can be up to ~1 s older than its u, v; the error this adds is small next to
-the wind speeds of interest.
+True wind is reconstructed as apparent = true + (u, -v) in (ahead, starboard) components
+(sway port positive). FH updates wind at 1 Hz, so apparent wind may lag u, v by up to
+~1 s; the resulting error is small.
 
-Percentiles come from fine histograms (resolution: 0.01 m, 0.01 m/s, 0.001 m/s
-for current, 1 deg); minimum, maximum, mean and standard deviation are exact.
+Percentiles come from fine histograms (0.01 m, 0.01 m/s, 0.001 m/s for current, 1 deg);
+min, max, mean and std are exact.
 
-Outputs, in <out> (default: <csv folder>/<csv stem>_coverage/):
-    overview.png                one 16:9 slide with every distribution
+Outputs in <out> (default <csv folder>/<csv stem>_coverage/):
+    overview.png                16:9 slide with every distribution
     ukc.png, wind_speed.png, wind_rose_true.png, wind_angle_apparent.png,
-    current_speed.png, current_rose.png, current_relative.png
-                                the same panels one per figure
+    current_speed.png, current_rose.png, current_relative.png   (one panel each)
     summary.csv                 min, percentiles, max, mean, std per quantity
     thresholds.csv              share of time below thresholds (e.g. UKC < 2 m)
     directions.csv              share of time per 30-deg sector (full datasets)
-The summary is also printed. Needs numpy, pandas and matplotlib (no torch, no FH).
+The summary is also printed. Needs numpy, pandas and matplotlib only.
 
 Usage (from src):
     python -m fw.surrogate.validation.plot_environment_coverage data/tripoli_full/ship_dynamics_dataset.csv
@@ -71,8 +64,8 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------ settings
 CHUNK_ROWS = 1_000_000
 
-# Fine histograms (for percentiles); values outside the range are still
-# counted in min / max / mean and in the under- / overflow.
+# Fine histograms for percentiles; out-of-range values still count in min/max/mean
+# and in the under-/overflow bins.
 UKC_EDGES = np.arange(0.0, 100.0 + 0.01, 0.01)            # m
 WIND_EDGES = np.arange(0.0, 60.0 + 0.01, 0.01)            # m/s
 CURRENT_EDGES = np.arange(0.0, 5.0 + 0.001, 0.001)        # m/s
@@ -92,21 +85,22 @@ CURRENT_CLASS_LABELS = ("< 0.25", "0.25-0.5", "0.5-1.0", "1.0-1.5", "> 1.5")
 ROSE_SECTOR_DEG = 10.0
 TABLE_SECTOR_DEG = 30.0
 
-# Colors: light chart surface, recessive ink and grid, one sequential blue
-# ramp (light -> dark = low -> high speed) for every magnitude.
+# Colors: light surface, recessive ink and grid, sequential blue ramp (light = low speed).
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
 INK_2 = "#52514e"
 GRID = "#e4e3df"
 BAR = "#2a78d6"
-# Ordinal steps 250..700 (the lightest still clears 2:1 on the surface).
+# Ordinal steps 250..700 (lightest still has 2:1 contrast on the surface).
 SEQ_BLUE = ("#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281", "#0d366b")
 
 
 # ------------------------------------------------------------------ accumulators
 @dataclass
 class Scalar:
-    """Streaming statistics of one scalar quantity: exact moments, histogram percentiles."""
+    """
+    Streaming statistics of one scalar quantity: exact moments, histogram percentiles.
+    """
 
     name: str
     unit: str
@@ -121,12 +115,17 @@ class Scalar:
     n_below: Dict[float, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Allocate the histogram (one extra bin each side for under- / overflow)."""
+        """
+        Allocate the histogram (one extra bin each side for under- / overflow).
+        """
+
         self.counts = np.zeros(len(self.edges) + 1, dtype=np.int64)
         self.n_below = {t: 0 for t in self.below}
 
     def add(self, values: np.ndarray) -> None:
-        """Add finite values to the statistics."""
+        """
+        Add finite values to the statistics.
+        """
 
         v = np.asarray(values, dtype=np.float64)
         v = v[np.isfinite(v)]
@@ -145,18 +144,26 @@ class Scalar:
 
     @property
     def mean(self) -> float:
-        """Exact mean (NaN without data)."""
+        """
+        Exact mean (NaN without data).
+        """
+
         return self.total / self.n if self.n else float("nan")
 
     @property
     def std(self) -> float:
-        """Exact population standard deviation (NaN without data)."""
+        """
+        Exact population standard deviation (NaN without data).
+        """
+
         if not self.n:
             return float("nan")
         return float(np.sqrt(max(self.total_sq / self.n - self.mean ** 2, 0.0)))
 
     def percentile(self, q: float) -> float:
-        """q-th percentile from the histogram (bin upper edge; clamped to min / max)."""
+        """
+        q-th percentile from the histogram (bin upper edge; clamped to min / max).
+        """
 
         if not self.n:
             return float("nan")
@@ -169,11 +176,16 @@ class Scalar:
         return float(min(max(self.edges[idx], self.lo), self.hi))
 
     def share_below(self, threshold: float) -> float:
-        """Share [%] of the values below `threshold`."""
+        """
+        Share [%] of the values below `threshold`.
+        """
+
         return 100.0 * self.n_below[threshold] / self.n if self.n else float("nan")
 
     def bin_shares(self, step: float) -> Tuple[np.ndarray, np.ndarray]:
-        """(left edges, share [%]) over the in-range part, regrouped into `step`-wide bins."""
+        """
+        (left edges, share [%]) over the in-range part, regrouped into `step`-wide bins.
+        """
 
         fine = self.counts[1:len(self.edges)]                 # in-range bins
         width = float(self.edges[1] - self.edges[0])
@@ -188,7 +200,9 @@ class Scalar:
 
 @dataclass
 class Direction:
-    """Streaming histogram of a direction [deg, 0..360) in 1-deg bins, optionally split by speed class."""
+    """
+    Streaming histogram of a direction [deg, 0..360) in 1-deg bins, optionally split by speed class.
+    """
 
     name: str
     convention: str
@@ -196,11 +210,16 @@ class Direction:
     counts: np.ndarray = field(init=False)
 
     def __post_init__(self) -> None:
-        """Allocate the (direction bin, speed class) histogram."""
+        """
+        Allocate the (direction bin, speed class) histogram.
+        """
+
         self.counts = np.zeros((len(DIR_EDGES) - 1, len(self.classes) - 1), dtype=np.int64)
 
     def add(self, direction_deg: np.ndarray, speed: Optional[np.ndarray] = None) -> None:
-        """Add directions (any range; wrapped to [0, 360)) with their speeds."""
+        """
+        Add directions (any range; wrapped to [0, 360)) with their speeds.
+        """
 
         d = np.asarray(direction_deg, dtype=np.float64)
         s = np.zeros_like(d) if speed is None else np.asarray(speed, dtype=np.float64)
@@ -212,7 +231,10 @@ class Direction:
 
     @property
     def n(self) -> int:
-        """Number of directions added."""
+        """
+        Number of directions added.
+        """
+
         return int(self.counts.sum())
 
     def sector_shares(self, sector_deg: float, centred: bool = True) -> Tuple[np.ndarray, np.ndarray]:
@@ -233,14 +255,17 @@ class Direction:
 
 # ------------------------------------------------------------------ conversions
 def compass_from_math(angle_rad: np.ndarray) -> np.ndarray:
-    """Math angle (rad, CCW from East) -> compass bearing (deg, clockwise from North), [0, 360)."""
+    """
+    Convert a math angle (rad, CCW from East) to a compass bearing (deg, clockwise from North, [0, 360)).
+    """
+
     return np.mod(90.0 - np.degrees(angle_rad), 360.0)
 
 
 def true_wind(app_speed: np.ndarray, app_dir: np.ndarray, heading: np.ndarray,
               u: np.ndarray, v: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
-    True wind (speed [m/s], compass direction it comes FROM [deg]) from the
+    True wind (speed [m/s], compass direction it comes from [deg]) from the
     stored apparent wind and the ship's motion.
 
     Args:
@@ -259,14 +284,18 @@ def true_wind(app_speed: np.ndarray, app_dir: np.ndarray, heading: np.ndarray,
 
 
 def current_relative_deg(current_dir: np.ndarray, heading: np.ndarray) -> np.ndarray:
-    """Direction the current flows TOWARD, clockwise off the bow [deg, 0..360): 0 = following, 180 = head."""
+    """
+    Direction the current flows TOWARD, clockwise off the bow [deg, 0..360): 0 = following, 180 = head.
+    """
     return np.mod(-np.degrees(current_dir - heading), 360.0)
 
 
 # ------------------------------------------------------------------ reading
 @dataclass
 class Coverage:
-    """All accumulated statistics of one dataset."""
+    """
+    All accumulated statistics of one dataset.
+    """
 
     scenario: ScenarioSchema
     rows: int = 0
@@ -286,7 +315,10 @@ class Coverage:
 
     @property
     def has_env(self) -> bool:
-        """True for datasets with wind and current (full_env)."""
+        """
+        True for datasets with wind and current (full_env).
+        """
+
         return self.scenario.includes_wind_current
 
 
@@ -335,13 +367,14 @@ def read_coverage(csv_file: Path, chunk_rows: int = CHUNK_ROWS, max_rows: Option
 
 
 def dataset_title(csv_file: Path, cov: Coverage, title: Optional[str] = None) -> str:
-    """Figure title: ship and configuration from the generator's sidecar JSON when present."""
+    """
+    Figure title: ship and configuration from the generator's sidecar JSON when present.
+    """
 
     if title:
         return title
     stem = csv_file.stem.replace(".csv", "")
-    # Without the sidecar (datasets generated before it existed), the folder
-    # name (e.g. "tripoli_full") says more than the generator's default file name.
+    # Without a sidecar, the folder name (e.g. "tripoli_full") beats the default file name.
     label = csv_file.parent.name if stem == "ship_dynamics_dataset" and csv_file.parent.name else stem
     sidecar = csv_file.with_name(stem + "_generation.json")
     try:
@@ -355,7 +388,9 @@ def dataset_title(csv_file: Path, cov: Coverage, title: Optional[str] = None) ->
 
 # ------------------------------------------------------------------ tables
 def summary_rows(cov: Coverage) -> List[Dict[str, object]]:
-    """One summary dict per scalar quantity (percentiles, moments, shares below thresholds)."""
+    """
+    One summary dict per scalar quantity (percentiles, moments, shares below thresholds).
+    """
 
     quantities = [cov.ukc] + ([cov.wind_true, cov.wind_app, cov.current] if cov.has_env else [])
     rows = []
@@ -369,7 +404,9 @@ def summary_rows(cov: Coverage) -> List[Dict[str, object]]:
 
 
 def threshold_rows(cov: Coverage) -> List[Dict[str, object]]:
-    """Share of time [%] below each threshold, one row per (quantity, threshold)."""
+    """
+    Share of time [%] below each threshold, one row per (quantity, threshold).
+    """
 
     quantities = [cov.ukc] + ([cov.wind_true, cov.wind_app, cov.current] if cov.has_env else [])
     return [{"quantity": s.name, "unit": s.unit, "below": t, "share_of_time_pct": s.share_below(t)}
@@ -377,7 +414,9 @@ def threshold_rows(cov: Coverage) -> List[Dict[str, object]]:
 
 
 def direction_rows(cov: Coverage) -> List[Dict[str, object]]:
-    """Share of time per TABLE_SECTOR_DEG sector for every direction quantity."""
+    """
+    Share of time per TABLE_SECTOR_DEG sector for every direction quantity.
+    """
 
     rows = []
     if not cov.has_env:
@@ -394,7 +433,9 @@ def direction_rows(cov: Coverage) -> List[Dict[str, object]]:
 
 
 def write_csv(path: Path, rows: Sequence[Dict[str, object]]) -> None:
-    """Write dict rows (same keys per quantity group; union of keys as header)."""
+    """
+    Write dict rows (same keys per quantity group; union of keys as header).
+    """
 
     if not rows:
         return
@@ -409,7 +450,9 @@ def write_csv(path: Path, rows: Sequence[Dict[str, object]]) -> None:
 
 
 def print_summary(title: str, cov: Coverage) -> None:
-    """Print the summary tables."""
+    """
+    Print the summary tables.
+    """
 
     print(f"\n== {title}")
     shares = threshold_rows(cov)
@@ -426,7 +469,9 @@ def print_summary(title: str, cov: Coverage) -> None:
 
 # ------------------------------------------------------------------ figures
 def _style(ax, polar: bool = False) -> None:
-    """Recessive axes and grid, readable at slide size."""
+    """
+    Recessive axes and grid, readable at slide size.
+    """
 
     ax.set_facecolor(SURFACE)
     ax.tick_params(colors=INK_2, labelsize=11)
@@ -440,7 +485,9 @@ def _style(ax, polar: bool = False) -> None:
 
 
 def plot_scalar(ax, s: Scalar, step: float, title: str) -> None:
-    """Histogram (share of time per bin) with the 5th, 50th and 95th percentiles marked."""
+    """
+    Histogram (share of time per bin) with the 5th, 50th and 95th percentiles marked.
+    """
 
     _style(ax)
     lefts, shares = s.bin_shares(step)
@@ -461,7 +508,9 @@ def plot_scalar(ax, s: Scalar, step: float, title: str) -> None:
 
 
 def plot_rose(ax, dirq: Direction, labels: Sequence[str], title: str, tick_labels: str) -> None:
-    """Stacked polar histogram: share of time per direction sector, split by speed class."""
+    """
+    Stacked polar histogram: share of time per direction sector, split by speed class.
+    """
 
     _style(ax, polar=True)
     ax.set_theta_zero_location("N")
@@ -495,7 +544,9 @@ REL_CURRENT_LABELS = "following,,to stbd,,head,,to port,"
 
 
 def _panels(cov: Coverage) -> List[Tuple[str, str, callable]]:
-    """(file stem, kind, draw function) of every panel for this dataset."""
+    """
+    (file stem, kind, draw function) of every panel for this dataset.
+    """
 
     panels = [("ukc", "xy", lambda ax: plot_scalar(ax, cov.ukc, 0.25, "Under-keel clearance"))]
     if cov.has_env:
@@ -519,7 +570,9 @@ def _panels(cov: Coverage) -> List[Tuple[str, str, callable]]:
 
 
 def _legend(fig, ax, anchor, title: str) -> None:
-    """Speed-class legend of a rose, at `anchor` (figure coordinates, upper left)."""
+    """
+    Speed-class legend of a rose, at `anchor` (figure coordinates, upper left).
+    """
 
     handles, labels = ax.get_legend_handles_labels()
     leg = fig.legend(handles, labels, loc="upper left", bbox_to_anchor=anchor, frameon=False,
@@ -529,7 +582,9 @@ def _legend(fig, ax, anchor, title: str) -> None:
 
 
 def save_figures(cov: Coverage, title: str, out_dir: Path, dpi: int) -> List[Path]:
-    """Write overview.png and one PNG per panel; returns the written paths."""
+    """
+    Write overview.png and one PNG per panel; returns the written paths.
+    """
 
     import matplotlib
     matplotlib.use("Agg")
@@ -574,8 +629,7 @@ def save_figures(cov: Coverage, title: str, out_dir: Path, dpi: int) -> List[Pat
         elif stem == "current_rose":
             current_ax = ax
     if cov.has_env:
-        # Top-right cell: the two speed-class legends of the roses, stacked
-        # (side by side they do not fit with every font).
+        # Top-right cell: both rose legends, stacked (side by side does not always fit).
         pos = fig.add_subplot(grid[0, 3]).get_position()
         fig.axes[-1].remove()
         _legend(fig, wind_ax, (pos.x0, pos.y1 + 0.04), "wind speed in the roses [m/s]")
@@ -590,13 +644,18 @@ def save_figures(cov: Coverage, title: str, out_dir: Path, dpi: int) -> List[Pat
 
 # ------------------------------------------------------------------ main
 def default_out_dir(csv_file: Path) -> Path:
-    """<csv folder>/<csv stem>_coverage (".csv.gz" counts as one suffix)."""
+    """
+    <csv folder>/<csv stem>_coverage (".csv.gz" counts as one suffix).
+    """
+
     stem = csv_file.name[:-len(".csv.gz")] if csv_file.name.endswith(".csv.gz") else csv_file.stem
     return csv_file.with_name(stem + "_coverage")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Parse the arguments, summarize every CSV, write tables and figures."""
+    """
+    Parse the arguments, summarize every CSV, write tables and figures.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)

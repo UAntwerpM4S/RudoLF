@@ -22,12 +22,7 @@ _SRC_DIR = Path(__file__).resolve().parents[2]
 
 class PPO2Agent(BaseAgent):
     """
-    PPO2Agent integrates the Stable-Baselines3 implementation of Proximal Policy Optimization (PPO)
-    into a custom training framework based on the BaseAgent interface.
-
-    It wraps an SB3 PPO agent and provides standardized methods for environment setup, policy prediction,
-    and training with callbacks, logging, and evaluation support. This class is fully compliant with the
-    BaseAgent API, enabling interchangeable use with other reinforcement learning agents in the framework.
+    BaseAgent wrapper around the Stable-Baselines3 PPO implementation.
 
     Attributes:
         env (gym.Env): The input environment.
@@ -47,28 +42,19 @@ class PPO2Agent(BaseAgent):
         **kwargs,
     ):
         """
-        Initialize the PPO2Agent with environment and Stable-Baselines3-specific settings.
-
-        This constructor wraps the SB3 PPO agent and adds extended configuration options
-        such as total training steps, logging intervals, and TensorBoard support.
+        Create the vectorized training env and the SB3 PPO model.
 
         Args:
-            *args: Positional arguments forwarded to the BaseAgent constructor.
-            total_time_steps (int, optional): Total number of environment steps for training.
-                Defaults to 200000.
-            log_interval (int, optional): Number of updates between logging to stdout.
-                Defaults to 10.
-            n_steps (int, optional): Number of steps to run for each environment per policy update.
-                Corresponds to `n_steps` in SB3 PPO. Defaults to 2048.
-            reward_threshold (float, optional): Reward threshold to stop training early if exceeded.
-                Used with `StopTrainingOnRewardThreshold` callback. Defaults to 100000.8.
-            log_dir (str, optional): Directory where evaluation logs and intermediate results are stored.
-                Defaults to "logs".
-            tensorboard_log (Optional[str], optional): Path to log TensorBoard summaries, or None to disable.
-                Defaults to "logs/tensorboard".
-            verbose (bool, optional): Verbosity flag; if True, enables console output during training.
-                Defaults to True.
-            **kwargs: Additional keyword arguments passed to the BaseAgent constructor.
+            *args: Forwarded to BaseAgent.
+            total_time_steps (int, optional): Total training environment steps.
+            log_interval (int, optional): Updates between stdout logs.
+            n_steps (int, optional): Steps per environment per update (SB3 `n_steps`).
+            reward_threshold (float, optional): Eval reward that stops training early.
+            log_dir (str, optional): Evaluation log directory (relative to src).
+            tensorboard_log (Optional[str], optional): TensorBoard directory
+                (relative to src), or None to disable.
+            verbose (bool, optional): Enable SB3 console output.
+            **kwargs: Forwarded to BaseAgent.
         """
 
         super().__init__(*args, **kwargs)
@@ -78,7 +64,6 @@ class PPO2Agent(BaseAgent):
         self.n_steps = n_steps
         self.reward_threshold = reward_threshold
         self.log_dir = str(_SRC_DIR / log_dir)
-        # None disables TensorBoard logging (as documented).
         self.tensorboard_log = str(_SRC_DIR / tensorboard_log) if tensorboard_log else None
         self.verbose = verbose
 
@@ -117,7 +102,7 @@ class PPO2Agent(BaseAgent):
 
     def make_env(self, rank, worker_seed=None):
         """
-        Utility function for multiprocessing env creation.
+        Return a factory creating one monitored env for a SubprocVecEnv worker.
 
         Args:
             rank: Worker index (used for the Monitor log directory).
@@ -130,10 +115,7 @@ class PPO2Agent(BaseAgent):
 
         def _init():
             """
-            Create one monitored environment instance for a worker process.
-
-            Returns:
-                A monitored Gym environment instance for the given worker rank.
+            Create the monitored environment for this worker.
             """
 
             logging_dir = str(_SRC_DIR / f"logs/env_{rank}")
@@ -144,22 +126,19 @@ class PPO2Agent(BaseAgent):
 
     def create_env(self, worker_seed=None) -> gym.Env:
         """
-        Create a fresh copy of the base environment.
+        Create a deep copy of the base environment with its own seeded RNG.
 
         Args:
             worker_seed: Seed for the copy's env RNG; None spawns a new
                 child of the agent's worker SeedSequence (see BaseAgent 'seed').
 
         Returns:
-            gym.Env: A deep copy of the original environment. If the environment supports randomization,
-                     a random initial configuration is applied.
+            gym.Env: The copy, randomized if it supports `randomize()`.
         """
 
         if worker_seed is None:
             worker_seed = self._spawn_worker_seeds(1)[0]
         env = copy.deepcopy(self.env)
-        # Each copy gets its own (seeded) RNG; otherwise every worker would
-        # draw the same randomization as the template environment.
         reseed_env_rng(env, worker_seed)
         if hasattr(env, "randomize"):
             env.randomize()
@@ -168,23 +147,18 @@ class PPO2Agent(BaseAgent):
 
     def predict(self, state: np.ndarray, deterministic: bool = False) -> Tuple:
         """
-        Predict an action for a given observation using the current policy.
+        Predict an action with the current policy.
 
         Args:
-            state (np.ndarray): Current observation from the environment.
-            deterministic (boolean): Whether the action should be deterministic or not.
+            state (np.ndarray): Current observation.
+            deterministic (bool): Use the deterministic action.
 
         Returns:
-            Tuple[np.ndarray, None, None]: (action, log_prob, value). SB3 does not
-            expose per-step log-probabilities or value estimates at inference time;
-            both are None. All callers must unpack exactly three values.
+            Tuple[np.ndarray, None, None]: (action, None, None); SB3 does not
+            expose log-probabilities or values at inference time.
         """
 
         action, _ = self.ppo.predict(state, deterministic=deterministic)
-        # Return (action, log_prob, value). SB3 does not expose per-step
-        # log-probabilities or value estimates at inference time; both are
-        # returned as None so callers that unpack three values (e.g.
-        # agent_manager_simple, episode_collector) work without modification.
         return action, None, None
 
 
@@ -193,13 +167,13 @@ class PPO2Agent(BaseAgent):
         stop_condition: Optional[StopCondition] = None,
     ):
         """
-        Train the PPO agent using Stable-Baselines3 with evaluation callbacks and logging.
+        Train with SB3, evaluating every `eval_frequency` steps.
+
+        The best model is saved by the eval callback and the final model as
+        "final_ppo_<total_time_steps>".
 
         Args:
-            stop_condition (StopCondition, optional): Optional custom stop condition (not currently used).
-
-        Notes:
-            The agent is saved both during training (if performance improves) and after training is completed.
+            stop_condition (StopCondition, optional): Not used.
         """
 
         logger.info("Starting training for %d time steps...", self.total_time_steps)
@@ -240,14 +214,13 @@ class PPO2Agent(BaseAgent):
 
     def load_policy(self, policy_file_name: str) -> None:
         """
-        Load a trained agent's policy.
+        Load a saved SB3 policy (relative to model_dir).
 
         Args:
             policy_file_name (str): Name of the policy file to load.
 
         Raises:
-            RuntimeError: If no agent is created or the policy fails to load.
-            ValueError: If the loaded policy dimensions do not match the environment.
+            ValueError: If the observation or action space shapes do not match.
         """
 
         if self.model_dir:
@@ -261,19 +234,15 @@ class PPO2Agent(BaseAgent):
         if loaded_ppo.action_space.shape != self.env.action_space.shape:
             raise ValueError(f"Action space dimension mismatch: loaded policy expects {loaded_ppo.action_space.shape}, but environment requires {self.env.action_space.shape}.")
             
-        # Attach the current training env so that learn() can continue from
-        # the loaded weights (PPO.load without env leaves model.env = None).
-        # Re-loading WITH the env lets SB3 size the model for this env's
-        # num_envs (set_env would assert when it differs from the saved one).
+        # Re-load with the current training env so learn() can continue (SB3
+        # then sizes the model for this num_envs; set_env would assert instead).
         current_env = self.ppo.get_env() if self.ppo is not None else None
         if current_env is not None:
             try:
                 loaded_ppo = PPO.load(policy_file_name, env=current_env, device=self.device)
             except ValueError as exc:
-                # Same shapes (checked above) but other space details, e.g. Box
-                # bounds: keep the env-less model, as before this change, so
-                # predict/visualize still work; continued training then needs
-                # matching spaces.
+                # Other space details differ (e.g. Box bounds): keep the env-less
+                # model, which still predicts.
                 logger.warning(
                     "Loaded '%s' without attaching the training env (%s); "
                     "predict works, continued training needs matching spaces.",
@@ -285,13 +254,10 @@ class PPO2Agent(BaseAgent):
 
     def save_policy(self, policy_file_name: str) -> None:
         """
-        Save the trained agent's policy.
+        Save the SB3 policy (relative to model_dir).
 
         Args:
             policy_file_name (str): Name of the policy file to save.
-
-        Raises:
-            RuntimeError: If no agent is created or the policy fails to save.
         """
 
         if self.model_dir:
@@ -310,8 +276,7 @@ class PPO2Agent(BaseAgent):
 
     def close(self) -> None:
         """
-        Close the vectorized training environment (worker processes and,
-        for simulator-backed envs, their connections).
+        Close the vectorized training env (worker processes and simulator connections).
         """
 
         if self.ppo is not None:

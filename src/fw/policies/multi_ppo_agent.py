@@ -22,17 +22,11 @@ logger = logging.getLogger(__name__)
 
 class MultiPPOAgent(BasePPOAgent):
     """
-    Multi-agent PPO trainer for tuple-based environments.
+    Multi-agent PPO trainer for a `MultiSimEnv`.
 
-    This class coordinates multiple independent `SinglePPOAgent` instances,
-    each controlling a sub-environment within a `MultiSimEnv`. Experience is
-    collected synchronously across all environments, while policy updates are
-    performed independently per agent.
-
-    The training setup is decentralized:
-        - Each agent observes only its own state.
-        - Policies are not shared between agents.
-        - No centralized critic is used.
+    Coordinates independent `SinglePPOAgent` instances, one per sub-environment.
+    Rollouts are collected synchronously; updates are per agent. Fully
+    decentralized: own observations, no shared policies, no central critic.
 
     Attributes:
         agents (list[SinglePPOAgent]): List of PPO agents (one per environment).
@@ -62,10 +56,6 @@ class MultiPPOAgent(BasePPOAgent):
         Raises:
             TypeError: If the environment is not a `MultiSimEnv`.
             ValueError: If the number of agents does not match the number of sub-environments.
-
-        Notes:
-            - Each agent operates independently with its own policy and optimizer.
-            - The number of agents must match `env.sub_environments`.
         """
 
         super().__init__(profile, *args, **kwargs)
@@ -82,9 +72,8 @@ class MultiPPOAgent(BasePPOAgent):
                 f"number of sub-environments ({self.num_envs})"
             )
 
-        # MultiPPOAgent steps the MultiSimEnv's sub-environments directly (no
-        # vectorized worker copies), so they are seeded here: one child of the
-        # 'seed' hyperparameter per sub-environment, in sub-environment order.
+        # Sub-environments are stepped directly (no worker copies), so seed them
+        # here: one child seed per sub-environment, in order.
         for sub_env, sub_seed in zip(self.env.sub_environments.values(),
                                      self._spawn_worker_seeds(self.num_envs)):
             reseed_env_rng(sub_env, sub_seed)
@@ -104,14 +93,8 @@ class MultiPPOAgent(BasePPOAgent):
             deterministic (bool): Whether to use deterministic policy outputs.
 
         Returns:
-            Tuple:
-                - actions (tuple): Actions per agent.
-                - log_probs (np.ndarray): Log-probabilities of actions (num_envs,).
-                - values (np.ndarray): Value estimates (num_envs,).
-
-        Notes:
-            - Each agent processes only its corresponding observation.
-            - Output ordering matches agent/environment indexing.
+            Tuple (actions per agent, log-probabilities (num_envs,), values
+            (num_envs,)), in agent order.
         """
 
         actions = []
@@ -143,15 +126,14 @@ class MultiPPOAgent(BasePPOAgent):
             num_envs (int): Number of environments (unused, inferred from env).
 
         Returns:
-            np.ndarray: Tuple or array of initial observations.
+            Initial observations, one per sub-environment.
         """
 
         for sub_env in self.env.sub_environments.values():
             if hasattr(sub_env, "randomize"):
                 sub_env.randomize()
 
-            # Apply the profile's simulator state so every training episode
-            # starts from the configured pose, not the environment default.
+            # Start every episode from the profile's pose, not the env default.
             if self._profile is not None:
                 _sim = getattr(sub_env, "phys_sim", None) or getattr(sub_env, "_phys_sim", None)
                 if _sim is not None:
@@ -176,12 +158,11 @@ class MultiPPOAgent(BasePPOAgent):
                 - truncations: Truncation flags.
                 - final_states: Real last observations (used to bootstrap truncations).
 
-        Notes:
-            - Supports custom info dictionaries for richer transition data.
-            - Falls back to standard Gymnasium outputs if unavailable.
+        Rewards and flags are taken from the per-env info dicts when all of
+        them provide "rewards", "terminations" and "truncations"; otherwise the
+        standard step outputs are used.
         """
 
-        # Step all environments
         infos: list[dict[str, Any]]
         next_states, next_rewards, next_terminations, truncations, infos = self.env.step(actions)
 
@@ -228,7 +209,7 @@ class MultiPPOAgent(BasePPOAgent):
             float: Estimated value.
 
         Raises:
-            TypeError: If `env_id` is None (subscripting a list with None raises TypeError).
+            TypeError: If `env_id` is None.
         """
 
         if env_id is None:
@@ -254,30 +235,15 @@ class MultiPPOAgent(BasePPOAgent):
             stop_condition (Optional[StopCondition]): Stopping criterion. If None,
                 a default condition is used.
 
-        Workflow:
-            1. Collect trajectories across all environments.
-            2. Train each agent independently on its trajectory.
-            3. Track metrics and save best-performing policies.
-            4. Apply early stopping if conditions are met.
+        Each iteration collects one trajectory per sub-environment and trains
+        each agent on its own (matched by env_id tag). A missing trajectory is
+        skipped with a warning and logged as NaN. Saves best policies per agent,
+        periodic checkpoints and per-agent metrics.
 
-        Side Effects:
-            - Updates all agent policies in-place.
-            - Saves checkpoints and best-performing models.
-            - Logs per-agent training metrics to disk.
-
-        Notes:
-            - Training is synchronous across environments.
-            - Episodes are matched to agents by env_id tag, not list position.
-            - A missing trajectory for an agent causes a warning + skip, not a crash.
-            - Metrics are recorded as NaN for skipped agents so the CSV stays aligned.
-            - Early stopping is per agent: each agent has its own copy of the
-              stop condition, evaluated on its OWN episode reward. An agent
-              that meets it is frozen (no more policy updates; it keeps acting
-              stochastically and its reward is still logged, with
-              `frozen=True` in the metrics CSV). Training ends when all agents
-              are frozen or after `max_time_steps` iterations.
-            - Best policies are tracked per agent (frozen agents no longer
-              change, so they are not re-saved).
+        Early stopping is per agent: each has its own copy of the stop
+        condition, judged on its own reward. An agent that meets it is frozen
+        (no more updates, still acting and logged with frozen=True). Training
+        ends when all agents are frozen or after `max_time_steps` iterations.
         """
 
         logger.info("Starting training with %d parallel environments on a '%s' device", self.num_envs, self.device)
@@ -287,9 +253,7 @@ class MultiPPOAgent(BasePPOAgent):
         training_metrics = {f"agent{i}": [] for i in range(len(self.agents))}
         stopping_condition = stop_condition if stop_condition is not None else StopCondition()
 
-        # One stop condition per agent: StopCondition is stateful (patience
-        # counter), and each agent is judged on its own reward. The run ends
-        # when every agent is frozen, or after stopping_condition.max_time_steps.
+        # StopCondition is stateful (patience counter), hence one copy per agent.
         agent_stop_conditions = [copy.deepcopy(stopping_condition) for _ in self.agents]
         for condition in agent_stop_conditions:
             condition.reset()
@@ -301,25 +265,20 @@ class MultiPPOAgent(BasePPOAgent):
             for i, env in enumerate(self.env.sub_environments.values())
         ]
 
-        # try/finally: on an exception or Ctrl-C the sub-environments
-        # (simulator connections) are still closed.
         try:
             for iteration in range(stopping_condition.max_time_steps):
                 self.set_policy_eval()
 
-                # Collect batch data from multiple parallel environments
                 batch_data = self.run_parallel_episodes(self.num_envs)
 
-                # Build a dict keyed by env_id for safe lookup.
-                # Each episode dict now carries episode["env_id"].
+                # Match episodes to agents by env_id.
                 episode_by_env: dict[int, dict] = {
                     ep["env_id"]: ep
                     for ep in batch_data
                     if "env_id" in ep
                 }
 
-                # Fallback: if env_id tags are absent (e.g. running old base code),
-                # reconstruct by position, same behavior as before.
+                # Fallback without env_id tags: match by position.
                 if not episode_by_env:
                     episode_by_env = {i: ep for i, ep in enumerate(batch_data)}
 
@@ -330,8 +289,7 @@ class MultiPPOAgent(BasePPOAgent):
                     if episode is None:
                         logger.warning("[Warning] Iteration %d: no trajectory for agent %s - skipping update.", iteration, agent_id)
                         if not frozen[agent_id]:
-                            # A gap breaks the "patience consecutive iterations
-                            # on target" streak, as an off-target iteration does.
+                            # A gap breaks the patience streak.
                             agent_stop_conditions[agent_id].reset()
                         training_metrics[f"agent{agent_id}"].append({
                             'iteration': iteration,
@@ -346,9 +304,7 @@ class MultiPPOAgent(BasePPOAgent):
                     mean_advantage = np.mean(episode['advantages'])
 
                     if frozen[agent_id]:
-                        # Converged agent: no more updates (as a single-agent run
-                        # that has stopped), but it keeps acting stochastically and
-                        # its reward is still logged.
+                        # Converged: no update, reward still logged.
                         training_metrics[f"agent{agent_id}"].append({
                             'iteration': iteration,
                             'loss': float('nan'),
@@ -358,7 +314,6 @@ class MultiPPOAgent(BasePPOAgent):
                         })
                         continue
 
-                    # Train agent on its episode
                     loss = agent.train([episode])
 
                     training_metrics[f"agent{agent_id}"].append({
@@ -369,18 +324,14 @@ class MultiPPOAgent(BasePPOAgent):
                         'frozen': False,
                     })
 
-                    # Save the best policy per agent
                     if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_rewards[agent_id]:
                         best_rewards[agent_id] = mean_reward
                         agent.save_policy(best_policy_files[agent_id])
 
-                    # Log evaluation results periodically
                     if iteration % self.eval_frequency == 0:
                         logger.info("Iteration %d | agent %s | average reward: %.3f, loss: %.3f", iteration, agent_id, mean_reward, loss)
 
-                    # Per-agent stop decision on this agent's OWN reward (not the
-                    # mean over agents): a converged agent is frozen instead of
-                    # being trained on until the slowest agent converges too.
+                    # Stop decision on this agent's own reward.
                     agent_done, reason = agent_stop_conditions[agent_id].should_stop(
                         current_step=iteration,
                         mean_reward=mean_reward,
@@ -389,10 +340,8 @@ class MultiPPOAgent(BasePPOAgent):
                     if agent_done:
                         frozen[agent_id] = True
                         logger.info("Iteration %d | agent %s frozen: %s", iteration, agent_id, reason)
-                        # A frozen agent is never saved as best again, so one
-                        # that froze before MINIMUM_ITERATIONS_FOR_BEST_SAVE
-                        # would have no Best_* file: save its final (converged)
-                        # policy as its best.
+                        # Frozen before MINIMUM_ITERATIONS_FOR_BEST_SAVE: save
+                        # the converged policy so a Best_* file exists.
                         if best_rewards[agent_id] == float('-inf'):
                             best_rewards[agent_id] = mean_reward
                             agent.save_policy(best_policy_files[agent_id])
@@ -415,13 +364,11 @@ class MultiPPOAgent(BasePPOAgent):
                     [i for i, f in enumerate(frozen) if f] or "none",
                 )
 
-            # Final checkpoint and metrics: only when training ended normally
-            # (same rule as SinglePPOAgent; a failure here raises).
+            # Final checkpoint and metrics only after normal completion.
             self.save_policy(f'ppo_checkpoint_{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}')
             dump_multi_agent_metrics(self.model_dir, training_metrics)
         finally:
-            # Always release the sub-environments (simulator connections),
-            # also on an exception or Ctrl-C.
+            # Always close the sub-environments (simulator connections).
             for sub_env in self.env.sub_environments.values():
                 try:
                     sub_env.close()
@@ -438,16 +385,14 @@ class MultiPPOAgent(BasePPOAgent):
         Args:
             policy_file_name (str): Path to the ZIP archive containing agent policies.
 
+        The archive holds one serialized policy per agent: policy_0.pth,
+        policy_1.pth, ...
+
         Raises:
             FileNotFoundError: If the archive does not exist.
             RuntimeError: If loading fails or required files are missing.
-
-        Notes:
-            - Archive must contain files named `policy_0.pth`, `policy_1.pth`, etc.
-            - Each file represents a serialized policy for one agent.
         """
 
-        # Ensure the parent file has the .zip extension
         if not policy_file_name.endswith(".zip"):
             policy_file_name += ".zip"
 
@@ -459,9 +404,7 @@ class MultiPPOAgent(BasePPOAgent):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             try:
-                # 1. Extract the main archive
                 with zipfile.ZipFile(policy_file_name, 'r') as main_zip:
-                    # Validate archive contents
                     file_list = main_zip.namelist()
                     expected_files = {f"policy_{i}.pth" for i in range(len(self.agents))}
                     if not expected_files.issubset(set(file_list)):
@@ -470,7 +413,6 @@ class MultiPPOAgent(BasePPOAgent):
 
                     main_zip.extractall(tmp_dir)
 
-                # 2. Load each agent
                 for i, agent in enumerate(self.agents):
                     agent_path = os.path.join(tmp_dir, f"policy_{i}.pth")
 
@@ -483,26 +425,19 @@ class MultiPPOAgent(BasePPOAgent):
                         raise RuntimeError(f"Agent {i} has no initialized policy.")
 
                     agent.policy = PPOPolicy.build_policy_from_state(saved_variables, self.device)
-                    # Rebind optimizer to the newly-loaded network's parameters.
-                    # Without this, agent.optimizer still references the old (GC'd) network
-                    # and subsequent train() calls silently update dead weights while the
-                    # active policy never actually learns further. This part is NOT optional
-                    # (unlike the Adam-momentum restore below) - see SinglePPOAgent.load_policy
-                    # for the equivalent, already-correct rebind.
+                    # Rebind the optimizer to the loaded network; otherwise train()
+                    # would update the old, discarded parameters.
                     agent.optimizer = torch.optim.Adam(
                         agent.policy.network.parameters(), lr=agent.learning_rate
                     )
-                    #
-                    # Restoring Adam momentum from a saved optimizer_state_dict is left
-                    # disabled for now, same scope as SinglePPOAgent/save_policy above -
-                    # deliberately deferred, not required for correct training to resume.
+                    # Restoring Adam momentum is deliberately disabled (not needed to
+                    # resume training), as in SinglePPOAgent.
                     # if "optimizer_state_dict" in saved_variables:
                     #     try:
                     #         agent.optimizer.load_state_dict(saved_variables["optimizer_state_dict"])
                     #     except Exception as opt_exc:  # shape mismatch on arch change, not fatal
                     #         print("Could not restore optimizer state for agent %d: %s", i, opt_exc)
 
-                # Verify all agents loaded
                 if any(agent.policy is None for agent in self.agents):
                     raise RuntimeError("Some agents failed to load policies")
 
@@ -517,16 +452,12 @@ class MultiPPOAgent(BasePPOAgent):
         Args:
             policy_file_name (str): Output file name ('.zip' will be appended if missing).
 
-        Raises:
-            RuntimeError: If saving fails.
-            FileNotFoundError: If any expected policy file is missing.
+        Each agent is stored as policy_<i>.pth (policy.serialize_policy()).
 
-        Notes:
-            - Each agent is saved as a separate `.pth` file inside the archive.
-            - Policies are serialized using `policy.serialize_policy()`.
+        Raises:
+            RuntimeError: If saving fails (including a missing policy file).
         """
 
-        # Ensure the parent file has the .zip extension
         if not policy_file_name.endswith(".zip"):
             policy_file_name += ".zip"
 
@@ -534,15 +465,13 @@ class MultiPPOAgent(BasePPOAgent):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             try:
-                # 1. Save each agent as a .pth file (policy + optimizer state)
+                # Policy only; saving the optimizer state is disabled.
                 for i, agent in enumerate(self.agents):
                     agent_path = os.path.join(tmp_dir, f"policy_{i}.pth")
 
                     if agent.policy is None:
                         raise RuntimeError(f"Agent {i} has no policy to save.")
 
-                    # Include optimizer state_dict so Adam momentum is
-                    # preserved across checkpoint resume.
                     checkpoint = agent.policy.serialize_policy()
                     # if hasattr(agent, "optimizer") and agent.optimizer is not None:
                     #     checkpoint["optimizer_state_dict"] = agent.optimizer.state_dict()
@@ -552,7 +481,6 @@ class MultiPPOAgent(BasePPOAgent):
                         agent_path,
                     )
 
-                # 2. Zip all .pth files into one archive
                 with zipfile.ZipFile(full_path, 'w', compression=zipfile.ZIP_DEFLATED) as main_zip:
                     for i in range(len(self.agents)):
                         file_name = f"policy_{i}.pth"
@@ -569,10 +497,7 @@ class MultiPPOAgent(BasePPOAgent):
 
     def set_policy_eval(self):
         """
-        Set all agent policies to evaluation mode.
-
-        Disables training-specific behavior such as dropout and ensures
-        consistent inference across all agents.
+        Set all agent policy networks to evaluation mode.
         """
 
         for agent in self.agents:

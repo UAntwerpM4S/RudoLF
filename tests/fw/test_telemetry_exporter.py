@@ -1,5 +1,5 @@
 """
-Unit tests for the common_tools TelemetryExporter.
+Unit tests for fw.common.airsim.tools.telemetry_exporter.TelemetryExporter.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-_SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+_SRC_DIR = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 

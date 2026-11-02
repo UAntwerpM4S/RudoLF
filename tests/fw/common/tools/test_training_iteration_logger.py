@@ -9,7 +9,7 @@ import csv
 
 def test_training_iteration_logger_writes_one_row_per_iteration(tmp_path):
     """
-    The iteration logger should only materialize its CSV when saved.
+    One row per logged iteration; the CSV is only written on save().
     """
 
     from fw.common.tools.training_iteration_logger import TrainingIterationLogger

@@ -17,7 +17,9 @@ from surrogate_test_helpers import make_state
 
 
 def _surrogate(ckpt, preset="myzako_clean", **config):
-    """A UAntwerpSurrogate for the Myzako on the given checkpoint."""
+    """
+    A UAntwerpSurrogate for the Myzako on the given checkpoint.
+    """
 
     from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 
@@ -27,7 +29,9 @@ def _surrogate(ckpt, preset="myzako_clean", **config):
 
 
 def test_one_step_equals_predicted_deltas(tiny_models):
-    """step(dt = SURROGATE_DT) returns u + du, v + dv, r + dr of the predictor for the same raw row."""
+    """
+    step(dt = SURROGATE_DT) returns u + du, v + dv, r + dr of the predictor for the same raw row.
+    """
 
     model = _surrogate(tiny_models["open_water"])
     state = make_state(x=10.0, y=-5.0, heading=0.7, u=3.2, v=-0.15, r=0.012)
@@ -42,7 +46,9 @@ def test_one_step_equals_predicted_deltas(tiny_models):
 
 @pytest.mark.parametrize("dt", [0.05, 0.2, 1.0, float("nan")])
 def test_other_time_steps_are_refused(tiny_models, dt):
-    """Any dt other than SURROGATE_DT raises ValueError (not an assert: also under python -O)."""
+    """
+    Any dt other than SURROGATE_DT raises ValueError (not an assert: also under python -O).
+    """
 
     model = _surrogate(tiny_models["open_water"])
     state = make_state(x=0.0, y=0.0, heading=0.0, u=2.0, v=0.0, r=0.0)
@@ -52,7 +58,9 @@ def test_other_time_steps_are_refused(tiny_models, dt):
 
 @pytest.mark.parametrize("rudder_deg, expected", [(-75.0, -1.0), (0.0, 0.0), (37.5, 0.5), (75.0, 1.0)])
 def test_rudder_action_scaling(tiny_models, rudder_deg, expected):
-    """rudder_action = rudder angle / the checkpoint's rudder scale (75 deg for the Myzako data here)."""
+    """
+    rudder_action = rudder angle / the checkpoint's rudder scale (75 deg for the Myzako data here).
+    """
 
     model = _surrogate(tiny_models["open_water"])
     state = make_state(x=0.0, y=0.0, heading=0.0, u=2.0, v=0.0, r=0.0)
@@ -63,7 +71,9 @@ def test_rudder_action_scaling(tiny_models, rudder_deg, expected):
 
 
 def test_raw_row_matches_scenario_layout(tiny_models):
-    """The row UAntwerpSurrogate builds has the checkpoint scenario's raw layout, state values in place."""
+    """
+    The row UAntwerpSurrogate builds has the checkpoint scenario's raw layout, state values in place.
+    """
 
     model = _surrogate(tiny_models["open_water"])
     state = make_state(x=1.5, y=2.5, heading=-1.0, u=3.0, v=0.2, r=-0.01)
@@ -76,14 +86,18 @@ def test_raw_row_matches_scenario_layout(tiny_models):
 
 
 def test_wrong_scenario_checkpoint_is_refused(tiny_models):
-    """A confined_ukc checkpoint in an open_water preset is refused when the surrogate is built."""
+    """
+    A confined_ukc checkpoint in an open_water preset is refused when the surrogate is built.
+    """
 
     with pytest.raises(ValueError):
         _surrogate(tiny_models["confined_ukc"], preset="myzako_clean")
 
 
 def test_wrong_ship_is_refused(tiny_models):
-    """A Tripoli caller with a Myzako preset is refused."""
+    """
+    A Tripoli caller with a Myzako preset is refused.
+    """
 
     from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 
@@ -94,7 +108,9 @@ def test_wrong_ship_is_refused(tiny_models):
 
 
 def test_predictor_refuses_mismatching_data(tiny_models):
-    """SurrogatePredictor.data_mismatch: other ship or other rudder scale -> a reason; same -> None."""
+    """
+    SurrogatePredictor.data_mismatch: other ship or other rudder scale -> a reason; same -> None.
+    """
 
     from fw.surrogate.inference_surrogate import SurrogatePredictor
     from surrogate_test_helpers import identity

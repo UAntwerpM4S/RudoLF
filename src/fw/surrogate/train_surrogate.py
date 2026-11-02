@@ -1,10 +1,9 @@
 # train_surrogate.py
 """
-Training script for the ship dynamics surrogate MLP -- every scenario.
+Training script for the ship dynamics surrogate MLP (any scenario).
 
-The model scenario (--scenario) defaults to the scenario of the training
-files; a poorer scenario can be trained from richer data when allowed
-(schema.check_projection), e.g.:
+The model scenario (--scenario) defaults to that of the training files; a
+poorer scenario can be trained from richer data (schema.check_projection), e.g.:
 
     # UA_full (full_env data, full_env model)
     python -m fw.surrogate.train_surrogate --train-file .._train.npz --val-file .._val.npz \
@@ -13,40 +12,35 @@ files; a poorer scenario can be trained from richer data when allowed
     python -m fw.surrogate.train_surrogate --scenario open_water ... \
         --checkpoint checkpoints/best_surrogate_tripoli_clean.pth
 
-Inputs (see schema.encoded_feature_names): the scenario's input columns
-(x, y always dropped), angles sin/cos encoded; for full_env, wind/current per
---env-encoding (body_components: 36 inputs, angles: 38).
-Output (3-D): [delta_surge, delta_sway, delta_yaw_rate]
+Inputs (schema.encoded_feature_names): the scenario's input columns without
+x, y, angles sin/cos encoded; full_env wind/current per --env-encoding
+(body_components: 36 inputs, angles: 38).
+Outputs: [delta_surge, delta_sway, delta_yaw_rate].
 
-The checkpoint stores the scenario, env encoding, the data's identity (ship
-model, rudder scale, ray layout) and the feature layout; SurrogatePredictor
-checks all of them on load.
+The checkpoint stores scenario, env encoding, data identity (ship model, rudder
+scale, ray layout) and feature layout; SurrogatePredictor checks them on load.
 
-Several datasets of the same identity (same scenario, ship, rudder scale, ray
-layout, sway convention), e.g. a main run plus a supplementary run with
-bank-straight episodes, are trained on together by giving several files per
-split (in the same order for the three splits):
+Datasets of the same identity (e.g. a main run plus a bank-straight run) are
+trained together by giving several files per split, in the same order:
 
     python -m fw.surrogate.train_surrogate \
         --train-file main_train.npz extra_train.npz \
         --val-file main_val.npz extra_val.npz \
         --test-file main_test.npz extra_test.npz ...
 
-The rows are concatenated per split; normalization stats come from all
-training files together. The test results are reported per test file too.
+Rows are concatenated per split; normalization stats use all training files;
+test results are also reported per test file.
 
---min-bank-distance D keeps only rows whose nearest bank (from the row's own
-ray features, all rays) is at least D m away, in all three splits. Meant for
-an open_water ("clean") model trained from confined_ukc data: it cannot see
-the bank, so rows with bank interaction would only add unexplainable noise.
-D = 200 (the ray range) keeps only rows without any bank in ray range:
+--min-bank-distance D keeps only rows whose nearest bank (from the ray features)
+is at least D m away, in all splits. Meant for an open_water ("clean") model from
+confined_ukc data, which cannot see the bank. D = 200 (the ray range) keeps only
+rows without a bank in range:
 
     python -m fw.surrogate.train_surrogate --scenario open_water \
         --min-bank-distance 200 ... --checkpoint checkpoints/best_surrogate_myzako_clean.pth
 
---min-ukc U keeps only rows with an under-keel clearance of at least U m (from
-the data's UKC column), in all three splits: e.g. a clean model for deep
-water only.
+--min-ukc U keeps only rows with UKC >= U m in all splits (e.g. a deep-water-only
+clean model).
 """
 
 import random
@@ -85,12 +79,8 @@ LOSS_LABELS = {"mse": "MSE", "l1": "MAE", "huber": "Huber"}
 
 def _num_samples(loader: DataLoader) -> int:
     """
-    Number of samples in a map-style loader's dataset.
-
-    torch types `DataLoader.dataset` as `Dataset`, which deliberately does not
-    define `__len__` (iterable datasets have no length). The TensorDatasets
-    built here do; the isinstance check narrows the type for the checker and fails
-    loudly if a dataset without a length is ever passed in.
+    Number of samples in a map-style loader's dataset. The isinstance check
+    narrows the type (torch's Dataset has no __len__) and fails loudly otherwise.
     """
 
     dataset = loader.dataset
@@ -101,17 +91,14 @@ def _num_samples(loader: DataLoader) -> int:
 
 def make_loss_fn(name: str = "mse", huber_delta: float = 1.0):
     """
-    Return the training/validation criterion, computed on NORMALIZED targets.
+    Return the training/validation criterion on normalized targets.
 
     Args:
-        name: "mse" (mean squared error), "l1" (mean absolute error) or
-            "huber" (quadratic for |error| < huber_delta, linear beyond).
-        huber_delta: Transition point for "huber", in normalized units
-            (i.e. target standard deviations).
+        name: "mse", "l1" (mean absolute error) or "huber".
+        huber_delta: Huber transition point, in target standard deviations.
 
     Returns:
-        Callable `loss_fn(pred, target, reduction="mean")`, same signature
-        as `F.mse_loss`.
+        loss_fn(pred, target, reduction="mean"), same signature as F.mse_loss.
     """
 
     if name == "mse":
@@ -133,24 +120,22 @@ def evaluate(
         loss_fn=None,
 ):
     """
-    Compute the normalized loss (MSE unless `loss_fn` is given) and
-    denormalized MAE.
+    Compute the mean normalized loss and the per-target MAE in physical units.
 
     Args:
-        model: Trained (or in-training) SurrogateMLP.
-        loader: DataLoader yielding normalized (X, Y) batches.
+        model: SurrogateMLP.
+        loader: DataLoader of normalized (X, Y) batches.
         device: Torch device.
-        y_mean: Output normalization mean.
+        y_mean: Output normalization mean (unused; MAE only needs y_std).
         y_std: Output normalization std.
-        loss_fn: Criterion from `make_loss_fn`; defaults to MSE so existing
-            callers keep their behavior. Pass the TRAINING criterion so that
-            early stopping and the LR scheduler judge what is optimized.
+        loss_fn: Criterion from make_loss_fn (default MSE). Pass the training
+            criterion so early stopping and the LR scheduler judge what is optimized.
 
     Returns:
-        Tuple:
-            mean_loss: Mean normalized loss (per-sample weighted).
-            mae: Mean absolute error in original physical units
-                 for each output dimension.
+        (mean_loss, mae): per-sample weighted normalized loss, MAE per output.
+
+    Raises:
+        ValueError: If the loader is empty.
     """
 
     model.eval()
@@ -171,8 +156,6 @@ def evaluate(
     total_samples = 0
     total_abs_error = None
 
-    # MAE in physical units only needs the scale: (pred - y) * y_std. y_mean is
-    # kept in the signature for callers.
     y_std_t = torch.as_tensor(y_std, dtype=torch.float32, device=device)
 
     with torch.no_grad():
@@ -185,7 +168,7 @@ def evaluate(
             loss = loss_fn(pred, y_vals, reduction="mean")
             total_loss += loss.item() * x_vals.size(0)
 
-            # pred_phys - y_phys == (pred - y) * y_std
+            # Physical error: pred_phys - y_phys == (pred - y) * y_std
             abs_error = torch.abs((pred - y_vals) * y_std_t)
 
             if total_abs_error is None:
@@ -205,7 +188,9 @@ PathOrPaths = Union[str, Path, Sequence[Union[str, Path]]]
 
 
 def _as_paths(files: PathOrPaths) -> List[str]:
-    """One path or a sequence of paths -> list of path strings."""
+    """
+    Return one path or a sequence of paths as a list of strings.
+    """
 
     if isinstance(files, (str, Path)):
         return [str(files)]
@@ -214,11 +199,11 @@ def _as_paths(files: PathOrPaths) -> List[str]:
 
 def nearest_bank_distance(x_raw: np.ndarray, source) -> np.ndarray:
     """
-    Distance [m] to the nearest bank per raw row of scenario `source`, from
-    its ray features (minimum over all rays; RAY_MAX_DISTANCE = none in range).
+    Distance [m] to the nearest bank per raw row of scenario source, from its
+    ray features (RAY_MAX_DISTANCE = none in range).
 
     Raises:
-        ValueError: If `source` has no ray columns.
+        ValueError: If source has no ray columns.
     """
 
     if not source.includes_rays:
@@ -232,24 +217,18 @@ def load_split(files: PathOrPaths, scenario, env_encoding,
                min_ukc: Optional[float] = None,
                min_episode_time: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Encoded (unnormalized) X and Y of one split, concatenated over `files`.
+    Encoded (unnormalized) float32 X and Y of one split, concatenated over files.
 
     Args:
         files: One or more dataset .npz files.
-        scenario: Model scenario (the files' scenario, or one derived from it).
+        scenario: Model scenario (the files' scenario or one derived from it).
         env_encoding: Wind/current encoding.
-        min_bank_distance: If given, keep only rows whose nearest bank (from
-            the file's own ray features, before projection) is at least this
-            many metres away.
-        min_ukc: If given, keep only rows whose UKC (the file's own UKC
-            column, before projection) is at least this many metres.
-        min_episode_time: If given, keep only rows at least this many seconds
-            after the start of their episode (the file's t_episode array,
-            written by fw.surrogate.episode_time); rows of episodes whose
-            order could not be reconstructed (t_episode < 0) are left out too.
-
-    Returns:
-        `(x, y)` float32 arrays.
+        min_bank_distance: Keep only rows with the nearest bank (file's own rays,
+            before projection) at least this far [m].
+        min_ukc: Keep only rows with the file's UKC at least this value [m].
+        min_episode_time: Keep only rows at least this many seconds into their
+            episode (t_episode from fw.surrogate.episode_time); unordered
+            episodes (t_episode < 0) are dropped too.
     """
 
     xs, ys = [], []
@@ -293,7 +272,9 @@ def load_split(files: PathOrPaths, scenario, env_encoding,
 
 
 def normalized_dataset(x_vals: np.ndarray, y_vals: np.ndarray, x_mean, x_std, y_mean, y_std) -> TensorDataset:
-    """TensorDataset of the normalized arrays (same arithmetic as ShipDynamicsDataset)."""
+    """
+    TensorDataset of the normalized arrays (same arithmetic as ShipDynamicsDataset).
+    """
 
     x_out = (x_vals - np.asarray(x_mean, np.float32).reshape(1, -1)) / np.asarray(x_std, np.float32).reshape(1, -1)
     y_out = (y_vals - np.asarray(y_mean, np.float32).reshape(1, -1)) / np.asarray(y_std, np.float32).reshape(1, -1)
@@ -303,12 +284,9 @@ def normalized_dataset(x_vals: np.ndarray, y_vals: np.ndarray, x_mean, x_std, y_
 
 def log_provenance(train_files: Sequence[str], all_files: Sequence[str]) -> dict:
     """
-    Log how each dataset file was generated (its provenance, see
-    generate_ship_data.generation_provenance) and return {file: provenance or
-    None} for the checkpoint. When several training datasets are combined,
-    the generator settings in which they differ are listed: combining them is
-    allowed (e.g. a main dataset plus a bank-straight one), this only makes
-    the difference visible. Informational only: nothing is checked or changed.
+    Log each file's generation provenance (generate_ship_data.generation_provenance)
+    and, for combined training datasets, the settings in which they differ.
+    Informational only. Returns {file: provenance or None} for the checkpoint.
     """
 
     provenance = {}
@@ -335,14 +313,18 @@ def log_provenance(train_files: Sequence[str], all_files: Sequence[str]) -> dict
 
 
 def _cli_settings(p: dict) -> dict:
-    """The provenance's generator CLI settings ({} if absent or malformed)."""
+    """
+    The provenance's generator CLI settings ({} if absent or malformed).
+    """
 
     s = p.get("cli_settings")
     return s if isinstance(s, dict) else {}
 
 
 def _log_provenance_summary(train_files: Sequence[str], provenance: dict) -> None:
-    """Log the provenance of every training file and the settings in which they differ (see log_provenance)."""
+    """
+    Log the provenance of every training file and the settings in which they differ (see log_provenance).
+    """
 
     for f in train_files:
         p = provenance[f]
@@ -371,36 +353,25 @@ def make_dataloaders(train_file: PathOrPaths, val_file: PathOrPaths, test_file: 
                      min_bank_distance: Optional[float] = None, min_ukc: Optional[float] = None,
                      min_episode_time: Optional[float] = None):
     """
-    Build train / val / test DataLoaders with shared normalization stats.
-
-    Normalization statistics are computed from the training split only and
-    then re-applied identically to the validation and test splits. Each split
-    may consist of several .npz files (rows concatenated).
+    Build train/val/test DataLoaders; normalization stats come from the training
+    split only and are reused for val/test. Each split may be several .npz files.
 
     Args:
-        train_file:  Path(s) to training .npz file(s).
-        val_file:    Path(s) to validation .npz file(s).
-        test_file:   Path(s) to test .npz file(s).
+        train_file, val_file, test_file: Path(s) to the .npz file(s) per split.
         scenario:    schema.ScenarioSchema of the model.
-        env_encoding: Wind/current encoding ("angles" / "body_components");
-                     the same one is used for all three splits.
+        env_encoding: Wind/current encoding ("angles" / "body_components").
         batch_size:  Mini-batch size.
         num_workers: DataLoader worker processes.
-        seed:        If given, seeds the train loader's shuffle order so
-                     runs are reproducible independently of other RNG use.
-        drop_last:   Drop the last incomplete train batch. Recommended with
-                     BatchNorm: a tiny last batch gives noisy batch stats,
-                     and a batch of 1 makes BatchNorm1d raise.
-        pin_memory:  Pin host memory (useful when training on CUDA).
-        min_bank_distance, min_ukc, min_episode_time: Row filters applied to
-                     all splits (see load_split).
+        seed:        Seeds the train loader's shuffle order.
+        drop_last:   Drop the last incomplete train batch (for BatchNorm: a batch
+                     of 1 makes BatchNorm1d raise).
+        pin_memory:  Pin host memory (useful on CUDA).
+        min_bank_distance, min_ukc, min_episode_time: Row filters (see load_split).
 
     Returns:
-        Tuple of (train_loader, val_loader, test_loader,
-                  x_mean, x_std, y_mean, y_std).
+        (train_loader, val_loader, test_loader, x_mean, x_std, y_mean, y_std).
     """
 
-    # Stats from the (concatenated) training split only; val/test reuse them.
     x_train, y_train = load_split(train_file, scenario, env_encoding, min_bank_distance, min_ukc,
                                   min_episode_time)
     stats = stats_from_arrays(x_train, y_train, encoded_feature_names(scenario, env_encoding))
@@ -412,8 +383,7 @@ def make_dataloaders(train_file: PathOrPaths, val_file: PathOrPaths, test_file: 
                                                 min_episode_time), *stats)
     test_ds = normalized_dataset(*load_split(test_file, scenario, env_encoding, min_bank_distance, min_ukc,
                                                  min_episode_time), *stats)
-    # Fail before training, not after it: an empty val split would only fail
-    # after the first epoch, an empty test split only after the whole run.
+    # Fail before training rather than after an epoch or the whole run.
     empty = [name for name, ds in (("validation", val_ds), ("test", test_ds)) if len(ds) == 0]
     if empty:
         filters = ", ".join(f"{k}={v}" for k, v in (("min_bank_distance", min_bank_distance),
@@ -444,10 +414,7 @@ def make_dataloaders(train_file: PathOrPaths, val_file: PathOrPaths, test_file: 
 
 def set_seed(seed: int = 42):
     """
-    Set random seeds for reproducibility.
-
-    Args:
-        seed: Integer seed value.
+    Seed random, numpy and torch (incl. CUDA).
     """
 
     random.seed(seed)
@@ -459,10 +426,7 @@ def set_seed(seed: int = 42):
 
 def main(argv=None):
     """
-    Entry point for surrogate training.
-
-    Args:
-        argv: Optional list of CLI arguments (useful for testing).
+    Entry point for surrogate training; argv is optional (for tests).
     """
 
     parser = argparse.ArgumentParser(
@@ -519,7 +483,7 @@ def main(argv=None):
                              "Default: no filter")
     args = parser.parse_args(argv)
 
-    # Identity of the data: all splits of all datasets must have the same identity.
+    # All files of all splits must share one data identity.
     train_files, val_files, test_files = (_as_paths(f) for f in (args.train_file, args.val_file, args.test_file))
     if not len(train_files) == len(val_files) == len(test_files):
         parser.error(f"--train-file, --val-file and --test-file need the same number of files "
@@ -568,8 +532,7 @@ def main(argv=None):
         min_episode_time=args.min_episode_time,
     )
 
-    # Checked before the peek below: on an empty split, next(iter(...)) would
-    # raise a bare StopIteration instead of a readable error.
+    # Check before the peek below, which would raise a bare StopIteration.
     n_train = _num_samples(train_loader)
     if n_train == 0:
         raise ValueError(f"Training split {args.train_file} contains 0 samples.")
@@ -578,16 +541,12 @@ def main(argv=None):
             f"--batchnorm needs at least 2 training samples, got {n_train}."
         )
 
-    # Derive dims from data (guards against accidental mismatch with whatever
-    # dataset schema is currently in train_file/val_file/test_file).
-    # Peek once: each iter() on a DataLoader starts a fresh set of workers.
+    # Derive dims from the data (peek once: each iter() starts new workers).
     x_peek, y_peek = next(iter(train_loader))
     input_dim, output_dim = x_peek.shape[1], y_peek.shape[1]
     del x_peek, y_peek
 
-    # Separate, non-dropping, unshuffled loader over the TRAIN set for the
-    # eval-mode train loss: the training loader may use drop_last (BatchNorm),
-    # which would silently leave the last partial batch out of that number.
+    # Unshuffled loader without drop_last for the eval-mode train loss.
     train_eval_loader = DataLoader(
         train_loader.dataset, batch_size=train_loader.batch_size, shuffle=False,
         num_workers=train_loader.num_workers, pin_memory=train_loader.pin_memory,
@@ -595,7 +554,7 @@ def main(argv=None):
 
     target_names = list(TARGET_NAMES)
     if output_dim != len(target_names):
-        # zip() further down would otherwise silently drop or mislabel targets
+        # zip() below would otherwise silently drop or mislabel targets
         raise ValueError(
             f"Dataset has output_dim={output_dim}, but {len(target_names)} target "
             f"names are configured: {target_names}"
@@ -621,16 +580,14 @@ def main(argv=None):
         dropout=args.dropout,
     ).to(device)
 
-    # AdamW: decoupled weight decay. With plain Adam, weight_decay is folded into
-    # the gradient and rescaled by the adaptive denominator, which makes it a
-    # weaker and less predictable regulariser. Identical to Adam when wd = 0.
+    # AdamW: decoupled weight decay (Adam's coupled decay is weaker and less
+    # predictable); identical to Adam when weight_decay = 0.
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
 
-    # LR-scheduler patience well below early-stopping patience, otherwise
-    # training can stop before the LR has ever been reduced.
-    # (Default patience 25 -> 8, same as the previous hardcoded value.)
+    # Scheduler patience well below early-stopping patience, so the LR is
+    # reduced before training stops (default 25 gives 8).
     sched_patience = max(1, args.patience // 3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=sched_patience
@@ -670,8 +627,8 @@ def main(argv=None):
             running_loss += loss.item() * x_vals.size(0)
             n_samples    += x_vals.size(0)
 
-        # Loss as seen during training: dropout ON, BatchNorm on batch statistics,
-        # averaged over changing weights. NOT directly comparable to val loss.
+        # Running loss (dropout on, batch-stat BatchNorm, changing weights):
+        # not comparable to the val loss.
         train_running_loss = running_loss / n_samples
         if not np.isfinite(train_running_loss):
             raise FloatingPointError(
@@ -679,8 +636,7 @@ def main(argv=None):
                 f"for extreme values (python -m fw.surrogate.validation.diagnose_splits) or lower --lr."
             )
 
-        # Loss on the training set under the SAME conditions as validation
-        # (eval mode, end-of-epoch weights). Compare THIS with val_loss.
+        # Train loss under validation conditions; compare this with val_loss.
         train_eval_loss, _ = evaluate(model, train_eval_loader, device, y_mean, y_std, loss_fn)
         val_loss, val_mae  = evaluate(model, val_loader,   device, y_mean, y_std, loss_fn)
 
@@ -710,15 +666,14 @@ def main(argv=None):
                 "input_dim":            input_dim,
                 "output_dim":           output_dim,
                 "target_names":         target_names,
-                # Feature-set fingerprint; SurrogatePredictor refuses to run
-                # if the schema's selection for this scenario has changed since.
+                # Feature-set fingerprint, checked by SurrogatePredictor.
                 "input_cols":           list(scenario.input_col_indices()),
                 "angle_cols":           list(scenario.angle_col_indices()),
                 "feature_names":        feature_names,
                 # Wind/current encoding; SurrogatePredictor encodes with it.
                 "env_encoding":         args.env_encoding,
                 # Model scenario and data identity (checked by SurrogatePredictor
-                # and by the UAntwerp surrogate against its preset / ship).
+                # and UAntwerpSurrogate).
                 "scenario":             scenario.name,
                 "source_scenario":      source_scenario.name,
                 "ship_model":           data_identity.ship_model,
@@ -730,7 +685,7 @@ def main(argv=None):
                 "min_bank_distance":    args.min_bank_distance,
                 "min_ukc":              args.min_ukc,
                 "min_episode_time":     args.min_episode_time,
-                # How the data was generated (informational; None for older files).
+                # Generation provenance (informational; None if not recorded).
                 "data_provenance":      data_provenance,
                 "hidden_sizes":         args.hidden_sizes,
                 "activation":           args.activation,
@@ -738,7 +693,7 @@ def main(argv=None):
                 "use_batchnorm":        args.batchnorm,
                 "seed":                 args.seed,
                 "args":                 {k: str(v) for k, v in vars(args).items()},
-                # Normalization stats - required by SurrogatePredictor at inference
+                # Normalization stats, required by SurrogatePredictor
                 "x_mean": x_mean,
                 "x_std":  x_std,
                 "y_mean": y_mean,
@@ -755,10 +710,9 @@ def main(argv=None):
             )
             break
 
-    # Final evaluation on held-out test set, using the best checkpoint
+    # Final test evaluation with the best checkpoint.
     if best_epoch < 0:
-        # Without this, a checkpoint left at the same path by an EARLIER run
-        # would be loaded and its results reported as this run's.
+        # Otherwise an older checkpoint at the same path would be evaluated.
         raise RuntimeError(
             f"No checkpoint was saved in this run (epochs={args.epochs}, val loss never "
             f"finite/improving), so there is nothing to evaluate. {ckpt_path} was not "
@@ -780,7 +734,7 @@ def main(argv=None):
         print(f"MAE {name:<15}: {mae:.6f}")
 
     if len(test_files) > 1:
-        # Per dataset: a combined number can hide a poor fit on the smaller dataset.
+        # Per dataset: a combined number can hide a poor fit on a smaller one.
         for test_file in test_files:
             loader = DataLoader(normalized_dataset(*load_split(test_file, scenario, args.env_encoding,
                                                                args.min_bank_distance, args.min_ukc,

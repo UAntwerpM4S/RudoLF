@@ -84,7 +84,7 @@ def test_learn_reraises_keyboard_interrupt_and_skips_final_checkpoint(tmp_path, 
 
         raise KeyboardInterrupt()
 
-    # Mock profile-dependent methods to prevent AttributeErrors
+    # Stub profile-dependent methods.
     monkeypatch.setattr(SimulatorApplier, "apply", lambda *args, **kwargs: None)
     monkeypatch.setattr(ActionAdapter, "transform", lambda *args, **kwargs: args[1] if len(args) > 1 else None)
     
@@ -135,7 +135,7 @@ def test_learn_raises_after_repeated_untrainable_airsim_batches(tmp_path, monkey
         }
     ]
 
-    # Mock profile-dependent methods to prevent AttributeErrors
+    # Stub profile-dependent methods.
     monkeypatch.setattr(SimulatorApplier, "apply", lambda *args, **kwargs: None)
     monkeypatch.setattr(ActionAdapter, "transform", lambda *args, **kwargs: args[1] if len(args) > 1 else None)
     
@@ -159,10 +159,8 @@ def test_learn_raises_after_repeated_untrainable_airsim_batches(tmp_path, monkey
 
 def test_single_ppo_agent_can_be_instantiated_without_profile(tmp_path):
     """
-    Verify that SinglePPOAgent can be instantiated with profile=None.
-
-    Profile-dependent operations (scenario initialization, action transformation)
-    are skipped when profile is None, but the agent should initialize cleanly.
+    SinglePPOAgent initializes cleanly with profile=None (profile-dependent
+    steps such as scenario initialization and action transformation are skipped).
     """
 
     agent = SinglePPOAgent(environment=_DummyEnv(), model_dir=str(tmp_path))
@@ -175,11 +173,8 @@ def test_single_ppo_agent_can_be_instantiated_without_profile(tmp_path):
 
 def test_load_policy_rebinds_optimizer(tmp_path):
     """
-    Optimizer must point at the loaded policy's parameters, not the original ones.
-
-    PPOPolicy.load() returns a NEW object, so after load_policy() the optimizer
-    must be recreated; otherwise step() silently updates the old unreferenced
-    network and the transferred policy never receives gradient updates.
+    Optimizer must point at the loaded policy's parameters: PPOPolicy.load()
+    returns a new object, so otherwise step() would update the old network.
     """
 
     agent = SinglePPOAgent(environment=_DummyEnv(), model_dir=str(tmp_path))

@@ -1,34 +1,17 @@
 """
-check_initial_rudder_sign.py -- does FH's setInitialRudderAngle use the same
-sign as the per-step rudder command?
+Check whether FH's setInitialRudderAngle uses the same sign as the per-step
+rudder command (the Myzako generators and FhSession assume it does and pass
+fh_rudder_sign(ship) * deg). Needs FH.
 
-The Myzako generators and FhSession pass
-    setInitialRudderAngle(fh_rudder_sign(ship) * deg)
-i.e. they ASSUME the initial angle has the per-step command's sign
-(check_rudder_sign.py only measured the per-step command). This script
-measures it (needs FH):
+Two short runs with a fresh FhSimBridge each: "+" sets an initial angle that
+should turn the ship to port under that assumption, "-" the opposite. After
+initialization the rudder is commanded to 0, so only the initial angle turns
+the ship. The heading change (counter-clockwise positive) gives the verdict:
+"+" to port and "-" to starboard means the assumption holds; the reverse means
+the initial angle must be negated; both near 0 is inconclusive.
 
-  * two short runs, each with a fresh FhSimBridge (no rewind);
-  * run "+": initial_rudder_angle = fh_rudder_sign(ship) * +ANGLE, which
-    under that assumption is a rudder that turns the ship to PORT;
-    run "-": the opposite;
-  * after initialization the rudder is commanded back to 0, so only the
-    initial angle (while FH moves the rudder back) turns the ship;
-  * the heading change over the first seconds says which way it turned
-    (heading counter-clockwise positive: > 0 = to port).
-
-  Verdict:
-    run "+" turns to port, run "-" to starboard -> the assumption holds
-    run "+" turns to starboard, run "-" to port -> the initial angle has the
-                                                   opposite sign: negate it
-    both ~0                                     -> inconclusive (FH ignores the
-                                                   initial angle, or the rudder
-                                                   snaps back)
-
-It also prints FH's own maximum rudder angle (getMaximumAngle) and the
-angle-related methods of the rudder control, to compare with the
-generator's RUDDER_MAX_DEG (the per-step setControlValue is normalized to
-FH's maximum, the initial angle uses RUDDER_MAX_DEG degrees).
+Also prints FH's getMaximumAngle and the rudder control's angle-related
+methods, for comparison with the generators' RUDDER_MAX_DEG.
 
 Usage (from src; position/heading must be in open water of the exercise):
     python -m fw.surrogate.validation.check_initial_rudder_sign --ship MYZAKO_37
@@ -60,14 +43,16 @@ MIN_TURN_DEG = 0.05       # |heading change| below this = no clear turn
 
 
 def _wrap_deg(a: float) -> float:
-    """Wrap an angle in degrees to [-180, 180)."""
+    """
+    Wrap an angle in degrees to [-180, 180).
+    """
+
     return (a + 180.0) % 360.0 - 180.0
 
 
 def _controls(si, ship_model):
     """
-    (steering controls, propeller controls) of FH's ship interface: azipods and no propellers
-    for the TRIPOLI, rudders and propellers otherwise.
+    (steering, propeller) controls: azipods and no propellers for TRIPOLI, else rudders and propellers.
     """
 
     if ship_model == ShipModel.TRIPOLI:
@@ -77,7 +62,9 @@ def _controls(si, ship_model):
 
 def run_once(ship_model: ShipModel, initial_deg: float, x: float, y: float, heading_deg: float,
              show_api: bool = False) -> float:
-    """Heading change [deg] after DURATION s, rudder commanded to 0 after init."""
+    """
+    Heading change [deg] after DURATION s, rudder commanded to 0 after init.
+    """
 
     bridge = FhSimBridge(ship_model=ship_model, rewind_enabled=False)
     bridge.initial_vessel_state = VesselState(terminated=False, truncated=False, x=x, y=y,
@@ -97,9 +84,7 @@ def run_once(ship_model: ShipModel, initial_deg: float, x: float, y: float, head
             print(f"  rudder control: {type(r0).__name__}; angle-related methods: {angle_api}")
             if hasattr(r0, "getMaximumAngle"):
                 print(f"  FH getMaximumAngle() = {r0.getMaximumAngle()} deg")
-        # Direct read-back of the actuator right after initialisation (FH's own
-        # getter: rudders getActualAngle, azipods getActualDirection), before
-        # any command is sent.
+        # Read back the actuator angle after initialization, before any command.
         getter = "getActualDirection" if ship_model == ShipModel.TRIPOLI else "getActualAngle"
         if hasattr(rudders[0], getter):
             try:
@@ -128,8 +113,7 @@ def run_once(ship_model: ShipModel, initial_deg: float, x: float, y: float, head
 
 def main(argv=None):
     """
-    CLI entry point: run the '+' and '-' initial-rudder-angle runs and print which sign
-    convention setInitialRudderAngle follows.
+    CLI: run the '+' and '-' runs and print the sign convention of setInitialRudderAngle.
     """
 
     ap = argparse.ArgumentParser(description="Sign of FH's setInitialRudderAngle.")

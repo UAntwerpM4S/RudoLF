@@ -8,11 +8,9 @@ EPSILON = 1e-9
 
 class CollisionEntity:
     """
-    Represents a collision entity in the simulation.
+    Static or dynamic circular obstacle (position, heading, speed, radius).
 
-    A collision entity may be static or dynamic and stores its position,
-    velocity, heading, and collision geometry. Dynamic entities support
-    simple kinematic motion and additional metadata used by encounter
+    Dynamic entities move kinematically and carry metadata used by encounter
     scenarios.
     """
 
@@ -28,16 +26,15 @@ class CollisionEntity:
         is_dynamic=False,
     ):
         """
-        Initializes a collision entity.
-
         Args:
-            velocity: Initial velocity vector.
+            velocity: Initial velocity vector; sets speed and heading unless
+                those are given explicitly.
             radius: Collision radius.
             x: Initial x-coordinate.
             y: Initial y-coordinate.
             entity_type: Entity category.
             heading: Initial heading in radians.
-            speed: Initial speed.
+            speed: Initial forward speed.
             is_dynamic: Whether the entity moves during simulation.
         """
 
@@ -63,21 +60,14 @@ class CollisionEntity:
 
     def get_position(self) -> np.ndarray:
         """
-        Returns the entity position.
-
-        Returns:
-            Position as a 2D NumPy array.
+        Return the position as a 2D array.
         """
 
         return np.array([self.x, self.y], dtype=np.float32)
 
     def set_position(self, x: float, y: float) -> None:
         """
-        Sets the entity position.
-
-        Args:
-            x: X-coordinate.
-            y: Y-coordinate.
+        Set the position.
         """
 
         self.x = float(x)
@@ -85,63 +75,42 @@ class CollisionEntity:
 
     def update_position(self, x: float, y: float) -> None:
         """
-        Updates the entity position.
-
-        Args:
-            x: X-coordinate.
-            y: Y-coordinate.
+        Alias for set_position.
         """
 
         self.set_position(x, y)
 
     def set_heading(self, heading: float) -> None:
         """
-        Sets the entity heading.
-
-        Args:
-            heading: Heading in radians.
+        Set the heading (rad).
         """
 
         self.heading = float(heading)
 
     def get_heading(self) -> float:
         """
-        Returns the entity heading.
-
-        Returns:
-            Heading in radians.
+        Return the heading (rad).
         """
 
         return float(self.heading)
 
     def set_speed(self, speed: float) -> None:
         """
-        Sets the forward speed.
-
-        Args:
-            speed: Forward speed.
+        Set the forward speed.
         """
 
         self.speed = float(speed)
 
     def get_speed(self) -> float:
         """
-        Returns the forward speed.
-
-        Returns:
-            Forward speed.
+        Return the forward speed.
         """
 
         return float(self.speed)
 
     def set_velocity(self, velocity: np.ndarray) -> None:
         """
-        Sets the velocity vector.
-
-        Updates both the speed and heading to match the supplied velocity.
-
-        Args:
-            velocity: Velocity vector.
+        Set speed and heading from a velocity vector (heading kept if speed is ~0).
         """
 
         vel = np.asarray(velocity, dtype=np.float32)
@@ -152,10 +121,7 @@ class CollisionEntity:
 
     def get_velocity(self) -> np.ndarray:
         """
-        Returns the velocity vector.
-
-        Returns:
-            Velocity as a 2D NumPy array.
+        Return the forward velocity vector as a 2D array (lateral speed excluded).
         """
 
         return np.array(
@@ -168,32 +134,21 @@ class CollisionEntity:
 
     def set_lateral_speed(self, lateral_speed: float) -> None:
         """
-        Sets the lateral speed.
-
-        Args:
-            lateral_speed: Lateral speed relative to the entity heading.
+        Set the lateral speed (positive to starboard).
         """
 
         self.lateral_speed = float(lateral_speed)
 
     def get_lateral_speed(self) -> float:
         """
-        Returns the lateral speed.
-
-        Returns:
-            Lateral speed.
+        Return the lateral speed.
         """
 
         return float(self.lateral_speed)
 
     def step(self, dt: float) -> None:
         """
-        Advances the entity state by one simulation step.
-
-        Moves the entity according to its forward and lateral speeds.
-
-        Args:
-            dt: Simulation time step.
+        Advance the position by dt using the forward and lateral speeds.
         """
 
         forward_x = math.cos(self.heading)
@@ -208,13 +163,7 @@ class CollisionEntity:
 
     def distance_to_point(self, point: np.ndarray) -> float:
         """
-        Computes the distance to a point.
-
-        Args:
-            point: Point position.
-
-        Returns:
-            Euclidean distance.
+        Return the Euclidean distance to a point.
         """
 
         point = np.asarray(point, dtype=np.float32)
@@ -222,62 +171,28 @@ class CollisionEntity:
 
     def clearance_to_point(self, point: np.ndarray, own_radius: float) -> float:
         """
-        Computes the clearance to a point.
-
-        The clearance equals the center-to-center distance minus the combined
-        collision radii.
-
-        Args:
-            point: Point position.
-            own_radius: Radius of the other object.
-
-        Returns:
-            Signed clearance distance.
+        Signed clearance: centre distance minus both radii (own_radius is the other object's).
         """
 
         return self.distance_to_point(point) - (self.radius + float(own_radius))
 
     def collides_with_point(self, point: np.ndarray, own_radius: float) -> bool:
         """
-        Checks whether the entity collides with a point.
-
-        Args:
-            point: Point position.
-            own_radius: Radius of the other object.
-
-        Returns:
-            `True` if a collision exists.
+        True if the clearance to a circle of own_radius at point is <= 0.
         """
 
         return self.clearance_to_point(point, own_radius) <= 0.0
 
     def collision_check(self, point: np.ndarray, own_radius: float) -> bool:
         """
-        Alias for :meth:`collides_with_point`.
-
-        Args:
-            point: Point position.
-            own_radius: Radius of the other object.
-
-        Returns:
-            `True` if a collision exists.
+        Alias for collides_with_point.
         """
 
         return self.collides_with_point(point, own_radius)
 
     def is_fully_inside_polygon(self, polygon: Polygon, own_radius: float) -> bool:
         """
-        Checks whether the entity fits inside a polygon.
-
-        The entity is treated as a circle whose radius is enlarged by the own
-        ship radius.
-
-        Args:
-            polygon: Navigable polygon.
-            own_radius: Own-ship radius.
-
-        Returns:
-            `True` if the entity is fully contained.
+        True if the entity circle, inflated by own_radius, lies fully inside polygon.
         """
 
         inflated = float(self.radius) + float(own_radius)
@@ -285,15 +200,7 @@ class CollisionEntity:
 
     def overlaps_with(self, other: "CollisionEntity", own_radius: float, margin: float = 0.0) -> bool:
         """
-        Checks whether two entities overlap.
-
-        Args:
-            other: Other collision entity.
-            own_radius: Own-ship radius.
-            margin: Additional safety margin.
-
-        Returns:
-            `True` if the entities overlap.
+        True if the centre distance is below both radii + 2 * own_radius + margin.
         """
 
         distance = float(np.linalg.norm(self.get_position() - other.get_position()))
@@ -302,19 +209,9 @@ class CollisionEntity:
 
     def passed_by_os(self, os_pos, os_heading):
         """
-        Checks whether the own ship has passed the entity.
-
-        The entity is considered passed once it lies abaft the own ship's beam.
-
-        Args:
-            os_pos: Own-ship position.
-            os_heading: Own-ship heading.
-
-        Returns:
-            `True` if the own ship has passed the entity.
+        True once the entity lies abaft the own ship's beam.
         """
 
-        # Check if TS is now abaft OS beam (OS has passed it)
         dx = self.x - float(os_pos[0])
         dy = self.y - float(os_pos[1])
         rel_bearing = math.atan2(dy, dx) - os_heading
@@ -339,10 +236,8 @@ class CollisionEntity:
 
     def ts_side_from_os_perspective(self, os_pos: np.ndarray, os_heading: float) -> str:
         """
-        Which side of the OS is this TS on?
-
-        Uses cross product of OS forward vector with the vector from OS to TS.
-        Returns "port", "starboard", or "ahead".
+        Return "port", "starboard" or "ahead" (on the OS heading line) from the
+        cross product of the OS forward vector and the OS-to-TS vector.
         """
 
         dx = self.x - float(os_pos[0])

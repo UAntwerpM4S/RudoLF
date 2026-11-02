@@ -6,22 +6,13 @@ from typing import Optional
 
 class BaseEnv(gym.Env):
     """
-    Base class for all custom environments, extending Gymnasium's Env class.
-
-    This class provides a common interface and base functionality for derived environments,
-    including standardized initialization, environment-type identification, and stubs for
-    environment-specific behaviors.
+    Common Gymnasium base for all framework environments: shared settings, identity and hooks.
     """
 
     def __init__(self, render_mode=None):
         """
-        Initialize the base environment.
-
-        This constructor sets up the base Gym environment. It is intended to be extended
-        by subclasses that implement specific environment logic.
-
         Args:
-            render_mode (str, optional): The rendering mode. Defaults to None.
+            render_mode (str, optional): Rendering mode.
         """
 
         super().__init__()
@@ -38,10 +29,7 @@ class BaseEnv(gym.Env):
     @property
     def env_name(self):
         """
-        Name of the environment instance.
-
-        Returns:
-            str: Environment name.
+        str: Name of the environment instance.
         """
 
         return self._env_name
@@ -51,9 +39,6 @@ class BaseEnv(gym.Env):
     def env_name(self, value):
         """
         Set the environment name.
-
-        Args:
-            value (str): Environment name.
         """
 
         self._env_name = value
@@ -62,10 +47,7 @@ class BaseEnv(gym.Env):
     @property
     def initial_speed(self):
         """
-        Initial vessel speed at environment reset.
-
-        Returns:
-            float: Initial speed.
+        float: Initial vessel speed at reset.
         """
 
         return self._initial_speed
@@ -75,9 +57,6 @@ class BaseEnv(gym.Env):
     def initial_speed(self, value):
         """
         Set the initial vessel speed.
-
-        Args:
-            value (float): Initial speed.
         """
 
         self._initial_speed = value
@@ -86,10 +65,7 @@ class BaseEnv(gym.Env):
     @property
     def render_mode(self):
         """
-        Rendering mode used by the environment.
-
-        Returns:
-            str | None: Active render mode.
+        str | None: Active render mode.
         """
 
         return self._render_mode
@@ -98,10 +74,7 @@ class BaseEnv(gym.Env):
     @render_mode.setter
     def render_mode(self, value):
         """
-        Set the rendering mode.
-
-        Args:
-            value (str | None): Render mode identifier.
+        Set the render mode.
         """
 
         self._render_mode = value
@@ -110,10 +83,7 @@ class BaseEnv(gym.Env):
     @property
     def enable_smoothing(self):
         """
-        Whether action smoothing is enabled.
-
-        Returns:
-            bool: True if smoothing is enabled, otherwise False.
+        bool: Whether action smoothing is enabled.
         """
 
         return self._smoothing_enabled
@@ -123,9 +93,6 @@ class BaseEnv(gym.Env):
     def enable_smoothing(self, value):
         """
         Enable or disable action smoothing.
-
-        Args:
-            value (bool): Smoothing enabled state.
         """
 
         self._smoothing_enabled = value
@@ -134,18 +101,12 @@ class BaseEnv(gym.Env):
     @property
     def enable_rudder_angle_scaling(self):
         """
-        Enable rudder angle scaling for sim-to-sim transfer.
+        bool: Rescale the rudder action for sim-to-sim transfer.
 
-        When *True*, the rudder action is rescaled at every step to compensate
-        for differing maximum rudder angles between the original (training)
-        simulator and the current (target) simulator.  The scale is computed
-        internally by the simulator as::
-
-            rudder_scale = framework_max_rudder_angle / target_sim_max_rudder_angle
-
-        Both values are read directly from the simulator at runtime, so no
-        manual angle configuration is required.  *False* means the raw policy
-        output is forwarded to the target simulator without rescaling.
+        When True, the simulator scales the rudder by
+        framework_max_rudder_angle / target_sim_max_rudder_angle (both read at
+        runtime) to compensate for differing maximum rudder angles. When False,
+        the raw policy output is forwarded.
         """
 
         return self._rudder_angle_scaling_enabled
@@ -154,10 +115,7 @@ class BaseEnv(gym.Env):
     @enable_rudder_angle_scaling.setter
     def enable_rudder_angle_scaling(self, value):
         """
-        Enable rudder angle scaling for sim-to-sim transfer.
-
-        Args:
-            value (bool): True to enable scaling, False to disable.
+        Enable or disable rudder angle scaling.
         """
 
         self._rudder_angle_scaling_enabled = value
@@ -166,7 +124,7 @@ class BaseEnv(gym.Env):
     @property
     def sub_environments(self):
         """
-        Returns the sub-environments. This property should only be used by multi-environment.
+        Sub-environments (multi-environments only).
         """
 
         return self._sub_environments
@@ -174,22 +132,15 @@ class BaseEnv(gym.Env):
 
     def neutral_action(self):
         """
-        Return a neutral (no-op) action for the environment.
+        Return a neutral (no-op) action, e.g. zero thrust and centred rudder.
 
-        A neutral action represents a control input that does not actively
-        influence the system (e.g., zero thrust, centered steering). This is
-        required for algorithms that continue stepping the simulator after an
-        episode has terminated in one or more environments.
-
-        Subclasses must implement this method and return an action that is
-        compatible with the environment's action space.
+        Used to keep stepping environments whose episode has already ended.
 
         Returns:
-            np.ndarray: Neutral action with the correct shape and dtype for
-            the environment.
+            np.ndarray: Action matching the action space.
 
         Raises:
-            NotImplementedError: If the method is not implemented by a subclass.
+            NotImplementedError: If the subclass does not implement it.
         """
 
         raise NotImplementedError
@@ -197,20 +148,14 @@ class BaseEnv(gym.Env):
 
     def get_neutral_action(self, env_id: int, action_template):
         """
-        Return a neutral action for a given env_id.
-
-        Delegates to self.neutral_action() so subclass-defined neutral
-        actions are respected. Falls back to zeros_like(action_template)
-        only if neutral_action() is not implemented.
+        Return neutral_action(), or zeros_like(action_template) if not implemented.
 
         Args:
             env_id (int): Sub-environment index (ignored for single envs).
-            action_template: An action array used for shape/dtype reference
-                if the fallback path is taken.
+            action_template: Reference array for the fallback's shape and dtype.
 
         Returns:
-            np.ndarray: Neutral action compatible with this environment's
-                action space.
+            np.ndarray: Neutral action.
         """
 
         try:
@@ -221,17 +166,10 @@ class BaseEnv(gym.Env):
 
     def get_agent_state(self):
         """
-        Retrieves the current state of this agent.
-
-        This method should be implemented by subclasses to return a
-        representation of the agent's internal state at the current time step.
-
-        Returns:
-            Any: The current state of the agent. The exact format and structure
-            depend on the specific implementation.
+        Return this agent's current state (format defined by the subclass).
 
         Raises:
-            NotImplementedError: If the method is not implemented in a subclass.
+            NotImplementedError: If the subclass does not implement it.
         """
 
         raise NotImplementedError
@@ -239,17 +177,13 @@ class BaseEnv(gym.Env):
 
     def set_other_agents_states(self, agent_states):
         """
-        Updates the stored states of other agents in the environment.
-
-        This method should be implemented by subclasses to store or process
-        the states of all agents except the current one.
+        Store the states of all other agents.
 
         Args:
-            agent_states (dict): A mapping of agent identifiers (e.g., names or IDs)
-                to their corresponding states.
+            agent_states (dict): Agent identifier to state.
 
         Raises:
-            NotImplementedError: If the method is not implemented in a subclass.
+            NotImplementedError: If the subclass does not implement it.
         """
 
         raise NotImplementedError
@@ -258,16 +192,11 @@ class BaseEnv(gym.Env):
     @property
     def type_name(self):
         """
-        Return the type name of the environment.
+        str: Class name of the gym implementation (e.g. "PySimEnv").
 
-        This reflects the underlying gym implementation *class* only (e.g.
-        "PySimEnv"). Multiple logically distinct environments (e.g. FhSimEnv
-        and PySimEnv) can share the same implementation class, so this must
-        NOT be used as an identity for policy files, metrics keys, or config
-        lookups. Use `training_name` for that instead.
-
-        Returns:
-            str: The class name of the current environment instance.
+        Several logical environments can share one class, so do not use this as
+        an identity for policy files, metrics keys or config lookups; use
+        training_name.
         """
 
         return type(self).__name__
@@ -276,22 +205,12 @@ class BaseEnv(gym.Env):
     @property
     def training_name(self):
         """
-        Logical training identity of this environment.
+        str: Logical identity of this environment.
 
-        This is the registered wrapper name (e.g. "FhSimEnv",
-        "PySimColavEnv") assigned by the `BaseEnvironment` factory wrapper
-        that constructed this gym env, and is guaranteed unique per logical
-        environment even when several wrappers share the same underlying
-        gym implementation class. Use this (not `type_name`) for policy file
-        naming, metrics dict keys, and any other place that needs to identify
-        *which training run/environment* this is.
-
-        Falls back to `type_name` when never explicitly set, e.g. when a gym
-        env is constructed directly (tests, scripts) without going through a
-        `BaseEnvironment` wrapper.
-
-        Returns:
-            str: The logical training identity for this environment.
+        The registered wrapper name (e.g. "FhSimEnv", "PySimColavEnv") set by the
+        BaseEnvironment wrapper; unique even when wrappers share a gym class. Use
+        it for policy file names, metrics keys and similar. Falls back to
+        type_name when not set (env built directly, e.g. in tests).
         """
 
         return self._training_name if self._training_name is not None else self.type_name
@@ -300,10 +219,7 @@ class BaseEnv(gym.Env):
     @training_name.setter
     def training_name(self, value):
         """
-        Set the logical training identity for this environment.
-
-        Args:
-            value (str): The registered wrapper name to assign.
+        Set the logical training identity (registered wrapper name).
         """
 
         self._training_name = value
@@ -311,14 +227,10 @@ class BaseEnv(gym.Env):
 
     def randomize(self, randomization_scale: Optional[float] = None):
         """
-        Apply domain randomization to the environment.
-
-        This method should be overridden by subclasses to apply random perturbations
-        or modifications to the environment's parameters to improve generalization.
+        Apply domain randomization (no-op by default; override in subclasses).
 
         Args:
-            randomization_scale (Optional[Any]): Scale or configuration for the randomization.
-                The exact structure depends on the specific environment's needs.
+            randomization_scale (Optional[float]): Randomization strength.
         """
 
         pass
@@ -326,10 +238,7 @@ class BaseEnv(gym.Env):
 
     def env_specific_reset(self):
         """
-        Perform any environment-specific reset logic.
-
-        This method should be overridden to implement additional reset behavior
-        that is specific to a subclass (e.g., setting custom internal state).
+        Hook for subclass-specific reset logic (no-op by default).
         """
 
         pass

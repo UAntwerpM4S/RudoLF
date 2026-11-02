@@ -1,42 +1,27 @@
 """
-profile_applier.py – Apply a :class:`~fw.config_profile.VesselProfile` to the framework.
+Apply a VesselProfile (fw.configuration.config_profile) to existing framework objects:
 
-Translates a :class:`VesselProfile` into side effects on existing framework
-objects so that no call-sites outside this module need to be rewritten:
+* CONFIG_PARAMETERS dict: ship_model, dynamics_model
+* BaseEnv: smoothing flag, rudder-angle scaling flag, initial speed
+* BaseSimulator: actuator-limit overrides
+* Raw [rudder, thrust] actions: fixed-thrust substitution only. Rudder-angle
+  scaling is a flag on BaseEnv passed down to the dynamics model's step()
+  (only FhTabularModel uses it; see that class for the formula).
 
-* `CONFIG_PARAMETERS` dict  – ship_model, dynamics_model
-* :class:`~fw.environments.base_env.BaseEnv`  – smoothing flag, rudder angle
-  scaling flag, and initial speed
-* :class:`~fw.simulators.base_simulator.BaseSimulator`  – actuator-limit
-  overrides
-* Raw `[rudder, thrust]` action arrays  – fixed-thrust substitution only
-  (see :class:`ActionAdapter` below). Rudder-angle *scaling* is NOT applied
-  here to the raw action array: it's a boolean flag
-  (`enable_rudder_angle_scaling`) set on `BaseEnv` by :class:`EnvApplier`,
-  which is threaded down through `ShipSimulator` into the dynamics model's
-  own `step()` (currently consumed only by `FhTabularModel`; see that
-  class's docstring for the actual scaling formula).
+Usage::
 
-Typical usage
--------------
-::
-
-    from fw.profile import ProfileRegistry
-    from fw.profile_applier import apply_profile
+    from fw.configuration.config_profile import ProfileRegistry
+    from fw.configuration.profile_applier import apply_profile
+    from fw.configuration.config import get_config_parameters
 
     profile = ProfileRegistry.get("inference_pysim")
-
-    # 1. Get CONFIG_PARAMETERS at startup
-    from fw.config import get_config_parameters
     cfg = get_config_parameters()
+    apply_profile(profile, config=cfg)
 
-    # 2. Configure smoothing and initial speed after the env is built
     env = build_default_environment("PySimEnv")
     apply_profile(profile, env=env)
 
-    # 3. Rescale / fix thrust at every step
-    raw_action = agent.predict(obs)
-    action = apply_profile(profile, action=raw_action)
+    action = apply_profile(profile, action=agent.predict(obs))
     obs, reward, done, info = env.step(action)
 """
 
@@ -65,24 +50,18 @@ def apply_profile(
     action: Optional[np.ndarray] = None,
 ) -> Optional[np.ndarray]:
     """
-    Apply *profile* settings to any combination of framework targets.
+    Apply *profile* to any combination of targets; pass only what you have.
 
-    Each keyword argument is independent; pass only what you have at hand.
-    `config`, `env`, and `simulator` are mutated in-place.  When
-    `action` is supplied the function returns a transformed copy; the
-    original array is never modified.
+    config, env and simulator are mutated in place; action is returned as a
+    transformed copy.
 
     Args:
-        profile: The :class:`~fw.profile.VesselProfile` to apply.
-        config: Mutable `CONFIG_PARAMETERS` dict from
-            :func:`~fw.config.get_config_parameters`. Updated in-place.
-        env: A :class:`~fw.environments.base_env.BaseEnv` instance.
-            `enable_smoothing`, `enable_rudder_angle_scaling`, and
-            `initial_speed` are propagated to sub-environments too.
-        simulator: A :class:`~fw.simulators.base_simulator.BaseSimulator`
-            instance.  Actuator limits are patched when overrides are present.
-        action: NumPy array of shape `(2,)` with `[rudder, thrust]` in
-            `[-1, 1]`.  Returns the transformed array.
+        profile: The VesselProfile to apply.
+        config: CONFIG_PARAMETERS dict (from get_config_parameters()).
+        env: A BaseEnv; smoothing, rudder-angle scaling and initial speed are
+            also set on its sub-environments.
+        simulator: A BaseSimulator; actuator limits are patched if overridden.
+        action: [rudder, thrust] array in [-1, 1].
 
     Returns:
         Transformed action array when *action* is not *None*, otherwise *None*.
@@ -112,13 +91,13 @@ def apply_profile(
 
 class ConfigApplier:
     """
-    Patches a `CONFIG_PARAMETERS` dict in-place.
+    Patches a CONFIG_PARAMETERS dict in place.
     """
 
     @staticmethod
     def apply(profile: VesselProfile, config: Dict[str, Any]) -> None:
         """
-        Patch ship_model and dynamics_model into *config* from *profile*.
+        Set ship_model and dynamics_model in *config* when the profile defines them.
         """
 
         if profile.model.ship_model is not None:
@@ -142,7 +121,7 @@ class EnvApplier:
     @staticmethod
     def apply(profile: VesselProfile, env) -> None:
         """
-        Apply env-level flags from *profile* to *env* and all its sub-environments.
+        Apply the profile's env-level flags to *env* and its sub-environments.
         """
 
         EnvApplier._set_smoothing(env, profile.actuator.enable_smoothing)
@@ -162,7 +141,7 @@ class EnvApplier:
     @staticmethod
     def _set_smoothing(env, value: bool) -> None:
         """
-        Set `enable_smoothing` on *env* if the attribute exists.
+        Set enable_smoothing on *env* if the attribute exists.
         """
 
         if hasattr(env, "enable_smoothing"):
@@ -175,7 +154,7 @@ class EnvApplier:
     @staticmethod
     def _set_rudder_angle_scaling(env, value: bool) -> None:
         """
-        Set `enable_rudder_angle_scaling` on *env* if the attribute exists.
+        Set enable_rudder_angle_scaling on *env* if the attribute exists.
         """
 
         if hasattr(env, "enable_rudder_angle_scaling"):
@@ -188,17 +167,8 @@ class EnvApplier:
     @staticmethod
     def _set_initial_speed(env, value: Optional[float]) -> None:
         """
-        Set the environment's initial surge speed via its `initial_speed` setter.
-
-        The setter is expected to store the value so that it is applied on the
-        next `env.reset()` call rather than immediately.  Environments that do
-        not expose an `initial_speed` attribute are silently skipped. Not all
-        environment types support a configurable start speed.
-
-        Args:
-            env: Environment instance to configure.
-            value: Desired initial surge speed in m/s, or *None* to leave the
-                environment's own default unchanged.
+        Set the initial surge speed (m/s), applied on the next reset(). None keeps
+        the env default; envs without an initial_speed attribute are skipped.
         """
 
         if value is None:
@@ -222,13 +192,13 @@ class EnvApplier:
 
 class SimulatorApplier:
     """
-    Patches actuator limits on the simulator from profile settings.
+    Patches the simulator's actuator limits from the profile.
     """
 
     @staticmethod
     def apply(profile: VesselProfile, simulator) -> None:
         """
-        Patch actuator limits on *simulator* from *profile*.
+        Patch actuator limits on *simulator* if the profile overrides them.
         """
 
         if profile.actuator.angle_rad is not None or profile.actuator.rate_rad is not None:
@@ -237,11 +207,8 @@ class SimulatorApplier:
     @staticmethod
     def _patch_specs(profile: VesselProfile, simulator) -> None:
         """
-        Override actuator limits on the simulator's :class:`ShipSpecifications`.
-
-        :class:`~fw.ships.ship_specs.ShipSpecifications` is a mutable dataclass;
-        fields are assigned directly.  The updated specs object is then
-        propagated to the actuator model so both stay in sync.
+        Override rudder limits on the simulator's (mutable) ShipSpecifications
+        and pass the specs on to the actuator model to keep both in sync.
         """
 
         specs = (
@@ -269,7 +236,6 @@ class SimulatorApplier:
                 "SimulatorApplier: set max_rudder_rate=%.4f rad/s", profile.actuator.rate_rad
             )
 
-        # Keep the actuator model in sync with the updated specs
         actuators = getattr(simulator, "_actuators", None)
         if actuators is not None and hasattr(actuators, "specifications"):
             actuators.specifications = specs
@@ -281,7 +247,7 @@ class SimulatorApplier:
 
 class ActionAdapter:
     """
-    Transforms a raw `[rudder, thrust]` action using profile settings.
+    Transforms a raw [rudder, thrust] action using profile settings.
     """
 
     @staticmethod
@@ -290,19 +256,15 @@ class ActionAdapter:
         action: np.ndarray,
     ) -> np.ndarray:
         """
-        Return a transformed copy of *action*.
-
-        When `thrust_mode == FIXED` the thrust component (index 1) is
-        replaced with `profile.thrust.fixed_value` directly.  The original
-        array is never modified.
+        Return a copy of *action*; with ThrustMode.FIXED the thrust (index 1)
+        is replaced by profile.thrust.fixed_value.
 
         Args:
             profile: Profile whose thrust settings to apply.
-            action: Array of shape `(N,)` with `N >= 2`.  Index 0 is
-                rudder, index 1 is thrust, both nominally in `[-1, 1]`.
+            action: Array of shape (N,), N >= 2: [rudder, thrust, ...] in [-1, 1].
 
         Returns:
-            New `float32` array with the same shape as *action*.
+            New float32 array with the same shape as *action*.
 
         Raises:
             ValueError: If *action* has fewer than 2 elements.
@@ -316,7 +278,6 @@ class ActionAdapter:
                 f"elements [rudder, thrust], got shape {action.shape}."
             )
 
-        # --- Fixed thrust -----------------------------------------------------
         if profile.thrust.mode == ThrustMode.FIXED:
             action[1] = profile.thrust.fixed_value
 
