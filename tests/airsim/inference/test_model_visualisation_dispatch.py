@@ -1,5 +1,5 @@
 """
-Tests for modular model-visualization dispatch through fw.main_with_airsim.
+Tests for model-visualization dispatch through fw.main_with_airsim.
 """
 
 import runpy
@@ -9,16 +9,8 @@ import pytest
 
 def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
     """
-    Run fw.main_with_airsim and verify it routes to run_visualise_models.
-
-    Args:
-        monkeypatch: Pytest monkeypatch fixture.
-
-    Verifies:
-        - runtime settings enable model_visualise.
-        - run_visualise_models receives expected arguments.
-        - main_with_airsim exits early with code 0 after dispatch.
-        - run_inference is not called in this mode.
+    With model_visualise enabled, main_with_airsim calls run_visualise_models with the
+    runtime-setting arguments (not run_inference) and exits with code 0.
     """
 
     runtime = {
@@ -62,10 +54,7 @@ def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
 
     def _fake_run_visualise_models(**kwargs):
         """
-        Fake run visualize models.
-
-        Args:
-            kwargs: Description.
+        Record the call arguments.
         """
 
         called.update(kwargs)
@@ -76,10 +65,7 @@ def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
 
     def _fail_run_inference(**kwargs):
         """
-        Fail run inference.
-
-        Args:
-            kwargs: Description.
+        Fail if called.
         """
 
         raise AssertionError("run_inference should not be called when model_visualise=True")
@@ -106,17 +92,8 @@ def test_main_with_airsim_dispatches_model_visualisation(monkeypatch):
 
 def test_main_with_airsim_model_visualisation_exits_cleanly_when_ue5_is_unreachable(monkeypatch, capsys):
     """
-    Run fw.main_with_airsim and verify UE5 connection failures exit cleanly.
-
-    Args:
-        monkeypatch: Pytest monkeypatch fixture.
-        capsys: Pytest stdout/stderr capture fixture.
-
-    Verifies:
-        - runtime settings enable model_visualise.
-        - a ConnectionError from the AirSim visualiser is converted into a
-          clean `SystemExit(1)` rather than an uncaught traceback.
-        - the user-facing message explains the missing UE5 dependency.
+    A ConnectionError from the model visualiser becomes SystemExit(1) with a message
+    explaining that UE5 is not reachable.
     """
 
     runtime = {
@@ -137,10 +114,7 @@ def test_main_with_airsim_model_visualisation_exits_cleanly_when_ue5_is_unreacha
 
     def _raise_connection_error(**kwargs):
         """
-        Raise connection error.
-
-        Args:
-            kwargs: Description.
+        Simulate an unreachable UE5.
         """
 
         raise ConnectionError("AirSimBridge could not connect to UE5 at 127.0.0.1:41451.")

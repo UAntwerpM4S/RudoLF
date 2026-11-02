@@ -38,7 +38,9 @@ def make_state(**values):
 
 
 def identity(scenario: str, ship_model: str = "MYZAKO_37", rudder_max_deg: float = 75.0) -> DatasetIdentity:
-    """A valid dataset identity for synthetic data."""
+    """
+    A valid dataset identity for synthetic data.
+    """
 
     return DatasetIdentity(scenario=scenario, ray_layout=RAY_LAYOUT_VERSION, ship_model=ship_model,
                            rudder_max_deg=float(rudder_max_deg), sway_convention=SWAY_CONVENTION)
@@ -91,7 +93,9 @@ def synthetic_rows(scenario_name: str, n_episodes: int, steps: int, seed: int):
 
 def write_splits(folder, scenario_name: str, ship_model: str = "MYZAKO_37", rudder_max_deg: float = 75.0,
                  seed: int = 0, provenance=None):
-    """Write train/val/test .npz files (disjoint episodes) of synthetic data; returns their paths."""
+    """
+    Write train/val/test .npz files (disjoint episodes) of synthetic data; returns their paths.
+    """
 
     ident = identity(scenario_name, ship_model, rudder_max_deg)
     paths = []
@@ -109,7 +113,9 @@ def write_splits(folder, scenario_name: str, ship_model: str = "MYZAKO_37", rudd
 
 
 def train_tiny(folder, scenario_name: str, extra_args=(), **split_kwargs):
-    """Train a one-epoch model on synthetic splits; returns (checkpoint path, split paths)."""
+    """
+    Train a one-epoch model on synthetic splits; returns (checkpoint path, split paths).
+    """
 
     from fw.surrogate import train_surrogate
 

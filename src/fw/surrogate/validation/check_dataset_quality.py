@@ -1,25 +1,21 @@
 #!/usr/bin/env python3
 """
-check_dataset_quality.py -- is a generated surrogate dataset good to train on?
+Quality checks of a generated surrogate dataset.
 
-Reads the three .npz splits written by generate_ship_data.py (X, Y,
-episode_id + identity) and reports, for any ship / configuration:
+Reads the .npz splits written by generate_ship_data.py (X, Y, episode_id,
+identity) and reports, for any ship / configuration:
 
-  1. Identity: the same scenario / ship / rudder scale / sway convention /
-     ray layout in all splits (schema.read_npz_identity).
-  2. Split hygiene: rows and episodes per split, NO episode in two splits
-     (leakage), every value finite, no (near-)constant input column.
-  3. Design checks: one constant (rudder, thrust) action per episode, actions
-     within [-1, 1], episode lengths (horizon / dt rows at most).
-  4. Coverage of the operating space: rudder / thrust / surge / sway / yaw
-     rate / UKC / heading, the share of straight episodes (rudder ~0) and of
-     rows with a bank in ray range -- what the surrogate will see.
-  5. Targets: per-step deltas, robust outliers (|delta - median| > K * MAD)
-     with the worst rows printed.
-  6. Rudder sign: corr(rudder_action, delta_yaw_rate) on rows with forward
-     speed and forward thrust. Framework convention: positive rudder_action
-     turns the ship to PORT, i.e. increases the yaw rate -> corr must be > 0
-     for EVERY ship (the generator converts to FH's sign).
+  1. Identity: same scenario, ship, rudder scale, sway convention and ray
+     layout in all splits (schema.read_npz_identity).
+  2. Split hygiene: rows and episodes per split, no episode leakage between
+     splits, all values finite, no (near-)constant input column.
+  3. Design: one constant (rudder, thrust) action per episode within [-1, 1];
+     at most horizon / dt rows per episode.
+  4. Coverage of rudder, thrust, surge, sway, yaw rate, UKC, heading, the
+     share of straight episodes and of rows with a bank in ray range.
+  5. Targets: per-step deltas and robust outliers (|delta - median| > K * MAD).
+  6. Rudder sign: corr(rudder_action, delta_yaw_rate) must be > 0 for every
+     ship (positive rudder turns to port), on rows with forward speed and thrust.
   7. Exact duplicate rows.
 
 Writes <prefix>_quality.png (histograms) next to the files. Needs numpy and
@@ -67,13 +63,17 @@ def _load(prefix: str):
 
 
 def _pct(values: np.ndarray, qs=(0, 1, 50, 99, 100)) -> str:
-    """Percentiles of `values` as one compact text."""
+    """
+    Percentiles of `values` as one compact text.
+    """
 
     return " ".join(f"p{q}={v:.4g}" for q, v in zip(qs, np.percentile(values, qs)))
 
 
 def _hist_text(values: np.ndarray, edges) -> str:
-    """Share of `values` per bin of `edges`, as percentages (np.histogram: the last bin is closed, [lo, hi])."""
+    """
+    Share of `values` per bin of `edges`, as percentages (np.histogram: the last bin is closed, [lo, hi]).
+    """
 
     counts, _ = np.histogram(values, bins=edges)
     total = max(len(values), 1)
@@ -207,8 +207,7 @@ def main(argv=None) -> int:
         print(f"  {name:15s}: {_pct(v)}  outliers (> {OUTLIER_K:g} MAD): {n_out} rows "
               f"({100 * n_out / len(v):.3f}%)")
         if n_out and ray_cols:
-            # Where do the outliers happen? Near a bank (bank interaction: physical)
-            # or in open water (suspicious: contact / numerical spikes)?
+            # Outliers near a bank are plausible (bank effects); in open water suspicious.
             out_rows = z > OUTLIER_K
             near = X[:, ray_cols].max(1)
             for label, sel in (("all rows", np.ones(len(v), dtype=bool)), ("outlier rows", out_rows)):

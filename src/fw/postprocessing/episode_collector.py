@@ -17,38 +17,17 @@ logger = logging.getLogger(__name__)
 
 class ShipDataExtractor:
     """
-    Extracts and records ship-specific data from an environment.
+    Appends a ship environment's state and action data to a per-ship accumulator.
 
-    This utility class is responsible for pulling relevant state and action
-    information from a ship environment and appending it to a per-ship
-    accumulator. It operates in a defensive manner by checking attribute
-    existence before accessing them, allowing compatibility across different
-    environment implementations.
-
-    Methods:
-        record_initial(ship_env, acc):
-            Records the initial state of a ship at the start of an episode.
-
-        record_step(ship_env, acc):
-            Records timestep data for a ship during an episode.
+    Only attributes present on the environment are recorded, so it works with
+    different environment implementations.
     """
 
     @staticmethod
     def record_initial(ship_env, acc: dict) -> None:
         """
-        Records the initial state of a ship environment.
-
-        Captures the starting values for position, cross-track error, velocity,
-        heading error, and initializes rudder-related signals.
-
-        Args:
-            ship_env: Environment instance representing a ship.
-            acc: Dictionary accumulator where data is stored.
-
-        Notes:
-            - Rudder actions and changes are initialized to 0.0 if available.
-            - Heading error is computed via `compute_heading_error` when a
-              physical simulator is present.
+        Record the initial position, cross-track error, velocity and heading error;
+        rudder/thrust actions and changes start at 0.0.
         """
 
         if hasattr(ship_env, "ship_pos"):
@@ -68,22 +47,11 @@ class ShipDataExtractor:
     @staticmethod
     def record_step(ship_env, acc: dict) -> None:
         """
-        Records a single timestep of ship data.
+        Record one step: position, cross-track and heading error, velocities,
+        rudder/thrust actions and their absolute changes, and UKC.
 
-        Appends current state and action-related values to the accumulator,
-        including position, cross-track error, heading error, velocities,
-        rudder actions, and under-keel clearance (UKC).
-
-        Args:
-            ship_env: Environment instance representing a ship.
-            acc: Dictionary accumulator where data is stored.
-
-        Notes:
-            - Rudder changes are computed as the absolute difference between
-              consecutive actions.
-            - UKC values are duplicated on the first step to ensure alignment
-              with other timestep-based arrays.
-            - Only attributes present on the environment are recorded.
+        The first UKC value is recorded twice so the array aligns with the others,
+        which include the initial state.
         """
 
         if hasattr(ship_env, "ship_pos"):
@@ -129,34 +97,20 @@ class ShipDataExtractor:
 
 class EpisodeCollector:
     """
-    Collects evaluation episodes and aggregates per-ship trajectory data.
-
-    Executes one or more episodes using a trained agent and records timestep-level
-    data (e.g., positions, errors, actions, rewards) for each ship. Supports both
-    single-ship and multi-ship environments and returns structured results for
-    analysis or visualization.
-
-    Args:
-        agent: Trained agent implementing `predict(state, deterministic=True)`
-            (e.g., SinglePPOAgent or MultiPPOAgent).
-        env: Environment compatible with the agent. Can be a single-ship
-            environment or a multi-ship environment exposing `sub_environments`.
-        ship_ids: Optional list of ship identifiers to track. If not provided,
-            uses `env.sub_environments.keys()` when available, otherwise defaults
-            to ["ship_0"].
+    Runs evaluation episodes with a trained agent and records per-step data
+    (positions, errors, actions, rewards) per ship, for single- and multi-ship
+    environments.
     """
 
     def __init__(self, agent, env, profile: VesselProfile, ship_ids: Optional[list[str]] = None, airsim_bridge=None):
         """
-        Initialize the collector and resolve the ship IDs to track.
-
         Args:
-            agent: Trained agent used to produce actions during evaluation.
-            env: Environment to evaluate, either single-ship or multi-ship.
-            profile: Profile that will be used for training or visualization.
-            ship_ids: Optional explicit ship ID list. If omitted, the collector
-                uses `env.sub_environments` when available, otherwise
-                defaults to `["ship_0"]`.
+            agent: Trained agent with predict(state, deterministic=True).
+            env: Single-ship env, or multi-ship env exposing sub_environments.
+            profile: Vessel profile applied to the simulator and actions.
+            ship_ids: Ship IDs to track (default: sub_environments keys, else ["ship_0"]).
+            airsim_bridge: Optional connected AirSim bridge; the ship pose is
+                mirrored to AirSim each step.
 
         Raises:
             ValueError: If the resolved ship ID list is empty.
@@ -189,16 +143,14 @@ class EpisodeCollector:
 
     def collect(self, num_episodes: int = 5, live_animation: bool = False) -> RunData:
         """
-        Runs multiple evaluation episodes and collects per-ship data.
+        Run evaluation episodes and collect per-ship data.
 
         Args:
-            num_episodes: Number of episodes to execute.
-            live_animation: If True, temporarily enables "human" render mode
-                for all ship environments during execution.
+            num_episodes: Number of episodes.
+            live_animation: Render in "human" mode during the run.
 
         Returns:
-            RunData containing aggregated per-ship `ShipEpisodeData` for each
-            episode.
+            RunData with one ShipEpisodeData per ship per episode.
 
         Raises:
             ValueError: If num_episodes is not positive.
@@ -225,25 +177,13 @@ class EpisodeCollector:
         actions,
     ):
         """
-        Apply :meth:`transform` to every action in a batch and return the
-        result in the same container type as the input.
+        Apply ActionAdapter.transform to each action, keeping the container type.
 
-        Supported input types:
-
-        * `np.ndarray` of shape `(N, action_dim)`: one row per agent.
-        * `tuple` of `N` individual action arrays.
-        * A single `np.ndarray` of shape `(action_dim,)`: scalar
-          single-agent case.
-
-        Args:
-            profile: Profile whose thrust settings to apply.
-            actions: Batch of actions in any of the supported container types.
-
-        Returns:
-            Transformed actions in the same container type as *actions*.
+        Accepts an (N, action_dim) array, a tuple of N actions, or a single
+        (action_dim,) array.
 
         Raises:
-            TypeError: If *actions* is not one of the supported types.
+            TypeError: For any other input type.
         """
 
         if isinstance(actions, np.ndarray) and actions.ndim == 2:
@@ -271,19 +211,8 @@ class EpisodeCollector:
     @contextmanager
     def _render_mode(self, ship_envs: dict[str, object], enabled: bool):
         """
-        Temporarily enables rendering for ship environments.
-
-        Args:
-            ship_envs: Mapping of ship IDs to their environment instances.
-            enabled: If True, switches environments to "human" render mode
-                within the context.
-
-        Yields:
-            None.
-
-        Notes:
-            Original render modes are restored after exiting the context.
-            Environments set to None are ignored.
+        Context manager: if enabled, switch the ship envs to "human" render mode
+        and restore their original modes on exit (None envs are skipped).
         """
 
         if not enabled:
@@ -303,32 +232,22 @@ class EpisodeCollector:
             for sid, ship_env in ship_envs.items():
                 if ship_env is None:
                     continue
-                # Only restore if we successfully captured the original mode.
                 if sid in render_modes:
                     ship_env.render_mode = render_modes[sid]
 
     def _run_episode(self, episode: int, live_animation: bool = False) -> dict[str, ShipEpisodeData]:
         """
-        Executes a single episode and collects per-ship data.
+        Run one episode and return ship ID to ShipEpisodeData.
 
-        Args:
-            episode: Episode index used for bookkeeping.
-            live_animation: If True, enables rendering during the episode.
-
-        Returns:
-            Dictionary mapping ship IDs to `ShipEpisodeData`.
-
-        Raises:
-            RuntimeError: If the environment reset does not return a valid state.
+        On a collision, the last 100 critic values and minimum distances are
+        logged ([VALUE_DIAG]).
         """
 
         env = self._env
         ship_ids = self._ship_ids
 
-        # Cache ship environments once
         ship_envs = {sid: self._get_ship_env(sid) for sid in ship_ids}
 
-        # Warn if any ship environment could not be resolved
         missing = [sid for sid, senv in ship_envs.items() if senv is None]
         if missing:
             warnings.warn(
@@ -338,13 +257,11 @@ class EpisodeCollector:
                 stacklevel=2,
             )
 
-        # Initialise per-ship accumulators
         accumulators: dict[str, dict] = {
             sid: self._empty_accumulator(sid, episode)
             for sid in ship_ids
         }
 
-        # Reset environment
         state, _ = env.reset()
 
         if self._profile is not None:
@@ -363,7 +280,6 @@ class EpisodeCollector:
         done = np.zeros(len(ship_ids), dtype=bool)
         steps = 0
 
-        # Capture initial state for each ship
         for sid, ship_env in ship_envs.items():
             if ship_env is not None:
                 ShipDataExtractor.record_initial(ship_env, accumulators[sid])
@@ -372,7 +288,7 @@ class EpisodeCollector:
         _value_buffer: deque = deque(maxlen=100)
         _dist_buffer: deque = deque(maxlen=100)
 
-        # Resolve the primary ship env once for distance queries
+        # Primary ship env, used for the distance diagnostic
         _primary_ship_env = next(iter(ship_envs.values()), None)
 
         info = {}
@@ -423,9 +339,7 @@ class EpisodeCollector:
                         if ship_env is not None:
                             ship_env.render()
 
-        # reward is accumulated inline during _record_step; nothing to finalize here
-
-        # Collision value diagnostic: print pre-collision value + distance history.
+        # Collision diagnostic: value and distance history before the collision.
         _terminal_info = info[0] if isinstance(info, (list, tuple)) else info
         if isinstance(_terminal_info, dict):
             _col_info = _terminal_info.get("collision_info", {}) or {}
@@ -439,7 +353,6 @@ class EpisodeCollector:
                     episode, _col_type, _n
                 )
                 if _vbuf:
-                    # Log step | value | dist side-by-side for readability
                     _offset = max(0, 100 - _n)
                     header = f"  {'step':>5}  {'value':>9}  {'min_dist':>10}"
                     _rows = [header]
@@ -488,17 +401,10 @@ class EpisodeCollector:
             reward,
     ) -> None:
         """
-        Records one timestep of data for each ship.
+        Record one step per ship and add the reward to its running sum.
 
-        Args:
-            accumulators: Per-ship data accumulators.
-            ship_envs: Mapping of ship IDs to environment instances.
-            reward: Reward signal from the environment. Can be a scalar,
-                sequence, or dict keyed by ship ID.
-
-        Notes:
-            - State data is recorded via `ShipDataExtractor.record_step`.
-            - Rewards are accumulated as a running sum per ship.
+        reward may be a scalar (shared), a sequence (by ship index) or a dict
+        keyed by ship ID.
         """
 
         for idx, (sid, ship_env) in enumerate(ship_envs.items()):
@@ -520,14 +426,7 @@ class EpisodeCollector:
 
     def _get_ship_env(self, ship_id: str):
         """
-        Returns the environment corresponding to a given ship.
-
-        Args:
-            ship_id: Identifier of the ship.
-
-        Returns:
-            The sub-environment for the given ship in multi-ship mode,
-            otherwise the main environment.
+        Return the ship's sub-environment (multi-ship) or the env itself (single-ship).
         """
 
         if hasattr(self._env, "sub_environments") and self._env.sub_environments:
@@ -537,15 +436,7 @@ class EpisodeCollector:
     @staticmethod
     def _empty_accumulator(ship_id: str, episode: int) -> dict:
         """
-        Initializes an empty data accumulator for a ship.
-
-        Args:
-            ship_id: Identifier of the ship.
-            episode: Episode index.
-
-        Returns:
-            Dictionary initialized with empty lists and default values for
-            storing timestep data and cumulative reward.
+        Return an empty per-ship accumulator.
         """
 
         return {
@@ -571,16 +462,7 @@ class EpisodeCollector:
     @staticmethod
     def _accumulator_to_episode_data(acc: dict) -> ShipEpisodeData:
         """
-        Converts a raw accumulator into structured episode data.
-
-        Args:
-            acc: Accumulator containing collected timestep data.
-
-        Returns:
-            ShipEpisodeData with NumPy arrays and aggregated metrics.
-
-        Notes:
-            Empty path data is converted to an array of shape (0, 2).
+        Convert an accumulator to ShipEpisodeData (an empty path becomes shape (0, 2)).
         """
 
         return ShipEpisodeData(

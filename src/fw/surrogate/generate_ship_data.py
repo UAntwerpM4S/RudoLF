@@ -1,27 +1,20 @@
 #!/usr/bin/env python3
 """
-generate_ship_data.py
+CLI for generating surrogate training data with the FH dataset generator
+(sim_fh_dataset_generator.collect_supervised_dataset): writes the full CSV and,
+unless --no-split, train/val/test .npz files split by episode.
 
-CLI for generating the surrogate training data with the FH dataset
-generator (sim_fh_dataset_generator.collect_supervised_dataset): writes the
-full CSV and, unless --no-split, train/val/test .npz files split by episode.
+--ship-model (TRIPOLI / MYZAKO_37) and --configuration (full = ship-bank + UKC +
+wind + current, confined = ship-bank + UKC) select the data.
 
---ship-model (TRIPOLI / MYZAKO_37) and --configuration (full = ship-bank + UKC
-+ wind + current, confined = ship-bank + UKC) select what is generated; see
-sim_fh_dataset_generator.SHIP_PROFILES / CONFIGURATIONS.
-
-Each .npz carries its identity (schema.DatasetIdentity):
-  * scenario       - from the configuration's row width
-                     (sim_fh_dataset_generator.nbr_x_features): 37 =
-                     full_env (full), 33 = confined_ukc (confined);
-  * ray_layout     - ray_features.RAY_LAYOUT_VERSION;
-  * ship_model     - --ship-model (default TRIPOLI);
-  * sway_convention - schema.SWAY_CONVENTION (sway positive to port);
-  * rudder_max_deg - the run's rudder scale (rudder_action = +-1 <->
-                     +-rudder_max_deg): fixed for the TRIPOLI (35 deg), FH's own
-                     getMaximumAngle() for the MYZAKO_37 (probed once before
-                     the run). Must equal the ship's maximum rudder angle in
-                     fw.ships.ship_factory, otherwise generation is refused.
+Each .npz carries its schema.DatasetIdentity:
+  * scenario: from the row width (37 = full_env, 33 = confined_ukc)
+  * ray_layout: ray_features.RAY_LAYOUT_VERSION
+  * ship_model: --ship-model
+  * sway_convention: schema.SWAY_CONVENTION (sway positive to port)
+  * rudder_max_deg: angle of rudder_action = +-1; 35 deg for TRIPOLI, FH's
+    getMaximumAngle() for MYZAKO_37 (probed before the run). Must equal the
+    ship's maximum rudder angle in ship_factory, else generation is refused.
 """
 
 import os
@@ -59,7 +52,7 @@ from fw.surrogate.sim_fh_dataset_generator import (
 def dataset_identity(ship_model: ShipModel, configuration: str = DEFAULT_CONFIGURATION,
                      rudder_max_deg: Optional[float] = None) -> DatasetIdentity:
     """
-    Identity of the data the generator produces for `ship_model` in `configuration`.
+    Identity of the data the generator produces for ship_model in configuration.
 
     Args:
         ship_model: Ship to simulate.
@@ -82,20 +75,15 @@ def dataset_identity(ship_model: ShipModel, configuration: str = DEFAULT_CONFIGU
                            sway_convention=SWAY_CONVENTION)
 
 
-# ================================================================
-# TRAIN/VAL/TEST SPLITTING
-# ================================================================
 def generation_provenance(args, ship_model: ShipModel, rudder_max_deg: float, n_episodes: int,
                           n_rows: int, started_utc: Optional[str] = None) -> dict:
     """
-    How a dataset was generated: the CLI settings, the resolved rudder scale,
-    the FH exercises, the generator's data version and what came out. Stored
-    in every .npz (schema.NPZ_PROVENANCE_KEY) and next to the CSV
-    (<csv stem>_generation.json). Informational only: it is not part of the
-    dataset identity and changes nothing in the data.
+    How a dataset was generated (CLI settings, rudder scale, FH exercises,
+    generator data version, row/episode counts). Stored in every .npz
+    (schema.NPZ_PROVENANCE_KEY) and as <csv stem>_generation.json.
+    Informational only; not part of the dataset identity.
     """
 
-    # Imported here so the import list at the top stays as it was.
     from fw.surrogate.sim_fh_dataset_generator import _CHECKPOINT_VERSION, exercise_paths
 
     exercise, no_current = exercise_paths(ship_model, args.configuration)
@@ -118,38 +106,24 @@ def generation_provenance(args, ship_model: ShipModel, rudder_max_deg: float, n_
 def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetIdentity,
                    train=0.8, val=0.1, seed=None, provenance: Optional[dict] = None):
     """
-    Split dataset into train/val/test BY EPISODE and save as .npz.
+    Split the dataset into train/val/test by episode and save as .npz.
 
-    Splitting is done on unique `episode_ids`, not on individual rows: all
-    rows belonging to one simulation rollout are assigned to the same
-    split. Splitting by row instead (the previous behavior) leaks
-    temporally-correlated, near-duplicate rows from the same episode
-    across the train/val/test boundary, which makes validation/test
-    metrics optimistically biased and doesn't test generalization to
-    genuinely unseen trajectories.
-
-    Because episodes have variable length (a rollout can terminate early,
-    e.g. leaving open water or insufficient keel clearance), the
-    resulting ROW counts per split will only approximately match
-    `train`/`val`/`1-train-val`, the fractions are exact in terms of
-    episode count, not row count.
+    All rows of one rollout go to the same split; a row-level split would leak
+    near-duplicate, correlated rows across splits and bias val/test metrics.
+    The fractions are exact in episodes, approximate in rows (episodes vary in
+    length).
 
     Args:
-        x_vals: Input array, shape (N, raw width of identity.scenario).
-        y_vals: Output array, shape (N, 3).
-        episode_ids: Per-row episode index, shape (N,), aligned with
-            x_vals/y_vals.
-        save_prefix: Path prefix for the three output .npz files.
-        identity: Dataset identity stored in every .npz (see dataset_identity).
-        train: Fraction of EPISODES assigned to the train split.
-        val: Fraction of EPISODES assigned to the val split (remainder
-            goes to test).
-        seed: Optional seed for the episode shuffle, so the same data gives
-            the same split. Each .npz also stores the per-row `episode_id`,
-            so the split can be inspected or reproduced afterwards, plus the
-            identity (`schema.npz_metadata`), which dataset.load_raw checks.
-        provenance: Optional generation provenance (generation_provenance),
-            stored in every .npz as well (schema.provenance_metadata).
+        x_vals: Inputs, shape (N, raw width of identity.scenario).
+        y_vals: Targets, shape (N, 3).
+        episode_ids: Per-row episode index, shape (N,).
+        save_prefix: Path prefix of the three .npz files.
+        identity: DatasetIdentity stored in every .npz (checked by dataset.load_raw).
+        train: Fraction of episodes for train.
+        val: Fraction of episodes for val (the rest is test).
+        seed: Optional seed of the episode shuffle (reproducible split). Each
+            .npz also stores the per-row episode_id.
+        provenance: Optional generation_provenance() dict, stored in every .npz.
     """
 
     unique_episodes = np.unique(episode_ids)
@@ -174,10 +148,8 @@ def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetId
             print(f"WARNING: the {name} split has 0 episodes ({num_episodes} episodes in total). "
                   f"Training will fail on it -- generate more episodes or change the fractions.")
 
-    # All three splits are first written to temporary files and only then
-    # renamed, so a crash while writing never leaves a truncated split or a
-    # mix of old and new splits behind. (The three renames themselves are not
-    # one atomic step, but they take microseconds and cannot run out of disk.)
+    # Write all splits to temporary files first, then rename, so a crash never
+    # leaves a truncated split or a mix of old and new splits.
     pending = []
     try:
         for name, mask in (("train", train_mask), ("val", val_mask), ("test", test_mask)):
@@ -200,12 +172,9 @@ def split_and_save(x_vals, y_vals, episode_ids, save_prefix, identity: DatasetId
     print(f"Saved: {save_prefix}_test.npz   ({test_mask.sum()} rows from {len(test_episodes)} episodes)")
 
 
-# ================================================================
-# MAIN CLI ENTRYPOINT
-# ================================================================
 def main():
     """
-    Main.
+    Command-line entry point.
     """
 
     parser = argparse.ArgumentParser()
@@ -311,8 +280,7 @@ def main():
 
     args = parser.parse_args()
 
-    # nargs=2 guarantees exactly two values; unpacking makes that visible to the
-    # type checker (tuple(list) is inferred as a variable-length tuple).
+    # Unpack the nargs=2 pairs so the type checker sees fixed-length tuples.
     bank_min, bank_max = args.bank_band
     bank_band = (float(bank_min), float(bank_max))
     bs_min, bs_max = args.bank_straight_band
@@ -320,10 +288,9 @@ def main():
     t_lo, t_hi = args.thrust_range
     thrust_range = (float(t_lo), float(t_hi))
 
-    # Before the (long) generation run: the rudder scale (for the Myzako probed
-    # from FH) must match ship_factory.
+    # Validate before the long run: cheap checks first, then the rudder scale
+    # (the Myzako probe starts FH and can take up to TIMEOUT_SECONDS).
     ship_model = ShipModel[args.ship_model]
-    # Cheap checks first: the probe below starts FH and can take up to TIMEOUT_SECONDS.
     try:
         validate_start_settings(args.bank_fraction, bank_band, args.straight_fraction,
                                 args.bank_straight_fraction, bank_straight_band, thrust_range)
@@ -332,10 +299,6 @@ def main():
     rudder_max_deg = resolve_rudder_max_deg(ship_model, args.configuration)
     identity = dataset_identity(ship_model, args.configuration, rudder_max_deg)
     print(f"Dataset identity: {identity}")
-
-    # ============================================================
-    # Generate
-    # ============================================================
 
     started_utc = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     print(f"Generating {args.samples} episodes (max. horizon={args.horizon}s, {ship_model.name}, "
@@ -364,20 +327,17 @@ def main():
 
     print(f"Saved dataset to {args.save} ({len(x_values)} rows from {nbr_samples} episodes)")
 
-    # Provenance: next to the CSV, and in every .npz below. Informational
-    # only -- after a long run it must never cost the data, so any failure
-    # here is reported and the run continues without it.
+    # Provenance is informational: a failure here is reported, never fatal.
     provenance = None
     try:
         provenance = generation_provenance(args, ship_model, rudder_max_deg, nbr_samples, len(x_values),
                                            started_utc=started_utc)
-        provenance_metadata(provenance)          # serializable? (checked here, not while writing the splits)
+        provenance_metadata(provenance)          # check serializability now, not while writing splits
     except Exception as exc:  # noqa: BLE001 - never lose the dataset over the provenance
         provenance = None
         print(f"WARNING: could not record the generation settings ({type(exc).__name__}: {exc}); "
               f"the dataset is written without them.")
     if provenance is not None:
-        # Written separately: a failing sidecar file does not drop the provenance in the .npz files.
         provenance_path = os.path.splitext(args.save)[0] + "_generation.json"
         tmp = f"{provenance_path}.tmp{os.getpid()}"
         try:
@@ -395,9 +355,6 @@ def main():
                 except OSError:
                     pass
 
-    # ============================================================
-    # Optional splitting
-    # ============================================================
     if args.split:
         prefix = os.path.splitext(args.save)[0]
         split_and_save(x_values, y_values, episode_ids, prefix, identity, seed=args.seed, provenance=provenance)

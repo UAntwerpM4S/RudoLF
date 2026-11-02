@@ -1,30 +1,20 @@
 """
 Time since the start of the episode, per row of a dataset split.
 
-The generator shuffles the rows of every split and stores no step index, so
-the order within an episode is reconstructed from the data itself (see
-`step_index`). This module
+Rows are shuffled and carry no step index, so the order within an episode is
+reconstructed from the data (step_index, also used by the time/bank error
+diagnostics). As a script, it adds the array t_episode [s] to dataset .npz files,
+so train_surrogate --min-episode-time can drop episode starts, where FH's hidden
+states (roll) still settle from the artificial initial state. Rows of episodes
+that cannot be ordered get t_episode = -1 (also dropped).
 
-  * provides `step_index` (also used by validation/time_error_diagnostic and
-    validation/bank_error_diagnostic), and
-  * as a script, adds that time as an extra array `t_episode` [s] to existing
-    dataset .npz files, so that train_surrogate --min-episode-time can leave
-    out the start of every episode (where FH's hidden states -- roll -- are
-    still settling from the artificial initial state).
+t_episode counts from the first recorded row, i.e. after FH start-up (0.1 s),
+wind warm-up (full configuration, 1 s) and actuator settling (0-3 s).
 
-Rows of episodes whose order cannot be reconstructed get t_episode = -1
-(train_surrogate --min-episode-time drops them).
+Compare time windows in whole steps (steps_from_times / step_threshold), not on
+the float32 times: float32(k * 0.1) is not exactly k / 10.
 
-t_episode counts from the FIRST RECORDED ROW of the episode. The generator
-records only after FH's start-up (0.1 s), the wind warm-up (full
-configuration, 1 s) and the actuator settling (0 - 3 s, per episode), so the
-time since FH started is that much longer.
-
-Time windows should be compared in whole steps (`steps_from_times` /
-`step_threshold`), not on the float32 times: float32(k * 0.1) is not exactly
-k / 10.
-
-Usage (from src; rewrites the files in place, all other arrays unchanged):
+Usage (from src; rewrites the files in place, other arrays unchanged):
 
     python -m fw.surrogate.episode_time ^
         data\\tripoli_confined\\ship_dynamics_dataset_train.npz ^
@@ -51,9 +41,9 @@ from fw.surrogate.schema import SURROGATE_DT, get_scenario
 logger = logging.getLogger(__name__)
 
 T_EPISODE_KEY = "t_episode"
-# Matching space: position [m] plus velocities scaled up, so that a successor
-# is found both when the ship moves (position separates the rows, ~0.1-0.6 m
-# per step) and when it is (nearly) stopped (only the velocities differ).
+# Matching space: position [m] plus scaled-up velocities, so successors are found
+# both when moving (position separates rows, ~0.1-0.6 m per step) and when
+# (nearly) stopped (only velocities differ).
 VEL_SCALE = 100.0          # surge/sway [m/s] -> x100
 YAW_SCALE = 1.0e4          # yaw rate [rad/s] -> x1e4
 MATCH_TOL = 0.1            # max distance in that space between predicted and found successor
@@ -61,28 +51,25 @@ STATE_COLUMNS = ("x", "y", "heading", "surge", "sway", "yaw_rate")
 
 
 def _match_space(x, y, u, v, r) -> np.ndarray:
-    """Points in the successor-matching space (see VEL_SCALE / YAW_SCALE)."""
+    """
+    Points in the successor-matching space (see VEL_SCALE / YAW_SCALE).
+    """
 
     return np.column_stack([x, y, VEL_SCALE * u, VEL_SCALE * v, YAW_SCALE * r])
 
 
 def step_index(state: np.ndarray, delta: np.ndarray, episode_id: np.ndarray) -> Tuple[np.ndarray, int, int]:
     """
-    Step index of every row within its episode (-1 where the chain could not
-    be reconstructed).
+    Step index of every row within its episode (-1 where the chain could not be
+    reconstructed).
 
-    A row's successor is the row of the same episode closest to this row's
-    predicted next state: velocities = state + targets (exact up to float32
-    rounding), position = one kinematic step of SURROGATE_DT. A row is never
-    its own successor (a slow or stopped ship's predicted next state lies
-    close to the row itself), and the row with the worst match is the last
-    one (a chain of n rows has n - 1 links). If even that row has a match
-    within MATCH_TOL (the track closes on itself, e.g. a full turning
-    circle), it is taken as the last one only when its match is clearly
-    worse (> 3x) than every other link; otherwise the episode is skipped.
-    The row nobody points to is the first one. Episodes that remain
-    ambiguous (e.g. a fully stopped ship, whose rows are identical) are
-    skipped, never mis-ordered.
+    A row's successor is the other row of the same episode closest to its
+    predicted next state (velocities = state + targets, position = one kinematic
+    step of SURROGATE_DT). The worst-matching row is the last one (n rows have
+    n - 1 links); if even it matches within MATCH_TOL (closed track, e.g. a full
+    turning circle), it must be > 3x worse than every other link, else the episode
+    is skipped. The row nobody points to is the first. Ambiguous episodes (e.g. a
+    stopped ship with identical rows) are skipped, never mis-ordered.
 
     Args:
         state: (N, 6) x, y, heading [rad, 0 = East, CCW], surge, sway (port
@@ -113,21 +100,16 @@ def step_index(state: np.ndarray, delta: np.ndarray, episode_id: np.ndarray) -> 
         y_next = yy + SURROGATE_DT * (u * np.sin(hm) + v * np.cos(hm))
         here = _match_space(x, yy, u, v, r)
         nxt = _match_space(x_next, y_next, u + du, v + dv, r + dr)
-        # k=2: a row is never its own successor (a slow or stopped ship's
-        # predicted next state is within MATCH_TOL of the row itself).
+        # k=2: a row is never its own successor (slow ships predict near themselves).
         dist2, succ2 = cKDTree(here).query(nxt, k=2)
         self_hit = succ2[:, 0] == np.arange(len(rows))
         dist = np.where(self_hit, dist2[:, 1], dist2[:, 0])
         succ = np.where(self_hit, succ2[:, 1], succ2[:, 0])
         has_succ = dist <= MATCH_TOL
-        # A chain of n rows has exactly n - 1 links: the worst-matching row is
-        # the last one, even if some unrelated row happens to lie within
-        # MATCH_TOL of its predicted next state (closed turning circle).
+        # n rows have n - 1 links: the worst-matching row is the last one.
         i_end = int(np.argmax(dist))
         if dist[i_end] <= MATCH_TOL:
-            # Every row has a match: the track closes on itself (e.g. a full
-            # turning circle). Cut it only where the worst link is clearly
-            # worse than all others; otherwise the order is ambiguous -> skip.
+            # Closed track: cut only where the worst link is clearly worse, else skip.
             second = float(np.partition(dist, -2)[-2])
             if not dist[i_end] > 3.0 * second:
                 n_bad += 1
@@ -157,7 +139,9 @@ def step_index(state: np.ndarray, delta: np.ndarray, episode_id: np.ndarray) -> 
 
 
 def steps_from_times(t: np.ndarray) -> np.ndarray:
-    """Step indices of t_episode values [s] (-1 stays -1, i.e. not reconstructed)."""
+    """
+    Step indices of t_episode values [s] (-1 stays -1, i.e. not reconstructed).
+    """
 
     t = np.asarray(t, dtype=np.float64)
     return np.where(t >= 0, np.rint(t / SURROGATE_DT), -1).astype(np.int64)
@@ -189,7 +173,9 @@ def episode_time(path) -> Tuple[np.ndarray, int, int]:
 
 
 def add_episode_time(path: Path) -> None:
-    """Write `t_episode` into the .npz at `path` (atomically; other arrays unchanged)."""
+    """
+    Write `t_episode` into the .npz at `path` (atomically; other arrays unchanged).
+    """
 
     t, n_ok, n_bad = episode_time(path)
     with np.load(path, allow_pickle=False) as z:
@@ -210,7 +196,9 @@ def add_episode_time(path: Path) -> None:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Command-line entry point; returns the exit code."""
+    """
+    Command-line entry point; returns the exit code.
+    """
 
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter)

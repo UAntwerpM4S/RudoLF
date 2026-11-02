@@ -11,11 +11,8 @@ try:
 except KeyError:
     _simexe_path = ""
 
-# DLL path mirrors the pattern used in FhSimBridge for library_path.
-# Resolved once at import time from SIMEXE_REPO_FOLDER so no path is
-# hardcoded. The clr.AddReference() call itself is deferred to _connect()
-# so a missing DLL does not crash the process on import (e.g. when running
-# without a simSync instance, or on a machine without the DLL).
+# Resolved from SIMEXE_REPO_FOLDER (as in FhSimBridge). clr.AddReference() is
+# deferred to _connect(), so a missing DLL does not break the import.
 _MANAGED_SIM_SYNC_DLL = os.path.join(
     _simexe_path,
     "exe/installed/ManagedSimSync.v143.x64.dll",
@@ -42,23 +39,17 @@ class _SyncMathModelProxy:
     """
     Stand-in for FH MathModel in realtime mode.
 
-    simulateSeconds(dt) blocks until `dt` seconds of *simulation time* have
-    elapsed by accumulating state-update events. The controls written by the
-    previous step() remain in effect throughout the interval. Same semantics
-    as fasttime, just running at 1x wall-clock.
-
-    At 40 Hz sim tick rate with dt=2.0 s, simulateSeconds blocks for ~80
-    events over ~2 s wall-clock.
+    simulateSeconds(dt) blocks until dt seconds of simulation time have passed
+    (counted from state-update events), with the previous step()'s controls in
+    effect. Same semantics as fasttime, at 1x wall-clock (e.g. 40 Hz ticks,
+    dt=2.0 s: ~80 events over ~2 s).
     """
 
     def __init__(self, bridge: "SimSyncBridge", timeout_per_tick: float = 1.0):
         """
-        Initialize the realtime math model proxy.
-
         Args:
-            bridge: Connected realtime simSync bridge instance.
-            timeout_per_tick: Maximum number of seconds to wait for a single
-                simulator state update.
+            bridge: Connected SimSyncBridge.
+            timeout_per_tick: Maximum wait [s] for a single state update.
         """
 
         self._bridge = bridge
@@ -66,17 +57,10 @@ class _SyncMathModelProxy:
 
     def simulateSeconds(self, dt: float) -> None:
         """
-        Advance realtime simulation by a given duration.
-
-        This method blocks until the requested amount of simulation time has
-        elapsed according to simulator timestamps received from simSync.
-
-        Args:
-            dt: Amount of simulation time, in seconds, to advance.
+        Block until dt seconds of simulation time have elapsed (simSync timestamps).
 
         Raises:
-            RuntimeError: If no simulator state update is received within the
-                configured timeout while waiting for simulation progression.
+            RuntimeError: If no state update arrives within the per-tick timeout.
         """
 
         if dt <= 0.0:
@@ -96,29 +80,20 @@ class _SyncMathModelProxy:
 
     def getSimInterface(self):
         """
-        Retrieve the simulator interface from the latest simulator state.
-
-        Returns:
-            Simulator interface object associated with the latest state.
+        Simulator interface of the latest state.
 
         Raises:
-            RuntimeError: If no simulator state has been received yet.
+            RuntimeError: If no state has been received yet.
         """
 
         return self._bridge._require_state().SimItf
 
     def SimulateRewindTo(self, time_point: float) -> None:
         """
-        Attempt to rewind realtime simulation.
-
-        Rewind operations are unsupported in realtime mode.
-
-        Args:
-            time_point: Requested rewind target time in seconds.
+        Not supported in realtime mode.
 
         Raises:
-            RuntimeError: Always raised because realtime rewind is not
-                supported.
+            RuntimeError: Always.
         """
 
         raise RuntimeError("Rewind is not supported in realtime mode.")
@@ -130,8 +105,7 @@ class SimSyncBridge:
 
     Connects to a running simSync instance over UDP and exposes the same
     interface as FhSimBridge (ship_model, ship_interface, math_model,
-    initial_vessel_state, reset, dispose), so FhTabularModel (via
-    ShipSimulator) can drive either bridge unchanged.
+    initial_vessel_state, reset, dispose), so FhTabularModel can drive either.
     """
 
     def __init__(self,
@@ -141,26 +115,16 @@ class SimSyncBridge:
                  connect_timeout: float = 10.0,
                  step_timeout_per_tick: float = 1.0):
         """
-        Initialize the realtime simSync bridge.
-
         Args:
-            ship_model: Ship model of the vessel already running in the
-                remote simSync instance. Required for API parity with
-                FhSimBridge.ship_model - FhTabularModel.step() branches on
-                this (e.g. ShipModel.TRIPOLI uses azipod controls instead
-                of rudder/propeller controls) regardless of which bridge
-                is in use, so it must be set correctly here to match
-                whatever ship the running simSync instance actually has
-                loaded. This does not configure or change the remote
-                simulator's ship in any way; simSync already owns that.
-            remote_ip: IP address of the remote simSync instance.
-            remote_port: UDP port of the remote simSync instance.
-            local_ip: Local IP address used for the UDP connection.
-            local_port: Local UDP port used for the connection.
-            connect_timeout: Maximum number of seconds to wait for the first
-                simulator state after connecting.
-            step_timeout_per_tick: Maximum number of seconds to wait for a
-                realtime state update while advancing simulation time.
+            ship_model: Ship already loaded in the remote simSync instance. Must
+                match it, because FhTabularModel.step() branches on it (e.g.
+                TRIPOLI uses azipod controls); it does not configure the remote ship.
+            remote_ip: IP address of the simSync instance.
+            remote_port: UDP port of the simSync instance.
+            local_ip: Local IP address for the UDP connection.
+            local_port: Local UDP port.
+            connect_timeout: Maximum wait [s] for the first state after connecting.
+            step_timeout_per_tick: Maximum wait [s] per state update while advancing.
         """
 
         self._ship_model = ship_model
@@ -168,7 +132,7 @@ class SimSyncBridge:
         self._local  = (local_ip, local_port)
         self._connect_timeout = connect_timeout
 
-        # self._app is created lazily in _connect() after the DLL is loaded.
+        # Created lazily in _connect(), after the DLL is loaded.
         self._app = None
 
         # Shared between .NET event thread and agent thread.
@@ -191,11 +155,7 @@ class SimSyncBridge:
     @property
     def ship_model(self):
         """
-        Model type of the ship already running in the remote simSync instance.
-
-        Returns:
-            ShipModel: Ship model enum value (e.g. ShipModel.MYZAKO_DEFAULT,
-                ShipModel.TRIPOLI), as provided at construction time.
+        ShipModel given at construction (the ship running in simSync).
         """
 
         return self._ship_model
@@ -203,13 +163,7 @@ class SimSyncBridge:
     @property
     def initial_vessel_state(self):
         """
-        Placeholder initial vessel state for API compatibility.
-
-        In realtime mode this value is ignored because the running simulator
-        already owns the vessel state.
-
-        Returns:
-            Optional initial vessel state object.
+        Stored for API parity only; ignored in realtime mode.
         """
 
         return self._initial_vessel_state
@@ -217,17 +171,9 @@ class SimSyncBridge:
     @initial_vessel_state.setter
     def initial_vessel_state(self, value):
         """
-        Store the initial vessel state placeholder.
-
-        The value is retained for compatibility with `FhSimBridge` but is
-        ignored in realtime mode.
-
-        Args:
-            value: Initial vessel state object.
+        Store the value (ignored: the running simulator owns the vessel state).
         """
 
-        # Stored for API parity but ignored in realtime. The running sim
-        # already has a vessel state.
         self._initial_vessel_state = value
         if value is not None:
             self._logger.info("initial_vessel_state ignored in realtime mode.")
@@ -235,10 +181,7 @@ class SimSyncBridge:
     @property
     def math_model(self):
         """
-        Realtime math model proxy.
-
-        Returns:
-            _SyncMathModelProxy instance used to advance realtime simulation.
+        The realtime math model proxy.
 
         Raises:
             RuntimeError: If the bridge is not connected.
@@ -251,31 +194,23 @@ class SimSyncBridge:
     @property
     def ship_interface(self):
         """
-        Ship interface from the latest simulator state.
-
-        Returns:
-            Simulator own-ship interface object.
+        Own-ship interface of the latest state.
 
         Raises:
-            RuntimeError: If no simulator state has been received yet.
+            RuntimeError: If no state has been received yet.
         """
 
         return self._require_state().OwnShipItf
 
     def reset(self, time_point: float = 0.25) -> None:
         """
-        Connect to the realtime simulator and wait for the first state.
-
-        The first invocation establishes the UDP connection and blocks until
-        an initial simulator state is received. Rewind operations are not
-        supported in realtime mode.
+        Connect on first call and block until the first state arrives.
 
         Args:
-            time_point: Ignored rewind target retained for API compatibility.
+            time_point: Ignored (rewind is not supported in realtime mode).
 
         Raises:
-            RuntimeError: If the connection fails or no state is received
-                within the configured timeout.
+            RuntimeError: If connecting fails or no state arrives in time.
         """
 
         if not self._connected:
@@ -288,11 +223,9 @@ class SimSyncBridge:
 
     def dispose(self) -> None:
         """
-        Disconnect from the realtime simulator and release resources.
+        Disconnect and unsubscribe event handlers (idempotent).
 
-        This method unsubscribes all event handlers and marks the bridge as
-        disconnected regardless of whether the underlying disconnect call
-        succeeds.
+        The bridge is marked disconnected even if Disconnect() fails.
         """
 
         if self._connected:
@@ -311,10 +244,7 @@ class SimSyncBridge:
 
     def __repr__(self):
         """
-        Return the bridge representation string.
-
-        Returns:
-            String identifier for the realtime bridge.
+        Return "SimSync".
         """
 
         return "SimSync"
@@ -323,11 +253,7 @@ class SimSyncBridge:
 
     def _current_sim_time(self) -> float:
         """
-        Retrieve the current simulator time.
-
-        Returns:
-            Current simulation time in seconds. Returns `0.0` if no state
-            has been received yet.
+        Current simulation time [s]; 0.0 before the first state.
         """
 
         with self._state_lock:
@@ -338,14 +264,7 @@ class SimSyncBridge:
 
     def _wait_for_next_state(self, timeout: float) -> bool:
         """
-        Wait for the next simulator state update.
-
-        Args:
-            timeout: Maximum number of seconds to wait.
-
-        Returns:
-            `True` if a new state was received before the timeout,
-            otherwise `False`.
+        Wait up to timeout [s] for a new state; False on timeout or disconnect.
         """
 
         self._new_state.clear()
@@ -355,13 +274,10 @@ class SimSyncBridge:
 
     def _require_state(self):
         """
-        Retrieve the latest simulator state.
-
-        Returns:
-            Latest simulator state object.
+        Latest simulator state.
 
         Raises:
-            RuntimeError: If no simulator state has been received yet.
+            RuntimeError: If no state has been received yet.
         """
 
         with self._state_lock:
@@ -374,15 +290,10 @@ class SimSyncBridge:
 
     def _connect(self) -> None:
         """
-        Establish the realtime simSync connection.
-
-        Loads the ManagedSimSync assembly, creates the underlying SyncApp,
-        subscribes event handlers, and waits for the initial simulator state.
+        Load ManagedSimSync, connect, subscribe handlers and wait for the first state.
 
         Raises:
-            RuntimeError: If the connection attempt fails.
-            RuntimeError: If no simulator state is received within the
-                configured timeout.
+            RuntimeError: If connecting fails or no state arrives within connect_timeout.
         """
 
         _load_sync_app()
@@ -410,11 +321,7 @@ class SimSyncBridge:
 
     def _on_update(self, sender, state):
         """
-        Handle realtime simulator update events.
-
-        Args:
-            sender: Event sender object.
-            state: Latest simulator state object.
+        Store the latest state and wake waiters.
         """
 
         with self._state_lock:
@@ -423,11 +330,7 @@ class SimSyncBridge:
 
     def _on_initialized(self, sender, state):
         """
-        Handle simulator initialization events.
-
-        Args:
-            sender: Event sender object.
-            state: Initial simulator state object.
+        Store the initial state and wake waiters.
         """
 
         with self._state_lock:
@@ -436,11 +339,8 @@ class SimSyncBridge:
 
     def _on_disconnected(self, sender):
         """
-        Handle simulator disconnect events.
-
-        Args:
-            sender: Event sender object.
+        Mark disconnected and wake waiters so they see it.
         """
 
         self._disconnected.set()
-        self._new_state.set()  # unblock any waiter so they observe disconnect
+        self._new_state.set()

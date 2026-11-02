@@ -9,15 +9,11 @@ from fw.dynamics.dynamics_model import DynamicsBase
 
 def fh_rudder_sign(ship_model: ShipModel) -> float:
     """
-    Factor from the framework's rudder sign to FH's command sign.
-
-    Framework convention (every ship, every dynamics model): a positive rudder
-    command turns the ship to PORT. FH, measured with check_rudder_sign.py
-    (2026-10-19):
-      - azipod (Tripoli), setDesiredDirection(+deg): the ship turns to port  -> +1
-      - classic rudder (Myzako), setControlValue(+):  the ship turns to starboard -> -1
-    Used by FhTabularModel, FhSimWrapper, FhSession and the Myzako dataset
-    generators, so the conversion lives in one place.
+    Factor from the framework's rudder sign (positive = turn to port) to FH's
+    command sign, as measured with check_rudder_sign.py:
+      - azipod (Tripoli), setDesiredDirection(+deg) turns to port: +1
+      - classic rudder (Myzako), setControlValue(+) turns to starboard: -1
+    Shared by FhTabularModel, FhSimWrapper, FhSession and the Myzako dataset generators.
 
     Raises:
         ValueError: For a ship without a known sign: measure it first (see
@@ -45,16 +41,11 @@ _FH_RUDDER_SIGNS = {
 
 class FhTabularModel(DynamicsBase):
     """
-    FH-engine-backed vessel dynamics model.
+    DynamicsBase wrapper around the FH math model (FastShip / FhSimBridge engine).
 
-    Wraps the FH math model (FastShip / FhSimBridge engine) as a DynamicsBase
-    implementation. On each call to step(), the FH engine is advanced by dt
-    seconds and the resulting body-fixed velocities (u, v, r) are read back
-    directly: no velocity-delta differencing and no re-integration.
-
-    This avoids the numerical drift that arises when accelerations are
-    reconstructed by finite-differencing velocity snapshots and then
-    re-integrated by ShipSimulator.integrate().
+    step() advances the FH engine by dt and reads the body-fixed velocities
+    (u, v, r) back directly, avoiding the drift of finite-differencing velocities
+    and re-integrating them.
 
     Coordinate convention:
         u  =  velocity_over_ground.x          (surge, forward positive)
@@ -64,15 +55,13 @@ class FhTabularModel(DynamicsBase):
         r  =  radians(getShipYawRate())       (yaw rate, counter-clockwise =
                                                bow-to-port positive)
 
-    Note: getShipVelocityOverGround() returns velocities already expressed
-    in the body-fixed frame despite its name (confirmed empirically: the
-    x-component aligns with surge regardless of heading).
+    Despite its name, getShipVelocityOverGround() returns body-fixed velocities
+    (checked empirically: x aligns with surge regardless of heading).
 
-    Wind and current come from the FH exercise itself, so ShipSimulator must
-    not add EnvironmentModel's accelerations (models_own_wind_current = True).
+    FH simulates the exercise's own wind and current, so ShipSimulator must not
+    add EnvironmentModel's accelerations (models_own_wind_current = True).
     """
 
-    # FH simulates the exercise's own wind and current.
     models_own_wind_current: bool = True
 
     def __init__(self, ship_spec: ShipSpecifications, fh_engine):
@@ -80,13 +69,11 @@ class FhTabularModel(DynamicsBase):
         Initialize the FH tabular dynamics model.
 
         Args:
-            ship_spec:  Vessel physical specifications, used to scale
-                        rudder commands to the FH engine's range.
-            fh_engine:  Initialized FH engine object exposing
-                        ship_interface and math_model.
+            ship_spec:  Vessel specifications (max_rudder_angle for rudder scaling).
+            fh_engine:  Initialized FH engine exposing ship_interface and math_model.
         """
 
-        # Also covers engines other than FhSimBridge (e.g. SyncSimBridge).
+        # getattr: also covers engines other than FhSimBridge (e.g. SyncSimBridge).
         engine_ship_model = getattr(fh_engine, "ship_model", None)
         if engine_ship_model is not None:
             require_fh_supported(engine_ship_model, "FhTabularModel")
@@ -106,41 +93,25 @@ class FhTabularModel(DynamicsBase):
         Advance the FH engine by dt seconds and return updated (u, v, r).
 
         Args:
-            state:        Current vessel state (used for interface consistency;
-                          the FH engine maintains its own internal state).
-            rudder_angle: Rudder command [rad]; positive = the ship turns to
-                          PORT (the framework convention, see fh_rudder_sign),
-                          NOT a normalized [-1, 1] value. Converted to FH's
-                          sign with fh_rudder_sign(ship_model).
-                          - Conventional rudder ships: converted internally to
-                            the FH engine's normalized [-1, 1] range via
-                            np.degrees(rudder_angle) / fh_max_deg.
-                          - TRIPOLI (azipod-controlled): converted to plain
-                            degrees via np.degrees(rudder_angle) and passed
-                            directly to setDesiredDirection(), which expects
-                            an absolute angle in degrees (not normalized).
-            thrust:       Normalized thrust command (dimensionless) in [-1, 1],
-                          passed directly to setEngineLeverValue().
-            dt:           Simulation step size in seconds. Passed directly to
-                          simulateSeconds().
-            enable_rudder_angle_scaling: When True (conventional-rudder ships
-                          only), scales the rudder command using this
-                          framework's max_rudder_angle instead of the FH
-                          rudder object's own getMaximumAngle(), to correct
-                          for a mismatch between the two. Ignored for TRIPOLI.
+            state:        Unused (FH keeps its own state); kept for the interface.
+            rudder_angle: Rudder command [rad], positive = turn to port (not
+                          normalized); sign converted with fh_rudder_sign().
+                          Rudder ships: normalized to [-1, 1] by the max angle.
+                          TRIPOLI (azipods): passed in degrees to setDesiredDirection().
+            thrust:       Normalized thrust in [-1, 1], passed to setEngineLeverValue().
+            dt:           Step size [s], passed to simulateSeconds().
+            enable_rudder_angle_scaling: Rudder ships only: normalize by the
+                          framework's max_rudder_angle instead of the FH rudder's
+                          getMaximumAngle() (corrects a mismatch). Ignored for TRIPOLI.
 
         Returns:
-            Tuple (u, v, r) read directly from the FH engine after advancing
-            by dt seconds:
-                u = velocity_over_ground.x          [m/s]
-                v = velocity_over_ground.y          [m/s]
-                r = radians(getShipYawRate())       [rad/s]
+            (u [m/s], v [m/s], r [rad/s]) read from the FH engine after the step.
         """
 
         # --- Set controls ---
         if self._engine.ship_model == ShipModel.TRIPOLI:
             for rudder in self._engine.ship_interface.getAzipodControls():
-                # rudder_angle is in radians; convert to degrees (FH sign +1 for azipods).
+                # FH sign is +1 for azipods.
                 val_deg = fh_rudder_sign(self._engine.ship_model) * np.degrees(rudder_angle)
                 rudder.setDesiredDirection(float(val_deg))
                 rudder.setEngineLeverValue(float(thrust))
@@ -148,12 +119,9 @@ class FhTabularModel(DynamicsBase):
             for rudder in self._engine.ship_interface.getRudderControls():
                 if enable_rudder_angle_scaling:
                     framework_max_deg = np.rad2deg(self.ship_spec.max_rudder_angle)
-                                                            # convert to degrees as max_rudder_angle
-                                                            # is stored in radians in ShipSpecifications
                     val = np.degrees(rudder_angle) / framework_max_deg
                 else:
                     val = np.degrees(rudder_angle) / rudder.getMaximumAngle()
-                # FH's positive rudder control turns the ship to starboard: convert.
                 rudder.setControlValue(float(fh_rudder_sign(self._engine.ship_model) * val))
 
             for propeller in self._engine.ship_interface.getPropellerControls():

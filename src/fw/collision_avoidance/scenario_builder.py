@@ -9,19 +9,15 @@ EPSILON = 1e-9
 
 class ScenarioBuilder:
     """
-    Episode-level scenario builder.
+    Places obstacles and target ships (TS) for COLAV episodes.
 
-    Reads scenario_types, scenario_probs, and encounter_range from the
-    environment so that subclass environments can configure them.
-
-    Subclass this builder (e.g. AdaptiveScenarioBuilder) to implement
-    step-level encounter spawning via on_step().
+    Scenario settings (scenario_types, scenario_probs, encounter_range, ...)
+    are read from the owning env. Spawning happens either once per episode
+    (on_reset) or during the episode (on_step, scenario_obstacle_level="step").
     """
 
     def __init__(self, env) -> None:
         """
-        Initializes the scenario builder.
-
         Args:
             env: Environment that owns the builder.
         """
@@ -30,14 +26,13 @@ class ScenarioBuilder:
         self.env = env
         self.chosen_scenario: Optional[str] = None
 
-        # Focused-encounter training state (per episode)
-        # Follows a sequence of PF steps -> Encounter steps -> PF step
-        self._encounters_this_episode: int = 0 # Number of encounters that have already spawned in the current episode.
-        self._pathfollowing_encounter_active: bool = False # dedicated PF steps are active instead of encounter
-        self._pathfollowing_encounter_counter: int = 0 # counts steps during active PF steps
-        self._post_encounter_active: bool = False # True if post-encounter cooldown is active
-        self._post_encounter_counter: int = 0 # counts number of steps in the post encounter
-        self._truncate_requested: bool = False # True when the post-encounter is done, and the episode is truncated
+        # Focused-encounter training state (per episode): PF, encounter, PF tail
+        self._encounters_this_episode: int = 0  # encounters spawned so far
+        self._pathfollowing_encounter_active: bool = False  # PF-only "encounter" running
+        self._pathfollowing_encounter_counter: int = 0
+        self._post_encounter_active: bool = False  # post-encounter PF tail running
+        self._post_encounter_counter: int = 0
+        self._truncate_requested: bool = False  # tail done; env should truncate
 
         # Single-encounter eval mode state (per episode)
         self._single_encounter_spawned: bool = False  # dormant TS has been placed
@@ -49,13 +44,9 @@ class ScenarioBuilder:
     # ----------------
     def on_reset(self) -> None:
         """
-        Called at episode reset.
-
-        Resets per-episode builder state regardless of mode (so the
-        recovery counter doesn't leak across episodes after early
-        terminations such as collisions). At episode level, also builds
-        the full episode scenario; at step level, entities are spawned
-        later by `on_step()`.
+        Reset per-episode state (in every mode, so counters don't leak after
+        early terminations). At episode level also build the episode's
+        entities; at step level they are spawned later by on_step().
         """
 
         env = self.env
@@ -63,7 +54,6 @@ class ScenarioBuilder:
         self.step_counter = 0
         self.chosen_scenario = None
 
-        # Reset focused-encounter training state
         self._encounters_this_episode = 0
         self._pathfollowing_encounter_active = False
         self._pathfollowing_encounter_counter = 0
@@ -71,7 +61,6 @@ class ScenarioBuilder:
         self._post_encounter_counter = 0
         self._truncate_requested = False
 
-        # Reset single-encounter eval-mode state
         self._single_encounter_spawned = False
         self._single_encounter_done = False
         self._single_encounter_ts_seen = False
@@ -80,8 +69,8 @@ class ScenarioBuilder:
         if getattr(env, "scenario_obstacle_level", None) == "step":
             env.collision_entities = []
             env._sync_collision_entity_views()
-            # Single-encounter mode places the dormant TS at episode reset
-            # so the OS can approach it from path-following distance.
+            # Single-encounter mode places its dormant TS now, so the OS
+            # approaches it from path-following distance.
             if getattr(env, "single_encounter_per_episode", False):
                 self._spawn_single_dormant_encounter()
             return
@@ -96,25 +85,20 @@ class ScenarioBuilder:
         chosen_scenario = self.sample_collision_entity_scenario()
         self.chosen_scenario = chosen_scenario
         env.collision_entities = self.compute_collision_entity_positions(chosen_scenario, env.obstacle_count) or []
-        # Tag every spawned entity with its ground-truth scenario (used by
-        # the classifier's ground_truth_extended_label property and by metrics).
+        # Ground-truth scenario tag, used by the classifier and by metrics.
         for entity in env.collision_entities:
             if getattr(entity, "spawn_scenario_label", None) is None:
                 entity.spawn_scenario_label = chosen_scenario
         env._sync_collision_entity_views()
-        # Lock the classifier to the builder's choice so misclassification
-        # (e.g. a head-on being geometrically labeled as crossing-right)
-        # cannot poison reward shaping during training.
+        # Lock the classifier to this choice so geometric misclassification
+        # (e.g. head-on seen as crossing-right) cannot corrupt reward shaping.
         self._push_scenario_to_classifier(chosen_scenario)
 
     def _push_scenario_to_classifier(self, scenario_label: Optional[str]) -> None:
         """
-        Propagate the builder's chosen scenario to the classifier.
-
-        Only applies when the env has ground_truth_classification=True.
-        When False, the classifier runs in pure geometric mode at both
-        episode and step levels (so its misclassification rate can be
-        measured against the builder's ground truth).
+        Lock the classifier to the builder's scenario, if the env has
+        ground_truth_classification=True. Otherwise the classifier stays purely
+        geometric, so its error rate can be measured against the ground truth.
         """
 
         env = self.env
@@ -127,7 +111,7 @@ class ScenarioBuilder:
 
     def _is_training_focused(self) -> bool:
         """
-        True when focused-encounter training is active for this env.
+        True when focused-encounter training is active (training only).
         """
 
         env = self.env
@@ -148,7 +132,7 @@ class ScenarioBuilder:
 
     def _active_encounter_prob(self) -> float:
         """
-        Encounter spawn probability per step for the current mode.
+        Per-step encounter spawn probability for the current train/eval mode.
         """
 
         env = self.env
@@ -158,19 +142,15 @@ class ScenarioBuilder:
 
     def on_step(self, dt: float) -> None:
         """
-        Called each environment step for step-level encounter spawning.
+        Step-level encounter spawning, called every env step.
 
-        Behavior depends on training vs eval mode:
-
-        * **Eval mode**: original behavior; after a cooldown, a TS may
-          spawn each step with `eval_encounter_prob`.  Multiple
-          encounters per episode are allowed; episode runs to `max_steps`.
-        * **Focused-encounter training mode**: a single encounter per
-          episode.  After `train_encounter_cooldown` steps of recovery,
-          a TS spawns with probability `train_encounter_prob` (typically
-          1.0).  Once the TS leaves `forget_range`, a post-encounter
-          countdown of `post_encounter_steps` runs and then `_truncate_requested`
-          is set so the env step loop can clean-truncate the episode.
+        - Eval mode: after the cooldown a TS may spawn each step with
+          eval_encounter_prob; several encounters per episode, runs to max_steps.
+        - Focused-encounter training: one encounter per episode. After
+          train_encounter_cooldown steps a TS spawns with train_encounter_prob.
+          Once it despawns, a post_encounter_steps countdown runs and then
+          _truncate_requested is set so the env can truncate cleanly.
+        - Single-encounter eval mode: handled by _single_encounter_on_step().
         """
 
         env = self.env
@@ -179,34 +159,23 @@ class ScenarioBuilder:
             env._sync_collision_entity_views()
             return
 
-        # Single-encounter eval mode: bypasses the normal cooldown / spawn /
-        # focused-training plumbing. The dormant TS was placed in on_reset();
-        # here we only handle despawn (OS leaves forget_range) and ensure no
-        # further encounters spawn for the rest of the episode.
+        # Dormant TS was placed in on_reset(); only despawn is handled here.
         if getattr(env, "single_encounter_per_episode", False):
             self._single_encounter_on_step()
             return
 
         is_focused = self._is_training_focused()
 
-        # ----------------------------------------------------------
-        # 1. Post-encounter countdown (focused training only)
-        #    Runs after the (only) encounter's TS has left forget range.
-        # ----------------------------------------------------------
+        # 1. Post-encounter countdown (focused training only).
         if self._post_encounter_active:
             self._post_encounter_counter += 1
             if self._post_encounter_counter >= int(getattr(env, "post_encounter_steps", 150)):
                 self._truncate_requested = True
             return
 
-        # ----------------------------------------------------------
-        # 1b. Path-following 'encounter' active (focused training only)
-        #     The episode sampled "path-following" as its encounter type,
-        #     so no TS is spawned; we just run PF for
-        #     `pathfollowing_encounter_steps` and then transition into
-        #     the post-encounter countdown so the episode terminates with
-        #     the same 150-step PF tail as a normal TS encounter.
-        # ----------------------------------------------------------
+        # 1b. Sampled "path-following" encounter (focused training only): no TS,
+        #     run PF for pathfollowing_encounter_steps, then the same
+        #     post-encounter tail as a real encounter.
         if self._pathfollowing_encounter_active:
             self._pathfollowing_encounter_counter += 1
             if self._pathfollowing_encounter_counter >= int(
@@ -217,17 +186,13 @@ class ScenarioBuilder:
                 self._post_encounter_counter = 0
             return
 
-        # ----------------------------------------------------------
-        # 2. Pre-encounter cooldown / recovery
-        # ----------------------------------------------------------
+        # 2. Pre-encounter cooldown / recovery.
         cooldown = self._active_cooldown()
         if self.step_counter != cooldown:
             self.step_counter += 1
             return
 
-        # ----------------------------------------------------------
-        # 3. Encounter spawn (skip if focused training already had one)
-        # ----------------------------------------------------------
+        # 3. Encounter spawn (at most one in focused training).
         spawn_blocked = is_focused and self._encounters_this_episode >= 1
         if not spawn_blocked:
             encounter_prob = self._active_encounter_prob()
@@ -236,10 +201,8 @@ class ScenarioBuilder:
             if encounter and not env.collision_entities:
                 chosen_scenario = self.sample_collision_entity_scenario()
                 if chosen_scenario == "path-following":
-                    # Focused training: treat the sampled "path-following"
-                    # as the encounter: start the PF-only encounter timer
-                    # and lock the classifier to PF for the duration so
-                    # reward shaping / observations stay in pure-PF mode.
+                    # Focused training: count PF as the encounter and lock
+                    # the classifier to PF for its duration.
                     if is_focused:
                         self._pathfollowing_encounter_active = True
                         self._pathfollowing_encounter_counter = 0
@@ -258,30 +221,15 @@ class ScenarioBuilder:
                         env.collision_entities = entities or []
                         env._sync_collision_entity_views()
                         if entities:
-                            # Honor ground_truth_classification for step-level too.
                             self._push_scenario_to_classifier(chosen_scenario)
                             self._encounters_this_episode += 1
 
-        # ----------------------------------------------------------
-        # 4. Clean up TS that has left forget range OR has finished its
-        #    route. The route_finished check covers the case where a
-        #    path-following TS (e.g. an overtaking TS that the OS never
-        #    catches up to) reaches the end of the trajectory
-        # ----------------------------------------------------------
-        #
-        #    A TS is only despawned for distance after it has been within
-        #    encounter_range at least once (`_despawn_engaged`): that is the
-        #    range at which the classifier starts tracking a TS, so this is the
-        #    same rule as before ("tracked, then left forget_range"), and the
-        #    same gate as the single-encounter path. A TS whose closest
-        #    approach stays between encounter_range and forget_range is
-        #    therefore NOT removed for distance. The old code relied on
-        #    `env.ts_idx` still being set from the previous step while the
-        #    classifier had already dropped the TS (a lag that any reordering
-        #    of reward/observation would break).
-        #    Scope: only DYNAMIC target ships, and only in envs that track one
-        #    (TRACKS_TARGET_SHIP, the polar env). Static obstacles and the
-        #    planner env never despawn here.
+        # 4. Despawn the TS once its route is finished (e.g. an overtaking TS
+        #    the OS never catches) or once it leaves forget_range after having
+        #    been within encounter_range (_despawn_engaged, the range at which
+        #    the classifier starts tracking it). A TS whose closest approach
+        #    stays between the two ranges is not removed for distance.
+        #    Only dynamic TS, and only in envs with TRACKS_TARGET_SHIP.
         if (
             env.collision_entities
             and len(env.collision_entities) == 1
@@ -299,21 +247,18 @@ class ScenarioBuilder:
                 env.ts_idx = None
                 env._sync_collision_entity_views()
                 self.step_counter = 0
-                # Reset the classifier so it doesn't hold a stale tracked_ts
-                # index into the now-empty collision_entities list.
+                # Drop the classifier's now-stale tracked TS index.
                 if hasattr(env, "scenario_classifier"):
                     env.scenario_classifier.reset()
 
-                # Focused training: encounter is over, start the
-                # post-encounter countdown to clean truncation.
                 if is_focused:
                     self._post_encounter_active = True
                     self._post_encounter_counter = 0
 
     def cache_checkpoint_segments(self) -> None:
         """
-        Cache checkpoint segment geometry for the current episode geometry.
-        Rebuild whenever self.checkpoints changes.
+        Cache per-segment geometry (env._seg_*) of env.checkpoints. Rebuild
+        whenever the checkpoints change.
         """
 
         env = self.env
@@ -350,7 +295,7 @@ class ScenarioBuilder:
         env._seg_normals = np.asarray(seg_normals, dtype=np.float32)
         env._seg_cp_end_indices = np.asarray(seg_cp_end_indices, dtype=np.int32)
 
-        # Match static/overtaking convention of skipping the first few and last few
+        # Dynamic TS never spawn on the first 2 or last 5 segments.
         n = len(env._seg_lengths)
         if n > 5:
             env._eligible_dynamic_seg_indices = np.arange(2, n - 5, dtype=np.int32)
@@ -360,7 +305,7 @@ class ScenarioBuilder:
 
     def sample_collision_entity_scenario(self):
         """
-        Sample the current episode's collision entities.
+        Sample env.obstacle_count and return a sampled scenario type.
         """
 
         env = self.env
@@ -370,23 +315,13 @@ class ScenarioBuilder:
 
     def _find_segment_at_encounter_range(self) -> Optional[int]:
         """
-        Find the cached-segment index whose start lies just beyond
-        `encounter_range` ahead of the OS along the path.
+        Return the cached segment index where the path distance ahead of the OS
+        first reaches encounter_range, or None if that segment is not an
+        eligible dynamic segment (or the route ends first).
 
-        Walks forward from the OS's current position (projected onto its
-        current segment), accumulating remaining path length.  Returns the
-        first segment index (into the cached `_seg_*` arrays) where the
-        accumulated distance exceeds `encounter_range` AND the segment
-        is one of the eligible dynamic segments, or `None` if no such
-        segment exists (OS is too close to the start/end of the route).
-
-        Note on the "remaining" accounting: the first iteration must use
-        the *remaining* distance on the OS's current segment, not the
-        full segment length. Without this correction, when the OS is
-        deep inside its current segment (which is the common case after
-        the recovery wait), the function over-counts by up to one full
-        `CHECKPOINTS_DISTANCE` and returns a segment that is well
-        inside `encounter_range`, leaving the agent no time to react.
+        The distance starts with the remaining length of the OS's current
+        segment (OS projected onto it), not its full length; otherwise the TS
+        could spawn well inside encounter_range.
         """
 
         env = self.env
@@ -398,14 +333,11 @@ class ScenarioBuilder:
             return None
         eligible_set = set(int(i) for i in eligible.tolist())
 
-        # Walk from the OS's current target checkpoint onward
         start_cp = max(1, env.checkpoint_index)
         first = True
         ship_pos = np.asarray(env.ship_pos, dtype=np.float32)
         for cp_idx in range(start_cp, len(env.checkpoints)):
-            # Map checkpoint-pair index to cached segment index
-            # _seg_cp_end_indices[seg_i] == cp_idx means segment seg_i
-            # connects checkpoints[cp_idx-1] -> checkpoints[cp_idx].
+            # Segment seg_i connects checkpoints[cp_idx - 1] and checkpoints[cp_idx].
             matches = np.where(env._seg_cp_end_indices == cp_idx)[0]
             if len(matches) == 0:
                 continue
@@ -413,9 +345,6 @@ class ScenarioBuilder:
             seg_len = float(env._seg_lengths[seg_i])
 
             if first:
-                # Project the OS onto the current segment and use the
-                # remaining distance to its end checkpoint, not the
-                # full segment length.
                 pa = env._seg_starts[seg_i]
                 tangent = env._seg_tangents[seg_i]
                 travelled = float(np.dot(ship_pos - pa, tangent))
@@ -426,11 +355,7 @@ class ScenarioBuilder:
                 accumulated += seg_len
 
             if accumulated >= encounter_range:
-                # Honor the start/end skip applied at episode level: if
-                # the segment that lands "just past encounter_range"
-                # falls in the excluded first-few or last-few region,
-                # skip this encounter entirely rather than spawning on
-                # an off-limits segment.
+                # Skip the encounter rather than spawn on an excluded segment.
                 if seg_i in eligible_set:
                     return seg_i
                 return None
@@ -444,14 +369,17 @@ class ScenarioBuilder:
         target_seg_idx: Optional[int] = None,
     ):
         """
-        Build collision entities for *episode_type*.
+        Build the collision entities for a scenario.
 
         Args:
             scenario_type: Scenario name (e.g. "head-on").
-            n: How many entities to create (episode-level).  For
-               step-level spawning this is always 1.
-            target_seg_idx: If given, force placement on this cached
-               segment index (used by step-level spawning).
+            n: Number of dynamic TS to create (1 for step-level spawning).
+                Static scenarios use env.obstacle_count instead.
+            target_seg_idx: If given, place on this cached segment index
+                (step-level spawning).
+
+        Raises:
+            ValueError: For an unknown scenario type.
         """
 
         entities = []
@@ -479,8 +407,9 @@ class ScenarioBuilder:
 
     def compute_static_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
-        Randomly placed obstacle_count static obstacles along the path, laterally randomized (uniform).
-        When target_seg_idx is given (step-level), places exactly one obstacle on that segment.
+        Place env.obstacle_count static obstacles on length-weighted random path
+        segments, with a clipped Gaussian lateral offset (sigma = max_lat / 3).
+        With target_seg_idx (step level), place exactly one on that segment.
         """
 
         env = self.env
@@ -494,8 +423,6 @@ class ScenarioBuilder:
         n_to_place = 1 if target_seg_idx is not None else env.obstacle_count
         for _ in range(n_to_place):
             if target_seg_idx is not None:
-                # Step-level: use the checkpoint index that corresponds to the
-                # cached segment's end checkpoint.
                 random_seg = int(env._seg_cp_end_indices[target_seg_idx])
             else:
                 eligible_indices = list(range(5, len(env.checkpoints) - 3))
@@ -559,13 +486,11 @@ class ScenarioBuilder:
 
     def compute_overtaking_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
-        Places an overtaking TS along the path.
+        Place an overtaking TS moving along the path.
 
-        Episode-level (target_seg_idx is None): selects a segment that
-        guarantees the OS will catch the TS before it reaches the goal.
-
-        Step-level (target_seg_idx given): places the TS on the specified
-        segment just outside encounter range.
+        Episode level (target_seg_idx None): timing-constrained spawn point so
+        the OS catches the TS before it reaches the goal.
+        Step level: place it on the given segment.
         """
 
         env = self.env
@@ -580,11 +505,9 @@ class ScenarioBuilder:
         ship_radius = float(env._rng.uniform(env.static_ship_radius_min, env.static_ship_radius_max))
 
         if target_seg_idx is not None:
-            # Step-level: place on the given segment
             seg_idx = target_seg_idx
             t_spawn = float(env._rng.uniform(t_min_global, t_max_global))
         else:
-            # Episode-level: original timing-constrained placement
             seg_indices = getattr(env, "_eligible_dynamic_seg_indices", np.array([], dtype=np.int32))
             if len(seg_indices) == 0:
                 return []
@@ -625,9 +548,9 @@ class ScenarioBuilder:
         normal = env._seg_normals[seg_idx]
         seg_len = float(env._seg_lengths[seg_idx])
         base = pa + tangent * (t_spawn * seg_len)
-        # Lateral jitter (eval-mode realism): no mean shift since overtaker shares OS lane.
-        # Sign convention: entity travels along path, so entity-starboard = -normal.
-        # Positive path_offset => entity's starboard => OS's starboard.
+        # Lateral jitter only (overtaker shares the OS lane). The TS travels
+        # along the path, so positive path_offset is to its (and the OS's)
+        # starboard, i.e. -normal.
         jitter = float(getattr(env, "overtaking_lateral_jitter", 0.0))
         lat = float(env._rng.uniform(-jitter, jitter)) if jitter > 0.0 else 0.0
         spawn_pos = base + (-normal) * lat
@@ -659,10 +582,8 @@ class ScenarioBuilder:
 
     def compute_headon_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
-        Places a head-on TS that travels backward along the path.
-
-        Episode-level (target_seg_idx is None): picks a random eligible segment.
-        Step-level (target_seg_idx given): places on the specified segment.
+        Place a head-on TS travelling backward along the path, on a
+        length-weighted random eligible segment or on target_seg_idx.
         """
 
         env = self.env
@@ -692,9 +613,9 @@ class ScenarioBuilder:
         reverse_tangent = -tangent
         pa = env._seg_starts[seg_idx]
         seg_len = float(env._seg_lengths[seg_idx])
-        # Lateral lane (eval-mode realism): mean shift to OS-port ("left lane")
-        # plus uniform jitter. Sign: head-on travels against path, so entity-starboard
-        # equals +normal (= path-port = OS-port). Positive path_offset => OS-port lane.
+        # Lane offset: headon_lateral_mean plus uniform jitter. The TS travels
+        # against the path, so positive path_offset (+normal) is the TS's
+        # starboard and the OS's port side.
         mean_shift = float(getattr(env, "headon_lateral_mean", 0.0))
         jitter = float(getattr(env, "headon_lateral_jitter", 0.0))
         lat = mean_shift + (float(env._rng.uniform(-jitter, jitter)) if jitter > 0.0 else 0.0)
@@ -731,17 +652,16 @@ class ScenarioBuilder:
 
     def _compute_crossing_collision_entities(self, side: str, target_seg_idx: Optional[int] = None):
         """
-        Shared logic for crossing-right and crossing-left scenarios.
+        Place a dormant crossing TS beside the path, heading perpendicular to it.
+        It starts moving once the OS is within crossing_activation_range.
 
-        Places a dormant TS on one side of the OS path, heading perpendicular
-        across it. The TS is activated (starts moving) once the OS enters
-        activation range during stepping.
+        Tries all eligible segments in random order (episode level) or only
+        target_seg_idx (step level). Returns [] if nothing fits.
 
-        Episode-level (target_seg_idx is None): tries all eligible segments.
-        Step-level (target_seg_idx given): only tries the specified segment.
-
-        side: "starboard" for crossing-right (TS on OS starboard, OS give-way)
-              "port"      for crossing-left  (TS on OS port, OS stand-on)
+        Args:
+            side: "starboard" for crossing-right (OS give-way) or "port" for
+                crossing-left (OS stand-on).
+            target_seg_idx: Optional cached segment index.
         """
 
         env = self.env
@@ -762,9 +682,8 @@ class ScenarioBuilder:
         ship_radius = float(env._rng.uniform(env.static_ship_radius_min, env.static_ship_radius_max))
         activation_range = float(env.encounter_range) + float(getattr(env, "crossing_activation_margin", 50.0))
 
-        # Target bearing range at classification (radians).
-        # d_ts = activation_range * sin(bearing) gives the lateral offset
-        # that produces the desired relative bearing when OS-to-TS ≈ activation_range.
+        # Lateral offset d_ts = activation_range * sin(bearing) gives the target
+        # relative bearing when the OS-TS distance is about activation_range.
         bearing_min = math.radians(float(getattr(env, "crossing_bearing_min", 25.0)))
         bearing_max = math.radians(float(getattr(env, "crossing_bearing_max", 50.0)))
         d_ts_min_abs = float(getattr(env, "crossing_d_ts_min", 50.0))
@@ -774,8 +693,7 @@ class ScenarioBuilder:
 
         entity_type = "crossing-right" if side == "starboard" else "crossing-left"
 
-        # Uniform shuffle of eligible segments (avoids bias toward longer/wider
-        # segments that would make narrow-canal placements rare).
+        # Unweighted shuffle, so narrow-canal segments are not underrepresented.
         seg_order = env._rng.choice(len(seg_indices), size=len(seg_indices), replace=False)
 
         for seg_local_idx in seg_order:
@@ -785,8 +703,6 @@ class ScenarioBuilder:
             pa = env._seg_starts[seg_idx]
             seg_len = float(env._seg_lengths[seg_idx])
 
-            # Determine spawn offset direction and TS heading
-            # normal points to port; -normal points to starboard
             if side == "starboard":
                 offset_dir = -normal       # spawn on starboard side
                 ts_heading_vec = normal    # head towards port
@@ -796,9 +712,8 @@ class ScenarioBuilder:
 
             ts_heading = float(math.atan2(ts_heading_vec[1], ts_heading_vec[0]))
 
-            # Try a few random crossing points along this segment.
-            # For each crossing point, try the ideal d_ts first, then shrink
-            # until the TS fits inside the canal polygon.
+            # Up to 10 crossing points; per point shrink d_ts from the ideal
+            # value until the TS fits in the polygon.
             for _ in range(10):
                 t_spawn = float(env._rng.uniform(t_min, t_max))
                 crossing_point = pa + tangent * (t_spawn * seg_len)
@@ -848,28 +763,25 @@ class ScenarioBuilder:
 
                 return [entity]
 
-        # No valid placement found across all segments
         return []
 
     def compute_crossing_right_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
-        Crossing-right: TS on OS starboard side, heading across the path
-        towards port. OS is the give-way vessel (must pass behind TS stern).
+        TS on the OS starboard side heading to port; OS gives way (passes astern).
         """
 
         return self._compute_crossing_collision_entities(side="starboard", target_seg_idx=target_seg_idx)
 
     def compute_crossing_left_collision_entities(self, target_seg_idx: Optional[int] = None):
         """
-        Crossing-left: TS on OS port side, heading across the path
-        towards starboard. OS is the stand-on vessel (maintain course/speed).
+        TS on the OS port side heading to starboard; OS stands on.
         """
 
         return self._compute_crossing_collision_entities(side="port", target_seg_idx=target_seg_idx)
 
     def check_collision_entity_collision(self) -> bool:
         """
-        Checks collision between OS and TS.
+        True if the OS collides with any collision entity.
         """
 
         env = self.env
@@ -884,7 +796,7 @@ class ScenarioBuilder:
     # ---------------------------------------------------------------
     def _resolve_single_encounter_seg_idx(self) -> Optional[int]:
         """
-        Resolve the target segment index into the cached _seg_* arrays.
+        Return single_encounter_target_segment_index if valid for _seg_*, else None.
         """
 
         env = self.env
@@ -899,13 +811,10 @@ class ScenarioBuilder:
 
     def _spawn_single_dormant_encounter(self) -> None:
         """
-        Place one dormant TS on the user-specified segment.
-
-        Reuses the existing per-scenario builders to get a geometry-correct
-        placement (segment, lateral offset, heading) and then zeros out the
-        TS speed so it sits still until the env step loop activates it.
-        Crossings already spawn dormant via the bearing-aware machinery, so
-        we only attach the generic dormant marker for overtaking / head-on.
+        Place one dormant TS on the configured segment using the regular
+        scenario builders. Overtaking/head-on TS get speed 0 plus a dormant
+        marker, so the env step loop starts them within encounter_range;
+        crossing TS are already dormant.
         """
 
         env = self.env
@@ -924,13 +833,8 @@ class ScenarioBuilder:
         for entity in entities:
             if getattr(entity, "spawn_scenario_label", None) is None:
                 entity.spawn_scenario_label = scenario
-            # Crossings have their own activation flow; leave their speed
-            # (which the crossing builder already set to 0.0) alone.
             if scenario in ("crossing-right", "crossing-left"):
                 continue
-            # Generic dormant marker: store the would-be motion speed, then
-            # park the entity. Step-loop activation flips speed back on once
-            # the OS is within encounter_range.
             orig_speed = float(getattr(entity, "path_speed", entity.get_speed()))
             entity._dormant_original_speed = orig_speed
             entity.dormant_activation_range = float(env.encounter_range)
@@ -941,8 +845,7 @@ class ScenarioBuilder:
 
         env.collision_entities = entities
         env._sync_collision_entity_views()
-        # Cache spawn position so the live renderer can center the camera
-        # on it (paper-comparison mode: identical view across runs).
+        # Lets the live renderer centre the camera here (same view across runs).
         env._single_encounter_ts_spawn_pos = np.asarray(
             entities[0].get_position(), dtype=np.float32
         ).copy()
@@ -952,21 +855,17 @@ class ScenarioBuilder:
 
     def _single_encounter_on_step(self) -> None:
         """
-        Per-step bookkeeping for single-encounter eval mode.
-
-        * Despawn the dormant/active TS once the OS leaves forget_range.
-        * After despawn, no further entities are spawned for the rest of
-          the episode (`_single_encounter_done` blocks any respawn path).
+        Single-encounter eval mode: despawn the TS once its route is finished
+        or the OS leaves forget_range (after having been within
+        encounter_range). Nothing respawns afterwards.
         """
 
         env = self.env
 
-        # If despawn already happened, hold the empty-entity state.
         if self._single_encounter_done:
             return
 
-        # If reset/spawn somehow missed (e.g. target_seg_idx unresolved),
-        # don't keep retrying: block further spawns to honor the spec.
+        # Spawn failed at reset (e.g. unresolved segment): never retry.
         if not self._single_encounter_spawned:
             return
 
@@ -978,11 +877,9 @@ class ScenarioBuilder:
         ts = entities[0]
         dist = ts.distance_to_point(env.ship_pos)
 
-        # Despawn is only valid AFTER the OS has approached the TS at least
-        # once; otherwise the dormant TS placed far ahead on the route
-        # would despawn on step 0 (dist > forget_range from the start).
-        # Use "ever been within encounter_range" as the activation gate,
-        # which is the same trigger that wakes the TS up.
+        # Distance despawn only after the OS has been within encounter_range;
+        # the dormant TS starts beyond forget_range.
+
         if dist <= float(env.encounter_range):
             self._single_encounter_ts_seen = True
 

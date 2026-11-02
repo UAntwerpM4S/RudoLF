@@ -1,5 +1,5 @@
 """
-Tests for AirSimBridge simulation-speed bookkeeping.
+Tests for AirSimBridge simulation speed, rendering toggle and output silencing.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from airsim.communication.airsim_bridge import AirSimBridge, _silence_library_ou
 
 def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypatch):
     """
-    Preparing model visualization should update the cached bridge speed value.
+    prepare_model_visualisation sets the client and cached simulation speed and enables rendering.
     """
 
     bridge = AirSimBridge.__new__(AirSimBridge)
@@ -46,14 +46,7 @@ def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypat
 
     def _fake_load_saved_calibration_reference(client, draw_reference=True, duration=10.0):
         """
-        Return a dummy coordinate transform and metadata payload.
-
-        Args:
-            client: Fake AirSim client instance.
-            draw_reference: Whether overlay drawing is enabled.
-
-        Returns:
-            A tuple matching the calibration-loader contract.
+        Fake calibration loader: (transform, metadata).
         """
 
         return object(), {"draw_reference": draw_reference}
@@ -80,7 +73,7 @@ def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypat
 
 def test_set_rendering_enabled_uses_console_command(monkeypatch):
     """
-    Bridge should toggle UE5 rendering through simRunConsoleCommand.
+    Rendering is toggled via the UE5 console command.
     """
 
     bridge = AirSimBridge.__new__(AirSimBridge)
@@ -102,12 +95,12 @@ def test_set_rendering_enabled_uses_console_command(monkeypatch):
 
 def test_silence_library_output_suppresses_stdout_and_stderr(capsys):
     """
-    Bridge helper should suppress noisy library output written directly to the terminal.
+    Library output on stdout and stderr is suppressed.
     """
 
     def _noisy_callback():
         """
-        Emit simulated native-library chatter to both stdout and stderr.
+        Write to stdout and stderr.
         """
 
         print("Client Ver:4")

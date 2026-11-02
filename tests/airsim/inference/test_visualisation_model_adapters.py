@@ -1,5 +1,5 @@
 """
-Tests for modular model-visualisation adapters.
+Tests for the model-visualisation adapters.
 """
 
 from __future__ import annotations
@@ -26,55 +26,28 @@ class _FakeCoordTransform:
 
     def framework_to_airsim(self, x: float, y: float, z: float):
         """
-        Convert framework coordinates into fake AirSim coordinates.
-
-        Args:
-            x: Framework x position.
-            y: Framework y position.
-            z: Framework z position.
-
-        Returns:
-            tuple[float, float, float]: Shifted AirSim-style coordinates.
+        Shift the position by a fixed offset.
         """
 
         return x + 100.0, y - 50.0, z
 
     def framework_heading_to_airsim_yaw(self, heading: float) -> float:
         """
-        Convert framework heading into fake AirSim yaw.
-
-        Args:
-            heading: Framework heading in radians.
-
-        Returns:
-            float: Shifted yaw value for testing.
+        Shift the heading by a fixed offset.
         """
 
         return heading + 0.25
 
     def framework_velocity_to_airsim(self, vx: float, vy: float):
         """
-        Convert framework velocity into fake AirSim velocity.
-
-        Args:
-            vx: Framework x velocity.
-            vy: Framework y velocity.
-
-        Returns:
-            tuple[float, float]: Shifted velocity pair for testing.
+        Shift the velocity by a fixed offset.
         """
 
         return vx + 1.0, vy - 2.0
 
     def framework_yaw_rate_to_airsim(self, yaw_rate: float) -> float:
         """
-        Convert framework yaw rate into fake AirSim yaw rate.
-
-        Args:
-            yaw_rate: Framework yaw rate.
-
-        Returns:
-            float: Shifted yaw-rate value for testing.
+        Shift the yaw rate by a fixed offset.
         """
 
         return yaw_rate - 0.1
@@ -199,7 +172,7 @@ def test_fhsim_adapter_rejects_pysim_environment():
 
 def test_single_environment_adapter_resolves_auto_mode():
     """
-    Adapters with one supported env should resolve `auto` themselves.
+    Adapters with one supported env should resolve "auto" themselves.
     """
 
     adapter = PySimVisualisationAdapter()
@@ -215,13 +188,7 @@ def test_pysim_adapter_build_environment_uses_shared_defaults(monkeypatch):
 
     def _fake_pysim_env(**kwargs):
         """
-        Capture construction arguments for the fake PySim environment.
-
-        Args:
-            **kwargs: Keyword arguments passed to the environment factory.
-
-        Returns:
-            SimpleNamespace: Lightweight fake environment object.
+        Capture the constructor kwargs and return a fake environment.
         """
 
         captured.update(kwargs)
@@ -240,7 +207,7 @@ def test_pysim_adapter_build_environment_uses_shared_defaults(monkeypatch):
 
 def test_motion_state_from_env_supports_flat_ship_position():
     """
-    Adapter motion extraction should not require `ship_pos[0]`.
+    Adapter motion extraction should not require ship_pos[0].
     """
 
     adapter = PySimVisualisationAdapter()
@@ -268,7 +235,7 @@ def test_motion_state_from_env_supports_flat_ship_position():
 
 def test_motion_state_from_env_supports_single_ship_attribute_layout():
     """
-    Adapter extraction should support envs exposing `phys_sim` and `ship`.
+    Adapter extraction should support envs exposing phys_sim and ship.
     """
 
     adapter = PySimVisualisationAdapter()
@@ -310,7 +277,7 @@ def test_motion_state_from_env_supports_single_ship_attribute_layout():
 
 def test_extract_actuator_state_supports_flat_action_vector():
     """
-    Actuator extraction should not require `performed_action[0]`.
+    Actuator extraction should not require performed_action[0].
     """
 
     adapter = PySimVisualisationAdapter()
@@ -383,7 +350,7 @@ def test_visual_replay_controls_hold_brake_during_pose_mirroring(
     expected_brake: float,
 ):
     """
-    Replay throttle visuals should follow the framework speed envelope.
+    Replay controls release the brake and set the throttle from the framework speed.
     """
 
     adapter = PySimVisualisationAdapter()

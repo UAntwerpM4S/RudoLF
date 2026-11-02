@@ -15,16 +15,12 @@ logger = logging.getLogger(__name__)
 
 def dump_metrics_to_csv(model_dir, csv_filename, training_metrics):
     """
-    Save training metrics to a CSV file.
-
-    This method writes the training metrics (such as loss, advantage, reward)
-    to a CSV file with headers.
+    Write training metrics (loss, advantage, reward, ...) to a CSV file with headers.
 
     Args:
-        model_dir (): The folder under which all models are stored.
-        csv_filename (str): The name of the CSV file to write.
-        training_metrics (list): A list of dictionaries containing the training metrics.
-
+        model_dir (str): Folder to write the CSV into.
+        csv_filename (str): Name of the CSV file.
+        training_metrics (list): List of metric dicts; the first dict's keys form the header.
     """
 
     if not training_metrics:
@@ -34,7 +30,7 @@ def dump_metrics_to_csv(model_dir, csv_filename, training_metrics):
     filepath = os.path.join(model_dir, csv_filename)
 
     with open(filepath, mode="w", newline="") as file:
-        # Get all possible keys (assuming all dicts have the same structure)
+        # Assumes all dicts share the same keys.
         fieldnames = training_metrics[0].keys()
 
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -44,7 +40,7 @@ def dump_metrics_to_csv(model_dir, csv_filename, training_metrics):
 
 def dump_multi_agent_metrics(model_dir, metrics_dict: dict):
     """
-    Helper method to flatten multi-agent metrics for CSV export.
+    Flatten per-agent metrics (keys 'agent<N>') into one CSV with an 'agent_id' column.
     """
 
     flat_metrics = []
@@ -61,11 +57,7 @@ def dump_multi_agent_metrics(model_dir, metrics_dict: dict):
 
 def create_logfile_handler(_log_file_path: Path, log_level: int):
     """
-    Create and configure a file handler for logging.
-
-    The parent directory of the specified log file is created if it does not
-    already exist. The handler uses UTF-8 encoding and a standard log format
-    containing the timestamp, log level, logger name, and message.
+    Create a UTF-8 logging file handler, creating the parent directory if needed.
 
     Args:
         _log_file_path: Path to the log file.

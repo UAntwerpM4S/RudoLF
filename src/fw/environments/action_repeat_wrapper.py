@@ -2,12 +2,12 @@ import gymnasium as gym
 
 class ActionRepeatWrapper(gym.Wrapper):
     """
-    Wrapper to repeat the same action for a given number of steps.
+    Repeats each action for a fixed number of steps.
     """
 
     def __init__(self, env, repeat=4):
         """
-        Initialize the wrapper with the base environment and repeat count.
+        Wrap env, repeating each action `repeat` times.
         """
 
         super().__init__(env)
@@ -15,7 +15,7 @@ class ActionRepeatWrapper(gym.Wrapper):
 
     def step(self, action):
         """
-        Repeat the action for up to `repeat` steps and accumulate reward.
+        Repeat the action up to `repeat` steps (stops early on done/truncated); rewards are summed.
         """
 
         total_reward = 0.0

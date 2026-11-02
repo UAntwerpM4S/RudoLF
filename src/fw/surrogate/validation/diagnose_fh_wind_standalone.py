@@ -1,26 +1,20 @@
 """
-Standalone FH wind-field diagnostic -- NO FhSimBridge, NO FhSession.
+Standalone FH wind-field diagnostic, without FhSimBridge or FhSession.
 
-Replicates sim_fh_dataset_generator.run_simulation()'s FH calls line for line
-(Config -> Exercise -> ship_config -> MathModel.Initialize -> enableBridge ->
-wind-field transform -> simulateSeconds), each probe in its own fresh worker
-process like the generator's pool, and prints per probe:
-  - the transform FH reports back right after setFieldTransform()
-  - the transform FH reports back after the first simulateSeconds()
-  - WindState at the ship after the settle, after 1 s and after 10 s
+Replicates the FH calls of sim_fh_dataset_generator.run_simulation() (Config, Exercise,
+ship_config, MathModel.Initialize, enableBridge, wind-field transform, simulateSeconds),
+one fresh worker process per probe, and prints per probe the transform read back after
+setFieldTransform() and after the first simulateSeconds(), plus WindState at the ship
+after the settle, after 1 s and after 10 s.
 
-One run answers the open question:
-  A) wind changes here            -> the generator's FH calls work at this
-                                     start pose; the difference is in
-                                     FhSimBridge/FhSession (I'll diff further)
-  B) read-back == requested, wind
-     never changes                -> the transform is stored but does not
-                                     drive the wind at this pose / with this
-                                     exercise (also with the generator's code)
-  C) read-back != requested       -> FH does not accept the transform at all
+Interpretation:
+  A) wind changes: the generator's FH calls work at this pose; the difference lies in
+     FhSimBridge/FhSession.
+  B) read-back equals request but wind never changes: the transform is stored but does
+     not drive the wind at this pose/exercise.
+  C) read-back differs from request: FH does not accept the transform.
 
-Usage: set START_* below (your wind-test start pose), run with the RudoLF venv.
-SIMEXE_REPO_FOLDER must be set, as for the generator.
+Usage: set START_* below (wind-test start pose) and SIMEXE_REPO_FOLDER, run with the RudoLF venv.
 """
 
 import multiprocessing
@@ -32,7 +26,7 @@ START_X = -1559.0
 START_Y = 11990.0
 START_HEADING_DEG = -45.0      # passed to setInitialHeading as-is (FH degrees)
 START_SURGE = 5.0
-PROPELLER_RPS = 0.0            # 0 = leave as in generator with action[1]=0; only wind matters here
+PROPELLER_RPS = 0.0            # only wind matters here
 
 TABS = [
     "DDShip_Tripoli_scenario_windnocurrent.tab",
@@ -51,12 +45,18 @@ OUTPUT_ROOT = Path.home() / "Desktop" / "testExercise" / "wind_diag"
 
 
 def _fmt_transform(tr) -> str:
-    """One-line text of an FH wind-field transform (Rotation, Scale, Offset)."""
+    """
+    One-line text of an FH wind-field transform (Rotation, Scale, Offset).
+    """
+
     return f"R={tr.Rotation:g} S={tr.Scale:g} O={tr.Offset:g}"
 
 
 def probe(tab: str, rotation: float, scale: float) -> str:
-    """One FH session, generator-style. Runs in a worker process; returns a report line."""
+    """
+    Run one generator-style FH session in a worker process; return a report line.
+    """
+
     if LIB_PATH not in sys.path:
         sys.path.append(LIB_PATH)
     from sim import Config, Exercise, MathModel  # noqa: E402
@@ -120,8 +120,7 @@ def probe(tab: str, rotation: float, scale: float) -> str:
 
 def main() -> None:
     """
-    Entry point: run every (exercise, rotation, scale) probe in its own spawned process and print
-    one result line per probe.
+    Run every (exercise, rotation, scale) probe in its own spawned process and print the results.
     """
 
     if not SIMEXE:

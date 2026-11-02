@@ -27,10 +27,7 @@ MAX_GRID_POS = 14500
 
 class AgentManagerSimple:
     """
-    AgentManagerSimple class for managing agents and environments during training.
-
-    This class includes methods for training, saving/loading policies, and
-    visualizing paths taken by the agent during evaluation.
+    Creates the agent for an environment, trains it and visualizes evaluation paths.
     """
 
     def render(
@@ -42,45 +39,44 @@ class AgentManagerSimple:
         show_plots: bool = True,
     ) -> None:
         """
-        Render and save a visualization of paths taken by the agent.
+        Plot the evaluation paths with checkpoints and waterway and save
+        <model_dir>/trajectory.png.
 
         Args:
-            env: Environment object containing boundaries, obstacles, and checkpoints.
-            start_pos (np.ndarray): Starting position of the agent.
-            all_paths (list): List of paths taken over multiple episodes.
-            total_rewards (list): List of total rewards corresponding to each episode.
-            show_plots (bool): Whether to show plots or not.
+            env: Environment with checkpoints, obstacles, overall and target_pos.
+            start_pos (np.ndarray): Start position.
+            all_paths (list): One path array per episode.
+            total_rewards (list): Reward per episode (mean step reward, see
+                visualize_trained_agent).
+            show_plots (bool): Show the figure window.
         """
 
         try:
             fig, ax = plt.subplots(figsize=(12, 8))
 
-            # Draw environment boundaries
+            # Grid boundary
             ax.plot(
                 [MIN_GRID_POS, MAX_GRID_POS, MAX_GRID_POS, MIN_GRID_POS, MIN_GRID_POS],
                 [MIN_GRID_POS, MIN_GRID_POS, MAX_GRID_POS, MAX_GRID_POS, MIN_GRID_POS],
                 'k-', label='Boundary'
             )
 
-            # Plot all checkpoints as semi-transparent circles
             checkpoint_positions = np.array([checkpoint['pos'] for checkpoint in env.checkpoints])
             for checkpoint in env.checkpoints:
                 circle = plt.Circle(
                     (checkpoint['pos'][0], checkpoint['pos'][1]),
-                    radius=10,  # Radius can be tuned to match environment scale
+                    radius=10,
                     color='gray',
                     alpha=0.5,
                     fill=True
                 )
                 ax.add_patch(circle)
 
-            # Draw ideal straight-line connections between checkpoints
             ax.plot(
                 checkpoint_positions[:, 0], checkpoint_positions[:, 1],
                 'g--', alpha=0.5, label='Ideal Path'
             )
 
-            # Plot environment obstacles (e.g., waterway)
             ax.add_patch(
                 patches.Polygon(
                     env.obstacles,
@@ -92,7 +88,6 @@ class AgentManagerSimple:
                 )
             )
 
-            # Plot additional environment features (e.g., general area)
             ax.add_patch(
                 patches.Polygon(
                     env.overall,
@@ -104,7 +99,6 @@ class AgentManagerSimple:
                 )
             )
 
-            # Plot all agent paths from different episodes
             colors = plt.cm.rainbow(np.linspace(0, 1, len(all_paths)))
             for i, path in enumerate(all_paths):
                 ax.plot(
@@ -113,25 +107,21 @@ class AgentManagerSimple:
                     label=f'Episode {i + 1} (reward: {total_rewards[i]:.1f})'
                 )
 
-            # Mark start and target positions
             ax.scatter([start_pos[0]], [start_pos[1]], c='blue', s=100, label='Start')
             ax.scatter([env.target_pos[0]], [env.target_pos[1]], c='red', s=100, label='Target')
 
-            # Final plot adjustments
             ax.set_title('Paths Across Multiple Episodes')
             ax.set_xlabel('X Position')
             ax.set_ylabel('Y Position')
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             ax.grid(True)
 
-            # Set aspect ratio to be equal
             ax.set_aspect('equal', adjustable='box')
 
             model_dir = self._agent.model_dir or 'models'
             os.makedirs(model_dir, exist_ok=True)
             trajectory_file_name = f'{model_dir}/trajectory.png'
 
-            # Save the figure
             plt.savefig(trajectory_file_name, bbox_inches='tight', dpi=300)
             logger.info("Path visualization saved as 'trajectory.png'.")
 
@@ -143,12 +133,10 @@ class AgentManagerSimple:
 
     def __init__(self, agent_type: str, profile: VesselProfile, hyperparameters: dict):
         """
-        Initialize AgentManagerSimple.
-
         Args:
-            agent_type (str): Type of agent to use (e.g., 'PPO').
-            profile (VesselProfile): Profile that will be used for training or visualization.
-            hyperparameters (dict): Hyperparameters for configuring the agent.
+            agent_type (str): Agent type (e.g. 'PPO').
+            profile (VesselProfile): Profile for training or visualization.
+            hyperparameters (dict): Agent hyperparameters.
         """
 
         self._agent = None
@@ -161,10 +149,7 @@ class AgentManagerSimple:
     @property
     def agent_type(self) -> str:
         """
-        Get the type of agent being used by the agent manager.
-
-        Returns:
-            str: The agent type.
+        str: Agent type.
         """
 
         return self._agent_type
@@ -173,10 +158,7 @@ class AgentManagerSimple:
     @property
     def profile(self) -> "VesselProfile":
         """
-        Get the active VesselProfile held by this manager.
-
-        Returns:
-            VesselProfile: The profile used for training or visualization.
+        VesselProfile: Active profile.
         """
 
         return self._profile
@@ -185,10 +167,7 @@ class AgentManagerSimple:
     @property
     def agent(self) -> BaseAgent:
         """
-        Get the agent that is used by the agent manager.
-
-        Returns:
-            BaseAgent: The agent.
+        BaseAgent: Current agent.
         """
 
         return self._agent
@@ -196,20 +175,10 @@ class AgentManagerSimple:
 
     def _build_single_agent(self, env):
         """
-        Create a `SinglePPOAgent` from the given environment.
-
-        If the environment exposes a `sub_environments` attribute, this method
-        ensures that exactly one sub-environment is used. Otherwise, the environment
-        itself is used directly.
-
-        Args:
-            env: Environment instance, optionally containing `sub_environments`.
-
-        Returns:
-            SinglePPOAgent: Initialized PPO agent for a single environment.
+        Create a SinglePPOAgent for env, or for its only sub-environment.
 
         Raises:
-            RuntimeError: If more than one sub-environment is provided.
+            RuntimeError: If env has more than one sub-environment.
         """
 
         sub_envs = getattr(env, "sub_environments", None)
@@ -226,21 +195,11 @@ class AgentManagerSimple:
 
     def _build_multi_agent(self, env: BaseEnv):
         """
-        Create a `MultiPPOAgent` composed of multiple `SinglePPOAgent` instances.
-
-        Each sub-environment in the provided `MultiSimEnv` is assigned its own
-        `SinglePPOAgent`. These agents are then combined into a `MultiPPOAgent`
-        for coordinated training.
-
-        Args:
-            env (MultiSimEnv): Multi-environment containing sub-environments.
-
-        Returns:
-            MultiPPOAgent: Initialized multi-agent PPO trainer.
+        Create a MultiPPOAgent with one SinglePPOAgent per sub-environment.
 
         Raises:
-            TypeError: If `env` is not an instance of `MultiSimEnv`.
-            ValueError: If no sub-environments are defined.
+            TypeError: If env is not a MultiSimEnv.
+            ValueError: If it has no sub-environments.
         """
 
         if not isinstance(env, MultiSimEnv):
@@ -260,15 +219,19 @@ class AgentManagerSimple:
     def set_environment(self, env: BaseEnv, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
                         other_env_name: str = None) -> None:
         """
-        Assign an environment to the agent and configure the policy strategy.
+        Build a new agent for env and optionally load an existing policy.
+
+        Falls back to a fresh policy (with a warning) if the policy file is
+        missing or incompatible.
 
         Args:
-            env (BaseEnv): The environment to set.
-            policy_strategy (PolicyStrategy, optional): Strategy for handling policy (reset, reuse current, or reuse other). Default is PolicyStrategy.RESET_POLICY.
-            other_env_name (str, optional): Name of the environment whose policy should be reused (if applicable).
+            env (BaseEnv): Environment to train on.
+            policy_strategy (PolicyStrategy): Reset, reuse the current policy, or
+                reuse another environment's policy.
+            other_env_name (str, optional): Environment whose policy to reuse.
 
         Raises:
-            RuntimeError: If an unknown policy type is specified.
+            RuntimeError: For an unknown agent type.
         """
 
         policy_file_name = None
@@ -279,8 +242,7 @@ class AgentManagerSimple:
         elif policy_strategy == PolicyStrategy.REUSE_OTHER_POLICY and other_env_name:
             policy_file_name = f'{other_env_name}_{self._agent_type}_policy'
 
-        # Release resources held by the agent being replaced (same as
-        # AgentManager.set_environment, e.g. PPO2Agent's SB3 VecEnv).
+        # Release resources of the replaced agent (e.g. PPO2Agent's SB3 VecEnv).
         if self._agent is not None and callable(getattr(self._agent, "close", None)):
             try:
                 self._agent.close()
@@ -296,8 +258,7 @@ class AgentManagerSimple:
         else:
             raise RuntimeError(f"Unknown {self._agent_type} policy type.")
 
-        # Always propagate profile env settings (e.g. enable_smoothing) to the
-        # environment, regardless of which entry point called set_environment.
+        # Propagate profile env settings (e.g. enable_smoothing).
         apply_profile(self._profile, env=env)
 
         if policy_file_name:
@@ -320,13 +281,8 @@ class AgentManagerSimple:
     @contextmanager
     def rendering(self, env):
         """
-        Temporarily force an environment's render_mode to 'human' for the
-        duration of the `with` block, restoring its previous value afterward.
-
-        Args:
-            env: The environment instance to toggle render_mode on. If it
-                 has no `render_mode` attribute, this is a no-op (the block
-                 still runs, just without forcing rendering on).
+        Context manager: set env.render_mode to 'human' and restore it afterwards
+        (no-op if env has no render_mode).
         """
 
         if hasattr(env, "render_mode"):
@@ -343,28 +299,22 @@ class AgentManagerSimple:
 
     def train(self, stop_condition: StopCondition, dispose_env: bool = True) -> None:
         """
-        Train the agent in the assigned environment.
+        Train the agent until stop_condition is met.
 
         Args:
-            stop_condition (StopCondition): The condition that determines when training should stop.
-            dispose_env (bool, optional): Whether to dispose the FH Simulator
-                bridge (if any) once training finishes. Defaults to True.
-                Callers that immediately follow this call with
-                `visualize_trained_agent()` on the same environment should
-                pass False here to avoid an unnecessary dispose + full
-                math-model reinitialization cycle; `visualize_trained_agent()`
-                always performs the (final) dispose itself.
+            stop_condition (StopCondition): When to stop training.
+            dispose_env (bool): Dispose the FH Simulator bridge (if any)
+                afterwards, also on exceptions. Pass False when
+                visualize_trained_agent() follows on the same environment, to
+                avoid a needless re-initialization; it disposes itself.
 
         Raises:
-            RuntimeError: If no agent is created.
+            RuntimeError: If no agent has been created.
         """
 
         if not self._agent:
             raise RuntimeError("No agent has been created yet!")
 
-        # Start training. fh_sim_cleanup guarantees dispose() runs on the
-        # way out even if learn() raises (KeyboardInterrupt, training
-        # error, etc.) - not just on normal completion.
         with fh_sim_cleanup(self.get_env, dispose=dispose_env):
             self._agent.learn(
                 stop_condition=stop_condition,
@@ -381,21 +331,29 @@ class AgentManagerSimple:
             show_plots: bool = True,
         ) -> dict | None:
         """
-        Run and visualize a trained agent in the environment over multiple episodes.
+        Run the trained agent deterministically and plot the paths.
+
+        Ship environments (with ship_pos) record and plot one path per episode;
+        the episode reward is the mean step reward. Other environments are only
+        rendered for one episode.
 
         Args:
-            num_episodes (int, optional): Number of episodes to visualize (default is 5).
-            live_animation (bool, optional): Enable live animation of the agent in the environment.
-            env_color_index (int, optional): Index of the environment color.
-            airsim_bridge (AirSimBridge, optional): AirSimBridge to create a connection with the Cosys AirSim.
-            return_summary (bool, optional): Return evaluation summary metrics when available.
-            show_plots (bool, optional): Show plot windows when visualization is generated.
+            num_episodes (int): Number of episodes.
+            live_animation (bool): Render every step.
+            env_color_index (int): Environment color index (unused here).
+            airsim_bridge (AirSimBridge, optional): Connected Cosys-AirSim bridge;
+                the ship pose is mirrored to UE5 and the bridge is disconnected
+                afterwards.
+            return_summary (bool): Return average/best/worst reward per environment.
+            show_plots (bool): Show the plot window.
+
+        Returns:
+            dict | None: Summary if return_summary and a ship environment, else None.
 
         Raises:
-            RuntimeError: If no agent is created.
+            RuntimeError: If no agent has been created.
         """
 
-        # Load checkpoint
         # self._agent.policy = PPOPolicy.load("PySimEnv_PPO_policy", device="cpu")
 
         if not self._agent:
@@ -407,7 +365,6 @@ class AgentManagerSimple:
         with fh_sim_cleanup(lambda: env):
             self.agent.set_policy_eval()
 
-            # Prepare framework->AirSim coordinate transform if bridge is active
             coord_transform = None
             if airsim_bridge and airsim_bridge.is_connected:
                 from airsim.communication.coord_transform import CoordTransform
@@ -415,7 +372,6 @@ class AgentManagerSimple:
 
             with self.rendering(env):
                 if hasattr(env, "ship_pos"):
-                    # Store results for each episode
                     all_paths = []
                     total_rewards = []
                     start_pos = None
@@ -433,33 +389,28 @@ class AgentManagerSimple:
                             done = False
                             steps = 0
 
-                            # Store positions for this episode
                             path_positions = [np.copy(env.ship_pos)]
 
                             while not done:
-                                # Select action
                                 action, _, _ = self._agent.predict(state=state, deterministic=True)
 
                                 if self._profile is not None:
                                     action = ActionAdapter.transform(self._profile, action)
 
-                                # Take step in environment
                                 state, reward, terminated, truncated, _ = env.step(action)
                                 done = terminated or truncated
 
-                                # Include every reward, including the terminal transition
+                                # Running mean of the step rewards, terminal step included
                                 steps += 1
                                 episode_reward += (reward - episode_reward) / steps
 
-                                # Store the new position (also the terminal one)
                                 path_positions.append(np.copy(env.ship_pos))
 
                                 if not done:
-                                    # Uncomment for animated evaluation
                                     if live_animation:
                                         env.render()
 
-                                    # Bridge ship position and heading to UE5 via coordinate transform
+                                    # Mirror the ship pose to UE5
                                     if coord_transform and hasattr(env, 'ship_pos') and hasattr(env, 'phys_sim'):
                                         ax, ay, _ = coord_transform.framework_to_airsim(
                                             float(env.ship_pos[0][0]),
@@ -479,7 +430,6 @@ class AgentManagerSimple:
                         if airsim_bridge is not None:
                             airsim_bridge.disconnect()
 
-                    # Print summary statistics
                     avg_reward = np.mean(total_rewards)
                     logger.info("Evaluation completed! Average reward: %.2f", avg_reward)
                     logger.info("Best episode reward: %.2f", max(total_rewards))
@@ -503,22 +453,18 @@ class AgentManagerSimple:
                             }
                         }
                 else:
-                    # Reset the environment
+                    # Non-ship environment: render a single episode
                     obs, _ = env.reset()
 
-                    # Render the environment before starting the loop
                     env.render()
 
-                    # Run the agent in the environment
                     done = False
                     while not done:
-                        # The agent chooses an action based on the current observation
                         prediction = self._agent.predict(state=obs, deterministic=True)
                         action = prediction[0]
                         obs, _, terminated, truncated, _ = env.step(action)
                         done = terminated or truncated
 
-                        # Render the environment each step to visualize the agent's action
                         env.render()
 
                 return None
@@ -526,10 +472,7 @@ class AgentManagerSimple:
 
     def get_env(self):
         """
-        Retrieve the environment associated with the agent.
-
-        Returns:
-            The environment object.
+        Return the agent's environment.
         """
 
         return self._agent.get_env()

@@ -55,18 +55,16 @@ _DEFAULT_TRAIL_MIN_SEGMENT_M = 1.5
 
 def _normalise_policy_observation(obs, expected_dim: int | None = None) -> np.ndarray:
     """
-    Convert framework observations to a flat policy input vector.
-
-    This keeps AirSim replay compatible with both flat single-ship observations
-    and batched per-ship layouts, without requiring framework env changes.
+    Flatten a framework observation (flat single-ship or batched per-ship) into
+    a policy input vector.
 
     Args:
-        obs: Observation payload returned by the framework environment.
-        expected_dim: Optional policy input dimension used to disambiguate
-            flattening vs selecting the first ship row.
+        obs: Observation returned by the framework environment.
+        expected_dim: Optional policy input dimension, used to choose between
+            flattening and taking the first ship row.
 
     Returns:
-        np.ndarray: Flat observation vector for `PPOPolicy.predict`.
+        np.ndarray: Flat observation vector for PPOPolicy.predict.
     """
 
     arr = np.asarray(obs, dtype=np.float32)
@@ -89,14 +87,7 @@ def _normalise_policy_observation(obs, expected_dim: int | None = None) -> np.nd
 
 def _normalise_policy_action(action, expected_dim: int | None = None) -> np.ndarray:
     """
-    Convert policy action output to a flat environment action vector.
-
-    Args:
-        action: Action payload returned by `PPOPolicy.predict`.
-        expected_dim: Optional action dimension inferred from env action space.
-
-    Returns:
-        np.ndarray: Flat action vector.
+    Flatten a PPOPolicy.predict action (optional expected_dim from the action space).
     """
 
     arr = np.asarray(action, dtype=np.float32).reshape(-1)
@@ -107,17 +98,13 @@ def _normalise_policy_action(action, expected_dim: int | None = None) -> np.ndar
 
 class VisualiseModelsRunner:
     """
-    Framework-physics visualizer that mirrors model output into UE5.
-
-    The runner stays model-family agnostic by delegating policy loading,
-    environment construction, and state extraction to a
-    `ModelVisualisationAdapter`.
+    Mirrors framework-physics model playback into UE5. Model-family specifics
+    (policy loading, environment, state extraction) are delegated to a
+    ModelVisualisationAdapter.
     """
 
     def __init__(self, adapter: ModelVisualisationAdapter, env_name: str = "auto") -> None:
         """
-        Initialize the generic runner with a model-family adapter.
-
         Args:
             adapter: Adapter implementing family-specific replay behavior.
             env_name: Requested framework environment name, or "auto".
@@ -128,97 +115,49 @@ class VisualiseModelsRunner:
 
     def _resolve_environment_name(self, model_path: str) -> str:
         """
-        Resolve which framework environment should back the visualization.
-
-        Args:
-            model_path: Model checkpoint path used for replay.
-
-        Returns:
-            str: Canonical framework environment name.
+        Canonical framework environment name for the replay of model_path.
         """
 
         return self.adapter.resolve_environment_name(model_path, self.env_name)
 
     def _load_policy(self, model_path: str, device: str):
         """
-        Load the framework policy used for replay.
-
-        Args:
-            model_path: Model checkpoint path used for replay.
-            device: Torch device selector.
-
-        Returns:
-            Any: Loaded policy object exposing `predict`.
+        Load the replay policy (an object exposing predict) on the given torch device.
         """
 
         return self.adapter.load_policy(model_path, device=device)
 
     def _build_environment(self, selected_env: str, max_steps: int):
         """
-        Construct the framework environment for replay.
-
-        Args:
-            selected_env: Canonical framework environment name.
-            max_steps: Maximum number of environment steps for replay.
-
-        Returns:
-            Any: Instantiated framework environment.
+        Construct the framework environment selected_env with max_steps.
         """
 
         return self.adapter.build_environment(selected_env, max_steps=max_steps)
 
     def _motion_state_from_env(self, env, bridge: AirSimBridge):
         """
-        Extract the current framework motion state.
-
-        Args:
-            env: Active framework environment.
-            bridge: AirSim bridge providing coordinate transforms.
-
-        Returns:
-            Any: AirSim-frame motion state returned by the adapter.
+        Current motion state in the AirSim frame (via the adapter and the bridge's transforms).
         """
 
         return self.adapter.motion_state_from_env(env, bridge)
 
     def _animate_state(self, env, bridge: AirSimBridge, **kwargs):
         """
-        Mirror one framework state transition into UE5.
-
-        Args:
-            env: Active framework environment.
-            bridge: AirSim bridge used for visual playback.
-            **kwargs: Interpolation and animation parameters.
-
-        Returns:
-            Any: Adapter return value describing the mirrored state.
+        Mirror one framework state transition into UE5; kwargs are animation parameters.
         """
 
         return self.adapter.animate_state(env, bridge, **kwargs)
 
     def _extract_pose(self, env) -> tuple[float, float, float]:
         """
-        Extract the current framework pose through the adapter surface.
-
-        Args:
-            env: Active framework environment.
-
-        Returns:
-            tuple[float, float, float]: Framework-frame `(x, y, heading)`.
+        Current framework-frame pose (x, y, heading) via the adapter.
         """
 
         return self.adapter.extract_pose(env)
 
     def _extract_velocity(self, env) -> tuple[float, float, float]:
         """
-        Extract the current framework velocity through the adapter surface.
-
-        Args:
-            env: Active framework environment.
-
-        Returns:
-            tuple[float, float, float]: Framework-frame
-            `(surge, sway, yaw_rate)`.
+        Current framework-frame velocity (surge, sway, yaw_rate) via the adapter.
         """
 
         return self.adapter.extract_velocity(env)
@@ -265,29 +204,29 @@ class VisualiseModelsRunner:
             max_steps: Maximum number of framework steps per episode.
             num_episodes: Number of episodes to visualize.
             device: Inference device passed to the policy loader.
-            draw_calibration_reference: Whether to draw the calibration overlay in UE5.
+            draw_calibration_reference: Draw the calibration overlay in UE5.
             log_every: Log every N steps when logging is enabled.
             save_slot: AirSim save slot to load before playback.
             simulation_speed: UE5 simulation-speed multiplier.
-            mirror_controls_in_ue5: Whether to mirror framework controls into UE5.
-            animate_steering_in_ue5: Whether to animate steering while mirroring.
-            animate_throttle_in_ue5: Whether to animate throttle while mirroring.
+            mirror_controls_in_ue5: Mirror framework controls into UE5.
+            animate_steering_in_ue5: Animate steering while mirroring.
+            animate_throttle_in_ue5: Animate throttle while mirroring.
             render_interpolation_steps: Number of interpolation steps per UE5 update.
             steering_visual_gain: Steering visualization gain.
             throttle_visual_gain: Throttle visualization gain.
-            use_kinematics_in_ue5: Whether to move the UE5 actor kinematically.
+            use_kinematics_in_ue5: Move the UE5 actor kinematically.
             min_render_hz: Minimum UE5 render update rate target.
             max_translation_step: Maximum translation distance per interpolation step.
-            max_yaw_step_deg: Maximum yaw delta per interpolation step in degrees.
-            lock_path_in_ue5: Whether to lock motion onto the framework path.
+            max_yaw_step_deg: Maximum yaw delta per interpolation step [deg].
+            lock_path_in_ue5: Lock motion onto the framework path.
             vehicle_object_name: Optional UE5 vehicle object override.
-            draw_ship_trail_in_ue5: Whether to draw a persistent blue trail behind the ship in UE5.
-            ship_trail_thickness: Thickness of the persistent blue ship trail in UE5.
+            draw_ship_trail_in_ue5: Draw a blue trail behind the ship in UE5.
+            ship_trail_thickness: Thickness of the ship trail.
             ship_trail_min_segment_m: Minimum movement before adding a new UE5 trail segment.
             min_log_interval_s: Minimum wall-clock interval between info logs.
             bridge_telemetry_hz: Maximum bridge telemetry polling rate.
             startup_settle_s: Startup settle window before stepping begins.
-            verbose: Whether to emit detailed per-step logging.
+            verbose: Emit detailed per-step logging.
         """
 
         logger.setLevel(logging.INFO if verbose else logging.WARNING)
@@ -359,15 +298,7 @@ class VisualiseModelsRunner:
 
             def _trail_point_from_motion_state(motion_state: np.ndarray):
                 """
-                Return the current UE5 trail point for the ship path marker.
-
-                Args:
-                    motion_state: AirSim-frame motion vector
-                        `[x, y, yaw, vx, vy, yaw_rate]`.
-
-                Returns:
-                    Any: `Vector3r`-compatible point for persistent trail
-                    plotting.
+                Vector3r-compatible trail point from an AirSim-frame [x, y, yaw, vx, vy, yaw_rate].
                 """
 
                 trail_offset_m = 8.0
@@ -431,10 +362,8 @@ class VisualiseModelsRunner:
                     previous_trail_point = None
                     trail_points_history: list = []
 
-                    # Flash the calibration overlay for 10s at episode start so the
-                    # user can verify ridges/trajectory before the run begins.
-                    # Skipped on episode 0 because prepare_model_visualisation
-                    # already drew it during setup.
+                    # Flash the calibration overlay for 10 s at episode start for a
+                    # visual check (episode 0: already drawn during setup).
                     if (
                         draw_calibration_reference
                         and episode > 0
@@ -547,9 +476,8 @@ class VisualiseModelsRunner:
                                     moved_dx = float(current_trail_point.x_val - previous_trail_point.x_val)
                                     moved_dy = float(current_trail_point.y_val - previous_trail_point.y_val)
                                     if np.hypot(moved_dx, moved_dy) >= float(ship_trail_min_segment_m):
-                                        # Accumulate the trail in memory only. Drawing every
-                                        # segment live causes a heavy FPS drop on long episodes.
-                                        # The full trail is rendered once at episode end.
+                                        # Only accumulate here (live drawing drops FPS);
+                                        # the trail is drawn once at episode end.
                                         trail_points_history.append(current_trail_point)
                                         previous_trail_point = current_trail_point
                                 else:
@@ -602,9 +530,8 @@ class VisualiseModelsRunner:
                         if remaining_budget_s > 0.001:
                             time.sleep(min(remaining_budget_s, target_step_interval_s))
 
-                    # End-of-episode: draw the full trail persistently, then flush
-                    # all 3D persistent lines and redraw everything non-persistently
-                    # so the 3D world is clean while the minimap retains all markers.
+                    # Episode end: draw the full trail persistently, then flush the
+                    # persistent 3D lines (the minimap keeps its markers).
                     if bridge.is_connected:
                         if draw_ship_trail_in_ue5 and len(trail_points_history) >= 2:
                             trail_chunk_size = 500
@@ -628,9 +555,7 @@ class VisualiseModelsRunner:
                                 except Exception as exc:
                                     logger.debug("Trail draw chunk failed: %s", exc)
 
-                        # Flush all persistent lines from the 3D world.
-                        # The minimap retains all markers that were registered
-                        # before the flush, so no redraw is needed.
+                        # Flush persistent 3D lines; the minimap keeps earlier markers.
                         try:
                             bridge.flush_persistent_markers()
                         except Exception as exc:
@@ -721,8 +646,7 @@ def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) 
     Args:
         model_path: Model checkpoint path used for replay.
         model_family: Requested adapter family, or "auto".
-        **kwargs: Additional runner options forwarded to
-            `VisualiseModelsRunner.run`.
+        **kwargs: Options forwarded to VisualiseModelsRunner.run.
     """
 
     env_name = str(kwargs.pop("env_name", "auto"))
@@ -738,10 +662,7 @@ def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) 
 
 def _build_parser() -> argparse.ArgumentParser:
     """
-    Build the command-line parser for framework-model replay.
-
-    Returns:
-        argparse.ArgumentParser: Configured CLI parser for UE5 replay runs.
+    Command-line parser for framework-model replay in UE5.
     """
 
     parser = argparse.ArgumentParser(

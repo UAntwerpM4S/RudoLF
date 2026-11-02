@@ -1,5 +1,5 @@
 """
-Helpers for mapping policy actions to UE5 CarControls.
+Helpers for mapping policy actions and actuator states to UE5 CarControls.
 """
 
 from __future__ import annotations
@@ -17,18 +17,18 @@ def validate_policy_action(
     action_name: str = "action",
 ) -> np.ndarray:
     """
-    Validate and lightly clamp a policy action in the expected space.
+    Validate a policy action and clip it to [-1, 1].
 
     Args:
         action: Candidate action vector.
-        action_name: Human-readable name used in error messages.
+        action_name: Name used in error messages.
 
     Returns:
-        A float32 action vector of shape `(2,)` clipped to `[-1, 1]`.
+        float32 array of shape (2,).
 
     Raises:
-        ValueError: If the action shape is wrong, contains non-finite values,
-            or exceeds the valid range by more than a small numeric tolerance.
+        ValueError: Wrong shape, non-finite values, or outside [-1, 1] by more
+            than a small tolerance.
     """
 
     action = np.asarray(action, dtype=np.float32)
@@ -50,14 +50,9 @@ def validate_policy_action(
 
 def _normalize_framework_thrust(specs: ShipSpecifications, thrust: float) -> float:
     """
-    Convert a framework thrust value to a UE5 throttle command in [0, 1].
+    Normalize framework thrust from [min_thrust, max_thrust] to a UE5 throttle in [0, 1].
 
-    Args:
-        specs: Ship specifications containing `min_thrust` and `max_thrust`.
-        thrust: Raw thrust value in the framework actuator space.
-
-    Returns:
-        Throttle value normalized to the range `[0, 1]`.
+    A degenerate range (max <= min) just clips thrust to [0, 1].
     """
 
     min_thrust = float(specs.min_thrust)
@@ -80,23 +75,19 @@ def build_car_controls(
     gear_immediate: bool = False,
 ):
     """
-    Create a populated `CarControls` object with clipped values.
-
-    All numeric inputs are clipped to their valid ranges before being written
-    to the `CarControls` object so callers do not need to guard against
-    out-of-range values.
+    Create a `CarControls` object; numeric inputs are clipped to their valid ranges.
 
     Args:
         airsim_module: The imported `cosysairsim` module.
-        steering: Steering command in `[-1, 1]`.
-        throttle: Throttle command in `[0, 1]`.
-        brake: Brake command in `[0, 1]`.  Defaults to `0.0`.
-        is_manual_gear: Whether to engage manual gear mode.
-        manual_gear: Gear index to engage when `is_manual_gear` is `True`.
-        gear_immediate: Whether the gear change takes effect immediately.
+        steering: Steering command in [-1, 1].
+        throttle: Throttle command in [0, 1].
+        brake: Brake command in [0, 1].
+        is_manual_gear: Engage manual gear mode.
+        manual_gear: Gear index used when `is_manual_gear` is True.
+        gear_immediate: Apply the gear change immediately (if supported).
 
     Returns:
-        A fully populated `cosysairsim.CarControls` instance.
+        A populated `cosysairsim.CarControls` instance.
     """
 
     controls = airsim_module.CarControls()
@@ -112,23 +103,17 @@ def build_car_controls(
 
 def map_direct_policy_action(airsim_module: Any, action: np.ndarray):
     """
-    Map a normalized UE5-trained action to direct `CarControls`.
-
-    Expects an action produced by an RL policy trained directly in AirSim
-    (not an external framework replay). The throttle dimension is rescaled from `[-1, 1]` to
-    `[0, 1]`.
+    Map an action from a policy trained directly in AirSim to `CarControls`.
 
     Args:
         airsim_module: The imported `cosysairsim` module.
-        action: Array of shape `(2,)` containing
-            `[steering, throttle_raw]` each in `[-1, 1]`.
+        action: [steering, throttle_raw], both in [-1, 1]; throttle is rescaled to [0, 1].
 
     Returns:
-        A `cosysairsim.CarControls` object ready to pass to
-        `bridge.set_controls()`.
+        `cosysairsim.CarControls` for `bridge.set_controls()`.
 
     Raises:
-        ValueError: If *action* does not have shape `(2,)`.
+        ValueError: If the action fails `validate_policy_action`.
     """
 
     action = validate_policy_action(action)
@@ -149,22 +134,20 @@ def map_framework_policy_action(
     brake: float = 0.0,
 ):
     """
-    Map a framework policy action to the equivalent UE5 `CarControls`.
+    Map a framework policy action to UE5 `CarControls`.
 
-    The throttle dimension is mapped from the signed policy action
-    `[-1, 1]` to the ship-spec thrust range using a linear affine
-    transform: `-1 -> min_thrust`, `+1 -> max_thrust`.
+    The signed throttle action is mapped linearly onto the ship's thrust range
+    (-1 to min_thrust, +1 to max_thrust) and then normalized to a UE5 throttle.
 
     Args:
         airsim_module: The imported `cosysairsim` module.
         specs: Ship specifications supplying `min_thrust` and `max_thrust`.
-        steering: Normalised steering command in `[-1, 1]`.
-        signed_throttle_action: Raw policy throttle output in `[-1, 1]`.
-        brake: Brake command in `[0, 1]`.  Defaults to `0.0`.
+        steering: Normalized steering command in [-1, 1].
+        signed_throttle_action: Policy throttle output in [-1, 1].
+        brake: Brake command in [0, 1].
 
     Returns:
-        A `cosysairsim.CarControls` object ready to pass to
-        `bridge.set_controls()`.
+        `cosysairsim.CarControls` for `bridge.set_controls()`.
     """
 
     signed_action = validate_policy_action(
@@ -197,26 +180,21 @@ def map_framework_actuator_state(
     """
     Map physical framework actuator outputs to UE5 `CarControls`.
 
-    Normalizes the rudder angle against the ship's `max_rudder_angle` and
-    the thrust against `min_thrust` / `max_thrust`, then engages forward
-    gear (`manual_gear=1`) so UE5 produces visible propulsion animation.
+    Rudder angle is normalized by `max_rudder_angle`, thrust by the thrust range;
+    forward gear (manual_gear=1) is engaged so UE5 animates propulsion.
 
     Args:
         airsim_module: The imported `cosysairsim` module.
         specs: Ship specifications supplying rudder and thrust limits.
-        rudder_angle: Physical rudder angle in radians.
-        thrust: Physical thrust in the framework actuator space.
-        brake: Brake command in `[0, 1]`.  Defaults to `0.0`.
-        steering_sign: Sign applied to the normalized steering (`+1` or
-            `-1`).  Defaults to `1.0`.
-        steering_gain: Additional multiplier on the normalized steering.
-            Defaults to `1.0`.
-        throttle_gain: Additional multiplier on the normalized throttle.
-            Defaults to `1.0`.
+        rudder_angle: Rudder angle in radians.
+        thrust: Thrust in the framework actuator space.
+        brake: Brake command in [0, 1].
+        steering_sign: Sign applied to the normalized steering (+1 or -1).
+        steering_gain: Multiplier on the normalized steering.
+        throttle_gain: Multiplier on the normalized throttle.
 
     Returns:
-        A `cosysairsim.CarControls` object ready to pass to
-        `bridge.set_controls()`.
+        `cosysairsim.CarControls` for `bridge.set_controls()`.
     """
 
     normalized_steering = 0.0
@@ -248,24 +226,22 @@ def map_framework_steering_visual_state(
     steering_gain: float = 0.35,
 ):
     """
-    Map only the framework rudder angle to UE5 steering for visual playback.
+    Map only the rudder angle to UE5 steering, for visual playback.
 
-    This keeps propulsion neutral so UE5 does not fight the kinematic pose
-    mirror while still animating the visible steering / rudder state.
+    Propulsion stays neutral (throttle 0) so UE5 does not fight the kinematic
+    pose mirror.
 
     Args:
         airsim_module: The imported `cosysairsim` module.
         specs: Ship specifications supplying `max_rudder_angle`.
-        rudder_angle: Physical rudder angle in radians.
-        brake: Brake command in `[0, 1]`.  Defaults to `0.0`.
-        steering_sign: Sign applied to the normalized steering.  Defaults
-            to `1.0`.
-        steering_gain: Additional multiplier on the normalized steering.
-            Defaults to `0.35` (visual-only, reduced to avoid fighting UE5
-            physics).
+        rudder_angle: Rudder angle in radians.
+        brake: Brake command in [0, 1].
+        steering_sign: Sign applied to the normalized steering.
+        steering_gain: Multiplier on the normalized steering (reduced default,
+            visual only).
 
     Returns:
-        A `cosysairsim.CarControls` object with `throttle=0.0`.
+        `cosysairsim.CarControls` with throttle 0.
     """
 
     normalized_steering = 0.0
@@ -296,26 +272,13 @@ def map_framework_visual_actuator_state(
     throttle_gain: float = 1.0,
 ):
     """
-    Map framework rudder and thrust for visual animation in forward gear.
+    Map rudder and thrust to UE5 controls in forward gear, for visual animation only.
 
-    This exposes steering and throttle animation in UE5 while the mirrored
-    framework motion remains the source of truth for replay.
-
-    Args:
-        airsim_module: The imported `cosysairsim` module.
-        specs: Ship specifications supplying rudder and thrust limits.
-        rudder_angle: Physical rudder angle in radians.
-        thrust: Physical thrust in the framework actuator space.
-        brake: Brake command in `[0, 1]`.  Defaults to `0.0`.
-        steering_sign: Sign applied to the normalized steering.  Defaults
-            to `1.0`.
-        steering_gain: Additional multiplier on the normalized steering.
-            Defaults to `0.35`.
-        throttle_gain: Multiplier applied to the normalized throttle.
-            Defaults to `1.0`.
+    The mirrored framework motion stays the source of truth for replay.
+    Arguments as in `map_framework_actuator_state` (steering_gain defaults to 0.35).
 
     Returns:
-        A `cosysairsim.CarControls` object with forward gear engaged.
+        `cosysairsim.CarControls` with forward gear engaged.
     """
 
     normalized_steering = 0.0

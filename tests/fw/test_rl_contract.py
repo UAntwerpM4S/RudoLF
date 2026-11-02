@@ -1,5 +1,5 @@
 """
-Regression tests for the RL-contract fixes from the framework review:
+RL-contract regression tests:
 
 - envs return the real Gymnasium `terminated` / `truncated` flags, and keep
   returning them after the episode has ended;
@@ -31,7 +31,9 @@ TARGET = np.array([-1559.0, 11990.0], dtype=np.float32)
 # ----------------------------------------------------------------------
 
 def _straight(env, n):
-    """Step `n` times with a neutral rudder; return the last 5-tuple."""
+    """
+    Step `n` times with a neutral rudder; return the last 5-tuple.
+    """
 
     out = None
     for _ in range(n):
@@ -40,7 +42,9 @@ def _straight(env, n):
 
 
 def test_pysimenv_time_limit_is_truncation():
-    """At max_steps PySimEnv reports truncated=True, terminated=False, also after the end."""
+    """
+    At max_steps PySimEnv reports truncated=True, terminated=False, also after the end.
+    """
 
     from fw.environments.py_sim_env import PySimEnv
 
@@ -57,7 +61,9 @@ def test_pysimenv_time_limit_is_truncation():
 
 
 def test_colav_flags_persist_after_episode_end():
-    """The COLAV env does not 'un-terminate' when stepped after the end."""
+    """
+    The COLAV env does not 'un-terminate' when stepped after the end.
+    """
 
     from fw.environments.py_sim_colav_env import PySimColavEnv
 
@@ -80,38 +86,50 @@ def test_colav_flags_persist_after_episode_end():
 # ----------------------------------------------------------------------
 
 class _CountingEnv(gym.Env):
-    """Observation = step index; truncates after 3 steps; info carries no framework keys."""
+    """
+    Observation = step index; truncates after 3 steps; info carries no framework keys.
+    """
 
     observation_space = gym.spaces.Box(low=-100.0, high=100.0, shape=(4,), dtype=np.float32)
     action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
     type_name = training_name = "CountingEnv"
 
     def __init__(self):
-        """Create the toy env."""
+        """
+        Create the toy env.
+        """
 
         self.t = 0
 
     def reset(self, seed=None, options=None):
-        """Restart counting at 0."""
+        """
+        Restart counting at 0.
+        """
 
         super().reset(seed=seed)
         self.t = 0
         return np.zeros(4, dtype=np.float32), {}
 
     def step(self, action):
-        """Advance one step; truncate at t == 3."""
+        """
+        Advance one step; truncate at t == 3.
+        """
 
         self.t += 1
         return np.full(4, float(self.t), dtype=np.float32), 1.0, False, self.t >= 3, {}
 
     def get_neutral_action(self, env_id, action):
-        """Neutral action for finished envs (BasePPOAgent hook)."""
+        """
+        Neutral action for finished envs (BasePPOAgent hook).
+        """
 
         return np.zeros_like(action)
 
 
 def test_step_envs_returns_terminal_observation_and_real_truncation(tmp_path):
-    """Without framework info keys: truncation is not a termination, and the final state is the real one."""
+    """
+    Without framework info keys: truncation is not a termination, and the final state is the real one.
+    """
 
     from stable_baselines3.common.vec_env import DummyVecEnv
     from fw.policies.single_ppo_agent import SinglePPOAgent
@@ -124,7 +142,7 @@ def test_step_envs_returns_terminal_observation_and_real_truncation(tmp_path):
     next_states, _, terminations, truncations, final_states = agent._step_envs(np.zeros((1, 2), dtype=np.float32))
 
     assert truncations.tolist() == [True]
-    assert terminations.tolist() == [False]                 # was True: bootstrap zeroed
+    assert terminations.tolist() == [False]                 # True would zero the bootstrap
     assert next_states[0][0] == 0.0                          # SB3 auto-reset observation
     assert final_states[0][0] == 3.0                         # real last observation
 
@@ -134,7 +152,9 @@ def test_step_envs_returns_terminal_observation_and_real_truncation(tmp_path):
 # ----------------------------------------------------------------------
 
 def test_squashed_log_prob_ratio_is_one_before_update():
-    """Rollout and update evaluate the log-prob at the same point, also for saturated samples."""
+    """
+    Rollout and update evaluate the log-prob at the same point, also for saturated samples.
+    """
 
     from fw.policies.ppo_policy import PPOPolicy
 
@@ -153,7 +173,9 @@ def test_squashed_log_prob_ratio_is_one_before_update():
 
 
 def test_policy_trained_on_other_device_loads_on_cpu(tmp_path):
-    """The device stored in a checkpoint is informational: a 'cuda' checkpoint loads on CPU."""
+    """
+    The device stored in a checkpoint is informational: a 'cuda' checkpoint loads on CPU.
+    """
 
     from fw.policies import ppo_policy
     from fw.policies.ppo_policy import PPOPolicy
@@ -165,7 +187,9 @@ def test_policy_trained_on_other_device_loads_on_cpu(tmp_path):
     original = PPOPolicy.serialize_policy
 
     def _as_cuda(self):
-        """Serialize as if the policy had been trained on a GPU."""
+        """
+        Serialize as if the policy had been trained on a GPU.
+        """
 
         data = original(self)
         data.setdefault("data", {})["device"] = "cuda"
@@ -182,21 +206,27 @@ def test_policy_trained_on_other_device_loads_on_cpu(tmp_path):
 
 
 def test_deep_copied_workers_get_independent_rngs():
-    """reseed_env_rng gives every deep copy its own generator."""
+    """
+    reseed_env_rng gives every deep copy its own generator.
+    """
 
     from fw.common.tools.ppo_utils import reseed_env_rng
 
     class _E:
-        """Env stub with a generator."""
+        """
+        Env stub with a generator.
+        """
 
         def __init__(self):
-            """Create the generator."""
+            """
+            Create the generator.
+            """
 
             self._rng = np.random.default_rng(1)
 
     template = _E()
     a, b = copy.deepcopy(template), copy.deepcopy(template)
-    assert a._rng.integers(1 << 30) == b._rng.integers(1 << 30)   # the problem
+    assert a._rng.integers(1 << 30) == b._rng.integers(1 << 30)   # copies share the stream
     reseed_env_rng(a)
     reseed_env_rng(b)
     assert a._rng.integers(1 << 30, size=4).tolist() != b._rng.integers(1 << 30, size=4).tolist()
@@ -204,7 +234,9 @@ def test_deep_copied_workers_get_independent_rngs():
 
 @pytest.mark.parametrize("ship_model", [ShipModel.MYZAKO_37, ShipModel.TRIPOLI])
 def test_rudder_change_penalty_limit_is_in_radians(ship_model):
-    """The rudder-change limit has the same unit (rad) as the rudder change, for every ship."""
+    """
+    The rudder-change limit has the same unit (rad) as the rudder change, for every ship.
+    """
 
     from fw.environments.py_sim_env import PySimEnv
 
@@ -215,7 +247,9 @@ def test_rudder_change_penalty_limit_is_in_radians(ship_model):
     original = env.reward_calculator._component_functions["rudder_change"]
 
     def _spy(rudder_change, max_rudder_change, **kwargs):
-        """Record the arguments of the rudder-change component."""
+        """
+        Record the arguments of the rudder-change component.
+        """
 
         captured.update(rudder_change=rudder_change, max_rudder_change=max_rudder_change)
         return original(rudder_change=rudder_change, max_rudder_change=max_rudder_change, **kwargs)
@@ -230,7 +264,9 @@ def test_rudder_change_penalty_limit_is_in_radians(ship_model):
 
 @pytest.mark.parametrize("ship_model", [ShipModel.MYZAKO_37, ShipModel.TRIPOLI])
 def test_full_rate_rudder_move_is_not_a_violation(ship_model):
-    """With smoothing on, a move at exactly the top slew rate gets the ratio branch, not the hard -1."""
+    """
+    With smoothing on, a move at exactly the top slew rate gets the ratio branch, not the hard -1.
+    """
 
     from fw.environments.py_sim_env import PySimEnv
 
@@ -242,7 +278,9 @@ def test_full_rate_rudder_move_is_not_a_violation(ship_model):
     original = env.reward_calculator._component_functions["rudder_change"]
 
     def _spy(rudder_change, max_rudder_change, **kwargs):
-        """Record rudder_change / max_rudder_change."""
+        """
+        Record rudder_change / max_rudder_change.
+        """
 
         ratios.append(rudder_change / max_rudder_change)
         return original(rudder_change=rudder_change, max_rudder_change=max_rudder_change, **kwargs)
@@ -255,7 +293,9 @@ def test_full_rate_rudder_move_is_not_a_violation(ship_model):
 
 
 def test_vec_env_factory_reseeds_each_worker(tmp_path):
-    """SinglePPOAgent.make_env gives every worker copy its own RNG (not a copy of the template's)."""
+    """
+    SinglePPOAgent.make_env gives every worker copy its own RNG (not a copy of the template's).
+    """
 
     from fw.environments.py_sim_env import PySimEnv
     from fw.policies.single_ppo_agent import SinglePPOAgent
@@ -269,7 +309,9 @@ def test_vec_env_factory_reseeds_each_worker(tmp_path):
 
 
 def test_colav_static_obstacle_is_not_despawned():
-    """The despawn rule only removes dynamic target ships (scope unchanged by the E16 fix)."""
+    """
+    The despawn rule only removes dynamic target ships.
+    """
 
     from fw.environments.py_sim_colav_env import PySimColavEnv
 
@@ -292,7 +334,9 @@ def test_colav_static_obstacle_is_not_despawned():
 
 
 def test_pipeline_stop_condition_type_error_is_a_spec_error():
-    """A non-numeric patience is reported by the loader, not when the block starts."""
+    """
+    A non-numeric patience is reported by the loader, not when the block starts.
+    """
 
     from fw.scheduling.run_loader import PipelineSpecError, _parse_stop_condition
 
@@ -305,7 +349,9 @@ def test_pipeline_stop_condition_type_error_is_a_spec_error():
 # ----------------------------------------------------------------------
 
 def _worker_draws(seed, tmp_path, n_workers=2):
-    """First draws of the env RNGs of `n_workers` workers of a SinglePPOAgent seeded with `seed`."""
+    """
+    First draws of the env RNGs of `n_workers` workers of a SinglePPOAgent seeded with `seed`.
+    """
 
     from fw.environments.py_sim_env import PySimEnv
     from fw.policies.single_ppo_agent import SinglePPOAgent
@@ -318,7 +364,9 @@ def _worker_draws(seed, tmp_path, n_workers=2):
 
 
 def test_worker_rngs_are_reproducible_from_the_seed(tmp_path):
-    """Same 'seed' -> same worker streams; workers differ from each other; another seed differs."""
+    """
+    Same 'seed' -> same worker streams; workers differ from each other; another seed differs.
+    """
 
     _, run_a = _worker_draws(42, tmp_path)
     _, run_b = _worker_draws(42, tmp_path)
@@ -329,7 +377,9 @@ def test_worker_rngs_are_reproducible_from_the_seed(tmp_path):
 
 
 def test_unset_seed_is_drawn_and_logged(tmp_path, caplog):
-    """seed=None draws a base seed and logs it, so the run can be reproduced afterwards."""
+    """
+    seed=None draws a base seed and logs it, so the run can be reproduced afterward.
+    """
 
     with caplog.at_level("INFO", logger="fw.policies.base_agent"):
         agent, run = _worker_draws(None, tmp_path)
@@ -341,7 +391,9 @@ def test_unset_seed_is_drawn_and_logged(tmp_path, caplog):
 
 @pytest.mark.parametrize("bad_seed", [-1, True, "42", 4.2])
 def test_invalid_seed_is_refused(bad_seed):
-    """Only None or a non-negative int is accepted (fail fast, no silent bool -> 1)."""
+    """
+    Only None or a non-negative int is accepted (fail fast, no silent bool -> 1).
+    """
 
     from fw.common.tools.ppo_utils import resolve_base_seed
 
@@ -383,19 +435,25 @@ def _despawn_after_pass(closest_offset, env_cls=None):
 
 
 def test_ts_that_came_within_encounter_range_despawns_when_it_leaves():
-    """Closest approach inside encounter_range, then beyond forget_range: despawned."""
+    """
+    Closest approach inside encounter_range, then beyond forget_range: despawned.
+    """
 
     assert _despawn_after_pass(-10.0)
 
 
 def test_ts_passing_only_through_the_hysteresis_band_is_not_despawned():
-    """Closest approach between encounter_range and forget_range: kept, as before PR 418."""
+    """
+    Closest approach between encounter_range and forget_range: kept.
+    """
 
     assert not _despawn_after_pass(+10.0)
 
 
 def test_planner_env_never_despawns_a_target_ship():
-    """Envs without TRACKS_TARGET_SHIP (the planner env) keep their TS, as before PR 418."""
+    """
+    Envs without TRACKS_TARGET_SHIP (the planner env) keep their TS.
+    """
 
     from fw.environments.py_sim_colav_planner import PySimColavPlannerEnv
 
@@ -404,7 +462,9 @@ def test_planner_env_never_despawns_a_target_ship():
 
 
 def test_multi_ppo_seeds_its_sub_environments(tmp_path):
-    """MultiPPOAgent steps its sub-envs directly: each gets its own child of 'seed', reproducibly."""
+    """
+    MultiPPOAgent steps its sub-envs directly: each gets its own child of 'seed', reproducibly.
+    """
 
     from fw.environments.multi_sim_env import MultiSimEnv
     from fw.environments.py_sim_env import PySimEnv
@@ -412,7 +472,9 @@ def test_multi_ppo_seeds_its_sub_environments(tmp_path):
     from fw.policies.single_ppo_agent import SinglePPOAgent
 
     def _draws(seed):
-        """First RNG draws of every sub-env after building an MPPO agent with `seed`."""
+        """
+        First RNG draws of every sub-env after building an MPPO agent with `seed`.
+        """
 
         subs = [PySimEnv(time_step=2.0, max_steps=5, start_pos=START, target_pos=TARGET,
                          dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37) for _ in range(2)]

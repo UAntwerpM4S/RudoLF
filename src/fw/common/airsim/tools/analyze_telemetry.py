@@ -1,9 +1,8 @@
 """
 Offline analysis of AirSim bridge telemetry.
 
-Reads `airsim_telemetry.csv` and computes summary statistics including
-mean / max distance error, mean / max heading error, and derived accuracy
-percentages.  Results are printed to stdout.
+Reads airsim_telemetry.csv and prints mean/max distance and heading errors
+and derived accuracy percentages.
 
 Usage:
     python -m fw.common.airsim.tools.analyze_telemetry
@@ -17,7 +16,7 @@ _THIS_FILE = Path(__file__).resolve()
 _SRC_DIR = _THIS_FILE.parents[4]
 _CONFIG_DIR = _SRC_DIR / "airsim" / "config"
 
-# Search for telemetry in multiple locations
+# Candidate telemetry locations, searched in order
 POSSIBLE_PATHS = [
     str(_CONFIG_DIR / "airsim_telemetry.csv"),
     "airsim_telemetry.csv",
@@ -27,14 +26,7 @@ POSSIBLE_PATHS = [
 
 def find_telemetry_file() -> str | None:
     """
-    Search for the telemetry CSV in a list of candidate locations.
-
-    Iterates through `POSSIBLE_PATHS` and returns the first path
-    that exists on disk.
-
-    Returns:
-        The absolute or relative path to the telemetry CSV, or
-        `None` if no candidate file is found.
+    Return the first existing path in POSSIBLE_PATHS, or None.
     """
 
     for p in POSSIBLE_PATHS:
@@ -45,14 +37,9 @@ def find_telemetry_file() -> str | None:
 
 def analyze() -> None:
     """
-    Read telemetry data and print summary statistics to stdout.
+    Print distance/heading error statistics and accuracy percentages.
 
-    Computes per-step mean absolute distance error, mean absolute
-    heading error, and derived positional / heading accuracy
-    percentages from the telemetry CSV.
-
-    Raises:
-        FileNotFoundError: If none of the candidate paths exist.
+    Errors (missing file, bad rows) are printed, not raised.
     """
 
     filename = find_telemetry_file()

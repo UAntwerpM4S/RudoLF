@@ -1,31 +1,23 @@
 """
-Wind coverage of a wind/current training CSV (41 columns, sim_fh_dataset_generator
-layout), over ALL rows.
+Wind/current coverage of a training CSV (41 columns, sim_fh_dataset_generator
+layout), over all rows.
 
-Background: FH's WindState updates at 1 Hz, so the stored wind (col 7/8) is held
-constant for ~10 consecutive 0.1 s rows. Bit-identical wind within an episode is
-therefore normal and NOT a sign of stale data -- the old "stale rows" section was
-removed for that reason. Episode-start staleness (the first second after the
-settle still showing the exercise default) cannot be detected reliably from this
-CSV: the generator shuffles rows, and the default's apparent value depends on each
-episode's start heading and speed. The generator fix (WIND_WARMUP_TIME) prevents it
-in regenerated datasets.
+FH's WindState updates at 1 Hz, so the stored wind (col 7/8) is constant for
+about 10 consecutive 0.1 s rows; identical wind within an episode is normal.
 
 Reports:
   1. 1 Hz hold check: rows per (episode, wind value) group.
-  2. Port vs starboard balance, apparent (as stored, col 7/8, rel. bow, + = from
-     STARBOARD, i.e. clockwise -- FH's WindState convention, determined from
-     turning episodes) and true (reconstructed as apparent - (u, -v), cols 3/4,
-     in (ahead, starboard) components; sway v is PORT positive, as the
-     generator stores it since 2026-10-19 -- older CSVs have starboard-positive
-     sway and need the opposite sign).
-  3. True-wind speed percentiles and the share of rows / episodes at low wind --
-     relevant for how well "no wind" is covered.
+  2. Port vs starboard balance, apparent (as stored, col 7/8, relative to the
+     bow, + = from starboard, FH's WindState convention) and true
+     (apparent - (u, -v), cols 3/4, in (ahead, starboard) components). Sway v
+     is port positive; CSVs generated before 2026-10-19 store it starboard
+     positive and need the opposite sign.
+  3. True-wind speed percentiles and share of rows/episodes at low wind
+     (coverage of "no wind").
   4. True-wind direction histogram.
-  5. Current speed coverage (share of rows / episodes at low or zero current)
-     and current direction relative to the heading.
+  5. Current speed coverage and current direction relative to the heading.
 
-Writes a PNG next to the CSV. Needs numpy, pandas, matplotlib only.
+Writes <csv stem>_wind_coverage.png next to the CSV.
 
 Usage:
     python analyze_wind_training_data.py <dataset.csv>
@@ -46,14 +38,16 @@ LOW_CURRENT_LIMITS = (0.01, 0.05, 0.1, 0.2, 0.5)     # m/s
 
 
 def _wrap_deg(a):
-    """Wrap angle(s) in degrees to [-180, 180)."""
+    """
+    Wrap angle(s) in degrees to [-180, 180).
+    """
+
     return (a + 180.0) % 360.0 - 180.0
 
 
 def main():
     """
-    CLI entry point: print the wind/current coverage reports (see module docstring) for the CSV
-    and write <csv stem>_wind_coverage.png next to it.
+    CLI entry point: print the reports and write the PNG (see module docstring).
     """
 
     ap = argparse.ArgumentParser()
@@ -82,7 +76,7 @@ def main():
 
     u, v, ws, wd = (df[c].to_numpy() for c in ("u", "v", "ws", "wd"))
     app_deg = _wrap_deg(np.degrees(wd))
-    tx = ws * np.cos(wd) - u                  # true = apparent - (u, -v), (ahead, starboard) components
+    tx = ws * np.cos(wd) - u                  # true = apparent - (u, -v), (ahead, starboard)
     ty = ws * np.sin(wd) + v                  # sway v port positive
     true_speed = np.hypot(tx, ty)
     true_deg = _wrap_deg(np.degrees(np.arctan2(ty, tx)))

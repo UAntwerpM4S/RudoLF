@@ -7,20 +7,12 @@ from fw.ships.actuator_command import ActuatorCommand
 
 class ActuatorModel:
     """
-    Models actuator dynamics with rate limiting and jitter suppression.
+    Rudder and thrust actuator response to commands.
 
-    This class simulates the dynamic response of vessel actuators (rudder
-    and thrust) to commanded inputs. It supports:
-
-        - Rate-limited updates to prevent unrealistically fast changes.
-        - Jitter suppression to ignore small actuator errors below a
-          threshold.
-        - An `enable_smoothing` toggle that switches the above (rate
-          limiting + jitter suppression + saturation) on or off; when
-          disabled, actuators jump directly to the commanded value
-          (clipped to physical limits only). Note: despite the toggle's
-          name, this is rate-limiting, not exponential/low-pass smoothing
-          - no smoothing filter is applied anywhere in this class.
+    With `enable_smoothing`, changes are rate limited and errors below a jitter
+    threshold are ignored; without it, actuators jump to the command. Both are
+    clipped to physical limits. Despite its name, the toggle does rate
+    limiting only; no low-pass filter is applied.
 
     Attributes:
         _rudder: Current rudder angle [rad].
@@ -44,20 +36,14 @@ class ActuatorModel:
     @property
     def current_actuator_state(self):
         """
-        Get the current actuator state as a NumPy array.
-
-        Returns:
-            Array [rudder_angle, thrust] reflecting the current actuator
-            positions.
+        Current actuator state as float32 array [rudder_angle, thrust].
         """
 
         return np.array([self._rudder, self._thrust], dtype=np.float32)
 
     def reset(self) -> None:
         """
-        Reset actuators to neutral position.
-
-        Sets rudder and thrust to zero.
+        Reset rudder and thrust to zero.
         """
 
         self._rudder = 0.0
@@ -65,33 +51,20 @@ class ActuatorModel:
 
     def step(self, action: ActuatorCommand, dt: float, enable_smoothing: bool) -> ActuatorState:
         """
-        Apply rate-limited and saturated actuator control.
-
-        Updates rudder and thrust according to commanded values, subject
-        to actuator rate limits, jitter thresholds, and optional smoothing.
+        Move rudder and thrust toward the command for one time step.
 
         Args:
             action: Desired ActuatorCommand containing rudder_angle [rad]
                 and thrust [-].
             dt: Time step in seconds.
-            enable_smoothing: Enable rate limiting, saturation, and jitter
-                suppression.
+            enable_smoothing: Enable rate limiting and jitter suppression
+                (clipping to limits always applies).
 
         Returns:
-            ActuatorState representing the actual actuator positions after
-            applying dynamics.
+            ActuatorState with the resulting actuator positions.
 
         Raises:
             ValueError: If dt is not positive.
-
-        Notes:
-            - Rudder and thrust are clipped to physical limits.
-            - Small deviations below jitter thresholds are ignored to prevent
-              high-frequency oscillations.
-            - Rate limits are converted from per-second to per-step increments
-              using dt.
-            - If enable_smoothing is False, actuators are set directly
-              with clipping only.
         """
 
         if dt <= 0:

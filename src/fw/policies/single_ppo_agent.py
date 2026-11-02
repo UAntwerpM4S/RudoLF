@@ -28,20 +28,11 @@ logger = logging.getLogger(__name__)
 
 class SinglePPOAgent(BasePPOAgent):
     """
-    PPO agent operating on a single (vectorized) environment instance.
+    PPO agent for a single environment, run as vectorized workers.
 
-    This class implements policy optimization, environment interaction,
-    and training logic for Proximal Policy Optimization (PPO). It supports
-    both discrete and continuous action spaces and leverages vectorized
-    environments for parallel rollout collection.
-
-    Responsibilities include:
-        - Policy inference and optimization
-        - Parallel trajectory collection
-        - PPO loss computation and updates
-        - Model checkpointing and evaluation
-
-    Inherits rollout and GAE logic from `BasePPOAgent`.
+    Handles inference, PPO updates, the training loop and checkpointing; rollout
+    and GAE logic come from `BasePPOAgent`. Only continuous (Box) action spaces
+    are supported.
     """
 
     MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20
@@ -53,15 +44,15 @@ class SinglePPOAgent(BasePPOAgent):
         Initialize the PPO agent.
 
         Args:
-            profile: Profile that will be used for training or visualization. When None,
-                scenario-specific initialization and action transformation are skipped.
+            profile: Profile used for training or visualization. When None,
+                profile-dependent initialization and action adaptation are skipped.
             *args: Positional arguments forwarded to `BasePPOAgent`.
             **kwargs: Keyword arguments forwarded to `BasePPOAgent`.
 
-        Notes:
-            - Automatically infers input and output dimensions from the environment.
-            - Initializes the PPO policy network and optimizer.
-            - Profile-dependent operations (initial state setup, action adaptation) only run when profile is not None.
+        Input and output dimensions are inferred from the environment.
+
+        Raises:
+            NotImplementedError: If the action space is not a Box.
         """
 
         super().__init__(profile, *args, **kwargs)
@@ -69,9 +60,7 @@ class SinglePPOAgent(BasePPOAgent):
         self.observation_space = self.env.observation_space
         self.action_space = self.env.action_space
 
-        # The policy is a tanh-squashed Gaussian: only continuous (Box)
-        # action spaces are supported. Fail fast instead of sending float
-        # vectors to a Discrete env.
+        # The policy is a tanh-squashed Gaussian, so only Box action spaces work.
         if not isinstance(self.action_space, gym.spaces.Box):
             raise NotImplementedError(
                 f"SinglePPOAgent supports only Box action spaces, got {self.action_space}."
@@ -103,10 +92,7 @@ class SinglePPOAgent(BasePPOAgent):
             deterministic (bool): Whether to use deterministic policy output.
 
         Returns:
-            Tuple:
-                - action: Selected action.
-                - log_prob: Log-probability of the action.
-                - value: Estimated state value.
+            Tuple (action, log-probability, state value).
         """
 
         actions, log_probs, values = self.policy.predict(state, deterministic)
@@ -126,12 +112,10 @@ class SinglePPOAgent(BasePPOAgent):
                 - returns (np.ndarray)
 
         Returns:
-            float: Mean training loss across all updates. Returns NaN if no valid data.
+            float: Mean loss over all updates, or NaN if there is no valid data.
 
-        Notes:
-            - Advantages are normalized before optimization.
-            - Uses mini-batch SGD over multiple epochs.
-            - Applies PPO clipping, value loss, and entropy regularization.
+        Advantages are normalized; mini-batch updates over num_epochs with PPO
+        clipping, value loss and entropy bonus.
         """
 
         if not all_episodes_data:
@@ -139,7 +123,6 @@ class SinglePPOAgent(BasePPOAgent):
 
         self.policy.network.train()
 
-        # Concatenate all episode data into single arrays for batch processing
         all_states = torch.as_tensor(np.concatenate([ep['states'] for ep in all_episodes_data]),
                                      dtype=torch.float32).to(self.device)
         all_actions = torch.as_tensor(np.concatenate([ep['actions'] for ep in all_episodes_data]),
@@ -168,12 +151,10 @@ class SinglePPOAgent(BasePPOAgent):
         if all_advantages.numel() > 1 and all_advantages.std() > 1e-6:
             all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
 
-        # Train over multiple epochs
         batch_size = all_states.shape[0]
         loss_per_epoch = []
 
         for _ in range(self.num_epochs):
-            # Shuffle indices
             indices = torch.randperm(batch_size)
 
             for start in range(0, batch_size, self.batch_size):
@@ -186,15 +167,12 @@ class SinglePPOAgent(BasePPOAgent):
                 mb_returns = all_returns[mb_idx]
                 mb_advantages = all_advantages[mb_idx]
 
-                # Get current policy distribution
                 action_mean, action_std, state_values = self.policy.network(mb_states)
                 dist = torch.distributions.Normal(action_mean, action_std)
 
-                # Log-prob of the stored squashed action, evaluated at the same
-                # point as during the rollout (see PPOPolicy.squashed_log_prob).
+                # Log-prob of the stored squashed action (see PPOPolicy.squashed_log_prob).
                 log_probs = self.policy.squashed_log_prob(dist, mb_actions)
 
-                # PPO clipped loss
                 ratios = torch.exp(log_probs - mb_old_log_probs)
 
                 surrogate_1 = ratios * mb_advantages
@@ -202,11 +180,9 @@ class SinglePPOAgent(BasePPOAgent):
 
                 policy_loss = -torch.min(surrogate_1, surrogate_2).mean()
 
-                # Value loss
                 value_loss = torch.nn.functional.mse_loss(state_values.squeeze(-1), mb_returns)
                 entropy_loss = dist.entropy().sum(dim=-1).mean()    # Encourage exploration
 
-                # Total loss
                 loss = policy_loss + (self.value_loss_coef * value_loss) - (self.entropy_coef * entropy_loss)
 
                 if torch.isnan(loss) or torch.isinf(loss):
@@ -214,7 +190,6 @@ class SinglePPOAgent(BasePPOAgent):
                                    "value=%.4f) - skipping update step.", policy_loss.item(), value_loss.item())
                     continue
 
-                # Optimize
                 self.optimizer.zero_grad()
                 loss.backward()
                 grad_norm = nn.utils.clip_grad_norm_(
@@ -227,17 +202,16 @@ class SinglePPOAgent(BasePPOAgent):
 
                 loss_per_epoch.append(loss.item())
 
-        # Return mean loss over all updates
         return np.mean(loss_per_epoch)
 
     @classmethod
     def filter_trainable_episodes(cls, batch_data):
         """
-        Return only trajectories long enough for a PPO update.
+        Split off trajectories too short for a PPO update (fewer than
+        MINIMUM_TRAINABLE_TRAJECTORY_LENGTH transitions), which give NaN losses.
 
-        Episodes with fewer than two transitions cannot produce a meaningful
-        advantage normalization pass and previously poisoned training with NaN
-        losses. We skip them instead of counting them as real PPO updates.
+        Returns:
+            Tuple (trainable episodes, number skipped).
         """
 
         valid_episodes = []
@@ -260,51 +234,33 @@ class SinglePPOAgent(BasePPOAgent):
         Create a callable environment factory for vectorized execution.
 
         Args:
-            worker_seed: Seed (np.random.SeedSequence or int) for this
-                worker's env RNG. None: a new child of the agent's worker
-                SeedSequence is spawned (see BaseAgent 'seed').
+            worker_seed: Seed (np.random.SeedSequence or int) for this worker's
+                env RNG. None spawns a new child seed (see BaseAgent 'seed').
 
         Returns:
-            Callable[[], gym.Env]: Function that creates a monitored copy of the base environment.
-
-        Notes:
-            - Each environment is deep-copied to ensure independence.
-            - Wrapped with `Monitor` for logging episode statistics.
-            - Applies the profile state to the simulator inside the copy
-              immediately after construction so every vectorized worker
-              starts from the configured pose.
+            Callable[[], gym.Env]: Creates a Monitor-wrapped deep copy of the
+            environment, with the profile pose applied and its own RNG seed.
         """
 
-        profile = self._profile  # captured by closure; avoids a late-binding issue
+        profile = self._profile  # bound now, not at call time
         if worker_seed is None:
             worker_seed = self._spawn_worker_seeds(1)[0]
 
         def _init():
             """
-            Create one monitored deep-copied environment instance.
-
-            Applies the profile's simulator state (if any) so that the
-            vectorized worker begins each episode from the configured pose.
-
-            Returns:
-                A monitored Gym environment copied from the agent base environment.
+            Create one monitored deep copy of the environment.
             """
 
             env_copy = copy.deepcopy(self.env)
 
-            # Push the profile's state into this worker's simulator so that
-            # _vec_env.reset() begins each episode at the configured pose.
-            # Without this the state setting only affects self.env, not
-            # the parallel training rollouts.
+            # Apply the profile pose to this worker's simulator (not only to self.env).
             if profile is not None:
                 _sim = getattr(env_copy, "phys_sim", None) or getattr(env_copy, "_phys_sim", None)
                 if _sim is not None:
                     SimulatorApplier.apply(profile, _sim)
 
-            # Every worker is a deep copy of the same env, including its
-            # random generator: without its own RNG every worker would sample
-            # identical start poses / route segments. Seeded per worker from
-            # the 'seed' hyperparameter, so runs are reproducible.
+            # Deep copies share the RNG state; reseed so workers sample
+            # different start poses / routes (reproducibly).
             reseed_env_rng(env_copy, worker_seed)
 
             return Monitor(env_copy)
@@ -322,29 +278,21 @@ class SinglePPOAgent(BasePPOAgent):
         Returns:
             np.ndarray: Initial observations of shape (num_envs, obs_dim).
 
-        Notes:
-            - Reuses existing vectorized environment if possible.
-            - Uses `SubprocVecEnv` for multiple environments, `DummyVecEnv` otherwise.
-            - Optionally randomizes environments if supported.
+        The VecEnv (SubprocVecEnv for several envs, else DummyVecEnv) is reused
+        across rollouts, as in SB3's on-policy algorithm, and only recreated
+        when num_envs changes.
         """
 
-        # Create vectorized environments once and reuse
-        # follows the approach of https://stable-baselines3.readthedocs.io/en/v0.11.1/_modules/stable_baselines3/common/on_policy_algorithm.html
-        # where the vector is passed for each rollout instead of recreating it for all environments
         if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
-            # Recreate vec_env only if it does not exist or if the requested number of envs changed
             env_fns = [self.make_env(worker_seed) for worker_seed in self._spawn_worker_seeds(num_envs)]
             self._vec_env = SubprocVecEnv(env_fns) if num_envs > 1 else DummyVecEnv(env_fns)
 
-        # ------------------------------------------------------------------
         # Optional environment randomization
-        # ------------------------------------------------------------------
         if hasattr(self._vec_env, "env_method"):
             self._vec_env.env_method("randomize")
             if self._is_airsim_env():
                 self._vec_env.env_method("mark_explicit_reset_context", True)
 
-        # Reset all environments
         return self._vec_env.reset()
 
 
@@ -363,12 +311,11 @@ class SinglePPOAgent(BasePPOAgent):
                 - truncations: Episode truncation flags.
                 - final_states: Real last observations (used to bootstrap truncations).
 
-        Notes:
-            - Supports both standard Gymnasium outputs and custom info dictionaries.
-            - Falls back to default values if truncation data is unavailable.
+        Rewards and flags come from the per-env info dicts when all provide
+        them; otherwise from the SB3 outputs, with truncation recovered from
+        "TimeLimit.truncated" (False if absent).
         """
 
-        # Step all environments
         next_states, next_rewards, next_terminations, infos = self._vec_env.step(actions)
 
         if infos and all(
@@ -381,11 +328,8 @@ class SinglePPOAgent(BasePPOAgent):
         else:
             rewards = next_rewards
 
-            # `next_terminations` here is SB3 VecEnv's combined `done` flag
-            # (terminated OR truncated). Recover the true truncation signal
-            # from SB3's own "TimeLimit.truncated" info key when present, and
-            # remove it from the termination flags: a truncated step must be
-            # bootstrapped, not treated as a terminal state.
+            # SB3 'done' = terminated OR truncated. Split off truncation, which
+            # must be bootstrapped rather than treated as terminal.
             if infos:
                 truncations = np.array(
                     [bool(env_info.get("TimeLimit.truncated", False)) for env_info in infos],
@@ -395,9 +339,8 @@ class SinglePPOAgent(BasePPOAgent):
                 truncations = np.zeros(actions.shape[0], dtype=bool)
             terminations = np.asarray(next_terminations, dtype=bool) & ~truncations
 
-        # SB3 VecEnvs auto-reset a finished env: `next_states[i]` is then the
-        # FIRST observation of the next episode. The real last observation,
-        # needed to bootstrap a truncated episode, is in
+        # SB3 auto-resets finished envs, so next_states[i] is then the next
+        # episode's first observation; the real last one is in
         # info["terminal_observation"].
         final_states = np.array(next_states, copy=True)
         if infos:
@@ -418,10 +361,7 @@ class SinglePPOAgent(BasePPOAgent):
             deterministic (bool): Whether to use deterministic policy output.
 
         Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray]:
-                - actions
-                - log_probs
-                - values
+            Tuple (actions, log_probs, values).
         """
 
         return self.policy.predict(states, deterministic=deterministic)
@@ -491,20 +431,19 @@ class SinglePPOAgent(BasePPOAgent):
         Execute the full PPO training loop.
 
         Args:
-            stop_condition (Optional[StopCondition]): Stopping criteria for training.
-                If not provided, a default condition is used.
+            stop_condition (Optional[StopCondition]): Stopping criteria; a
+                default StopCondition if None.
 
-        Workflow:
-            1. Collect trajectories using parallel environments.
-            2. Compute advantages and returns.
-            3. Update policy using PPO optimization.
-            4. Log metrics and save checkpoints.
-            5. Apply early stopping if conditions are met.
+        Per iteration: collect rollouts, run a PPO update, log metrics, save
+        the best policy and periodic checkpoints, and check the stop condition.
+        For AirSim, too-short rollouts are skipped and training aborts after
+        MAX_CONSECUTIVE_UNTRAINABLE_AIRSIM_BATCHES empty batches. On Ctrl-C an
+        interrupt checkpoint is saved and KeyboardInterrupt is re-raised after
+        cleanup. The VecEnv is always closed.
 
-        Notes:
-            - Tracks best-performing policy based on mean reward.
-            - Periodically saves checkpoints.
-            - Cleans up vectorized environments after training.
+        Raises:
+            RuntimeError: On repeated untrainable AirSim batches, or when the
+                final checkpoint/metrics cannot be saved.
         """
 
         logger.info("Starting training with %d parallel environments on a '%s' device", self.num_envs, self.device)
@@ -674,19 +613,14 @@ class SinglePPOAgent(BasePPOAgent):
             except Exception as _save_err:
                 logger.warning("Could not save interrupt checkpoint: %s", _save_err)
         finally:
-            # Every cleanup step is guarded: a failing step (e.g. an env_method
-            # RPC to a dead worker, or a plot) must neither replace the
-            # original exception nor prevent the VecEnv (worker processes,
-            # simulator connections) from being closed.
+            # Each cleanup step is guarded so a failure can neither mask the
+            # original exception nor prevent closing the VecEnv.
             final_save_errors = []
 
             def _safe(step_name, fn, *fn_args, critical=False, **fn_kwargs):
                 """
-                Run one cleanup step; log (do not raise) if it fails.
-
-                A failing `critical` step (final checkpoint / metrics after a
-                successful run) is re-raised once the VecEnv is closed, as
-                before this cleanup was guarded.
+                Run one cleanup step and log a failure. Failures of `critical`
+                steps are re-raised after the VecEnv is closed.
                 """
 
                 try:
@@ -734,8 +668,7 @@ class SinglePPOAgent(BasePPOAgent):
                     _safe("close VecEnv", self._vec_env.close)
                     self._vec_env = None
 
-            # Only reached after a successful run (critical steps run only then):
-            # a failed final save is still an error, raised after cleanup.
+            # Critical steps only run after a successful run.
             if final_save_errors:
                 raise final_save_errors[0]
 
@@ -773,12 +706,10 @@ class SinglePPOAgent(BasePPOAgent):
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
             self.policy = PPOPolicy.load(policy_file_name, self.device)
-            # PPOPolicy.load() returns a NEW object, so the optimizer must be
-            # rebound to the new network's parameters; otherwise step() silently
-            # updates the old (unreferenced) network and the loaded policy never trains.
+            # load() returns a new network: rebind the optimizer to its parameters.
             self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
 
-            # Restore Adam momentum when a companion optimizer file exists.
+            # Disabled: restore Adam momentum from a companion optimizer file.
             # opt_path = normalize_policy_zip_path(policy_file_name).replace(".zip", "_optimizer.pth")
             # if os.path.isfile(opt_path):
             #     try:
@@ -811,8 +742,7 @@ class SinglePPOAgent(BasePPOAgent):
 
             self.policy.save(policy_file_name)
 
-            # Persist optimizer state so Adam momentum survives a
-            # checkpoint resume.  The optimizer file sits alongside the zip.
+            # Disabled: save the optimizer state in a file next to the zip.
             # if self.optimizer is not None:
             #     opt_path = normalize_policy_zip_path(policy_file_name).replace(".zip", "_optimizer.pth")
             #     torch.save(self.optimizer.state_dict(), opt_path)
@@ -823,9 +753,6 @@ class SinglePPOAgent(BasePPOAgent):
     def set_policy_eval(self):
         """
         Set the policy network to evaluation mode.
-
-        Disables training-specific behavior such as dropout and
-        batch normalization updates.
         """
 
         self.policy.network.eval()

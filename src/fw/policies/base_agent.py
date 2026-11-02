@@ -16,11 +16,8 @@ logger = logging.getLogger(__name__)
 
 class BaseAgent(ABC):
     """
-    Abstract base class for reinforcement learning agents.
-
-    This class provides a unified interface and shared hyperparameters
-    for reinforcement learning algorithms. Subclasses must implement
-    the core training and inference logic.
+    Abstract base class for RL agents: shared PPO hyperparameters, device,
+    model directory and worker seeding. Subclasses implement training and inference.
     """
 
     def __init__(
@@ -61,14 +58,14 @@ class BaseAgent(ABC):
                 or 'auto' ('auto' resolves to 'cuda' if available, else 'cpu').
                 Default is 'cpu'.
             model_dir (str, optional): Folder in which the generated agents are saved.
-            seed (int, optional): Base seed for the RNGs of the vectorized
-                worker environments ('seed' hyperparameter). Each worker
-                gets its own child seed of it, so workers are independent
-                and a run is reproducible. None: a random base seed is
-                drawn and logged, so the run can still be reproduced.
+            seed (int, optional): Base seed for the worker environment RNGs
+                ('seed' hyperparameter); each worker gets an independent child
+                seed. None draws a random base seed, which is logged.
 
         Raises:
-            ValueError: If `seed` is not None or a non-negative integer.
+            ValueError: If `device` is not 'cpu', 'cuda' or 'auto', if
+                `num_envs` is not positive, or if `seed` is not None or a
+                non-negative integer.
         """
 
         if device not in ("cpu", "cuda", "auto"):
@@ -95,8 +92,7 @@ class BaseAgent(ABC):
         self.device = get_device(device)
         self.model_dir = model_dir
 
-        # Normalize relative model paths so they always land under src/models.
-        # This prevents cases where training from inside src/ creates src/src/models.
+        # Resolve relative model paths against src/ (independent of the cwd).
         if self.model_dir:
             project_src_dir = Path(__file__).resolve().parents[2]
             model_dir_path = resolve_path_relative_to_src(self.model_dir, project_src_dir)
@@ -107,14 +103,12 @@ class BaseAgent(ABC):
         self.reward_var = 1.0
         self.reward_count = 1e-4  # avoid division by zero
 
-        # Worker RNG seeding. SeedSequence.spawn() is deterministic in call
-        # order, so recreating the workers (e.g. a different num_envs) gives
-        # new, but still reproducible, seeds.
+        # Worker seeding: SeedSequence.spawn() is deterministic in call order,
+        # so recreated workers get new but reproducible seeds.
         self.seed = resolve_base_seed(seed)
         self._worker_seed_seq = np.random.SeedSequence(self.seed)
-        # Only the env RNG streams (start poses, route segments, scenario
-        # sampling) are seeded; policy sampling (torch) is not, so a training
-        # run as a whole is not bit-reproducible.
+        # Only env RNG streams (start poses, routes, scenarios) are seeded, not
+        # torch policy sampling, so training is not bit-reproducible.
         logger.info(
             "%s: base seed of the env RNG streams = %d%s.",
             type(self).__name__, self.seed,
@@ -146,11 +140,11 @@ class BaseAgent(ABC):
         Predict an action for a given state.
 
         Args:
-            state (np.ndarray): Current state observation.
-            deterministic (boolean): Whether the action should be deterministic or not.
+            state: Current observation (array or tuple of arrays).
+            deterministic (bool): Whether to act deterministically.
 
         Returns:
-            Tuple[np.ndarray, float]: A tuple containing the selected action and its log probability.
+            Tuple of (action, log probability, value).
         """
 
         pass

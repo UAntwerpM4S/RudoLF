@@ -1,8 +1,7 @@
 """
 Shared AirSim telemetry analysis and 2D-vs-3D plotting helpers.
 
-This module focuses on post-run analysis by reusing exported telemetry CSV
-files instead of collecting duplicate runtime data.
+Works post-run on the exported telemetry CSV files.
 """
 
 from __future__ import annotations
@@ -69,10 +68,7 @@ class RunPerformanceSummary:
 
     def to_metadata_dict(self) -> Dict[str, Any]:
         """
-        Convert summary dataclass content to JSON-safe metadata.
-
-        Returns:
-            Dictionary representation suitable for metadata JSON sidecars.
+        Return the summary as a JSON-safe dict (episodes as dicts).
         """
 
         data = asdict(self)
@@ -82,14 +78,7 @@ class RunPerformanceSummary:
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     """
-    Convert a value to float with fallback.
-
-    Args:
-        value: Source value to parse.
-        default: Value returned when conversion fails.
-
-    Returns:
-        Parsed float or the provided default.
+    float(value), or `default` for None, blank strings and unparsable values.
     """
 
     try:
@@ -104,14 +93,7 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 def _safe_int(value: Any, default: int = 0) -> int:
     """
-    Convert a value to int with fallback.
-
-    Args:
-        value: Source value to parse.
-        default: Value returned when conversion fails.
-
-    Returns:
-        Parsed int or the provided default.
+    int(value), or `default` for None, blank strings and unparsable values.
     """
 
     try:
@@ -126,13 +108,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 def _read_csv_rows(path: Path) -> List[Dict[str, str]]:
     """
-    Read all CSV rows into memory.
-
-    Args:
-        path: CSV file path.
-
-    Returns:
-        List of row dictionaries. Empty list if file does not exist.
+    All rows of a CSV as dicts; [] if the file does not exist.
     """
 
     if not path.exists() or not path.is_file():
@@ -144,13 +120,7 @@ def _read_csv_rows(path: Path) -> List[Dict[str, str]]:
 
 def _cumulative_distance_2d(rows: Iterable[Dict[str, Any]]) -> float:
     """
-    Compute cumulative 2D distance from x/y columns.
-
-    Args:
-        rows: Telemetry rows containing `x` and `y` fields.
-
-    Returns:
-        Cumulative Euclidean distance in meters.
+    Cumulative 2D path length [m] from x/y (falling back to pos_x/pos_y).
     """
 
     distance = 0.0
@@ -171,14 +141,7 @@ def _cumulative_distance_2d(rows: Iterable[Dict[str, Any]]) -> float:
 
 def _cumulative_distance_3d(rows: Iterable[Dict[str, Any]]) -> float:
     """
-    Compute cumulative 3D distance from bridge `pos_*` columns.
-
-    Args:
-        rows: Bridge telemetry rows containing `pos_x`, `pos_y`, and
-            `pos_z` fields.
-
-    Returns:
-        Cumulative 3D Euclidean distance in meters.
+    Cumulative 3D path length [m] from bridge pos_x/pos_y/pos_z.
     """
 
     distance = 0.0
@@ -201,13 +164,7 @@ def _cumulative_distance_3d(rows: Iterable[Dict[str, Any]]) -> float:
 
 def _group_rows_by_episode(rows: List[Dict[str, str]]) -> Dict[int, List[Dict[str, str]]]:
     """
-    Group telemetry rows by episode index.
-
-    Args:
-        rows: Session telemetry rows.
-
-    Returns:
-        Mapping from one-based episode number to rows.
+    Group rows by one-based episode number (missing or < 1 counts as 1).
     """
 
     grouped: Dict[int, List[Dict[str, str]]] = {}
@@ -222,13 +179,7 @@ def _group_rows_by_episode(rows: List[Dict[str, str]]) -> Dict[int, List[Dict[st
 
 def _episode_duration_s(rows: List[Dict[str, str]]) -> float:
     """
-    Estimate episode duration from telemetry rows.
-
-    Args:
-        rows: Telemetry rows for a single episode.
-
-    Returns:
-        Simulated duration in seconds.
+    Episode duration [s]: sim_time span, else episode_step span (dt = 1 s).
     """
 
     if not rows:
@@ -249,8 +200,6 @@ def _episode_duration_s(rows: List[Dict[str, str]]) -> float:
     if sim_times:
         return float(max(sim_times) - min(sim_times))
 
-    # Fallback when sim_time is unavailable: approximate by the largest
-    # recorded episode step assuming dt=1.0s.
     steps = [_safe_int(row.get("episode_step", None), default=0) for row in rows]
     if not steps:
         return 0.0
@@ -324,14 +273,7 @@ def build_run_summary_from_csv(
 
 def format_performance_summary(title: str, summary: RunPerformanceSummary) -> str:
     """
-    Format a concise multi-line console summary for one run.
-
-    Args:
-        title: User-facing summary title.
-        summary: Aggregated run summary.
-
-    Returns:
-        Human-readable summary string suitable for stdout.
+    Multi-line console summary of one run.
     """
 
     lines = [
@@ -429,11 +371,10 @@ def compute_trajectory_similarity(
     n_samples: int = 150,
 ) -> Tuple[float, float]:
     """
-    Compute shape-based RMSE and DTW distance between 2D and 3D trajectories.
+    Shape-based RMSE and DTW distance between the 2D and 3D trajectories.
 
-    Both trajectories are resampled to *n_samples* points by arc-length and
-    then shape-normalized (centroid subtracted, scaled to unit extent) before
-    comparison, making the metric coordinate-system agnostic.
+    Both are resampled by arc length and normalized (centroid removed, unit
+    extent), so the metric does not depend on the coordinate system.
 
     Args:
         session_rows: Framework session telemetry rows (fields `x`/`y`).
@@ -441,8 +382,8 @@ def compute_trajectory_similarity(
         n_samples: Number of arc-length sample points for resampling.
 
     Returns:
-        Tuple `(rmse, dtw)`; lower values indicate more similar shapes.
-        Both values are `float('nan')` when either trajectory is empty.
+        (rmse, dtw); lower is more similar. Both NaN if either trajectory has
+        fewer than 2 points.
     """
 
     pts_2d = _extract_xy(session_rows, x_key="x", y_key="y")
@@ -467,11 +408,8 @@ def render_side_by_side_trajectory_plot(
     title: str,
 ) -> Optional[Path]:
     """
-    Render and save a side-by-side 2D-vs-3D trajectory plot.
-
-    The left panel shows 2D trajectory data from session telemetry
-    (framework/local frame), while the right panel shows UE5 AirSim 3D bridge
-    telemetry.
+    Save a side-by-side plot: 2D session telemetry (framework frame) left,
+    UE5 AirSim 3D bridge telemetry right.
 
     Args:
         session_csv_path: Session telemetry CSV path.
@@ -480,7 +418,7 @@ def render_side_by_side_trajectory_plot(
         title: Figure title.
 
     Returns:
-        Saved output path when successful, otherwise `None`.
+        The saved path, or None (no session rows, no matplotlib, or any error).
     """
 
     session_rows = _read_csv_rows(Path(session_csv_path))

@@ -4,9 +4,9 @@ Train or visualize the UE5 AirSim environment using runtime settings.
 Usage:
     python -m airsim.train.train_airsim
 
-This entrypoint now reads its AirSim environment configuration from
-`airsim/config/runtime_settings.json` so standalone AirSim training stays in
-sync with `fw.main_with_airsim`.
+Configuration comes from airsim/config/runtime_settings.json (shared with
+fw.main_with_airsim). Environment variables: FW_AIRSIM_ACTION ("train" or
+"visualize", default "train") and FW_AIRSIM_VERBOSE.
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def _emit_training_log_summary(
     route_csv: Path,
 ) -> None:
     """
-    Print a concise summary of the existing AirSim training log.
+    Print a short summary of the existing AirSim training episode log.
     """
 
     from airsim.train.training_log_analysis import analyze_training_log
@@ -121,7 +121,9 @@ def _resolve_effective_training_settings(
     runtime_settings: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """
-    Return merged runtime settings plus the effective AirSim training config.
+    Return (runtime, airsim_cfg, training_cfg). A named speed_profile overrides
+    the training settings; with sim-time pause stepping, time_step is set to
+    sim_time_per_action.
     """
 
     runtime = merge_runtime_settings(
@@ -150,7 +152,8 @@ def _resolve_effective_training_settings(
 
 def _build_training_env_config(runtime_settings: dict[str, Any] | None = None) -> dict[str, Any]:
     """
-    Build the standalone AirSim training config from runtime settings.
+    Build the AirSim training env config from runtime settings (also prints a
+    summary of the existing training log, if any).
     """
 
     repo_root = Path(__file__).resolve().parents[2]
@@ -269,7 +272,7 @@ def _build_training_stop_condition(
     runtime_settings: dict[str, Any] | None = None,
 ):
     """
-    Build the AirSim standalone stop condition.
+    Stop condition: max_policy_updates policy updates (default 1500).
     """
 
     _, _, training_cfg = _resolve_effective_training_settings(runtime_settings)
@@ -285,7 +288,7 @@ def _build_training_stop_condition(
 
 def _build_visualize_env_config(runtime_settings: dict[str, Any] | None = None) -> dict[str, Any]:
     """
-    Build a simple inference/visualization AirSim config from runtime settings.
+    Build the AirSim visualization config from runtime settings.
     """
 
     runtime = merge_runtime_settings(
@@ -315,11 +318,11 @@ def _run_training_with_transfer(
     profile=None,
 ) -> dict[str, Any]:
     """
-    Create a SinglePPOAgent directly, inject a transfer policy, and run learn().
+    Train a SinglePPOAgent whose policy is initialised from a 2D policy.
 
-    Bypasses Trainer/Scheduler so the policy can be replaced before training
-    starts. The Trainer creates the agent inside train() which is too late for
-    weight injection.  This path is AirSim-only and has no effect on 2D envs.
+    Bypasses Trainer, which creates its agent inside train(), too late to
+    inject weights. On a transfer failure, training continues from random
+    weights. AirSim only.
     """
 
     import torch.optim as optim
@@ -375,10 +378,9 @@ def _run_training_with_transfer(
 
     agent.learn(stop_condition=stop_condition)
 
-    # This path bypasses SimpleScheduler, which is what normally writes the
-    # canonical "<env>_PPO_policy" model (the default model path for AirSim
-    # inference) and the profile JSON next to it. Write them here as well,
-    # otherwise inference silently runs a stale model from an earlier run.
+    # SimpleScheduler normally saves "<env>_PPO_policy" (the default model for
+    # AirSim inference) and the profile JSON; do it here, or inference would
+    # run a stale model.
     training_name = getattr(env.gym_env, "training_name", "AirSimEnv")
     agent.save_policy(f"{training_name}_{PPO_POLICY_NAME}_policy")
     if profile is not None:
@@ -393,7 +395,8 @@ def _run_training_with_transfer(
 
 def run_training(runtime_settings: dict[str, Any] | None = None):
     """
-    Run AirSim PPO training from runtime settings and return trainer metrics.
+    Run AirSim PPO training from runtime settings and return the trainer
+    metrics ({} if AirSim is unavailable or transfer learning is used).
     """
 
     from fw.scheduling.trainer import Trainer
@@ -413,10 +416,8 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
 
     env = get_environment(airsim_env_name, configuration=env_config)
 
-    # Guard: if AirSim was unavailable and env_factory silently returned a
-    # fallback environment (e.g. PySimEnv), abort here. The fallback env
-    # has already been (or will be) trained by fw.main's standard batch; we
-    # must not run it a second time with an AirSim-only stop-condition dict.
+    # If UE5 was unavailable, env_factory returns a fallback env (e.g. PySimEnv)
+    # that fw.main trains anyway; don't train it again here.
     if env.gym_env.type_name != airsim_env_name:
         logger.warning(
             "AirSimEnv requested but env_factory returned '%s' (UE5 unavailable). "
@@ -424,14 +425,10 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
         )
         return {}
 
-    # Apply env-level profile flags (smoothing, rudder-angle scaling) so this
-    # path stays in sync with main_with_airsim.py. For AirSimEnv these
-    # attributes are no-ops today, but future profile fields that EnvApplier
-    # consumes would otherwise be silently skipped here.
+    # Same env-level profile flags as main_with_airsim.py (currently no-ops
+    # for AirSimEnv).
     apply_profile(profile, env=env.gym_env)
 
-    # Transfer learning: bypass Trainer and drive agent directly so the
-    # transferred policy can be injected before learn() starts.
     runtime = merge_runtime_settings(
         runtime_settings if runtime_settings is not None else get_runtime_settings()
     )
@@ -445,7 +442,6 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
             except Exception:
                 pass
 
-    # Standard path (no transfer learning)
     envs = [env]
     trainer = Trainer(PPO_POLICY_NAME, envs, profile, "SimpleScheduler")
 
@@ -469,7 +465,7 @@ def run_training(runtime_settings: dict[str, Any] | None = None):
 
 def run_visualization(runtime_settings: dict[str, Any] | None = None):
     """
-    Run AirSim visualization from runtime settings and return trainer instance.
+    Run AirSim visualization from runtime settings and return the Trainer.
     """
 
     from fw.scheduling.trainer import Trainer
@@ -487,8 +483,7 @@ def run_visualization(runtime_settings: dict[str, Any] | None = None):
     profile = ProfileRegistry.get(profile_name)
     profile.validate()
 
-    # Apply env-level profile flags consistently with run_training and
-    # main_with_airsim.py so all three entrypoints behave identically.
+    # Same as run_training and main_with_airsim.py
     apply_profile(profile, env=env.gym_env)
 
     trainer = Trainer(PPO_POLICY_NAME, envs, profile, "SimpleScheduler")
@@ -527,9 +522,7 @@ if __name__ == "__main__":
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
     logging.getLogger("asyncio").addFilter(AsyncioWin995Filter())
 
-    # Additionally write a per-run log file, matching the other entry points.
-    # Console verbosity stays governed by FW_AIRSIM_VERBOSE (see main_with_airsim.py
-    # for the same pattern); the file handler always captures at least INFO.
+    # Per-run log file (at least INFO); console verbosity follows FW_AIRSIM_VERBOSE.
     from fw.common.tools.path_utils import resolve_path_relative_to_src as _resolve_log_dir
     from fw.configuration.config import PPO_POLICY_NAME as _PPO_POLICY_NAME
     from datetime import datetime, timezone as _timezone

@@ -10,7 +10,7 @@ class Criterion(Enum):
         NBR_POLICY_UPDATES: Stop after a fixed number of policy updates.
         TARGET_REWARD: Stop once the (smoothed) episode reward reaches a target value.
         TARGET_REWARD_AND_LOSS: Stop once both a target reward and a target loss are reached.
-        AUTO_CONVERGE: Stop automatically once reward/loss plateaus within a tolerance.
+        AUTO_CONVERGE: Stop once reward/loss plateaus (not implemented; raises).
     """
 
     NBR_POLICY_UPDATES = auto()
@@ -23,8 +23,8 @@ class StopCondition:
     """
     Defines stopping criteria for training loops.
 
-    Supports multiple stopping strategies such as a fixed number of policy updates
-    or achieving a target reward for a number of consecutive evaluations ("patience").
+    Strategies: a fixed number of policy updates, or a target reward (and loss)
+    met for `patience` consecutive evaluations.
 
     Attributes:
         stop_criterion (Criterion): The strategy used to determine stopping.
@@ -43,14 +43,19 @@ class StopCondition:
         patience: Optional[int] = None
     ):
         """
-        Initializes the StopCondition instance.
+        Initialize the stop condition.
 
         Args:
             stop_criterion (Criterion): Criterion used to decide stopping.
             max_time_steps (int): Maximum number of training steps before stopping.
             target_reward (float, optional): Target reward to reach for stopping.
             target_loss (float, optional): Target loss threshold for stopping.
-            patience (int, optional): Number of consecutive successful evaluations needed to stop.
+            patience (int, optional): Consecutive successful evaluations needed to
+                stop (minimum 1, default 1).
+
+        Raises:
+            ValueError: If a target required by the criterion is missing.
+            NotImplementedError: For AUTO_CONVERGE.
         """
 
         self.stop_criterion = stop_criterion
@@ -83,10 +88,8 @@ class StopCondition:
         """
         Reset the patience counter.
 
-        The patience counter was never reset between environments in
-        SimpleScheduler.execute, so later envs could satisfy the stop condition
-        prematurely by inheriting a partially-filled counter from the previous env.
-        Call this at the start of each new environment's training run.
+        Call at the start of each environment's training run, so an env does not
+        inherit a partially filled counter from the previous one.
         """
 
         self._counter = 0

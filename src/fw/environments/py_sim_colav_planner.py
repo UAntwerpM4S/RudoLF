@@ -8,14 +8,8 @@ from fw.environments.py_sim_colav_base import PySimColavBaseEnv
 
 class PySimColavPlannerEnv(PySimColavBaseEnv):
     """
-    Collision avoidance environment using a replanner approach.
-
-    This environment extends `PySimColavBaseEnv` with planner-specific
-    configuration while reusing the base implementation for scenario
-    generation, simulation, collision detection, and reward computation.
-
-    The default configuration generates obstacles at every simulation step,
-    making it suitable for replanning-based collision avoidance algorithms.
+    Collision avoidance environment for replanning approaches: PySimColavBaseEnv
+    with obstacles regenerated every step by default.
     """
 
     def __init__(
@@ -46,11 +40,8 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             scenario_obstacle_level: Optional[str] = None,
     ) -> None:
         """
-        Initializes the replanner collision avoidance environment.
-
-        This constructor forwards all configuration parameters to the base
-        environment while changing the default obstacle generation level to
-        "step", enabling obstacle regeneration at every simulation step.
+        Forwards all arguments to the base env; only the default obstacle level
+        differs ("step" instead of "episode").
 
         Args:
             render_mode: Rendering mode for the environment.
@@ -59,6 +50,9 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
             verbose: Enables verbose logging if True.
             ship_pos: Initial ship position. Randomized if None.
             target_pos: Target position. Randomized if None.
+            overall_contour: Overall contour file.
+            depth_contour: Depth contour file.
+            trajectory: Trajectory file.
             dynamics_model: Vessel dynamics model.
             ship_model: Ship specification model.
             wind: Enables wind disturbances.
@@ -78,9 +72,6 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
                 "step" when not specified.
         """
 
-        # Any of the parameters in the below super().__init(...)
-        # can be set in this environment for different scenario configurations
-        # For example: use obstacle generation at step level as opposed to the default "episode" level
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
 
         super().__init__(
@@ -111,18 +102,10 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
 
     def _calculate_colav_reward(self) -> Tuple[float, bool]:
         """
-        Computes the collision avoidance reward.
-
-        Currently, delegates reward computation to the base environment without
-        additional planner-specific shaping.
+        Delegates to the base reward (no planner-specific shaping); collision
+        detection and failure penalty are handled by the base step().
 
         Returns:
-            A tuple containing:
-
-            - Reward for the current step.
-            - Whether the episode should terminate due to the reward logic.
+            (reward for the current step, whether the reward logic terminates the episode)
         """
-
-        # For now, use only the base path-following reward.
-        # Collision detection and failure penalty are handled by base step().
         return super()._calculate_colav_reward()

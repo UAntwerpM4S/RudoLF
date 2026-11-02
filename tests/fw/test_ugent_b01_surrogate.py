@@ -1,4 +1,6 @@
-"""Unit and wiring tests for fw.dynamics.ugent_b01_surrogate (UGent B01 / Myzako, model scale)."""
+"""
+Unit and wiring tests for fw.dynamics.ugent_b01_surrogate (UGent B01 / Myzako, model scale).
+"""
 
 import copy
 import logging
@@ -21,13 +23,17 @@ TARGET = np.array([-1559.0, 11990.0], dtype=np.float32)
 
 @pytest.fixture
 def spec():
-    """Specifications of the model-scale B01 preset."""
+    """
+    Specifications of the model-scale B01 preset.
+    """
 
     return create_ship(ShipModel.B01).specifications
 
 
 def _state(u=0.8, v=0.0, r=0.0):
-    """A VesselState at the origin with the given body velocities."""
+    """
+    A VesselState at the origin with the given body velocities.
+    """
 
     return VesselState(terminated=False, truncated=False, x=0.0, y=0.0, heading=0.0, u=u, v=v, r=r)
 
@@ -35,7 +41,9 @@ def _state(u=0.8, v=0.0, r=0.0):
 # ---------------------------------------------------------------- ship preset
 
 def test_b01_preset_is_model_scale_with_froude_scaled_envelope(spec):
-    """ShipModel.B01: model-scale hull, 35 deg rudder, limits Froude-scaled with sqrt(25)."""
+    """
+    ShipModel.B01: model-scale hull, 35 deg rudder, limits Froude-scaled with sqrt(25).
+    """
 
     assert spec.length == pytest.approx(4.32)
     assert spec.mass == pytest.approx(260.8)
@@ -49,7 +57,9 @@ def test_b01_preset_is_model_scale_with_froude_scaled_envelope(spec):
 
 
 def test_b01_has_no_fh_model():
-    """The FH entry points refuse the model-scale preset."""
+    """
+    The FH entry points refuse the model-scale preset.
+    """
 
     with pytest.raises(ValueError, match="model-scale"):
         require_fh_supported(ShipModel.B01, "test")
@@ -58,7 +68,9 @@ def test_b01_has_no_fh_model():
 # ---------------------------------------------------------------- coefficients and UKC
 
 def test_tested_ukc_and_deep_water_bank_terms():
-    """379 % bank terms are the draft's values (coeff_UKC379)."""
+    """
+    379 % bank terms are the draft's values (coeff_UKC379).
+    """
 
     assert TESTED_UKC_PERCENT == (379.0, 153.0, 35.0)
     deep = B01_COEFFICIENT_SETS[0]
@@ -70,7 +82,9 @@ def test_tested_ukc_and_deep_water_bank_terms():
     (500.0, 379.0), (379.0, 379.0), (35.0, 35.0), (10.0, 35.0),
 ])
 def test_blend_outside_and_at_ends(ukc, expected):
-    """At and beyond the tested range one set is used with weight 1."""
+    """
+    At and beyond the tested range one set is used with weight 1.
+    """
 
     blend = interpolation_blend(ukc)
     assert len(blend) == 1
@@ -79,7 +93,9 @@ def test_blend_outside_and_at_ends(ukc, expected):
 
 
 def test_blend_is_linear_in_depth_ratio():
-    """Between 153 and 35 % the weights are linear in T/(h-T)."""
+    """
+    Between 153 and 35 % the weights are linear in T/(h-T).
+    """
 
     (lo, w_lo), (hi, w_hi) = interpolation_blend(100.0)  # T/(h-T) = 1.0
     assert (lo.ukc_percent, hi.ukc_percent) == (153.0, 35.0)
@@ -88,7 +104,9 @@ def test_blend_is_linear_in_depth_ratio():
 
 
 def test_get_ukc_in_model_scale_metres(spec):
-    """get_ukc returns metres at model scale and follows set_ukc_percent."""
+    """
+    get_ukc returns metres at model scale and follows set_ukc_percent.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 153})
     assert model.get_ukc() == pytest.approx(1.53 * 0.146)
@@ -123,7 +141,9 @@ _GOLDEN = [
 
 @pytest.mark.parametrize("ukc, u, v, r, rudder_deg, thrust, d_port, d_stbd, expected", _GOLDEN)
 def test_matches_ugent_draft(spec, ukc, u, v, r, rudder_deg, thrust, d_port, d_stbd, expected):
-    """Accelerations equal UGent's draft (frame and unit conversion applied)."""
+    """
+    Accelerations equal UGent's draft (frame and unit conversion applied).
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": ukc})
     model.set_bank_distances(d_port, d_stbd)
@@ -135,21 +155,27 @@ def test_matches_ugent_draft(spec, ukc, u, v, r, rudder_deg, thrust, d_port, d_s
 
 @pytest.mark.parametrize("ukc, expected", [(379, 0.181), (153, 0.155), (100, 0.263), (35, 0.603)])
 def test_min_straight_running_thrust(spec, ukc, expected):
-    """Smallest thrust whose wheel effect can be trimmed with 35 deg rudder."""
+    """
+    Smallest thrust whose wheel effect can be trimmed with 35 deg rudder.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": ukc})
     assert model.min_straight_running_thrust == pytest.approx(expected, abs=2e-3)
 
 
 def test_min_thrust_preset_covers_deep_water(spec):
-    """B01_MIN_THRUST is trimmable at the tested deep and intermediate UKC."""
+    """
+    B01_MIN_THRUST is trimmable at the tested deep and intermediate UKC.
+    """
 
     for ukc in (379, 153):
         assert UGentB01Surrogate(spec, {"ukc_percent": ukc}).min_straight_running_thrust < B01_MIN_THRUST
 
 
 def test_low_thrust_warns_once(spec, caplog):
-    """Thrust below the UKC's minimum logs one warning per instance."""
+    """
+    Thrust below the UKC's minimum logs one warning per instance.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 35})
     with caplog.at_level(logging.WARNING, logger="fw.dynamics.ugent_b01_surrogate"):
@@ -160,7 +186,9 @@ def test_low_thrust_warns_once(spec, caplog):
 
 
 def test_no_warning_above_min_thrust(spec, caplog):
-    """No low-thrust warning above the minimum."""
+    """
+    No low-thrust warning above the minimum.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 379})
     with caplog.at_level(logging.WARNING, logger="fw.dynamics.ugent_b01_surrogate"):
@@ -169,7 +197,9 @@ def test_no_warning_above_min_thrust(spec, caplog):
 
 
 def test_min_thrust_ignores_bank_distances(spec):
-    """The minimum is computed without banks and leaves the set bank distances untouched."""
+    """
+    The minimum is computed without banks and leaves the set bank distances untouched.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 153})
     model.set_bank_distances(1.0, 2.0)
@@ -181,7 +211,9 @@ def test_min_thrust_ignores_bank_distances(spec):
 # ---------------------------------------------------------------- conventions
 
 def test_positive_rudder_turns_to_port(spec):
-    """Framework convention: positive rudder -> r > 0 (bow to port)."""
+    """
+    Framework convention: positive rudder -> r > 0 (bow to port).
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 379})
     _, _, dr_port = model._compute_accelerations(_state(), math.radians(20), 0.8)
@@ -192,7 +224,9 @@ def test_positive_rudder_turns_to_port(spec):
 
 
 def test_port_bank_attracts_and_turns_bow_away(spec):
-    """A port bank pulls the ship to port and turns the bow to starboard."""
+    """
+    A port bank pulls the ship to port and turns the bow to starboard.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 153})
     beam = model.particulars.beam
@@ -205,7 +239,9 @@ def test_port_bank_attracts_and_turns_bow_away(spec):
 # ---------------------------------------------------------------- bank limits
 
 def test_far_banks_act_without_cut_off_by_default(spec):
-    """Default: no upper cut-off (both tank walls were in the identification)."""
+    """
+    Default: no upper cut-off (both tank walls were in the identification).
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 153})
     without = model._compute_accelerations(_state(), 0.0, 0.0)
@@ -214,7 +250,9 @@ def test_far_banks_act_without_cut_off_by_default(spec):
 
 
 def test_optional_cut_off(spec):
-    """max_bank_clearance ignores banks farther than that y'."""
+    """
+    max_bank_clearance ignores banks farther than that y'.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 153, "max_bank_clearance": 4.0})
     without = model._compute_accelerations(_state(), 0.0, 0.0)
@@ -223,7 +261,9 @@ def test_optional_cut_off(spec):
 
 
 def test_close_banks_unclamped_by_default(spec):
-    """By default y' is used as in the draft: a bank at y' = 0.2 acts more strongly than at y' = 1."""
+    """
+    By default, y' is used as in the draft: a bank at y' = 0.2 acts more strongly than at y' = 1.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 153})
     beam = model.particulars.beam
@@ -235,7 +275,9 @@ def test_close_banks_unclamped_by_default(spec):
 
 
 def test_bank_at_or_inside_ship_is_floored(spec):
-    """y' <= 0 (ship at or inside the bank) is held at the default floor: finite, attraction kept."""
+    """
+    y' <= 0 (ship at or inside the bank) is held at the default floor: finite, attraction kept.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 153})
     beam = model.particulars.beam
@@ -248,7 +290,9 @@ def test_bank_at_or_inside_ship_is_floored(spec):
 
 
 def test_optional_min_clearance(spec):
-    """min_bank_clearance = 1.0 holds closer banks at the closest validated y'."""
+    """
+    min_bank_clearance = 1.0 holds closer banks at the closest validated y'.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 153, "min_bank_clearance": 1.0})
     beam = model.particulars.beam
@@ -261,7 +305,9 @@ def test_optional_min_clearance(spec):
 # ---------------------------------------------------------------- inputs and config
 
 def test_reverse_thrust_clamped_to_zero(spec):
-    """Negative thrust commands act as zero rpm."""
+    """
+    Negative thrust commands act as zero rpm.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 379})
     assert model._compute_accelerations(_state(), 0.0, -0.3) == \
@@ -279,14 +325,18 @@ def test_reverse_thrust_clamped_to_zero(spec):
     {"ukc_percent": 153, "min_bank_clearance": 2.0, "max_bank_clearance": 1.0},
 ])
 def test_invalid_config_raises(spec, config):
-    """Missing, unknown or invalid keys raise ValueError."""
+    """
+    Missing, unknown or invalid keys raise ValueError.
+    """
 
     with pytest.raises(ValueError):
         UGentB01Surrogate(spec, config)
 
 
 def test_nan_bank_distance_raises(spec):
-    """NaN bank distances are refused."""
+    """
+    NaN bank distances are refused.
+    """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 153})
     with pytest.raises(ValueError):
@@ -294,23 +344,31 @@ def test_nan_bank_distance_raises(spec):
 
 
 class _BankOwner:
-    """Holds a B01 model whose bank provider is one of its own bound methods (as PySimEnv)."""
+    """
+    Holds a B01 model whose bank provider is one of its own bound methods (as PySimEnv).
+    """
 
     def __init__(self, spec, d_port):
-        """Create the model and bind the provider."""
+        """
+        Create the model and bind the provider.
+        """
 
         self.d_port = d_port
         self.dynamics = UGentB01Surrogate(spec, {"ukc_percent": 153})
         self.dynamics.set_bank_distance_provider(self.banks)
 
     def banks(self, state):
-        """Bank distances [m] of this owner."""
+        """
+        Bank distances [m] of this owner.
+        """
 
         return self.d_port, None
 
 
 def test_deepcopy_rebinds_bound_provider(spec):
-    """deepcopy re-binds a bound-method provider to the copied owner."""
+    """
+    deepcopy re-binds a bound-method provider to the copied owner.
+    """
 
     owner = _BankOwner(spec, d_port=0.9)
     clone = copy.deepcopy(owner)
@@ -325,7 +383,9 @@ def test_deepcopy_rebinds_bound_provider(spec):
 # ---------------------------------------------------------------- simulator and environments
 
 def test_ship_simulator_refuses_wind_and_current(spec):
-    """EnvironmentModel's full-scale wind/current are refused for the B01."""
+    """
+    EnvironmentModel's full-scale wind/current are refused for the B01.
+    """
 
     from fw.simulators.ship_simulator import ShipSimulator
 
@@ -337,7 +397,9 @@ def test_ship_simulator_refuses_wind_and_current(spec):
 
 
 def test_full_scale_guard():
-    """require_full_scale_ship refuses only model-scale presets."""
+    """
+    require_full_scale_ship refuses only model-scale presets.
+    """
 
     with pytest.raises(ValueError, match="model-scale"):
         require_full_scale_ship(ShipModel.B01, "test")
@@ -346,7 +408,9 @@ def test_full_scale_guard():
 
 
 def _colav(**kwargs):
-    """A small PySimColavEnv (no rendering)."""
+    """
+    A small PySimColavEnv (no rendering).
+    """
 
     from fw.environments.py_sim_colav_env import PySimColavEnv
 
@@ -354,7 +418,9 @@ def _colav(**kwargs):
 
 
 def test_full_scale_envs_refuse_b01():
-    """PySimEnv and the COLAV envs (Western Scheldt, full scale) refuse ShipModel.B01."""
+    """
+    PySimEnv and the COLAV envs (Western Scheldt, full scale) refuse ShipModel.B01.
+    """
 
     from fw.environments.py_sim_env import PySimEnv
 
@@ -367,7 +433,9 @@ def test_full_scale_envs_refuse_b01():
 
 
 def test_b01_surrogate_refuses_other_ships():
-    """The B01 coefficients are for ShipModel.B01 only."""
+    """
+    The B01 coefficients are for ShipModel.B01 only.
+    """
 
     with pytest.raises(ValueError, match="B01"):
         _colav(dynamics_model=Model.UGENT_B01_SURROGATE, ship_model=ShipModel.MYZAKO_37,
@@ -375,12 +443,16 @@ def test_b01_surrogate_refuses_other_ships():
 
 
 def test_model_scale_env_wiring():
-    """With SUPPORTS_MODEL_SCALE_SHIPS (as a towing-tank env will set), PySimEnv wires the B01 surrogate."""
+    """
+    With SUPPORTS_MODEL_SCALE_SHIPS (as a towing-tank env will set), PySimEnv wires the B01 surrogate.
+    """
 
     from fw.environments.py_sim_env import PySimEnv
 
     class _ModelScalePySimEnv(PySimEnv):
-        """PySimEnv that accepts model-scale ships (stand-in for the towing-tank env)."""
+        """
+        PySimEnv that accepts model-scale ships (stand-in for the towing-tank env).
+        """
 
         SUPPORTS_MODEL_SCALE_SHIPS = True
 
@@ -395,7 +467,9 @@ def test_model_scale_env_wiring():
 
 
 def test_build_colav_config_carries_b01_config():
-    """env_factory's COLAV config builders forward ugent_b01_surrogate_config."""
+    """
+    env_factory's COLAV config builders forward ugent_b01_surrogate_config.
+    """
 
     from fw.configuration.config import load_config_parameters
     from fw.configuration.env_factory import build_colav_config, build_multi_policy_colav_config
@@ -407,7 +481,9 @@ def test_build_colav_config_carries_b01_config():
 
 
 def test_hull_coefficient_guard():
-    """require_hull_coefficients refuses only model-scale presets."""
+    """
+    require_hull_coefficients refuses only model-scale presets.
+    """
 
     with pytest.raises(ValueError, match="model-scale"):
         require_hull_coefficients(ShipModel.B01, "test")
@@ -418,7 +494,9 @@ def test_hull_coefficient_guard():
 @pytest.mark.parametrize("dynamics_model", [Model.FOSSEN, Model.NOMOTO])
 @pytest.mark.parametrize("base", ["pysim", "colav"])
 def test_model_scale_envs_refuse_fossen_and_nomoto(dynamics_model, base):
-    """Even where model-scale ships are accepted, Fossen/Nomoto refuse B01 (full-scale placeholder coefficients)."""
+    """
+    Even where model-scale ships are accepted, Fossen/Nomoto refuse B01 (full-scale placeholder coefficients).
+    """
 
     if base == "pysim":
         from fw.environments.py_sim_env import PySimEnv as Base
@@ -426,7 +504,9 @@ def test_model_scale_envs_refuse_fossen_and_nomoto(dynamics_model, base):
         from fw.environments.py_sim_colav_env import PySimColavEnv as Base
 
     class _ModelScaleEnv(Base):
-        """Env that accepts model-scale ships (stand-in for the towing-tank env)."""
+        """
+        Env that accepts model-scale ships (stand-in for the towing-tank env).
+        """
 
         SUPPORTS_MODEL_SCALE_SHIPS = True
 

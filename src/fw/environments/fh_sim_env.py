@@ -15,20 +15,13 @@ logger = logging.getLogger(__name__)
 
 class FhSimEnv(PySimEnv):
     """
-    An environment for ship navigation using the FH Simulator.
+    Deprecated: PySimEnv variant driven by the FH Simulator.
 
-    This class extends PySimEnv to integrate with the FH Simulator, providing
-    realistic ship dynamics and control including accurate physics, wind, and
-    current effects.
-
-    The FH Simulator is treated as a black box: interaction is limited to
-    setting normalized rudder and thrust commands in [-1, 1] via the SimAPI
-    Python layer.
+    The FH Simulator is a black box: only normalized rudder and thrust
+    commands in [-1, 1] are set, via the SimAPI Python layer.
 
     Attributes:
-        _fh_sim: FhSimBridge instance managing the FH Simulator math model.
-            Is None only if the fh_sim_bridge module cannot be imported, in
-            which case instantiation will fail at create_simulator().
+        _fh_sim: FhSimBridge managing the FH Simulator math model.
     """
 
     def __init__(self,
@@ -45,25 +38,23 @@ class FhSimEnv(PySimEnv):
                  ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
                  scenario: str = "DDShip_scenario1_nowindnocurrent"):
         """
-        Initialize the FhSimEnv environment.
-
-        .. deprecated::
-            FhSimEnv is deprecated; use PySimEnv instead.
+        Deprecated; use PySimEnv instead.
 
         Args:
-            render_mode (str, optional): The rendering mode. Defaults to None.
-            time_step (float, optional): Simulation time step in seconds. Defaults to 1.0.
-            max_steps (int, optional): Maximum number of steps per episode. Defaults to 15000.
-            verbose (bool, optional): Whether to enable verbose logging. Defaults to None.
-            start_pos (np.ndarray, optional): Initial ship position (x, y). Defaults to None.
-            target_pos (np.ndarray, optional): Target position (x, y). Defaults to None.
-            ship_model (ShipModel, optional): Ship model preset. Defaults to MYZAKO_DEFAULT.
-            scenario (str, optional): FH Simulator scenario name.
+            render_mode: Rendering mode.
+            time_step: Simulation time step (s).
+            max_steps: Maximum steps per episode.
+            verbose: Verbose logging.
+            start_pos: Initial ship position (x, y).
+            target_pos: Target position (x, y).
+            overall_contour, depth_contour, trajectory: Map/path CSV files.
+            dynamics_model: Dynamics model (only Model.FH_TABULAR is supported).
+            ship_model: Ship model preset.
+            scenario: FH Simulator scenario name.
 
         Raises:
-            RuntimeError: If the fh_sim_bridge module cannot be imported. FhSimEnv
-                requires the FH Simulator to be installed. Use PySimEnv for
-                pure-Python simulation without external dependencies.
+            RuntimeError: If fw.simulators.fh_sim_bridge cannot be imported
+                (FH Simulator not installed).
         """
 
         logger.warning(
@@ -97,27 +88,19 @@ class FhSimEnv(PySimEnv):
             ship_model=ship_model,
         )
 
-        # Set the initial vessel state on the bridge so the math model can be
-        # initialized with the correct position, heading, and velocities on
-        # the first reset() call.
+        # Initial state used by the bridge when the math model is first reset
         self._fh_sim.initial_vessel_state = self.phys_sim.state
 
 
     def create_simulator(self, ua_surrogate_config: Optional[Dict]=None):
         """
-        Create and return a configured FH-based ship simulator.
-
-        Called by PySimEnv.__init__ via the simulator factory pattern.
-
-        Returns:
-            ShipSimulator: Initialized wrapper around the FH engine.
+        Create the ShipSimulator around FhTabularModel (called by PySimEnv.__init__).
 
         Raises:
-            RuntimeError: If _fh_sim is None (should not occur after __init__ fix).
+            RuntimeError: If _fh_sim is None or the dynamics model is not
+                Model.FH_TABULAR.
         """
 
-        # Explicit guard so any future code path that bypasses
-        # __init__ does not silently pass None to ShipSimulator.
         if self._fh_sim is None:
             raise RuntimeError(
                 "FH Simulator engine (_fh_sim) is not available. "
@@ -134,18 +117,9 @@ class FhSimEnv(PySimEnv):
 
     def __deepcopy__(self, memo):
         """
-        Deep copy this instance, sharing the FH Simulator reference.
-
-        The FH Simulator bridge (_fh_sim) is not deep-copied because it holds
-        non-picklable external resources (native library handles, COM objects).
-        All other attributes are deep-copied normally.
-
-        Args:
-            memo (dict): Memoization dict used by copy.deepcopy.
-
-        Returns:
-            FhSimEnv: Deep copy with shared _fh_sim reference (including all
-            other references to the same bridge in the object graph).
+        Deep copy everything except the FH bridge, which is shared (it holds
+        non-picklable native resources), including references to it elsewhere
+        in the object graph.
         """
 
         new_instance = self.__class__.__new__(self.__class__)
@@ -153,9 +127,9 @@ class FhSimEnv(PySimEnv):
 
         for key, value in self.__dict__.items():
             if key == '_fh_sim':
-                setattr(new_instance, key, value)   # Retain the original reference
+                setattr(new_instance, key, value)
             else:
-                setattr(new_instance, key, copy.deepcopy(value, memo))  # Deep copy all other attributes
+                setattr(new_instance, key, copy.deepcopy(value, memo))
 
         return new_instance
 
@@ -163,10 +137,7 @@ class FhSimEnv(PySimEnv):
     @property
     def fh_sim(self):
         """
-        The FH Simulator bridge instance.
-
-        Returns:
-            FhSimBridge: Active bridge to the FH Simulator math model.
+        The FhSimBridge instance.
         """
 
         return self._fh_sim
@@ -174,38 +145,22 @@ class FhSimEnv(PySimEnv):
 
     def randomize(self, randomization_scale: Optional[float] = None):
         """
-        Intentionally no-op for FhSimEnv.
-
-        The FH Simulator always rewinds to the fixed initial state baked into
-        the exercise file at math model initialization time. The initial position,
-        heading, and velocities are set once via FhSimBridge.initial_vessel_state
-        and cannot be changed between episodes without reinitializing the math
-        model from scratch.
-
-        If per-episode starting position variation is needed, it must be
-        implemented by loading a different exercise file or by extending this
-        method to call dispose() + reset() with a new initial_vessel_state.
-
-        Args:
-            randomization_scale (float, optional): Unused. Retained for API
-                compatibility with PySimEnv.randomize().
+        No-op: the FH Simulator always rewinds to the initial state set once at
+        math-model initialization; changing it requires reinitializing the model.
         """
 
-        pass  # Intentional no-op, documented explicitly
+        pass
 
 
     def env_specific_reset(self):
         """
-        Reset the FH Simulator to its initial state.
-
-        Called by PySimEnv.reset() before _initialize_simulation(). Rewinds
-        the math model to t=0.25s (the earliest supported rewind point).
+        Rewind the FH math model to t = 0.25 s, the earliest supported rewind
+        point (called by reset() before _initialize_simulation()).
 
         Raises:
-            RuntimeError: If _fh_sim is None or the math model fails to reset.
+            RuntimeError: If _fh_sim is None or the reset fails.
         """
 
-        # Guard against None so the error is clear, not AttributeError
         if self._fh_sim is None:
             raise RuntimeError(
                 "FH Simulator is not available - cannot reset. "
@@ -217,20 +172,12 @@ class FhSimEnv(PySimEnv):
 
     def get_keel_clearance(self, pos: Optional[np.ndarray] = None) -> float:
         """
-        Query the current under-keel clearance from the FH Simulator.
-
-        Args:
-            pos (np.array, optional): Unused. Retained for API
-                compatibility with PySimEnv.get_keel_clearance().
-
-        Returns:
-            float: Keel clearance in metres as reported by the FH physics engine.
+        Under-keel clearance (m) reported by the FH Simulator; pos is unused.
 
         Raises:
-            RuntimeError: If _fh_sim is None or the ship interface is unavailable.
+            RuntimeError: If _fh_sim is None.
         """
 
-        # Guard against None
         if self._fh_sim is None:
             raise RuntimeError(
                 "FH Simulator is not available - cannot query keel clearance."
@@ -241,20 +188,12 @@ class FhSimEnv(PySimEnv):
 
     def _has_enough_keel_clearance(self, depth_threshold: float = 0.5) -> bool:
         """
-        Check whether the vessel has sufficient keel clearance.
-
-        Args:
-            depth_threshold (float): Minimum acceptable keel clearance in
-                metres. Defaults to 0.5 m.
-
-        Returns:
-            bool: True if keel clearance >= depth_threshold.
+        True if the FH keel clearance is >= depth_threshold (m).
 
         Raises:
-            RuntimeError: If _fh_sim is None or the ship interface is unavailable.
+            RuntimeError: If _fh_sim is None.
         """
 
-        # Guard against None
         if self._fh_sim is None:
             raise RuntimeError(
                 "FH Simulator is not available - cannot query keel clearance."

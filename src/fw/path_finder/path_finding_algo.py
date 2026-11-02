@@ -48,29 +48,23 @@ def apf(ship_pos, target_pos, obstacle, step_size=1.0, max_iterations=1000):
     poly = Polygon(obstacle)
 
     for _ in range(max_iterations):
-        # Calculate attractive force
         attractive = attractive_force(ship_pos, target_pos)
         
-        # Calculate repulsive and tangential forces
         repulsive, closest_point = repulsive_force(ship_pos, obstacle)
         tangential = tangential_force(ship_pos, closest_point) if closest_point is not None else np.zeros(2)
         
-        # Total force is the sum of attractive, repulsive, and tangential forces
         total_force = attractive + repulsive + 0.5 * tangential
         
-        # Move the ship in the direction of the total force
         new_ship_pos = ship_pos + step_size * total_force
         
-        # Ensure the ship stays within the polygon
+        # Keep the ship inside the polygon
         if not poly.contains(Point(new_ship_pos)):
             closest_point = poly.exterior.interpolate(poly.exterior.project(Point(ship_pos)))
             new_ship_pos = np.array([closest_point.x, closest_point.y])
         
-        # Append the new position to the path
         path.append(new_ship_pos)
         ship_pos = new_ship_pos
         
-        # Check if the ship has reached the target
         if np.linalg.norm(np.array(ship_pos) - np.array(target_pos)) < step_size:
             break
     
@@ -83,12 +77,12 @@ def initialize_population(start, target, population_size, safe_polygon):
 
     population = []
     for _ in range(population_size):
-        num_waypoints = np.random.randint(3, 10)  # Random number of waypoints
+        num_waypoints = np.random.randint(3, 10)
         waypoints = []
         for _ in range(num_waypoints):
             while True:
-                point = np.random.uniform(0, 20000, size=2)  # Random point in 2D space
-                if safe_polygon.contains(Point(point)):  # Ensure point is inside the safe polygon
+                point = np.random.uniform(0, 20000, size=2)
+                if safe_polygon.contains(Point(point)):
                     waypoints.append(point)
                     break
         path = [start] + waypoints + [target]
@@ -97,7 +91,7 @@ def initialize_population(start, target, population_size, safe_polygon):
 
 def fitness_function(path, safe_polygon):
     """
-    Evaluate the fitness of a path.
+    Path cost (lower is better): length + 1000 per point outside the safe area + smoothness.
     """
 
     path_length = sum(np.linalg.norm(np.array(path[i]) - np.array(path[i + 1])) for i in range(len(path) - 1))
@@ -111,12 +105,12 @@ def fitness_function(path, safe_polygon):
 
 def select_parents(population, fitness_scores):
     """
-    Select parents based on their fitness scores using roulette wheel selection.
+    Roulette-wheel parent selection; a lower fitness score (cost) gives a higher probability.
     """
 
     total_fitness = sum(fitness_scores)
     probabilities = [1 - score / total_fitness for score in fitness_scores]
-    probabilities = probabilities / np.sum(probabilities)  # Normalize to make a probability distribution
+    probabilities = probabilities / np.sum(probabilities)
     indices = np.random.choice(len(population), size=len(population), p=probabilities)
     return [population[i] for i in indices]
 
@@ -132,7 +126,7 @@ def crossover(parent1, parent2):
 
 def mutate(path, safe_polygon, mutation_rate=0.1):
     """
-    Mutate a path by randomly shifting waypoints or adding/removing waypoints.
+    Mutate a path by randomly shifting waypoints (shifted points stay inside the safe polygon).
     """
 
     new_path = []
@@ -153,23 +147,19 @@ def genetic_algorithm(start, target, safe_polygon, population_size=50, generatio
     Find the optimal path using a genetic algorithm.
     """
 
-    # Initialize population
     safe_polygon = Polygon(safe_polygon)
     population = initialize_population(start, target, population_size, safe_polygon)
     
     for generation in range(generations):
         if generation % 1000 == 0:
             print("{}/{}".format(generation, generations))
-        # Evaluate fitness
         fitness_scores: list = [fitness_function(path, safe_polygon) for path in population]
         
-        # Print best fitness in the current generation
         #print(f"Generation {generation + 1}: Best Fitness = {min(fitness_scores):.2f}")
         
-        # Select parents
         selected_parents = select_parents(population, fitness_scores)
         
-        # Generate offspring through crossover and mutation
+        # Offspring via crossover and mutation
         offspring = []
         for i in range(0, len(selected_parents), 2):
             if i + 1 < len(selected_parents):
@@ -177,10 +167,8 @@ def genetic_algorithm(start, target, safe_polygon, population_size=50, generatio
                 offspring.append(mutate(child1, safe_polygon))
                 offspring.append(mutate(child2, safe_polygon))
         
-        # Replace the old population with the new one
         population = offspring
     
-    # Return the best path
     fitness_scores = [fitness_function(path, safe_polygon) for path in population]
     best_index = np.argmin(fitness_scores)
     return population[best_index]

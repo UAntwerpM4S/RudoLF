@@ -24,20 +24,16 @@ and each run is checked against the conventions in fw/CONVENTIONS.md:
   DRIFT      side of the turn the ship drifts to (a real ship: outside; the
              toy models Fossen/Nomoto: inside, see CONVENTIONS.md)
 
-For the non-FH models the run goes through ShipSimulator.integrate (as the
-RL environment and the comparison tests do), so TURN/THRUST also check the
-simulator path. For FH the commands go through FhTabularModel.step (so
-fh_rudder_sign is included) on a fresh FhSimBridge per run; position,
-heading, sway and yaw rate are read from FH exactly as the framework does.
-YAW RATE and SWAY are only informative for FH: for the other models the
-simulator builds heading and track FROM r and v, so they agree by construction.
+Non-FH models run through ShipSimulator.integrate (as the RL environment
+does), so TURN/THRUST also check the simulator path; for them YAW RATE and
+SWAY agree by construction (heading and track are built from r and v). FH
+runs through FhTabularModel.step (including fh_rudder_sign) on a fresh
+FhSimBridge per run, with the state read as the framework reads it.
 
-The UA_* surrogates need their checkpoints (and lookup CSVs); a missing one is
-reported and skipped. UA_full's wind and current from the lookup CSV are set
-to zero (--keep-lookup-env keeps them), so every model sails in calm water.
-UGent and the UA_* models are Tripoli-only and are skipped for other ships.
-The start position must be in open water of the FH exercise (default: the
-comparison tests' start point).
+UGent and UA_* are Tripoli-only; for B01 only UGentB01 runs (model scale).
+UA_* need their checkpoints and lookup CSVs (missing ones are skipped);
+UA_full's lookup wind and current are zeroed unless --keep-lookup-env. The
+start position must be in open water of the FH exercise.
 
 Usage (from src):
     python -m fw.surrogate.validation.check_model_conventions                      # Tripoli, all models
@@ -82,8 +78,7 @@ UA_PRESETS = {"UA_clean": "tripoli_clean", "UA_confined": "tripoli_confined", "U
 @dataclasses.dataclass
 class Track:
     """
-    One run of one model, sampled every SURROGATE_DT: time [s], position [m], unwrapped heading
-    [rad], surge, sway [m/s] and yaw rate [rad/s].
+    One run sampled every SURROGATE_DT: t [s], x, y [m], unwrapped h [rad], u, v [m/s], r [rad/s].
     """
 
     t: np.ndarray
@@ -96,12 +91,18 @@ class Track:
 
     @property
     def dh_deg(self) -> float:
-        """Heading change over the whole run [deg], counter-clockwise positive."""
+        """
+        Heading change over the whole run [deg], counter-clockwise positive.
+        """
+
         return float(np.degrees(self.h[-1] - self.h[0]))
 
 
 def _track(rows: List[tuple]) -> Track:
-    """Track from (t, x, y, heading, u, v, r) rows; the heading is unwrapped."""
+    """
+    Track from (t, x, y, heading, u, v, r) rows; the heading is unwrapped.
+    """
+
     a = np.asarray(rows, dtype=float)
     return Track(t=a[:, 0], x=a[:, 1], y=a[:, 2], h=np.unwrap(a[:, 3]), u=a[:, 4], v=a[:, 5], r=a[:, 6])
 
@@ -109,7 +110,9 @@ def _track(rows: List[tuple]) -> Track:
 # ---------------------------------------------------------------- models
 
 def build_models(ship: ShipModel, spec, keep_lookup_env: bool) -> Dict[str, Callable[[], object]]:
-    """label -> factory of a FRESH model (each run starts from a clean model)."""
+    """
+    label -> factory of a FRESH model (each run starts from a clean model).
+    """
 
     from fw.dynamics.fossen import Fossen
     from fw.dynamics.nomoto import Nomoto
@@ -117,10 +120,9 @@ def build_models(ship: ShipModel, spec, keep_lookup_env: bool) -> Dict[str, Call
     factories: Dict[str, Callable[[], object]] = {"Fossen": lambda: Fossen(spec), "Nomoto": lambda: Nomoto(spec)}
     if ship == ShipModel.B01:
         from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
-        # Model scale; no bank provider: open water. Same convention as UGent.
-        # Fossen/Nomoto use the heuristic full-scale coefficients (normalised by
-        # mass), which are not meaningful at model scale: Nomoto reaches the
-        # 1.0 m/s surge limit within 2 s at any thrust. Only the B01 model is run.
+        # Model scale, open water (no bank provider). Fossen/Nomoto's heuristic
+        # full-scale coefficients are meaningless here (Nomoto hits the 1.0 m/s
+        # surge limit within 2 s at any thrust), so only the B01 model runs.
         print("B01: Fossen/Nomoto (heuristic full-scale coefficients), UA_* and UGent (Tripoli) -- skipped.")
         return {"UGentB01": lambda: UGentB01Surrogate(spec, {"ukc_percent": 379})}
     if ship != ShipModel.TRIPOLI:
@@ -140,8 +142,7 @@ def build_models(ship: ShipModel, spec, keep_lookup_env: bool) -> Dict[str, Call
 
         def make(preset=preset):
             """
-            Fresh UAntwerpSurrogate for `preset`; unless keep_lookup_env, its get_env reports zero wind
-            and current.
+            Fresh UAntwerpSurrogate for `preset`; zero wind/current unless keep_lookup_env.
             """
 
             model = UAntwerpSurrogate(spec, {"preset": preset}, ship_model=ship)
@@ -149,7 +150,10 @@ def build_models(ship: ShipModel, spec, keep_lookup_env: bool) -> Dict[str, Call
                 looked_up = model.get_env
 
                 def calm_env(pos, state=None, _get=looked_up):
-                    """The looked-up environment with wind_speed and current_speed set to 0."""
+                    """
+                    The looked-up environment with wind_speed and current_speed set to 0.
+                    """
+
                     env = _get(pos, state)
                     return dataclasses.replace(env, wind_speed=0.0, current_speed=0.0)
 
@@ -161,7 +165,9 @@ def build_models(ship: ShipModel, spec, keep_lookup_env: bool) -> Dict[str, Call
 
 
 def run_sim_model(model, spec, start: VesselState, rudder: float, thrust: float, duration: float) -> Track:
-    """Through ShipSimulator.integrate, as the RL environment and the comparison tests."""
+    """
+    Through ShipSimulator.integrate, as the RL environment and the comparison tests.
+    """
 
     from fw.simulators.ship_simulator import ShipSimulator
 
@@ -179,7 +185,9 @@ def run_sim_model(model, spec, start: VesselState, rudder: float, thrust: float,
 
 def run_fh(ship: ShipModel, spec, start: VesselState, rudder: float, thrust: float, duration: float,
            exercise_path: Optional[str]) -> Track:
-    """FH via FhTabularModel.step on a fresh bridge; state read as the framework reads it."""
+    """
+    FH via FhTabularModel.step on a fresh bridge; state read as the framework reads it.
+    """
 
     from fw.dynamics.fh_tabular_model import FhTabularModel, fh_rudder_sign
     from fw.simulators.fh_sim_bridge import FhSimBridge
@@ -195,7 +203,9 @@ def run_fh(ship: ShipModel, spec, start: VesselState, rudder: float, thrust: flo
         si = bridge.ship_interface
 
         def read(t):
-            """FH state at time `t` as a Track row: heading and yaw rate converted from degrees to radians."""
+            """
+            FH state at time `t` as a Track row: heading and yaw rate converted from degrees to radians.
+            """
 
             pos, vog = si.getShipPosition(), si.getShipVelocityOverGround()
             return (t, float(pos.x), float(pos.y), float(np.radians(si.getShipHeading())),
@@ -213,7 +223,9 @@ def run_fh(ship: ShipModel, spec, start: VesselState, rudder: float, thrust: flo
 # ---------------------------------------------------------------- analysis
 
 def sway_slope(tr: Track) -> Optional[float]:
-    """Slope of the track's sideways (port +) velocity on the reported sway; None if v barely varies."""
+    """
+    Slope of the track's sideways (port +) velocity on the reported sway; None if v barely varies.
+    """
 
     vx, vy = np.gradient(tr.x, tr.t), np.gradient(tr.y, tr.t)
     v_track = -np.sin(tr.h) * vx + np.cos(tr.h) * vy          # port unit vector = (-sin h, cos h)
@@ -224,13 +236,18 @@ def sway_slope(tr: Track) -> Optional[float]:
 
 
 def check_model(label: str, runs: Dict[str, Track], is_fh: bool) -> List[str]:
-    """Returns the failures of one model and prints its lines."""
+    """
+    Returns the failures of one model and prints its lines.
+    """
 
     fails = []
     dp, d0, dm = runs["+R"].dh_deg, runs["0"].dh_deg, runs["-R"].dh_deg
 
     def side(d):
-        """"PORT", "STARBOARD" or "none" for a heading change [deg], using MIN_TURN_DEG."""
+        """
+        "PORT", "STARBOARD" or "none" for a heading change [deg], using MIN_TURN_DEG.
+        """
+
         return "PORT" if d > MIN_TURN_DEG else "STARBOARD" if d < -MIN_TURN_DEG else "none"
 
     ok_turn = dp > MIN_TURN_DEG and dm < -MIN_TURN_DEG
@@ -287,7 +304,9 @@ def check_model(label: str, runs: Dict[str, Track], is_fh: bool) -> List[str]:
 
 
 def plot(results: Dict[str, Dict[str, Track]], path: str) -> None:
-    """Save every model's +R, 0 and -R tracks in the start frame (port to the left) to `path`."""
+    """
+    Save every model's +R, 0 and -R tracks in the start frame (port to the left) to `path`.
+    """
 
     import matplotlib
     matplotlib.use("Agg")
@@ -318,8 +337,7 @@ def plot(results: Dict[str, Dict[str, Track]], path: str) -> None:
 
 def main(argv=None) -> int:
     """
-    CLI entry point: run every model with the same commands, print the checks and a summary,
-    and optionally save the plot.
+    CLI entry point: run every model, print the checks and a summary, optionally plot.
 
     Returns:
         0 if every model passes, 1 otherwise (used as the exit code).
@@ -380,8 +398,7 @@ def main(argv=None) -> int:
             continue
         failures[label] = check_model(label, results[label], is_fh=(label == "FH"))
 
-    # Cross-model: every model turns the same way (the TURN check per model
-    # already compares with the convention; this line makes it one glance).
+    # One-glance cross-model comparison.
     print("\nSummary (heading change [deg] after the run, +R / 0 / -R; final surge at +R):")
     for label, runs in results.items():
         print(f"  {label:12s} {runs['+R'].dh_deg:+8.2f} {runs['0'].dh_deg:+8.2f} {runs['-R'].dh_deg:+8.2f}"
@@ -397,8 +414,7 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)
-    # FhSimBridge's per-instance loggers are set to INFO and propagate to the
-    # root handler; only show warnings and errors on the console.
+    # FhSimBridge loggers are INFO and propagate; show only warnings and errors.
     for handler in logging.getLogger().handlers:
         handler.setLevel(logging.WARNING)
     sys.exit(main())

@@ -92,7 +92,7 @@ class TrainingIterationLogger:
         elapsed_seconds: float,
     ) -> None:
         """
-        Append one training-iteration row to the CSV file.
+        Buffer one training-iteration row; save() writes the buffer to CSV.
         """
 
         rss_mb = self._sample_rss_mb()

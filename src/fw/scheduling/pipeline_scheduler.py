@@ -19,10 +19,10 @@ from fw.configuration.config import PolicyStrategy, get_hyperparameters, load_co
 logger = logging.getLogger(__name__)
 
 
-# A single AgentManager is reused so policies can transfer between blocks.
 class PipelineScheduler(BaseScheduler):
     """
-    Execute ordered pipeline blocks with a shared AgentManager.
+    Execute ordered pipeline blocks with one shared AgentManager, so policies
+    can transfer between blocks.
     """
 
     def __init__(
@@ -32,17 +32,12 @@ class PipelineScheduler(BaseScheduler):
         on_block_failure: str = "continue",
     ):
         """
-        Initializes the PipelineScheduler.
-
         Args:
-            agent_mgr: The `AgentManager` instance reused across every
-                block (its profile/hyperparameters are swapped per block
-                via `set_environment`).
-            blocks: Ordered list of `PipelineBlock`s to run. Can also be
-                supplied later via `execute(blocks=...)`.
-            on_block_failure: Run-level default - "continue" or "abort" -
-                for what happens when a block raises. Overridable per block
-                via `PipelineBlock.on_failure`.
+            agent_mgr: AgentManager reused by every block (profile and
+                hyperparameters are swapped per block via set_environment).
+            blocks: Ordered PipelineBlocks; can also be given to execute().
+            on_block_failure: "continue" or "abort" when a block raises;
+                PipelineBlock.on_failure overrides it per block.
         """
 
         super().__init__(agent_mgr)
@@ -53,14 +48,13 @@ class PipelineScheduler(BaseScheduler):
 
     def execute(self, blocks: Optional[list] = None) -> Dict[str, Any]:
         """
-        Run blocks in order and return their results.
-
-        Args:
-            blocks: Optional override of the blocks passed at construction.
+        Run blocks in order (optionally overriding the constructor's blocks).
 
         Returns:
-            dict: Metrics keyed by block name, e.g.
-                {"block_a": {"status": "success", "duration": 12.3}, ...}
+            dict: Metrics per block name, e.g. {"block_a": {"status": "success", "duration": 12.3}}.
+
+        Raises:
+            RuntimeError: If there are no blocks.
         """
 
         blocks = blocks if blocks is not None else self._blocks
@@ -98,22 +92,15 @@ class PipelineScheduler(BaseScheduler):
             self, block: PipelineBlock, completed_block_names: set, last_train_block: Optional[str]
     ) -> Dict[str, Any]:
         """
-        Build a block environment and execute its action.
+        Build the block's environment and run its action.
 
         Args:
             block: The block to run.
-            completed_block_names: Names of "train" blocks that have
-                completed successfully so far in this run (populated only
-                for `action == "train"` - see `execute()`), used to
-                validate `transfer.from_block` references.
-            last_train_block: Name of the most recently completed "train"
-                block so far in this run, or `None` if none has completed
-                yet. Passed through to `_resolve_transfer` for the
-                implicit-chaining default (see its docstring).
+            completed_block_names: "train" blocks completed so far (validates transfer.from_block).
+            last_train_block: Most recent completed "train" block, or None (implicit chaining).
 
         Returns:
-            Dict with at least "duration"; also "evaluation_summary"
-            when a post-train evaluation rollout ran.
+            Dict with "duration", plus "evaluation_summary" if a post-train rollout ran.
         """
 
         profile = resolve_block_profile(block)
@@ -179,14 +166,8 @@ class PipelineScheduler(BaseScheduler):
 
     def _save_checkpoint(self, block: PipelineBlock, env, profile) -> None:
         """
-        Save the trained policy and profile.
-
-        Args:
-            block: Currently unused by this method - the checkpoint name
-                is derived entirely from `env`/`agent_mgr` instead.
-            env: The block's environment wrapper (`env.gym_env` supplies
-                `training_name`).
-            profile: The profile to serialize alongside the policy.
+        Save the trained policy and the profile JSON, named after
+        env.gym_env.training_name. `block` is unused.
         """
 
         training_name = env.gym_env.training_name
@@ -204,19 +185,11 @@ class PipelineScheduler(BaseScheduler):
 
     def _run_evaluate_reward(self, block: PipelineBlock, env, profile, framework_config: dict) -> Dict[str, Any]:
         """
-        Evaluate a block with a scoped Trainer.
-
-        Args:
-            block: The block to run; must have `action` == "evaluate_reward"
-                and a non-empty `reward_configs`.
-            env: The block's environment wrapper, passed to `Trainer`.
-            profile: The profile to train with.
-            framework_config: Framework config dict to pass through to
-                `Trainer` so the profile isn't applied a second time.
+        Run an "evaluate_reward" block (non-empty reward_configs) with a scoped
+        Trainer. framework_config is passed so the profile is not applied twice.
 
         Returns:
-            Dict with "duration" (evaluation results themselves are
-            written to the CSV file, not returned).
+            Dict with "duration"; the results are written to CSV.
         """
 
         from fw.scheduling.trainer import Trainer
@@ -235,17 +208,7 @@ class PipelineScheduler(BaseScheduler):
 
     def _resolve_hyperparameters(self, block: PipelineBlock, canonical_name: str) -> dict:
         """
-        Merge block overrides with environment defaults.
-
-        Args:
-            block: The block whose `hyperparameter_overrides` (if any)
-                take precedence over the defaults.
-            canonical_name: The block's resolved environment name, used
-                to look up its default hyperparameters.
-
-        Returns:
-            Dict of hyperparameters: `get_hyperparameters(...)` defaults
-            with `block.hyperparameter_overrides` merged on top.
+        Default hyperparameters for the agent and env, with block overrides on top.
         """
 
         base = get_hyperparameters(self.agent_mgr.agent_type, env_name=canonical_name)
@@ -258,26 +221,22 @@ class PipelineScheduler(BaseScheduler):
             block: PipelineBlock, completed_block_names: set, last_train_block: Optional[str]
     ) -> Tuple[PolicyStrategy, Optional[str]]:
         """
-        Resolve the policy strategy and source environment for a block.
+        Resolve (policy strategy, source name) for a block.
+
+        Defaults: independent gives RESET_POLICY; an explicit policy_strategy wins;
+        from_block / external_training_name, "visualize" blocks and "train" blocks
+        after an earlier completed train block reuse another policy (implicit
+        chaining from last_train_block); otherwise RESET_POLICY.
 
         Args:
-            block: The block whose transfer is being resolved.
-            completed_block_names: Names of "train" blocks that have
-                completed successfully so far in this run, used to
-                validate an explicit `transfer.from_block` reference.
-            last_train_block: Name of the most recently completed "train"
-                block so far in this run, or `None` if none has completed
-                yet - used for the implicit-chaining default above.
+            block: The block whose transfer is resolved.
+            completed_block_names: "train" blocks completed so far (validates from_block).
+            last_train_block: Most recent completed "train" block, or None.
 
         Raises:
-            RuntimeError: If `transfer.independent` is combined with
-                `policy_strategy`, `from_block`, or
-                `external_training_name`. `run_loader._parse_transfer`
-                already rejects this for JSON-driven runs; this check
-                exists so a `PipelineBlock`/`TransferSpec` built directly
-                in Python (bypassing the loader) fails loudly here too,
-                instead of `independent` silently winning and the other
-                field(s) being silently ignored.
+            RuntimeError: If independent is combined with another transfer field or
+                used on a non-train block (also checked for blocks built in Python,
+                bypassing run_loader), or if a reused policy source is missing.
         """
 
         transfer: TransferSpec = block.transfer
@@ -348,15 +307,7 @@ class PipelineScheduler(BaseScheduler):
     @staticmethod
     def _build_stop_condition(spec: StopConditionSpec) -> StopCondition:
         """
-        Build a StopCondition from a validated specification.
-
-        Args:
-            spec: A spec already validated by
-                `run_loader._parse_stop_condition` (so `spec.criterion`
-                is guaranteed to name a member of `Criterion`).
-
-        Returns:
-            A new `StopCondition` configured from `spec`.
+        Build a StopCondition from a spec validated by run_loader._parse_stop_condition.
         """
 
         return StopCondition(

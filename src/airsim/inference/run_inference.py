@@ -1,15 +1,9 @@
 """
 Run inference for PPO policies trained directly in `AirSimEnv`.
 
-This runner is intentionally single-purpose:
-
-- it loads a trained `AirSimEnv` policy
-- it drives the live UE5/CosysAirSim ship through `AirSimEnv.step()`
-- it relies on `AirSimEnv.reset()` and `AirSimEnv.close()` for
-  episode lifecycle handling
-
-Framework-driven replay for modular framework-model visualization lives in
-`run_visualise_models.py` and is kept separate on purpose.
+Loads a trained `AirSimEnv` policy and drives the live UE5/CosysAirSim ship
+through `AirSimEnv.reset()/step()/close()`. Replay of framework models lives
+separately in `run_visualise_models.py`.
 """
 
 from __future__ import annotations
@@ -63,9 +57,7 @@ def _draw_ship_trail_in_ue5(
     """
     Draw the ship trail in UE5 as one chunked burst.
 
-    The trail is built from framework-frame positions accumulated during
-    the episode and transformed via the env's `CoordTransform` so it
-    aligns with the UE5 world.
+    Framework-frame positions are mapped to UE5 with the env's `CoordTransform`.
 
     Args:
         env: Active AirSim environment (provides `coord_transform` and `bridge`).
@@ -142,7 +134,7 @@ def _warn_if_model_name_looks_non_airsim(model_path: Path) -> None:
 
 def load_policy(model_path: str, device: str = "cpu") -> PPOPolicy:
     """
-    Load a :class:`PPOPolicy` from a saved `.zip` file.
+    Load a `PPOPolicy` from a saved `.zip` file.
 
     Args:
         model_path: User-provided checkpoint path.
@@ -221,13 +213,8 @@ def _run_episode_airsim_env(
     """
     Run one inference episode through `AirSimEnv.step()`.
 
-    This mirrors the trained control loop:
-
-    1. `env.reset()` restores the ship to the episode start pose
-    2. the policy predicts an action from the current observation
-    3. `env.step()` sends the action to UE5, waits for physics, reads back
-       the new state, and computes reward/termination/truncation
-    4. inference stops when the episode terminates or truncates
+    Mirrors the training loop: reset, then predict and step until the episode
+    terminates or truncates.
 
     Args:
         env: Active AirSim environment.
@@ -421,9 +408,8 @@ def run_inference(
                     steps_run, outcome, total_reward
                 )
 
-                # End-of-episode: draw the full trail persistently, then flush
-                # all 3D persistent lines and redraw non-persistently so the
-                # minimap keeps the full picture but the 3D world is clean.
+                # Draw the trail persistently, then flush and redraw it
+                # non-persistently: the minimap keeps it, the 3D world is clean.
                 if draw_ship_trail_in_ue5 and env.bridge.is_connected:
                     try:
                         _draw_ship_trail_in_ue5(env, traj_x, traj_y)

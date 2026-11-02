@@ -23,20 +23,14 @@ class MatplotlibRenderer:
     """
     Renders multi-ship episode data as a static matplotlib figure.
 
-    Produces a grid of subplots where each column corresponds to a ship and
-    each row visualizes a different aspect of the episode data:
-        - Row 0: Trajectory map
-        - Row 1: Cross-track error over time
-        - Row 2: Rudder actions over time
-        - Row 3: Under-keel clearance (UKC) over time
-
-    Episodes for a given ship are shown as color variations of a base ship color.
-    Aggregate (average) signals are overlaid where applicable.
+    Two figures with one column per ship: a trajectory map, and a metrics
+    figure with rows for cross-track error, rudder, UKC, surge velocity and
+    thrust. Episodes of a ship are shades of the ship's base color; averages
+    are overlaid where applicable.
 
     Attributes:
-        COMMON_TIME: Normalized time axis used for resampling signals to a
-            common length for averaging. Values in [0, 1] as expected by
-            resample_to_common_time.
+        COMMON_TIME: Normalized time axis in [0, 1] for resampling signals to
+            a common length before averaging.
     """
 
     COMMON_TIME = np.linspace(0.0, 1.0, 200)
@@ -52,26 +46,22 @@ class MatplotlibRenderer:
         show_plots: bool = True,
     ) -> None:
         """
-        Generates and saves a multi-ship trajectory visualization.
+        Generate and save the trajectory and metrics figures.
 
         Args:
             ship_data: Mapping of ship IDs to lists of `ShipEpisodeData`.
             metrics: Mapping of ship IDs to computed `ShipMetrics`.
             env: Environment instance (single-ship or multi-ship).
-            save_path: File path where the generated figure is saved.
+            save_path: Base path; figures are saved as `<base>_trajectory.<ext>`
+                and `<base>_metrics.<ext>`.
             fig_width_per_ship: Width (in inches) allocated per ship column.
-            show_plots: Whether to display the figure window.
-
-        Returns:
-            None.
+            show_plots: Whether to show the figures (blocking); otherwise
+                they are closed.
 
         Raises:
             ValueError: If fig_width_per_ship is not positive.
 
-        Notes:
-            - Ships without episode data are skipped.
-            - The figure is displayed and saved to disk.
-            - All matplotlib figures are closed after rendering to avoid leaks.
+        Ships without episode data are skipped.
         """
 
         if fig_width_per_ship <= 0:
@@ -196,19 +186,17 @@ class MatplotlibRenderer:
             plt.savefig(metrics_path, bbox_inches="tight", dpi=300)
             logger.info("Metrics figure saved to '%s'", metrics_path)
 
-            # If interactive display requested, block here so both windows stay open
             if show_plots:
                 plt.show()
         finally:
-            # If the user requested interactive display, leave windows open
-            # so both trajectory and metrics figures can be viewed simultaneously.
+            # With show_plots the windows stay open for viewing.
             if not show_plots:
                 plt.close("all")
 
     @classmethod
     def _get_ship_env(cls, env, ship_id: str):
         """
-        Retrieves the environment corresponding to a specific ship.
+        Return the environment of a specific ship.
 
         Args:
             env: Environment instance, possibly containing sub-environments.
@@ -230,11 +218,8 @@ class MatplotlibRenderer:
     @classmethod
     def create_hashed_area(cls, obstacles, overall) -> list[np.ndarray]:
         """
-        Creates a hatched polygon for the area between obstacles and the overall boundary.
-
-        Computes the set difference between the overall boundary polygon and the
-        navigable obstacle polygon, returning the exterior coordinates of each
-        resulting polygon (or sub-polygon for MultiPolygon results).
+        Return the area between the overall boundary and the navigable
+        polygon (set difference), for hatching.
 
         Args:
             obstacles: Sequence of (x, y) coordinates defining the navigable boundary.
@@ -242,11 +227,8 @@ class MatplotlibRenderer:
                 (e.g., Western Scheldt).
 
         Returns:
-            List of np.ndarray, each of shape (N, 2), representing the exterior
-            coordinate rings of the hatched difference area.
-
-        Notes:
-            - Returns an empty list if the difference geometry is empty.
+            Exterior rings of the difference area, each of shape (N, 2);
+            empty if the difference is empty.
         """
 
         obstacle_poly = Polygon(obstacles)
@@ -263,10 +245,8 @@ class MatplotlibRenderer:
     @classmethod
     def _plot_trajectory(cls, ax, episodes, colors, env, ship_id, metrics) -> None:
         """
-        Plots the trajectory map for a single ship.
-
-        Includes waterway geometry, checkpoints, episode paths, and start/end
-        markers.
+        Plot the trajectory map of one ship: waterway geometry, checkpoints,
+        episode paths and start/end markers.
 
         Args:
             ax: Matplotlib axis to draw on.
@@ -276,11 +256,8 @@ class MatplotlibRenderer:
             ship_id: Identifier of the ship.
             metrics: `ShipMetrics` instance for summary statistics.
 
-        Notes:
-            - Only episodes with at least two path points are plotted.
-            - env may be None for ships whose environment could not be resolved;
-              geometry overlays are skipped in that case.
-            - Collision visualization hooks are present but currently disabled.
+        Episodes with fewer than two path points are skipped; with env None the
+        geometry overlays are skipped.
         """
 
         if env is not None:
@@ -313,15 +290,12 @@ class MatplotlibRenderer:
                 label=f"Ep {i + 1} (R={ep.reward:.1f})",
             )
 
-            # Start marker (always blue dot).
+            # Start marker: blue dot.
             ax.scatter(*ep.path[0], c="blue", s=80, zorder=5)
 
-            # End marker. Distinguish actual collisions (env-reported via
-            # ep.collision) from non-collision terminations (clean
-            # truncation, max-steps, heading-change/cross-track failures
-            # that aren't tagged as collisions). Without this split, a
-            # "red dot near a bank" looks like a bank crash even when the
-            # episode ended for an unrelated reason.
+            # End marker: X for env-reported collisions (magenta for ship),
+            # a small gray dot for any other ending, so an ending near a bank
+            # is not mistaken for a bank crash.
             if ep.collision:
                 ctype = (ep.collision_type or "").lower()
                 if ctype == "bank":
@@ -331,7 +305,6 @@ class MatplotlibRenderer:
                 else:
                     end_color, end_marker, end_size = "red", "X", 130
             else:
-                # Non-collision endpoint: gray, smaller, less prominent.
                 end_color, end_marker, end_size = "dimgray", "o", 60
             ax.scatter(
                 *ep.path[-1], c=end_color, marker=end_marker,
@@ -360,10 +333,8 @@ class MatplotlibRenderer:
         ylim: tuple[float, float] | None = None,
     ) -> None:
         """
-        Plots a generic time-series signal across episodes.
-
-        Each episode is plotted individually, along with an averaged signal
-        computed after resampling to a common time axis.
+        Plot a time-series signal per episode, plus the average after
+        resampling to a common time axis.
 
         Args:
             ax: Matplotlib axis to draw on.
@@ -374,9 +345,8 @@ class MatplotlibRenderer:
             ylabel: Label for the y-axis.
             ylim: Optional tuple specifying y-axis limits.
 
-        Notes:
-            - Signals are normalized to episode progress [0, 100] on the x-axis.
-            - Average signal is computed only if at least one valid signal exists.
+        The x-axis is episode progress [0, 100] %; the average is drawn only if
+        at least one episode has data.
         """
 
         all_signals = []
@@ -393,7 +363,7 @@ class MatplotlibRenderer:
             # resample_to_common_time expects common_time in [0, 1]
             resampled = [resample_to_common_time(s, cls.COMMON_TIME) for s in all_signals]
             avg = np.mean(resampled, axis=0)
-            # Map COMMON_TIME [0, 1] -> [0, 100] to match normalized_time_axis output
+            # Scale COMMON_TIME to [0, 100] like normalized_time_axis
             t_common = cls.COMMON_TIME * 100.0
             ax.plot(t_common, avg, color="black", alpha=0.7, lw=1.5, label="Average")
 
@@ -410,10 +380,7 @@ class MatplotlibRenderer:
     @classmethod
     def _plot_rudder(cls, ax, episodes, colors, ship_id: str) -> None:
         """
-        Plots rudder actions over normalized episode time.
-
-        Rudder signals are resampled to a common time axis to allow comparison
-        across episodes.
+        Plot rudder actions per episode over normalized episode time.
 
         Args:
             ax: Matplotlib axis to draw on.
@@ -421,9 +388,7 @@ class MatplotlibRenderer:
             colors: List of colors corresponding to episodes.
             ship_id: Identifier of the ship.
 
-        Notes:
-            - Episodes without rudder data are skipped.
-            - No average curve is plotted for rudder actions.
+        Episodes without rudder data are skipped; no average is drawn.
         """
 
         for i, ep in enumerate(episodes):

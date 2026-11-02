@@ -1,54 +1,43 @@
 """
-UAntwerp surrogate dynamics -- ONE class for every surrogate scenario.
+UAntwerp surrogate dynamics: one class for every surrogate scenario.
 
-Replaces the previous per-scenario copies (UAntwerpSurrogateTripoliClean /
-Confined / Full and the old generic UAntwerpSurrogate). What a given instance
-does is fully determined by its checkpoint's scenario (fw.surrogate.schema):
+The checkpoint's scenario (fw.surrogate.schema) determines the inputs:
 
-    scenario       UKC (lookup)   rays   wind/current   (previous class)
-    open_water     -              -      -              ...TripoliClean
-    confined_ukc   yes            yes    -              ...TripoliConfined
-    full_env       yes            yes    yes            ...TripoliFull
+    scenario       UKC (lookup)   rays   wind/current
+    open_water     -              -      -
+    confined_ukc   yes            yes    -
+    full_env       yes            yes    yes
 
-Configuration (`ua_surrogate_config`, see config.py)::
+Configuration (ua_surrogate_config, see config.py)::
 
     {"preset": "tripoli_confined",          # required, see fw.surrogate.presets
      "checkpoint": "x.pth",                 # optional override of the preset's
      "lookup_csv": "x.csv"}                 # optional override (None = no lookup)
 
-Relative checkpoint paths are resolved against fw/checkpoints
-(presets.CHECKPOINT_DIR), relative lookup CSVs against fw/dynamics
-(presets.LOOKUP_CSV_DIR), independent of the working directory.
+Relative checkpoint paths resolve against fw/checkpoints, relative lookup CSVs
+against fw/dynamics, independent of the working directory. The checkpoint must
+match the preset (scenario and ship). The rudder angle is converted to
+rudder_action with the rudder scale stored in the checkpoint.
 
-The checkpoint must match the preset (scenario and ship); the rudder angle is
-converted to the model's rudder_action with the rudder scale stored in the
-checkpoint (the generator's RUDDER_MAX_DEG for that data).
+Hooks used by the model-comparison tests:
+  * get_env(pos, state=None): the only source of UKC/wind/current for the
+    input row; may be replaced by an instance attribute with that signature.
+  * _env: the ray caster (scenarios with rays); may be any PySimEnv-like object.
+  * ukc / get_ukc(pos): last UKC used.
+  * _compute_accelerations(state, rudder_angle, thrust).
 
-Hooks used by the model-comparison tests (kept on purpose):
-  * `get_env(pos, state=None)`: the ONLY source of UKC/wind/current for the
-    input row; may be replaced by an instance attribute (a function of
-    `(pos, state=None)`; its values are used as given).
-  * `_env`: the ray caster (only present for scenarios with rays); may be
-    replaced by another PySimEnv-like object.
-  * `ukc` / `get_ukc(pos)`: last UKC used.
-  * `_compute_accelerations(state, rudder_angle, thrust)`.
-
-Environment from the lookup CSV (`get_env`, nearest dataset row):
-  * UKC: for scenarios with a UKC input.
+Environment from the lookup CSV (get_env, nearest dataset row):
+  * UKC for scenarios with a UKC input.
   * Current (full_env): the row's earth-fixed current, as stored.
-  * Wind (full_env): the CSV stores the APPARENT wind of the ship that
-    recorded the row (FH WindState: relative to its bow, positive = from
-    starboard). It is turned into the true wind with that ship's heading,
-    surge and sway, and back into the apparent wind for THIS ship's heading,
-    surge and sway -- the same conversion as the wind test
-    (model_comparison_wind._true_wind_world / _apparent_wind_for).
-  Without a lookup (or no row found): default UKC, zero wind and current.
-  The rows come from episodes with random tide times and wind fields, so the
-  looked-up wind/current can jump when the nearest row changes.
-  The nearest row is used however far away it is (unchanged behaviour), but
-  a lookup farther than LOOKUP_WARN_DISTANCE_M is reported: a warning the
-  first time, and counted in `lookup_far_count` (largest distance seen in
-  `lookup_max_distance`), so gaps in the lookup's coverage become visible.
+  * Wind (full_env): the CSV stores the apparent wind of the recording ship
+    (FH WindState: relative to its bow, positive from starboard). It is
+    converted to true wind with that ship's heading, surge and sway, then back
+    to apparent wind for this ship (same conversion as model_comparison_wind).
+  Without a lookup or a row: default UKC, zero wind and current. Rows come
+  from episodes with random tides and wind fields, so values can jump when the
+  nearest row changes. The nearest row is always used; distances beyond
+  LOOKUP_WARN_DISTANCE_M are warned about once and then counted
+  (lookup_far_count, lookup_max_distance) to expose coverage gaps.
 """
 
 import logging
@@ -61,7 +50,7 @@ from fw.ships.ship_specs import ShipSpecifications
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.dynamics.wcu_lookup import WcuLookup, EnvironmentData
-# The single shared ray implementation, also used by the dataset generator.
+# Shared ray implementation, also used by the dataset generator.
 from fw.environments.ray_features import RAY_ANGLES_DEG, compute_ray_features, ray_world_angles
 from fw.surrogate.presets import CHECKPOINT_DIR, get_preset, resolve_checkpoint, resolve_lookup_csv
 from fw.surrogate.schema import SURROGATE_DT, TARGET_NAMES, scenario_for_raw_width
@@ -70,7 +59,9 @@ logger = logging.getLogger(__name__)
 
 
 def _finite_position(pos) -> bool:
-    """True if `pos` is an (x, y) pair of finite numbers (None counts as not finite)."""
+    """
+    True if `pos` is an (x, y) pair of finite numbers (None counts as not finite).
+    """
 
     try:
         return bool(np.all(np.isfinite(np.asarray(pos[:2], dtype=float))))
@@ -80,9 +71,8 @@ def _finite_position(pos) -> bool:
 # Keys accepted in ua_surrogate_config.
 CONFIG_KEYS = ("preset", "checkpoint", "lookup_csv")
 
-# A lookup row farther away than this [m] is reported (see the module
-# docstring). The lookups are 5 m grids of the positions the dataset visited,
-# so inside the covered water the nearest row is a few metres away.
+# Lookup rows farther than this [m] are reported. Lookups are 5 m grids of the
+# dataset positions, so inside covered water the nearest row is a few metres away.
 LOOKUP_WARN_DISTANCE_M = 50.0
 
 _RAY_IDX_BOW = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=float), 0.0))[0])
@@ -90,8 +80,9 @@ _RAY_IDX_STBD = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=f
 
 
 def _bow_and_starboard(heading_rad: float) -> Tuple[np.ndarray, np.ndarray]:
-    """World-frame unit vectors of the bow and starboard directions, from the
-    shared ray module (so no heading convention is assumed here)."""
+    """
+    World-frame unit vectors of bow and starboard (heading convention from the ray module).
+    """
 
     angles = ray_world_angles(float(heading_rad))
     bow, stbd = angles[_RAY_IDX_BOW], angles[_RAY_IDX_STBD]
@@ -104,10 +95,9 @@ def apparent_wind_for_state(app_speed: float, app_dir: float,
     """
     Re-express an apparent wind measured on one ship for another ship.
 
-    Wind convention (FH WindState, as stored in the dataset): direction the
-    wind comes FROM, relative to the bow, positive = from starboard; as
-    (ahead, starboard) components apparent = true + (u, -v), because sway v
-    is positive to PORT (fw.ships.vessel_state, the dataset convention).
+    Wind convention (FH WindState, as in the dataset): direction the wind comes
+    from, relative to the bow, positive from starboard. In (ahead, starboard)
+    components apparent = true + (u, -v), since sway v is positive to port.
 
     Args:
         app_speed, app_dir: Apparent wind [m/s, rad] on the recording ship.
@@ -131,15 +121,10 @@ def apparent_wind_for_state(app_speed: float, app_dir: float,
 
 class UAntwerpSurrogate(DynamicsBase):
     """
-    Surrogate-model-based 3-DOF vessel dynamics.
-
-    Uses a trained neural-network surrogate (fw.surrogate.inference_surrogate)
-    to predict body-frame surge, sway and yaw accelerations from the vessel
-    state, actuator commands and -- depending on the checkpoint's scenario --
-    under-keel clearance, ray-cast proximity features, wind and current.
-
-    The surrogate predicts velocity changes over `SURROGATE_DT`, which is
-    therefore the only time step `step()` accepts.
+    3-DOF dynamics from a trained neural-network surrogate, predicting body-frame
+    accelerations from state, actuator commands and, depending on the scenario,
+    UKC, ray features, wind and current. The surrogate predicts velocity changes
+    over SURROGATE_DT, the only time step step() accepts.
 
     Attributes:
         preset: fw.surrogate.presets.SurrogatePreset in use.
@@ -149,8 +134,8 @@ class UAntwerpSurrogate(DynamicsBase):
         wcu_lookup: WcuLookup for the UKC, or None.
         default_ukc: UKC [m] used without (a hit in) the lookup.
         ukc: Last UKC used [m].
-        lookup_far_count: Number of lookups whose nearest row was farther
-            than LOOKUP_WARN_DISTANCE_M (the row is still used).
+        lookup_far_count: Lookups whose nearest row was farther than
+            LOOKUP_WARN_DISTANCE_M (the row is still used).
         lookup_max_distance: Largest lookup distance seen so far [m].
         _env: Ray caster (scenarios with rays only); created on first use if
             none was given.
@@ -162,21 +147,20 @@ class UAntwerpSurrogate(DynamicsBase):
                  ship_model: Optional[ShipModel] = None,
                  ray_caster=None):
         """
-        Initialize the surrogate dynamics model.
-
         Args:
             ship_spec:           Vessel specifications.
             ua_surrogate_config: {"preset": ..., optional "checkpoint", "lookup_csv"}.
             ship_model:          Ship the caller simulates; if given, it must be
                                  the preset's ship.
-            ray_caster:          Object with `ray_cast_distances_batch` /
-                                 `ray_cast_distance` (normally a PySimEnv) to
-                                 cast the rays against. None = a PySimEnv is
-                                 created on first use (scenarios with rays only).
+            ray_caster:          Object with ray_cast_distances_batch / ray_cast_distance
+                                 (normally a PySimEnv). None: a PySimEnv is created
+                                 on first use (scenarios with rays only).
 
         Raises:
-            ValueError: On a missing/unknown preset, unknown config keys, or a
-                checkpoint / ship that does not match the preset.
+            ValueError: On a missing/unknown preset, unknown config keys, a
+                checkpoint/ship that does not match the preset, or a lookup CSV
+                with the wrong column count.
+            FileNotFoundError: If the checkpoint does not exist.
         """
 
         config = dict(ua_surrogate_config or {})
@@ -193,7 +177,7 @@ class UAntwerpSurrogate(DynamicsBase):
             raise ValueError(f"UAntwerp surrogate preset '{self.preset.name}' is for "
                              f"{self.preset.ship_model.name}, but ship_model={ship_model.name}.")
 
-        # Imported here: torch is only needed once a surrogate is actually used.
+        # Lazy import: torch is only needed once a surrogate is used.
         from fw.surrogate.inference_surrogate import SurrogatePredictor
 
         checkpoint = resolve_checkpoint(config.get("checkpoint", self.preset.checkpoint))
@@ -219,9 +203,8 @@ class UAntwerpSurrogate(DynamicsBase):
                 np.degrees(ship_spec.max_rudder_angle), self.rudder_max_deg, checkpoint,
             )
 
-        # UKC (and, for full_env, wind/current): nearest-neighbor lookup in
-        # the dataset CSV, only for scenarios with a UKC input. The CSV has
-        # the scenario's raw column layout, so the positions come from the schema.
+        # UKC (and for full_env wind/current): nearest-neighbour lookup in a CSV
+        # with the scenario's raw column layout.
         self.default_ukc = float(self.preset.default_ukc)
         self.ukc = self.default_ukc
         self.lookup_far_count = 0
@@ -232,10 +215,9 @@ class UAntwerpSurrogate(DynamicsBase):
             if csv is not None and csv.exists():
                 self.wcu_lookup = self._make_lookup(csv)
             else:
-                # Deliberately a warning, not an error (the lookup CSVs are large
-                # and often left out). For full_env it means NO wind and current
-                # at all: this model has its own (models_own_wind_current), so
-                # ShipSimulator does not fall back to EnvironmentModel either.
+                # Deliberately a warning (lookup CSVs are large and often left out).
+                # For full_env this means no wind/current at all: ShipSimulator does
+                # not fall back to EnvironmentModel for this model.
                 logger.warning(
                     "UAntwerp surrogate '%s': %s; falling back to default UKC value of %s%s",
                     self.preset.name,
@@ -251,22 +233,21 @@ class UAntwerpSurrogate(DynamicsBase):
     @property
     def models_own_wind_current(self) -> bool:
         """
-        True only for scenarios with wind/current inputs (full_env): those
-        take wind and current from the lookup themselves, so ShipSimulator
-        must not add EnvironmentModel's accelerations. open_water and
-        confined_ukc have no wind/current inputs and get EnvironmentModel's.
+        True only for full_env (wind/current from the lookup), so ShipSimulator
+        adds EnvironmentModel accelerations for open_water and confined_ukc only.
         """
 
         return bool(self.scenario.includes_wind_current)
 
     def _make_lookup(self, csv) -> WcuLookup:
-        """WcuLookup on `csv`, reading only the columns this scenario needs."""
+        """
+        WcuLookup on `csv`, reading only the columns this scenario needs.
+        """
 
         sc = self.scenario
-        # Lookup CSVs carry no identity, so their width is the only check that
-        # they have this scenario's layout. Without it a 37-column confined_ukc
-        # CSV is accepted by a full_env preset (needs >= 11 columns) and its
-        # rudder/thrust/ray columns are read as wind and current.
+        # Lookup CSVs carry no identity, so the width is the only layout check
+        # (otherwise e.g. a confined_ukc CSV's rudder/ray columns would be read
+        # as wind and current by a full_env preset).
         expected = sc.raw_input_dim + len(TARGET_NAMES) + 1     # raw row + targets + episode_id
         n_cols = len(pd.read_csv(csv, header=None, nrows=1).columns)
         if n_cols != expected:
@@ -287,7 +268,9 @@ class UAntwerpSurrogate(DynamicsBase):
         return WcuLookup(str(csv), **cols)
 
     def _ray_caster(self):
-        """The ray caster, creating the default PySimEnv on first use."""
+        """
+        The ray caster, creating the default PySimEnv on first use.
+        """
 
         if self._env is None:
             # Imported locally to avoid a circular import (py_sim_env imports this module).
@@ -297,17 +280,12 @@ class UAntwerpSurrogate(DynamicsBase):
 
     def get_ukc(self, pos: Optional[np.ndarray]):
         """
-        Under-keel clearance at `pos`.
-
-        With a lookup and a position, the nearest lookup row at `pos` is used
-        (no side effects on the state used by the model). Without a position
-        or without a lookup, the UKC of the last model input is returned
-        (the default UKC when there is no lookup). Previously `pos` was
-        ignored, so the value lagged one sub-step behind and, right after a
-        reset, still belonged to the previous episode.
+        Under-keel clearance at `pos`: the nearest lookup row (no side effects),
+        or the UKC of the last model input without a position or a lookup
+        (default UKC without a lookup; also for a non-finite position).
 
         Args:
-            pos: World-frame position `[x, y]` in metres, or None.
+            pos: World-frame position [x, y] in metres, or None.
 
         Returns:
             Under-keel clearance in metres.
@@ -316,34 +294,27 @@ class UAntwerpSurrogate(DynamicsBase):
         if pos is None or self.wcu_lookup is None:
             return self.ukc
         if not _finite_position(pos):
-            # A NaN position (NaN dynamics) must not raise here: scipy's KD-tree
-            # refuses non-finite queries; _compute_accelerations raises the
-            # clear FloatingPointError instead.
+            # Do not raise here (the KD-tree refuses NaN); _compute_accelerations
+            # raises a clear FloatingPointError instead.
             return self.default_ukc
         ukc = self.wcu_lookup.get_ukc(float(pos[0]), float(pos[1]))
         return self.default_ukc if ukc is None else float(ukc)
 
     def get_env(self, pos: Optional[np.ndarray], state: Optional[VesselState] = None) -> EnvironmentData:
         """
-        Environmental conditions at `pos` from the nearest lookup row (see
-        the module docstring); default UKC and zero wind/current without a
-        lookup or a row.
+        Environmental conditions at `pos` from the nearest lookup row (see module
+        docstring); default UKC and zero wind/current without a lookup or row.
 
         Args:
-            pos: World-frame position `[x, y]` in metres.
-            state: State of THIS ship (heading, surge, sway), needed to give
-                the full_env wind as this ship's apparent wind. None: the
-                wind fields are None (only UKC/current wanted, e.g. by
-                model_comparison_wind.UkcSource).
-
-        Returns:
-            Environmental conditions at the requested position.
+            pos: World-frame position [x, y] in metres.
+            state: This ship's state, needed to express the full_env wind as its
+                apparent wind. None: wind fields are None (only UKC/current
+                wanted, e.g. model_comparison_wind.UkcSource).
         """
 
         calm = 0.0 if state is not None or not self.scenario.includes_wind_current else None
-        # A non-finite position (NaN dynamics) gets the no-row defaults: the
-        # KD-tree query would raise a cryptic error; the NaN x/y then reach
-        # _compute_accelerations, which raises a clear FloatingPointError.
+        # Non-finite position: no-row defaults instead of a cryptic KD-tree error;
+        # _compute_accelerations then raises a clear FloatingPointError.
         sample = (None if self.wcu_lookup is None or not _finite_position(pos)
                   else self.wcu_lookup.get_sample(pos[0], pos[1]))
         if sample is None or sample.env.ukc is None:
@@ -369,9 +340,11 @@ class UAntwerpSurrogate(DynamicsBase):
                                current_direction=sample.env.current_direction)
 
     def _note_lookup_distance(self, pos, distance: float) -> None:
-        """Track the lookup distance; warn the first time it exceeds LOOKUP_WARN_DISTANCE_M."""
+        """
+        Track the lookup distance; warn the first time it exceeds LOOKUP_WARN_DISTANCE_M.
+        """
 
-        if distance is None:          # a lookup without distance information: nothing to report
+        if distance is None:          # lookup without distance information
             return
         distance = float(distance)
         if distance > self.lookup_max_distance:
@@ -396,23 +369,21 @@ class UAntwerpSurrogate(DynamicsBase):
         enable_rudder_angle_scaling: Optional[bool] = False,
     ) -> Tuple[float, float, float]:
         """
-        Advance the vessel dynamics by one surrogate time step.
+        Advance the dynamics by one surrogate time step.
 
         Args:
             state:                       Current vessel state.
             rudder_angle:                Rudder command [rad]; positive = the ship turns to PORT
                                          (framework convention, see DynamicsBase).
-            thrust:                      Normalized thrust command in `[-1, 1]`.
+            thrust:                      Normalized thrust command in [-1, 1].
             dt:                          Integration time step [s]; must equal SURROGATE_DT.
-            enable_rudder_angle_scaling: Passed to the base implementation for interface
-                                         compatibility. Ignored by this class.
+            enable_rudder_angle_scaling: Interface compatibility only; ignored.
 
         Returns:
-            Tuple `(u, v, r)` containing the updated body-frame velocities.
+            Updated body-frame velocities (u, v, r).
 
         Raises:
-            ValueError: If `dt` differs from `SURROGATE_DT` (an explicit check, not
-                an assert, so it also holds under `python -O`).
+            ValueError: If dt differs from SURROGATE_DT.
         """
 
         if not np.isclose(dt, SURROGATE_DT):
@@ -425,23 +396,18 @@ class UAntwerpSurrogate(DynamicsBase):
 
     def _build_input_vector(self, state: VesselState, rudder_angle: float, thrust: float) -> np.ndarray:
         """
-        Assemble the RAW input row in the checkpoint scenario's column order
-        (schema.<SCENARIO>.raw_columns), exactly as the dataset generator
-        stores it. Selection, encoding and normalization happen inside
-        SurrogatePredictor; nothing is pre-processed here.
-
-        UKC/wind/current come from `get_env` (only called for scenarios that
-        use them), rays from `compute_ray_features` (only for scenarios with
-        rays). x, y are part of every raw row but never a model input.
+        Assemble the raw input row in the scenario's column order, exactly as
+        the dataset generator stores it (selection, encoding and normalization
+        happen in SurrogatePredictor). UKC/wind/current come from get_env, rays
+        from compute_ray_features, each only if the scenario uses them.
 
         Returns:
-            float32 array of shape `(scenario.raw_input_dim,)`.
+            float32 array of shape (scenario.raw_input_dim,).
         """
 
         values = {
             # x, y are never model inputs; 0.0 placeholder if unknown (only
-            # possible for scenarios that do not need the position, see
-            # _compute_accelerations).
+            # allowed for scenarios that do not need the position).
             "x": state.x if state.x is not None else 0.0,
             "y": state.y if state.y is not None else 0.0,
             "heading": state.heading,
@@ -466,8 +432,7 @@ class UAntwerpSurrogate(DynamicsBase):
                     float(state.heading),
                 )
             else:
-                # NaN pose: no ray casting (geometry queries on NaN are not
-                # safe); _compute_accelerations then raises FloatingPointError.
+                # NaN pose: skip ray casting; _compute_accelerations raises.
                 values["rays"] = np.full(len(RAY_ANGLES_DEG), np.nan, dtype=np.float32)
 
         return self.scenario.build_raw_row(values)
@@ -479,24 +444,21 @@ class UAntwerpSurrogate(DynamicsBase):
         thrust: float,
     ) -> Tuple[float, float, float]:
         """
-        Compute body-frame accelerations using the trained surrogate.
-
-        The surrogate predicts body-frame velocity changes over one training
-        time step (`SURROGATE_DT`), converted to accelerations by dividing by
-        that interval.
+        Body-frame accelerations: the surrogate's velocity changes over
+        SURROGATE_DT divided by SURROGATE_DT.
 
         Args:
             state:        Current vessel state.
-            rudder_angle: Rudder command [rad]; positive = the ship turns to PORT
-                (framework convention, see DynamicsBase).
-            thrust:       Normalized thrust command in `[-1, 1]`.
+            rudder_angle: Rudder command [rad]; positive turns the ship to port.
+            thrust:       Normalized thrust command in [-1, 1].
 
         Returns:
-            Tuple `(du, dv, dr)` containing the predicted body-frame accelerations.
+            Predicted accelerations (du, dv, dr).
 
         Raises:
-            ValueError: If `state.heading` is None, or `state.x`/`state.y` is
-                None for a scenario that needs the position.
+            ValueError: If heading is None, or x/y is None for a scenario that
+                needs the position.
+            FloatingPointError: If any input is non-finite.
         """
 
         required = [("heading", state.heading)]
@@ -510,11 +472,7 @@ class UAntwerpSurrogate(DynamicsBase):
 
         x_raw = self._build_input_vector(state, rudder_angle, thrust)
         if not np.all(np.isfinite(x_raw)):
-            # Fail fast: a NaN/inf input gives a NaN prediction that np.clip
-            # keeps, and it would only surface later as a NaN observation.
-            # The lookup and ray casting skip a non-finite position (see
-            # get_env / _build_input_vector), so this clear error is the one
-            # raised, not scipy's KD-tree "'x' must be finite".
+            # Fail fast: a NaN input would otherwise surface later as a NaN observation.
             bad = [name for name, val in zip(self.scenario.raw_columns, x_raw) if not np.isfinite(val)]
             raise FloatingPointError(
                 f"UAntwerpSurrogate ({self.scenario.name}): non-finite input(s) {bad} "

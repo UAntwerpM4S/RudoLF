@@ -1,47 +1,29 @@
 """
 Build a small UKC lookup CSV from a (large) confined_ukc dataset CSV.
 
-The UAntwerp surrogate (fw.dynamics.uantwerp_surrogate) finds the UKC at a
-position with a nearest-neighbour lookup (fw.dynamics.wcu_lookup.WcuLookup)
-over a dataset CSV. The full dataset CSV has one row per simulation step
-(millions of rows, 37 columns), but WcuLookup only uses x, y and UKC. This
-tool bins the positions on a square grid and keeps one row per occupied
-cell:
+The UAntwerp surrogate (fw.dynamics.uantwerp_surrogate) looks up the UKC at a
+position with a nearest-neighbour search (fw.dynamics.wcu_lookup.WcuLookup).
+The dataset CSV has one row per simulation step (millions of rows), but
+WcuLookup only needs a few columns. This tool bins positions on a square grid
+and keeps one row per occupied cell, in the same column layout as the dataset
+CSV (raw row, 3 targets, episode_id; other columns 0), so it is a drop-in
+replacement for the preset's lookup_csv.
 
-    x, y = mean position of the rows in the cell (so the point stays where
-           the ship actually was, i.e. in the water)
-    UKC  = median UKC of the rows in the cell
+- confined_ukc: UKC comes from the static tide and depends on position, so a
+  cell stores its mean x, y (stays in the water) and median UKC.
+- full_env: tide, wind and current vary in time, so a median would mix moments
+  (e.g. flood and ebb cancelling out). Each cell keeps one real row (closest to
+  the cell's mean position), so UKC, wind, current and the recording ship's
+  heading/surge/sway (needed to convert the recorded apparent wind) belong to
+  the same moment. Only ENV_LOOKUP_COLUMNS are kept.
 
-The output has the SAME column layout as the dataset CSV (raw row, 3
-targets, episode_id; all other columns 0), so it is a drop-in replacement
-for the preset's lookup_csv: no change in WcuLookup or UAntwerpSurrogate.
+An --out name ending in .gz gives a gzip file that WcuLookup reads as is (a 5 m
+grid of the river is tens of MB as plain CSV, a few MB compressed; GitHub
+refuses files over 100 MB).
 
-confined_ukc data: the UKC comes from the static tide, so it depends on
-position (plus a small speed/squat part that no position lookup can
-represent anyway); a cell's median UKC is the best estimate.
-
-full_env data: the tide, wind and current change with time, so a per-cell
-median would mix different moments (e.g. flood and ebb current cancelling
-out). Instead each cell keeps ONE REAL ROW, unchanged: the row closest to the
-cell's mean position. That row's UKC, wind, current AND the recording ship's
-heading/surge/sway (which the UAntwerp surrogate needs to turn the recorded
-apparent wind into this ship's apparent wind) all belong to the same moment.
-This is what a lookup in the full CSV does too -- the nearest row is one
-recorded moment, at whatever tide that episode had -- but with ~1 row per
-cell instead of millions. Only the columns the lookup reads are kept
-(ENV_LOOKUP_COLUMNS); the others are written as 0.
-
-Output size: give --out a name ending in .gz (e.g. env_lookup_tripoli_full.csv.gz)
-and the file is gzip-compressed; WcuLookup (pandas) reads it as is. A 5 m grid
-of the whole river has several hundred thousand cells, i.e. tens of MB as
-plain CSV but a few MB compressed (GitHub refuses files over 100 MB).
-
-Accuracy report (before writing): whole episodes are held out (default
-10 %), the lookups are built from the other episodes, and the UKC they
-return at the held-out positions is compared with the UKC FH recorded
-there -- for the full nearest-neighbour lookup (what the full CSV gives
-today) and for each grid size. The within-cell spread shows how much of the
-UKC is NOT explained by position.
+Before writing, whole episodes (default 10 %) are held out and the UKC at their
+positions is compared with the full nearest-neighbour lookup and each grid size.
+The within-cell spread shows how much UKC is not explained by position.
 
 Usage (from src):
 
@@ -112,8 +94,7 @@ def load_columns(csv_file: Path, scenario: ScenarioSchema, n_cols: int,
         df = pd.read_csv(csv_file, engine="pyarrow", **kwargs)
     except (ImportError, ValueError):
         df = pd.read_csv(csv_file, dtype=np.float64, **kwargs)
-    # Both engines return the selected columns in file order, but the pyarrow
-    # engine may renumber them 0..n-1: label them by their file position again.
+    # pyarrow may renumber the selected columns 0..n-1: relabel by file position.
     df.columns = usecols
     data = {k: df[c].to_numpy(dtype=np.float64) for k, c in cols.items()}
     data["row"] = np.arange(len(df), dtype=np.int64)     # 0-based row index in the CSV
@@ -175,7 +156,9 @@ def grid_representative(x: np.ndarray, y: np.ndarray, cell: float) -> np.ndarray
 
 
 def read_rows(csv_file: Path, rows: np.ndarray, chunk_rows: int = 1_000_000) -> np.ndarray:
-    """The CSV rows with the given (sorted, 0-based) indices, all columns, read in chunks."""
+    """
+    The CSV rows with the given (sorted, 0-based) indices, all columns, read in chunks.
+    """
 
     parts, start = [], 0
     for chunk in pd.read_csv(csv_file, header=None, chunksize=chunk_rows, dtype=np.float64):
@@ -191,7 +174,9 @@ def read_rows(csv_file: Path, rows: np.ndarray, chunk_rows: int = 1_000_000) -> 
 
 
 def error_stats(err: np.ndarray) -> Dict[str, float]:
-    """MAE, RMSE, 95th/99th percentile and maximum of |err| [m]."""
+    """
+    MAE, RMSE, 95th/99th percentile and maximum of |err| [m].
+    """
 
     a = np.abs(err)
     return {"mae": float(a.mean()), "rmse": float(np.sqrt(np.mean(err ** 2))),
@@ -199,7 +184,9 @@ def error_stats(err: np.ndarray) -> Dict[str, float]:
 
 
 def _fmt(stats: Dict[str, float]) -> str:
-    """One table row of error_stats [m]."""
+    """
+    One table row of error_stats [m].
+    """
 
     return "  ".join(f"{stats[k]:8.3f}" for k in ("mae", "rmse", "p95", "p99", "max"))
 
@@ -207,8 +194,8 @@ def _fmt(stats: Dict[str, float]) -> str:
 def evaluate(data: Dict[str, np.ndarray], cells: Sequence[float], holdout_frac: float, seed: int,
              representative: bool = False) -> None:
     """
-    Log the UKC error at held-out episodes' positions of the full
-    nearest-neighbour lookup and of the grid lookup for each cell size.
+    Log the UKC error at held-out episodes' positions for the full
+    nearest-neighbour lookup and the grid lookup per cell size.
     """
 
     episodes = np.unique(data["episode_id"])
@@ -253,9 +240,8 @@ def evaluate(data: Dict[str, np.ndarray], cells: Sequence[float], holdout_frac: 
 
 def _savetxt(out: Path, arr: np.ndarray, fmt) -> None:
     """
-    np.savetxt to `out`; gzip-compressed if the name ends in .gz, with a fixed
-    header timestamp (mtime 0, no file name), so the same content always gives
-    the same bytes (no spurious changes in version control).
+    np.savetxt to `out`, gzip-compressed if the name ends in .gz. The gzip
+    header is fixed (mtime 0, no name), so equal content gives equal bytes.
     """
 
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -267,7 +253,9 @@ def _savetxt(out: Path, arr: np.ndarray, fmt) -> None:
 
 
 def _stem(csv_file: Path) -> str:
-    """File name without .csv / .csv.gz (for the default output name)."""
+    """
+    File name without .csv / .csv.gz (for the default output name).
+    """
 
     name = csv_file.name
     for ext in (".csv.gz", ".gz", ".csv"):
@@ -277,7 +265,9 @@ def _stem(csv_file: Path) -> str:
 
 
 def write_lookup(out: Path, scenario: ScenarioSchema, n_cols: int, cx, cy, cukc) -> None:
-    """Write the grid points in the dataset CSV layout (other columns 0, episode_id -1)."""
+    """
+    Write the grid points in the dataset CSV layout (other columns 0, episode_id -1).
+    """
 
     arr = np.zeros((len(cx), n_cols), dtype=np.float64)
     arr[:, scenario.col("x")] = cx
@@ -291,7 +281,9 @@ def write_lookup(out: Path, scenario: ScenarioSchema, n_cols: int, cx, cy, cukc)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Command-line entry point; returns the exit code."""
+    """
+    Command-line entry point; returns the exit code.
+    """
 
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -316,8 +308,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     representative = scenario.includes_wind_current
 
     t0 = time.perf_counter()
-    # full_env: the representative rows must also have finite wind/current/heading/speeds, or
-    # WcuLookup would drop them and leave their cell without a lookup row.
+    # full_env: representative rows need finite wind/current/heading/speeds, or
+    # WcuLookup drops them and their cell has no lookup row.
     data = load_columns(args.csv, scenario, n_cols, ENV_LOOKUP_COLUMNS if representative else ())
     logger.info("Read %d rows (%d episodes) of %s from '%s' in %.1f s.", len(data["x"]),
                 len(np.unique(data["episode_id"])), scenario.name, args.csv, time.perf_counter() - t0)

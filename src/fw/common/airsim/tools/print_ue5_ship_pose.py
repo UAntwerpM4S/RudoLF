@@ -1,14 +1,9 @@
 """
 Print the current UE5 AirSim ship position and heading.
 
-Run from the repository root:
+Usage (from the repository root):
 
-    python print_ue5_ship_pose.py
-
-Optional overrides:
-
-    python print_ue5_ship_pose.py --ip 127.0.0.1 --port 41451
-    python print_ue5_ship_pose.py --json
+    python src/fw/common/airsim/tools/print_ue5_ship_pose.py [--ip 127.0.0.1] [--port 41451] [--json]
 """
 
 from __future__ import annotations
@@ -32,7 +27,7 @@ from fw.common.airsim.tools.angles import yaw_from_quaternion
 
 def _build_parser() -> argparse.ArgumentParser:
     """
-    Create the CLI parser for the pose reader.
+    Create the CLI parser.
     """
 
     parser = argparse.ArgumentParser(
@@ -55,7 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     """
-    Connect to AirSim, read the live pose, and print it.
+    Connect to AirSim, read the live pose and print it. Returns the exit code.
     """
 
     args = _build_parser().parse_args()

@@ -57,7 +57,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     """
-    Connect to AirSim, apply calibration drift correction, and print the pose.
+    Connect to AirSim, apply the calibration drift correction and print the pose.
+
+    Returns:
+        int: Exit code (1 if AirSim is unreachable).
     """
 
     args = _build_parser().parse_args()

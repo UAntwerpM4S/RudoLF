@@ -19,7 +19,9 @@ from fw.surrogate.validation import plot_environment_coverage as M
 
 
 def test_true_wind_matches_the_framework_conversion():
-    """Apparent wind made with apparent_wind_for_state turns back into the true wind it came from."""
+    """
+    Apparent wind made with apparent_wind_for_state turns back into the true wind it came from.
+    """
 
     rng = np.random.default_rng(0)
     for _ in range(200):
@@ -35,7 +37,9 @@ def test_true_wind_matches_the_framework_conversion():
 
 
 def test_direction_conventions():
-    """Compass bearings (N = 0, clockwise) and current off the bow (0 = following, 90 = to starboard)."""
+    """
+    Compass bearings (N = 0, clockwise) and current off the bow (0 = following, 90 = to starboard).
+    """
 
     assert M.compass_from_math(np.radians([0.0, 90.0, 180.0, -90.0])).tolist() == \
         pytest.approx([90.0, 0.0, 270.0, 180.0])
@@ -45,7 +49,9 @@ def test_direction_conventions():
 
 
 def test_scalar_statistics():
-    """Percentiles within one bin, exact moments, min / max and shares below thresholds."""
+    """
+    Percentiles within one bin, exact moments, min / max and shares below thresholds.
+    """
 
     rng = np.random.default_rng(1)
     values = rng.gamma(2.0, 2.0, 50_000)
@@ -62,7 +68,9 @@ def test_scalar_statistics():
 
 
 def test_direction_sectors_are_centred():
-    """Rose sectors are centred on the compass points: 355 deg and 5 deg both count as N."""
+    """
+    Rose sectors are centred on the compass points: 355 deg and 5 deg both count as N.
+    """
 
     d = M.Direction("d", "test")
     d.add(np.array([355.0, 5.0, 89.0, -90.0]))              # -90 wraps to 270 (W)
@@ -73,7 +81,9 @@ def test_direction_sectors_are_centred():
 
 
 def _write_full_csv(path, rng, n_episodes=40, rows=50):
-    """Shuffled full_env CSV: per episode one true wind (from compass 270 +- 20) and current (toward East)."""
+    """
+    Shuffled full_env CSV: per episode one true wind (from compass 270 +- 20) and current (toward East).
+    """
 
     sc = get_scenario("full_env")
     data = np.zeros((n_episodes * rows, sc.raw_input_dim + 4))
@@ -94,13 +104,18 @@ def _write_full_csv(path, rng, n_episodes=40, rows=50):
 
 
 def _read(path):
-    """CSV file as a list of dicts."""
+    """
+    CSV file as a list of dicts.
+    """
+
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 
 def test_full_dataset_end_to_end(tmp_path):
-    """Tables and figures for a full CSV; the wind rose and current direction land where they should."""
+    """
+    Tables and figures for a full CSV; the wind rose and current direction land where they should.
+    """
 
     pytest.importorskip("matplotlib")
     path = tmp_path / "full.csv"
@@ -121,7 +136,9 @@ def test_full_dataset_end_to_end(tmp_path):
 
 
 def test_confined_gz_and_open_water(tmp_path):
-    """A confined .csv.gz gives the UKC only; open-water data is refused."""
+    """
+    A confined .csv.gz gives the UKC only; open-water data is refused.
+    """
 
     sc = get_scenario("confined_ukc")
     data = np.zeros((500, sc.raw_input_dim + 4))
@@ -140,7 +157,9 @@ def test_confined_gz_and_open_water(tmp_path):
 
 
 def test_compare_slide_from_two_coverage_folders(tmp_path):
-    """compare_environment_coverage draws one slide from the tables of two coverage folders."""
+    """
+    compare_environment_coverage draws one slide from the tables of two coverage folders.
+    """
 
     pytest.importorskip("matplotlib")
     from fw.surrogate.validation import compare_environment_coverage as C

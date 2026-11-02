@@ -1,12 +1,7 @@
 """
-plot_training_reward_multi.py
------------------------------
-Plots average reward vs. training iteration per policy from a
-multi_policy_training_metrics.csv file.
-
-  - One line (rolling mean) per policy, each with its own color.
-  - Faint raw reward and ±1 σ band per policy.
-  - Policies whose reward is NaN for every row are skipped.
+Plot training reward vs. iteration per policy from a
+multi_policy_training_metrics.csv file: per policy a rolling mean, a faint
+raw line and a +/-1 std band. Policies with only NaN rewards are skipped.
 
 Usage
 -----
@@ -48,22 +43,11 @@ FIG_W, FIG_H = 9, 5
 
 def load_data(csv_path: str) -> pd.DataFrame:
     """
-    Load and normalize training metrics from a CSV file.
-
-    The function ensures required columns are present, normalizes column names
-    to lowercase, and constructs a consistent 'iteration' column if missing.
-
-    Args:
-        csv_path (str): Path to the input CSV file containing training metrics.
-
-    Returns:
-        pd.DataFrame: Normalized dataframe containing at least:
-            - policy (str)
-            - reward (float)
-            - iteration (int)
+    Load the CSV with lowercased columns and an 'iteration' column (renamed
+    from 'step', or a per-policy row index).
 
     Raises:
-        ValueError: If required columns ('policy', 'reward') are missing.
+        ValueError: If 'policy' or 'reward' is missing.
     """
 
     df = pd.read_csv(csv_path)
@@ -84,20 +68,7 @@ def load_data(csv_path: str) -> pd.DataFrame:
 
 def rolling_stats(series: pd.Series, window: int):
     """
-    Compute rolling mean and rolling standard deviation bounds.
-
-    This function computes a rolling mean over the input series and derives
-    upper and lower confidence bands using ±1 standard deviation.
-
-    Args:
-        series (pd.Series): Input numeric series (e.g., rewards).
-        window (int): Rolling window size.
-
-    Returns:
-        tuple[pd.Series, pd.Series, pd.Series]:
-            - rolling mean
-            - lower bound (mean - std)
-            - upper bound (mean + std)
+    Return the rolling mean and the mean -/+ 1 std bounds.
     """
 
     rm   = series.rolling(window, min_periods=1).mean()
@@ -107,25 +78,10 @@ def rolling_stats(series: pd.Series, window: int):
 
 def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
     """
-    Plot per-policy training reward curves with rolling statistics.
-
-    For each policy in the dataframe, this function plots:
-        - Raw reward trajectory (low opacity)
-        - Rolling mean reward
-        - ±1 standard deviation band around the rolling mean
-
-    Policies with entirely NaN rewards are skipped.
-
-    Args:
-        df (pd.DataFrame): Input dataframe containing columns:
-            - policy
-            - reward
-            - iteration
-        window (int): Rolling window size for smoothing.
-        out_path (str): Output file path for saving the figure.
+    Plot the per-policy curves, save to out_path (300 dpi) and show them.
 
     Raises:
-        RuntimeError: If no valid (non-NaN) policies are available to plot.
+        RuntimeError: If no policy has a non-NaN reward.
     """
 
     fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
@@ -190,20 +146,7 @@ def plot_reward(df: pd.DataFrame, window: int, out_path: str) -> None:
 
 def main() -> None:
     """
-    CLI entry point for plotting multi-policy training reward curves.
-
-    This function:
-        1. Parses command-line arguments
-        2. Loads and normalizes the CSV dataset
-        3. Generates and saves a reward curve visualization
-
-    CLI Arguments:
-        --csv (str): Path to input CSV file.
-        --window (int): Rolling window size for smoothing.
-        --out (str): Output file path for saved figure.
-
-    Returns:
-        None
+    CLI entry point: --csv, --window, --out.
     """
 
     parser = argparse.ArgumentParser(

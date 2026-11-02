@@ -24,13 +24,14 @@ EPSILON = 1e-9
 
 class PySimColavPolarEnv(PySimColavBaseEnv):
     """
-    Collision avoidance environment using polar rangefinder observations.
+    Collision avoidance environment with polar rangefinder observations.
 
-    Adds a polar scan (ray-cast sectors) and CRI scalar to the observation,
-    and applies COLREG-aware reward shaping based on relative bearings.
+    Adds a polar scan (ray-cast sectors) and a TCPA phase scalar,
+    tanh(TCPA / cri_T), to the observation, and applies COLREG-aware reward
+    shaping based on relative bearings.
     """
 
-    # Tracks one target ship (`ts_idx`) via the scenario classifier; the
+    # Tracks one target ship (ts_idx) via the scenario classifier; the
     # ScenarioBuilder may despawn it once it has passed.
     TRACKS_TARGET_SHIP: bool = True
 
@@ -76,54 +77,51 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             **kwargs,
     ) -> None:
         """
-        Initializes the polar collision avoidance environment.
-
-        Configures the polar rangefinder, COLREG-aware reward shaping, focused
-        encounter training, and scenario generation before initializing the base
-        collision avoidance environment.
-
         Args:
-            render_mode: Rendering mode for the environment.
-            time_step: Simulation time step in seconds.
-            max_steps: Maximum number of simulation steps per episode.
-            verbose: Enables verbose logging if True.
-            ship_pos: Initial own-ship position. Randomized if None.
-            target_pos: Target position. Randomized if None.
+            render_mode: Rendering mode.
+            time_step: Simulation time step (s).
+            max_steps: Maximum steps per episode.
+            verbose: Verbose logging.
+            ship_pos: Initial own-ship position.
+            target_pos: Target position.
+            overall_contour, depth_contour, trajectory: Map/path CSV files.
             dynamics_model: Vessel dynamics model.
-            ship_model: Ship specification model.
-            wind: Enables wind disturbances.
-            current: Enables current disturbances.
-            ugent_surrogate_config: Configuration for the UGent surrogate
-                (Model.UGENT_SURROGATE), e.g. {"ukc_percent": 363}.
-            ugent_b01_surrogate_config: Configuration for the UGent B01 model-scale
-                surrogate (Model.UGENT_B01_SURROGATE), e.g. {"ukc_percent": 379}.
-            enable_obstacles: Enables obstacle generation.
-            enable_variable_ship_size: Enables randomized ship sizes.
-            evaluate: Enables evaluation mode.
-            include_scenario_one_hot: Appends a one-hot scenario encoding to the
+            ship_model: Ship model.
+            wind: Enable wind.
+            current: Enable current.
+            ugent_surrogate_config: Config for Model.UGENT_SURROGATE, e.g.
+                {"ukc_percent": 363}.
+            ugent_b01_surrogate_config: Config for Model.UGENT_B01_SURROGATE,
+                e.g. {"ukc_percent": 379}.
+            enable_obstacles: Spawn obstacles / target ships.
+            enable_variable_ship_size: Randomize ship sizes.
+            evaluate: Evaluation mode.
+            include_scenario_one_hot: Append a one-hot scenario encoding to the
                 observation.
-            scenario_types: Available encounter scenario types.
-            scenario_probs: Sampling probabilities for scenario types.
-            obstacle_population: Available obstacle density levels.
-            obstacle_weights: Sampling weights for obstacle densities.
-            scenario_obstacle_level: Obstacle generation level.
-            ground_truth_classification: Uses ground-truth encounter labels instead
-                of classifier predictions.
-            focused_encounter_mode: Enables encounter-focused training episodes.
-            train_encounter_prob: Encounter probability during training.
-            train_encounter_cooldown: Minimum steps between training encounters.
-            eval_encounter_prob: Encounter probability during evaluation.
-            eval_encounter_cooldown: Minimum steps between evaluation encounters.
-            post_encounter_steps: Steps after an encounter before terminating.
-            pathfollowing_encounter_steps: Initial path-following steps before an
-                encounter.
-            skip_tail_segments: Number of path segments excluded from encounter
-                placement.
-            random_segment_start: Randomizes the initial path segment.
-            minimal_path_render: Enables simplified path rendering.
-            **kwargs: Reserved for future compatibility. Currently NOT used;
-                any keys passed here are logged as ignored so that typos and
-                not-yet-wired options are visible.
+            scenario_types: Encounter scenario types.
+            scenario_probs: Sampling probabilities per scenario type.
+            obstacle_population: Possible obstacle counts.
+            obstacle_weights: Sampling weights for obstacle_population.
+            scenario_obstacle_level: "episode" or "step" level spawning
+                (default "step").
+            ground_truth_classification: Lock the classifier to the spawned
+                scenario instead of geometric classification.
+            focused_encounter_mode: One encounter per training episode, then
+                truncate (shorter episodes, more balanced PF/encounter steps).
+            train_encounter_prob: Per-step spawn probability in training.
+            train_encounter_cooldown: Steps before an encounter may spawn
+                (training).
+            eval_encounter_prob: Per-step spawn probability in evaluation.
+            eval_encounter_cooldown: Steps before an encounter may spawn
+                (evaluation).
+            post_encounter_steps: Path-following steps after an encounter before
+                truncation (focused mode).
+            pathfollowing_encounter_steps: Length of a sampled "path-following"
+                encounter (focused mode).
+            skip_tail_segments: Final path segments excluded as random start.
+            random_segment_start: Start at a random path segment.
+            minimal_path_render: Simplified path rendering.
+            **kwargs: Not used; any keys are logged as ignored.
         """
 
         if kwargs:
@@ -132,8 +130,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 type(self).__name__, sorted(kwargs),
             )
 
-        # Index of the tracked target ship (set from the classifier in the
-        # reward). Defined up front so it exists from the very first step.
+        # Tracked target ship index (set from the classifier in the reward).
         self.ts_idx = None
 
         # Polar scan configuration
@@ -146,14 +143,13 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.distance_penalty_peak = 40
         self.distance_penalty_max = 5.0
 
-        # overtaking TS speed
+        # Overtaking TS speed range (m/s)
         self.overtaking_ts_v_min = 1.0
         self.overtaking_ts_v_max = 1.7
 
         self.include_scenario_one_hot = bool(include_scenario_one_hot)
 
-        # focused encounter (path following -> encounter -> path following --> terminate)
-        # to produce shorter episodes with more equal step distribution across encounter/path-following
+        # Focused encounter: path following, encounter, path following, truncate
         self.focused_encounter_mode = bool(focused_encounter_mode)
         self.train_encounter_prob = float(train_encounter_prob)
         self.train_encounter_cooldown = int(train_encounter_cooldown)
@@ -165,7 +161,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.random_segment_start = bool(random_segment_start)
 
 
-        # Pre-compute polar ray directions
+        # Polar ray directions relative to the heading (sector centres)
         bin_width = float(self.polar_fov) / float(self.polar_n_sectors)
         self._polar_rel_angles = (
                 -(self.polar_fov / 2.0) + (np.arange(self.polar_n_sectors, dtype=np.float32) + 0.5) * bin_width
@@ -174,13 +170,12 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             (np.cos(self._polar_rel_angles), np.sin(self._polar_rel_angles)), axis=1
         ).astype(np.float32)
 
-        # Scenario parameters
         scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
         scenario_probs = scenario_probs if scenario_probs is not None else [
             0.0, 0.0, 0.33, 0.33, 0.34, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
         ]
 
-        # Call base init (encounter_range = polar_max_range)
+        # encounter_range = polar_max_range
         super().__init__(
             render_mode=render_mode,
             time_step=time_step,
@@ -213,7 +208,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.polar_scan_cached = None
         self.enable_reward_diag = False
 
-        # Reward weights for polar COLAV shaping
         self.reward_weights = {
             "polar_distance_colreg": 0.65,
             "colreg_bearing": 1.5,
@@ -230,26 +224,21 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # -------------------------
     def set_evaluation_parameters(self) -> None:
         """
-        Flip on the eval-only realism overrides for trained-model evaluation.
+        Switch on evaluation settings (fixed TS speeds, fixed start segment).
 
-        Called by AgentManager.visualize_trained_agent before running episodes.
-        Overrides set here take effect on the next reset/spawn. They are read
-        by the scenario builder (lateral spawn) and the base env step loop
-        (head-on dodge). Training runs leave these at their safe defaults
-        (set in PySimColavBaseEnv.__init__) and are unaffected.
+        Called by AgentManager.visualize_trained_agent before running episodes;
+        takes effect on the next reset/spawn. Training is unaffected.
         """
 
         self.eval = True
 
-        # overtaking TS speed
         self.overtaking_ts_v_min = 1.0
         self.overtaking_ts_v_max = 1.0
 
-        # Head-on TS speed
         self.headon_ts_v_min = self.os_nominal_speed
         self.headon_ts_v_max = self.os_nominal_speed
 
-        # Let OS always start from the original position
+        # OS always starts from the route start
         self.random_segment_start = False
 
         # Single-encounter mode wiring (read by scenario_builder).
@@ -262,7 +251,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # -------------------------
     def _intersect_rays_with_segments(self, origins, ray_ends, seg_starts, seg_ends):
         """
-        Vectorized ray-segment intersection distances.
+        Distance along each ray (origins to ray_ends) to the nearest segment hit,
+        or polar_max_range if none.
         """
 
         r = ray_ends - origins
@@ -283,7 +273,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
     def _rebuild_polar_scan_geometries(self) -> None:
         """
-        Prepare boundary and collision-entity geometry for vectorized ray casting.
+        Cache boundary segments and inflated entity circles for ray casting.
         """
 
         coords = np.array(self.obstacles, dtype=np.float32)
@@ -305,13 +295,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
     def _get_polar_scan(self) -> np.ndarray:
         """
-        Computes the current polar rangefinder scan.
-
-        Performs vectorized ray casting against the environment boundaries and
-        collision entities to generate the normalized polar scan observation.
+        Ray-cast against boundaries and collision entities.
 
         Returns:
-            A normalized polar scan with one value per sector.
+            Closeness per sector, (1 - distance / polar_max_range) scaled to
+            [0, polar_obs_max].
         """
 
         ship_pos = self.ship_pos
@@ -366,7 +354,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # -----------------------
     def _on_entities_stepped(self) -> None:
         """
-        Rebuild polar scan geometries after entities move.
+        Refresh the polar scan after entities move, then update passing detection.
         """
 
         if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
@@ -377,11 +365,12 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
     def _update_passing_detection(self) -> None:
         """
-        Track TS passing events and record encounter snapshots.
+        Detect the OS passing the tracked TS and record encounter snapshots.
 
-        TS-frame sign-flip on lateral (crossing-right) or longitudinal
-        (head-on) offset. Linearly interpolate the sub-step crossing point
-        so the dotted snapshot line lies on the TS track.
+        A pass is a sign flip of CollisionEntity.passing_signal; the pass point
+        is interpolated within the step so the snapshot lies on the TS track.
+        Passing the TS on the OS's port side counts as COLREG-correct,
+        starboard as a violation.
         """
 
         clf = self.scenario_classifier
@@ -401,8 +390,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         ts_pos_now = ts.get_position()
         signal = ts.passing_signal(os_pos_now, clf.label)
 
-        # Encounter-start snapshot (first step we observe this TS in a
-        # tracked encounter scenario).
+        # Encounter-start snapshot (first step this TS is tracked)
         if self._prev_passing_ts_idx != ts_idx:
             self._passing_snapshots.append({
                 "os_pos": np.asarray(os_pos_now, dtype=np.float32),
@@ -443,7 +431,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
     def _on_episode_reset(self) -> None:
         """
-        Reset polar-specific state for new episode.
+        Reset polar-specific state for a new episode.
         """
 
         self.polar_scan_cached = None
@@ -457,7 +445,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # -----------------------
     def _initialize_observation_space(self) -> gym.spaces.Box:
         """
-        Extend observation space with polar scan sectors + tanh-TCPA scalar.
+        Base space plus polar scan sectors, the tanh-TCPA scalar and optional one-hot.
         """
 
         base_space = super()._initialize_observation_space()
@@ -465,7 +453,6 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         polar_low = np.zeros(self.polar_n_sectors, dtype=np.float32)
         polar_high = np.full(self.polar_n_sectors, self.polar_obs_max, dtype=np.float32)
 
-        # tanh(TCPA / cri_T) is bounded in (-1, +1).
         tcpa_low = -np.ones(1, dtype=np.float32)
         tcpa_high = np.ones(1, dtype=np.float32)
 
@@ -482,7 +469,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
     def _get_obs(self) -> np.ndarray:
         """
-        Extend observation with polar scan data and a TCPA phase scalar.
+        Base observation plus polar scan, TCPA phase scalar and optional one-hot.
         """
 
         base_obs = super()._get_obs()
@@ -501,12 +488,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             scan = self._get_polar_scan()
             self.polar_scan_cached = scan
 
-        # Base path-following without radial distances
+        # No scan during pure path following
         if clf.label == "path-following":
             scan = np.zeros(self.polar_n_sectors, dtype=np.float32)
 
-        # Encounter phase as a single scalar
-        #   ~+1  TS before CPA, 0 at CPA, ~-1 TS already past CPA
+        # Encounter phase: about +1 before CPA, 0 at CPA, about -1 after CPA
         tcpa_norm = 0.0
         if clf.tracked_ts is not None and clf.tracked_ts < len(self.collision_entities):
             ts = self.collision_entities[clf.tracked_ts]
@@ -533,7 +519,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # -------------------
     def _calculate_colav_reward(self) -> Tuple[float, bool]:
         """
-        Polar COLAV reward: base path-following + bearing-based COLREG shaping.
+        Base COLAV reward plus a polar proximity penalty and bearing-based
+        COLREG shaping per scenario, weighted by g_tcpa (fades out after CPA).
         """
 
         base_reward, done = super()._calculate_colav_reward()
@@ -597,9 +584,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 beta = (
                     math.atan2(dy, dx) - os_heading + math.pi
                 ) % (2.0 * math.pi) - math.pi
-                # Same shape as crossing-right; (1 + (1 - cri)) boosts the
-                # signal magnitude when the encounter is still low-risk so
-                # earlier turning is rewarded more than late turning.
+                # (1 + (1 - cri)) boosts the signal while the risk is still
+                # low, so early turning pays more than late turning.
                 k = 1
                 _headon_term = (
                     self.reward_weights["head-on"]
@@ -617,8 +603,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                     math.atan2(dy, dx) - os_heading + math.pi
                 ) % (2.0 * math.pi) - math.pi
 
-                # R(x) = A * tanh(k * (x - beta_start)).
-                # Zero crossing (and max gradient) at encounter relative bearing
+                # A * tanh(k * (beta - beta_start)): zero crossing at beta_start
                 k = 1
                 beta_start = -0.34906585 # -20deg
 
@@ -646,9 +631,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 reward += _overtaking_term
 
 
-        # Post-encounter base-reward boost so that the
-        # phase-2 base reward reaches same order of magnitude as the phase-1 reward
-        # (base + scenario-specific directional signal) at saturation.
+        # After CPA, boost the base reward so it matches the pre-CPA reward
+        # (base + scenario signal) in magnitude at saturation.
         if clf.label != "path-following":
             base_peak = float(self._base_reward_peak_est)
             cr_w = float(self.reward_weights[clf.label])
@@ -662,10 +646,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
     # -----------------------
     def _initialize_rendering(self) -> None:
         """
-        Initializes polar-specific rendering.
-
-        Creates polar beam artists, configures the plot appearance, and applies
-        evaluation-specific camera settings when required.
+        Add polar beam artists, paper-style axes and the single-encounter camera.
         """
 
         super()._initialize_rendering()
@@ -678,8 +659,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             beam_line.set_animated(True)
             self.polar_beams.append(beam_line)
 
-        # Override the legend with a curated, fixed set of entries (proxy
-        # artists, so they don't depend on which artists got auto-labeled).
+        # Fixed legend from proxy artists
         from matplotlib.lines import Line2D
         legend_handles = [
             Line2D([0], [0], marker='o', color='none', markerfacecolor='blue',
@@ -694,7 +674,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         ]
         self.ax.legend(handles=legend_handles, loc='best', fontsize=14)
 
-        # Paper-ready axis styling: titled, larger fonts, km on both axes.
+        # Paper-ready styling: larger fonts, km on both axes
         from matplotlib.ticker import FuncFormatter
         self.ax.set_title(
             "Ship Trajectory",
@@ -707,10 +687,9 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         self.ax.yaxis.set_major_formatter(km_formatter)
         self.ax.tick_params(axis="both", which="major", labelsize=16)
 
-        # Single-encounter eval: center the camera on the dormant TS so
-        # multiple agents share an identical static frame for overlay
-        # comparison. Only the OS trajectory changes between runs.
-        # Zoom is controlled by `single_encounter_zoom_halfwidth` (m).
+        # Single-encounter eval: fixed camera centred on the TS spawn point, so
+        # runs of different agents can be overlaid. Half-width (m) from
+        # single_encounter_zoom_halfwidth.
         if (
             getattr(self, "single_encounter_per_episode", False)
             and getattr(self, "_single_encounter_ts_spawn_pos", None) is not None
@@ -725,7 +704,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
     def _render_subclass(self, heading: float) -> None:
         """
-        Update polar beam rendering.
+        Update the polar beam lines.
         """
 
         if getattr(self, "polar_beams", None):
@@ -748,7 +727,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
     def _blit_subclass(self) -> None:
         """
-        Blit polar beam artists.
+        Draw the polar beam artists.
         """
 
         if getattr(self, "polar_beams", None):
@@ -765,12 +744,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         include_banks: bool = True,
     ) -> None:
         """
-        Plots minimum-distance evaluation statistics.
-
-        Args:
-            pdf_save_path: Output path for the probability density plot.
-            boxplot_save_path: Output path for the boxplot figure.
-            include_banks: Includes bank distances in the statistics if True.
+        Plot minimum-distance statistics (PDF and boxplots); see colav_statistics.
         """
 
         from fw.collision_avoidance.colav_statistics import plot_min_distance_stats
@@ -783,10 +757,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         save_path: str = "scenario_confusion_matrix.png",
     ) -> None:
         """
-        Plots the encounter scenario confusion matrix.
-
-        Args:
-            save_path: Output path for the generated figure.
+        Plot the scenario confusion matrix; see colav_statistics.
         """
 
         from fw.collision_avoidance.colav_statistics import plot_scenario_confusion_matrix

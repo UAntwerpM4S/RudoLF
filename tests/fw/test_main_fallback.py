@@ -21,9 +21,8 @@ def test_main_falls_back_when_airsim_extension_exits(monkeypatch, capsys):
     Verify fw.main exits cleanly when the AirSim extension fails and no
     other environments are configured.
 
-    When fw.config selects only the AirSim environment but the extension
-    exits with a non-zero status, the generic framework entrypoint should
-    raise SystemExit(1) rather than continuing with an empty environment list.
+    With only AirSimEnv selected and a non-zero extension exit, fw.main raises
+    SystemExit(1) instead of continuing with an empty environment list.
     """
 
     import multiprocessing
@@ -333,8 +332,8 @@ def test_main_train_mixed_list_skips_failed_airsim_step(monkeypatch):
     """
     Verify mixed env training continues without duplicating fallback env work.
 
-    If the delegated AirSim step exits non-zero, fw.main should keep already
-    completed framework training and not perform an extra fallback training pass.
+    If the delegated AirSim step exits non-zero, completed framework training is
+    kept and no extra fallback training pass runs.
     """
 
     import multiprocessing
@@ -462,7 +461,7 @@ def test_main_train_repeated_env_sequence_continues_after_failed_airsim_step(mon
 
     class _FakeTrainer:
         """
-        FakeTrainer.
+        Trainer test double that records train calls.
         """
 
         def __init__(self, *args, **kwargs):

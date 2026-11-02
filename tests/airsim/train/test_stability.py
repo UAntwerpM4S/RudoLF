@@ -26,10 +26,8 @@ from airsim.train.strict_success_callback import StrictSuccessStoppingCallback
 
 def _make_callback(n_envs: int = 1, **kwargs) -> StrictSuccessStoppingCallback:
     """
-    Create a callback and initialize per-env trackers directly.
-
-    SB3's BaseCallback.training_env is a read-only property in newer releases,
-    so we bypass _on_training_start and call _reset_episode_trackers directly.
+    Create a callback with per-env trackers initialized directly (training_env is
+    read-only in newer SB3, so _on_training_start is bypassed).
     """
 
     cb = StrictSuccessStoppingCallback(**kwargs)
@@ -342,8 +340,7 @@ class TestStrictSuccessMultiEnv:
 
     def test_failure_after_success_in_same_step_resets_counter(self):
         """
-        Envs are processed sequentially: a failure that follows a success in the same
-        step still resets the counter because the callback iterates env_0 then env_1.
+        A failure after a success in the same step still resets the counter (envs processed in order).
         """
 
         cb = self._make_multi_callback(2, min_average_episode_reward=0.95)
@@ -357,8 +354,7 @@ class TestStrictSuccessMultiEnv:
 
     def test_failure_in_any_env_resets_streak(self):
         """
-        A failure in the last env of a step resets the counter to zero even if
-        earlier envs in the same step succeeded.
+        A failure in the last env resets the counter even if earlier envs in the step succeeded.
         """
 
         cb = self._make_multi_callback(2, min_average_episode_reward=0.95)

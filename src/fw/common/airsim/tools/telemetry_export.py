@@ -33,8 +33,7 @@ class AsyncTelemetryExporter:
         Args:
             filename: Output CSV filename.
             metadata: Optional metadata lines written at the top of the file.
-            export_dir: Optional export directory. When omitted, the workspace
-                `exports` directory is used.
+            export_dir: Optional export directory. Defaults to fw/common/exports.
         """
 
         src_dir = Path(__file__).resolve().parents[1]

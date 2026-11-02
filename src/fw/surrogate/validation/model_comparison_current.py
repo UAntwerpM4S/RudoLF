@@ -1,69 +1,47 @@
 """
-Current counterpart of model_comparison_wind.py: compares the trajectories of
-all dynamics models against FH (ground truth) for a ship sailing a straight
-line (rudder 0, fixed thrust) in OPEN WATER in a river CURRENT, for a grid of
-(current level x current direction relative to the ship). Wind is off.
+Current counterpart of model_comparison_wind.py: compares all dynamics models
+against FH (ground truth) for a ship sailing straight (rudder 0, fixed thrust)
+in open water in a river current, over a grid of current level x direction
+relative to the ship. Wind is off.
 
 Models:
-    FH            -- real simexe engine, current exercise, wind-field Scale 0
-    FH_nocurrent  -- the same FH run (same timeStart, same heading) on the
-                     no-current exercise: the paired baseline of every run
-    UGent, Fossen, UA_clean, UA_confined -- no current input
-    UA_full       -- the only non-FH model with current inputs
-    UA_full_nocurrent -- UA_full in the baseline run (current 0)
+    FH: simexe, current exercise, wind-field Scale 0
+    FH_nocurrent: same run (timeStart, heading) on the no-current exercise,
+        the paired baseline of every run
+    UGent, Fossen, UA_clean, UA_confined: no current input
+    UA_full: the only non-FH model with current inputs
+    UA_full_nocurrent: UA_full in the baseline run (current 0)
 
-How the current is set (FH has no current setter):
-    The current (and the water level) come from the area's current and tide
-    XML files; their <timeStart> shifts the tidal phase. Before every FH
-    session the wanted timeStart is written into both files with the dataset
-    generator's own writer (randomize_current_time_start, with a one-value
-    range); the original values are restored at the end, also on errors or
-    Ctrl+C. The no-current exercise (current off, tide still on) is run with
-    the SAME timeStart, so both runs have the same water level.
+Setting the current (FH has no setter): current and water level come from the
+area's current and tide XMLs, whose <timeStart> shifts the tidal phase. Before
+each FH session the wanted timeStart is written with the generator's writer;
+the originals are restored at the end (also on errors or Ctrl+C). The baseline
+uses the same timeStart, hence the same water level. If the run is killed hard,
+the originals stay in CURRENT_OUTPUT_DIR/timestart_backup/ and are restored at
+the next start.
 
-    Calibration: the current at the start pose is measured (FH velocity over
-    ground minus through water, as the generator does) for timeStarts across
-    the generator's CURRENT_TIME_START_RANGE (every CAL_TIME_STEP_S). From
-    that scan the test picks one timeStart per current level
-    (CURRENT_LEVEL_FRACTIONS of the strongest current found, or the absolute
-    CURRENT_SPEED_TARGETS).
+Calibration: the current at the start pose (velocity over ground minus through
+water) is scanned over CURRENT_TIME_START_RANGE every CAL_TIME_STEP_S; one
+timeStart per level is picked (CURRENT_LEVEL_FRACTIONS of the strongest current,
+or CURRENT_SPEED_TARGETS). The field cannot be rotated, so the relative direction
+is set with the start heading = (current toward) + 180 deg + relative direction.
 
-    The current field cannot be rotated, so the direction RELATIVE to the ship
-    is set with the start heading: heading = (direction the current flows
-    toward) + 180 deg + relative direction.
+Relative direction (as in the wind test): where the current comes FROM, relative
+to the bow, clockwise: 0 = head current, 90 = from starboard (sets the ship to
+port), 180 = following, 270 = from port.
 
-Relative current direction convention (same as the wind test): the direction
-the current comes FROM, relative to the bow, clockwise:
-    0 = head current (against the ship), 90 = from starboard (sets the ship to
-    port), 180 = following current, 270 = from port.
+UA_* inputs every step: FH's live UKC (timeStart changes the water level), FH's
+current at FH's position (no API to query elsewhere), and the apparent wind for
+the model's own state from FH's true wind (Scale 0), sampled and held at FH's
+1 Hz WindState updates.
 
-Inputs given to the UA_* models every step (decided for this test):
-    UKC      -- FH's live UKC (timeStart changes the water level, and the
-                lookup CSVs were generated at random tide times).
-    current  -- FH's current at FH's own position (FH has no API to query the
-                current elsewhere), the same for every model.
-    wind     -- the apparent wind for the model's OWN state, from FH's true
-                wind (Scale 0, so only the ship's own motion), sampled and held
-                at FH's 1 Hz WindState updates, exactly as in the wind test.
+Non-FH models run in their own ShipSimulator with wind=False, current=False and
+start from FH's state after warm-up. Those velocities over ground already contain
+the current, so models without current input still show a small "current effect".
 
-Every non-FH model runs in its own ShipSimulator with wind=False,
-current=False: nothing is added on top of what a model computes itself. All
-models start from FH's state (velocities over ground, as in the training data)
-after the warm-up. In a current those velocities already contain the current,
-so the four models without a current input still show a small "current
-effect": their response to that different start state.
+Domain checks as in the wind test; runs coming near a bank are flagged, not skipped.
 
-If the run is killed hard (no `finally`, e.g. the IDE's stop button), the
-original XMLs stay in CURRENT_OUTPUT_DIR/timestart_backup/ and are restored at
-the start of the next run.
-
-Open-water / domain checks: as in the wind test (start pose free of banks in
-ray range; every model checked every second; FH checked against the
-generator's stop limits). With 8 headings and TARGET_PATH_LENGTH, some runs
-may come near a bank: they are flagged, not skipped.
-
-Usage (from src, with the current architecture's model_comparison.py and
-model_comparison_wind.py installed):
+Usage (from src):
     python fw/surrogate/validation/model_comparison_current.py               # full run
     python fw/surrogate/validation/model_comparison_current.py --calibrate-only
     python fw/surrogate/validation/model_comparison_current.py --report-only # rebuild the report
@@ -106,8 +84,8 @@ from fw.surrogate.validation.model_comparison import (
     make_model_simulator,
     plt,
 )
-# Shared, unchanged helpers of the wind test (geometry, wind reconstruction,
-# one-step statistics, report building blocks).
+# Shared helpers of the wind test (geometry, wind reconstruction, one-step
+# statistics, report building blocks).
 from fw.surrogate.validation.model_comparison_wind import (
     COLORS as _WIND_COLORS,
     FH_REWIND_ENABLED,
@@ -190,14 +168,19 @@ TIMESTART_BACKUP_DIR_NAME = "timestart_backup"   # in CURRENT_OUTPUT_DIR; exists
 
 
 def _backup_dir() -> Path:
-    """Folder holding the <timeStart> XML backups while a run is active."""
+    """
+    Folder holding the <timeStart> XML backups while a run is active.
+    """
+
     return CURRENT_OUTPUT_DIR / TIMESTART_BACKUP_DIR_NAME
 
 
 def snapshot_xmls() -> Dict[Path, bytes]:
-    """Original raw bytes of every file in TIME_START_XML_PATHS, also copied to
-    CURRENT_OUTPUT_DIR/timestart_backup/ (with an index), so a run that is killed
-    hard (no `finally`) is repaired at the start of the next run."""
+    """
+    Original raw bytes of every TIME_START_XML_PATHS file, also backed up (with
+    an index) to CURRENT_OUTPUT_DIR/timestart_backup/ for recovery after a hard kill.
+    """
+
     original = {}
     for p in TIME_START_XML_PATHS:
         p = Path(p)
@@ -216,14 +199,19 @@ def snapshot_xmls() -> Dict[Path, bytes]:
 
 
 def _time_start_text(raw: bytes) -> str:
-    """The <timeStart> value in the raw XML bytes, or "?" if not found."""
+    """
+    The <timeStart> value in the raw XML bytes, or "?" if not found.
+    """
+
     m = _TIME_START_PATTERN.search(raw)
     return m.group(2).decode("ascii", errors="replace").strip() if m else "?"
 
 
 def _write_bytes_atomic(path: Path, raw: bytes) -> None:
-    """Same procedure as the generator's writer: temp file + os.replace, with retries
-    for transient Windows locks."""
+    """
+    Write via temp file + os.replace, retrying on transient Windows locks (as the generator).
+    """
+
     import os
     tmp = path.with_name(path.name + f".tmp{os.getpid()}")
     try:
@@ -242,8 +230,11 @@ def _write_bytes_atomic(path: Path, raw: bytes) -> None:
 
 
 def restore_xmls(original: Dict[Path, bytes]) -> List[str]:
-    """Write the original bytes back, each file independently. Returns error
-    messages (empty = all restored); the backup folder is removed only then."""
+    """
+    Write the original bytes back, each file independently. Returns error
+    messages (empty = all restored); the backup folder is removed only then.
+    """
+
     errors = []
     for path, raw in original.items():
         try:
@@ -262,7 +253,10 @@ def restore_xmls(original: Dict[Path, bytes]) -> List[str]:
 
 
 def recover_stale_backup() -> None:
-    """If a previous run was killed before it could restore the XMLs, restore them now."""
+    """
+    If a previous run was killed before it could restore the XMLs, restore them now.
+    """
+
     bdir = _backup_dir()
     index_path = bdir / "index.json"
     if not index_path.is_file():
@@ -276,8 +270,11 @@ def recover_stale_backup() -> None:
 
 
 def set_time_start(value: int) -> None:
-    """Write `value` into all TIME_START_XML_PATHS (generator's own writer, one-value range).
-    Only call while no FH session is running: simexe reads these files itself."""
+    """
+    Write value into all TIME_START_XML_PATHS (generator's writer). Only call while
+    no FH session runs: simexe reads these files itself.
+    """
+
     randomize_current_time_start(TIME_START_XML_PATHS, time_range=(int(value), int(value)))
 
 
@@ -286,7 +283,10 @@ def set_time_start(value: int) -> None:
 # --------------------------------------------------------------------------
 
 def _session(x, y, heading_deg, v_init, thrust, ship_spec, exercise_path, where: str) -> FhSession:
-    """FH session with wind Scale 0, advanced WIND_WARMUP_TIME (rudder 0, fixed thrust)."""
+    """
+    FH session with wind Scale 0, advanced WIND_WARMUP_TIME (rudder 0, fixed thrust).
+    """
+
     try:
         fh = FhSession(x=x, y=y, heading_deg=heading_deg, v_init=v_init, thrust=thrust, ship_spec=ship_spec,
                        exercise_path=exercise_path, wind_field=(0.0, 0.0), rewind_enabled=FH_REWIND_ENABLED)
@@ -301,25 +301,37 @@ def _session(x, y, heading_deg, v_init, thrust, ship_spec, exercise_path, where:
 
 
 def _loaded_exercise(fh: FhSession) -> str:
-    """The exercise file FH actually loaded (FhSimBridge.exercise_path, i.e. the explicit
-    exercise_path given to FhSession) -- not the scenario name the bridge derives from the ship."""
+    """
+    The exercise FH actually loaded (FhSimBridge.exercise_path), not the scenario
+    name the bridge derives from the ship.
+    """
+
     bridge = getattr(fh, "_bridge", None)
     return str(getattr(bridge, "exercise_path", "?"))
 
 
 def current_toward_deg(fh: FhSession) -> Tuple[float, float]:
-    """(speed [m/s], direction the current flows TOWARD [deg, env frame: 0 = East, CCW])."""
+    """
+    (speed [m/s], direction the current flows TOWARD [deg, env frame: 0 = East, CCW]).
+    """
+
     cs, cd = fh.get_current()
     return float(cs), _wrap360(np.degrees(cd))
 
 
 def rel_from_dir_deg(heading_rad: float, toward_deg: float) -> float:
-    """Direction the current comes FROM, relative to the bow, clockwise [deg]."""
+    """
+    Direction the current comes FROM, relative to the bow, clockwise [deg].
+    """
+
     return _wrap360(np.degrees(heading_rad) - (toward_deg + 180.0))
 
 
 def heading_for(toward_deg: float, rel_from_deg: float) -> float:
-    """Start heading [deg, env frame] that puts a current flowing toward `toward_deg` at `rel_from_deg`."""
+    """
+    Start heading [deg, env frame] that puts a current flowing toward toward_deg at rel_from_deg.
+    """
+
     return _wrap180(toward_deg + 180.0 + rel_from_deg)
 
 
@@ -329,7 +341,9 @@ def heading_for(toward_deg: float, rel_from_deg: float) -> float:
 
 @dataclass
 class CurrentLevel:
-    """One calibrated current level: the timeStart that gives it and the current at the start pose."""
+    """
+    One calibrated current level: the timeStart that gives it and the current at the start pose.
+    """
 
     name: str                 # e.g. "c1.12" (current speed at the start pose)
     time_start: int
@@ -339,7 +353,10 @@ class CurrentLevel:
 
 def calibrate_current(start_x, start_y, start_heading_deg, v_init, thrust, ship_spec,
                       exercise_path: Path) -> Tuple[List[CurrentLevel], List[dict]]:
-    """Scan timeStart over CURRENT_TIME_START_RANGE and pick the test levels."""
+    """
+    Scan timeStart over CURRENT_TIME_START_RANGE and pick the test levels.
+    """
+
     lo, hi = CURRENT_TIME_START_RANGE
     scan = []
     for ts in range(int(lo), int(hi) + 1, int(CAL_TIME_STEP_S)):
@@ -401,9 +418,8 @@ def calibrate_current(start_x, start_y, start_heading_deg, v_init, thrust, ship_
 @dataclass
 class RunResult:
     """
-    Result of one current-test run: FH and every model, one level and one relative direction.
-
-    The baseline ("_nocurrent") run of the same case has with_current=False.
+    One current-test run (FH and every model, one level, one relative direction).
+    The baseline ("_nocurrent") run has with_current=False.
     """
 
     run_id: str
@@ -429,8 +445,11 @@ def run_case(run_id: str, level: CurrentLevel, rel_deg: float, heading_deg: floa
              start_x, start_y, v_init, thrust, ship_spec, exercise_path: Path,
              ray_env: PySimEnv, cutoff_geom, non_fh_models: dict, ua_models: dict,
              tf_models: Optional[dict] = None, n_steps: Optional[int] = None) -> RunResult:
-    """n_steps: fixed step count (the baseline runs exactly as long as its current run);
-    None = until FH has sailed TARGET_PATH_LENGTH."""
+    """
+    Run one case. n_steps: fixed step count (the baseline matches its current run);
+    None = until FH has sailed TARGET_PATH_LENGTH.
+    """
+
     set_time_start(level.time_start)
     fh = _session(start_x, start_y, heading_deg, v_init, thrust, ship_spec, exercise_path, run_id)
     try:
@@ -477,8 +496,7 @@ def run_case(run_id: str, level: CurrentLevel, rel_deg: float, heading_deg: floa
 
         def keep_going():
             """
-            Continue stepping: until n_steps if given, else until FH has sailed TARGET_PATH_LENGTH
-            (at most MAX_STEPS).
+            True until n_steps, or until FH has sailed TARGET_PATH_LENGTH (at most MAX_STEPS).
             """
 
             if n_steps is not None:
@@ -563,7 +581,9 @@ def run_case(run_id: str, level: CurrentLevel, rel_deg: float, heading_deg: floa
 
 
 def _all_paths(res: RunResult, base: Optional[RunResult]) -> Dict[str, List[TrackPoint]]:
-    """The run's own paths plus FH_nocurrent and UA_full_nocurrent from the baseline run, if given."""
+    """
+    The run's own paths plus FH_nocurrent and UA_full_nocurrent from the baseline run, if given.
+    """
 
     paths = dict(res.paths)
     if base is not None:
@@ -593,9 +613,8 @@ SUMMARY_HEADER = [
 
 def summary_rows(res: RunResult, base: RunResult) -> List[list]:
     """
-    Rows for current_summary.csv (SUMMARY_HEADER), one per model in the run: final track metrics,
-    errors versus FH, and the paired current effect (run minus its no-current baseline) versus
-    FH's own current effect.
+    current_summary.csv rows, one per model: final track metrics, errors versus FH,
+    and the paired current effect (run minus baseline) versus FH's.
     """
 
     rows = []
@@ -640,7 +659,9 @@ ONESTEP_HEADER = ["level", "target_rel_dir_deg", "with_current", "model", "n_ste
 
 
 def onestep_rows(res: RunResult) -> List[list]:
-    """Rows for the one-step CSV (ONESTEP_HEADER), one per model with teacher-forced statistics."""
+    """
+    Rows for the one-step CSV (ONESTEP_HEADER), one per model with teacher-forced statistics.
+    """
 
     return [[res.level, res.target_rel_dir_deg, int(res.with_current), label, st["n"], st["T"],
              *st["bias"], *st["rms"], *st["fh_rms"]]
@@ -648,7 +669,9 @@ def onestep_rows(res: RunResult) -> List[list]:
 
 
 def write_trajectory_csv(path: Path, res: RunResult, base: RunResult) -> None:
-    """Write every model's path (including the no-current reference lines) with its track metrics."""
+    """
+    Write every model's path (including the no-current reference lines) with its track metrics.
+    """
 
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
@@ -662,7 +685,9 @@ def write_trajectory_csv(path: Path, res: RunResult, base: RunResult) -> None:
 
 
 def write_env_csv(path: Path, res: RunResult) -> None:
-    """Write the run's per-step environment log; nothing is written if the log is empty."""
+    """
+    Write the run's per-step environment log; nothing is written if the log is empty.
+    """
 
     if res.env_log:
         with open(path, "w", newline="") as f:
@@ -676,7 +701,10 @@ def write_env_csv(path: Path, res: RunResult) -> None:
 # --------------------------------------------------------------------------
 
 def _dir_label(rel: float) -> str:
-    """Readable name for a relative current direction [deg] (e.g. "from starboard")."""
+    """
+    Readable name for a relative current direction [deg] (e.g. "from starboard").
+    """
+
     names = {0: "head current", 90: "from starboard", 180: "following", 270: "from port"}
     return names.get(int(round(rel)) % 360, f"from {rel:g}°")
 
@@ -684,7 +712,10 @@ def _dir_label(rel: float) -> str:
 def plot_paths_for_level(results: List[RunResult], bases: Dict[str, RunResult], png_path: Path, title: str,
                          models=("FH", "FH_nocurrent", "UGent", "Fossen", "UA_clean", "UA_confined",
                                  "UA_full", "UA_full_nocurrent")) -> None:
-    """Ship-fixed view per direction (axes fixed to the start heading, bow up at start)."""
+    """
+    Ship-fixed view per direction (axes fixed to the start heading, bow up at start).
+    """
+
     if plt is None:
         return
     n = len(results)
@@ -724,7 +755,9 @@ _INK, _INK2, _MUTED, _GRID, _BLUE, _GRAY = "#0b0b0b", "#52514e", "#8a8984", "#e6
 
 
 def _slide_style():
-    """Set matplotlib rcParams for the slide figures."""
+    """
+    Set matplotlib rcParams for the slide figures.
+    """
 
     plt.rcParams.update({"font.size": 13, "axes.edgecolor": _MUTED, "axes.labelcolor": _INK2, "xtick.color": _INK2,
                          "ytick.color": _INK2, "axes.titlesize": 15, "axes.titleweight": "bold",
@@ -732,7 +765,10 @@ def _slide_style():
 
 
 def slide_response_per_direction(d, level: str, png_path: Path) -> None:
-    """FH vs UA_full current effect per relative direction, for one level (3 panels)."""
+    """
+    FH vs UA_full current effect per relative direction, for one level (3 panels).
+    """
+
     if plt is None:
         return
     import matplotlib as mpl
@@ -773,7 +809,10 @@ def slide_response_per_direction(d, level: str, png_path: Path) -> None:
 
 def slide_example_paths(results: Dict[Tuple[str, float], RunResult], bases: Dict[str, RunResult], level: str,
                         png_path: Path, rels=(0.0, 90.0, 180.0)) -> None:
-    """FH vs UA_full paths (ship-fixed view) for a few directions at one level."""
+    """
+    FH vs UA_full paths (ship-fixed view) for a few directions at one level.
+    """
+
     if plt is None:
         return
     import matplotlib as mpl
@@ -823,8 +862,8 @@ def slide_example_paths(results: Dict[Tuple[str, float], RunResult], bases: Dict
 
 def _effect_plot(d, col: str, fcol: str, ylabel: str, title: str) -> str:
     """
-    One panel per current level: the current effect `col` per model against FH's `fcol`, over the
-    relative current direction. Returns the figure as a PNG data URI.
+    One panel per current level: current effect col per model versus FH's fcol, over
+    the relative direction. Returns a PNG data URI.
     """
 
     levels = sorted(d["level"].unique(), key=lambda s: float(s[1:]))
@@ -854,8 +893,10 @@ def _effect_plot(d, col: str, fcol: str, ylabel: str, title: str) -> str:
 
 
 def write_report(out_dir: Optional[Path] = None) -> Path:
-    """Build the HTML report from current_summary.csv, onestep_summary.csv,
-    current_calibration.csv and run_meta.json (nothing is re-simulated)."""
+    """
+    Build the HTML report from the CSVs and run_meta.json (no re-simulation).
+    """
+
     import base64
     import html
     import pandas as pd
@@ -870,7 +911,9 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
     models_present = [m for m in REPORT_MODELS if m in set(d["model"])]
 
     def mean_abs(col):
-        """Mean |col| per model, per current level and over all levels, as a DataFrame."""
+        """
+        Mean |col| per model, per current level and over all levels, as a DataFrame.
+        """
 
         rows = []
         for m in models_present:
@@ -892,7 +935,10 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
     ag = d[d["model"].isin(NO_CURRENT_MODELS)]
 
     def m_abs(df, col):
-        """Mean |col| of `df`, NaN for an empty frame."""
+        """
+        Mean |col| of df, NaN for an empty frame.
+        """
+
         return float(df[col].abs().mean()) if not df.empty else float("nan")
 
     fh_pos_eff = np.hypot(fh["fh_current_effect_along"], fh["fh_current_effect_lateral"])
@@ -940,9 +986,14 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
         o = pd.read_csv(out_dir / ONESTEP_NAME)
         o = o[o["with_current"] == 1]
         if not o.empty:
+
             def grp(rd):
-                """Side group of a relative current direction [deg] for the one-step table."""
+                """
+                Side group of a relative current direction [deg] for the one-step table.
+                """
+
                 return "from starboard" if 0 < rd < 180 else ("from port" if rd > 180 else "head / following")
+
             o["side"] = o["target_rel_dir_deg"].map(grp)
             rows = []
             for m in [x for x in MODEL_ORDER if x in set(o["model"])]:
@@ -950,10 +1001,10 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
                     s = o[(o["model"] == m) & (o["side"] == g)]
                     if s.empty:
                         continue
+
                     def pct(k):   # runs where FH's own signal is ~0 are left out of the ratio
                         """
-                        Mean RMS one-step error of component `k` as % of FH's RMS, over runs where FH's own signal
-                        exceeds ONESTEP_MIN_FH_RMS[k]; NaN if there are none.
+                        Mean RMS one-step error of k as % of FH's RMS (runs with FH RMS > ONESTEP_MIN_FH_RMS[k]).
                         """
 
                         ok = s[f"fh_rms_{k}"] > ONESTEP_MIN_FH_RMS[k]
@@ -982,12 +1033,17 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
                             "current effect on heading [deg]\n(stbd +)", "Figure 3 - Current effect on heading")
 
     def kpi(v, label):
-        """HTML KPI tile for value `v` ("n/a" for None/NaN)."""
+        """
+        HTML KPI tile for v ("n/a" for None/NaN).
+        """
+
         txt = "n/a" if v is None or (isinstance(v, float) and np.isnan(v)) else f"{v:.1f}"
         return f'<div class="kpi"><div class="v">{txt}</div><div class="l">{html.escape(label)}</div></div>'
 
     def img(path: Path, alt: str) -> str:
-        """HTML figure embedding the PNG at `path` as a data URI; empty string if the file is missing."""
+        """
+        HTML figure embedding the PNG at path as a data URI ("" if missing).
+        """
 
         if not path.is_file():
             return ""
@@ -1062,8 +1118,7 @@ def write_report(out_dir: Optional[Path] = None) -> Path:
 
 def _clean_output_dir(out_dir: Path) -> None:
     """
-    Remove this script's own outputs from a previous run (only these patterns), so the report
-    never mixes runs.
+    Remove this script's outputs of a previous run, so the report never mixes runs.
     """
 
     patterns = ("trajectory_*.csv", "env_*.csv", "current_paths_*.png", "slide_current_*.png", SUMMARY_NAME,
@@ -1078,10 +1133,11 @@ def _clean_output_dir(out_dir: Path) -> None:
 
 
 def _check_fh_directions(lv: CurrentLevel, results: List[RunResult], bases: Dict[str, RunResult]) -> None:
-    """Independent check of the direction convention on FH's own paths: a head current
-    must reduce the distance ahead, a current from starboard set the ship to port (and
-    from port to starboard). Warns only (a wrong frame in the current measurement or in
-    heading_for would show up here)."""
+    """
+    Check the direction convention on FH's paths (head current reduces the distance
+    ahead; current from starboard sets to port, from port to starboard). Warns only.
+    """
+
     expect = {0.0: ("along", -1), 90.0: ("lateral", -1), 180.0: ("along", +1), 270.0: ("lateral", +1)}
     for res in results:
         key = expect.get(res.target_rel_dir_deg)
@@ -1099,8 +1155,7 @@ def _check_fh_directions(lv: CurrentLevel, results: List[RunResult], bases: Dict
 
 def _print_run(res: RunResult) -> None:
     """
-    Print a summary of one run: current, FH's final position and heading change, and any
-    domain exit, bank hits or MAX_STEPS stop.
+    Print one run's current, FH's final position and heading change, and any domain/bank/MAX_STEPS issue.
     """
 
     fh_final = track_metrics(res.paths["FH"][0], res.paths["FH"][-1])
@@ -1123,8 +1178,11 @@ def generate_current_trajectories(start_x: float, start_y: float, start_heading_
                                   exercise_path_nocurrent: Optional[Path] = None,
                                   rel_dirs_deg=REL_CURRENT_DIRS_DEG, speed: float = CURRENT_TRAJECTORY_SPEED,
                                   calibrate_only: bool = False) -> None:
-    """start_heading_deg is only used for the calibration sessions (the current
-    does not depend on the heading); every run sets its own heading."""
+    """
+    Run the current test. start_heading_deg is used only for calibration; every run
+    sets its own heading.
+    """
+
     exercise_path = Path(exercise_path or CURRENT_EXERCISE_PATH or "")
     exercise_path_nocurrent = Path(exercise_path_nocurrent or NOCURRENT_EXERCISE_PATH or "")
     for p, name in ((exercise_path, "exercise_path"), (exercise_path_nocurrent, "exercise_path_nocurrent")):
@@ -1155,9 +1213,9 @@ def generate_current_trajectories(start_x: float, start_y: float, start_heading_
 def _generate(start_x, start_y, start_heading_deg, exercise_path, exercise_path_nocurrent, rel_dirs_deg, speed,
               started, warn, calibrate_only) -> None:
     """
-    Body of generate_current_trajectories: calibrate the current levels, run every (level,
-    direction) case with its no-current baseline, and write the CSVs, plots, run_meta.json and
-    report. With calibrate_only, stops after writing the calibration CSV.
+    Calibrate the levels, run every (level, direction) case with its baseline, and
+    write CSVs, plots, run_meta.json and the report (calibrate_only: stop after the
+    calibration CSV).
     """
 
     import pandas as pd
@@ -1180,8 +1238,7 @@ def _generate(start_x, start_y, start_heading_deg, exercise_path, exercise_path_
                        start_pos=np.array([start_x, start_y], dtype=np.float32), ship_model=SHIP_MODEL)
     cutoff_geom = _cutoff_geometry(ray_env)
 
-    # One UAntwerpSurrogate per preset (model_comparison.UA_PRESETS_BY_SHIP), shared with the
-    # ship-bank and wind tests; UGent only for the Tripoli, the UA_* slots per SHIP_MODEL.
+    # One UAntwerpSurrogate per preset (model_comparison.UA_PRESETS_BY_SHIP); UGent only for Tripoli.
     ua_models = build_ua_models(ship_spec)
     non_fh = {**build_reference_models(ship_spec, ray_env), **ua_models}
     tf_models = None
@@ -1268,9 +1325,7 @@ if __name__ == "__main__":
     if "--report-only" in sys.argv:
         write_report(CURRENT_OUTPUT_DIR)
     else:
-        # The full exercises of SHIP_MODEL (model_comparison.SHIP_MODEL), with and without
-        # current: Tripoli -> DDShip_Tripoli_scenario_windcurrent/windnocurrent.tab,
-        # MYZAKO_37 -> DDShip_scenario3_windcurrent / scenario2_windnocurrent_myzako_37.tab
+        # SHIP_MODEL's full exercises with and without current
         # (sim_fh_dataset_generator.SHIP_PROFILES).
         from fw.surrogate.sim_fh_dataset_generator import exercise_paths
         _current_exercise, _nocurrent_exercise = exercise_paths(SHIP_MODEL, "full")

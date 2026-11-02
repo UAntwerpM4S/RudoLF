@@ -1,5 +1,5 @@
 """
-Shared generic ppo utilities used across the framework.
+Generic PPO utilities: policy file paths and seeding.
 """
 
 from __future__ import annotations
@@ -53,8 +53,7 @@ def resolve_base_seed(seed: Optional[int]) -> int:
     """
     Validate the configured base seed, or draw and return a random one.
 
-    A drawn seed is returned (and logged by the caller) so that a run
-    without a configured seed can still be reproduced afterwards.
+    A drawn seed is returned (and logged by the caller) so the run can be reproduced.
 
     Args:
         seed: Non-negative integer from the 'seed' hyperparameter, or None.
@@ -79,14 +78,11 @@ def reseed_env_rng(env, seed: Union[None, int, np.random.SeedSequence] = None) -
     """
     Give a deep-copied environment its own RNG, seeded with `seed`.
 
-    Vectorized workers are deep copies of one template environment, so
-    without this every worker carries an identical copy of the template's
-    `np.random.Generator` and samples identical start poses / route
-    segments. The agents pass one child of their worker SeedSequence per
-    worker, which makes the workers independent AND reproducible from the
-    'seed' hyperparameter. `seed=None` gives an unseeded generator. Envs
-    without a `_rng` attribute are left untouched; an explicit
-    `env.reset(seed=...)` still re-seeds the generator.
+    Vectorized workers are deep copies of one template env and would otherwise
+    share identical RNG state (identical start poses/route segments). Agents pass
+    one SeedSequence child per worker, making workers independent and reproducible
+    from the 'seed' hyperparameter. seed=None gives an unseeded generator. Envs
+    without `_rng` (also when wrapped) are left untouched.
 
     Args:
         env: Environment instance (possibly wrapped) to re-seed in place.

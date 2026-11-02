@@ -1,5 +1,5 @@
 """
-Load and validate a JSON pipeline specification against framework enums and registries.
+Load a JSON pipeline specification and validate it against framework enums and registries.
 """
 
 from __future__ import annotations
@@ -21,13 +21,15 @@ from fw.scheduling.run_spec import PipelineBlock, PipelineSpec, StopConditionSpe
 _VALID_ACTIONS = {"train", "visualize", "evaluate_reward"}
 _VALID_FAILURE_MODES = {"continue", "abort"}
 
-# Reject criteria known to fail later during execution.
+# Rejected up front because they would fail later during execution.
 _UNIMPLEMENTED_CRITERIA = {"AUTO_CONVERGE"}
 _UNSUPPORTED_POLICY_STRATEGIES = {"REUSE_CURRENT_POLICY"}
 
 
 class PipelineSpecError(ValueError):
-    """ Raised when a pipeline specification fails validation. """
+    """
+    Raised when a pipeline specification fails validation.
+    """
 
 
 def load_pipeline_spec(path: str) -> PipelineSpec:
@@ -35,15 +37,14 @@ def load_pipeline_spec(path: str) -> PipelineSpec:
     Read and validate a pipeline specification file.
 
     Args:
-        path: Path to a JSON file shaped like:
-            {"on_block_failure": "continue", "blocks": [ {...}, {...} ]}
+        path: JSON file shaped like {"on_block_failure": "continue", "blocks": [{...}, ...]}.
 
     Returns:
         A validated `PipelineSpec`.
 
     Raises:
-        PipelineSpecError: If the file is missing required fields, or any
-            field does not match a known enum member / registered name.
+        PipelineSpecError: Missing required fields, or a value that is not a known
+            enum member or registered name.
     """
 
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -52,18 +53,11 @@ def load_pipeline_spec(path: str) -> PipelineSpec:
 
 def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
     """
-    Validate and parse the top-level pipeline specification.
-
-    Args:
-        raw: Parsed JSON content of the run file.
-        source: Path string used only for error messages.
-
-    Returns:
-        A validated `PipelineSpec`.
+    Parse the top-level specification (`source` is only used in error messages).
 
     Raises:
-        PipelineSpecError: On any invalid field or forward/self
-            `transfer.from_block` reference.
+        PipelineSpecError: On any invalid field, or a `transfer.from_block` that does
+            not name an earlier 'train' block.
     """
 
     on_block_failure = raw.get("on_block_failure", "continue")
@@ -113,17 +107,13 @@ def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
 
 def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], source: str) -> PipelineBlock:
     """
-    Validate and parse one pipeline block.
+    Parse one entry of `blocks`.
 
     Args:
-        raw_block: One entry from the run file's `blocks` list.
-        index: Position of this block in `blocks`, used in error messages.
-        seen_names: Names of blocks already parsed earlier in this file,
-            used to reject duplicates.
-        source: Path string used only for error messages.
-
-    Returns:
-        A validated `PipelineBlock`.
+        raw_block: The raw block dict.
+        index: Position in `blocks` (for error messages).
+        seen_names: Names of earlier blocks, used to reject duplicates.
+        source: Path string for error messages.
 
     Raises:
         PipelineSpecError: On any missing or invalid field.
@@ -202,18 +192,11 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
 
 def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopConditionSpec:
     """
-    Validate and parse a stop-condition specification.
-
-    Args:
-        raw: The block's raw `stop_condition` dict (can be empty).
-        where: Location string used in error messages.
-        name: The owning block's name, used in error messages.
-
-    Returns:
-        A validated `StopConditionSpec`.
+    Parse a block's (possibly empty) `stop_condition` dict.
 
     Raises:
-        PipelineSpecError: If `criterion` is unknown or unimplemented.
+        PipelineSpecError: Unknown or unimplemented criterion, or parameters that
+            StopCondition rejects.
     """
 
     criterion = raw.get("criterion", "NBR_POLICY_UPDATES")
@@ -232,9 +215,8 @@ def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopCon
         patience=raw.get("patience"),
     )
 
-    # Build the StopCondition once at load time, exactly as PipelineScheduler
-    # does when the block starts, so a missing target_reward / target_loss is
-    # reported now instead of after hours of earlier blocks.
+    # Build the StopCondition now, as PipelineScheduler will, so a missing
+    # target_reward/target_loss fails at load time rather than hours into the run.
     try:
         StopCondition(
             stop_criterion=Criterion[spec.criterion],
@@ -251,24 +233,18 @@ def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopCon
 
 def _parse_transfer(raw: Dict[str, Any], action: str, where: str, name: str) -> TransferSpec:
     """
-    Validate and parse a transfer specification.
+    Parse a block's (possibly empty) `transfer` dict.
 
     Args:
-        raw: The block's raw `transfer` dict (can be empty).
-        action: The owning block's already-validated `action` (one of
-            `_VALID_ACTIONS`), used to reject `independent` on any action
-            other than "train".
-        where: Location string used in error messages.
-        name: The owning block's name, used in error messages.
-
-    Returns:
-        A validated `TransferSpec`.
+        raw: The raw `transfer` dict.
+        action: The block's validated action; `independent` is only allowed on "train".
+        where: Location string for error messages.
+        name: Block name for error messages.
 
     Raises:
-        PipelineSpecError: If `policy_strategy` is unknown/unsupported,
-            both `from_block` and `external_training_name` are set,
-            `independent` is combined with any other transfer field, or
-            `independent` is set on a non-"train" block.
+        PipelineSpecError: Unknown/unsupported policy_strategy; both from_block and
+            external_training_name set; `independent` combined with another
+            transfer field or used on a non-"train" block.
     """
 
     policy_strategy = raw.get("policy_strategy")
@@ -326,17 +302,7 @@ def _parse_transfer(raw: Dict[str, Any], action: str, where: str, name: str) -> 
 
 def _validate_choice(field_name: str, value: Any, valid: Set[str], where: str) -> None:
     """
-    Raise if value is not one of the allowed choices.
-
-    Args:
-        field_name: Name of the field being validated, used in the
-            error message.
-        value: The value to check.
-        valid: Set of acceptable values.
-        where: Location string used in the error message.
-
-    Raises:
-        PipelineSpecError: If `value` is not in `valid`.
+    Raise PipelineSpecError if `value` is not in `valid`.
     """
 
     if value not in valid:
@@ -347,19 +313,7 @@ def _validate_choice(field_name: str, value: Any, valid: Set[str], where: str) -
 
 def _validate_enum_member(field_name: str, value: str, enum_cls, where: str, block_name: str) -> None:
     """
-    Raise if value does not name a member of enum_cls.
-
-    Args:
-        field_name: Name of the field being validated, used in the
-            error message.
-        value: The raw string to check against `enum_cls`'s member names.
-        enum_cls: The enum class `value` must name a member of.
-        where: Location string used in the error message.
-        block_name: The owning block's name, used in the error message.
-
-    Raises:
-        PipelineSpecError: If `value` does not match any member name of
-            `enum_cls`.
+    Raise PipelineSpecError if `value` is not a member name of `enum_cls`.
     """
 
     valid_names = {member.name for member in enum_cls}

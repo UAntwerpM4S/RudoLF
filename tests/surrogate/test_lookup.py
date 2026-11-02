@@ -18,7 +18,9 @@ SC = get_scenario("confined_ukc")
 
 
 def _lookup_csv(path, points):
-    """A confined_ukc-layout lookup CSV (raw row, 3 targets, episode_id) with the given (x, y, ukc) points."""
+    """
+    A confined_ukc-layout lookup CSV (raw row, 3 targets, episode_id) with the given (x, y, ukc) points.
+    """
 
     rows = np.zeros((len(points), SC.raw_input_dim + 4))
     for i, (x, y, ukc) in enumerate(points):
@@ -32,7 +34,9 @@ POINTS = [(0.0, 0.0, 5.0), (10.0, 0.0, 7.0), (0.0, 10.0, 9.0)]
 
 
 def _wcu(path):
-    """WcuLookup on a confined lookup CSV (x, y, UKC only)."""
+    """
+    WcuLookup on a confined lookup CSV (x, y, UKC only).
+    """
 
     from fw.dynamics.wcu_lookup import WcuLookup
 
@@ -42,7 +46,9 @@ def _wcu(path):
 
 @pytest.mark.parametrize("name", ["lookup.csv", "lookup.csv.gz"])
 def test_nearest_row_and_max_distance(tmp_path, name):
-    """Nearest row is returned (plain and gzip); with max_distance, nothing beyond it."""
+    """
+    Nearest row is returned (plain and gzip); with max_distance, nothing beyond it.
+    """
 
     lk = _wcu(_lookup_csv(tmp_path / name, POINTS))
     assert lk.get_ukc(1.0, 1.0) == pytest.approx(5.0)
@@ -55,7 +61,9 @@ def test_nearest_row_and_max_distance(tmp_path, name):
 
 
 def _confined_surrogate(tiny_models, lookup):
-    """A myzako_confined UAntwerpSurrogate on the tiny checkpoint with the given lookup CSV."""
+    """
+    A myzako_confined UAntwerpSurrogate on the tiny checkpoint with the given lookup CSV.
+    """
 
     from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 
@@ -65,7 +73,9 @@ def _confined_surrogate(tiny_models, lookup):
 
 
 def test_surrogate_uses_lookup_and_reports_far_rows(tiny_models, tmp_path, caplog):
-    """Near: lookup UKC, nothing reported. Far: the nearest row is still used, warned once, counted every time."""
+    """
+    Near: lookup UKC, nothing reported. Far: the nearest row is still used, warned once, counted every time.
+    """
 
     from fw.dynamics import uantwerp_surrogate
 
@@ -87,7 +97,9 @@ def test_surrogate_uses_lookup_and_reports_far_rows(tiny_models, tmp_path, caplo
 
 
 def test_missing_lookup_falls_back_to_default_ukc(tiny_models, tmp_path, caplog):
-    """A missing lookup file: a warning, then the preset's default UKC."""
+    """
+    A missing lookup file: a warning, then the preset's default UKC.
+    """
 
     with caplog.at_level(logging.WARNING):
         model = _confined_surrogate(tiny_models, tmp_path / "does_not_exist.csv.gz")

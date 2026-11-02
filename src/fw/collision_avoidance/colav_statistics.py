@@ -26,22 +26,14 @@ def plot_min_distance_stats(
     """
     Plot encounter-level min-distance statistics.
 
-    Generates two images:
-      * `pdf_save_path`: histogram + KDE of min center-to-center distance
-        aggregated across all non-collision encounters (no per-policy split).
-      * `boxplot_save_path`: per-policy/scenario boxplots of the same
-        min-distance values, bucketed by the encounter's ground-truth label.
+    Writes a histogram + KDE of the min center-to-center distance over all
+    encounters (`pdf_save_path`) and boxplots of the same values per
+    ground-truth scenario (`boxplot_save_path`). With `include_banks`, the
+    per-encounter distance also accounts for the closest bank distance.
 
-    When `include_banks` is True, the per-encounter distance is the minimum
-    of the closest target-ship distance and the closest distance to the bank
-    (polygon boundary) observed during the encounter; otherwise only
-    target-ship distance is used.
-
-    Only "valid" encounters are included: those that resolved normally
-    (OS passed the TS and the TS subsequently left the forget range) and
-    did not end in collision. Unresolved encounters (e.g. episode timed
-    out / terminated mid-encounter) are excluded to avoid skewing the
-    distribution with partial samples.
+    Only encounters that resolved normally (TS passed and left the forget
+    range) without collision are used; partial encounters would skew the
+    distribution.
 
     Args:
         env: Collision-avoidance environment.
@@ -53,9 +45,7 @@ def plot_min_distance_stats(
 
     # print(f"banks included: {include_banks}")
 
-    # Make sure any encounter still active at call time is finalized.
-    # Calling here means we're outside the env's normal step/reset loop,
-    # so the encounter was not resolved by TS leaving forget range.
+    # Finalize a still-active encounter; it did not resolve normally.
     env._finalize_active_encounter(resolved_normally=False)
 
     encounters = list(env._all_encounters)
@@ -225,8 +215,7 @@ def _plot_min_distance_boxplots(
         include_banks: Whether bank distances are included.
     """
 
-    # Order known labels first (canonical scenario order), then any
-    # extras encountered (e.g. "unknown") tacked on at the end.
+    # Canonical scenario order first, then extras such as "unknown".
     ordered = [lbl for lbl in EXTENDED_SCENARIO_LABELS if per_policy.get(lbl)]
     ordered += [lbl for lbl in per_policy.keys()
                 if lbl not in EXTENDED_SCENARIO_LABELS and per_policy[lbl]]
@@ -237,9 +226,7 @@ def _plot_min_distance_boxplots(
     data = [per_policy[lbl] for lbl in ordered]
     counts = [len(v) for v in data]
 
-    # Dump the raw min-distance samples next to the boxplot image so the
-    # underlying numbers can be re-plotted / cross-referenced. Long-form
-    # CSV: one row per encounter sample (scenario, min_distance_m).
+    # Long-form CSV next to the image: one row per encounter (scenario, min_distance_m).
     csv_path = os.path.splitext(save_path)[0] + ".csv"
     try:
         with open(csv_path, "w", newline="") as f:
@@ -296,13 +283,11 @@ def plot_scenario_confusion_matrix(
     """
     Plot a confusion matrix over encounters aggregated across episodes.
 
-    Rows = builder ground-truth scenario, columns = geometric classifier
-    prediction at encounter entry. One entry per encounter (multiple
-    encounters may occur per episode in step-level generation).
+    Rows: builder ground-truth scenario; columns: geometric classifier
+    prediction at encounter entry. One entry per encounter.
     """
 
-    # Flush current episode's encounters if the run ended without another
-    # env_specific_reset() being called.
+    # Include the current episode's encounters (not yet flushed by a reset).
     encounters = list(env._all_encounters)
     if env._episode_encounters:
         encounters.extend(env._episode_encounters)
@@ -341,7 +326,7 @@ def plot_scenario_confusion_matrix(
         f"accuracy {accuracy:.1f}% ({correct}/{total})"
     )
 
-    # Overlay counts. Use white text on dark cells for readability.
+    # Overlay counts; white text on dark cells.
     thresh = matrix.max() / 2.0 if matrix.max() > 0 else 0.5
     for i in range(n):
         for j in range(n):

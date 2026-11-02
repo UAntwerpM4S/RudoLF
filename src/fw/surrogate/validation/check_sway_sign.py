@@ -1,33 +1,21 @@
 """
-check_sway_sign.py -- which way does FH's sway point?
+Check the sign of FH's sway (and yaw rate) from existing test outputs.
 
-Uses the outputs the wind and current tests already wrote (no FH needed):
-FH's track (trajectory_*.csv: x, y, heading per step) and FH's sway as the
-tests read it (env_*.csv: fh_sway from FhSession.state(), the same value the
-dataset generator stores as "sway").
+Uses the outputs of the wind and current comparison tests (no FH needed):
+FH's track (trajectory_*.csv) and FH's sway as the tests read it (env_*.csv:
+fh_sway from FhSession.state(), the value the dataset generator stores).
 
-For every FH step it compares fh_sway with the sideways velocity actually
-seen in FH's own track, projected on the STARBOARD direction of the shared
-ray module (ray_90, heading 0 = East, counter-clockwise):
+Per FH step, fh_sway is regressed on the sideways velocity of FH's own track,
+projected on the starboard direction (ray_90):
 
-    slope ~ -1  -> fh_sway is PORT positive: the framework convention
-                   (fw.ships.vessel_state), expected for outputs written
-                   since 2026-10-19
-    slope ~ +1  -> fh_sway is STARBOARD positive: outputs written before
-                   2026-10-19 (the sway was negated then), or a sign flip
-                   that crept back in
+    slope ~ -1: fh_sway is port positive (framework convention, fw.ships.vessel_state)
+    slope ~ +1: fh_sway is starboard positive (old outputs, or a sign flip)
 
-The same is done for surge (u vs the speed along the bow) as a sanity check:
-that slope must be ~ +1. And for the yaw rate: fh_yaw_rate (radians of
-getShipYawRate()) vs the rate of change of FH's heading (counter-clockwise):
-slope ~ +1 means the yaw rate is counter-clockwise (= to port) positive, as
-ShipSimulator.integrate assumes (heading += r * dt); ~ -1 means starboard positive.
+Surge must give slope ~ +1 (sanity check). For the yaw rate, slope ~ +1 means
+counter-clockwise (port) positive, as ShipSimulator.integrate assumes.
 
-Why it matters: ShipSimulator.integrate moves the ship by
-dx = u cos(psi) - v sin(psi), dy = u sin(psi) + v cos(psi), which with
-heading 0 = East, counter-clockwise, treats v as PORT positive. Data or
-states with starboard-positive sway make every non-FH model's sideways drift
-go to the wrong side.
+This matters because ShipSimulator.integrate treats v as port positive;
+starboard-positive sway makes every non-FH model drift to the wrong side.
 
 Usage (from src):
     python -m fw.surrogate.validation.check_sway_sign model_comparison_output/wind_trajectories
@@ -38,8 +26,8 @@ import argparse
 import sys
 from pathlib import Path
 
-# Allow running by file path as well (src on the import path).
-_SRC_DIR = str(Path(__file__).resolve().parents[3])     # src (this file: src/fw/surrogate/validation/)
+# Allow running by file path (src on the import path).
+_SRC_DIR = str(Path(__file__).resolve().parents[3])
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
@@ -54,12 +42,18 @@ MIN_ABS_SWAY = 1e-3   # m/s; steps with smaller sway carry no sign information
 
 
 def _unit(angle: float) -> np.ndarray:
-    """Unit vector (cos, sin) for a world-frame angle [rad]."""
+    """
+    Unit vector (cos, sin) for a world-frame angle [rad].
+    """
+
     return np.array([np.cos(angle), np.sin(angle)])
 
 
 def _slope(observed: np.ndarray, reported: np.ndarray) -> float:
-    """Least-squares slope through the origin of observed vs reported."""
+    """
+    Least-squares slope through the origin of observed vs reported.
+    """
+
     return float(observed @ reported / max(float(reported @ reported), 1e-30))
 
 

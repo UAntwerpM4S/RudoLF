@@ -1,14 +1,10 @@
 """
-Single-agent with N switchable policies (one per scenario).
+Single agent with N switchable policies (one per scenario).
 
-The environment must append a one-hot encoding to the observation
-indicating which policy should act at each timestep.
-For example (N=4):
-- Good usage: [1, 0, 0, 0]
-- Bad usage: [0, 0, 0, 0]
-- Bad usage: [1, 1, 0, 0]
-During training, trajectories are split at scenario-switch boundaries and each policy
-receives only the segments that belong to it, with correct per-segment
+The environment appends a one-hot vector to the observation selecting the
+acting policy, e.g. for N=4: [1, 0, 0, 0] is valid, [0, 0, 0, 0] and
+[1, 1, 0, 0] are not. During training, trajectories are split at scenario
+switches and each policy trains only on its own segments, with per-segment
 GAE bootstrapping.
 
 Usage:
@@ -48,30 +44,18 @@ logger = logging.getLogger(__name__)
 
 class CollapseWatchdog:
     """
-    Tracks a rolling mean of per-iteration reward for each policy.  Whenever
-    the rolling mean reaches a new peak, the policy's network `state_dict`
-    is snapshotted in memory (deep-cloned tensors).  After a warmup period,
-    the current rolling mean is compared against the peak rolling mean.  The
-    watchdog triggers when `smoothed / peak < ratio_threshold`, where
-    `ratio_threshold` is typically negative (e.g. `-1.75` means "current
-    is at -175% of peak").
+    Per-policy collapse detector with weights-only rollback.
 
-    On trigger, the watchdog returns the snapshotted `state_dict`; the
-    caller is responsible for applying it via `network.load_state_dict`
-    and (recommended) for re-initializing the corresponding optimizer so
-    that Adam's `m`/`v` moment buffers to avoid pushing the rolled-back
-    weights back along the failure trajectory. Without an optimizer reset,
-    weights-only rollback can produce a rollback ping-pong on policies with
-    high reward variance.
+    Tracks a rolling mean of the per-iteration reward per policy and snapshots
+    the network state_dict at every new peak. It triggers when
+    smoothed / peak < ratio_threshold (typically negative: -1.75 means the
+    current mean is at -175 % of the peak) and returns the snapshot. The caller
+    loads it and should also reset the optimizer, otherwise Adam's moment
+    buffers push the weights back along the failure path (rollback ping-pong).
 
-    Safeguards:
-      * `warmup_iterations`: no rollback before this many iterations have
-        elapsed.
-      * `min_gap_between_rollbacks`: enforce a cooldown for each policy.
-      * `max_rollbacks`: cap the total rollbacks per policy.
-      * `min_peak_for_trigger`: require the peak rolling mean to be above
-        this floor before the ratio test is meaningful (the formulation is
-        ill-defined for non-positive peaks).
+    Safeguards: warmup_iterations (no rollback before), min_gap_between_rollbacks
+    (cooldown), max_rollbacks (cap per policy), min_peak_for_trigger (the ratio
+    test is ill-defined for non-positive peaks).
     """
 
     def __init__(
@@ -86,37 +70,15 @@ class CollapseWatchdog:
         min_peak_for_trigger: float = 0.1,
     ):
         """
-        Initialize CollapseWatchdog.
-
-        Tracks per-policy rolling mean rewards and stores the best observed
-        policy parameters. If the current smoothed reward drops sufficiently
-        relative to the best observed peak, a rollback state can be returned.
-
         Args:
-            num_policies (int):
-                Number of policies to monitor.
-
-            policy_labels (List[str]):
-                Labels for each policy (used for logging/debugging).
-
-            window_size (int, optional):
-                Size of rolling window used to compute smoothed rewards.
-
-            ratio_threshold (float, optional):
-                Collapse threshold applied to ratio of current smoothed reward
-                over best smoothed reward.
-
-            warmup_iterations (int, optional):
-                Number of initial iterations before rollback logic is active.
-
-            min_gap_between_rollbacks (int, optional):
-                Minimum iterations required between rollbacks per policy.
-
-            max_rollbacks (int, optional):
-                Maximum number of rollbacks allowed per policy.
-
-            min_peak_for_trigger (float, optional):
-                Minimum peak reward required before enabling rollback checks.
+            num_policies: Number of policies to monitor.
+            policy_labels: Policy names (logging).
+            window_size: Rolling window for the smoothed reward.
+            ratio_threshold: Trigger when smoothed / peak falls below this.
+            warmup_iterations: Iterations before rollbacks are allowed.
+            min_gap_between_rollbacks: Minimum iterations between rollbacks per policy.
+            max_rollbacks: Maximum rollbacks per policy.
+            min_peak_for_trigger: Peak smoothed reward required before checking.
         """
 
         self.num_policies = num_policies
@@ -152,20 +114,9 @@ class CollapseWatchdog:
         network: nn.Module,
     ) -> Optional[dict]:
         """
-        Record this iteration's reward for `pid` and, if appropriate,
-        either snapshot a new best or return a rollback `state_dict`.
-
-        Args:
-            pid (int): Policy index.
-            iteration (int): Current training iteration.
-            reward (float): Mean reward for `pid` this iteration (NaN if
-                the policy collected no segments; will be ignored).
-            network (nn.Module): The policy's live network; snapshotted
-                (cloned) when a new peak rolling mean is observed.
-
-        Returns:
-            Optional[dict]: A cloned `state_dict` to load if a collapse
-                is detected; `None` otherwise.
+        Record this iteration's reward for pid, snapshot network at a new peak,
+        and return the best state_dict if a collapse is detected (else None).
+        A NaN reward (no segments collected) is ignored.
         """
 
         if reward is None or np.isnan(reward):
@@ -173,40 +124,35 @@ class CollapseWatchdog:
 
         self._reward_history[pid].append(float(reward))
 
-        # Need a full window before the rolling mean is meaningful
+        # Need a full window first
         if len(self._reward_history[pid]) < self.window_size:
             return None
 
         smoothed = float(np.mean(self._reward_history[pid]))
 
-        # New best: snapshot the current network state
+        # New peak: snapshot the network
         if smoothed > self._best_smoothed[pid]:
             self._best_smoothed[pid] = smoothed
             self._best_state_dict[pid] = {
                 k: v.detach().clone() for k, v in network.state_dict().items()
             }
 
-        # Watchdog disabled until warmup elapses
         if iteration < self.warmup_iterations:
             return None
 
-        # Out of rollback budget
         if self._rollback_count[pid] >= self.max_rollbacks:
             return None
 
-        # No usable peak yet (peak too small / negative - ratio test
-        # would be meaningless or trigger-happy)
+        # Peak too small or negative: ratio test meaningless
         peak = self._best_smoothed[pid]
         if peak <= self.min_peak_for_trigger or self._best_state_dict[pid] is None:
             return None
 
-        # Cooldown after a previous rollback for this policy
+        # Cooldown
         if iteration - self._last_rollback_iter[pid] < self.min_gap_between_rollbacks:
             return None
 
-        # Trigger condition: current rolling mean is far below the peak.
-        # E.g. ratio_threshold = -1.75 means "smoothed must be below -175%
-        # of peak" (so for peak=0.7, smoothed < -1.225 triggers).
+        # E.g. ratio_threshold = -1.75, peak 0.7: smoothed < -1.225 triggers.
         if smoothed / peak < self.ratio_threshold:
             return self._best_state_dict[pid]
 
@@ -214,12 +160,8 @@ class CollapseWatchdog:
 
     def record_rollback(self, pid: int, iteration: int) -> None:
         """
-        Mark a rollback as having occurred for `pid` at `iteration`.
-
-        Clears the rolling reward history so that the post-rollback
-        rolling mean is not dragged down by the collapsed iterations
-        still sitting in the window.  The best snapshot itself is
-        retained: subsequent improvements may still surpass it.
+        Record a rollback for pid and clear its reward window, so collapsed
+        iterations do not drag down the new mean. The best snapshot is kept.
         """
 
         self._rollback_count[pid] += 1
@@ -231,18 +173,11 @@ class MultiPolicySingleAgent(BasePPOAgent):
     """
     Single-agent PPO with N scenario-conditioned policies.
 
-    At each timestep the environment appends a one-hot vector of length
-    `num_policies` to the observation.  The agent strips this suffix,
-    determines which policy should act, and forwards only the base
-    observation to that policy's actor-critic network.
-
-    During training, each collected trajectory is split into contiguous
-    segments where the same policy was active.  At segment boundaries
-    (scenario switches), the outgoing policy's value estimate is used for
-    GAE bootstrapping, treating the switch as a mini-episode boundary.
-    Each policy is then trained independently on only its own segments.
-
-    This design is fully generalizable to any number of policies N.
+    The agent strips the one-hot suffix (length num_policies) from each
+    observation and routes the base observation to the selected policy.
+    Trajectories are split into segments per active policy; at a scenario
+    switch the outgoing policy's value bootstraps GAE (mini-episode boundary).
+    Each policy trains only on its own segments.
     """
 
     MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20
@@ -258,38 +193,21 @@ class MultiPolicySingleAgent(BasePPOAgent):
         **kwargs,
     ):
         """
-        Initialize the multi-policy single agent.
-
         Args:
-            *args: Positional arguments forwarded to `BasePPOAgent`.
-            num_policies (int): Number of switchable policies.  Must match
-                the length of the one-hot suffix appended by the environment.
-            policy_labels (list[str], optional): Human-readable names for
-                each policy.  Defaults to `["policy_0", ...]`.
-            steps_per_policy_update (int): Minimum number of segment steps a
-                slot must have accumulated (across one or more iterations)
-                before its PPO update fires. Iterations where a slot is
-                below threshold append the new segments to a per-slot
-                pending buffer and skip the optimizer step. When the
-                threshold is reached, the buffered segments are flushed
-                through one PPO update and the buffer is cleared.
-                Because a slot's policy/value networks do not change
-                between updates, accumulating across iterations does not
-                introduce off-policy bias for that slot.
-            watchdog_enabled (bool): If True, instantiate a
-                `CollapseWatchdog` that monitors per-policy rolling-mean
-                reward and rolls back to the best snapshot when a collapse
-                is detected.  Per-policy and weights-only.
-            watchdog_kwargs (Optional[dict]): Override defaults for the
-                `CollapseWatchdog` (`window_size`, `ratio_threshold`,
-                `warmup_iterations`, `min_gap_between_rollbacks`,
-                `max_rollbacks`, `min_peak_for_trigger`).  Ignored if
-                `watchdog_enabled` is False.
-            **kwargs: Keyword arguments forwarded to `BasePPOAgent`.
+            *args, **kwargs: Forwarded to BasePPOAgent.
+            num_policies: Number of policies; equals the env's one-hot length.
+            policy_labels: Policy names; default ["policy_0", ...].
+            steps_per_policy_update: Segment steps a slot accumulates (over one or
+                more iterations) before its PPO update runs on the buffered
+                segments. No off-policy bias: a slot's networks do not change
+                between its updates.
+            watchdog_enabled: Use a CollapseWatchdog (per-policy rollback).
+            watchdog_kwargs: CollapseWatchdog overrides (ignored if disabled).
 
         Raises:
-            ValueError: If `num_policies < 2` or the observation space is
-                too small to contain both base features and the one-hot.
+            ValueError: If num_policies < 2 or the observation space cannot hold
+                both base features and the one-hot.
+            NotImplementedError: If the action space is not a Box.
         """
 
         super().__init__(*args, **kwargs)
@@ -310,7 +228,6 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 f"must match num_policies ({num_policies})."
             )
 
-        # Observation / action dimensions
         full_obs_dim = self.env.observation_space.shape[0]
         self.policy_obs_dim = full_obs_dim - num_policies
 
@@ -323,8 +240,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         action_space = self.env.action_space
         if not isinstance(action_space, gym.spaces.Box):
-            # The policy is a tanh-squashed Gaussian: it emits continuous
-            # vectors in [-1, 1]. A Discrete space would receive float vectors.
+            # The policy is a tanh-squashed Gaussian (continuous outputs in [-1, 1]).
             raise NotImplementedError(
                 f"MultiPolicySingleAgent supports only Box action spaces, got {action_space}."
             )
@@ -332,7 +248,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         self.action_space = action_space
 
-        # Create N independent policies and optimizers
+        # N independent policies and optimizers
         self.policies: List[PPOPolicy] = [
             PPOPolicy(self.policy_obs_dim, self.output_dim, str(self.device))
             for _ in range(num_policies)
@@ -343,17 +259,15 @@ class MultiPolicySingleAgent(BasePPOAgent):
             for policy in self.policies
         ]
 
-        # Vectorized environment handle (lazy-init like SinglePPOAgent)
+        # Vectorized environment, created lazily
         self._vec_env = None
 
-        # Reward normalization (shared across policies, same environment)
+        # Reward normalization, shared across policies
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4
 
-        # Per-policy update gating: accumulate segments across iterations
-        # until the slot's pending step count crosses
-        # `steps_per_policy_update`, then flush through one PPO update.
+        # Per-policy pending segments until steps_per_policy_update is reached
         self.steps_per_policy_update = int(steps_per_policy_update)
         self._pending_segments: Dict[int, List[dict]] = {
             k: [] for k in range(num_policies)
@@ -362,7 +276,6 @@ class MultiPolicySingleAgent(BasePPOAgent):
             k: 0 for k in range(num_policies)
         }
 
-        # Collapse watchdog (per-policy, weights-only rollback)
         if watchdog_enabled:
             wd_kwargs = dict(watchdog_kwargs or {})
             self.watchdog: Optional[CollapseWatchdog] = CollapseWatchdog(
@@ -378,23 +291,15 @@ class MultiPolicySingleAgent(BasePPOAgent):
     # ------------------------------------------------------------------
     def _extract_scenario(self, obs: np.ndarray) -> Tuple[np.ndarray, int]:
         """
-        Strip the one-hot suffix and return `(base_obs, scenario_id)`.
-
-        Args:
-            obs (np.ndarray): Full observation including one-hot suffix.
-
-        Returns:
-            Tuple[np.ndarray, int]: Base observation and active scenario index.
+        Strip the one-hot suffix and return (base_obs, scenario_id).
 
         Raises:
-            ValueError: If the one-hot suffix contains values other than 0/1
-                or does not have exactly one active bit.
+            ValueError: If the suffix is not exactly one-hot.
         """
 
         one_hot = obs[-self.num_policies:]
         base_obs = obs[:-self.num_policies]
 
-        # Validate binary encoding
         if not np.all((one_hot == 0.0) | (one_hot == 1.0)):
             raise ValueError(
                 f"Expected binary (0/1) one-hot encoding in the last "
@@ -421,16 +326,10 @@ class MultiPolicySingleAgent(BasePPOAgent):
         deterministic: bool = False,
     ) -> Tuple[Union[np.ndarray, Tuple[np.ndarray, ...]], np.ndarray, np.ndarray]:
         """
-        Predict an action for a single observation by routing to the
-        appropriate policy based on the one-hot scenario suffix.
-
-        Args:
-            state (np.ndarray): Single observation (with one-hot suffix).
-            deterministic (bool): Whether to use deterministic actions.
+        Predict for one observation (with one-hot suffix) using the selected policy.
 
         Returns:
-            Tuple[np.ndarray, float, float]:
-                - action, log_prob, value estimate.
+            (action, log_prob, value)
         """
 
         base_obs, scenario_id = self._extract_scenario(state)
@@ -441,22 +340,11 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
     def _predict(self, states, deterministic=False):
         """
-        Batched prediction across parallel environments, grouped by scenario.
-
-        Each environment may be in a different scenario, but envs that share
-        a scenario are forwarded through their policy in a single batched
-        call. With N policies and K envs, this is at most N forward passes
-        per step (rather than K), removing the per-env PyTorch dispatch
-        overhead that otherwise scales linearly with `num_envs`.
-
-        Args:
-            states (np.ndarray): Shape `(num_envs, obs_dim)`.
-            deterministic (bool): Whether to use deterministic actions.
+        Batched prediction for (num_envs, obs_dim) states: envs sharing a scenario
+        go through their policy in one call (at most N forward passes per step).
 
         Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray]:
-                actions, log_probs, values (shapes
-                `(num_envs, action_dim)`, `(num_envs,)`, `(num_envs,)`).
+            actions (num_envs, action_dim), log_probs (num_envs,), values (num_envs,).
         """
 
         states_arr = np.asarray(states)
@@ -465,7 +353,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         base_obs_all = states_arr[:, :-self.num_policies]
         one_hot = states_arr[:, -self.num_policies:]
 
-        # Vectorized equivalent of _extract_scenario's validation
+        # Vectorized _extract_scenario validation
         if not np.all((one_hot == 0.0) | (one_hot == 1.0)):
             raise ValueError(
                 f"Expected binary (0/1) one-hot encoding in the last "
@@ -497,14 +385,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):
         """
-        Estimate value for bootstrapping using the correct policy's critic.
-
-        Args:
-            next_state (np.ndarray): State to evaluate.
-            env_id (Optional[int]): Unused (single-env agent).
-
-        Returns:
-            float: Estimated value.
+        Bootstrap value of next_state from the selected policy's critic (env_id unused).
         """
 
         base_obs, scenario_id = self._extract_scenario(next_state)
@@ -514,36 +395,27 @@ class MultiPolicySingleAgent(BasePPOAgent):
             return value.squeeze(0).item()
 
     # ------------------------------------------------------------------
-    # Vectorized environment management (mirrors SinglePPOAgent)
+    # Vectorized environments (as in SinglePPOAgent)
     # ------------------------------------------------------------------
     def make_env(self, worker_seed=None):
         """
-        Create a callable factory for deep-copied, monitored environments.
-
-        The closure captures only `self.env` (not the full agent) to
-        avoid pickling CUDA policy tensors when `SubprocVecEnv` sends
-        the factory to child processes.
+        Return a factory for a deep-copied, monitored environment. It captures
+        only the env (not the agent), so SubprocVecEnv does not pickle CUDA
+        tensors.
 
         Args:
-            worker_seed: Seed (np.random.SeedSequence or int) for this
-                worker's env RNG. None: a new child of the agent's worker
-                SeedSequence is spawned (see BaseAgent 'seed').
+            worker_seed: SeedSequence or int for the worker's env RNG; None
+                spawns a new child of the agent's worker SeedSequence.
         """
 
-        env = self.env  # capture only the lightweight env, not the agent
+        env = self.env
         profile = self._profile
         if worker_seed is None:
             worker_seed = self._spawn_worker_seeds(1)[0]
 
         def _init():
             """
-            Create one monitored deep-copied environment instance.
-
-            Applies the profile's simulator settings (if any), as
-            SinglePPOAgent.make_env does, and gives the copy its own RNG.
-
-            Returns:
-                A monitored Gym environment copied from the agent base environment.
+            Deep-copy the env, apply the profile's simulator settings, reseed, wrap in Monitor.
             """
 
             env_copy = copy.deepcopy(env)
@@ -558,13 +430,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
     def _reset_envs(self, num_envs):
         """
-        Initialize or reset vectorized environments.
-
-        Args:
-            num_envs (int): Number of parallel environments.
-
-        Returns:
-            np.ndarray: Initial observations `(num_envs, obs_dim)`.
+        (Re)create the vectorized envs if needed, reset them; returns (num_envs, obs_dim).
         """
 
         if self._vec_env is None or getattr(self._vec_env, "num_envs", None) != num_envs:
@@ -578,14 +444,11 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
     def _step_envs(self, actions):
         """
-        Step all environments with given actions.
-
-        Args:
-            actions (np.ndarray): Shape `(num_envs, action_dim)`.
+        Step all envs with (num_envs, action_dim) actions.
 
         Returns:
-            Tuple: next_states, rewards, terminations, truncations, final_states
-            (real last observations of finished envs, for bootstrapping).
+            next_states, rewards, terminations, truncations, final_states (real
+            last observations of finished envs, for bootstrapping).
         """
 
         next_states, next_rewards, next_terminations, infos = self._vec_env.step(actions)
@@ -600,11 +463,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
         else:
             rewards = next_rewards
 
-            # `next_terminations` here is SB3 VecEnv's combined `done` flag
-            # (terminated OR truncated). Recover the true truncation signal
-            # from SB3's own "TimeLimit.truncated" info key when present, and
-            # remove it from the termination flags: a truncated step must be
-            # bootstrapped, not treated as a terminal state.
+            # SB3's done = terminated OR truncated. Split off truncation via
+            # "TimeLimit.truncated": a truncated step must be bootstrapped.
             if infos:
                 truncations = np.array(
                     [bool(env_info.get("TimeLimit.truncated", False)) for env_info in infos],
@@ -614,9 +474,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 truncations = np.zeros(actions.shape[0], dtype=bool)
             terminations = np.asarray(next_terminations, dtype=bool) & ~truncations
 
-        # SB3 VecEnvs auto-reset a finished env: `next_states[i]` is then the
-        # FIRST observation of the next episode. The real last observation,
-        # needed to bootstrap a truncated episode, is in
+        # SB3 auto-resets finished envs; their real last observation is in
         # info["terminal_observation"].
         final_states = np.array(next_states, copy=True)
         if infos:
@@ -635,37 +493,27 @@ class MultiPolicySingleAgent(BasePPOAgent):
         self, episode: dict
     ) -> Dict[int, List[dict]]:
         """
-        Split a collected trajectory into per-policy segments and compute
-        GAE independently for each segment with proper bootstrapping at
-        scenario-switch boundaries.
-
-        At each switch point, the outgoing policy's value estimate of the
-        boundary state is used as the bootstrap value, treating the switch
-        as a mini-episode boundary.
+        Split a trajectory into per-policy segments and compute GAE per segment;
+        at a switch the outgoing policy's value of the boundary state bootstraps.
 
         Args:
-            episode (dict): Raw trajectory from `run_parallel_episodes()`,
-                containing keys: states, actions, rewards, values, log_probs,
-                terminations, truncations, next_states, advantages, returns,
-                env_id.  `states` includes the one-hot suffix.
+            episode: Trajectory from run_parallel_episodes() (states include
+                the one-hot suffix).
 
         Returns:
-            Dict[int, List[dict]]: Mapping from `policy_id` to a list of
-                segment dictionaries.  Each segment has keys: states (one-hot
-                stripped), actions, rewards, values, log_probs, advantages,
-                returns.
+            {policy_id: [segment]}, each segment with states (one-hot stripped),
+            actions, rewards, values, log_probs, advantages, returns.
         """
 
         T = len(episode["rewards"])
 
-        # --- Extract scenario ID per timestep from the stored states ---
+        # Scenario per timestep
         scenario_ids = np.array([
             int(np.argmax(episode["states"][t, -self.num_policies:]))
             for t in range(T)
         ])
 
-        # --- Identify contiguous segments ---
-        # Each segment is (start_idx, end_idx_exclusive, policy_id)
+        # Contiguous segments: (start, end_exclusive, policy_id)
         segments: List[Tuple[int, int, int]] = []
         seg_start = 0
         for t in range(1, T):
@@ -674,13 +522,11 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 seg_start = t
         segments.append((seg_start, T, int(scenario_ids[seg_start])))
 
-        # --- Compute per-segment GAE ---
         policy_segments: Dict[int, List[dict]] = {
             k: [] for k in range(self.num_policies)
         }
 
         for i, (start, end, policy_id) in enumerate(segments):
-            # Slice segment data (strip one-hot from states)
             seg_states = episode["states"][start:end, :-self.num_policies]
             seg_actions = episode["actions"][start:end]
             seg_rewards = episode["rewards"][start:end]
@@ -688,18 +534,14 @@ class MultiPolicySingleAgent(BasePPOAgent):
             seg_log_probs = episode["log_probs"][start:end]
             seg_terminations = episode["terminations"][start:end]
 
-            # ----------------------------------------------------------
-            # Determine bootstrap value at end of segment
-            # ----------------------------------------------------------
+            # Bootstrap value at the end of the segment
             is_last_segment = (i == len(segments) - 1)
             next_value = 0.0
 
             if is_last_segment:
-                # Last segment: bootstrap depends on true episode termination
                 last_terminated = bool(episode["terminations"][end - 1])
                 if not last_terminated:
-                    # Truncation or safeguard: bootstrap with this policy's
-                    # value estimate of the state after the segment
+                    # Truncated: bootstrap from the state after the segment
                     next_state = episode["next_states"][end - 1]
                     base_next = next_state[:-self.num_policies]
                     with torch.no_grad():
@@ -707,10 +549,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         _, _, v = self.policies[policy_id].network(st)
                         next_value = v.squeeze(0).item()
             else:
-                # Mid-episode scenario switch: bootstrap with the outgoing
-                # policy's value estimate of the next state (first state of
-                # the next segment). This treats the switch as a soft
-                # episode boundary.
+                # Scenario switch: outgoing policy's value of the next segment's first state
                 boundary_state = episode["states"][end]
                 base_boundary = boundary_state[:-self.num_policies]
                 with torch.no_grad():
@@ -718,7 +557,6 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     _, _, v = self.policies[policy_id].network(st)
                     next_value = v.squeeze(0).item()
 
-            # Compute GAE for this segment
             advantages = self.compute_gae(
                 seg_rewards,
                 seg_values,
@@ -747,21 +585,11 @@ class MultiPolicySingleAgent(BasePPOAgent):
     # ------------------------------------------------------------------
     def _train_policy(self, policy_id: int, segments: List[dict]) -> Tuple[float, float, float, float]:
         """
-        Run PPO optimization for a single policy on its collected segments.
-
-        Mirrors `SinglePPOAgent.train()` but operates on the given
-        policy/optimizer pair.
-
-        Args:
-            policy_id (int): Index of the policy to train.
-            segments (list[dict]): Segment dicts with keys: states, actions,
-                advantages, log_probs, returns.
+        PPO update of one policy on its segments (as SinglePPOAgent.train()).
 
         Returns:
-            Tuple[float, float, float, float]: Mean total loss, mean policy
-                loss, mean value loss, and mean entropy bonus (entropy coef *
-                mean entropy) across all minibatches/epochs.  All NaN if no
-                usable data.
+            Mean total loss, policy loss, value loss and entropy bonus over all
+            minibatches; all NaN if the slot is frozen or has no usable data.
         """
 
         if policy_id in self.frozen_pids:
@@ -774,7 +602,6 @@ class MultiPolicySingleAgent(BasePPOAgent):
         optimizer = self.optimizers[policy_id]
         policy.network.train()
 
-        # Concatenate segments into batched tensors
         all_states = torch.as_tensor(
             np.concatenate([s["states"] for s in segments]),
             dtype=torch.float32,
@@ -803,8 +630,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         if all_advantages.numel() <= 1:
             return float("nan"), float("nan"), float("nan"), float("nan")
 
-        # Same guards as SinglePPOAgent.train: one NaN/Inf in a slot's batch
-        # would otherwise corrupt that slot's weights permanently.
+        # One NaN/Inf would permanently corrupt the slot's weights.
         for name, tensor in (
             ("states", all_states),
             ("advantages", all_advantages),
@@ -817,7 +643,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 )
                 return float("nan"), float("nan"), float("nan"), float("nan")
 
-        # Normalize advantages (a near-constant tensor would give NaN/Inf).
+        # Normalize advantages (skipped if near-constant).
         if all_advantages.std() > 1e-6:
             all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
 
@@ -840,12 +666,10 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 mb_returns = all_returns[mb_idx]
                 mb_advantages = all_advantages[mb_idx]
 
-                # Forward pass through this policy's network
                 action_mean, action_std, state_values = policy.network(mb_states)
                 dist = torch.distributions.Normal(action_mean, action_std)
 
-                # Log-prob of the stored squashed action, evaluated at the same
-                # point as during the rollout (see PPOPolicy.squashed_log_prob).
+                # Same evaluation point as in the rollout (PPOPolicy.squashed_log_prob).
                 log_probs = policy.squashed_log_prob(dist, mb_actions)
 
                 # PPO clipped objective
@@ -854,7 +678,6 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 surr2 = torch.clamp(ratios, 1.0 - self.clip_range, 1.0 + self.clip_range) * mb_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
 
-                # Value + entropy losses
                 value_loss = nn.functional.mse_loss(state_values.squeeze(-1), mb_returns)
                 entropy_loss = dist.entropy().sum(dim=-1).mean()
 
@@ -896,11 +719,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         stop_condition: Optional[StopCondition] = None,
     ) -> None:
         """
-        Full training loop: collect trajectories, split by scenario,
-        compute per-segment GAE, and train each policy.
-
-        Args:
-            stop_condition (Optional[StopCondition]): Stopping criterion.
+        Training loop: collect, split by scenario, per-segment GAE, train each policy.
         """
 
         logger.info(
@@ -922,16 +741,14 @@ class MultiPolicySingleAgent(BasePPOAgent):
             for label in self.policy_labels
         ]
 
-        # try/finally: on an exception or Ctrl-C the SubprocVecEnv workers
-        # are still shut down.
         try:
             for iteration in range(stopping_condition.max_time_steps):
                 self.set_policy_eval()
 
-                # --- 1. Collect trajectories (base class handles routing via _predict) ---
+                # 1. Collect (routing via _predict)
                 batch_data = self.run_parallel_episodes(self.num_envs)
 
-                # --- 2. Split every trajectory & recompute per-segment GAE ---
+                # 2. Split trajectories, per-segment GAE
                 accumulated_segments: Dict[int, List[dict]] = {
                     k: [] for k in range(self.num_policies)
                 }
@@ -941,7 +758,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     for pid, segs in policy_segments.items():
                         accumulated_segments[pid].extend(segs)
 
-                # --- 3. Train each policy on its segments ---
+                # 3. Train each policy
                 iter_rewards = {}
                 iter_losses = {}
                 iter_policy_losses = {}
@@ -951,9 +768,6 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 for pid in range(self.num_policies):
                     segs = accumulated_segments[pid]
 
-                    # Push this iteration's segments into the per-slot pending
-                    # buffer; the update only fires once the buffer crosses
-                    # `steps_per_policy_update`.
                     self._pending_segments[pid].extend(segs)
                     self._pending_steps[pid] += sum(len(s["rewards"]) for s in segs)
 
@@ -974,9 +788,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     iter_value_losses[pid] = value_loss
                     iter_entropy_bonuses[pid] = entropy_bonus
 
-                    # Reward reflects only this iteration's freshly collected
-                    # segments (not the pending buffer), so the per-iteration
-                    # reward curve isn't smeared by stale data.
+                    # Reward of this iteration's segments only (not the pending buffer).
                     if segs:
                         all_seg_rewards = np.concatenate([s["rewards"] for s in segs])
                         iter_rewards[pid] = float(np.mean(all_seg_rewards))
@@ -995,9 +807,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         "flushed_steps": flushed_steps,
                     })
 
-                    # Save best policy per scenario (only on iterations where
-                    # an update actually fired, so we don't snapshot a stale
-                    # policy against a noisy single-iteration reward).
+                    # Save the best policy per scenario, only on iterations with an update.
                     if (
                         flushed_steps > 0
                         and iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE
@@ -1007,9 +817,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         best_rewards[pid] = iter_rewards[pid]
                         self._save_single_policy(pid, best_policy_files[pid])
 
-                    # Collapse watchdog: track rolling-mean reward, snapshot
-                    # the network at new peaks, and roll back on collapse.
-                    # Skipped for frozen slots (which don't update anyway).
+                    # Collapse watchdog (not for frozen slots).
                     rollback_triggered = False
                     if self.watchdog is not None and pid not in self.frozen_pids:
                         rollback_state = self.watchdog.observe(
@@ -1020,22 +828,13 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         )
                         if rollback_state is not None:
                             self.policies[pid].network.load_state_dict(rollback_state)
-                            # Reset this policy's Adam optimizer state. The
-                            # exponential moving averages of past gradients
-                            # (Adam's `m` and `v` buffers) were accumulated
-                            # during the collapse phase and, if reused after
-                            # rolling weights back, would push the network
-                            # right along the failure trajectory, producing
-                            # a rapid second collapse and a rollback ping-pong.
-                            # A fresh optimizer ensures the next gradient steps
-                            # are computed cleanly from the rolled-back weights.
+                            # Fresh optimizer: Adam's moments from the collapse
+                            # would push the weights straight back (ping-pong).
                             self.optimizers[pid] = optim.Adam(
                                 self.policies[pid].network.parameters(),
                                 lr=self.learning_rate,
                             )
-                            # Discard pending segments: they were collected
-                            # under the now-discarded post-collapse weights and
-                            # would be off-policy w.r.t. the rolled-back net.
+                            # Pending segments are off-policy for the rolled-back net.
                             self._pending_segments[pid] = []
                             self._pending_steps[pid] = 0
                             self.watchdog.record_rollback(pid, iteration)
@@ -1050,13 +849,12 @@ class MultiPolicySingleAgent(BasePPOAgent):
                                 self.watchdog.max_rollbacks,
                             )
 
-                    # Annotate the most recent metrics record with watchdog state
                     if training_metrics[self.policy_labels[pid]]:
                         training_metrics[self.policy_labels[pid]][-1][
                             "rollback_triggered"
                         ] = rollback_triggered
 
-                # --- 4. Logging ---
+                # 4. Logging
                 valid_rewards = [r for r in iter_rewards.values() if not np.isnan(r)]
                 valid_losses = [l for l in iter_losses.values() if not np.isnan(l)]
                 agg_reward = float(np.mean(valid_rewards)) if valid_rewards else 0.0
@@ -1083,7 +881,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 if iteration > 0 and iteration % self.eval_frequency == 0:
                     self.save_policy(f"multi_policy_checkpoint_{iteration}")
 
-                # --- 5. Stopping condition ---
+                # 5. Stopping condition
                 should_stop, reason = stopping_condition.should_stop(
                     current_step=iteration,
                     mean_reward=agg_reward,
@@ -1095,16 +893,14 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     last_save_index = iteration
                     break
 
-            # Final checkpoint and metrics: only when training ended normally
-            # (same rule as SinglePPOAgent; a failure here raises).
+            # Final checkpoint and metrics, only after a normal end.
             self.save_policy(
                 f"multi_policy_checkpoint_"
                 f"{last_save_index if last_save_index > 0 else stopping_condition.max_time_steps}"
             )
             self._dump_training_metrics(training_metrics)
         finally:
-            # Always shut down the SubprocVecEnv workers, also on an
-            # exception or Ctrl-C.
+            # Always shut down the workers, also on an exception or Ctrl-C.
             if self._vec_env is not None:
                 try:
                     self._vec_env.close()
@@ -1119,17 +915,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
     # ------------------------------------------------------------------
     def save_policy(self, policy_file_name: str) -> None:
         """
-        Save all N policies into a single ZIP archive.
-
-        Archive layout::
-
-            policy_0.pth   (serialized PPOPolicy)
-            policy_1.pth
-            ...
-            policy_{N-1}.pth
-
-        Args:
-            policy_file_name (str): File name (without extension).
+        Save all N policies into one ZIP (policy_0.pth ... policy_{N-1}.pth,
+        serialized PPOPolicy). policy_file_name is given without extension.
         """
 
         if not policy_file_name.endswith(".zip"):
@@ -1161,10 +948,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
     def load_policy(self, policy_file_name: str) -> None:
         """
-        Load N policies from a ZIP archive.
-
-        Args:
-            policy_file_name (str): Path to the ZIP (extension added if missing).
+        Load N policies from a ZIP archive (".zip" added if missing) and rebuild
+        the optimizers.
 
         Raises:
             FileNotFoundError: If the archive is missing.
@@ -1194,7 +979,6 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     saved = torch.load(agent_path, map_location=self.device, weights_only=False)
                     self.policies[i] = PPOPolicy.build_policy_from_state(saved, self.device)
 
-                # Rebuild optimizers for the loaded networks
                 self.optimizers = [
                     optim.Adam(p.network.parameters(), lr=self.learning_rate)
                     for p in self.policies
@@ -1212,22 +996,11 @@ class MultiPolicySingleAgent(BasePPOAgent):
         frozen: bool = False,
     ) -> None:
         """
-        Load a single pre-trained policy (e.g. from a `SinglePPOAgent`
-        checkpoint) into one of the N policy slots.
-
-        This is useful for initializing the multi-policy agent with
-        policies that were pre-trained in specialized environments.
-
-        Args:
-            policy_id (int): Which slot to load into (0..N-1).
-            policy_file_name (str): Path to a `SinglePPOAgent`-style
-                `.zip` policy file.
-            frozen (bool): If True, the slot is excluded from PPO updates
-                (kept fixed during training).
+        Load a pre-trained SinglePPOAgent-style .zip policy into slot policy_id
+        (0..N-1); frozen slots are excluded from PPO updates.
 
         Raises:
-            IndexError: If `policy_id` is out of range.
-            RuntimeError: If loading fails.
+            IndexError: If policy_id is out of range.
         """
 
         if not 0 <= policy_id < self.num_policies:
@@ -1252,18 +1025,13 @@ class MultiPolicySingleAgent(BasePPOAgent):
         specs: Dict[int, dict],
     ) -> None:
         """
-        Load multiple pre-trained policies from a single directory.
+        Load pre-trained policies from directory.
 
         Args:
-            directory (str): Directory containing the pre-trained `.zip`
-                policy files.
-            specs (dict[int, dict]): Mapping `policy_id -> {"file": str,
-                "frozen": bool}`.  `file` is the file name (without
-                `.zip`) inside `directory`.  `frozen` defaults to
-                False.
+            directory: Directory with the .zip policy files.
+            specs: {policy_id: {"file": name without .zip, "frozen": bool (default False)}}.
 
-        Slots whose file is missing are left untouched and a warning is
-        printed.
+        Slots whose file is missing are left unchanged (a warning is logged).
         """
 
         for pid, spec in specs.items():
@@ -1283,12 +1051,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
     def _save_single_policy(self, policy_id: int, policy_file_name: str) -> None:
         """
-        Save one policy slot as a standalone file (same format as
-        `SinglePPOAgent`).
-
-        Args:
-            policy_id (int): Which policy to save.
-            policy_file_name (str): File name (without extension).
+        Save one slot as a standalone SinglePPOAgent-format file (name without extension).
         """
 
         if self.model_dir:
@@ -1310,7 +1073,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
     def _dump_training_metrics(self, metrics: Dict[str, list]) -> None:
         """
-        Flatten per-policy metrics and write to CSV.
+        Flatten per-policy metrics and write them to CSV.
         """
 
         flat = []

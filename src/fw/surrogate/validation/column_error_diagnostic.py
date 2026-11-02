@@ -1,15 +1,12 @@
 """
 Surrogate error binned by any raw input column of a dataset split.
 
-Question it answers: does the error (or the under-prediction) depend on one
-condition -- wind speed, current speed, surge, UKC, rudder, ... ? E.g. if the
-yaw-rate gain drops with wind speed, the wind's effect on the ship is not
-fully explained by the model's inputs.
+Shows whether the error (or under-prediction) depends on one condition such as
+wind speed, current speed, surge, UKC or rudder. E.g. a yaw-rate gain that drops
+with wind speed means the model's inputs do not fully explain the wind's effect.
 
-Per bin and per target it reports the MAE in physical units, the MAE
-relative to the target's spread (MAE / std of the target over all rows), the
-gain sum(pred*true)/sum(true^2) (1 = right size, < 1 = predictions too small)
-and the number of rows.
+Per bin and target: MAE (physical units), MAE / std of the target over all
+rows, gain sum(pred*true)/sum(true^2) (< 1 = predictions too small), row count.
 
 Usage (from src):
 
@@ -17,8 +14,8 @@ Usage (from src):
         --checkpoint myzako_full_A80.pth ^
         --data data\\myzako_full\\ship_dynamics_dataset_test.npz --by wind_speed
 
-    --by     raw column name of the data's scenario (e.g. wind_speed,
-             current_speed, surge, ukc, rudder_action, thrust_action)
+    --by     raw column of the data's scenario (e.g. wind_speed, current_speed,
+             surge, ukc, rudder_action, thrust_action)
     --bins   bin edges; default: the deciles of that column
     --abs    bin on the absolute value (e.g. --by rudder_action --abs)
     --min-time  only rows at least this long after the episode start [s]
@@ -27,7 +24,7 @@ Usage (from src):
              --where rudder_action -0.03 0.03  (straight rudder only)
              --where current_speed 0 0.001     (no current)
 
-Relative --checkpoint paths are resolved like the presets do (fw/checkpoints).
+Relative --checkpoint paths are resolved in fw/checkpoints.
 """
 
 from __future__ import annotations
@@ -52,7 +49,9 @@ BATCH = 65536
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Command-line entry point; returns the exit code."""
+    """
+    Command-line entry point; returns the exit code.
+    """
 
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter)

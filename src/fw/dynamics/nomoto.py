@@ -8,40 +8,20 @@ from fw.dynamics.dynamics_model import DynamicsBase
 
 class Nomoto(DynamicsBase):
     """
-    Nomoto-inspired low-order vessel maneuvering model.
+    Nomoto-inspired, low-order 3-DOF (u, v, r) maneuvering model for control
+    design, RL and fast-time simulation; not for high-fidelity hydrodynamics.
 
-    This class implements a simplified, control-oriented horizontal-plane
-    maneuvering model with three degrees of freedom (3-DOF):
-    surge (u), sway (v), and yaw (r).
+    Extends the first-order Nomoto yaw equation with heuristic surge, sway and
+    yaw coupling terms. Assumptions:
+        - Body-fixed frame at the CG, framework axes (x forward, y to port,
+          yaw counter-clockwise positive; see CONVENTIONS.md)
+        - No wind, waves or current
+        - Heuristic coefficients, identical for every ship (ship_spec is ignored)
 
-    The formulation is *inspired by* Nomoto-type models but extends beyond
-    the classical first-order Nomoto yaw equation by explicitly modeling
-    surge, sway, and yaw dynamics with heuristic coupling terms.
-
-    The model is intended for:
-        - Control design
-        - Reinforcement learning
-        - Fast-time simulation
-
-    It is **not** intended for high-fidelity hydrodynamic prediction or
-    seakeeping analysis.
-
-    Coordinate frame and assumptions:
-        - Body-fixed reference frame located at the vessel center of gravity (CG)
-        - Axes: the framework's (fw.ships.vessel_state, CONVENTIONS.md):
-          x forward, y to PORT, yaw counter-clockwise positive
-        - Motion restricted to the horizontal plane (3-DOF)
-        - No environmental disturbances (wind, waves, current)
-        - Hydrodynamic coefficients are heuristic and weakly scaled
-          to vessel dimensions rather than identified from experiments
-        - Ignores the ship specifications: every ship behaves the same
-
-    Known limitation (toy model): the turning DIRECTION follows the framework
-    convention (positive rudder -> turn to port), but the sway during a turn
-    does not follow real ship behaviour: it goes toward the inside of the
-    turn (k_v > 0) instead of the outside. Its effect is small (drift
-    ~0.5 deg; flipping k_v changes the turning rate by ~4 %, checked
-    2026-10-19), so it is left as is.
+    Known limitation: the turn direction follows the framework convention, but
+    sway goes toward the inside of the turn (k_v > 0) instead of the outside.
+    The effect is small (drift ~0.5 deg, ~4 % turning-rate change), so it is
+    left as is.
     """
 
     def __init__(self, ship_spec: ShipSpecifications):
@@ -49,8 +29,7 @@ class Nomoto(DynamicsBase):
         Initialize the Nomoto maneuvering model.
 
         Args:
-            ship_spec: Vessel physical specifications used to parameterize
-                the dynamics model (e.g., mass, length, actuator limits).
+            ship_spec: Vessel specifications (stored, not used by the dynamics).
         """
 
         self.ship_spec: ShipSpecifications = ship_spec
@@ -58,17 +37,13 @@ class Nomoto(DynamicsBase):
 
     def _initialize_coefficients(self):
         """
-        Initialize hydrodynamic and control coefficients.
-
-        Coefficients are intentionally simple and heuristic, chosen to yield
-        qualitatively reasonable vessel behavior rather than quantitatively
-        accurate hydrodynamics.
+        Set heuristic coefficients giving qualitatively reasonable behavior.
         """
 
         # Linear damping and control effectiveness coefficients
         self.xu = -0.02      # Surge damping
         self.yv = -0.4       # Sway damping
-        self.yv_r = -0.09    # Sway–yaw coupling
+        self.yv_r = -0.09    # Sway-yaw coupling
         self.nr = -0.36      # Yaw-rate damping
 
         # Characteristic length scale (used for cross-coupling)
@@ -99,7 +74,6 @@ class Nomoto(DynamicsBase):
             Tuple (du, dv, dr): surge, sway, and yaw accelerations [m/s², m/s², rad/s²].
         """
 
-        # Simplified dynamics
         du = self.k_t * (thrust * 60.0) + self.xu * state.u
         dv = self.k_v * np.sin(rudder_angle) + self.yv * state.v
         dr = (self.k_r * rudder_angle + self.nr * state.r + self.yv_r * state.v +

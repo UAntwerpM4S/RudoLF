@@ -13,16 +13,11 @@ logger = logging.getLogger(__name__)
 
 class BasePPOAgent(BaseAgent):
     """
-    Abstract base class for Proximal Policy Optimization (PPO) agents.
+    Abstract base class for PPO agents: trajectory collection, reward
+    normalization and GAE.
 
-    This class extends `BaseAgent` with PPO-specific functionality, including
-    trajectory collection, reward normalization, and Generalized Advantage
-    Estimation (GAE). It defines a standardized interface for interacting
-    with environments and computing policy/value updates.
-
-    Subclasses are responsible for implementing environment interaction
-    (`_reset_envs`, `_step_envs`) and model inference (`_predict`,
-    `_get_bootstrap_value`).
+    Subclasses implement environment interaction (`_reset_envs`, `_step_envs`)
+    and model inference (`_predict`, `_get_bootstrap_value`).
     """
 
     @staticmethod
@@ -37,24 +32,21 @@ class BasePPOAgent(BaseAgent):
         """
         Compute Generalized Advantage Estimation (GAE).
 
-        GAE helps in reducing the variance of the policy gradient estimates by using both bootstrapping and Monte Carlo estimates.
-
         Args:
             rewards (np.ndarray): Array of rewards for the batch.
             values (np.ndarray): Array of value estimates for each state.
-            dones (np.ndarray): Array of done flags indicating if the episode ended.
+            dones (np.ndarray): Termination flags (zero the bootstrap).
             next_value (float): Value estimate for the state after the batch.
             gamma (float): Discount factor for future rewards.
-            lambda_ (float): GAE parameter that controls bias-variance tradeoff (default: 0.95).
+            lambda_ (float): GAE bias-variance trade-off parameter.
 
         Returns:
-            np.ndarray: Computed advantages as a NumPy array.
+            np.ndarray: Advantages (float32).
         """
 
         advantages = np.zeros_like(rewards, dtype=np.float32)
         last_gae = 0.0
 
-        # Reverse iteration for GAE calculation
         for t in reversed(range(len(rewards))):
             next_non_terminal = 1.0 - dones[t]
             next_values = next_value if t == len(rewards) - 1 else values[t + 1]
@@ -77,10 +69,7 @@ class BasePPOAgent(BaseAgent):
             int: The index of the first True value, or -1 if not found.
         """
 
-        # Find the index of the first True value
         true_indices = np.where(bool_array)[0]
-
-        # Return the first index if it exists, otherwise return -1
         return true_indices[0] if true_indices.size > 0 else -1
 
 
@@ -124,13 +113,10 @@ class BasePPOAgent(BaseAgent):
             batch_size (int): Mini-batch size.
             device (str): Device for computation ("cpu" or "cuda").
             model_dir (str): Directory for saving models.
-            max_nbr_iterations (int): Maximum steps per rollout.
+            max_nbr_iterations (int): Maximum steps per rollout (safeguard
+                against endless episodes).
             normalize (bool): Whether to normalize rewards.
             seed (int, optional): Base seed for the worker env RNGs (see BaseAgent).
-
-        Attributes:
-            max_nbr_iterations: Safeguard value to avoid infinite stepping through environments.
-            normalize: Flag that indicates whether reward values should be normalized.
         """
 
         super().__init__(
@@ -216,9 +202,7 @@ class BasePPOAgent(BaseAgent):
     @abstractmethod
     def _get_bootstrap_value(self, states, env_id: Optional[int] = None):
         """
-        Estimate value for bootstrapping.
-
-        Used when an episode ends due to truncation or iteration limits.
+        Estimate the bootstrap value after truncation or the iteration limit.
 
         Args:
             states (np.ndarray): State(s) to evaluate.
@@ -234,12 +218,9 @@ class BasePPOAgent(BaseAgent):
     @staticmethod
     def _repack_actions(original_actions, transformed_actions: list):
         """
-        Repack a list of (transformed) actions into the same container type
-        as the original actions produced by `_predict`.
-
-        `SinglePPOAgent._predict` returns an `np.ndarray`; `MultiPPOAgent`
-        returns a `tuple`.  `_step_envs` in each subclass expects the same
-        type back, so the list built during the rollout loop must be converted.
+        Repack per-env actions into the container type returned by `_predict`
+        (ndarray for SinglePPOAgent, tuple for MultiPPOAgent), as `_step_envs`
+        expects.
 
         Args:
             original_actions: The actions container returned by `_predict`,
@@ -269,16 +250,15 @@ class BasePPOAgent(BaseAgent):
 
     def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
         """
-        Normalize rewards using running statistics (Welford's algorithm).
+        Normalize rewards with running mean/variance (parallel Welford update).
 
         Args:
             rewards: Raw rewards array of shape (batch_size,).
 
         Returns:
-            Normalized rewards with zero mean and unit variance.
+            Rewards standardized with the updated running statistics.
         """
 
-        # Welford's algorithm for running stats
         batch_mean = float(np.mean(rewards))
         batch_var = np.var(rewards)
         batch_count = len(rewards)
@@ -303,41 +283,30 @@ class BasePPOAgent(BaseAgent):
         """
         Collect one trajectory per environment in parallel.
 
-        Environments are stepped synchronously until each one reaches a terminal
-        or truncated state, or until `max_nbr_iterations` is reached.
-
-        Actions for agents that have already finished are replaced with zeros
-        so the joint simulator is not perturbed after an agent's episode ends.
+        Environments are stepped synchronously until each is terminated or
+        truncated, or `max_nbr_iterations` is reached. Finished environments get
+        the env's neutral action so the joint simulator is not perturbed.
 
         Args:
             num_envs (int): Number of environments to simulate.
 
         Returns:
-            list[dict]: List of trajectory dictionaries (one per environment), each containing:
-                - states (np.ndarray): Observations.
-                - actions (np.ndarray): Actions taken.
-                - rewards (np.ndarray): Rewards received.
-                - terminations (np.ndarray): True termination flags.
-                - truncations (np.ndarray): Truncation flags.
-                - values (np.ndarray): Value estimates.
-                - log_probs (np.ndarray): Action log-probabilities.
-                - advantages (np.ndarray): GAE advantages.
-                - returns (np.ndarray): Discounted returns.
+            list[dict]: One trajectory per environment (empty ones skipped) with
+                states, actions, rewards, terminations, truncations, values,
+                log_probs, next_states, advantages, returns (arrays) and env_id.
+                Trajectories are trimmed to the first terminal/truncated step;
+                non-terminated ones are bootstrapped.
 
-        Notes:
-            - Trajectories are trimmed to the first terminal/truncated step.
-            - Bootstrapping is applied if termination is not reached.
-            - Reward normalization is applied per trajectory if enabled.
+        Raises:
+            ValueError: If `num_envs` <= 0.
         """
 
         if num_envs <= 0:
             raise ValueError("num_envs must be greater than 0.")
 
-        # Reset all environments
         states = self._reset_envs(num_envs)
         envs_done = np.zeros(num_envs, dtype=bool)
 
-        # Storage for episode data
         collected_data = [
             {
                 "states": [],
@@ -352,22 +321,16 @@ class BasePPOAgent(BaseAgent):
             for _ in range(num_envs)
         ]
 
-        # Snapshot of each environment's last valid observation.  Once an
-        # environment finishes its episode, its entry here is frozen so that
-        # subsequent calls to _predict and _step_envs receive a stable,
-        # meaningful observation rather than an auto-reset initial state from
-        # a ghost episode.  This prevents finished environments from
-        # contaminating the shared agent-state that still-running environments
-        # rely on for their observations and rewards.
+        # Last valid observation per env, frozen when the env finishes, so the
+        # auto-reset state of a finished env does not leak into the shared
+        # agent state that running envs depend on.
         frozen_states = list(states) if hasattr(states, "__len__") else [states]
 
         safeguard = 0
         while not np.all(envs_done) and safeguard < self.max_nbr_iterations:
 
-            # Build the observation array for this step: use the frozen last
-            # valid state for done environments so _predict does not waste a
-            # forward pass on a ghost auto-reset observation, and so that
-            # MultiSimEnv.update_agent_states sees a stable last-known pose.
+            # Done envs use their frozen state (stable pose for
+            # MultiSimEnv.update_agent_states).
             step_states = type(states)(
                 frozen_states[env_id] if envs_done[env_id] else states[env_id]
                 for env_id in range(num_envs)
@@ -376,15 +339,10 @@ class BasePPOAgent(BaseAgent):
                 for env_id in range(num_envs)
             ])
 
-            # Policy predicts actions for all agents from live (or frozen) states
             actions, log_probs, values = self._predict(step_states, deterministic=False)
 
-            # Replace actions for done environments with a neutral input BEFORE
-            # stepping so the simulator receives a stable helm-zero signal for
-            # ships that have already finished their episode.
-            # Profile transforms are NOT applied to neutral actions. The neutral
-            # signal must reach the simulator unmodified so it does not perturb
-            # the joint physics state for still-running environments.
+            # Done envs get the neutral action, without profile transform, so
+            # they do not perturb the joint physics of running envs.
             effective_actions = []
             for env_id, action in enumerate(actions):
                 if envs_done[env_id]:
@@ -393,15 +351,12 @@ class BasePPOAgent(BaseAgent):
                     transformed = ActionAdapter.transform(self._profile, action) if self._profile is not None else action
                     effective_actions.append(transformed)
 
-            # Restore the container type that _step_envs expects, i.e.
-            # np.ndarray for SinglePPOAgent, tuple for MultiPPOAgent.
             effective_actions = self._repack_actions(actions, effective_actions)
             next_states, rewards, terminations, truncations, final_states = self._step_envs(effective_actions)
 
-            # Store per-agent transitions
             for env_id in range(num_envs):
                 if envs_done[env_id]:
-                    continue  # Skip already completed environments
+                    continue
 
                 collected_data[env_id]["states"].append(states[env_id])
                 collected_data[env_id]["actions"].append(actions[env_id])
@@ -410,29 +365,25 @@ class BasePPOAgent(BaseAgent):
                 collected_data[env_id]["truncations"].append(truncations[env_id])
                 collected_data[env_id]["values"].append(values[env_id])
                 collected_data[env_id]["log_probs"].append(log_probs[env_id])
-                # Real last observation (not an auto-reset one), so a
-                # truncated episode is bootstrapped from its own final state.
+                # Real last observation (not auto-reset), for bootstrapping.
                 collected_data[env_id]["next_states"].append(final_states[env_id])
 
-            # Update done flags at environment level
             env_done = np.logical_or(terminations, truncations)
 
-            # Freeze the last valid observation for environments that just
-            # finished, before envs_done is updated.
+            # Freeze the last valid observation of envs that just finished.
             for env_id in range(num_envs):
                 if env_done[env_id] and not envs_done[env_id]:
                     frozen_states[env_id] = states[env_id]
 
             envs_done = np.logical_or(envs_done, env_done)
 
-            # Update states for the next step
             states = next_states
             safeguard += 1
 
         if safeguard >= self.max_nbr_iterations:
             logger.warning("[Warning] Safeguard triggered at %d steps (max_nbr_iterations=%d).", safeguard, self.max_nbr_iterations)
 
-        # Process episode data with proper trimming
+        # Trim, bootstrap and compute advantages per environment.
         episode_data = []
         for env_id in range(num_envs):
             trajectory = collected_data[env_id]
@@ -440,36 +391,20 @@ class BasePPOAgent(BaseAgent):
             if len(trajectory["states"]) == 0:
                 continue
 
-            # ----------------------------------------------------------
-            # Determine episode end (termination OR truncation)
-            # ----------------------------------------------------------
-
-            # First we'll trim the episode to the correct length, i.e. the moment where 'done == True' was reached.
-            # After that, the episode is padded with irrelevant data until all environments have reached their 'done' state.
-
-            # Find the first True in dones for this environment
+            # Episode end: first termination or truncation.
             done_mask = np.logical_or(trajectory["terminations"], trajectory["truncations"])
             first_done = self.find_first_true(done_mask)
 
-            # Handle cases where no True is found (episode did not terminate)
             if first_done == -1:
-                first_done = len(done_mask) - 1  # Use the entire episode
+                first_done = len(done_mask) - 1  # safeguard stop: use everything
 
-            # ----------------------------------------------------------
-            # Determine bootstrap condition
-            # ----------------------------------------------------------
             last_step_terminated = trajectory["terminations"][first_done]
 
             next_value = 0.0
             if not last_step_terminated:
-                # We bootstrap for:
-                # - truncation
-                # - safeguard stop
+                # Bootstrap on truncation or safeguard stop.
                 next_value = self._get_bootstrap_value(trajectory["next_states"][first_done], env_id)
 
-            # ----------------------------------------------------------
-            # Trim trajectory to valid region
-            # ----------------------------------------------------------
             episode = {}
 
             for key in trajectory:
@@ -482,17 +417,10 @@ class BasePPOAgent(BaseAgent):
                 else:
                     episode[key] = np.asarray(relevant_steps, dtype=np.float32)
 
-            # ----------------------------------------------------------
-            # Optional reward normalization
-            # ----------------------------------------------------------
             if self.normalize:
                 episode["rewards"] = self.normalize_rewards(episode["rewards"])
 
-            # ----------------------------------------------------------
-            # Compute GAE (ONLY true terminations zero bootstrap)
-            # ----------------------------------------------------------
-
-            # Compute advantages and returns
+            # Only true terminations zero the bootstrap.
             episode["advantages"] = self.compute_gae(
                 episode["rewards"],
                 episode["values"],

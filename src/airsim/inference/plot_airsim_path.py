@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 # Configuration
-DT = 0.1  # Simulation time step
+DT = 0.1  # Simulation time step [s]
 POSSIBLE_PATHS = [
     "airsim_telemetry.csv",
     "src/airsim/config/airsim_telemetry.csv",
@@ -24,10 +24,7 @@ POSSIBLE_PATHS = [
 
 def find_telemetry_file():
     """
-    Search for the telemetry CSV in a list of candidate locations.
-    Returns:
-        The first existing path from `POSSIBLE_PATHS`, or `None`
-        if no file is found.
+    Return the first existing path in POSSIBLE_PATHS, or None.
     """
 
     for p in POSSIBLE_PATHS:
@@ -40,20 +37,16 @@ def reconstruct_path(speeds, headings_deg, start_pos=(0, 0)):
     """
     Reconstruct a 2D path from speed and heading arrays via dead reckoning.
 
-    Assumes headings are north-referenced (0 = North, 90 = East)::
-
-        x_{t+1} = x_t + v_t * cos(theta_t) * dt   (North)
-        y_{t+1} = y_t + v_t * sin(theta_t) * dt   (East)
+    Headings are north-referenced (0 = North, 90 = East), so x is North and y East:
+    x += v*cos(theta)*DT, y += v*sin(theta)*DT.
 
     Args:
-        speeds: Sequence of scalar speeds (m/s) at each time step.
-        headings_deg: Sequence of headings in degrees
-            (0 = North, 90 = East).
-        start_pos: `(x, y)` starting position. Defaults to `(0, 0)`.
+        speeds: Speeds per time step [m/s].
+        headings_deg: Headings per time step [deg].
+        start_pos: (x, y) start position.
 
     Returns:
-        A tuple `(x_list, y_list)` of reconstructed positions.
-        Each list has `len(speeds) + 1` elements (start + one per step).
+        (x_list, y_list), each with len(speeds) + 1 elements.
     """
 
     x, y = [start_pos[0]], [start_pos[1]]
@@ -70,18 +63,17 @@ class LivePlotter:
     """
     Continuously updating matplotlib plot of reference-ship vs. AirSim paths.
 
-    Reads `airsim_telemetry.csv` every second, reconstructs both paths
-    with dead reckoning, aligns their initial headings, and re-draws the
-    figure.
+    Every second, reads airsim_telemetry.csv, reconstructs both paths by dead
+    reckoning, aligns their initial headings and redraws.
 
     Attributes:
-        telemetry_file: Path to the CSV file, or `None` while waiting.
+        telemetry_file: Path to the CSV file, or None while waiting.
         is_running: Whether the animation loop is still active.
     """
 
     def __init__(self):
         """
-        Initialize the figure, axes, line artists, and event handlers.
+        Create the figure, line artists and event handlers.
         """
 
         self.telemetry_file = find_telemetry_file()
@@ -90,7 +82,6 @@ class LivePlotter:
 
         self.fig, self.ax = plt.subplots(figsize=(10, 8))
 
-        # Initialize plots with empty data
         self.ship_line, = self.ax.plot([], [], label='Reference Ship', linewidth=2, linestyle='--', color='blue')
         self.car_line, = self.ax.plot([], [], label='AirSim Vehicle (Aligned Start)', linewidth=2, alpha=0.8, color='orange')
 
@@ -108,7 +99,6 @@ class LivePlotter:
         self.ani = None
         self.is_running = True
 
-        # Connect events
         self.fig.canvas.mpl_connect('close_event', self.on_close)
         self.fig.canvas.mpl_connect('key_press_event', self.on_key)
 
@@ -117,19 +107,12 @@ class LivePlotter:
 
     def update(self, frame):
         """
-        Read the latest telemetry and refresh the plot.
-
-        Called automatically by `FuncAnimation` each interval.
-
-        Args:
-            frame: Frame index supplied by the animation timer
-                (unused).
+        FuncAnimation callback: read the latest telemetry and refresh the plot (frame unused).
         """
 
         if not self.is_running:
             return
 
-        # Re-check for file if not found yet
         if not self.telemetry_file:
             self.telemetry_file = find_telemetry_file()
             if not self.telemetry_file:
@@ -158,7 +141,7 @@ class LivePlotter:
             if not ship_speeds:
                 return
 
-            # --- ALIGNMENT LOGIC ---
+            # Remove the initial heading offset (mean of the first 10 samples).
             n_avg = min(10, len(ship_headings))
             if n_avg > 0:
                 start_ship_h = sum(ship_headings[:n_avg]) / n_avg
@@ -172,11 +155,10 @@ class LivePlotter:
 
             self.ax.set_title(title)
 
-            # Reconstruct paths with aligned headings
             ship_x, ship_y = reconstruct_path(ship_speeds, ship_headings)
             car_x, car_y = reconstruct_path(car_speeds, car_headings_aligned)
 
-            # Update Plot Data
+            # Plot East on the horizontal axis, North on the vertical.
             self.ship_line.set_data(ship_y, ship_x)
             self.car_line.set_data(car_y, car_x)
 
@@ -194,7 +176,7 @@ class LivePlotter:
 
     def save_plot(self):
         """
-        Save the current figure to `airsim_path_reconstruction.png`.
+        Save the figure as airsim_path_reconstruction.png next to the telemetry file.
         """
 
         if self.telemetry_file:
@@ -207,10 +189,7 @@ class LivePlotter:
 
     def on_close(self, event):
         """
-        Handle the matplotlib window-close event.
-
-        Args:
-            event: The matplotlib `CloseEvent`.
+        On window close: save the plot and stop.
         """
 
         if self.is_running:
@@ -220,10 +199,7 @@ class LivePlotter:
 
     def on_key(self, event):
         """
-        Handle keyboard input; pressing *q* stops the plot.
-
-        Args:
-            event: The matplotlib `KeyEvent`.
+        Close the figure when 'q' is pressed.
         """
 
         if event.key == 'q':
@@ -232,7 +208,7 @@ class LivePlotter:
 
     def start(self):
         """
-        Start the live animation loop (updates every 1 second).
+        Start the animation loop (1 s interval) and show the window.
         """
 
         self.ani = animation.FuncAnimation(self.fig, self.update, interval=1000, cache_frame_data=False)

@@ -41,13 +41,7 @@ def get_export_directory(export_dir: Optional[str | Path] = None) -> Path:
 
 def _slugify(value: str) -> str:
     """
-    Build a filesystem-friendly slug.
-
-    Args:
-        value: User-facing session label.
-
-    Returns:
-        str: Filesystem-safe slug suitable for directory names.
+    Return a filesystem-safe slug of a label ("session" if nothing remains).
     """
 
     slug = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
@@ -56,15 +50,10 @@ def _slugify(value: str) -> str:
 
 def build_airsim_env_snapshot(env) -> Dict[str, Any]:
     """
-    Capture the current AirSim environment state as a serializable dictionary.
+    Capture the current AirSimEnv state as a flat dict of scalars (for metadata/CSV).
 
     Args:
-        env: Active `AirSimEnv` instance exposing ship pose, heading,
-            checkpoint, and timing state.
-
-    Returns:
-        A dictionary with scalar telemetry values that can be written directly
-        to metadata or CSV exports.
+        env: Active AirSimEnv instance.
     """
 
     snapshot = {
@@ -87,17 +76,12 @@ def build_airsim_env_snapshot(env) -> Dict[str, Any]:
 
 def _get_ship_scalar(value: Any, ship_index: int = 0, default: Any = 0.0) -> Any:
     """
-    Return a scalar value for one ship from scalar or per-ship containers.
+    Return one ship's scalar from a scalar or a per-ship list/tuple/array.
 
     Args:
-        value: Scalar-like value or a per-ship container such as `list`,
-            `tuple`, or `np.ndarray`.
-        ship_index: Zero-based ship index to extract when `value` is a
-            per-ship container.
-        default: Fallback value returned when extraction is not possible.
-
-    Returns:
-        A scalar-compatible value for the requested ship.
+        value: Scalar or per-ship container.
+        ship_index: Zero-based ship index.
+        default: Returned when `value` is None or too short.
     """
 
     if value is None:
@@ -117,16 +101,12 @@ def _get_ship_scalar(value: Any, ship_index: int = 0, default: Any = 0.0) -> Any
 
 def _get_ship_item(value: Any, ship_index: int = 0, default: Any = None) -> Any:
     """
-    Return one per-ship item while tolerating flat and nested layouts.
+    Return one ship's item from a flat value (e.g. a single position) or a per-ship container.
 
     Args:
         value: Scalar, array, or per-ship container.
-        ship_index: Preferred ship index when `value` stores per-ship items.
-        default: Fallback returned when extraction is not possible.
-
-    Returns:
-        Any: Extracted ship-specific item, original flat value, or
-        `default`.
+        ship_index: Ship index when `value` holds per-ship items.
+        default: Returned when nothing can be extracted.
     """
 
     if value is None:
@@ -151,15 +131,7 @@ def _get_ship_item(value: Any, ship_index: int = 0, default: Any = None) -> Any:
 
 def _get_ship_sim_state(env, ship_index: int = 0) -> Any:
     """
-    Return one framework simulator state from common env layouts.
-
-    Args:
-        env: Active framework environment.
-        ship_index: Zero-based ship index to extract when the environment
-            stores per-ship simulator entries.
-
-    Returns:
-        Any: Simulator state object when available, otherwise `None`.
+    Return a ship's simulator state from `env.phys_sims` or `env.phys_sim`, or None.
     """
 
     for attr_name in ("phys_sims", "phys_sim"):
@@ -171,11 +143,10 @@ def _get_ship_sim_state(env, ship_index: int = 0) -> Any:
 
 class AirSimSessionExporter:
     """
-    Session-scoped export bundle for AirSim inference and visualization runs.
+    Export bundle for one AirSim inference or visualization session.
 
-    The exporter owns one timestamped session directory and keeps telemetry,
-    bridge logs, and metadata paths aligned for inference and visualization
-    workflows.
+    Owns a timestamped session directory with the telemetry CSV, bridge log
+    and metadata JSON.
     """
 
     def __init__(
@@ -191,17 +162,13 @@ class AirSimSessionExporter:
         Create a dedicated export directory and file set for one session.
 
         Args:
-            session_name: Human-readable session label used to derive the folder
-                name.
-            metadata: Optional initial metadata stored in `metadata.json`.
-            export_dir: Optional root export directory. When omitted, the
-                workspace-level `exports` folder is used.
-            flush_interval: Number of queued rows to buffer before the async
-                writer flushes them to disk.
-            session_type: Logical session kind such as "inference" or
-                "visualisation". This controls default filenames.
-            telemetry_filename: Optional explicit CSV filename for the primary
-                session telemetry export.
+            session_name: Session label, used for the folder name.
+            metadata: Optional initial metadata.
+            export_dir: Root export directory; defaults to the workspace
+                `exports` folder.
+            flush_interval: Rows buffered before the async writer flushes.
+            session_type: E.g. "inference" or "visualisation"; sets default filenames.
+            telemetry_filename: Optional explicit telemetry CSV filename.
         """
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -256,21 +223,14 @@ class AirSimSessionExporter:
 
     def log_inference_step(self, row: Dict[str, Any]) -> None:
         """
-        Queue one inference telemetry row.
-
-        Args:
-            row: Inference-step telemetry payload to append to the session CSV.
+        Queue one inference telemetry row (alias of `log_step`).
         """
 
         self.log_step(row)
 
     def log_visualisation_step(self, row: Dict[str, Any]) -> None:
         """
-        Queue one visualization telemetry row.
-
-        Args:
-            row: Visualisation-step telemetry payload to append to the session
-                CSV.
+        Queue one visualization telemetry row (alias of `log_step`).
         """
 
         self.log_step(row)
@@ -302,10 +262,7 @@ class AirSimSessionExporter:
 
     def __enter__(self) -> "AirSimSessionExporter":
         """
-        Enter runtime context for automatic resource management.
-
-        Returns:
-            AirSimSessionExporter: The active exporter instance.
+        Return self for use as a context manager.
         """
 
         return self
@@ -317,12 +274,7 @@ class AirSimSessionExporter:
         traceback,
     ) -> None:
         """
-        Ensure exporter is closed when exiting context manager.
-
-        Args:
-            exc_type: Exception type raised inside the context, if any.
-            exc_value: Exception instance raised inside the context, if any.
-            traceback: Traceback object for the active exception, if any.
+        Save and close the exporter (exceptions are not suppressed).
         """
 
         try:
@@ -344,29 +296,22 @@ def build_framework_visualisation_row(
     model_origin: str = "framework",
 ) -> Dict[str, Any]:
     """
-    Build one lightweight visualization telemetry row from framework state.
+    Build one visualization telemetry row from framework state.
 
     Args:
-        env: Active framework environment containing ship pose and simulator
-            state.
-        bridge: Connected AirSim bridge providing the latest mirrored control
-            state.
-        episode_index: One-based episode index for the active run.
-        step_index: One-based step index within the active episode.
-        reward: Reward value returned for the current framework step.
-        action: Policy action associated with the current step.
-        outcome: Step outcome label such as "running", "terminated",
-            or "truncated".
-        control_mode: Export label describing how controls are being mirrored
-            during visualization.
-        ship_index: Zero-based ship index used when the environment stores
-            per-ship state in lists or arrays.
-        model_origin: High-level source label for the mirrored model, such as
-            "pysim" or "fhsim".
+        env: Active framework environment.
+        bridge: AirSim bridge (source of the brake control value).
+        episode_index: One-based episode index.
+        step_index: One-based step index within the episode.
+        reward: Reward of the current step.
+        action: Policy action [steering, throttle].
+        outcome: E.g. "running", "terminated" or "truncated".
+        control_mode: Label for how controls are mirrored.
+        ship_index: Ship index for per-ship env attributes.
+        model_origin: Source of the mirrored model, e.g. "pysim" or "fhsim".
 
     Returns:
-        A flat CSV-friendly dictionary describing the current visualization
-        step.
+        A flat, CSV-friendly dict.
     """
 
     ship_pos = _get_ship_item(getattr(env, "ship_pos", None), ship_index=ship_index)
@@ -377,7 +322,7 @@ def build_framework_visualisation_row(
     if state is None:
         class _DefaultState:
             """
-            Default motion state used when AirSim state is unavailable.
+            Zero motion state used when no simulator state is available.
             """
 
             heading = 0.0

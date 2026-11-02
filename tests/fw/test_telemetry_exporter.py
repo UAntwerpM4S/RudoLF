@@ -1,5 +1,5 @@
 """
-Unit tests for the common_tools TelemetryExporter.
+Unit tests for fw.common.airsim.tools.telemetry_exporter.TelemetryExporter.
 """
 
 from __future__ import annotations

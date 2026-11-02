@@ -65,7 +65,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         initialize_all_environments
     )
 
-    # retrieve the profile object here only for the later apply_profile(env/sim) calls.
+    # Profile object for the apply_profile(env/sim) calls below.
     profile_name = framework_config.get("profile", "default_profile")
     profile = ProfileRegistry.get(profile_name)
 
@@ -79,22 +79,18 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     def _run_airsim_extension(selected_action: str) -> bool:
         """
-        Run the AirSim entrypoint as an ordered step.
+        Run fw.main_with_airsim as one step of the ordered env_type sequence.
 
         Args:
-            selected_action: Framework action to forward to the AirSim
-                entrypoint ("train", "visualize", or "evaluate_reward").
+            selected_action: "train", "visualize" or "evaluate_reward".
 
         Returns:
-            True when the AirSim step completed successfully. False when
-            it failed and the caller should continue with remaining steps.
+            True on success; False on failure (the caller continues with the
+            remaining steps).
         """
 
-        # main_with_airsim adds a per-run file handler to the root logger and
-        # lowers its level every time it is executed. Snapshot both so that a
-        # second AirSim step (env_type lists may repeat it) does not log into
-        # the first step's file as well, and later non-AirSim steps keep the
-        # original level.
+        # main_with_airsim adds a file handler to the root logger and lowers its
+        # level on every run; snapshot both so they can be restored afterwards.
         _root_logger = logging.getLogger()
         _handlers_before = list(_root_logger.handlers)
         _level_before = _root_logger.level
@@ -118,11 +114,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
             )
             return False
         except Exception:
-            # Documented behavior (README): a failing AirSim step is skipped
-            # and the remaining environments still run. Previously only
-            # SystemExit/ConnectionError/OSError were caught, so e.g. a
-            # RuntimeError from the transfer-learning path or a ValueError
-            # from settings validation ended the whole ordered run.
+            # Deliberate exception to fail-fast: a failing AirSim step is
+            # skipped and the remaining environments still run.
             logger.exception(
                 "AirSim step failed; skipping it and continuing with the remaining environments."
             )
@@ -145,8 +138,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
             patience=4,
             max_time_steps=850,
         ),
-        # Per-agent stop condition in MultiPPOAgent (each agent is judged on
-        # its own reward), so the same target as the single-agent PySimEnv.
+        # MultiPPOAgent judges each agent on its own reward, hence the same
+        # target as single-agent PySimEnv.
         multi_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=0.99,
@@ -159,9 +152,9 @@ if __name__ == "__main__" or __name__ == "fw.main":
         ),
         fh_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
-            target_reward=3.80,
+            target_reward=0.99,
             patience=4,
-            max_time_steps=1300,
+            max_time_steps=1600,
         ),
         sync_sim_env_name: StopCondition(
             stop_criterion=Criterion.TARGET_REWARD,
@@ -198,17 +191,8 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     def _select_agent_type(envs: list) -> str:
         """
-        Choose the correct agent type based on the environments.
-
-        If any environment has `include_scenario_one_hot` enabled, use
-        MPSA (Multi-Policy Single Agent). If any environment is a
-        MultiSimEnv, use MPPO. Otherwise, default to single-policy PPO.
-
-        Args:
-            envs: List of framework environment wrappers.
-
-        Returns:
-            The agent type string (e.g. "PPO", "MPPO", or "MPSA").
+        Pick the agent type: MPSA if any env has include_scenario_one_hot, MPPO if
+        any env is a MultiSimEnv, otherwise PPO.
         """
 
         for sub_env in envs:
@@ -222,15 +206,11 @@ if __name__ == "__main__" or __name__ == "fw.main":
 
     def _run_standard_batch(envs: list) -> bool:
         """
-        Run one contiguous batch of framework environments.
-
-        Args:
-            envs: Framework environment instances collected from the
-                ordered `env_type` sequence up to the next AirSim step.
+        Train or visualize one batch of non-AirSim environments (those between
+        AirSim steps in env_type), then bundle the run output.
 
         Returns:
-            True when a framework train/visualize step was executed,
-            False when `envs` is empty.
+            True if a step was executed, False if envs is empty.
         """
 
         if not envs:

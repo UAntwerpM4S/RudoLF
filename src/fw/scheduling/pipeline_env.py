@@ -35,7 +35,7 @@ from fw.configuration.env_factory import (
 )
 
 
-# Build directly because the standard environment factory caches by canonical name.
+# Instantiated directly: the standard env factory caches by canonical name.
 _DIRECT_ENV_BUILDERS = {
     py_sim_env_name: PySimEnvironment,
     multi_sim_env_name: MultiPySimEnvironment,

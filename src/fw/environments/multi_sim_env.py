@@ -8,19 +8,14 @@ from fw.environments.base_env import BaseEnv
 
 class MultiSimEnv(BaseEnv):
     """
-    Wrapper environment that composes multiple independent `BaseEnv` instances
-    into a single vectorized environment with structured (tuple-based) spaces.
+    Synchronous multi-ship environment composed of several BaseEnv instances.
 
-    Each sub-environment is stepped independently, while observations and actions
-    are grouped using `gymnasium.spaces.Tuple`. This preserves structural
-    information and ensures compatibility with Gymnasium's space validation.
-
-    The environment behaves as a synchronous vectorized environment:
-    all sub-environments are stepped together, and results are returned as
-    tuples (observations) or NumPy arrays (rewards, termination flags).
+    Observations and actions use `gymnasium.spaces.Tuple`; rewards and flags
+    are returned as NumPy arrays. Sub-environments are named
+    "<type_name>_<index>".
 
     Attributes:
-        _sub_environments (dict[BaseEnv]): Dict of wrapped sub-environments.
+        _sub_environments (dict[str, BaseEnv]): Wrapped sub-environments by name.
         num_envs (int): Number of sub-environments.
         observation_space (spaces.Tuple): Tuple of sub-environment observation spaces.
         action_space (spaces.Tuple): Tuple of sub-environment action spaces.
@@ -51,12 +46,10 @@ class MultiSimEnv(BaseEnv):
         self.num_envs = len(sub_environments)
         self.agent_states = {}
 
-        # --- Structured observation space ---
         self.observation_space = spaces.Tuple(
             tuple(env.observation_space for env in sub_environments)
         )
 
-        # --- Structured action space ---
         self.action_space = spaces.Tuple(
             tuple(env.action_space for env in sub_environments)
         )
@@ -64,7 +57,7 @@ class MultiSimEnv(BaseEnv):
 
     def _get_ordered_envs(self):
         """
-        Returns a stable ordered list of sub-environments.
+        Return the sub-environments in insertion order.
         """
 
         return list(self.sub_environments.values())
@@ -72,7 +65,7 @@ class MultiSimEnv(BaseEnv):
 
     def get_sub_env(self, env_id: int):
         """
-        Resolve sub-environment by index.
+        Return the sub-environment at index `env_id`.
         """
 
         return self._get_ordered_envs()[env_id]
@@ -80,7 +73,7 @@ class MultiSimEnv(BaseEnv):
 
     def get_neutral_action(self, env_id: int, action_template):
         """
-        Return neutral action for a specific sub-environment.
+        Return the sub-environment's `neutral_action()`, or zeros like `action_template`.
         """
 
         sub_env = self.get_sub_env(env_id)
@@ -93,17 +86,7 @@ class MultiSimEnv(BaseEnv):
 
     def update_agent_states(self):
         """
-        Updates the stored states of all agents from their sub-environments.
-
-        Iterates over all sub-environments, retrieves each agent's current
-        state using `get_agent_state()`, and updates `self.agent_states`
-        with a mapping from environment names to agent states.
-
-        This method overwrites existing entries in `self.agent_states`
-        for agents present in `self.sub_environments`.
-
-        Returns:
-            None
+        Refresh `agent_states` (env name to `get_agent_state()`) for all sub-environments.
         """
 
         self.agent_states.update({
@@ -117,23 +100,16 @@ class MultiSimEnv(BaseEnv):
         """
         Reset all sub-environments.
 
-        Each sub-environment is reset independently. If a seed is provided,
-        it is deterministically offset per environment (`seed + i`) to ensure
-        reproducibility while avoiding identical trajectories.
+        A given seed is offset per environment (seed + i), so runs are
+        reproducible without identical sub-environments.
 
         Args:
             seed (int, optional): Base random seed.
             options (dict, optional): Additional environment-specific reset options.
 
         Returns:
-            tuple:
-                - observations (tuple[np.ndarray, ...]): Tuple containing the
-                  initial observation of each sub-environment.
-                - infos (list[dict]): List of info dictionaries returned by each
-                  sub-environment reset.
-
-        Notes:
-            The returned observation structure matches `observation_space`.
+            tuple: (observations as a tuple matching `observation_space`,
+                list of info dicts).
         """
 
         observations = []
@@ -155,11 +131,8 @@ class MultiSimEnv(BaseEnv):
         """
         Step all sub-environments with the provided actions.
 
-        Agent states are updated AFTER all sub-environments have stepped.
-        This implements synchronous (simultaneous) execution: every ship acts
-        on the world state from the end of the previous timestep. This is
-        intentional. It avoids ordering bias between agents and matches the
-        standard multi-agent RL assumption.
+        Agent states are updated after all sub-environments have stepped, so
+        every ship acts on the previous step's world state (no ordering bias).
 
         Args:
             action (tuple or list): One action per sub-environment.
@@ -171,6 +144,11 @@ class MultiSimEnv(BaseEnv):
                 - terminations (np.ndarray): Per-env termination flags.
                 - truncations (np.ndarray): Per-env truncation flags.
                 - infos (list[dict]): Per-env info dicts.
+
+        Raises:
+            TypeError: If `action` is not a tuple or list.
+            ValueError: On a wrong action count (or, with DEBUG_ENV set, an
+                action outside `action_space`).
         """
 
         if not isinstance(action, (tuple, list)):
@@ -180,8 +158,8 @@ class MultiSimEnv(BaseEnv):
                 f"Action count mismatch: got {len(action)}, expected {self.num_envs}"
             )
 
-        # spaces.Tuple.contains() is sensitive to exact dtypes and rejects valid
-        # float32 arrays in practice. Use DEBUG_ENV=1 to enable during development.
+        # spaces.Tuple.contains() rejects valid float32 arrays on dtype details,
+        # so it only runs with DEBUG_ENV=1.
         if os.environ.get("DEBUG_ENV"):
             if not self.action_space.contains(action):
                 raise ValueError(
@@ -206,7 +184,6 @@ class MultiSimEnv(BaseEnv):
             truncations.append(truncated)
             infos.append(info)
 
-        # States updated after all ships have stepped (synchronous execution).
         self.update_agent_states()
 
         return (

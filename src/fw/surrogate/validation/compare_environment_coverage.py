@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 """
-compare_environment_coverage.py -- one slide comparing the environment
-coverage of several datasets (e.g. Tripoli full vs Myzako full).
+One slide comparing the environment coverage of several datasets (e.g. Tripoli full vs Myzako full).
 
-Reads only the small tables that plot_environment_coverage.py writes
-(summary.csv, thresholds.csv, directions.csv), so the large dataset CSVs are
-not needed. Shows, per dataset:
-    top row     UKC, true wind speed and current speed: median (dot),
-                25-75 % (thick bar) and 5-95 % (thin bar)
-    bottom row  share of time below thresholds (UKC < 2 m, calm wind, ...)
-                and the share of time per 30-deg sector of the true wind
+Reads only the small tables written by plot_environment_coverage.py (summary.csv,
+thresholds.csv, directions.csv). Per dataset:
+    top row     UKC, true wind speed, current speed: median, 25-75 % and 5-95 % ranges
+    bottom row  share of time below thresholds, and per 30-deg sector of the true wind
                 direction and of the current relative to the ship
 
 Usage (from src):
@@ -45,7 +41,9 @@ ROSES = (("true wind direction", "True wind, comes from", "N,NE,E,SE,S,SW,W,NW")
 
 
 def _read(path: Path) -> List[Dict[str, str]]:
-    """A CSV file as a list of dicts ([] when the file does not exist)."""
+    """
+    Read a CSV file as a list of dicts ([] if the file does not exist).
+    """
 
     if not path.is_file():
         return []
@@ -54,7 +52,9 @@ def _read(path: Path) -> List[Dict[str, str]]:
 
 
 def load(folder: Path) -> Dict[str, object]:
-    """summary / thresholds / directions of one coverage folder, keyed for lookup."""
+    """
+    Load summary, thresholds and directions of one coverage folder, keyed for lookup.
+    """
 
     summary = {r["quantity"]: r for r in _read(folder / "summary.csv")}
     if not summary:
@@ -66,7 +66,9 @@ def load(folder: Path) -> Dict[str, object]:
 
 
 def _style(ax, polar: bool = False) -> None:
-    """Recessive axes and grid."""
+    """
+    Recessive axes and grid.
+    """
 
     ax.set_facecolor(SURFACE)
     ax.tick_params(colors=INK_2, labelsize=11)
@@ -83,7 +85,9 @@ def _style(ax, polar: bool = False) -> None:
 
 def plot(datasets: Sequence[Dict[str, object]], labels: Sequence[str], out: Path,
          title: Optional[str], dpi: int) -> None:
-    """Draw and save the comparison slide."""
+    """
+    Draw and save the comparison slide.
+    """
 
     import matplotlib
     matplotlib.use("Agg")
@@ -118,7 +122,7 @@ def plot(datasets: Sequence[Dict[str, object]], labels: Sequence[str], out: Path
         ax.text(0.0, 1.02, "dot = median, thick = 25-75 %, thin = 5-95 % of the time",
                 transform=ax.transAxes, fontsize=10, color=INK_2, va="bottom")
 
-    # Bottom left: share of time below thresholds (horizontal grouped bars, labelled).
+    # Bottom left: share of time below thresholds (grouped horizontal bars).
     ax = fig.add_subplot(grid[1, 0:2])
     _style(ax)
     ax.grid(axis="y", visible=False)
@@ -175,7 +179,9 @@ def plot(datasets: Sequence[Dict[str, object]], labels: Sequence[str], out: Path
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Parse the arguments and write the comparison slide."""
+    """
+    Parse the arguments and write the comparison slide.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)

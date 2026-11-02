@@ -1,21 +1,14 @@
 """
-Dataset files (.npz) and the torch Dataset for surrogate training -- one
-implementation for every scenario (open_water / confined_ukc / full_env,
-see schema.py).
+Dataset files (.npz) and the torch Dataset for surrogate training, for every
+scenario (open_water / confined_ukc / full_env, see schema.py).
 
-A dataset file holds RAW rows ("X", in the layout of the scenario it was
-generated for), targets ("Y") and its identity (schema.DatasetIdentity:
-scenario, ray layout, ship model, rudder scale). A model can be trained for
-the file's own scenario or for a poorer one derived from it by dropping
-columns (schema.check_projection, e.g. an open_water model from
-confined_ukc data).
+A dataset file holds raw inputs "X" (in the layout of the scenario it was generated
+for), targets "Y" and its identity (schema.DatasetIdentity). A model can be trained
+for the file's own scenario or for a poorer one obtained by dropping columns
+(schema.check_projection, e.g. open_water from confined_ukc data).
 
-Normalization strategy:
-  - Inputs X normalized using x_mean/x_std, targets Y using y_mean/y_std,
-    both computed from the TRAINING split only (`compute_stats`).
-  - Features whose std is (near-)zero in the stats source get std = 1.0
-    instead of ~1e-8 (see `STD_FLOOR` / `safe_std`): otherwise any deviation
-    of that feature in val/test or at inference time is multiplied by 1e8.
+Normalization: X and Y use mean/std from the training split only. Near-constant
+features get std = 1.0 (see `safe_std`), so later deviations are not amplified ~1e8.
 """
 
 import logging
@@ -43,15 +36,13 @@ from fw.surrogate.schema import (
 
 logger = logging.getLogger(__name__)
 
-# A feature whose std in the stats source is below this is treated as
-# constant: its std is replaced by 1.0.
+# Features with std below this are treated as constant (std replaced by 1.0).
 STD_FLOOR = 1e-6
 
 
 def read_identity(path) -> DatasetIdentity:
     """
-    Identity of a dataset .npz (checked: all keys present, known scenario,
-    current ray layout).
+    Validated identity of a dataset .npz (all keys present, known scenario, current ray layout).
     """
 
     with np.load(path, allow_pickle=False) as data:
@@ -60,9 +51,8 @@ def read_identity(path) -> DatasetIdentity:
 
 def read_provenance(path) -> Optional[dict]:
     """
-    Generation provenance of a dataset .npz (generator settings, see
-    generate_ship_data.generation_provenance), or None for files written
-    before it was recorded.
+    Generator settings of a dataset .npz (see generate_ship_data.generation_provenance),
+    or None for files without provenance.
     """
 
     with np.load(path, allow_pickle=False) as data:
@@ -71,24 +61,22 @@ def read_provenance(path) -> Optional[dict]:
 
 def load_raw(path, scenario: Optional[ScenarioSchema] = None) -> Tuple[np.ndarray, np.ndarray, DatasetIdentity]:
     """
-    Load the RAW X and Y arrays of a dataset .npz. Every reader of dataset
-    files goes through this (training, diagnose_splits, plot_val_vs_simulator,
-    inference_tester).
+    Load the raw X and Y arrays of a dataset .npz (the single entry point for all
+    dataset readers).
 
     Args:
-        path: Path to an .npz written by generate_ship_data.py.
-        scenario: Scenario to return X for. None = the file's own scenario.
-            A different scenario must be derivable from the file's
-            (schema.check_projection); X is then projected to it.
+        path: An .npz written by generate_ship_data.py.
+        scenario: Scenario to return X for; None means the file's own. Another
+            scenario must be derivable from it (schema.check_projection).
 
     Returns:
-        `(x_raw, y, identity)`: float32 arrays, X in `scenario`'s raw layout
-        (not selected, encoded or normalized), Y as `(N, 3)`, and the file's
-        identity (its `scenario` is the SOURCE scenario of the file).
+        (x_raw, y, identity): float32 X in `scenario`'s raw layout (not encoded or
+        normalized), Y as (N, 3), and the file's identity (its `scenario` is the
+        source scenario).
 
     Raises:
-        ValueError: On missing/invalid identity, a projection that is not
-            allowed, wrong array shapes or NaN/inf values.
+        ValueError: Missing/invalid identity, disallowed projection, wrong shapes
+            or NaN/inf values.
     """
 
     with np.load(path, allow_pickle=False) as data:
@@ -118,10 +106,7 @@ def load_raw(path, scenario: Optional[ScenarioSchema] = None) -> Tuple[np.ndarra
 
 def check_same_identity(paths: Sequence, identities: Sequence[DatasetIdentity]) -> DatasetIdentity:
     """
-    Raise unless all `identities` are equal (e.g. train/val/test of one run).
-
-    Returns:
-        The common identity.
+    Return the common identity; raise unless all are equal (e.g. train/val/test of one run).
     """
 
     first = identities[0]
@@ -135,15 +120,12 @@ def check_same_identity(paths: Sequence, identities: Sequence[DatasetIdentity]) 
 def safe_std(values: np.ndarray, names: Optional[Sequence[str]] = None,
              what: str = "feature") -> np.ndarray:
     """
-    Per-column std (shape `(1, D)`) with near-constant columns set to 1.0.
+    Per-column float32 std of shape (1, D), with near-constant columns set to 1.0.
 
     Args:
-        values: Array of shape `(N, D)`.
-        names: Optional column names, used only for the warning.
+        values: Array of shape (N, D).
+        names: Optional column names for the warning.
         what: Label used in the warning ("input feature" / "target").
-
-    Returns:
-        Std array of shape `(1, D)`, float32.
     """
 
     std = values.std(axis=0, keepdims=True).astype(np.float32)
@@ -166,10 +148,7 @@ def safe_std(values: np.ndarray, names: Optional[Sequence[str]] = None,
 
 def stats_from_arrays(x_vals: np.ndarray, y_vals: np.ndarray, feature_names: Sequence[str]):
     """
-    Mean/std for encoded X and Y.
-
-    Returns:
-        `(x_mean, x_std, y_mean, y_std)`, each shaped `(1, D)`.
+    Return (x_mean, x_std, y_mean, y_std) for encoded X and Y, each shaped (1, D).
     """
 
     if len(x_vals) == 0:
@@ -186,11 +165,7 @@ def stats_from_arrays(x_vals: np.ndarray, y_vals: np.ndarray, feature_names: Seq
 
 def load_encoded(path, scenario: ScenarioSchema, env_encoding: str) -> Tuple[np.ndarray, np.ndarray, DatasetIdentity]:
     """
-    `load_raw(path, scenario)`, then select/encode X for `scenario` and
-    `env_encoding`.
-
-    Returns:
-        `(x_encoded, y, identity)`.
+    `load_raw`, then select/encode X; returns (x_encoded, y, identity).
     """
 
     x_raw, y_vals, identity = load_raw(path, scenario)
@@ -199,10 +174,7 @@ def load_encoded(path, scenario: ScenarioSchema, env_encoding: str) -> Tuple[np.
 
 def compute_stats(path, scenario: ScenarioSchema, env_encoding: str):
     """
-    Per-feature mean/std for encoded X and for Y of a dataset .npz.
-
-    Returns:
-        `(x_mean, x_std, y_mean, y_std)`, each shaped `(1, D)`.
+    Per-feature (x_mean, x_std, y_mean, y_std) of a dataset .npz, each shaped (1, D).
     """
 
     x_vals, y_vals, _ = load_encoded(path, scenario, env_encoding)
@@ -216,7 +188,7 @@ class ShipDynamicsDataset(Dataset):
     Attributes:
         scenario: Scenario the model inputs are built for.
         env_encoding: Wind/current encoding used for the inputs.
-        identity: Identity of the file (its `scenario` is the SOURCE scenario).
+        identity: Identity of the file (its `scenario` is the source scenario).
         feature_names: Encoded feature names, in input order.
         X, Y: Encoded but unnormalized inputs and targets (numpy).
         x_mean, x_std, y_mean, y_std: Normalization stats (None if not normalized).
@@ -234,11 +206,10 @@ class ShipDynamicsDataset(Dataset):
         normalize: bool = True,
     ):
         """
-        Load a `.npz` dataset and set up normalization.
+        Load a .npz dataset and set up normalization.
 
-        If `normalize` is True and no stats are given, per-feature mean/std
-        are computed from this dataset itself; otherwise the given stats are
-        used as-is. All four stats must be passed together or none.
+        With `normalize` and no stats given, stats are computed from this dataset;
+        otherwise the given stats are used. Pass all four stats or none.
 
         Args:
             path: Path to the `.npz` file.
@@ -277,8 +248,7 @@ class ShipDynamicsDataset(Dataset):
             self.y_mean = np.asarray(y_mean, np.float32).reshape(1, -1)
             self.y_std = np.asarray(y_std, np.float32).reshape(1, -1)
 
-            # Stats from a different feature layout would otherwise broadcast
-            # silently (width 1) or fail with an opaque numpy error.
+            # Catch stats from another feature layout (would broadcast silently or fail opaquely).
             for name, stat, width in (("x_mean", self.x_mean, self.X.shape[1]),
                                       ("x_std", self.x_std, self.X.shape[1]),
                                       ("y_mean", self.y_mean, self.Y.shape[1]),
@@ -300,11 +270,15 @@ class ShipDynamicsDataset(Dataset):
         self._y_t = torch.from_numpy(np.ascontiguousarray(y_out, dtype=np.float32))
 
     def __len__(self):
-        """Number of samples."""
+        """
+        Number of samples.
+        """
 
         return len(self._x_t)
 
     def __getitem__(self, idx):
-        """`(x, y)` tensors at `idx` (normalized if `self.normalize`)."""
+        """
+        `(x, y)` tensors at `idx` (normalized if `self.normalize`).
+        """
 
         return self._x_t[idx], self._y_t[idx]

@@ -25,7 +25,9 @@ from surrogate_test_helpers import train_tiny  # noqa: E402
 
 @pytest.fixture(scope="session")
 def tiny_models(tmp_path_factory):
-    """One-epoch open_water and confined_ukc Myzako models on synthetic data (trained once per session)."""
+    """
+    One-epoch open_water and confined_ukc Myzako models on synthetic data (trained once per session).
+    """
 
     folder = tmp_path_factory.mktemp("tiny_models")
     clean, clean_splits = train_tiny(folder, "open_water")
