@@ -205,42 +205,13 @@ class PPOPolicy:
         return cls.build_policy_from_state(saved_variables, device)
 
 
-    # Clamp for `squashed_log_prob`, which only has the squashed action. PPO
-    # training does not use it: the rollout stores the raw pre-tanh sample and
-    # both rollout and update evaluate the log-density there (`raw_log_prob`),
-    # so the importance ratio is exactly 1 before the first optimizer step.
-    SQUASH_CLAMP = 0.999
-
-    # Upper bound on log(new_prob / old_prob) in the PPO update. exp() of a
-    # float32 above ~88 is inf, and min(surr1, surr2) then backpropagates
-    # 0 * inf = NaN into every weight. e^20 is far outside any clip range, so
-    # the bound only affects samples that would otherwise overflow.
+    # Upper bound on log(new_prob / old_prob) in the PPO update. Without it,
+    # exp() overflows to inf above ~88 (float32) and min(surr1, surr2) can
+    # backpropagate 0 * inf = NaN into every weight; well below 88 the gradient
+    # norm can already overflow, which skips the whole minibatch. Samples
+    # above the bound get zero policy gradient (their loss term stays finite
+    # but large); samples below it are unaffected.
     MAX_LOG_RATIO = 20.0
-
-    @classmethod
-    def squashed_log_prob(
-        cls,
-        dist: torch.distributions.Normal,
-        actions: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Log-probability of tanh-squashed actions, from the squashed action only.
-
-        Approximate for saturated actions (|raw| > atanh(SQUASH_CLAMP)); not
-        used for PPO training (see `raw_log_prob`).
-
-        Args:
-            dist (torch.distributions.Normal): Pre-squash Gaussian.
-            actions (torch.Tensor): Squashed actions in [-1, 1].
-
-        Returns:
-            torch.Tensor: Log-probabilities summed over the action dimensions.
-        """
-
-        a = actions.clamp(-cls.SQUASH_CLAMP, cls.SQUASH_CLAMP)
-        raw = torch.atanh(a)
-        log_probs = dist.log_prob(raw) - torch.log(1 - a.pow(2) + 1e-6)
-        return log_probs.sum(dim=-1)
 
     @staticmethod
     def calc_log_probs(

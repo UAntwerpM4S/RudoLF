@@ -506,7 +506,17 @@ class MultiPolicySingleAgent(BasePPOAgent):
         Returns:
             {policy_id: [segment]}, each segment with states (one-hot stripped),
             actions, raw_actions, rewards, values, log_probs, advantages, returns.
+
+        Raises:
+            KeyError: If the episode has no "raw_actions" (not produced by
+                `run_parallel_episodes`).
         """
+
+        if "raw_actions" not in episode:
+            raise KeyError(
+                "PPO update needs 'raw_actions' (pre-tanh rollout actions) in every "
+                "episode; collect episodes with run_parallel_episodes()."
+            )
 
         T = len(episode["rewards"])
 
