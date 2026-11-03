@@ -205,12 +205,17 @@ class PPOPolicy:
         return cls.build_policy_from_state(saved_variables, device)
 
 
-    # Squashed actions are clamped to +-SQUASH_CLAMP before evaluating the
-    # log-density, both in the rollout and in the PPO update, so both evaluate the
-    # same point (importance ratio exactly 1 before the first optimizer step).
-    # Using the raw sample in the rollout gave ratios of 1e4..1e18 for saturated
-    # actions (|raw| > atanh(0.999) ~= 3.8).
+    # Clamp for `squashed_log_prob`, which only has the squashed action. PPO
+    # training does not use it: the rollout stores the raw pre-tanh sample and
+    # both rollout and update evaluate the log-density there (`raw_log_prob`),
+    # so the importance ratio is exactly 1 before the first optimizer step.
     SQUASH_CLAMP = 0.999
+
+    # Upper bound on log(new_prob / old_prob) in the PPO update. exp() of a
+    # float32 above ~88 is inf, and min(surr1, surr2) then backpropagates
+    # 0 * inf = NaN into every weight. e^20 is far outside any clip range, so
+    # the bound only affects samples that would otherwise overflow.
+    MAX_LOG_RATIO = 20.0
 
     @classmethod
     def squashed_log_prob(
@@ -220,6 +225,9 @@ class PPOPolicy:
     ) -> torch.Tensor:
         """
         Log-probability of tanh-squashed actions, from the squashed action only.
+
+        Approximate for saturated actions (|raw| > atanh(SQUASH_CLAMP)); not
+        used for PPO training (see `raw_log_prob`).
 
         Args:
             dist (torch.distributions.Normal): Pre-squash Gaussian.
@@ -241,18 +249,69 @@ class PPOPolicy:
         actions: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Alias of `squashed_log_prob`, kept for compatibility; `raw_actions` is ignored.
+        Log-probability of tanh-squashed actions with the tanh correction.
 
         Args:
             dist (torch.distributions.Normal): Pre-squash Gaussian.
-            raw_actions (torch.Tensor): Ignored.
-            actions (torch.Tensor): Squashed actions.
+            raw_actions (torch.Tensor): Pre-squash (raw) actions.
+            actions (torch.Tensor): Squashed actions, tanh(raw_actions).
 
         Returns:
             torch.Tensor: Log-probabilities summed over the action dimensions.
         """
 
-        return PPOPolicy.squashed_log_prob(dist, actions)
+        log_probs = dist.log_prob(raw_actions)
+        log_probs = log_probs - torch.log(1 - actions.pow(2) + 1e-6)
+        return log_probs.sum(dim=-1)
+
+    @classmethod
+    def raw_log_prob(
+        cls,
+        dist: torch.distributions.Normal,
+        raw_actions: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Log-probability of the tanh-squashed action, evaluated at the raw action.
+
+        Used both in the rollout and in the PPO update, so both evaluate the
+        exact same point.
+
+        Args:
+            dist (torch.distributions.Normal): Pre-squash Gaussian.
+            raw_actions (torch.Tensor): Pre-squash (raw) actions.
+
+        Returns:
+            torch.Tensor: Log-probabilities summed over the action dimensions.
+        """
+
+        return cls.calc_log_probs(dist, raw_actions, torch.tanh(raw_actions))
+
+
+    def _predict_with_raw(self, state: torch.Tensor, deterministic: bool = False) -> Tuple:
+        """
+        Predict squashed action, raw action, log-probability and value (tensors).
+
+        Args:
+            state (torch.Tensor): Batched observations.
+            deterministic (bool): Use the mean instead of sampling.
+
+        Returns:
+            Tuple: (action in [-1, 1], raw pre-tanh action, log_prob, value).
+        """
+
+        action_mean, action_std, value = self.network(state)
+
+        dist = torch.distributions.Normal(action_mean, action_std)
+
+        if deterministic:
+            raw_action = action_mean
+        else:
+            raw_action = dist.rsample()
+
+        action = torch.tanh(raw_action)
+        log_prob = self.raw_log_prob(dist, raw_action)
+
+        return action, raw_action, log_prob, value.squeeze(-1)
 
 
     def _predict(self, state: torch.Tensor, deterministic: bool = False) -> Tuple:
@@ -267,21 +326,23 @@ class PPOPolicy:
             Tuple: (action in [-1, 1], log_prob, value).
         """
 
-        action_mean, action_std, value = self.network(state)
+        action, _, log_prob, value = self._predict_with_raw(state, deterministic)
+        return action, log_prob, value
 
-        dist = torch.distributions.Normal(action_mean, action_std)
 
-        if deterministic:
-            raw_action = action_mean
-        else:
-            raw_action = dist.rsample()
+    def _as_batched_tensor(self, state: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
+        """
+        Convert a state to a float tensor on the policy device; a 1-D state gets
+        a batch dimension.
+        """
 
-        action = torch.tanh(raw_action)
+        if not isinstance(state, torch.Tensor):
+            state = torch.FloatTensor(state).to(self.device)
 
-        # Same evaluation point as in the PPO update (see squashed_log_prob).
-        log_prob = self.squashed_log_prob(dist, action)
+        if state.ndim == 1:
+            state = state.unsqueeze(0)
 
-        return action, log_prob, value.squeeze(-1)
+        return state
 
 
     def predict(self, state: Union[np.ndarray, torch.Tensor], deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -296,13 +357,39 @@ class PPOPolicy:
             Tuple: (action, log_prob, value) as NumPy arrays.
         """
 
-        if not isinstance(state, torch.Tensor):
-            state = torch.FloatTensor(state).to(self.device)
-
-        if state.ndim == 1:
-            state = state.unsqueeze(0)
+        state = self._as_batched_tensor(state)
 
         with torch.no_grad():
             action, log_prob, value = self._predict(state, deterministic)
 
         return action.cpu().numpy(), log_prob.cpu().numpy(), value.cpu().numpy()
+
+
+    def predict_with_raw(
+        self,
+        state: Union[np.ndarray, torch.Tensor],
+        deterministic: bool = False,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        As `predict`, but also return the raw pre-tanh action, which the PPO
+        update needs to evaluate the log-probability at the same point.
+
+        Args:
+            state (np.ndarray | torch.Tensor): Observation(s).
+            deterministic (bool): Use the mean instead of sampling.
+
+        Returns:
+            Tuple: (action, raw_action, log_prob, value) as NumPy arrays.
+        """
+
+        state = self._as_batched_tensor(state)
+
+        with torch.no_grad():
+            action, raw_action, log_prob, value = self._predict_with_raw(state, deterministic)
+
+        return (
+            action.cpu().numpy(),
+            raw_action.cpu().numpy(),
+            log_prob.cpu().numpy(),
+            value.cpu().numpy(),
+        )

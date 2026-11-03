@@ -344,7 +344,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
         go through their policy in one call (at most N forward passes per step).
 
         Returns:
-            actions (num_envs, action_dim), log_probs (num_envs,), values (num_envs,).
+            actions (num_envs, action_dim), raw_actions (num_envs, action_dim),
+            log_probs (num_envs,), values (num_envs,).
         """
 
         states_arr = np.asarray(states)
@@ -369,19 +370,21 @@ class MultiPolicySingleAgent(BasePPOAgent):
         scenario_ids = np.argmax(one_hot, axis=1)
 
         actions = np.empty((num_envs, self.output_dim), dtype=np.float32)
+        raw_actions = np.empty((num_envs, self.output_dim), dtype=np.float32)
         log_probs = np.empty(num_envs, dtype=np.float32)
         values = np.empty(num_envs, dtype=np.float32)
 
         for pid in np.unique(scenario_ids):
             mask = scenario_ids == pid
-            a, lp, v = self.policies[int(pid)].predict(
+            a, raw, lp, v = self.policies[int(pid)].predict_with_raw(
                 base_obs_all[mask], deterministic=deterministic,
             )
             actions[mask] = a
+            raw_actions[mask] = raw
             log_probs[mask] = lp
             values[mask] = v
 
-        return actions, log_probs, values
+        return actions, raw_actions, log_probs, values
 
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):
         """
@@ -502,7 +505,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         Returns:
             {policy_id: [segment]}, each segment with states (one-hot stripped),
-            actions, rewards, values, log_probs, advantages, returns.
+            actions, raw_actions, rewards, values, log_probs, advantages, returns.
         """
 
         T = len(episode["rewards"])
@@ -529,6 +532,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         for i, (start, end, policy_id) in enumerate(segments):
             seg_states = episode["states"][start:end, :-self.num_policies]
             seg_actions = episode["actions"][start:end]
+            seg_raw_actions = episode["raw_actions"][start:end]
             seg_rewards = episode["rewards"][start:end]
             seg_values = episode["values"][start:end]
             seg_log_probs = episode["log_probs"][start:end]
@@ -571,6 +575,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
             policy_segments[policy_id].append({
                 "states": seg_states,
                 "actions": seg_actions,
+                "raw_actions": seg_raw_actions,
                 "rewards": seg_rewards,
                 "values": seg_values,
                 "log_probs": seg_log_probs,
@@ -607,8 +612,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
             dtype=torch.float32,
         ).to(self.device)
 
-        all_actions = torch.as_tensor(
-            np.concatenate([s["actions"] for s in segments]),
+        all_raw_actions = torch.as_tensor(
+            np.concatenate([s["raw_actions"] for s in segments]),
             dtype=torch.float32,
         ).to(self.device)
 
@@ -661,7 +666,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 mb_idx = indices[mb_start:mb_end]
 
                 mb_states = all_states[mb_idx]
-                mb_actions = all_actions[mb_idx]
+                mb_raw_actions = all_raw_actions[mb_idx]
                 mb_old_log_probs = all_old_log_probs[mb_idx]
                 mb_returns = all_returns[mb_idx]
                 mb_advantages = all_advantages[mb_idx]
@@ -669,11 +674,12 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 action_mean, action_std, state_values = policy.network(mb_states)
                 dist = torch.distributions.Normal(action_mean, action_std)
 
-                # Same evaluation point as in the rollout (PPOPolicy.squashed_log_prob).
-                log_probs = policy.squashed_log_prob(dist, mb_actions)
+                # Same evaluation point as in the rollout (PPOPolicy.raw_log_prob).
+                log_probs = policy.raw_log_prob(dist, mb_raw_actions)
 
                 # PPO clipped objective
-                ratios = torch.exp(log_probs - mb_old_log_probs)
+                log_ratios = torch.clamp(log_probs - mb_old_log_probs, max=PPOPolicy.MAX_LOG_RATIO)
+                ratios = torch.exp(log_ratios)
                 surr1 = ratios * mb_advantages
                 surr2 = torch.clamp(ratios, 1.0 - self.clip_range, 1.0 + self.clip_range) * mb_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
@@ -693,7 +699,15 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
                 optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(policy.network.parameters(), self.max_grad_norm)
+                grad_norm = nn.utils.clip_grad_norm_(policy.network.parameters(), self.max_grad_norm)
+                if not torch.isfinite(grad_norm):
+                    # A non-finite norm would turn every weight of the slot into NaN.
+                    logger.warning(
+                        "[Alert] Non-finite gradient norm (%s) for policy '%s' - skipping update step.",
+                        float(grad_norm), self.policy_labels[policy_id],
+                    )
+                    optimizer.zero_grad()
+                    continue
                 optimizer.step()
 
                 loss_per_epoch.append(loss.item())
