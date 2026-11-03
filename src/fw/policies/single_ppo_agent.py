@@ -106,7 +106,7 @@ class SinglePPOAgent(BasePPOAgent):
         Args:
             all_episodes_data (list[dict]): List of trajectory dictionaries, each containing:
                 - states (np.ndarray)
-                - actions (np.ndarray)
+                - raw_actions (np.ndarray): pre-tanh actions from the rollout
                 - advantages (np.ndarray)
                 - log_probs (np.ndarray)
                 - returns (np.ndarray)
@@ -114,19 +114,30 @@ class SinglePPOAgent(BasePPOAgent):
         Returns:
             float: Mean loss over all updates, or NaN if there is no valid data.
 
+        Raises:
+            KeyError: If an episode has no "raw_actions" (not produced by
+                `run_parallel_episodes`).
+
         Advantages are normalized; mini-batch updates over num_epochs with PPO
-        clipping, value loss and entropy bonus.
+        clipping, value loss and entropy bonus. Steps with a non-finite loss or
+        gradient norm are skipped.
         """
 
         if not all_episodes_data:
             return float('nan')
 
+        if any("raw_actions" not in ep for ep in all_episodes_data):
+            raise KeyError(
+                "PPO update needs 'raw_actions' (pre-tanh rollout actions) in every "
+                "episode; collect episodes with run_parallel_episodes()."
+            )
+
         self.policy.network.train()
 
         all_states = torch.as_tensor(np.concatenate([ep['states'] for ep in all_episodes_data]),
                                      dtype=torch.float32).to(self.device)
-        all_actions = torch.as_tensor(np.concatenate([ep['actions'] for ep in all_episodes_data]),
-                                      dtype=torch.float32).to(self.device)
+        all_raw_actions = torch.as_tensor(np.concatenate([ep['raw_actions'] for ep in all_episodes_data]),
+                                          dtype=torch.float32).to(self.device)
         all_advantages = torch.as_tensor(np.concatenate([ep['advantages'] for ep in all_episodes_data]),
                                          dtype=torch.float32).to(self.device)
         all_old_log_probs = torch.as_tensor(np.concatenate([ep['log_probs'] for ep in all_episodes_data]),
@@ -162,7 +173,7 @@ class SinglePPOAgent(BasePPOAgent):
                 mb_idx = indices[start:end]
 
                 mb_states = all_states[mb_idx]
-                mb_actions = all_actions[mb_idx]
+                mb_raw_actions = all_raw_actions[mb_idx]
                 mb_old_log_probs = all_old_log_probs[mb_idx]
                 mb_returns = all_returns[mb_idx]
                 mb_advantages = all_advantages[mb_idx]
@@ -170,10 +181,11 @@ class SinglePPOAgent(BasePPOAgent):
                 action_mean, action_std, state_values = self.policy.network(mb_states)
                 dist = torch.distributions.Normal(action_mean, action_std)
 
-                # Log-prob of the stored squashed action (see PPOPolicy.squashed_log_prob).
-                log_probs = self.policy.squashed_log_prob(dist, mb_actions)
+                # Same evaluation point as in the rollout (PPOPolicy.raw_log_prob).
+                log_probs = self.policy.raw_log_prob(dist, mb_raw_actions)
 
-                ratios = torch.exp(log_probs - mb_old_log_probs)
+                log_ratios = torch.clamp(log_probs - mb_old_log_probs, max=PPOPolicy.MAX_LOG_RATIO)
+                ratios = torch.exp(log_ratios)
 
                 surrogate_1 = ratios * mb_advantages
                 surrogate_2 = torch.clamp(ratios, 1.0 - self.clip_range, 1.0 + self.clip_range) * mb_advantages
@@ -195,6 +207,11 @@ class SinglePPOAgent(BasePPOAgent):
                 grad_norm = nn.utils.clip_grad_norm_(
                     self.policy.network.parameters(), self.max_grad_norm
                 )
+                if not torch.isfinite(grad_norm):
+                    # A non-finite norm would turn every weight into NaN.
+                    logger.warning("[Alert] Non-finite gradient norm (%s) - skipping update step.", float(grad_norm))
+                    self.optimizer.zero_grad()
+                    continue
                 if float(grad_norm) > 1000.0:
                     logger.warning("[Alert] Exploding gradient: norm=%.2f "
                                    "(clip=%.2f). Clipping applied.", float(grad_norm), self.max_grad_norm)
@@ -202,7 +219,7 @@ class SinglePPOAgent(BasePPOAgent):
 
                 loss_per_epoch.append(loss.item())
 
-        return np.mean(loss_per_epoch)
+        return float(np.mean(loss_per_epoch)) if loss_per_epoch else float('nan')
 
     @classmethod
     def filter_trainable_episodes(cls, batch_data):
@@ -354,17 +371,17 @@ class SinglePPOAgent(BasePPOAgent):
 
     def _predict(self, states, deterministic=False):
         """
-        Compute batched actions, log-probabilities, and value estimates.
+        Compute batched actions, raw actions, log-probabilities, and value estimates.
 
         Args:
             states (np.ndarray): Observations of shape (num_envs, obs_dim).
             deterministic (bool): Whether to use deterministic policy output.
 
         Returns:
-            Tuple (actions, log_probs, values).
+            Tuple (actions, raw_actions, log_probs, values).
         """
 
-        return self.policy.predict(states, deterministic=deterministic)
+        return self.policy.predict_with_raw(states, deterministic=deterministic)
 
 
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):

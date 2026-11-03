@@ -183,15 +183,17 @@ class BasePPOAgent(BaseAgent):
     @abstractmethod
     def _predict(self, states, deterministic=False):
         """
-        Compute actions, log-probabilities, and value estimates.
+        Compute actions, raw actions, log-probabilities, and value estimates.
 
         Args:
             states (np.ndarray): Observations of shape (num_envs, obs_dim).
             deterministic (bool): Whether to use deterministic policy.
 
         Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray]:
-                - actions: Sampled actions.
+            Tuple of per-env containers:
+                - actions: Sampled (tanh-squashed) actions.
+                - raw_actions: Pre-tanh actions; the PPO update evaluates the
+                  log-probability at these, as the rollout did.
                 - log_probs: Log-probabilities of actions.
                 - values: Value estimates.
         """
@@ -292,8 +294,8 @@ class BasePPOAgent(BaseAgent):
 
         Returns:
             list[dict]: One trajectory per environment (empty ones skipped) with
-                states, actions, rewards, terminations, truncations, values,
-                log_probs, next_states, advantages, returns (arrays) and env_id.
+                states, actions, raw_actions, rewards, terminations, truncations,
+                values, log_probs, next_states, advantages, returns (arrays) and env_id.
                 Trajectories are trimmed to the first terminal/truncated step;
                 non-terminated ones are bootstrapped.
 
@@ -311,6 +313,7 @@ class BasePPOAgent(BaseAgent):
             {
                 "states": [],
                 "actions": [],
+                "raw_actions": [],
                 "rewards": [],
                 "terminations": [],
                 "truncations": [],
@@ -339,7 +342,7 @@ class BasePPOAgent(BaseAgent):
                 for env_id in range(num_envs)
             ])
 
-            actions, log_probs, values = self._predict(step_states, deterministic=False)
+            actions, raw_actions, log_probs, values = self._predict(step_states, deterministic=False)
 
             # Done envs get the neutral action, without profile transform, so
             # they do not perturb the joint physics of running envs.
@@ -360,6 +363,7 @@ class BasePPOAgent(BaseAgent):
 
                 collected_data[env_id]["states"].append(states[env_id])
                 collected_data[env_id]["actions"].append(actions[env_id])
+                collected_data[env_id]["raw_actions"].append(raw_actions[env_id])
                 collected_data[env_id]["rewards"].append(rewards[env_id])
                 collected_data[env_id]["terminations"].append(terminations[env_id])
                 collected_data[env_id]["truncations"].append(truncations[env_id])
@@ -410,7 +414,7 @@ class BasePPOAgent(BaseAgent):
             for key in trajectory:
                 relevant_steps = trajectory[key][:first_done + 1]
 
-                if key in ["states", "actions", "next_states"]:
+                if key in ["states", "actions", "raw_actions", "next_states"]:
                     episode[key] = np.stack(relevant_steps)
                 elif key in ["terminations", "truncations"]:
                     episode[key] = np.asarray(relevant_steps, dtype=bool)

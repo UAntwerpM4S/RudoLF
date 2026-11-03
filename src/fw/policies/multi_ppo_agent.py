@@ -184,17 +184,39 @@ class MultiPPOAgent(BasePPOAgent):
 
     def _predict(self, states, deterministic=False):
         """
-        Internal wrapper for batched prediction.
+        Per-agent prediction for the rollout, including the raw pre-tanh actions.
 
         Args:
             states (np.ndarray or tuple): Observations per agent.
             deterministic (bool): Whether to use deterministic actions.
 
         Returns:
-            Same as `predict`.
+            Tuple (actions per agent, raw actions per agent, log-probabilities
+            (num_envs,), values (num_envs,)), in agent order.
         """
 
-        return self.predict(states, deterministic=deterministic)
+        actions = []
+        raw_actions = []
+        log_probs = []
+        values = []
+
+        for i, agent in enumerate(self.agents):
+            action, raw_action, log_prob, value = agent.policy.predict_with_raw(
+                states[i],
+                deterministic=deterministic,
+            )
+
+            actions.append(action[0])
+            raw_actions.append(raw_action[0])
+            log_probs.append(log_prob.item())
+            values.append(value.item())
+
+        return (
+            tuple(actions),
+            tuple(raw_actions),
+            np.stack(log_probs),
+            np.stack(values),
+        )
 
 
     def _get_bootstrap_value(self, next_state, env_id: Optional[int] = None):

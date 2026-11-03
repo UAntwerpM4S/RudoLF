@@ -6,7 +6,7 @@ RL-contract regression tests:
 - the PPO agents bootstrap a truncated episode from its real last
   observation (not SB3's auto-reset one), and do not treat a truncation as a
   termination in the info-less fallback;
-- the tanh-squashed log-prob is evaluated at the same point in the rollout
+- the tanh-squashed log-prob is evaluated at the same raw action in the rollout
   and in the update (ratio exactly 1 before any optimizer step);
 - a policy saved on another device type loads on CPU;
 - deep-copied vectorized workers get independent RNGs.
@@ -151,9 +151,10 @@ def test_step_envs_returns_terminal_observation_and_real_truncation(tmp_path):
 # Policy
 # ----------------------------------------------------------------------
 
-def test_squashed_log_prob_ratio_is_one_before_update():
+def test_raw_log_prob_ratio_is_one_before_update():
     """
-    Rollout and update evaluate the log-prob at the same point, also for saturated samples.
+    Rollout and update evaluate the log-prob at the same raw action, also for
+    saturated samples, after the NumPy round-trip and in shuffled minibatches.
     """
 
     from fw.policies.ppo_policy import PPOPolicy
@@ -162,14 +163,25 @@ def test_squashed_log_prob_ratio_is_one_before_update():
     policy = PPOPolicy(4, 2, "cpu")
     with torch.no_grad():
         policy.network.actor_log_std.fill_(2.0)              # std = 7.4: many saturated samples
-    states = torch.randn(512, 4)
+    states = np.random.default_rng(0).standard_normal((512, 4)).astype(np.float32)
+
+    # Rollout: NumPy outputs, as stored in the trajectories.
+    actions, raw_actions, old_log_probs, _ = policy.predict_with_raw(states)
+    assert (np.abs(actions) > 0.999).any()                   # saturation actually exercised
+    assert np.allclose(actions, np.tanh(raw_actions), atol=1e-6)
+
+    # Update: tensors rebuilt from the stored arrays, evaluated per minibatch.
+    all_states = torch.as_tensor(states, dtype=torch.float32)
+    all_raw = torch.as_tensor(raw_actions, dtype=torch.float32)
+    all_old = torch.as_tensor(old_log_probs, dtype=torch.float32)
+    indices = torch.randperm(len(states))
     with torch.no_grad():
-        actions, old_log_probs, _ = policy._predict(states)
-        mean, std, _ = policy.network(states)
-        new_log_probs = PPOPolicy.squashed_log_prob(torch.distributions.Normal(mean, std), actions)
-    ratio = torch.exp(new_log_probs - old_log_probs)
-    assert (actions.abs() > 0.999).any()                     # saturation actually exercised
-    assert torch.allclose(ratio, torch.ones_like(ratio), atol=1e-4)
+        for start in range(0, len(states), 64):
+            mb = indices[start:start + 64]
+            mean, std, _ = policy.network(all_states[mb])
+            new_log_probs = PPOPolicy.raw_log_prob(torch.distributions.Normal(mean, std), all_raw[mb])
+            ratio = torch.exp(new_log_probs - all_old[mb])
+            assert torch.allclose(ratio, torch.ones_like(ratio), atol=1e-5)
 
 
 def test_policy_trained_on_other_device_loads_on_cpu(tmp_path):
