@@ -108,4 +108,5 @@ class PySimColavPlannerEnv(PySimColavBaseEnv):
         Returns:
             (reward for the current step, whether the reward logic terminates the episode)
         """
+
         return super()._calculate_colav_reward()

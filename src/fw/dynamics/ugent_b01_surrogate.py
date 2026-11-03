@@ -353,6 +353,7 @@ class UGentB01Surrogate(DynamicsBase):
             rudder_angle: Rudder angle [rad]; positive turns the ship to port.
             thrust: Propeller-rate command n / n_max, in [0, 1].
         """
+
         if self._bank_distance_provider is not None:
             self.set_bank_distances(*self._bank_distance_provider(state))
         if thrust < self.min_straight_running_thrust and not self._warned_low_thrust:

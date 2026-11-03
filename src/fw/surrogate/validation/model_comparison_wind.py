@@ -1028,6 +1028,7 @@ def _line_kwargs(label: str) -> dict:
     """
     Plot style for a model label (FH drawn thicker and on top).
     """
+
     return dict(color=COLORS.get(label, "#000000"), linestyle=LINESTYLES.get(label, "-"),
                 linewidth=2.0 if label == "FH" else 1.4, label=label, zorder=3 if label == "FH" else 2)
 

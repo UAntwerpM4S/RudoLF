@@ -374,6 +374,7 @@ class PySimColavEnvironment(BaseEnvironment):
             name: Registered environment name.
             configuration: Scoped configuration dict (see `build_colav_config`).
         """
+
         super().__init__(name, configuration)
 
         # Empty configuration: registry placeholder only, nothing to build.
@@ -420,6 +421,7 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
                 include_scenario_one_hot and minimal_path_render are hardcoded
                 pending the planned eval rework.
         """
+
         super().__init__(name, configuration)
 
         # Empty configuration: registry placeholder only, nothing to build.
