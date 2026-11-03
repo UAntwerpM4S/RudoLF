@@ -305,6 +305,7 @@ class UGentSurrogate(DynamicsBase):
                 turns to PORT (framework convention, see DynamicsBase).
             thrust:       Propeller-rate command n / n_max, in [0, 1].
         """
+
         if self._bank_distance_provider is not None:
             self.set_bank_distances(*self._bank_distance_provider(state))
         du, dv_report, dr_report = self._accelerations_report_frame(

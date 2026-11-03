@@ -204,6 +204,7 @@ def _sent(rudder, method):
     """
     First argument of every recorded call of `method` on the recorder.
     """
+
     return [a[0] for name, a in rudder.calls if name == method]
 
 
@@ -245,6 +246,7 @@ class _Npz(dict):
         """
         Keys, like NpzFile.files.
         """
+
         return list(self)
 
 

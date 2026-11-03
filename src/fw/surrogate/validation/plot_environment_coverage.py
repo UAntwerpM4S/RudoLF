@@ -289,6 +289,7 @@ def current_relative_deg(current_dir: np.ndarray, heading: np.ndarray) -> np.nda
     """
     Direction the current flows TOWARD, clockwise off the bow [deg, 0..360): 0 = following, 180 = head.
     """
+
     return np.mod(-np.degrees(current_dir - heading), 360.0)
 
 
