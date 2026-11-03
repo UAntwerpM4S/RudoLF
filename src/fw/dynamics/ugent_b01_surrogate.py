@@ -15,19 +15,23 @@ Notes:
       are used (linear extrapolation from 153/35 % gives Y = -2.757, N = 2.084; the 0.6 %
       difference in Y is an open question for UGent).
     - Banks: y' = (d - B/2) / B (eq. 18), unclamped in the data range and without upper
-      cut-off by default. Only y' < min_bank_clearance (default 0.001, ship at or inside
-      the bank) is held at that value. A guard such as 1.0 can be configured: bank terms
-      were identified at y' = 1.25 and 2.0 (Table 17) and validated at 1.0 and 1.5.
+      cut-off by default (both banks count, confirmed by A. Van Damme). Only y' below
+      min_bank_clearance (default 0.001, ship at or inside the bank) is held at that
+      value. A guard such as 1.0 can be configured: bank terms were identified at
+      y' = 1.25 and 2.0 (Table 17) and validated at 1.0 and 1.5.
     - Frames: equations use the report frame (y starboard); the framework has y to port,
       so v and r flip sign at the boundary. The rudder angle does not: a positive angle
       turns the ship to port in both.
     - Units: radians throughout (the draft uses degrees for rudder and yaw quantities).
     - Rudder: limited to 35 deg by ShipModel.B01, below the 45 deg peak of the sin(2 delta)
       lift model; identified at 20-25 deg only.
+    - Propeller: n_max = DEFAULT_N_MAX_RPM (1700 rpm, the towing-tank setting confirmed
+      by A. Van Damme; self-propulsion about 1 m/s). The draft script uses 1650 rpm.
     - Low thrust: the wheel-effect terms Y_n n, N_n n do not scale with speed, while rudder
-      force scales with u|u| and yaw damping vanishes as u -> 0. Below a UKC-dependent
-      n/n_max (0.18 at 379 %, 0.16 at 153 %, 0.26 at 100 %, 0.41 at 60 %, 0.60 at 35 %)
-      the ship cannot hold a straight course with |rudder| <= 35 deg and spins up.
+      force scales with u|u| and yaw damping vanishes as u -> 0 (N_r|r| ~ 0 at 153 and
+      35 %, confirmed by A. Van Damme; more tests may follow). Below a UKC-dependent
+      n/n_max (at 1700 rpm: 0.18 at 379 %, 0.15 at 153 %, 0.26 at 100 %, 0.40 at 60 %,
+      0.59 at 35 %) the ship cannot hold a straight course with |rudder| <= 35 deg.
       ShipModel.B01 uses min_thrust = 0.2 (lowest tested rate); a warning is logged once
       below min_straight_running_thrust (computed per UKC).
     - Validity: straight running and small maneuvers; under-predicts rudder effectiveness
@@ -55,6 +59,9 @@ BankDistanceProvider = Callable[[VesselState], Tuple[Optional[float], Optional[f
 _CONFIG_NAME = "ugent_b01_surrogate_config"
 _REQUIRED_CONFIG_KEYS = frozenset({"ukc_percent"})
 _OPTIONAL_CONFIG_KEYS = frozenset({"n_max_rpm", "min_bank_clearance", "max_bank_clearance"})
+
+# Propeller rate [rpm] at thrust command 1.0 (towing-tank setting, A. Van Damme).
+DEFAULT_N_MAX_RPM = 1700.0
 
 # Default lower bound on y': only keeps 1/y' finite and positive.
 DEFAULT_MIN_BANK_CLEARANCE = 1e-3
@@ -212,7 +219,8 @@ class UGentB01Surrogate(DynamicsBase):
                 B01 particulars.
             ugent_b01_surrogate_config:
                 ukc_percent (required): UKC [%] = (h-T)/T * 100, > 0.
-                n_max_rpm (default 1650): model-scale propeller rate at thrust 1.0.
+                n_max_rpm (default DEFAULT_N_MAX_RPM): model-scale propeller rate
+                    at thrust 1.0.
                 min_bank_clearance (default 0.001): closer banks act as at this y'.
                 max_bank_clearance (default None): farther banks are ignored;
                     None means no cut-off.
@@ -233,7 +241,7 @@ class UGentB01Surrogate(DynamicsBase):
                 f"{_CONFIG_NAME} has unknown key(s) {sorted(unknown)}; allowed: "
                 f"{sorted(_REQUIRED_CONFIG_KEYS | _OPTIONAL_CONFIG_KEYS)}.")
 
-        n_max_rpm = _positive_finite(config, "n_max_rpm", 1650.0)
+        n_max_rpm = _positive_finite(config, "n_max_rpm", DEFAULT_N_MAX_RPM)
         min_bank_clearance = _positive_finite(config, "min_bank_clearance", DEFAULT_MIN_BANK_CLEARANCE)
         if config.get("max_bank_clearance") is None:
             max_bank_clearance = math.inf

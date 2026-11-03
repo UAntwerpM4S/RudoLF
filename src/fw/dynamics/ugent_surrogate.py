@@ -16,6 +16,9 @@ Notes:
       same as Fossen.
     - Validity: straight running and small maneuvers (zigzag 10-25°), not
       steady turning. Bank effects validated for y' = 1-4 (Fig. 16-17).
+    - Banks: both banks count, without upper cut-off by default (confirmed by
+      A. Van Damme; a cut-off makes the force jump when the far bank crosses
+      it). Banks closer than y' = 1.0 act as at y' = 1.0.
 """
 
 import logging
@@ -35,6 +38,11 @@ logger = logging.getLogger(__name__)
 BankDistanceProvider = Callable[[VesselState], Tuple[Optional[float], Optional[float]]]
 
 LAMBDA = 25.0  # Froude scale factor model -> full scale
+
+# Defaults of the optional configuration keys.
+DEFAULT_N_MAX_RPM = 320.0              # propeller rate at thrust 1.0 (A. Van Damme)
+DEFAULT_MIN_BANK_CLEARANCE = 1.0       # closest validated y'
+DEFAULT_MAX_BANK_CLEARANCE = None      # None: no cut-off
 
 _REQUIRED_CONFIG_KEYS = frozenset({"ukc_percent"})
 _OPTIONAL_CONFIG_KEYS = frozenset({"ittc_correction", "n_max_rpm", "min_bank_clearance",
@@ -145,7 +153,7 @@ def tripoli_coefficient_sets(ittc_correction: bool) -> Dict[int, ManoeuvringCoef
     return {363: ukc363, 125: ukc125, 43: ukc43}
 
 
-def _positive_finite(config: Mapping, key: str, default: float) -> float:
+def _positive_finite(config: Mapping, key: str, default: Optional[float]) -> float:
     """
     config[key] as a finite float > 0; raises ValueError otherwise.
     """
@@ -178,9 +186,11 @@ class UGentSurrogate(DynamicsBase):
             ugent_surrogate_config:
                 ukc_percent (required): 363, 125 or 43.
                 ittc_correction (default False): use Table 5 X_u|u|.
-                n_max_rpm (default 320): propeller rate at thrust 1.0.
-                min_bank_clearance (default 1.0): closer banks act as at this y'.
-                max_bank_clearance (default 4.0): farther banks are ignored.
+                n_max_rpm (default DEFAULT_N_MAX_RPM): propeller rate at thrust 1.0.
+                min_bank_clearance (default DEFAULT_MIN_BANK_CLEARANCE): closer
+                    banks act as at this y'.
+                max_bank_clearance (default DEFAULT_MAX_BANK_CLEARANCE): farther
+                    banks are ignored; None means no cut-off.
 
         Raises:
             ValueError: missing, unknown or invalid configuration key.
@@ -204,13 +214,16 @@ class UGentSurrogate(DynamicsBase):
                 f"ugent_surrogate_config['ukc_percent']={ukc_percent!r} is not a tested towing-tank "
                 f"UKC; choose one of {SUPPORTED_UKC_PERCENT}.")
 
-        n_max_rpm = _positive_finite(config, "n_max_rpm", 320.0)
-        min_bank_clearance = _positive_finite(config, "min_bank_clearance", 1.0)
-        max_bank_clearance = _positive_finite(config, "max_bank_clearance", 4.0)
-        if max_bank_clearance <= min_bank_clearance:
-            raise ValueError(
-                f"ugent_surrogate_config: max_bank_clearance ({max_bank_clearance}) must exceed "
-                f"min_bank_clearance ({min_bank_clearance}).")
+        n_max_rpm = _positive_finite(config, "n_max_rpm", DEFAULT_N_MAX_RPM)
+        min_bank_clearance = _positive_finite(config, "min_bank_clearance", DEFAULT_MIN_BANK_CLEARANCE)
+        if config.get("max_bank_clearance", DEFAULT_MAX_BANK_CLEARANCE) is None:
+            max_bank_clearance = math.inf
+        else:
+            max_bank_clearance = _positive_finite(config, "max_bank_clearance", DEFAULT_MAX_BANK_CLEARANCE)
+            if max_bank_clearance <= min_bank_clearance:
+                raise ValueError(
+                    f"ugent_surrogate_config: max_bank_clearance ({max_bank_clearance}) must exceed "
+                    f"min_bank_clearance ({min_bank_clearance}).")
         ittc_correction = get_validated_bool(config, "ittc_correction", False)
 
         self.ship_spec: ShipSpecifications = ship_spec
@@ -228,8 +241,10 @@ class UGentSurrogate(DynamicsBase):
         self._warned_reverse_thrust = False
         self._warned_bank_clamp = False
 
-        logger.info("UGentSurrogate: UKC %d %%, ITTC correction %s, n_max %.0f rpm.",
-                    int(ukc_percent), ittc_correction, n_max_rpm)
+        logger.info("UGentSurrogate: UKC %d %%, ITTC correction %s, n_max %.0f rpm, bank y' "
+                    "clamp %g, cut-off %s.", int(ukc_percent), ittc_correction, n_max_rpm,
+                    min_bank_clearance,
+                    "none" if math.isinf(max_bank_clearance) else f"{max_bank_clearance:g}")
 
     # ------------------------------------------------------------------ #
     # Environment

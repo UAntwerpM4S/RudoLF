@@ -90,7 +90,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         """
 
         # main_with_airsim adds a file handler to the root logger and lowers its
-        # level on every run; snapshot both so they can be restored afterwards.
+        # level on every run; snapshot both so they can be restored afterward.
         _root_logger = logging.getLogger()
         _handlers_before = list(_root_logger.handlers)
         _level_before = _root_logger.level

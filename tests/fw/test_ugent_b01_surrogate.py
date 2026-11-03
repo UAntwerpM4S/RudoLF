@@ -11,7 +11,7 @@ import pytest
 
 from fw.dynamics.dynamics_model import Model
 from fw.dynamics.ugent_b01_surrogate import (
-    B01_COEFFICIENT_SETS, TESTED_UKC_PERCENT, UGentB01Surrogate, interpolation_blend)
+    B01_COEFFICIENT_SETS, DEFAULT_N_MAX_RPM, TESTED_UKC_PERCENT, UGentB01Surrogate, interpolation_blend)
 from fw.ships.ship_factory import (
     B01_MIN_THRUST, ShipModel, create_ship, require_fh_supported, require_full_scale_ship,
     require_hull_coefficients)
@@ -120,7 +120,9 @@ def test_get_ukc_in_model_scale_metres(spec):
 # B01_surrogate_model.py, unchanged (calc_accelerations + np.interp as in
 # calc_next_state, its own coefficient lists), converted to the framework frame
 # (v, r flipped) and to rad. Includes banks at 379 % and a bank at y' = 0.26.
+# The draft hard-codes n_max = 1650 rpm, so the comparison uses that value.
 # (ukc, u, v, r, rudder [deg], thrust, dist_port, dist_starboard, (du, dv, dr))
+_DRAFT_N_MAX_RPM = 1650.0
 _GOLDEN = [
     (379, 0.6, -0.02, 0.01, 12.0, 0.7, None, None,
      (-0.0019306847373014027, -0.008520386013294948, 0.007043900979998916)),
@@ -145,7 +147,7 @@ def test_matches_ugent_draft(spec, ukc, u, v, r, rudder_deg, thrust, d_port, d_s
     Accelerations equal UGent's draft (frame and unit conversion applied).
     """
 
-    model = UGentB01Surrogate(spec, {"ukc_percent": ukc})
+    model = UGentB01Surrogate(spec, {"ukc_percent": ukc, "n_max_rpm": _DRAFT_N_MAX_RPM})
     model.set_bank_distances(d_port, d_stbd)
     got = model._compute_accelerations(_state(u, v, r), math.radians(rudder_deg), thrust)
     assert got == pytest.approx(expected, rel=1e-9, abs=1e-15)
@@ -153,10 +155,30 @@ def test_matches_ugent_draft(spec, ukc, u, v, r, rudder_deg, thrust, d_port, d_s
 
 # ---------------------------------------------------------------- low thrust
 
-@pytest.mark.parametrize("ukc, expected", [(379, 0.181), (153, 0.155), (100, 0.263), (35, 0.603)])
+def test_default_n_max_is_tank_setting(spec):
+    """
+    n_max defaults to 1700 rpm (A. Van Damme): self-propulsion about 1 m/s at 379 % UKC.
+    """
+
+    model = UGentB01Surrogate(spec, {"ukc_percent": 379})
+    assert DEFAULT_N_MAX_RPM == 1700.0
+    assert model.n_max_rpm == DEFAULT_N_MAX_RPM
+    u, _ = model._straight_running_trim(1.0)
+    assert u == pytest.approx(0.96, abs=0.01)
+
+
+def test_n_max_override(spec):
+    """
+    n_max_rpm in the config replaces the default.
+    """
+
+    assert UGentB01Surrogate(spec, {"ukc_percent": 379, "n_max_rpm": 1000}).n_max_rpm == 1000.0
+
+
+@pytest.mark.parametrize("ukc, expected", [(379, 0.176), (153, 0.150), (100, 0.256), (35, 0.585)])
 def test_min_straight_running_thrust(spec, ukc, expected):
     """
-    Smallest thrust whose wheel effect can be trimmed with 35 deg rudder.
+    Smallest thrust whose wheel effect can be trimmed with 35 deg rudder (n_max 1700 rpm).
     """
 
     model = UGentB01Surrogate(spec, {"ukc_percent": ukc})
