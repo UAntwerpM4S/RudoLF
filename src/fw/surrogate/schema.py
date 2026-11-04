@@ -300,9 +300,11 @@ def env_body_components(wind_speed, wind_direction, current_speed, current_direc
     for the RL observation. Works on floats and numpy arrays.
 
     Args:
-        wind_speed, wind_direction: Apparent wind [m/s, rad], direction it
-            comes from relative to the bow, positive from starboard.
-        current_speed, current_direction: Earth-fixed current [m/s, rad],
+        wind_speed: Apparent wind speed [m/s]
+        wind_direction: Apparent wind direction [rad], relative
+            to the bow, positive from starboard.
+        current_speed: Earth-fixed current speed [m/s]
+        current_direction: Earth-fixed current direction [rad],
             0 = East, CCW, flowing toward.
         heading: Ship heading [rad], 0 = East, CCW.
 

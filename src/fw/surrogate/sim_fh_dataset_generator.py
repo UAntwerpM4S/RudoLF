@@ -70,7 +70,6 @@ from fw.simulators.fh_interface_utils import (
     env_rad_to_fh_heading_deg,
     fh_heading_to_env_rad,
     fh_wind_current_state,
-    get_current_velocity,
 )
 from fw.environments.py_sim_env import PySimEnv
 from fw.environments.ray_features import (

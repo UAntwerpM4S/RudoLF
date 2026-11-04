@@ -141,7 +141,7 @@ class PySimBaseEnv(BaseEnv):
             target_pos: Optional target. The trajectory is cut to end here,
                 walked forwards or (if target_pos lies before start_pos)
                 backwards. If omitted, the trajectory's last point is the
-                target and it is walked forwards.
+                target, and it is walked forwards.
             overall_contour: Map outline CSV (default env_Sche_no_scale.csv).
             depth_contour: Navigable-area CSV (default env_Sche_250cm_no_scale.csv).
             trajectory: Path CSV (default trajectory_points_no_scale.csv).

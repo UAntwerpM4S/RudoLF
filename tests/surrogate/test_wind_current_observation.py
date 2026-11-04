@@ -172,6 +172,8 @@ def test_smoothing_keeps_a_steady_wind_and_current(full_env_model):
     model.get_env = _env_sequence([env])
     state = make_state(x=1.0, y=2.0, heading=-0.4, u=3.0, v=0.2, r=0.0)
     sc = model.scenario
+    raw = None
+
     for _ in range(3):
         raw = model._build_input_vector(state, 0.0, 0.5)
     got = [raw[sc.col(c)] for c in ("ukc", "wind_speed", "wind_direction", "current_speed", "current_direction")]
@@ -190,13 +192,13 @@ def test_smoothing_is_earth_fixed(full_env_model):
     true_wind = np.array([3.0, -4.0])          # earth-fixed, pointing where the wind comes from
     model = _ua(full_env_model, env_smoothing_tau=5.0)
 
-    def get_env(pos, state=None):
+    def get_env(pos, _state=None):
         """
         Apparent wind of `state` for true_wind; current 0.6 m/s toward 1.0 rad.
         """
 
-        ws, wd = apparent_wind_from_true_world(true_wind, float(state.heading), float(state.u), float(state.v))
-        return EnvironmentData(**_calm(5.0, ws, wd, 0.6, 1.0))
+        _ws, _wd = apparent_wind_from_true_world(true_wind, float(_state.heading), float(_state.u), float(_state.v))
+        return EnvironmentData(**_calm(5.0, _ws, _wd, 0.6, 1.0))
 
     model.get_env = get_env
     sc = model.scenario

@@ -35,9 +35,9 @@ flagged as extrapolation for the UA_* models (diagnostic only, see
 _training_domain_issue). Only surrogates trained on datasets from the current
 generator (current ray layout) are supported.
 
-Also the shared base of the wind and current tests (model_comparison_wind.py,
+Also, the shared base of the wind and current tests (model_comparison_wind.py,
 model_comparison_current.py import FhSession, _inject_live_environment, ...);
-FhSession's optional arguments default to the ship-bank behaviour.
+FhSession's optional arguments default to the ship-bank behavior.
 
 FhSession replicates the FH construction that runs successfully via fw.main
 (env_factory.FhSimEnvironment and PySimEnv) step by step. Earlier, differing

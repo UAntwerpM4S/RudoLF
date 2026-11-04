@@ -7,7 +7,6 @@ COLREG-aware reward shaping for the polar/rangefinder approach.
 
 import math
 import logging
-import matplotlib
 import numpy as np
 import gymnasium as gym
 
