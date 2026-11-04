@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import Optional
+from typing import Optional, Tuple
 from fw.ships.vessel_state import VesselState
 from fw.ships.action_mapper import ActionMapper
 from fw.ships.ship_specs import ShipSpecifications
@@ -35,18 +35,30 @@ class ShipSimulator(BaseSimulator):
     PHYSICS_DT: float = SURROGATE_DT
 
 
-    def __init__(self, specs: ShipSpecifications, dynamics: DynamicsBase, dt: float):
+    def __init__(self, specs: ShipSpecifications, dynamics: DynamicsBase, dt: float,
+                 surge_limits: Optional[Tuple[float, float]] = None):
         """
         Args:
-            specs:    Vessel dimensions, actuator limits and kinematic constraints.
-            dynamics: DynamicsBase implementing step().
-            dt:       Environment time step [s], positive.
+            specs:     Vessel dimensions, actuator limits and kinematic constraints
+                       (kept by reference: profiles patch it in place).
+            dynamics:  DynamicsBase implementing step().
+            dt:        Environment time step [s], positive.
+            surge_limits: (low, high) [m/s] replacing specs.surge_limits in
+                       the clip (e.g. over-ground surge with a current); None
+                       uses the specs.
 
         Raises:
-            ValueError: dt not a multiple of PHYSICS_DT for UAntwerpSurrogate.
+            ValueError: dt not a multiple of PHYSICS_DT for UAntwerpSurrogate, or
+                surge_limits not (low, high) with low < high.
         """
 
         super().__init__(specs, dt)
+        if surge_limits is not None:
+            low, high = (float(x) for x in surge_limits)
+            if not low < high:
+                raise ValueError(f"surge_limits={surge_limits} must be (low, high) with low < high.")
+            surge_limits = (low, high)
+        self._surge_limits = surge_limits
 
         # Sub-step grid, validated once here rather than deep inside a training run.
         n_full = int(round(dt / self.PHYSICS_DT))
@@ -93,7 +105,7 @@ class ShipSimulator(BaseSimulator):
         u, v, r = self._dynamics.step(state, actuator.rudder_angle, actuator.thrust,
                                       time_step, enable_rudder_angle_scaling)
 
-        u = np.clip(u, *self._specs.surge_limits)
+        u = np.clip(u, *(self._specs.surge_limits if self._surge_limits is None else self._surge_limits))
         v = np.clip(v, *self._specs.sway_limits)
         r = np.clip(r, *self._specs.yaw_rate_limits)
 

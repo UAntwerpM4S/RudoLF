@@ -60,7 +60,7 @@ from multiprocessing.pool import Pool
 from dataclasses import dataclass, field
 from shapely.geometry import LineString, MultiLineString, Point
 from fw.dynamics.fh_tabular_model import fh_rudder_sign
-# Shared with the RL bridge; re-exported here for fw.surrogate.validation.
+# Shared with the RL bridge (single source: fw.simulators.fh_interface_utils).
 from fw.simulators.fh_interface_utils import (
     FH_HEADING_CONVENTION,
     WIND_SCALE_MAX,

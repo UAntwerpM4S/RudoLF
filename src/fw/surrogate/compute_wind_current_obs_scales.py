@@ -24,7 +24,7 @@ import pandas as pd
 
 from pathlib import Path
 from typing import Dict, Sequence
-from fw.surrogate.schema import FULL_ENV, env_body_components
+from fw.surrogate.schema import FULL_ENV, TARGET_NAMES, env_body_components
 
 _COLUMNS = ("heading", "wind_speed", "wind_direction", "current_speed", "current_direction")
 
@@ -34,12 +34,15 @@ def load_env_columns(csv_file: Path, chunk_rows: int = 1_000_000) -> Dict[str, n
     Read only the heading and wind/current columns of a full_env CSV.
 
     Raises:
-        ValueError: If the CSV is narrower than a full_env raw row.
+        ValueError: If the CSV does not have the full_env dataset layout
+            (raw row + targets + episode_id).
     """
 
+    expected = FULL_ENV.raw_input_dim + len(TARGET_NAMES) + 1
     n_cols = len(pd.read_csv(csv_file, header=None, nrows=1).columns)
-    if n_cols < FULL_ENV.raw_input_dim:
-        raise ValueError(f"{csv_file}: {n_cols} columns, but a full_env raw row has {FULL_ENV.raw_input_dim}.")
+    if n_cols != expected:
+        raise ValueError(f"{csv_file}: {n_cols} columns, but a full_env dataset/lookup CSV has {expected} "
+                         f"(raw row {FULL_ENV.raw_input_dim} + {len(TARGET_NAMES)} targets + episode_id).")
     usecols = [FULL_ENV.col(c) for c in _COLUMNS]
     parts = {c: [] for c in _COLUMNS}
     for chunk in pd.read_csv(csv_file, header=None, usecols=usecols, dtype=np.float64, chunksize=chunk_rows):

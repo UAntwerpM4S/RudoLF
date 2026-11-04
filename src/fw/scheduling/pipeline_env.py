@@ -8,6 +8,9 @@ from typing import Any, Dict
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from fw.scheduling.run_spec import PipelineBlock
+from fw.surrogate.presets import get_preset
+from fw.configuration.config import load_config_parameters
+from fw.configuration.profile_applier import apply_profile
 from fw.configuration.config_profile import ModelConfig, ProfileRegistry, VesselProfile
 
 from fw.configuration.env_factory import (
@@ -91,6 +94,41 @@ def resolve_block_profile(block: PipelineBlock) -> VesselProfile:
 
     profile.validate()
     return profile
+
+
+def block_framework_config(block: PipelineBlock, profile: VesselProfile) -> Dict[str, Any]:
+    """
+    The block's framework configuration: config.py, the block's wind/current
+    flags, then the profile.
+    """
+
+    framework_config = load_config_parameters()
+    framework_config["wind"] = block.wind
+    framework_config["current"] = block.current
+    apply_profile(profile, config=framework_config)
+    return framework_config
+
+
+def check_block_wind_current(block: PipelineBlock, framework_config: Dict[str, Any]) -> None:
+    """
+    Wind/current combinations that PySimEnv would only refuse when the block's
+    environment is built: a full_env UAntwerp preset with the flags off, or the
+    realtime simSync environment (no wind/current support) with them on.
+
+    Raises:
+        ValueError: For either combination.
+    """
+
+    canonical_name = resolve_environment_name(block.env_type)
+    if canonical_name == sync_sim_env_name and block.wind:
+        raise ValueError(f"Block '{block.name}': {sync_sim_env_name} does not support wind and current; "
+                         f"disable them.")
+    ua_config = framework_config.get("ua_surrogate_config") or {}
+    if framework_config.get("dynamics_model") == Model.UANTWERP and "preset" in ua_config and not block.wind:
+        preset = get_preset(ua_config["preset"])
+        if preset.scenario.includes_wind_current:
+            raise ValueError(f"Block '{block.name}': UAntwerp surrogate preset '{preset.name}' simulates wind and "
+                             f"current, so wind and current must be enabled.")
 
 
 def build_block_environment(block: PipelineBlock, framework_config: Dict[str, Any]):

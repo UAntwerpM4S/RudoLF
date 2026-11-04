@@ -22,7 +22,7 @@ from fw.environments.base_env import BaseEnv
 from fw.environments.wind_current_obs import WIND_CURRENT_OBS_DIM, normalize_wind_current
 from fw.reward.reward import Reward
 
-from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
+from fw.dynamics.uantwerp_surrogate import RANDOM_CURRENT_SPEED_MAX, UAntwerpSurrogate
 from fw.dynamics.fh_tabular_model import FhTabularModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.dynamics.ugent_surrogate import UGentSurrogate
@@ -460,7 +460,26 @@ class PySimEnv(BaseEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step)
+        # Only models with a real current (over-ground surge) get limits widened
+        # by RANDOM_CURRENT_SPEED_MAX (following current up, head current down);
+        # for the others it would lift their only speed limit.
+        sim_limits = None
+        if self.wind and self.dynamics.models_own_wind_current:
+            sim_limits = (float(self.ship.specifications.surge_limits[0]) - RANDOM_CURRENT_SPEED_MAX,
+                          self._surge_cap())
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, surge_limits=sim_limits)
+
+    def _surge_cap(self) -> float:
+        """
+        Scale [m/s] of the observed surge, for every model alike so the
+        observation means the same: the ship's own upper surge limit, raised by
+        RANDOM_CURRENT_SPEED_MAX with wind and current (surge is over ground).
+        Also the simulator's upper surge limit for models with their own
+        wind/current (their lower limit is lowered by the same amount).
+        """
+
+        high = float(self.ship.specifications.surge_limits[1])
+        return high + RANDOM_CURRENT_SPEED_MAX if self.wind else high
 
     def __deepcopy__(self, memo):
         """
@@ -1153,7 +1172,7 @@ class PySimEnv(BaseEnv):
         """
         Box in [-1, 1]: 12 base features (velocities, checkpoint distances, cross-track and
         heading errors, previous rudder, LOS error) plus, with wind and current, the 4
-        features of fw.environments.wind_current_obs.
+        features of fw.environments.wind_current_obs. Surge is scaled by _surge_cap().
         """
 
         base_low = np.array(
@@ -1298,7 +1317,7 @@ class PySimEnv(BaseEnv):
 
         # Normalize velocities
         norm_velocities = np.array([
-            np.clip(self.phys_sim.state.u / self.ship.specifications.surge_limits[1], -1, 1),
+            np.clip(self.phys_sim.state.u / self._surge_cap(), -1, 1),
             np.clip(self.phys_sim.state.v / self.ship.specifications.sway_limits[1], -1, 1),
             np.clip(self.phys_sim.state.r / self.ship.specifications.yaw_rate_limits[1], -1, 1)
         ], dtype=np.float32)

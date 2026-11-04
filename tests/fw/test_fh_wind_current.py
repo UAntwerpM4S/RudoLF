@@ -361,7 +361,7 @@ def test_env_reset_starts_from_fh_state():
     np.testing.assert_array_equal(env.ship_pos, np.array([2250.0, -40.0], dtype=np.float32))
     np.testing.assert_array_equal(env.previous_ship_pos, env.ship_pos)
     spec = env.ship.specifications
-    np.testing.assert_allclose(obs[:3], [2.0 / spec.surge_limits[1], 0.5 / spec.sway_limits[1],
+    np.testing.assert_allclose(obs[:3], [2.0 / env._surge_cap(), 0.5 / spec.sway_limits[1],
                                          np.radians(0.5) / spec.yaw_rate_limits[1]], rtol=1e-6)
 
 

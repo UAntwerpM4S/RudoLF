@@ -88,6 +88,7 @@ from fw.ships.vessel_state import VesselState
 from fw.environments.py_sim_env import PySimEnv
 from fw.environments.ray_features import RAY_ANGLES_DEG, compute_ray_features, ray_world_angles
 from fw.ships.actuator_command import ActuatorCommand
+from fw.simulators.fh_interface_utils import WIND_WARMUP_TIME
 from fw.surrogate.sim_fh_dataset_generator import _cutoff_geometry
 from fw.surrogate.validation.model_comparison import (
     FhSession,
@@ -120,7 +121,7 @@ TARGET_PATH_LENGTH = 500.0                            # [m] stop once FH's own p
 MAX_STEPS = 8000                                      # safety cap (8000 * 0.1 s = 800 s)
 
 CAL_STEADY_CHECK_TIME = 5.0        # [s] first calibration probe is read again after this long
-WIND_WARMUP_TIME = 1.0             # [s] FH time after reset() before WindState shows the transform
+# WIND_WARMUP_TIME (fh_interface_utils): FH time after reset() before WindState shows the transform.
 
 # apparent = true + (u, TRUE_WIND_SWAY_SIGN * v) in (ahead, starboard) components;
 # v is port positive. None = sway not corrected. The calibration prints an estimate.

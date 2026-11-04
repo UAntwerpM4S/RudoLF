@@ -625,7 +625,9 @@ def test_episode_end_is_logged_with_outcome_and_conditions(full_env_model, caplo
         assert not truncated and "episode_outcome" not in info
         _, _, _, truncated, info = env.step(np.array([0.0, 0.5], dtype=np.float32))
     assert truncated and info["episode_outcome"] == "max_steps"
-    assert set(info["episode_conditions"]) == {"wind_speed", "wind_from_deg", "current_speed", "current_sign"}
+    assert set(info["episode_conditions"]) == {"wind_speed", "wind_from_deg", "current_speed", "current_sign",
+                                               "current_applied"}
+    assert info["episode_conditions"]["current_applied"] is False      # no lookup: no current
     lines = [r.getMessage() for r in caplog.records if "episode end" in r.getMessage()]
     assert len(lines) == 1 and "outcome=max_steps" in lines[0] and "success=False" in lines[0]
     assert "wind_speed" in lines[0]
@@ -809,3 +811,128 @@ def test_diagnostic_offset_paths_use_the_route_direction(tmp_path):
     folded = offset_path(route, 20.0)
     s = follow_route(lookup, folded, 1.0, jump_deg=10.0, tangents=np.gradient(route, axis=0))
     assert s["jumps"] == 0 and s["reversals"] == 0
+
+
+def test_surge_cap_is_raised_with_wind_and_current(full_env_model, tiny_models):
+    """
+    With wind and current every model observes surge against the ship's cap +
+    RANDOM_CURRENT_SPEED_MAX, but only models with their own wind/current get it
+    as simulator limit. The simulator keeps the ship's own specs object.
+    """
+
+    from fw.dynamics.uantwerp_surrogate import RANDOM_CURRENT_SPEED_MAX
+
+    full_cfg = {"preset": "myzako_full", "checkpoint": str(full_env_model), "lookup_csv": None,
+                "wind_current": "random"}
+    confined_cfg = {"preset": "myzako_confined", "checkpoint": str(tiny_models["confined_ukc"]), "lookup_csv": None}
+    full = _env(dynamics_model=Model.UANTWERP, ua_surrogate_config=full_cfg, wind=True, current=True)
+    no_current = [_env(dynamics_model=Model.UANTWERP, ua_surrogate_config=confined_cfg, wind=True, current=True),
+                  _env(dynamics_model=Model.FOSSEN, wind=True, current=True)]
+    plain = [_env(dynamics_model=Model.FOSSEN),
+             _env(dynamics_model=Model.UANTWERP, ua_surrogate_config=confined_cfg)]
+    low, high = full.ship.specifications.surge_limits
+    raised = high + RANDOM_CURRENT_SPEED_MAX
+    assert full._surge_cap() == raised
+    assert full.phys_sim._surge_limits == (low - RANDOM_CURRENT_SPEED_MAX, raised)
+    for env in no_current:
+        assert env._surge_cap() == env.ship.specifications.surge_limits[1] + RANDOM_CURRENT_SPEED_MAX
+        assert env.phys_sim._surge_limits is None
+    for env in plain:
+        assert env._surge_cap() == env.ship.specifications.surge_limits[1]
+        assert env.phys_sim._surge_limits is None
+    for env in [full] + no_current + plain:
+        assert env.phys_sim._specs is env.ship.specifications     # profiles patch it in place
+
+
+def test_model_without_current_keeps_its_own_speed_limit():
+    """
+    Fossen with wind/current on is still clipped at the ship's own cap (no
+    current to justify more), observed against the raised scale.
+    """
+
+    from fw.ships.vessel_state import VesselState
+
+    env = _env(dynamics_model=Model.FOSSEN, wind=True, current=True)
+    env.reset(seed=0)
+    cap = env.ship.specifications.surge_limits[1]
+    s = env.phys_sim.state
+    env.phys_sim._state = VesselState(terminated=False, truncated=False, x=s.x, y=s.y, heading=s.heading,
+                                      u=cap + 1.5, v=0.0, r=0.0)
+    env.dynamics.step = lambda state, *a, **k: (state.u, state.v, state.r)     # hold the velocities
+    env.phys_sim.step(np.array([0.0, 1.0], dtype=np.float32))
+    assert env.phys_sim.state.u == pytest.approx(cap)
+    assert env._get_obs()[0] == pytest.approx(cap / env._surge_cap())
+
+
+def test_ship_simulator_refuses_invalid_surge_limits():
+    """
+    surge_limits must be (low, high) with low < high.
+    """
+
+    from fw.dynamics.fossen import Fossen
+    from fw.simulators.ship_simulator import ShipSimulator
+
+    spec = create_ship(ShipModel.MYZAKO_37).specifications
+    with pytest.raises(ValueError, match="surge_limits"):
+        ShipSimulator(spec, Fossen(spec), 0.1, surge_limits=(5.0, 5.0))
+
+
+def test_surge_above_the_ship_cap_is_kept_and_observed(full_env_model):
+    """
+    With wind and current, a surge above the ship's own cap survives a simulator
+    step and is observed relative to the raised cap (not saturated at 1).
+    """
+
+    from fw.ships.vessel_state import VesselState
+
+    env = _env(dynamics_model=Model.UANTWERP, wind=True, current=True,
+               ua_surrogate_config={"preset": "myzako_full", "checkpoint": str(full_env_model), "lookup_csv": None,
+                                    "wind_current": "random"})
+    env.reset(seed=0)
+    u = env.ship.specifications.surge_limits[1] + 1.5
+    s = env.phys_sim.state
+    env.phys_sim._state = VesselState(terminated=False, truncated=False, x=s.x, y=s.y, heading=s.heading,
+                                      u=u, v=0.0, r=0.0)
+    env.dynamics.step = lambda state, *a, **k: (state.u, state.v, state.r)     # hold the velocities
+    env.phys_sim.step(np.array([0.0, 0.5], dtype=np.float32))
+    assert env.phys_sim.state.u == pytest.approx(u)
+    assert env._get_obs()[0] == pytest.approx(u / env._surge_cap())
+    assert env._get_obs()[0] < 1.0
+
+
+
+def test_head_current_can_push_a_full_env_ship_backwards(full_env_model):
+    """
+    Models with their own current may get a negative over-ground surge (down to
+    the ship's lower limit - RANDOM_CURRENT_SPEED_MAX); Fossen stays clipped at it.
+    """
+
+    from fw.ships.vessel_state import VesselState
+
+    full = _env(dynamics_model=Model.UANTWERP, wind=True, current=True,
+                ua_surrogate_config={"preset": "myzako_full", "checkpoint": str(full_env_model), "lookup_csv": None,
+                                     "wind_current": "random"})
+    fossen = _env(dynamics_model=Model.FOSSEN, wind=True, current=True)
+    for env, expected in ((full, -1.5), (fossen, 0.0)):
+        env.reset(seed=0)
+        s = env.phys_sim.state
+        env.phys_sim._state = VesselState(terminated=False, truncated=False, x=s.x, y=s.y, heading=s.heading,
+                                          u=-1.5, v=0.0, r=0.0)
+        env.dynamics.step = lambda state, *a, **k: (state.u, state.v, state.r)     # hold the velocities
+        env.phys_sim.step(np.array([0.0, 0.0], dtype=np.float32))
+        assert env.phys_sim.state.u == pytest.approx(expected)
+        assert env._get_obs()[0] == pytest.approx(expected / env._surge_cap())
+
+
+def test_episode_conditions_report_whether_the_current_was_applied(full_env_model, tmp_path):
+    """
+    current_applied: False without a lookup or before the first reliable row, True once applied.
+    """
+
+    model = _ua(full_env_model, wind_current="random", lookup_csv=str(_full_lookup_csv(tmp_path / "lk.csv")))
+    model.reset_episode(np.random.default_rng(2))
+    assert model.episode_conditions()["current_applied"] is False
+    model._build_input_vector(make_state(x=40.0, y=20.0, heading=0.0, u=2.0, v=0.0, r=0.0), 0.0, 0.5)
+    assert model.episode_conditions()["current_applied"] is (model._random_current_speed > 0.0)
+    model.reset_episode(np.random.default_rng(2))
+    assert model.episode_conditions()["current_applied"] is False

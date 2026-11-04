@@ -75,7 +75,7 @@ from fw.surrogate.presets import PRESETS
 from fw.dynamics.wcu_lookup import EnvironmentData
 from fw.simulators.fh_sim_bridge import FhSimBridge
 from fw.surrogate.schema import SURROGATE_DT
-from fw.simulators.fh_interface_utils import get_current_velocity, fh_heading_to_env_rad
+from fw.simulators.fh_interface_utils import fh_heading_to_env_rad, get_current_velocity
 from fw.surrogate.sim_fh_dataset_generator import (
     _PROPELLER_RPS_SCALE,
     _cutoff_geometry,
@@ -1414,8 +1414,8 @@ def _plot_trajectories(trajectories_by_distance, ray_env: PySimEnv, seed_point: 
 
 def diagnose_fh_initialization() -> None:
     """
-    Run the known-working FH path (env_factory + PySimEnv, FH_TABULAR with wind
-    and current) in this process, to tell whether an "os2_body" /
+    Run the known-working FH path (env_factory + PySimEnv, FH_TABULAR without
+    wind and current, so with FhSession's exercise) in this process, to tell whether an "os2_body" /
     MathModel.Initialize() failure comes from this script or from the process
     environment (working directory, environment variables, antivirus, imports).
 
@@ -1431,8 +1431,8 @@ def diagnose_fh_initialization() -> None:
     # Explicit overrides, independent of config.py's current defaults.
     framework_config["ship_model"] = SHIP_MODEL
     framework_config["dynamics_model"] = Model.FH_TABULAR
-    framework_config["wind"] = True
-    framework_config["current"] = True
+    framework_config["wind"] = False
+    framework_config["current"] = False
 
     env_factory.initialize_all_environments()
     env_wrapper = env_factory.build_default_environment(
@@ -1441,7 +1441,7 @@ def diagnose_fh_initialization() -> None:
 
     print(
         "diagnose_fh_initialization: calling PySimEnv.reset() "
-        "(FH_TABULAR / Tripoli / wind+current) via the exact construction "
+        "(FH_TABULAR / Tripoli / no wind or current) via the exact construction "
         "fw.main.py uses, in THIS process...",
         flush=True,
     )

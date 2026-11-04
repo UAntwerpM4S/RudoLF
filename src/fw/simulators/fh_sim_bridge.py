@@ -101,7 +101,11 @@ class FhSimBridge:
         )
 
         self.wind_current = bool(wind_current)
-        scenario = fh_exercise_base(ship_model, scenario, self.wind_current)
+        base = fh_exercise_base(ship_model, scenario, self.wind_current)
+        if base != scenario and ship_model != ShipModel.TRIPOLI:
+            _logger.info("[FhSimBridge] wind_current: exercise base '%s' replaces the configured scenario '%s'.",
+                         base, scenario)
+        scenario = base
         if ship_model == ShipModel.MYZAKO_DEFAULT:
             scenario_suffix = f"{scenario}_default"
         elif ship_model == ShipModel.TRIPOLI:

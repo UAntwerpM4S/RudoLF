@@ -141,8 +141,8 @@ class FhTabularModel(DynamicsBase):
 
     def read_state(self) -> Tuple[float, float, float, float, float, float]:
         """
-        FH's ship state in framework conventions (the single place it is read
-        for ShipSimulator.step and PySimEnv's episode start).
+        FH's ship state in framework conventions, as ShipSimulator.step and
+        PySimEnv's episode start take it from FH.
 
         Returns:
             (x [m], y [m], heading [rad, 0 = East, CCW], u [m/s], v [m/s, port

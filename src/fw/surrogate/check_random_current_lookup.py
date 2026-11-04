@@ -150,10 +150,14 @@ def main(argv: Sequence[str] = None) -> int:
     csv = resolve_lookup_csv(args.lookup_csv if args.lookup_csv is not None else preset.lookup_csv)
     if csv is None or not csv.exists():
         parser.error(f"Lookup CSV not found: {csv}")
-    lookup = make_scenario_lookup(csv, preset.scenario, preset.name)
-    points = route_points(DEFAULT_FRAMEWORK_SHIP_POS, DEFAULT_FRAMEWORK_TARGET_POS, args.step)
     if args.speed <= 0:
         parser.error("--speed must be positive.")
+    if args.step <= 0:
+        parser.error("--step must be positive.")
+    if args.tau < 0:
+        parser.error("--tau must be >= 0 (0 = CURRENT_LINE_TAU).")
+    lookup = make_scenario_lookup(csv, preset.scenario, preset.name)
+    points = route_points(DEFAULT_FRAMEWORK_SHIP_POS, DEFAULT_FRAMEWORK_TARGET_POS, args.step)
     tau = args.tau if args.tau > 0 else None
     print(f"{csv}: {len(points)} route points every {args.step:g} m at {args.speed:g} m/s, "
           f"line tau {'CURRENT_LINE_TAU' if tau is None else f'{tau:g} s'}")
