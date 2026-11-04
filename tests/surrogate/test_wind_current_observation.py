@@ -633,23 +633,27 @@ def test_episode_end_is_logged_with_outcome_and_conditions(full_env_model, caplo
 
 def test_random_mode_smooths_the_current_direction(full_env_model):
     """
-    In the model input, the current direction is smoothed with env_smoothing_tau; its speed is the drawn one.
+    In the model input, a line jittering +-17 deg between rows gives a smooth
+    direction converging to the line (no jumps); its speed is the drawn one.
     """
 
     model = _random_ua(full_env_model, seed=0, env_smoothing_tau=10.0)
     sign = model._random_current_sign
-    rows = [_calm(5.0, current_speed=1.0, current_direction=0.3 + (0.3 if k % 2 else -0.3)) for k in range(400)]
+    n = 800
+    rows = [_calm(5.0, current_speed=1.0, current_direction=0.3 + (0.3 if k % 2 else -0.3)) for k in range(n)]
     model.get_env = _env_sequence(rows)
     state = make_state(x=1.0, y=2.0, heading=0.0, u=2.0, v=0.0, r=0.0)
     dirs = []
-    for _ in range(400):
+    for _ in range(n):
         got = _raw_env(model, model._build_input_vector(state, 0.0, 0.5))
         assert got[3] == pytest.approx(model._random_current_speed, abs=1e-6)
         dirs.append(got[4])
     target = 0.3 if sign > 0 else 0.3 - np.pi
-    assert np.max(np.abs(np.sin(np.array(dirs[300:]) - target))) < np.radians(3.0)     # after 3 tau
-    assert np.min(np.cos(np.array(dirs[300:]) - target)) > 0.99
-
+    err = np.abs(np.sin(np.array(dirs) - target))
+    assert np.max(np.abs(np.sin(np.diff(dirs)))) < np.radians(1.0)                # no jumps
+    assert np.all(np.diff(err[1:]) <= 1e-9)                                       # converges monotonically
+    assert err[-1] < np.radians(3.0)                                              # within 3 deg after 80 s
+    assert np.min(np.cos(np.array(dirs) - target)) > 0.9
 
 
 # ---------------------------------------------------------------- averaged river line
@@ -785,3 +789,23 @@ def test_failure_takes_precedence_over_reaching_the_target():
     env.ship_in_open_water = lambda *a, **k: False
     _, done = env._calculate_reward()
     assert done and env._episode_outcome == "bank_or_ukc"
+
+
+def test_diagnostic_offset_paths_use_the_route_direction(tmp_path):
+    """
+    offset_path shifts sideways; with the route's tangents an offset path folding back
+    at an inner corner reports no artificial reversals.
+    """
+
+    from fw.dynamics.uantwerp_surrogate import make_scenario_lookup
+    from fw.surrogate.check_random_current_lookup import follow_route, offset_path
+
+    straight = np.column_stack([np.arange(0.0, 10.0, 1.0), np.zeros(10)])
+    np.testing.assert_allclose(offset_path(straight, 5.0)[:, 1], 5.0)
+    lookup = make_scenario_lookup(_full_lookup_csv(tmp_path / "lk.csv", flow_dir=0.0), get_scenario("full_env"))
+    # Route along x with a sharp inner corner whose offset path folds back for a few points.
+    route = np.column_stack([np.concatenate([np.arange(10.0, 150.0, 0.5), np.full(80, 150.0)]),
+                             np.concatenate([np.full(280, 50.0), 50.0 + np.arange(0.5, 40.5, 0.5)])])
+    folded = offset_path(route, 20.0)
+    s = follow_route(lookup, folded, 1.0, jump_deg=10.0, tangents=np.gradient(route, axis=0))
+    assert s["jumps"] == 0 and s["reversals"] == 0

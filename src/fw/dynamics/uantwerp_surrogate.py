@@ -50,8 +50,10 @@ current speed (uniform in [0, RANDOM_CURRENT_SPEED_MAX]) with a flood/ebb sign
 moving average (time constant env_smoothing_tau, else CURRENT_LINE_TAU) of
 the line of the lookup's current at the ship's position over reliable rows
 (at least CURRENT_AXIS_MIN_SPEED), with flood/ebb rows treated alike. The
-drawn sign orients it at the first reliable row, then the orientation closest
-to the previous step's is kept, so it never flips. Before the first reliable
+drawn sign orients it at the first reliable row; then the direction moves
+gradually towards the line, the slower the weaker the line, so it neither
+jumps nor flips. Tuned on the real lookups with
+fw.surrogate.check_random_current_lookup. Before the first reliable
 row, and without a lookup, the current is zero. UKC still comes from the
 lookup. episode_conditions() reports the draw. For presets without
 wind/current the setting has no effect.
@@ -109,7 +111,7 @@ RANDOM_WIND_SPEED_MAX = 25.0      # m/s
 RANDOM_CURRENT_SPEED_MAX = 2.1    # m/s, p99.9 of the full_env datasets
 CURRENT_AXIS_MIN_SPEED = 0.05     # m/s; slower lookup currents give no reliable direction
 CURRENT_LINE_TAU = 10.0           # s; river-line average without env_smoothing_tau
-CURRENT_LINE_MIN_STRENGTH = 0.2   # weaker averaged line (cross flow cancelling): keep the direction
+CURRENT_LINE_STRENGTH_EXPONENT = 2.0  # direction follows the line at a rate ~ strength**this
 
 # Lookup rows farther than this [m] are reported. Lookups are 5 m grids of the
 # dataset positions, so inside covered water the nearest row is a few metres away.
@@ -186,24 +188,25 @@ class CurrentLineFollower:
     of twice the lookup current's direction over reliable rows (speed at
     least CURRENT_AXIS_MIN_SPEED, finite), so flood and ebb rows reinforce
     each other and cross-flow rows only weaken it. The first reliable row,
-    oriented by `sign`, gives the first direction; afterwards the line's
-    orientation closest to the previous direction is used (it changes
-    gradually, so it never flips). While the averaged line is weaker than
-    CURRENT_LINE_MIN_STRENGTH the previous direction is kept. None (zero
-    current) until the first reliable row.
+    oriented by `sign`, gives the first direction. Afterwards the direction
+    moves towards the line's orientation closest to it, as a moving average
+    with time constant `tau` scaled by the line strength to the power
+    CURRENT_LINE_STRENGTH_EXPONENT: a weak line (cross flow, sparse rows)
+    barely moves it, so it neither jumps nor flips. None (zero current)
+    until the first reliable row.
     """
 
     def __init__(self, sign: float, tau: Optional[float] = None):
         """
         Args:
             sign: +1: flow as the first reliable row's current, -1: opposite.
-            tau: Line average time constant [s]; None for CURRENT_LINE_TAU.
+            tau: Time constant [s] of the line and direction averages; None for CURRENT_LINE_TAU.
         """
 
         self.sign = float(sign)
         self.tau = float(tau) if tau is not None else CURRENT_LINE_TAU
-        self.direction: Optional[float] = None
         self._line: Optional[np.ndarray] = None
+        self._vec: Optional[np.ndarray] = None
 
     @property
     def line_strength(self) -> float:
@@ -220,21 +223,24 @@ class CurrentLineFollower:
         None before the first reliable row.
         """
 
+        alpha = 1.0 - np.exp(-dt / self.tau)
         if np.isfinite(axis) and np.isfinite(axis_speed) and axis_speed >= CURRENT_AXIS_MIN_SPEED:
             doubled = np.array([np.cos(2.0 * axis), np.sin(2.0 * axis)])
             if self._line is None:
                 self._line = doubled
                 first = axis if self.sign > 0 else axis + np.pi
-                self.direction = float((first + np.pi) % (2.0 * np.pi) - np.pi)
-                return self.direction
-            self._line = self._line + (1.0 - np.exp(-dt / self.tau)) * (doubled - self._line)
-        if self._line is None or self.line_strength < CURRENT_LINE_MIN_STRENGTH:
-            return self.direction
-        line = 0.5 * float(np.arctan2(self._line[1], self._line[0]))
-        if np.cos(line - self.direction) < 0.0:
+                self._vec = np.array([np.cos(first), np.sin(first)])
+                return float((first + np.pi) % (2.0 * np.pi) - np.pi)
+            self._line = self._line + alpha * (doubled - self._line)
+        if self._line is None:
+            return None
+        current = np.arctan2(self._vec[1], self._vec[0])
+        line = 0.5 * np.arctan2(self._line[1], self._line[0])
+        if np.cos(line - current) < 0.0:
             line += np.pi
-        self.direction = float((line + np.pi) % (2.0 * np.pi) - np.pi)
-        return self.direction
+        weight = alpha * self.line_strength ** CURRENT_LINE_STRENGTH_EXPONENT
+        self._vec = self._vec + weight * (np.array([np.cos(line), np.sin(line)]) - self._vec)
+        return float(np.arctan2(self._vec[1], self._vec[0]))
 
 
 def make_scenario_lookup(csv, scenario, preset_name: str = "?") -> WcuLookup:

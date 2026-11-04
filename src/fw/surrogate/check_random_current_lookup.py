@@ -2,26 +2,28 @@
 Check how the "random" current of the UAntwerp full_env surrogate
 (ua_surrogate_config["wind_current"] = "random") follows a real lookup CSV.
 
-The ship is moved along the env's route (checkpoints from start to target) in
-small steps at --speed; at each point the nearest lookup row gives the current
+The ship is moved along the env's route (checkpoints from start to target),
+and along copies shifted sideways by --offsets (the ship wanders in
+training), in small steps at --speed; at each point the nearest lookup row gives the current
 line and fw.dynamics.uantwerp_surrogate.CurrentLineFollower the direction,
 exactly as during training (line average --tau, as env_smoothing_tau), for
-both flood/ebb signs. Reported per sign:
+both flood/ebb signs. Reported per path and sign:
 
   * rows below CURRENT_AXIS_MIN_SPEED (slack, not averaged into the line),
     steps with zero current before the first reliable row, and steps where
-    the averaged line was weaker than CURRENT_LINE_MIN_STRENGTH (direction held),
+    the averaged line was weaker than WEAK_LINE_STRENGTH (direction barely moves),
   * the largest step-to-step direction change and the number above --jump-deg,
   * reversals: sign changes of the current's component along the route
-    (only where it flows within 45 deg of the route), which should be 0,
-    with their positions,
+    (only where it flows within 45 deg of the route), with their positions;
+    a reversal can also be the current gradually following a flow line that
+    turns away from the route (check the largest step changes),
   * the share of points where the current is within 45 deg of the route,
   * the lookup distance (nearest row) along the route.
 
 Usage (from src):
 
     python -m fw.surrogate.check_random_current_lookup --preset myzako_full
-    python -m fw.surrogate.check_random_current_lookup --preset tripoli_full --tau 5
+    python -m fw.surrogate.check_random_current_lookup --preset tripoli_full --offsets 0 25 -25 50 -50 100 -100
 """
 
 from __future__ import annotations
@@ -35,13 +37,13 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from fw.common.default_positions import DEFAULT_FRAMEWORK_SHIP_POS, DEFAULT_FRAMEWORK_TARGET_POS
 from fw.dynamics.uantwerp_surrogate import (
     CURRENT_AXIS_MIN_SPEED,
-    CURRENT_LINE_MIN_STRENGTH,
     CurrentLineFollower,
     make_scenario_lookup,
 )
 from fw.surrogate.presets import get_preset, resolve_lookup_csv
 
 _ALONG = np.cos(np.radians(45.0))
+WEAK_LINE_STRENGTH = 0.2   # reporting only: line strength below this counts as a weak-line step
 
 
 def route_points(start, target, step: float) -> np.ndarray:
@@ -63,15 +65,28 @@ def route_points(start, target, step: float) -> np.ndarray:
     return np.array(points)
 
 
-def follow_route(lookup, points: np.ndarray, sign: float, jump_deg: float, tau: Optional[float] = None,
-                 speed: float = 4.0) -> Dict[str, object]:
+def offset_path(points: np.ndarray, offset: float) -> np.ndarray:
     """
-    Run CurrentLineFollower along `points` for one sign, sailing at `speed`
-    [m/s] (time step = point spacing / speed); returns the statistics (see
-    module docstring).
+    `points` shifted sideways by `offset` metres (positive to port of the route direction).
     """
 
     tangents = np.gradient(points, axis=0)
+    tangents /= np.linalg.norm(tangents, axis=1)[:, None]
+    return points + offset * np.column_stack([-tangents[:, 1], tangents[:, 0]])
+
+
+def follow_route(lookup, points: np.ndarray, sign: float, jump_deg: float, tau: Optional[float] = None,
+                 speed: float = 4.0, tangents: Optional[np.ndarray] = None) -> Dict[str, object]:
+    """
+    Run CurrentLineFollower along `points` for one sign, sailing at `speed`
+    [m/s] (time step = point spacing / speed); returns the statistics (see
+    module docstring). `tangents`: route direction per point (default: of
+    `points`; pass the centreline's for offset paths, which fold back at
+    inner corners).
+    """
+
+    if tangents is None:
+        tangents = np.gradient(points, axis=0)
     follower = CurrentLineFollower(sign, tau)
     prev = None
     along_signs: List[int] = []
@@ -89,7 +104,7 @@ def follow_route(lookup, points: np.ndarray, sign: float, jump_deg: float, tau: 
         if d is None:
             stats["zero_current"] += 1
             continue
-        stats["weak_line"] += int(follower.line_strength < CURRENT_LINE_MIN_STRENGTH)
+        stats["weak_line"] += int(follower.line_strength < WEAK_LINE_STRENGTH)
         if prev is not None:
             change = abs(np.degrees((d - prev + np.pi) % (2.0 * np.pi) - np.pi))
             stats["max_change_deg"] = max(stats["max_change_deg"], change)
@@ -125,6 +140,8 @@ def main(argv: Sequence[str] = None) -> int:
                         help="River-line average time constant [s] as env_smoothing_tau (default 10; "
                              "0 = CURRENT_LINE_TAU, as without smoothing).")
     parser.add_argument("--speed", type=float, default=4.0, help="Ship speed along the route [m/s] (default 4).")
+    parser.add_argument("--offsets", type=float, nargs="+", default=[0.0],
+                        help="Sideways offsets of the route [m], positive to port (default 0).")
     args = parser.parse_args(argv)
 
     preset = get_preset(args.preset)
@@ -141,20 +158,31 @@ def main(argv: Sequence[str] = None) -> int:
     print(f"{csv}: {len(points)} route points every {args.step:g} m at {args.speed:g} m/s, "
           f"line tau {'CURRENT_LINE_TAU' if tau is None else f'{tau:g} s'}")
 
-    for sign, label in ((1.0, "sign +1"), (-1.0, "sign -1")):
-        s = follow_route(lookup, points, sign, args.jump_deg, tau, args.speed)
-        print(f"{label}: slack rows {s['slack']}, zero-current steps at the start {s['zero_current']}, "
-              f"weak-line steps {s['weak_line']}, "
-              f"max step change {s['max_change_deg']:.1f} deg, changes > {args.jump_deg:g} deg: {s['jumps']}, "
-              f"reversals along the route: {s['reversals']}, within 45 deg of the route: "
-              f"{100 * s['along_share']:.1f} %, lookup distance mean {s['distance_mean']:.1f} m / "
-              f"max {s['distance_max']:.1f} m")
-        print("    largest step changes:")
-        for change, x, y in s["worst"]:
-            print(f"    {change:6.1f} deg at ({x:.1f}, {y:.1f})")
-        for x, y in s["reversal_positions"]:
-            print(f"    reversal at ({x:.1f}, {y:.1f})")
+    route_tangents = np.gradient(points, axis=0)
+    for offset in args.offsets:
+        path = offset_path(points, offset) if offset else points
+        for sign, label in ((1.0, "sign +1"), (-1.0, "sign -1")):
+            stats = follow_route(lookup, path, sign, args.jump_deg, tau, args.speed, route_tangents)
+            _report(f"offset {offset:g} m, {label}", stats, args.jump_deg)
     return 0
+
+
+def _report(label: str, s: Dict[str, object], jump_deg: float) -> None:
+    """
+    Print the statistics of one path and sign.
+    """
+
+    print(f"{label}: slack rows {s['slack']}, zero-current steps at the start {s['zero_current']}, "
+          f"weak-line steps {s['weak_line']}, "
+          f"max step change {s['max_change_deg']:.1f} deg, changes > {jump_deg:g} deg: {s['jumps']}, "
+          f"reversals along the route: {s['reversals']}, within 45 deg of the route: "
+          f"{100 * s['along_share']:.1f} %, lookup distance mean {s['distance_mean']:.1f} m / "
+          f"max {s['distance_max']:.1f} m")
+    print("    largest step changes:")
+    for change, x, y in s["worst"]:
+        print(f"    {change:6.1f} deg at ({x:.1f}, {y:.1f})")
+    for x, y in s["reversal_positions"]:
+        print(f"    reversal at ({x:.1f}, {y:.1f})")
 
 
 if __name__ == "__main__":
