@@ -75,11 +75,10 @@ from fw.surrogate.presets import PRESETS
 from fw.dynamics.wcu_lookup import EnvironmentData
 from fw.simulators.fh_sim_bridge import FhSimBridge
 from fw.surrogate.schema import SURROGATE_DT
+from fw.simulators.fh_interface_utils import get_current_velocity, fh_heading_to_env_rad
 from fw.surrogate.sim_fh_dataset_generator import (
     _PROPELLER_RPS_SCALE,
     _cutoff_geometry,
-    fh_heading_to_env_rad,
-    get_current_velocity,
     stop_reason,
 )
 from fw.environments.py_sim_env import PySimEnv
