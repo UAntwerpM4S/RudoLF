@@ -5,10 +5,9 @@ Source: https://www.samgongustofa.is/media/log-og-reglur/COLREG-Consolidated-201
 Scenarios:
   0  "path-following"   no dynamic TS within range
   1  "head-on"          Rule 14
-  2  "overtaking"       Rule 13
-  3  "crossing-right"   Rules 15, 16: TS on starboard (OS give-way)
-  4  "crossing-left"    Rules 15, 17: TS on port (OS stand-on); metrics only, the
-                        policy treats it as path-following
+
+The policy-facing classifier intentionally has only these two scenarios. The
+extended labels below remain available for encounter metrics.
 """
 
 import math
@@ -16,12 +15,12 @@ import numpy as np
 
 from typing import Optional
 
-SCENARIO_LABELS = ["path-following", "head-on", "overtaking", "crossing-right"]
+SCENARIO_LABELS = ["path-following", "head-on"]
 NUM_SCENARIOS = len(SCENARIO_LABELS)
 SCENARIO_INDEX = {label: i for i, label in enumerate(SCENARIO_LABELS)}
 
-# Extended 5-way labels for metrics only (policy and reward use the 4-way space);
-# they make crossing-left measurable, which the reduced space folds into path-following.
+# Extended labels for metrics only; all non-head-on encounters are routed to the
+# path-following policy.
 EXTENDED_SCENARIO_LABELS = ["path-following", "head-on", "overtaking", "crossing-right", "crossing-left"]
 EXTENDED_SCENARIO_INDEX = {label: i for i, label in enumerate(EXTENDED_SCENARIO_LABELS)}
 
@@ -98,7 +97,7 @@ class ScenarioClassifier:
         self._episode_scenario_label: Optional[str] = None
 
         # Last geometric classification output
-        self._last_geometric_scenario: int = 0            # 4-way index
+        self._last_geometric_scenario: int = 0            # 2-way index
         self._last_geometric_extended: int = 0            # 5-way index
 
         # Last collision_entities list, used to look up the tracked TS's spawn label.
@@ -178,8 +177,8 @@ class ScenarioClassifier:
         curvature does not skew the result (head-on always gives delta=180°,
         crossings 90°). Falls back to raw geometry without set_path_segments().
 
-        Returns:
-            Reduced 4-way scenario index.
+            Returns:
+                Reduced 2-way scenario index.
         """
 
         self._last_entities = collision_entities
@@ -236,28 +235,14 @@ class ScenarioClassifier:
             return self._scenario
 
         # Geometric mode: once detected, a scenario stays locked until the TS is lost.
-        if self._overtaking_locked:
-            self._scenario = 2
-            return 2
-
         if self._headon_locked:
             self._scenario = 1
             return 1
 
-        if self._crossing_right_locked:
-            self._scenario = 3
-            return 3
-
         self._scenario = self._last_geometric_scenario
-
-        if self._scenario == 2:
-            self._overtaking_locked = True
 
         if self._scenario == 1:
             self._headon_locked = True
-
-        if self._scenario == 3:
-            self._crossing_right_locked = True
 
         return self._scenario
 
@@ -369,7 +354,7 @@ class ScenarioClassifier:
           * pi/2: crossing; right or left depending on the side of OS the TS is on
 
         Never returns path-following (a TS is tracked). Returns the extended
-        5-way index; the caller reduces it to the 4-way space.
+        5-way index; the caller reduces it to the 2-way policy space.
         """
 
         # Heading difference, folded to [0, pi].

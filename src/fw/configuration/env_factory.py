@@ -449,6 +449,12 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             evaluate=False,
             # eval_scenario/eval_obstacle_count are not PySimColavEnv parameters yet.
             include_scenario_one_hot=True,
+            scenario_types=self.configuration.get(
+                "scenario_types", ["path-following", "head-on"]
+            ),
+            scenario_probs=self.configuration.get(
+                "scenario_probs", [0.5, 0.5]
+            ),
             minimal_path_render=True
         )
 
@@ -815,8 +821,8 @@ def build_multi_policy_colav_config(framework_config: dict, extra: dict | None =
     """
     Extract MultiPolicyColav-relevant keys from *framework_config*.
 
-    Currently identical to `build_colav_config` (the eval-related fields are
-    still hardcoded in MultiPolicyColavEnvironment).
+    The multi-policy environment defaults to path-following and head-on
+    scenarios, with equal sampling probability.
 
     Args:
         framework_config: Full resolved framework configuration dict.
@@ -826,7 +832,10 @@ def build_multi_policy_colav_config(framework_config: dict, extra: dict | None =
         The keys used by MultiPolicyColavEnvironment.
     """
 
-    return build_colav_config(framework_config, extra)
+    cfg = build_colav_config(framework_config, extra)
+    cfg.setdefault("scenario_types", ["path-following", "head-on"])
+    cfg.setdefault("scenario_probs", [0.5, 0.5])
+    return cfg
 
 
 def build_fhsim_config(framework_config: dict) -> dict:

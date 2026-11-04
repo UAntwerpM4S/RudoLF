@@ -149,7 +149,7 @@ AIRSIM_HYPERPARAMETER_OVERRIDES = {
 CONFIG_PARAMETERS = {
     # One or a list of: "PySimEnv", "FhSimEnv", "MultiSimEnv",
     # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander".
-    'env_type': ["PySimEnv"],
+    'env_type': ["MultiPolicyColavEnv"],
     'profile': "default_profile",       # see ProfileRegistry, e.g.
                                         # "myzako_pysim_to_fhsim_transfer_profile"
     'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"

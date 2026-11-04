@@ -47,7 +47,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             depth_contour: Optional[str] = None,
             trajectory: Optional[str] = None,
             dynamics_model: Optional[Model] = Model.FOSSEN,
-            ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
+            ship_model: Optional[ShipModel] = ShipModel.MYZAKO_37,
             wind: bool = False,
             current: bool = False,
             ugent_surrogate_config: Optional[dict] = None,

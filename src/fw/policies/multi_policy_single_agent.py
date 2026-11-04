@@ -10,8 +10,8 @@ GAE bootstrapping.
 Usage:
     agent = MultiPolicySingleAgent(
         environment=my_env,        # env that appends one-hot to obs
-        num_policies=4,            # number of switchable policies
-        policy_labels=["path-following", "head-on", "overtaking", "crossing-right"],
+        num_policies=2,            # number of switchable policies
+        policy_labels=["path-following", "head-on"],
         ...                        # standard PPO hyperparameters
     )
     agent.learn(stop_condition=...)

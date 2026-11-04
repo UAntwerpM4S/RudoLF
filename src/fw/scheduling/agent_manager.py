@@ -163,7 +163,7 @@ class AgentManager:
 
         # Optional warm start from pretrained per-scenario policies in model_dir
         # (file names without .zip). Slots follow SCENARIO_LABELS: 0 path-following,
-        # 1 head-on, 2 overtaking, 3 crossing-right. Empty: all slots start random.
+        # 1 head-on. Empty: all slots start random.
         pretrained_dir = agent.model_dir
         pretrained_specs = {
             #0: {"file": "pretrained_pf", "frozen": False},

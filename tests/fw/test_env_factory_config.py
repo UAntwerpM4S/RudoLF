@@ -6,6 +6,7 @@ from fw.configuration.env_factory import (
     EnvironmentRegistryError,
     airsim_env_name,
     build_default_environment,
+    build_multi_policy_colav_config,
     get as get_environment,
     py_sim_env_name,
     py_sim_colav_env_name,
@@ -21,6 +22,27 @@ def test_resolve_environment_name_defaults_to_pysim():
 
     assert resolve_environment_name(None) == py_sim_env_name
     assert resolve_environment_name("") == py_sim_env_name
+
+
+def test_multi_policy_colav_config_uses_two_training_scenarios():
+    """
+    MultiPolicyColavEnv samples only path-following and head-on encounters.
+    """
+
+    config = build_multi_policy_colav_config({
+        "wind": False,
+        "current": False,
+        "ship_model": None,
+        "dynamics_model": None,
+        "start_pos": [0.0, 0.0],
+        "target_pos": [1.0, 1.0],
+        "overall_contour": "overall.csv",
+        "depth_contour": "depth.csv",
+        "trajectory": "trajectory.csv",
+    })
+
+    assert config["scenario_types"] == ["path-following", "head-on"]
+    assert config["scenario_probs"] == [0.5, 0.5]
 
 
 def test_resolve_environment_name_accepts_aliases():
