@@ -46,21 +46,21 @@ reset_episode(rng) draws per episode a true wind (direction uniform, speed
 |N(0, RANDOM_WIND_SPEED_SIGMA)| clipped to RANDOM_WIND_SPEED_MAX), constant
 earth-fixed and converted to this ship's apparent wind every step, and a
 current speed (uniform in [0, RANDOM_CURRENT_SPEED_MAX]) with a flood/ebb sign
-(50 %). The current flows along the line of the lookup's current at the
-ship's position (follow_current_line): the drawn sign orients it at the
-first reliable row (at least CURRENT_AXIS_MIN_SPEED), then the orientation
-closest to the previous reliable direction is used; slack rows and lines
-turning more than CURRENT_AXIS_MAX_TURN_DEG from it keep that direction.
-Slack rows before the first reliable one are used provisionally (sign-oriented).
-With env_smoothing_tau the direction is averaged over time (CurrentLineFollower). Without a lookup the current is zero. UKC still comes from the
+(50 %). The current flows along the river line (CurrentLineFollower): a
+moving average (time constant env_smoothing_tau, else CURRENT_LINE_TAU) of
+the line of the lookup's current at the ship's position over reliable rows
+(at least CURRENT_AXIS_MIN_SPEED), with flood/ebb rows treated alike. The
+drawn sign orients it at the first reliable row, then the orientation closest
+to the previous step's is kept, so it never flips. Before the first reliable
+row, and without a lookup, the current is zero. UKC still comes from the
 lookup. episode_conditions() reports the draw. For presets without
 wind/current the setting has no effect.
 
 Smoothing (env_smoothing_tau, meant for RL): the model input then gets an
 exponential moving average (time constant tau) of the UKC and, with "lookup",
-the earth-fixed true wind and the earth-fixed current ("random": UKC and the
-current direction only), restarted by reset_episode(); the wind is converted back to this ship's apparent wind.
-get_env and get_ukc(pos) stay raw; get_ukc(None) returns the UKC of the last
+the earth-fixed true wind and the earth-fixed current ("random": the UKC),
+restarted by reset_episode(); the wind is converted back to this ship's
+apparent wind. get_env and get_ukc(pos) stay raw; get_ukc(None) returns the UKC of the last
 model input. observed_wind_current() reports the wind and current of the
 last model input.
 """
@@ -108,7 +108,8 @@ RANDOM_WIND_SPEED_SIGMA = 8.6     # m/s, true wind
 RANDOM_WIND_SPEED_MAX = 25.0      # m/s
 RANDOM_CURRENT_SPEED_MAX = 2.1    # m/s, p99.9 of the full_env datasets
 CURRENT_AXIS_MIN_SPEED = 0.05     # m/s; slower lookup currents give no reliable direction
-CURRENT_AXIS_MAX_TURN_DEG = 45.0  # lines turning more per step are noise (cross flow), not a bend
+CURRENT_LINE_TAU = 10.0           # s; river-line average without env_smoothing_tau
+CURRENT_LINE_MIN_STRENGTH = 0.2   # weaker averaged line (cross flow cancelling): keep the direction
 
 # Lookup rows farther than this [m] are reported. Lookups are 5 m grids of the
 # dataset positions, so inside covered water the nearest row is a few metres away.
@@ -177,78 +178,63 @@ def apparent_wind_from_true_world(true_world: np.ndarray, heading: float, u: flo
     return float(np.hypot(own[0], own[1])), float((direction + np.pi) % (2.0 * np.pi) - np.pi)
 
 
-def follow_current_line(axis: float, axis_speed: float, ref_dir: Optional[float],
-                        sign: float) -> Tuple[float, Optional[float]]:
-    """
-    Direction of the "random" current at one step along the lookup current's
-    line `axis` (its speed `axis_speed`), given the reference direction of
-    the last reliable row (None before the first one).
-
-    Without a reference: `axis` for sign > 0, the opposite otherwise; it
-    becomes the reference only if the row is reliable (speed at least
-    CURRENT_AXIS_MIN_SPEED and finite). With a reference: the orientation of
-    `axis` closest to it; the reference is kept unchanged for slack or
-    non-finite rows and for lines turning more than CURRENT_AXIS_MAX_TURN_DEG.
-
-    Returns:
-        (direction [rad, flowing toward, in [-pi, pi)], new reference).
-    """
-
-    def wrap(a: float) -> float:
-        """
-        Angle wrapped to [-pi, pi).
-        """
-
-        return float((a + np.pi) % (2.0 * np.pi) - np.pi)
-
-    reliable = bool(axis_speed >= CURRENT_AXIS_MIN_SPEED and np.isfinite(axis))
-    if ref_dir is None:
-        direction = wrap(axis if sign > 0 else axis + np.pi)
-        return direction, (direction if reliable else None)
-    c = np.cos(axis - ref_dir)
-    if not (reliable and abs(c) >= np.cos(np.radians(CURRENT_AXIS_MAX_TURN_DEG))):
-        return ref_dir, ref_dir
-    direction = wrap(axis if c >= 0.0 else axis + np.pi)
-    return direction, direction
-
-
 class CurrentLineFollower:
     """
-    Direction of one episode's "random" current: follow_current_line per step,
-    optionally smoothed by an exponential moving average of the direction's
-    unit vector (time constant `tau` [s], None = off). The average restarts
-    when the first reliable row sets the reference, so a provisional slack
-    direction never mixes with the real one.
+    Direction of one episode's "random" current along the river line.
+
+    The line is a moving average (time constant `tau`) of the unit vectors
+    of twice the lookup current's direction over reliable rows (speed at
+    least CURRENT_AXIS_MIN_SPEED, finite), so flood and ebb rows reinforce
+    each other and cross-flow rows only weaken it. The first reliable row,
+    oriented by `sign`, gives the first direction; afterwards the line's
+    orientation closest to the previous direction is used (it changes
+    gradually, so it never flips). While the averaged line is weaker than
+    CURRENT_LINE_MIN_STRENGTH the previous direction is kept. None (zero
+    current) until the first reliable row.
     """
 
     def __init__(self, sign: float, tau: Optional[float] = None):
         """
         Args:
-            sign: Flood/ebb orientation (+1 or -1) for the first reliable row.
-            tau: Smoothing time constant [s], None for none.
+            sign: +1: flow as the first reliable row's current, -1: opposite.
+            tau: Line average time constant [s]; None for CURRENT_LINE_TAU.
         """
 
         self.sign = float(sign)
-        self.tau = tau
-        self.ref: Optional[float] = None
-        self._vec: Optional[np.ndarray] = None
+        self.tau = float(tau) if tau is not None else CURRENT_LINE_TAU
+        self.direction: Optional[float] = None
+        self._line: Optional[np.ndarray] = None
 
-    def step(self, axis: float, axis_speed: float, dt: float) -> float:
+    @property
+    def line_strength(self) -> float:
+        """
+        Length of the averaged doubled-angle vector (1 = all rows on one line, 0 = no line).
+        """
+
+        return 0.0 if self._line is None else float(np.hypot(self._line[0], self._line[1]))
+
+    def step(self, axis: float, axis_speed: float, dt: float) -> Optional[float]:
         """
         Direction [rad, flowing toward, in [-pi, pi)] after a step of `dt` [s]
-        at a lookup row with current line `axis` and speed `axis_speed`.
+        at a lookup row with current direction `axis` and speed `axis_speed`;
+        None before the first reliable row.
         """
 
-        had_ref = self.ref is not None
-        direction, self.ref = follow_current_line(axis, axis_speed, self.ref, self.sign)
-        if self.tau is None:
-            return direction
-        unit = np.array([np.cos(direction), np.sin(direction)])
-        if self._vec is None or (not had_ref and self.ref is not None):
-            self._vec = unit
-        else:
-            self._vec = self._vec + (1.0 - np.exp(-dt / self.tau)) * (unit - self._vec)
-        return float(np.arctan2(self._vec[1], self._vec[0]))
+        if np.isfinite(axis) and np.isfinite(axis_speed) and axis_speed >= CURRENT_AXIS_MIN_SPEED:
+            doubled = np.array([np.cos(2.0 * axis), np.sin(2.0 * axis)])
+            if self._line is None:
+                self._line = doubled
+                first = axis if self.sign > 0 else axis + np.pi
+                self.direction = float((first + np.pi) % (2.0 * np.pi) - np.pi)
+                return self.direction
+            self._line = self._line + (1.0 - np.exp(-dt / self.tau)) * (doubled - self._line)
+        if self._line is None or self.line_strength < CURRENT_LINE_MIN_STRENGTH:
+            return self.direction
+        line = 0.5 * float(np.arctan2(self._line[1], self._line[0]))
+        if np.cos(line - self.direction) < 0.0:
+            line += np.pi
+        self.direction = float((line + np.pi) % (2.0 * np.pi) - np.pi)
+        return self.direction
 
 
 def make_scenario_lookup(csv, scenario, preset_name: str = "?") -> WcuLookup:
@@ -521,7 +507,7 @@ class UAntwerpSurrogate(DynamicsBase):
         Environment for the model input at `pos`: get_env, with this episode's
         wind and current instead with "random", smoothed with env_smoothing_tau
         if set (one update per call, i.e. per SURROGATE_DT step; with "random"
-        only the UKC here, the current direction in CurrentLineFollower). Remembers it for observed_wind_current; self.ukc becomes
+        only the UKC). Remembers it for observed_wind_current; self.ukc becomes
         the UKC used.
         """
 
@@ -536,8 +522,8 @@ class UAntwerpSurrogate(DynamicsBase):
             else:
                 alpha = 1.0 - np.exp(-SURROGATE_DT / self.env_smoothing_tau)
                 self._env_ema = self._env_ema + alpha * (world - self._env_ema)
-            # "random": wind/current come from the episode draw (current direction
-            # smoothed by CurrentLineFollower), so only the UKC is averaged here.
+            # "random": wind/current come from the episode draw (current line
+            # averaged by CurrentLineFollower), so only the UKC is averaged here.
             world = np.concatenate([self._env_ema[:1], world[1:]]) if use_random else self._env_ema
             env = self._world_to_env(world, state)
             self.ukc = env.ukc
@@ -570,7 +556,8 @@ class UAntwerpSurrogate(DynamicsBase):
             cs, cd = 0.0, 0.0
         else:
             cd = self._random_current.step(float(env.current_direction), float(env.current_speed), SURROGATE_DT)
-            cs = self._random_current_speed
+            # Zero current until the first reliable row (slack water at the start).
+            cs, cd = (0.0, 0.0) if cd is None else (self._random_current_speed, cd)
         return EnvironmentData(ukc=env.ukc, wind_speed=ws, wind_direction=wd, current_speed=cs,
                                current_direction=cd)
 

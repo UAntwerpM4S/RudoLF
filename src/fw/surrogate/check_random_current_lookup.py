@@ -5,12 +5,12 @@ Check how the "random" current of the UAntwerp full_env surrogate
 The ship is moved along the env's route (checkpoints from start to target) in
 small steps at --speed; at each point the nearest lookup row gives the current
 line and fw.dynamics.uantwerp_surrogate.CurrentLineFollower the direction,
-exactly as during training (smoothed with --tau, the env_smoothing_tau), for
+exactly as during training (line average --tau, as env_smoothing_tau), for
 both flood/ebb signs. Reported per sign:
 
-  * rows below CURRENT_AXIS_MIN_SPEED (slack) and rows whose line turned more
-    than CURRENT_AXIS_MAX_TURN_DEG from the reference (rejected as cross flow);
-    both keep the reference direction,
+  * rows below CURRENT_AXIS_MIN_SPEED (slack, not averaged into the line),
+    steps with zero current before the first reliable row, and steps where
+    the averaged line was weaker than CURRENT_LINE_MIN_STRENGTH (direction held),
   * the largest step-to-step direction change and the number above --jump-deg,
   * reversals: sign changes of the current's component along the route
     (only where it flows within 45 deg of the route), which should be 0,
@@ -21,7 +21,7 @@ both flood/ebb signs. Reported per sign:
 Usage (from src):
 
     python -m fw.surrogate.check_random_current_lookup --preset myzako_full
-    python -m fw.surrogate.check_random_current_lookup --preset tripoli_full --tau 0   (unsmoothed)
+    python -m fw.surrogate.check_random_current_lookup --preset tripoli_full --tau 5
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ import numpy as np
 from typing import Dict, List, Optional, Sequence, Tuple
 from fw.common.default_positions import DEFAULT_FRAMEWORK_SHIP_POS, DEFAULT_FRAMEWORK_TARGET_POS
 from fw.dynamics.uantwerp_surrogate import (
-    CURRENT_AXIS_MAX_TURN_DEG,
     CURRENT_AXIS_MIN_SPEED,
+    CURRENT_LINE_MIN_STRENGTH,
     CurrentLineFollower,
     make_scenario_lookup,
 )
@@ -76,20 +76,20 @@ def follow_route(lookup, points: np.ndarray, sign: float, jump_deg: float, tau: 
     prev = None
     along_signs: List[int] = []
     along_points: List[Tuple[float, float]] = []
-    stats = {"points": len(points), "slack": 0, "turn_rejected": 0, "max_change_deg": 0.0, "jumps": 0,
-             "reversals": 0, "reversal_positions": [], "along_share": 0.0, "worst": []}
+    stats = {"points": len(points), "slack": 0, "zero_current": 0, "weak_line": 0, "max_change_deg": 0.0,
+             "jumps": 0, "reversals": 0, "reversal_positions": [], "along_share": 0.0, "worst": []}
     distances, along = [], 0
     for k, (p, t) in enumerate(zip(points, tangents)):
         dt = float(np.linalg.norm(points[k] - points[k - 1])) / speed if k > 0 else 0.0
         sample = lookup.get_sample(float(p[0]), float(p[1]))
         axis, axis_speed = float(sample.env.current_direction), float(sample.env.current_speed)
         distances.append(sample.distance)
-        if not axis_speed >= CURRENT_AXIS_MIN_SPEED:
-            stats["slack"] += 1
-        elif follower.ref is not None and \
-                abs(np.cos(axis - follower.ref)) < np.cos(np.radians(CURRENT_AXIS_MAX_TURN_DEG)):
-            stats["turn_rejected"] += 1
+        stats["slack"] += int(not axis_speed >= CURRENT_AXIS_MIN_SPEED)
         d = follower.step(axis, axis_speed, dt)
+        if d is None:
+            stats["zero_current"] += 1
+            continue
+        stats["weak_line"] += int(follower.line_strength < CURRENT_LINE_MIN_STRENGTH)
         if prev is not None:
             change = abs(np.degrees((d - prev + np.pi) % (2.0 * np.pi) - np.pi))
             stats["max_change_deg"] = max(stats["max_change_deg"], change)
@@ -122,7 +122,8 @@ def main(argv: Sequence[str] = None) -> int:
     parser.add_argument("--step", type=float, default=0.5, help="Distance between route points [m] (default 0.5).")
     parser.add_argument("--jump-deg", type=float, default=10.0, help="Report direction changes above this [deg].")
     parser.add_argument("--tau", type=float, default=10.0,
-                        help="Direction smoothing time constant [s] as env_smoothing_tau (default 10; 0 = off).")
+                        help="River-line average time constant [s] as env_smoothing_tau (default 10; "
+                             "0 = CURRENT_LINE_TAU, as without smoothing).")
     parser.add_argument("--speed", type=float, default=4.0, help="Ship speed along the route [m/s] (default 4).")
     args = parser.parse_args(argv)
 
@@ -138,11 +139,12 @@ def main(argv: Sequence[str] = None) -> int:
         parser.error("--speed must be positive.")
     tau = args.tau if args.tau > 0 else None
     print(f"{csv}: {len(points)} route points every {args.step:g} m at {args.speed:g} m/s, "
-          f"tau {'off' if tau is None else f'{tau:g} s'}")
+          f"line tau {'CURRENT_LINE_TAU' if tau is None else f'{tau:g} s'}")
 
     for sign, label in ((1.0, "sign +1"), (-1.0, "sign -1")):
         s = follow_route(lookup, points, sign, args.jump_deg, tau, args.speed)
-        print(f"{label}: slack rows {s['slack']}, rejected turns {s['turn_rejected']}, "
+        print(f"{label}: slack rows {s['slack']}, zero-current steps at the start {s['zero_current']}, "
+              f"weak-line steps {s['weak_line']}, "
               f"max step change {s['max_change_deg']:.1f} deg, changes > {args.jump_deg:g} deg: {s['jumps']}, "
               f"reversals along the route: {s['reversals']}, within 45 deg of the route: "
               f"{100 * s['along_share']:.1f} %, lookup distance mean {s['distance_mean']:.1f} m / "

@@ -33,6 +33,10 @@ from fw.dynamics.nomoto import Nomoto
 
 logger = logging.getLogger(__name__)
 
+# Episode outcomes counted as success: inside the final checkpoint circle, or
+# across its perpendicular guidance line.
+SUCCESS_OUTCOMES = ("target_reached", "target_passed")
+
 
 # Grid limits
 MAX_CHECKPOINTS_DISTANCE = 2000
@@ -263,8 +267,9 @@ class PySimEnv(BaseEnv):
         self.previous_heading = None
         self.performed_action = None
         self.previous_action = None
-        # Why the episode terminated (episode log): target_reached, cross_track,
-        # bank_or_ukc or heading_change; max_steps for truncation.
+        # Why the episode ended (episode log): SUCCESS_OUTCOMES, cross_track,
+        # bank_or_ukc or heading_change (failures take precedence), max_steps
+        # for truncation.
         self._episode_outcome: Optional[str] = None
         self._boundary_cache = None
         self._bank_lines_cache = None
@@ -1453,7 +1458,7 @@ class PySimEnv(BaseEnv):
             info["episode_outcome"] = self._episode_outcome if terminated else "max_steps"
             info["episode_conditions"] = self.dynamics.episode_conditions()
             logger.info("%s - episode end: outcome=%s, success=%s, conditions=%s", self.env_name,
-                        info["episode_outcome"], info["episode_outcome"] == "target_reached",
+                        info["episode_outcome"], info["episode_outcome"] in SUCCESS_OUTCOMES,
                         info["episode_conditions"])
 
         # Gymnasium: time-limit cut-off is `truncated` (bootstrap V(s')), a real end is
@@ -1518,9 +1523,11 @@ class PySimEnv(BaseEnv):
         checkpoint_distance = float(np.linalg.norm(self.ship_pos - current_checkpoint["pos"]))
 
         # Reached checkpoint circle
+        final_label = None      # how the last checkpoint was completed in this step
         if self.segment_point_distance(self.previous_ship_pos, self.ship_pos, current_checkpoint["pos"]) <= current_checkpoint['radius']:
             if self.checkpoint_index == len(self.checkpoints) - 1:
                 logger.info("%s - target REACHED at distance %.2f", self.env_name, checkpoint_distance)
+                final_label = "target_reached"
             self.checkpoint_index += 1
             self.step_count = 0
 
@@ -1528,6 +1535,8 @@ class PySimEnv(BaseEnv):
         elif self._is_near_perpendicular_line(current_checkpoint):
             # if self.checkpoint_index == len(self.checkpoints) - 1:
             #     print(f"Target passed at distance {checkpoint_distance:.2f}")
+            if self.checkpoint_index == len(self.checkpoints) - 1:
+                final_label = "target_passed"
             self.checkpoint_index += 1
             self.step_count = 0
 
@@ -1546,10 +1555,12 @@ class PySimEnv(BaseEnv):
             done = True
             self._episode_outcome = ("cross_track", "bank_or_ukc", "heading_change")[termination_conditions.index(True)]
 
-        # Normal completion (reached or passed all checkpoints)
+        # Normal completion (reached or passed all checkpoints); a failure in
+        # the same step takes precedence in the episode outcome.
         if self.checkpoint_index >= len(self.checkpoints):
+            if not done:
+                self._episode_outcome = final_label or "target_passed"
             done = True
-            self._episode_outcome = "target_reached"
 
         return reward, done
 

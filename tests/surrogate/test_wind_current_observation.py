@@ -437,22 +437,28 @@ def test_random_wind_is_constant_earth_fixed(full_env_model):
 @pytest.mark.parametrize("seed", [0, 1, 2, 3])
 def test_random_current_follows_the_lookup_line(full_env_model, seed):
     """
-    Drawn speed along the lookup's current line: drawn sign at the first step,
-    then continuous through a flipped row; a slack row keeps the previous direction.
+    Zero current until the first reliable row; then the drawn speed along the
+    drawn orientation of the line, unchanged by an opposite-tide row and
+    turning gradually towards a bend.
     """
 
     model = _random_ua(full_env_model, seed=seed)
-    model.get_env = _env_sequence([_calm(5.0, current_speed=1.0, current_direction=0.3),
-                                   _calm(5.0, current_speed=0.7, current_direction=0.3 + np.pi),  # flipped row
-                                   _calm(5.0, current_speed=1.2, current_direction=0.6),          # river bends
-                                   _calm(5.0, current_speed=0.01, current_direction=-2.0)])       # slack row
+    rows = ([_calm(5.0, current_speed=0.01, current_direction=-2.0)]                      # slack start
+            + [_calm(5.0, current_speed=1.0, current_direction=0.3)]
+            + [_calm(5.0, current_speed=0.7, current_direction=0.3 + np.pi)]              # other tide
+            + [_calm(5.0, current_speed=1.2, current_direction=0.6)] * 400)               # river bends
+    model.get_env = _env_sequence(rows)
     state = make_state(x=1.0, y=2.0, heading=0.0, u=2.0, v=0.0, r=0.0)
+    got = [_raw_env(model, model._build_input_vector(state, 0.0, 0.5)) for _ in range(len(rows))]
+    assert got[0][3] == 0.0
     first = 0.3 if model._random_current_sign > 0 else 0.3 - np.pi
-    expected = [first, first, first + 0.3, first + 0.3]
-    for exp in expected:
-        got = _raw_env(model, model._build_input_vector(state, 0.0, 0.5))
-        assert got[3] == pytest.approx(model._random_current_speed, abs=1e-6)
-        assert np.cos(got[4] - exp) == pytest.approx(1.0, abs=1e-6)
+    for g in got[1:]:
+        assert g[3] == pytest.approx(model._random_current_speed, abs=1e-6)
+    assert np.cos(got[1][4] - first) == pytest.approx(1.0, abs=1e-9)
+    assert np.cos(got[2][4] - first) == pytest.approx(1.0, abs=1e-9)
+    assert np.cos(got[-1][4] - (first + 0.3)) == pytest.approx(1.0, abs=1e-3)              # after 40 s
+    assert np.all(np.cos(np.array([g[4] for g in got[1:]]) - first) > 0.9)                 # never flips
+
 
 
 def test_random_current_without_lookup_is_zero(full_env_model):
@@ -543,54 +549,6 @@ def _full_lookup_csv(path, flow_dir=0.2, speed=1.0, slack_every=0):
     return path
 
 
-def test_follow_current_line_ignores_cross_flow_rows():
-    """
-    The reviewer's sequence 0, 0, 85, 170, 180, 0 deg (cross flow, then the other tide) never reverses the current.
-    """
-
-    from fw.dynamics.uantwerp_surrogate import follow_current_line
-
-    ref, dirs = None, []
-    for deg in (0.0, 0.0, 85.0, 170.0, 180.0, 0.0):
-        d, ref = follow_current_line(np.radians(deg), 1.0, ref, 1.0)
-        dirs.append(np.degrees(d))
-    # 85 deg is cross flow (ignored); the 170 deg line is followed as -10 deg.
-    np.testing.assert_allclose(dirs, [0.0, 0.0, 0.0, -10.0, 0.0, 0.0], atol=1e-9)
-
-
-def test_follow_current_line_bends_slack_and_nan():
-    """
-    Gradual bends are followed; slack and non-finite rows keep the reference.
-    """
-
-    from fw.dynamics.uantwerp_surrogate import follow_current_line
-
-    ref = 0.0
-    for k in range(1, 31):                                                     # 30 x 3 deg bend, alternating tides
-        d, ref = follow_current_line(np.radians(3.0 * k) + (np.pi if k % 2 else 0.0), 1.0, ref, 1.0)
-    assert d == ref == pytest.approx(np.radians(90.0))
-    assert follow_current_line(2.0, 0.01, ref, 1.0) == (ref, ref)              # slack
-    assert follow_current_line(float("nan"), 1.0, ref, 1.0) == (ref, ref)      # non-finite line
-    assert follow_current_line(1.6, float("nan"), ref, 1.0) == (ref, ref)      # non-finite speed
-
-
-def test_slack_rows_before_the_first_reliable_row_are_provisional():
-    """
-    Slack rows at the start are used sign-oriented without becoming the reference;
-    the first reliable row then sets the orientation with the drawn sign.
-    """
-
-    from fw.dynamics.uantwerp_surrogate import follow_current_line
-
-    for sign in (1.0, -1.0):
-        d, ref = follow_current_line(2.5, 0.01, None, sign)                    # slack, noise direction
-        assert ref is None and np.cos(d - 2.5) == pytest.approx(sign)
-        d, ref = follow_current_line(0.2, 1.0, ref, sign)                      # first reliable row
-        assert ref == d and np.cos(d - 0.2) == pytest.approx(sign)
-        d, ref = follow_current_line(0.2 + np.pi, 1.0, ref, sign)              # opposite-tide row: no flip
-        assert np.cos(d - 0.2) == pytest.approx(sign)
-
-
 def test_random_mode_with_a_real_lookup(full_env_model, tmp_path):
     """
     Real WcuLookup and get_env: the current keeps one orientation along the flow line
@@ -673,36 +631,6 @@ def test_episode_end_is_logged_with_outcome_and_conditions(full_env_model, caplo
     assert "wind_speed" in lines[0]
 
 
-def test_current_follower_smooths_cell_noise():
-    """
-    With tau, a line jittering +-17 deg between cells is averaged; without tau it is followed as is.
-    """
-
-    from fw.dynamics.uantwerp_surrogate import CurrentLineFollower
-
-    axes = [0.3 + (0.3 if k % 2 else -0.3) for k in range(400)]
-    raw, smooth = CurrentLineFollower(1.0), CurrentLineFollower(1.0, tau=10.0)
-    raw_dirs = [raw.step(a, 1.0, 0.1) for a in axes]
-    smooth_dirs = [smooth.step(a, 1.0, 0.1) for a in axes]
-    np.testing.assert_allclose(raw_dirs, axes, atol=1e-12)
-    assert np.max(np.abs(np.array(smooth_dirs[1:]) - 0.3)) < np.radians(18.0)       # first step only
-    assert np.max(np.abs(np.array(smooth_dirs[300:]) - 0.3)) < np.radians(3.0)      # after 3 tau
-    assert np.max(np.abs(np.diff(smooth_dirs))) < np.radians(4.0)
-
-
-def test_current_follower_restarts_at_the_first_reliable_row():
-    """
-    A provisional slack direction is not averaged into the real one.
-    """
-
-    from fw.dynamics.uantwerp_surrogate import CurrentLineFollower
-
-    f = CurrentLineFollower(1.0, tau=10.0)
-    assert f.step(2.5, 0.01, 0.1) == pytest.approx(2.5)        # provisional
-    assert f.step(0.2, 1.0, 0.1) == pytest.approx(0.2)         # restart, no blend with 2.5
-    assert f.step(0.2, 1.0, 0.1) == pytest.approx(0.2)
-
-
 def test_random_mode_smooths_the_current_direction(full_env_model):
     """
     In the model input, the current direction is smoothed with env_smoothing_tau; its speed is the drawn one.
@@ -721,3 +649,139 @@ def test_random_mode_smooths_the_current_direction(full_env_model):
     target = 0.3 if sign > 0 else 0.3 - np.pi
     assert np.max(np.abs(np.sin(np.array(dirs[300:]) - target))) < np.radians(3.0)     # after 3 tau
     assert np.min(np.cos(np.array(dirs[300:]) - target)) > 0.99
+
+
+
+# ---------------------------------------------------------------- averaged river line
+
+def _follow(axes, speeds=None, sign=1.0, tau=10.0, dt=0.1):
+    """
+    CurrentLineFollower outputs for a sequence of lookup directions (speed 1 m/s unless given).
+    """
+
+    from fw.dynamics.uantwerp_surrogate import CurrentLineFollower
+
+    f = CurrentLineFollower(sign, tau)
+    return [f.step(a, 1.0 if speeds is None else speeds[k], dt) for k, a in enumerate(axes)]
+
+
+def test_line_starts_at_the_first_reliable_row_with_the_drawn_sign():
+    """
+    None (zero current) for slack and non-finite rows; the first reliable row oriented by the sign.
+    """
+
+    for sign, expected in ((1.0, 0.2), (-1.0, 0.2 - np.pi)):
+        out = _follow([2.5, float("nan"), 0.2, 0.2], speeds=[0.01, 1.0, 1.0, 1.0], sign=sign)
+        assert out[:2] == [None, None]
+        assert out[2] == pytest.approx(expected) and out[3] == pytest.approx(expected)
+
+
+def test_line_ignores_tide_flips_and_cross_flow():
+    """
+    Flood/ebb rows reinforce the line; alternating cross-flow rows only weaken it (direction held).
+    """
+
+    tides = _follow([0.2 + np.pi if k % 2 else 0.2 for k in range(500)])      # starts with 0.2
+    np.testing.assert_allclose(tides, 0.2, atol=1e-9)
+    cross = _follow([0.0] + [np.pi / 2 if k % 2 else 0.0 for k in range(500)])
+    assert np.max(np.abs(np.sin(cross))) < np.sin(np.radians(45.0))
+    assert np.all(np.cos(cross) > 0.0)
+
+
+@pytest.mark.parametrize("case", ["odd_first_row", "slack_over_bend", "eddy"])
+def test_line_never_locks(case):
+    """
+    The reviewer's lock-in cases: the current returns to the river line afterwards.
+    """
+
+    if case == "odd_first_row":           # first reliable row at 90 deg, then a 0/180 deg river
+        out = _follow([np.pi / 2] + [0.0 if k % 2 else np.pi for k in range(3000)])
+        target = 0.0
+    elif case == "slack_over_bend":       # river 0 deg, slack through a 90 deg bend, river 90 deg
+        axes = [0.0] * 100 + [np.pi / 4] * 300 + [np.pi / 2] * 1000
+        out = _follow(axes, speeds=[1.0] * 100 + [0.01] * 300 + [1.0] * 1000)
+        target = np.pi / 2
+    else:                                 # flow turning to 95 deg in an eddy, then the 0 deg river again
+        out = _follow(list(np.radians(np.linspace(0.0, 95.0, 600))) + [0.0] * 2000)
+        target = 0.0
+    assert abs(np.sin(out[-1] - target)) < np.sin(np.radians(2.0))
+
+
+def test_line_is_robust_to_cell_noise():
+    """
+    River at 0 deg with Gaussian noise (25 deg) and random tide per 5 m cell: no reversal, rarely >30 deg off.
+    """
+
+    rng = np.random.default_rng(1)
+    off = 0
+    for _ in range(50):
+        axes = []
+        for _ in range(200):
+            axes += [float(rng.normal(0.0, np.radians(25.0))) + (np.pi if rng.random() < 0.5 else 0.0)] * 12
+        sign = 1.0 if rng.random() < 0.5 else -1.0
+        out = np.array(_follow(axes, sign=sign))
+        assert np.all(np.sign(np.cos(out)) == np.sign(np.cos(out[0])))
+        off += int(np.sum(np.abs(np.sin(out)) > np.sin(np.radians(30.0))))
+    assert off / (50 * 2400) < 0.01
+
+
+def test_random_mode_has_zero_current_until_a_reliable_row(full_env_model):
+    """
+    Slack rows at the episode start give zero current, not the drawn speed in a noise direction.
+    """
+
+    model = _random_ua(full_env_model, seed=3)
+    model.get_env = _env_sequence([_calm(5.0, current_speed=0.01, current_direction=1.0)] * 3
+                                  + [_calm(5.0, current_speed=1.0, current_direction=0.5)])
+    state = make_state(x=1.0, y=2.0, heading=0.0, u=2.0, v=0.0, r=0.0)
+    got = [_raw_env(model, model._build_input_vector(state, 0.0, 0.5)) for _ in range(4)]
+    assert [g[3] for g in got[:3]] == [0.0, 0.0, 0.0]
+    assert got[3][3] == pytest.approx(model._random_current_speed, abs=1e-6)
+
+
+# ---------------------------------------------------------------- episode outcomes
+
+def _env_at_last_checkpoint():
+    """
+    Fossen env (default framework start/target) with the ship on its last checkpoint, steady heading.
+    """
+
+    from fw.common.default_positions import DEFAULT_FRAMEWORK_SHIP_POS, DEFAULT_FRAMEWORK_TARGET_POS
+
+    env = _env(dynamics_model=Model.FOSSEN, start_pos=np.array(DEFAULT_FRAMEWORK_SHIP_POS, dtype=np.float32),
+               target_pos=np.array(DEFAULT_FRAMEWORK_TARGET_POS, dtype=np.float32))
+    env.reset(seed=0)
+    env.checkpoint_index = len(env.checkpoints) - 1
+    pos = np.asarray(env.checkpoints[-1]["pos"], dtype=np.float32)
+    env.ship_pos, env.previous_ship_pos = pos.copy(), pos.copy()
+    env.previous_heading = env.phys_sim.state.heading
+    return env
+
+
+def test_outcome_target_reached_and_passed():
+    """
+    Inside the final circle: target_reached; across its perpendicular line: target_passed.
+    """
+
+    env = _env_at_last_checkpoint()
+    env.ship_in_open_water = lambda *a, **k: True
+    _, done = env._calculate_reward()
+    assert done and env._episode_outcome == "target_reached"
+
+    env = _env_at_last_checkpoint()
+    env.ship_in_open_water = lambda *a, **k: True
+    env.segment_point_distance = lambda *a, **k: 1e9
+    env._is_near_perpendicular_line = lambda *a, **k: True
+    _, done = env._calculate_reward()
+    assert done and env._episode_outcome == "target_passed"
+
+
+def test_failure_takes_precedence_over_reaching_the_target():
+    """
+    Leaving open water in the step that reaches the target is a failure (bank_or_ukc).
+    """
+
+    env = _env_at_last_checkpoint()
+    env.ship_in_open_water = lambda *a, **k: False
+    _, done = env._calculate_reward()
+    assert done and env._episode_outcome == "bank_or_ukc"
