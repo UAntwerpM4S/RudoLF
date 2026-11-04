@@ -177,10 +177,10 @@ CONFIG_PARAMETERS = {
     # the env time step must be a multiple of 0.1 s. "env_smoothing_tau" [s]:
     # moving average of the looked-up UKC (and wind/current with "lookup";
     # with "random" also the time constant of the averaged river line, which
-    # then defaults to 10 s); None = off (e.g. 10.0 for RL). "wind_current" (*_full presets only, no effect otherwise):
-    # "random" = random wind and current per episode (current along the
-    # averaged river line of the lookup), "lookup" = from the lookup CSV at
-    # every step.
+    # then defaults to 10 s); None = off (e.g. 10.0 for RL). "wind_current"
+    # (*_full presets only, no effect otherwise): "random" = random wind and
+    # current per episode (current along the averaged river line of the
+    # lookup), "lookup" = from the lookup CSV at every step.
     'ua_surrogate_config': {"preset": "myzako_confined", "env_smoothing_tau": None, "wind_current": "random"},
     'ugent_surrogate_config': {"ukc_percent": 363},
     # UGent B01 model-scale surrogate (Model.UGENT_B01_SURROGATE, ShipModel.B01).

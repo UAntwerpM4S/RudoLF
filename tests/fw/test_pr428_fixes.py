@@ -176,3 +176,86 @@ def test_bridge_logs_the_replaced_scenario(tmp_path, caplog):
         FhSimBridge(ship_model=ShipModel.MYZAKO_37, output_path=str(tmp_path), wind_current=False).dispose()
     lines = [r.getMessage() for r in caplog.records if "replaces the configured scenario" in r.getMessage()]
     assert len(lines) == 1 and "DDShip_scenario3_windcurrent" in lines[0]
+
+
+def _execute(monkeypatch, blocks, ua_preset):
+    """
+    PipelineScheduler.execute() with config.py's UAntwerp preset set to
+    `ua_preset` and a stubbed _run_block that resolves the block's config and
+    raises like the real one for an unknown preset; returns the metrics.
+    """
+
+    from fw.configuration import config as config_module
+    from fw.scheduling import pipeline_env
+    from fw.scheduling.pipeline_scheduler import PipelineScheduler
+    from fw.surrogate.presets import get_preset
+
+    def load():
+        """
+        config.py with the given UAntwerp preset and dynamics model.
+        """
+
+        cfg = config_module.load_config_parameters()
+        cfg["ua_surrogate_config"] = {"preset": ua_preset}
+        return cfg
+
+    monkeypatch.setattr(pipeline_env, "load_config_parameters", load)
+
+    def run_block(self, block, *_args):
+        """
+        Stand-in for _run_block: fails, as building the env would, on an unknown preset.
+        """
+
+        cfg = pipeline_env.block_framework_config(block, pipeline_env.resolve_block_profile(block))
+        if cfg["dynamics_model"].name == "UANTWERP" and block.env_type == "PySimEnv":
+            get_preset(cfg["ua_surrogate_config"]["preset"])
+        return {"duration": 0.0}
+
+    monkeypatch.setattr(PipelineScheduler, "_run_block", run_block)
+    return PipelineScheduler(agent_mgr=None, blocks=blocks).execute()
+
+
+def _blocks(*raw):
+    """
+    Parsed pipeline blocks (names b0, b1, ...).
+    """
+
+    from fw.scheduling.run_loader import _parse_spec
+
+    return _parse_spec({"blocks": [dict(name=f"b{i}", action="train", **r) for i, r in enumerate(raw)]},
+                       "test").blocks
+
+
+def test_execute_runs_a_lunar_block_under_a_full_preset_config(monkeypatch):
+    """
+    Pre-flight only checks PySimEnv-based blocks: a Lunar block next to a UA full block runs.
+    """
+
+    blocks = _blocks(dict(env_type="PySimEnv", dynamics_model="UANTWERP", ship_model="MYZAKO_37",
+                          wind=True, current=True),
+                     dict(env_type="LunarLander", dynamics_model="UANTWERP"))
+    metrics = _execute(monkeypatch, blocks, "myzako_full")
+    assert [metrics[b]["status"] for b in ("b0", "b1")] == ["success", "success"]
+
+
+def test_execute_leaves_a_preset_typo_to_its_block(monkeypatch):
+    """
+    An unknown preset is not raised by pre-flight: that block fails, the next one still runs.
+    """
+
+    blocks = _blocks(dict(env_type="PySimEnv", dynamics_model="UANTWERP", ship_model="MYZAKO_37"),
+                     dict(env_type="PySimEnv"))
+    metrics = _execute(monkeypatch, blocks, "myzako_confinedd")
+    assert metrics["b0"]["status"] == "failure" and "myzako_confinedd" in metrics["b0"]["error"]
+    assert metrics["b1"]["status"] == "success"
+
+
+def test_execute_stops_before_any_block_on_a_wind_current_mismatch(monkeypatch):
+    """
+    A full preset with the flags off in a later block stops the run before the first block.
+    """
+
+    blocks = _blocks(dict(env_type="PySimEnv"),
+                     dict(env_type="PySimEnv", dynamics_model="UANTWERP", ship_model="MYZAKO_37"))
+    with pytest.raises(ValueError, match="must be enabled"):
+        _execute(monkeypatch, blocks, "myzako_full")

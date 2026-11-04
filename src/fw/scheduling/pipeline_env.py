@@ -96,6 +96,10 @@ def resolve_block_profile(block: PipelineBlock) -> VesselProfile:
     return profile
 
 
+# Environments built from the framework config's ua_surrogate_config (PySimEnv based).
+_UA_CONFIG_ENVS = frozenset({py_sim_env_name, multi_sim_env_name, fh_sim_env_name, sync_sim_env_name})
+
+
 def block_framework_config(block: PipelineBlock, profile: VesselProfile) -> Dict[str, Any]:
     """
     The block's framework configuration: config.py, the block's wind/current
@@ -112,20 +116,30 @@ def block_framework_config(block: PipelineBlock, profile: VesselProfile) -> Dict
 def check_block_wind_current(block: PipelineBlock, framework_config: Dict[str, Any]) -> None:
     """
     Wind/current combinations that PySimEnv would only refuse when the block's
-    environment is built: a full_env UAntwerp preset with the flags off, or the
-    realtime simSync environment (no wind/current support) with them on.
+    environment is built: a full_env UAntwerp preset with the flags off (only
+    for the PySimEnv-based environments, which use ua_surrogate_config), or the
+    realtime simSync environment (no wind/current support) with them on. Any
+    other problem (unknown environment or preset) is left to the block.
 
     Raises:
         ValueError: For either combination.
     """
 
-    canonical_name = resolve_environment_name(block.env_type)
+    try:
+        canonical_name = resolve_environment_name(block.env_type)
+    except Exception:
+        return
     if canonical_name == sync_sim_env_name and block.wind:
         raise ValueError(f"Block '{block.name}': {sync_sim_env_name} does not support wind and current; "
                          f"disable them.")
+    if canonical_name not in _UA_CONFIG_ENVS:
+        return
     ua_config = framework_config.get("ua_surrogate_config") or {}
     if framework_config.get("dynamics_model") == Model.UANTWERP and "preset" in ua_config and not block.wind:
-        preset = get_preset(ua_config["preset"])
+        try:
+            preset = get_preset(ua_config["preset"])
+        except ValueError:
+            return
         if preset.scenario.includes_wind_current:
             raise ValueError(f"Block '{block.name}': UAntwerp surrogate preset '{preset.name}' simulates wind and "
                              f"current, so wind and current must be enabled.")

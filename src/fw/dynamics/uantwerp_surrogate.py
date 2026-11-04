@@ -567,7 +567,7 @@ class UAntwerpSurrogate(DynamicsBase):
             cd = self._random_current.step(float(env.current_direction), float(env.current_speed), SURROGATE_DT)
             # Zero current until the first reliable row (slack water at the start).
             cs, cd = (0.0, 0.0) if cd is None else (self._random_current_speed, cd)
-            self._random_current_applied = self._random_current_applied or cd is not None and cs > 0.0
+            self._random_current_applied = self._random_current_applied or cs > 0.0
         return EnvironmentData(ukc=env.ukc, wind_speed=ws, wind_direction=wd, current_speed=cs,
                                current_direction=cd)
 

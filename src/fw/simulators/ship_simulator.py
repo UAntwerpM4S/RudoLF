@@ -39,13 +39,13 @@ class ShipSimulator(BaseSimulator):
                  surge_limits: Optional[Tuple[float, float]] = None):
         """
         Args:
-            specs:     Vessel dimensions, actuator limits and kinematic constraints
-                       (kept by reference: profiles patch it in place).
-            dynamics:  DynamicsBase implementing step().
-            dt:        Environment time step [s], positive.
+            specs:        Vessel dimensions, actuator limits and kinematic constraints
+                          (kept by reference: profiles patch it in place).
+            dynamics:     DynamicsBase implementing step().
+            dt:           Environment time step [s], positive.
             surge_limits: (low, high) [m/s] replacing specs.surge_limits in
-                       the clip (e.g. over-ground surge with a current); None
-                       uses the specs.
+                          the clip (e.g. over-ground surge with a current);
+                          None uses the specs.
 
         Raises:
             ValueError: dt not a multiple of PHYSICS_DT for UAntwerpSurrogate, or
