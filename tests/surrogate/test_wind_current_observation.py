@@ -671,3 +671,53 @@ def test_episode_end_is_logged_with_outcome_and_conditions(full_env_model, caplo
     lines = [r.getMessage() for r in caplog.records if "episode end" in r.getMessage()]
     assert len(lines) == 1 and "outcome=max_steps" in lines[0] and "success=False" in lines[0]
     assert "wind_speed" in lines[0]
+
+
+def test_current_follower_smooths_cell_noise():
+    """
+    With tau, a line jittering +-17 deg between cells is averaged; without tau it is followed as is.
+    """
+
+    from fw.dynamics.uantwerp_surrogate import CurrentLineFollower
+
+    axes = [0.3 + (0.3 if k % 2 else -0.3) for k in range(400)]
+    raw, smooth = CurrentLineFollower(1.0), CurrentLineFollower(1.0, tau=10.0)
+    raw_dirs = [raw.step(a, 1.0, 0.1) for a in axes]
+    smooth_dirs = [smooth.step(a, 1.0, 0.1) for a in axes]
+    np.testing.assert_allclose(raw_dirs, axes, atol=1e-12)
+    assert np.max(np.abs(np.array(smooth_dirs[1:]) - 0.3)) < np.radians(18.0)       # first step only
+    assert np.max(np.abs(np.array(smooth_dirs[300:]) - 0.3)) < np.radians(3.0)      # after 3 tau
+    assert np.max(np.abs(np.diff(smooth_dirs))) < np.radians(4.0)
+
+
+def test_current_follower_restarts_at_the_first_reliable_row():
+    """
+    A provisional slack direction is not averaged into the real one.
+    """
+
+    from fw.dynamics.uantwerp_surrogate import CurrentLineFollower
+
+    f = CurrentLineFollower(1.0, tau=10.0)
+    assert f.step(2.5, 0.01, 0.1) == pytest.approx(2.5)        # provisional
+    assert f.step(0.2, 1.0, 0.1) == pytest.approx(0.2)         # restart, no blend with 2.5
+    assert f.step(0.2, 1.0, 0.1) == pytest.approx(0.2)
+
+
+def test_random_mode_smooths_the_current_direction(full_env_model):
+    """
+    In the model input, the current direction is smoothed with env_smoothing_tau; its speed is the drawn one.
+    """
+
+    model = _random_ua(full_env_model, seed=0, env_smoothing_tau=10.0)
+    sign = model._random_current_sign
+    rows = [_calm(5.0, current_speed=1.0, current_direction=0.3 + (0.3 if k % 2 else -0.3)) for k in range(400)]
+    model.get_env = _env_sequence(rows)
+    state = make_state(x=1.0, y=2.0, heading=0.0, u=2.0, v=0.0, r=0.0)
+    dirs = []
+    for _ in range(400):
+        got = _raw_env(model, model._build_input_vector(state, 0.0, 0.5))
+        assert got[3] == pytest.approx(model._random_current_speed, abs=1e-6)
+        dirs.append(got[4])
+    target = 0.3 if sign > 0 else 0.3 - np.pi
+    assert np.max(np.abs(np.sin(np.array(dirs[300:]) - target))) < np.radians(3.0)     # after 3 tau
+    assert np.min(np.cos(np.array(dirs[300:]) - target)) > 0.99

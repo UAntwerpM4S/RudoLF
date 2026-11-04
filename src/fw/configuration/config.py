@@ -175,8 +175,8 @@ CONFIG_PARAMETERS = {
     # lookup, full = UKC + wind + current lookup (.csv.gz). Optional overrides:
     # "checkpoint", "lookup_csv". The preset's ship must equal 'ship_model' and
     # the env time step must be a multiple of 0.1 s. "env_smoothing_tau" [s]:
-    # moving average of the looked-up UKC (and wind/current with "lookup");
-    # None = off. "wind_current" (*_full presets only, no effect otherwise):
+    # moving average of the looked-up UKC (and wind/current with "lookup",
+    # the current direction with "random"); None = off. "wind_current" (*_full presets only, no effect otherwise):
     # "random" = random wind and current per episode (current along the
     # lookup's flow line), "lookup" = from the lookup CSV at every step.
     'ua_surrogate_config': {"preset": "myzako_confined", "env_smoothing_tau": 10.0, "wind_current": "random"},

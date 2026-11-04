@@ -51,14 +51,15 @@ ship's position (follow_current_line): the drawn sign orients it at the
 first reliable row (at least CURRENT_AXIS_MIN_SPEED), then the orientation
 closest to the previous reliable direction is used; slack rows and lines
 turning more than CURRENT_AXIS_MAX_TURN_DEG from it keep that direction.
-Slack rows before the first reliable one are used provisionally (sign-oriented). Without a lookup the current is zero. UKC still comes from the
+Slack rows before the first reliable one are used provisionally (sign-oriented).
+With env_smoothing_tau the direction is averaged over time (CurrentLineFollower). Without a lookup the current is zero. UKC still comes from the
 lookup. episode_conditions() reports the draw. For presets without
 wind/current the setting has no effect.
 
 Smoothing (env_smoothing_tau, meant for RL): the model input then gets an
 exponential moving average (time constant tau) of the UKC and, with "lookup",
-the earth-fixed true wind and the earth-fixed current, restarted by
-reset_episode(); the wind is converted back to this ship's apparent wind.
+the earth-fixed true wind and the earth-fixed current ("random": UKC and the
+current direction only), restarted by reset_episode(); the wind is converted back to this ship's apparent wind.
 get_env and get_ukc(pos) stay raw; get_ukc(None) returns the UKC of the last
 model input. observed_wind_current() reports the wind and current of the
 last model input.
@@ -211,6 +212,45 @@ def follow_current_line(axis: float, axis_speed: float, ref_dir: Optional[float]
     return direction, direction
 
 
+class CurrentLineFollower:
+    """
+    Direction of one episode's "random" current: follow_current_line per step,
+    optionally smoothed by an exponential moving average of the direction's
+    unit vector (time constant `tau` [s], None = off). The average restarts
+    when the first reliable row sets the reference, so a provisional slack
+    direction never mixes with the real one.
+    """
+
+    def __init__(self, sign: float, tau: Optional[float] = None):
+        """
+        Args:
+            sign: Flood/ebb orientation (+1 or -1) for the first reliable row.
+            tau: Smoothing time constant [s], None for none.
+        """
+
+        self.sign = float(sign)
+        self.tau = tau
+        self.ref: Optional[float] = None
+        self._vec: Optional[np.ndarray] = None
+
+    def step(self, axis: float, axis_speed: float, dt: float) -> float:
+        """
+        Direction [rad, flowing toward, in [-pi, pi)] after a step of `dt` [s]
+        at a lookup row with current line `axis` and speed `axis_speed`.
+        """
+
+        had_ref = self.ref is not None
+        direction, self.ref = follow_current_line(axis, axis_speed, self.ref, self.sign)
+        if self.tau is None:
+            return direction
+        unit = np.array([np.cos(direction), np.sin(direction)])
+        if self._vec is None or (not had_ref and self.ref is not None):
+            self._vec = unit
+        else:
+            self._vec = self._vec + (1.0 - np.exp(-dt / self.tau)) * (unit - self._vec)
+        return float(np.arctan2(self._vec[1], self._vec[0]))
+
+
 def make_scenario_lookup(csv, scenario, preset_name: str = "?") -> WcuLookup:
     """
     WcuLookup on `csv`, reading only the columns `scenario` needs.
@@ -323,13 +363,13 @@ class UAntwerpSurrogate(DynamicsBase):
         # Per episode (reset_episode): moving average and last model input,
         # both as [ukc, true wind x, y, current x, y] (earth-fixed), and the
         # "random" draw: true wind world vector, current speed and sign, and
-        # the current's reference direction (last reliable row, see follow_current_line).
+        # the current's direction follower (CurrentLineFollower).
         self._env_ema: Optional[np.ndarray] = None
         self._env_world: Optional[np.ndarray] = None
         self._random_wind_world: Optional[np.ndarray] = None
         self._random_current_speed = 0.0
         self._random_current_sign = 1.0
-        self._random_current_dir: Optional[float] = None
+        self._random_current: Optional[CurrentLineFollower] = None
         if ship_model is not None and ship_model != self.preset.ship_model:
             raise ValueError(f"UAntwerp surrogate preset '{self.preset.name}' is for "
                              f"{self.preset.ship_model.name}, but ship_model={ship_model.name}.")
@@ -480,8 +520,8 @@ class UAntwerpSurrogate(DynamicsBase):
         """
         Environment for the model input at `pos`: get_env, with this episode's
         wind and current instead with "random", smoothed with env_smoothing_tau
-        if set (one update per call, i.e. per SURROGATE_DT step; only the UKC
-        with "random"). Remembers it for observed_wind_current; self.ukc becomes
+        if set (one update per call, i.e. per SURROGATE_DT step; with "random"
+        only the UKC here, the current direction in CurrentLineFollower). Remembers it for observed_wind_current; self.ukc becomes
         the UKC used.
         """
 
@@ -496,7 +536,8 @@ class UAntwerpSurrogate(DynamicsBase):
             else:
                 alpha = 1.0 - np.exp(-SURROGATE_DT / self.env_smoothing_tau)
                 self._env_ema = self._env_ema + alpha * (world - self._env_ema)
-            # "random": constant wind/current per episode, only the UKC is smoothed.
+            # "random": wind/current come from the episode draw (current direction
+            # smoothed by CurrentLineFollower), so only the UKC is averaged here.
             world = np.concatenate([self._env_ema[:1], world[1:]]) if use_random else self._env_ema
             env = self._world_to_env(world, state)
             self.ukc = env.ukc
@@ -528,9 +569,7 @@ class UAntwerpSurrogate(DynamicsBase):
         if self.wcu_lookup is None:
             cs, cd = 0.0, 0.0
         else:
-            cd, self._random_current_dir = follow_current_line(float(env.current_direction),
-                                                               float(env.current_speed),
-                                                               self._random_current_dir, self._random_current_sign)
+            cd = self._random_current.step(float(env.current_direction), float(env.current_speed), SURROGATE_DT)
             cs = self._random_current_speed
         return EnvironmentData(ukc=env.ukc, wind_speed=ws, wind_direction=wd, current_speed=cs,
                                current_direction=cd)
@@ -611,13 +650,14 @@ class UAntwerpSurrogate(DynamicsBase):
         self._env_world = None
         self.ukc = self.default_ukc
         self._random_wind_world = None
-        self._random_current_dir = None
+        self._random_current = None
         if self._uses_random_wind_current and rng is not None:
             wind_dir = float(rng.uniform(0.0, 2.0 * np.pi))
             wind_speed = float(np.clip(np.abs(rng.normal(0.0, RANDOM_WIND_SPEED_SIGMA)), 0.0, RANDOM_WIND_SPEED_MAX))
             self._random_wind_world = wind_speed * np.array([np.cos(wind_dir), np.sin(wind_dir)])
             self._random_current_speed = float(rng.uniform(0.0, RANDOM_CURRENT_SPEED_MAX))
             self._random_current_sign = 1.0 if rng.random() < 0.5 else -1.0
+            self._random_current = CurrentLineFollower(self._random_current_sign, self.env_smoothing_tau)
 
     def _note_lookup_distance(self, pos, distance: float) -> None:
         """
