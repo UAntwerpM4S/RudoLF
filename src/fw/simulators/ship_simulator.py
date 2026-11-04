@@ -8,7 +8,6 @@ from fw.dynamics.dynamics_model import DynamicsBase
 from fw.simulators.base_simulator import BaseSimulator
 from fw.dynamics.fh_tabular_model import FhTabularModel
 from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
-from fw.simulators.fh_interface_utils import fh_heading_to_env_rad
 from fw.surrogate.schema import SURROGATE_DT
 
 
@@ -148,15 +147,14 @@ class ShipSimulator(BaseSimulator):
             self.integrate(actuator, dt_rem, enable_rudder_angle_scaling)
 
         if isinstance(self._dynamics, FhTabularModel):
-            fh_pos = self._dynamics._engine.ship_interface.getShipPosition()
-            fh_hdg = fh_heading_to_env_rad(self._dynamics._engine.ship_interface.getShipHeading())
+            fh_x, fh_y, fh_hdg, *_ = self._dynamics.read_state()
 
             s = self._state
             self._state = VesselState(
                 terminated=s.terminated,
                 truncated=s.truncated,
-                x=fh_pos.x,
-                y=fh_pos.y,
+                x=fh_x,
+                y=fh_y,
                 heading=fh_hdg,
                 u=s.u,
                 v=s.v,

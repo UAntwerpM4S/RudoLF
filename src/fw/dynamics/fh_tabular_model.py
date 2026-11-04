@@ -139,6 +139,22 @@ class FhTabularModel(DynamicsBase):
 
         return float(vel.x), float(vel.y), float(yaw_rate)
 
+    def read_state(self) -> Tuple[float, float, float, float, float, float]:
+        """
+        FH's ship state in framework conventions (the single place it is read
+        for ShipSimulator.step and PySimEnv's episode start).
+
+        Returns:
+            (x [m], y [m], heading [rad, 0 = East, CCW], u [m/s], v [m/s, port
+            positive], r [rad/s, CCW positive]).
+        """
+
+        ship_interface = self._engine.ship_interface
+        pos = ship_interface.getShipPosition()
+        vel = ship_interface.getShipVelocityOverGround()
+        return (float(pos.x), float(pos.y), fh_heading_to_env_rad(ship_interface.getShipHeading()),
+                float(vel.x), float(vel.y), float(np.radians(ship_interface.getShipYawRate())))
+
     def observed_wind_current(self, state: VesselState) -> np.ndarray:
         """
         FH's wind and current at its own ship (see DynamicsBase): WindState and

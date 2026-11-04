@@ -52,7 +52,13 @@ def suggest_scales(columns: Dict[str, np.ndarray], percentile: float) -> Dict[st
     """
     Per quantity ("wind", "current"): the percentile of max(|ahead|, |stbd|),
     the maximum, and the share of finite rows above that percentile.
+
+    Raises:
+        ValueError: If `percentile` is outside [0, 100] or a quantity has no finite rows.
     """
+
+    if not 0.0 <= percentile <= 100.0:
+        raise ValueError(f"percentile must be in [0, 100], got {percentile}.")
 
     wa, ws, ca, cs = env_body_components(columns["wind_speed"], columns["wind_direction"],
                                          columns["current_speed"], columns["current_direction"],
@@ -61,6 +67,8 @@ def suggest_scales(columns: Dict[str, np.ndarray], percentile: float) -> Dict[st
     for name, a, b in (("wind", wa, ws), ("current", ca, cs)):
         m = np.maximum(np.abs(a), np.abs(b))
         m = m[np.isfinite(m)]
+        if m.size == 0:
+            raise ValueError(f"No finite {name} rows in the given CSV(s).")
         p = float(np.percentile(m, percentile))
         out[name] = {"percentile": p, "max": float(m.max()), "clipped_share": float(np.mean(m > p)),
                      "rows": int(m.size)}

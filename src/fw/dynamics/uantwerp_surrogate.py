@@ -459,11 +459,13 @@ class UAntwerpSurrogate(DynamicsBase):
 
     def reset_episode(self) -> None:
         """
-        Restart the environment smoothing and forget the last model input.
+        Restart the environment smoothing and forget the last model input
+        (get_ukc(None) returns the default UKC until the next one).
         """
 
         self._env_ema = None
         self._env_world = None
+        self.ukc = self.default_ukc
 
     def _note_lookup_distance(self, pos, distance: float) -> None:
         """

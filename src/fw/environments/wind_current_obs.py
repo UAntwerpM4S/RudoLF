@@ -15,10 +15,11 @@ import numpy as np
 WIND_CURRENT_OBS_NAMES = ("wind_from_ahead", "wind_from_stbd", "current_to_ahead", "current_to_stbd")
 WIND_CURRENT_OBS_DIM = len(WIND_CURRENT_OBS_NAMES)
 
-# PLACEHOLDER scales [m/s], to be replaced by the values printed by
-# fw.surrogate.compute_wind_current_obs_scales on the full_env datasets.
-WIND_OBS_SCALE = 30.0
-CURRENT_OBS_SCALE = 2.0
+# Scales [m/s]: p99.9 of max(|ahead|, |stbd|) from fw.surrogate.compute_wind_current_obs_scales
+# on the tripoli_full and myzako_full datasets (19.2 M rows, 0.1 % clipped; maxima
+# 36.8 m/s wind, 2.71 m/s current).
+WIND_OBS_SCALE = 26.6
+CURRENT_OBS_SCALE = 2.12
 
 
 def normalize_wind_current(components: np.ndarray) -> np.ndarray:

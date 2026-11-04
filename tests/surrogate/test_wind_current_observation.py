@@ -325,3 +325,31 @@ def test_env_reset_restarts_the_smoothing(full_env_model):
     env.reset(seed=1)
     assert env.dynamics._env_ema[0] == pytest.approx(env.dynamics.default_ukc)
     np.testing.assert_array_equal(env.dynamics._env_ema[1:], np.zeros(4))
+
+
+def test_reset_episode_restores_the_default_ukc(full_env_model):
+    """
+    After reset_episode, get_ukc(None) no longer returns the previous episode's (smoothed) UKC.
+    """
+
+    model = _ua(full_env_model, env_smoothing_tau=2.0)
+    model.get_env = _env_sequence([_calm(4.0)])
+    model._build_input_vector(make_state(x=1.0, y=2.0, heading=0.0, u=2.0, v=0.0, r=0.0), 0.0, 0.5)
+    assert model.get_ukc(None) == pytest.approx(4.0)
+    model.reset_episode()
+    assert model.get_ukc(None) == model.default_ukc
+
+
+def test_scale_script_refuses_bad_input():
+    """
+    compute_wind_current_obs_scales: percentile outside [0, 100] or no finite rows raise ValueError.
+    """
+
+    from fw.surrogate.compute_wind_current_obs_scales import suggest_scales
+
+    cols = {c: np.ones(3) for c in ("heading", "wind_speed", "wind_direction", "current_speed", "current_direction")}
+    with pytest.raises(ValueError, match="percentile"):
+        suggest_scales(cols, 101.0)
+    with pytest.raises(ValueError, match="No finite wind"):
+        suggest_scales(dict(cols, wind_speed=np.full(3, np.nan)), 99.9)
+    assert suggest_scales(cols, 99.9)["wind"]["rows"] == 3

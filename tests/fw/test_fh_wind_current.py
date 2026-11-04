@@ -440,3 +440,15 @@ def test_failed_initial_warm_up_disposes_the_model(tmp_path, monkeypatch):
         bridge.reset(wind_rng=np.random.default_rng(0))
     assert bridge.initialize_math_model and not bridge.math_model_initialized
     bridge.dispose()
+
+
+def test_read_state_in_framework_conventions():
+    """
+    FhTabularModel.read_state: position, heading in rad (math convention), body velocities, yaw rate in rad/s.
+    """
+
+    from fw.dynamics.fh_tabular_model import FhTabularModel
+    from fw.ships.ship_factory import create_ship
+
+    model = FhTabularModel(create_ship(ShipModel.MYZAKO_37).specifications, _FakeEnvBridge())
+    np.testing.assert_allclose(model.read_state(), [2250.0, -40.0, np.pi / 2, 2.0, 0.5, np.radians(0.5)])

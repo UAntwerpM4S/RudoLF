@@ -129,7 +129,8 @@ class PySimEnv(BaseEnv):
     commands in [-1, 1] are set through it. Any object with FhSimBridge's duck-typed
     interface (ship_model, ship_interface, math_model, initial_vessel_state, reset(),
     dispose()) works, e.g. FhSimBridge (local math model) or SimSyncBridge (realtime
-    UDP link to simSync). For other models self._fh_sim is None.
+    UDP link to simSync). For other models self._fh_sim is None. With FH, reset()
+    starts the episode from FH's actual state after the bridge's reset.
 
     Wind and current (wind = current = True, both or neither): the observation
     gets 4 features (fw.environments.wind_current_obs) from
@@ -225,11 +226,16 @@ class PySimEnv(BaseEnv):
                     "non-FH_TABULAR dynamics_model for pure-Python simulation "
                     "without external dependencies."
                 )
-            bridge_wind_current = bool(getattr(fh_bridge, "wind_current", False))
-            if bridge_wind_current != bool(wind):
+            if not hasattr(fh_bridge, "wind_current"):
+                if wind:
+                    raise ValueError(
+                        f"wind={wind}/current={current}: the FH bridge {type(fh_bridge).__name__} does not "
+                        f"support wind and current (no wind_current setting); disable them."
+                    )
+            elif bool(fh_bridge.wind_current) != bool(wind):
                 raise ValueError(
                     f"wind={wind}/current={current}, but the FH bridge {type(fh_bridge).__name__} has "
-                    f"wind_current={bridge_wind_current}: its exercise must match the flags "
+                    f"wind_current={fh_bridge.wind_current}: its exercise must match the flags "
                     f"(FhSimBridge(wind_current=...))."
                 )
             self._fh_sim = fh_bridge
@@ -1252,8 +1258,26 @@ class PySimEnv(BaseEnv):
 
         self.env_specific_reset()
         self._initialize_simulation()
+        if self._fh_sim is not None:
+            self._sync_initial_state_from_fh()
 
         return self._get_obs(), {}
+
+    def _sync_initial_state_from_fh(self) -> None:
+        """
+        Start the episode from FH's actual state after its reset (which simulates
+        the initialization step and, with wind and current, WIND_WARMUP_TIME):
+        position, heading, surge, sway and yaw rate (FhTabularModel.read_state).
+        """
+
+        x, y, heading, u, v, r = self.dynamics.read_state()
+        self.phys_sim.reset(VesselState(terminated=False, truncated=False, x=x, y=y, heading=heading, u=u, v=v, r=r))
+        self._agent_state = self.phys_sim.state
+        self.ship_pos = np.array([self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32)
+        self.previous_ship_pos = self.ship_pos.copy()
+        self.ship_heading = self.phys_sim.state.heading
+        self.heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
+        self.velocities = self.phys_sim.state.u
 
     def _get_obs(self) -> np.ndarray:
         """
