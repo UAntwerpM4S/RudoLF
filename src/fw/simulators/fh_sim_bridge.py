@@ -5,6 +5,12 @@ import numpy as np
 
 from typing import Optional
 from fw.ships.ship_factory import ShipModel, require_fh_supported
+from fw.simulators.fh_interface_utils import (
+    WIND_WARMUP_TIME,
+    draw_wind_field_transform,
+    fh_exercise_base,
+    fh_true_wind_speed,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -28,6 +34,12 @@ class FhSimBridge:
     simulator: initial conditions are set before init, the model is rewound
     between episodes, and the state is read after each step.
 
+    With wind_current, the exercise with wind and current is loaded and every
+    reset() draws a new wind-field transform (draw_wind_field_transform) that
+    holds for the whole episode; the current and tide stay the exercise's.
+    The first rewind verifies once that FH applies a transform set after
+    SimulateRewindTo (WIND_PROBE_SCALE); otherwise reset() raises.
+
     Attributes:
         initialize_math_model (bool): True when the math model needs (re)initialization.
         math_model_initialized (bool): True only after a successful Initialize() call.
@@ -36,6 +48,11 @@ class FhSimBridge:
     """
 
     SNAPSHOT_WINDOW = 100000  # Maximum rewind window [s] (~27 h)
+    # Rewind check: true wind at Scale WIND_PROBE_SCALE must exceed the one at
+    # Scale 0 by WIND_PROBE_MIN_DIFF (about 1.1 m/s per unit Scale was measured
+    # for the Tripoli exercise, see model_comparison_wind).
+    WIND_PROBE_SCALE = 10.0
+    WIND_PROBE_MIN_DIFF = 2.0  # m/s
 
     def __init__(self,
                  ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
@@ -44,14 +61,16 @@ class FhSimBridge:
                  config_path=None,
                  exercise_path=None,
                  output_path=None,
-                 rewind_enabled: bool = True):
+                 rewind_enabled: bool = True,
+                 wind_current: bool = False):
         """
         Resolve file paths and set up logging. The math model itself is
         initialized lazily on the first reset().
 
         Args:
             ship_model (ShipModel): Determines the scenario file suffix.
-            scenario (str): Base scenario name, matched against .tab files.
+            scenario (str): Base scenario name without wind and current,
+                matched against .tab files (not used for the Tripoli).
             library_path (str, optional): Path to the SimAPI native library.
             config_path (str, optional): Path to simXdrive.config.xml.
             exercise_path (str, optional): Explicit path to the .tab exercise file.
@@ -59,6 +78,9 @@ class FhSimBridge:
             rewind_enabled (bool): Keep FH snapshots so reset() can rewind
                 between episodes. If False (as in sim_fh_dataset_generator),
                 reset() works only once.
+            wind_current (bool): Load the exercise with wind and current
+                (fh_exercise_base) and randomize the wind field per episode;
+                reset() then needs a wind_rng.
 
         Initial-condition attributes (set before the first reset(); None keeps
         the exercise's value):
@@ -78,10 +100,12 @@ class FhSimBridge:
             "database/areas/ScheldeSaeftinge_23_002/invoer/tra"
         )
 
+        self.wind_current = bool(wind_current)
+        scenario = fh_exercise_base(ship_model, scenario, self.wind_current)
         if ship_model == ShipModel.MYZAKO_DEFAULT:
             scenario_suffix = f"{scenario}_default"
         elif ship_model == ShipModel.TRIPOLI:
-            scenario_suffix = "DDShip_Tripoli_scenario_nowindnocurrent"
+            scenario_suffix = scenario
         else:
             scenario_suffix = f"{scenario}_{ship_model.name.lower()}"
 
@@ -91,6 +115,12 @@ class FhSimBridge:
         self.initial_propeller_rps: Optional[float] = None
         self.initial_rudder_angle: Optional[float] = None          # degrees
         self.initial_wind_field_transform: Optional[tuple] = None  # (rotation_deg, scale, offset)
+        # Wind-field transform of the current episode (wind_current only) and
+        # whether a transform set after a rewind was verified to take effect.
+        self.episode_wind_field_transform: Optional[tuple] = None
+        self._rewind_wind_verified = False
+        # True once reset() set initial_wind_field_transform itself (wind_current).
+        self._owns_initial_wind_transform = False
         self.library_path  = library_path  or os.path.join(simexe_path, 'exe/installed')
         self.config_path   = config_path   or os.path.join(simexe_path, 'config/simXdrive.config.xml')
         self.output_path   = output_path   or os.path.join(
@@ -317,7 +347,7 @@ class FhSimBridge:
 
         control = self._math_model.getEnvironmentInterface().getWindFieldControl()
         if control is None:
-            raise RuntimeError("initial_wind_field_transform is set, but the exercise "
+            raise RuntimeError("A wind-field transform is requested, but the exercise "
                                f"'{self.exercise_path}' has no wind field control.")
         transform = control.getFieldTransform()
         transform.Rotation = float(rotation)
@@ -358,26 +388,54 @@ class FhSimBridge:
         return self._ship_interface
 
 
-    def reset(self, time_point: float = 0.25):
+    def reset(self, time_point: float = 0.25, wind_rng: Optional[np.random.Generator] = None):
         """
         Reset the simulation.
 
         The first call initializes the math model from initial_vessel_state;
-        later calls rewind to time_point using the snapshots.
+        later calls rewind to time_point using the snapshots. With wind_current,
+        a new wind-field transform is drawn from wind_rng and WIND_WARMUP_TIME
+        is simulated, so the episode starts WIND_WARMUP_TIME after the reset point.
 
         Args:
             time_point (float): Simulation time [s] to rewind to, at least
                 0.25 s (SimAPI cannot rewind to t=0) and at most the current
                 simulation time (not checked here).
+            wind_rng: Random generator for the wind field; required with
+                wind_current, ignored otherwise.
 
         Raises:
-            RuntimeError: If time_point < 0.25 s, rewind is disabled, or
-                initialization fails.
+            ValueError: wind_current without wind_rng, or with a user-set
+                initial_wind_field_transform.
+            RuntimeError: If time_point < 0.25 s, rewind is disabled,
+                initialization fails, or the wind-field transform has no effect.
         """
 
+        if self.wind_current and wind_rng is None:
+            raise ValueError("FhSimBridge with wind_current=True needs a wind_rng in reset().")
+        if self.wind_current and self.initial_wind_field_transform is not None \
+                and not self._owns_initial_wind_transform:
+            raise ValueError("initial_wind_field_transform must not be set with wind_current=True: "
+                             "reset() draws the wind field per episode.")
+        transform = draw_wind_field_transform(wind_rng) if self.wind_current else None
+
         if self.initialize_math_model:
+            if transform is not None:
+                # Applied in _initialize_math_model before the first simulateSeconds().
+                self.initial_wind_field_transform = (transform[0], transform[1], 0.0)
+                self._owns_initial_wind_transform = True
             self._initialize_math_model(snapshot_window=self.SNAPSHOT_WINDOW, snapshot_frequency=5000)
-        elif not self.rewind_enabled:
+            if transform is not None:
+                try:
+                    self._warm_up_wind()
+                except BaseException:
+                    # As for other init failures: the next reset() re-initializes.
+                    self._dispose_math_model()
+                    raise
+                self.episode_wind_field_transform = self.initial_wind_field_transform
+            return
+
+        if not self.rewind_enabled:
             raise RuntimeError(
                 "FhSimBridge was created with rewind_enabled=False, so it cannot rewind; "
                 "dispose() it and create a new bridge for the next episode."
@@ -399,6 +457,75 @@ class FhSimBridge:
                 )
 
             self._math_model.SimulateRewindTo(time_point)
+
+        if transform is not None:
+            if not self._rewind_wind_verified:
+                self._verify_rewind_wind_transform(time_point)
+            self._apply_wind_field_transform(transform[0], transform[1], 0.0)
+            self._warm_up_wind()
+            self.episode_wind_field_transform = (transform[0], transform[1], 0.0)
+
+
+    def _warm_up_wind(self) -> None:
+        """
+        Simulate WIND_WARMUP_TIME after a wind-field transform was set.
+
+        Raises:
+            RuntimeError: If WindState is bit-identical before and after (it
+                still shows the previous wind, as in sim_fh_dataset_generator).
+        """
+
+        before = self._wind_state_tuple()
+        self.math_model.simulateSeconds(WIND_WARMUP_TIME)
+        after = self._wind_state_tuple()
+        if after == before:
+            raise RuntimeError(
+                f"FH WindState unchanged after WIND_WARMUP_TIME={WIND_WARMUP_TIME} s ({after}): "
+                f"the wind-field transform did not take effect (or needs a longer warm-up)."
+            )
+
+
+    def _wind_state_tuple(self) -> tuple:
+        """
+        (Speed, Direction) of FH's current WindState.
+        """
+
+        wind_state = self.ship_interface.getWindState()
+        return float(wind_state.Speed), float(wind_state.Direction)
+
+
+    def _verify_rewind_wind_transform(self, time_point: float) -> None:
+        """
+        One-time check that a wind-field transform set after SimulateRewindTo
+        takes effect: from the same rewound state, Scale WIND_PROBE_SCALE must
+        give a clearly stronger true wind than Scale 0. Leaves the model rewound
+        to time_point.
+
+        Raises:
+            RuntimeError: If the difference is below WIND_PROBE_MIN_DIFF or not finite.
+        """
+
+        speeds = []
+        for i, scale in enumerate((0.0, self.WIND_PROBE_SCALE)):
+            if i > 0:
+                self._math_model.SimulateRewindTo(time_point)
+            self._apply_wind_field_transform(0.0, scale, 0.0)
+            self.math_model.simulateSeconds(WIND_WARMUP_TIME)
+            speeds.append(fh_true_wind_speed(self.ship_interface))
+        self._math_model.SimulateRewindTo(time_point)
+
+        diff = speeds[1] - speeds[0]
+        if not np.isfinite(diff) or diff < self.WIND_PROBE_MIN_DIFF:
+            raise RuntimeError(
+                f"FH ignores a wind-field transform set after SimulateRewindTo: true wind "
+                f"{speeds[0]:.2f} m/s at Scale 0 and {speeds[1]:.2f} m/s at Scale "
+                f"{self.WIND_PROBE_SCALE:g} (expected a difference of at least "
+                f"{self.WIND_PROBE_MIN_DIFF:g} m/s) in '{self.exercise_path}'. Per-episode wind "
+                f"randomization with rewind does not work for this exercise."
+            )
+        self._logger.info("Wind-field transform after rewind verified: true wind %.2f m/s at Scale 0, "
+                          "%.2f m/s at Scale %g.", speeds[0], speeds[1], self.WIND_PROBE_SCALE)
+        self._rewind_wind_verified = True
 
 
     def dispose(self):

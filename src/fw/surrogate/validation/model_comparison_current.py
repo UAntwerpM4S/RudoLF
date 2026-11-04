@@ -35,7 +35,7 @@ current at FH's position (no API to query elsewhere), and the apparent wind for
 the model's own state from FH's true wind (Scale 0), sampled and held at FH's
 1 Hz WindState updates.
 
-Non-FH models run in their own ShipSimulator with wind=False, current=False and
+Non-FH models run in their own ShipSimulator (which adds no wind or current) and
 start from FH's state after warm-up. Those velocities over ground already contain
 the current, so models without current input still show a small "current effect".
 

@@ -22,9 +22,8 @@ UA_full_nowind; the summary's paired columns compare each model's wind effect
 also writes an env_*.csv with FH's true/apparent wind, UKC, sway and yaw rate
 and the inputs each UA_* model got.
 
-Non-FH models run in their own ShipSimulator with wind=False, current=False,
-so EnvironmentModel adds nothing: wind-agnostic models stay wind-blind and
-UA_full gets wind exactly once.
+Non-FH models run in their own ShipSimulator, which adds no wind or current:
+wind-agnostic models stay wind-blind and UA_full gets wind exactly once.
 
 Test layout: one open-water start pose; initial surge WIND_TRAJECTORY_SPEED,
 thrust = min(1, v/6), rudder 0 (as model_comparison.py); per wind speed one
@@ -1781,7 +1780,8 @@ def _generate(start_x, start_y, start_heading_deg, exercise_path, wind_speeds, r
                        start_pos=np.array([start_x, start_y], dtype=np.float32), ship_model=SHIP_MODEL)
     cutoff_geom = _cutoff_geometry(ray_env)
 
-    # Models are stateless (state lives in ShipSimulator), so built once and reused.
+    # Built once and reused: their only per-episode state (UA smoothing, off here) is
+    # cleared by ShipSimulator.reset.
     ua_models = build_ua_models(ship_spec)          # the UA_* slots SHIP_MODEL has a preset for
     non_fh_models = {**build_reference_models(ship_spec, ray_env), **ua_models}
     ukc_source = UkcSource(ua_models)

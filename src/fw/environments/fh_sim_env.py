@@ -112,7 +112,7 @@ class FhSimEnv(PySimEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step)
 
 
     def __deepcopy__(self, memo):

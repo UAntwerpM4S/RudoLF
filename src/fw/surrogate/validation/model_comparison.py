@@ -93,8 +93,7 @@ from fw.environments.ray_features import (
 )
 
 # Trajectories of the non-FH models are integrated with the production
-# ShipSimulator (no hand-rolled integration). It runs with wind=False and
-# current=False here, so EnvironmentModel adds nothing.
+# ShipSimulator (no hand-rolled integration), which adds no wind or current.
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.actuator_command import ActuatorCommand
 
@@ -188,7 +187,7 @@ def make_model_simulator(ship_spec, model) -> ShipSimulator:
     """
 
     specs = dataclasses.replace(ship_spec, surge_limits=sim_surge_limits(ship_spec))
-    return ShipSimulator(specs=specs, dynamics=model, dt=SURROGATE_DT, wind=False, current=False)
+    return ShipSimulator(specs=specs, dynamics=model, dt=SURROGATE_DT)
 
 
 class SurgeClipCounter:

@@ -5,6 +5,8 @@ from fw.ships.ship_factory import ShipModel, require_fh_supported
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
+from fw.simulators.fh_interface_utils import fh_heading_to_env_rad, fh_wind_current_state
+from fw.surrogate.schema import env_body_components
 
 
 def fh_rudder_sign(ship_model: ShipModel) -> float:
@@ -58,8 +60,8 @@ class FhTabularModel(DynamicsBase):
     Despite its name, getShipVelocityOverGround() returns body-fixed velocities
     (checked empirically: x aligns with surge regardless of heading).
 
-    FH simulates the exercise's own wind and current, so ShipSimulator must not
-    add EnvironmentModel's accelerations (models_own_wind_current = True).
+    FH simulates the exercise's own wind and current (models_own_wind_current);
+    observed_wind_current reads them from FH as the dataset generator does.
     """
 
     models_own_wind_current: bool = True
@@ -136,3 +138,16 @@ class FhTabularModel(DynamicsBase):
         yaw_rate = np.radians(self._engine.ship_interface.getShipYawRate())
 
         return float(vel.x), float(vel.y), float(yaw_rate)
+
+    def observed_wind_current(self, state: VesselState) -> np.ndarray:
+        """
+        FH's wind and current at its own ship (see DynamicsBase): WindState and
+        over-ground minus through-water velocity, as in the dataset generator.
+
+        Args:
+            state: Unused (FH keeps its own state); kept for the interface.
+        """
+
+        ship_interface = self._engine.ship_interface
+        heading = fh_heading_to_env_rad(ship_interface.getShipHeading())
+        return np.array(env_body_components(*fh_wind_current_state(ship_interface), heading), dtype=np.float64)

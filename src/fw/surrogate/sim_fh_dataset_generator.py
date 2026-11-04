@@ -60,6 +60,18 @@ from multiprocessing.pool import Pool
 from dataclasses import dataclass, field
 from shapely.geometry import LineString, MultiLineString, Point
 from fw.dynamics.fh_tabular_model import fh_rudder_sign
+# Shared with the RL bridge; re-exported here for fw.surrogate.validation.
+from fw.simulators.fh_interface_utils import (
+    FH_HEADING_CONVENTION,
+    WIND_SCALE_MAX,
+    WIND_SCALE_SIGMA,
+    WIND_WARMUP_TIME,
+    draw_wind_field_transform,
+    env_rad_to_fh_heading_deg,
+    fh_heading_to_env_rad,
+    fh_wind_current_state,
+    get_current_velocity,
+)
 from fw.environments.py_sim_env import PySimEnv
 from fw.environments.ray_features import (
     RAY_ANGLES_DEG,
@@ -75,10 +87,8 @@ from typing import Callable, Dict, Iterable, Optional, Tuple, Union
 DEFAULT_MATH_MODEL_FREQUENCY = 10.0  # Hz
 # Simulated before the first recorded state (whole math-model steps only).
 INITIALIZATION_TIME = 1.0 / DEFAULT_MATH_MODEL_FREQUENCY  # s
-# FH's WindState lags the wind-field transform by about 1 s (it first reports
-# the exercise's default wind), so this warm-up is simulated after the settle,
-# before the first recorded state (whole math-model steps; full configuration only).
-WIND_WARMUP_TIME = 1.0  # s
+# WIND_WARMUP_TIME (fh_interface_utils) is simulated after the settle, before
+# the first recorded state (whole math-model steps; full configuration only).
 
 # Episode stop limits (see stop_reason). Rows recorded before a limit is hit are kept.
 MIN_KEEL_CLEARANCE = 1.0    # m
@@ -104,8 +114,7 @@ INIT_SURGE_RANGE = (0.0, 6.0)         # m/s
 THRUST_ACTION_RANGE = (-1.0, 1.0)
 INIT_SWAY_RANGE = (-2.0, 2.0)         # m/s
 INIT_YAW_RATE_RANGE = (-1.5, 1.5)     # FH units (deg/s)
-WIND_SCALE_SIGMA = 7.8                # |N(0, sigma)|: about 80% of the wind scales between 0 and 10
-WIND_SCALE_MAX = 25.0                 # clip of the wind-field scale factor
+# Wind-field transform per episode: draw_wind_field_transform (fh_interface_utils).
 
 # "Straight" episodes: steady straight sailing in open water (rudder ~0,
 # constant forward thrust, near-steady initial speed). Random episodes almost
@@ -184,9 +193,8 @@ CURRENT_TIME_START_RANGE = (-21840, 24960)  # s; about -6.1 h ... +6.9 h
 # Rays: fw.environments.ray_features. Row width: nbr_x_features (37 full, 33 confined).
 NBR_Y_FEATURES = 3                           # delta_surge, delta_sway, delta_yaw_rate
 
-# FH heading convention: "math" (0 = East, counter-clockwise; verified for the
-# Tripoli with check_fh_conventions.py) or "compass" (0 = North, clockwise).
-FH_HEADING_CONVENTION = "math"
+# FH heading convention: FH_HEADING_CONVENTION in fh_interface_utils ("math",
+# verified for the Tripoli with check_fh_conventions.py).
 
 
 
@@ -796,34 +804,6 @@ def load_supervised_dataset(file_name: str, plot: bool = True,
     return x_values, y_values, episode_ids, counter
 
 
-def fh_heading_to_env_rad(fh_heading_deg: float) -> float:
-    """
-    FH heading (degrees, FH_HEADING_CONVENTION) -> radians, 0 = East, counter-clockwise, [-pi, pi).
-    """
-
-    if FH_HEADING_CONVENTION == "math":
-        heading_deg = fh_heading_deg
-    elif FH_HEADING_CONVENTION == "compass":
-        heading_deg = 90.0 - fh_heading_deg
-    else:
-        raise ValueError(f"Unknown FH_HEADING_CONVENTION {FH_HEADING_CONVENTION!r}")
-    return float(PySimEnv.normalize_angle(np.radians(heading_deg)))
-
-
-def env_rad_to_fh_heading_deg(heading_rad: float) -> float:
-    """
-    Inverse of fh_heading_to_env_rad: radians (0 = East, CCW) -> FH degrees in [0, 360).
-    """
-
-    deg = float(np.degrees(heading_rad))
-    if FH_HEADING_CONVENTION == "math":
-        fh = deg
-    elif FH_HEADING_CONVENTION == "compass":
-        fh = 90.0 - deg
-    else:
-        raise ValueError(f"Unknown FH_HEADING_CONVENTION {FH_HEADING_CONVENTION!r}")
-    return fh % 360.0
-
 
 _WORKER_STRAIGHT_ZONE = []  # per process: [stop zone] once computed (see _straight_stop_zone)
 
@@ -969,35 +949,6 @@ def stop_reason(env: "PySimEnv", ship_pos: np.ndarray, ukc: float, ray_features:
         return "ukc"
     return None
 
-
-def get_current_velocity(_ship_interface):
-    """
-    Current speed (m/s) and direction (deg in [0, 360), 0 = East, CCW, flowing
-    toward), from FH's body-frame velocities over ground and through water.
-    FH's body frame (x forward, y port) is rotated directly to the world frame.
-    """
-
-    psi = fh_heading_to_env_rad(_ship_interface.getShipHeading())
-
-    r = np.array([
-        [np.cos(psi), -np.sin(psi)],
-        [np.sin(psi),  np.cos(psi)]
-    ])
-
-    vog = _ship_interface.getShipVelocityOverGround()
-    vtw = _ship_interface.getShipVelocityThroughWater()
-
-    vog_earth = r @ np.array([vog.x, vog.y])
-    vtw_earth = r @ np.array([vtw.x, vtw.y])
-
-    current = vog_earth - vtw_earth
-
-    current_speed = np.linalg.norm(current)
-    current_direction_deg = np.degrees(np.arctan2(current[1], current[0]))
-    if current_direction_deg < 0:
-        current_direction_deg += 360
-
-    return current_speed, current_direction_deg
 
 
 def _probe_rudder_max_worker(sim_config: SimConfig, exercise_path: str, output_path: str,
@@ -1154,7 +1105,7 @@ def resolve_rudder_max_deg(ship_model: Union[ShipModel, str], configuration: str
     return value if value is not None else probe_fh_rudder_max_deg(ship_model, configuration, **probe_kwargs)
 
 
-def _fh_state(ship_interface, env: "PySimEnv", wind_current: bool) -> np.ndarray:
+def _fh_state(ship_interface, wind_current: bool) -> np.ndarray:
     """
     FH's state in framework conventions: [x, y, heading, surge, sway, yaw_rate,
     UKC], plus [wind speed, wind dir, current speed, current dir] with `wind_current`.
@@ -1172,14 +1123,7 @@ def _fh_state(ship_interface, env: "PySimEnv", wind_current: bool) -> np.ndarray
         ship_interface.getKeelClearance(),
     ]
     if wind_current:
-        wind_state = ship_interface.getWindState()
-        current_speed, current_direction = get_current_velocity(ship_interface)
-        state += [
-            wind_state.Speed,
-            env.normalize_angle(np.radians(wind_state.Direction)),
-            current_speed,
-            env.normalize_angle(np.radians(current_direction)),
-        ]
+        state += list(fh_wind_current_state(ship_interface))
     return np.array(state, dtype=np.float64)
 
 
@@ -1346,11 +1290,10 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
             environment = math_model.getEnvironmentInterface()
             wind_field_control = environment.getWindFieldControl()
             wind_field_transform = wind_field_control.getFieldTransform()
-            wind_field_transform.Rotation = float(rng.uniform(0.0, 360.0))
-            wind_field_transform.Offset = 0.0
             # Clipped half-normal wind scale; STRAIGHT_CALM_SHARE of straight episodes are calm.
-            wind_scale = float(np.clip(np.abs(rng.normal(loc=0.0, scale=WIND_SCALE_SIGMA)),
-                                       0.0, WIND_SCALE_MAX))
+            wind_rotation, wind_scale = draw_wind_field_transform(rng)
+            wind_field_transform.Rotation = wind_rotation
+            wind_field_transform.Offset = 0.0
             if straight and rng.random() < STRAIGHT_CALM_SHARE:
                 wind_scale = 0.0
             wind_field_transform.Scale = wind_scale
@@ -1445,7 +1388,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
         sim_setup.output.info["settle_seconds"] = settle_steps * sim_setup.dt
 
         # State layout: see _fh_state
-        input_state = _fh_state(ship_interface, env, conf.wind_current)
+        input_state = _fh_state(ship_interface, conf.wind_current)
         if conf.wind_current:
             initial_wind_state = ship_interface.getWindState()
             print(f"Wind direction: {initial_wind_state.Direction} - wind speed: {initial_wind_state.Speed}")
@@ -1476,7 +1419,7 @@ def run_simulation(sim_config: SimConfig, sim_setup: SimSetup) -> SimSetup:
                 apply_command()
                 math_model.simulateSeconds(sim_setup.dt)
 
-                next_input_state = _fh_state(ship_interface, env, conf.wind_current)
+                next_input_state = _fh_state(ship_interface, conf.wind_current)
                 next_ship_pos = np.array([next_input_state[0], next_input_state[1]], dtype=np.float32)
                 traj.append(next_ship_pos.copy())
 

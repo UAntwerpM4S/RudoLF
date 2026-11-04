@@ -35,30 +35,38 @@ class DynamicsBase:
       acceleration (delta / dt) and uses the default `step()`; only valid when dt
       equals the training step, which the subclass enforces.
 
-    `models_own_wind_current`: True for models with wind and current in their own
-    dynamics (FhTabularModel, UAntwerpSurrogate full_env), so ShipSimulator does
-    not add EnvironmentModel accelerations twice.
-
-    `supports_environment_model`: False when EnvironmentModel's full-scale
-    accelerations make no sense for the model (UGentB01Surrogate, model scale:
-    about 9x its maximum thrust acceleration); ShipSimulator then refuses
-    wind=True / current=True.
+    Wind and current exist only in models that simulate them themselves
+    (`models_own_wind_current`: FhTabularModel, UAntwerpSurrogate full_env).
+    `observed_wind_current()` gives them to the RL observation (zeros for all
+    other models); `reset_episode()` clears per-episode model state.
     """
 
     models_own_wind_current: bool = False
     """
-    True if this model includes wind and current in its own dynamics, so
-    ShipSimulator must skip the EnvironmentModel accelerations for it.
-    Default False: ShipSimulator adds them. Subclasses override it as a class
-    attribute or, if it depends on the instance, as a read-only property.
+    True if this model simulates wind and current itself (default False: no
+    wind or current at all). Subclasses override it as a class attribute or, if
+    it depends on the instance, as a read-only property.
     """
 
-    supports_environment_model: bool = True
-    """
-    False if EnvironmentModel's (full-scale) wind/current accelerations must
-    never be added to this model; ShipSimulator then raises ValueError when
-    wind or current is enabled. Default True.
-    """
+    def observed_wind_current(self, state: VesselState) -> np.ndarray:
+        """
+        Wind and current at `state` as the ship observes them, in the
+        "body_components" convention of the surrogate dataset
+        (fw.surrogate.schema.env_body_components).
+
+        Returns:
+            float64 array [wind_from_ahead, wind_from_stbd, current_to_ahead,
+            current_to_stbd] in m/s; zeros for models without wind and current.
+        """
+
+        return np.zeros(4, dtype=np.float64)
+
+    def reset_episode(self) -> None:
+        """
+        Clear per-episode state (called by ShipSimulator.reset); no-op by default.
+        """
+
+        return None
 
     def _compute_accelerations(
         self,

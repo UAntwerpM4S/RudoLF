@@ -129,8 +129,8 @@ class PySimColavBaseEnv(PySimBaseEnv):
             trajectory: Trajectory file.
             dynamics_model: Vessel dynamics model.
             ship_model: Ship specification model.
-            wind: Enables wind disturbances.
-            current: Enables current disturbances.
+            wind: Add 2 zero wind observation slots (no model here has wind).
+            current: Add 2 zero current observation slots (as wind).
             minimal_path_render: Enables simplified path rendering.
             ugent_surrogate_config: Configuration for the UGent surrogate
                 (Model.UGENT_SURROGATE), e.g. {"ukc_percent": 363}.

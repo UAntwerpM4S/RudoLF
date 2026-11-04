@@ -294,6 +294,45 @@ _ENV_RAW_COLS = ("wind_speed", "wind_direction", "current_speed", "current_direc
 _ENV_BODY_NAMES = ("wind_from_ahead", "wind_from_stbd", "current_to_ahead", "current_to_stbd")
 
 
+def env_body_components(wind_speed, wind_direction, current_speed, current_direction, heading):
+    """
+    Ship-frame wind and current of the "body_components" encoding, also used
+    for the RL observation. Works on floats and numpy arrays.
+
+    Args:
+        wind_speed, wind_direction: Apparent wind [m/s, rad], direction it
+            comes from relative to the bow, positive from starboard.
+        current_speed, current_direction: Earth-fixed current [m/s, rad],
+            0 = East, CCW, flowing toward.
+        heading: Ship heading [rad], 0 = East, CCW.
+
+    Returns:
+        (wind_from_ahead, wind_from_stbd, current_to_ahead, current_to_stbd).
+    """
+
+    rel_cur = current_direction - heading
+    return (
+        wind_speed * np.cos(wind_direction),
+        wind_speed * np.sin(wind_direction),
+        current_speed * np.cos(rel_cur),
+        -current_speed * np.sin(rel_cur),
+    )
+
+
+def apparent_to_true_wind(app_speed: float, app_dir: float, u: float, v: float) -> Tuple[float, float]:
+    """
+    True wind in the ship frame from the apparent wind (dataset / FH WindState
+    convention): apparent = true + (u, -v) in (from ahead, from starboard)
+    components, since sway v is positive to port.
+
+    Returns:
+        (true wind from ahead, true wind from starboard) [m/s].
+    """
+
+    rel = app_speed * np.array([np.cos(app_dir), np.sin(app_dir)]) - np.array([u, -v])
+    return float(rel[0]), float(rel[1])
+
+
 def check_env_encoding(env_encoding: str) -> str:
     """
     Return `env_encoding` if known.
@@ -391,13 +430,10 @@ def select_and_encode(x_raw: np.ndarray, scenario: ScenarioSchema, env_encoding:
 
     # body_components: compute in float64, then cast once.
     col = {c: x_raw[:, scenario.col(c)].astype(np.float64) for c in _ENV_RAW_COLS + ("heading",)}
-    rel_cur = col["current_direction"] - col["heading"]
-    body = {
-        "wind_speed": col["wind_speed"] * np.cos(col["wind_direction"]),          # wind_from_ahead
-        "wind_direction": col["wind_speed"] * np.sin(col["wind_direction"]),      # wind_from_stbd
-        "current_speed": col["current_speed"] * np.cos(rel_cur),                  # current_to_ahead
-        "current_direction": -col["current_speed"] * np.sin(rel_cur),             # current_to_stbd
-    }
+    # Each raw column is replaced in place by its body component (_ENV_BODY_NAMES).
+    body = dict(zip(_ENV_RAW_COLS, env_body_components(
+        col["wind_speed"], col["wind_direction"], col["current_speed"], col["current_direction"],
+        col["heading"])))
     non_angle, angle = [], []
     for c in scenario.input_columns:
         if c in body:

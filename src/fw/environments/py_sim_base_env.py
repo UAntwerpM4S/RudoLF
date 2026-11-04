@@ -147,8 +147,8 @@ class PySimBaseEnv(BaseEnv):
             trajectory: Path CSV (default trajectory_points_no_scale.csv).
             dynamics_model: Dynamics model to use.
             ship_model: Ship model to use.
-            wind: Enable wind effects.
-            current: Enable current effects.
+            wind: Add 2 wind observation features (zeros: no model here has wind).
+            current: Add 2 current observation features (zeros, as wind).
             minimal_path_render: Draw only a faint path line (no checkpoints).
             ugent_surrogate_config: Config for Model.UGENT_SURROGATE, e.g.
                 {"ukc_percent": 363}; see fw.dynamics.ugent_surrogate.
@@ -310,8 +310,8 @@ class PySimBaseEnv(BaseEnv):
     def create_simulator(self, ugent_surrogate_config: Optional[Dict] = None,
                          ugent_b01_surrogate_config: Optional[Dict] = None):
         """
-        Create the ShipSimulator for the configured ship, dynamics model,
-        wind/current flags and time step (also sets self.dynamics).
+        Create the ShipSimulator for the configured ship, dynamics model and
+        time step (also sets self.dynamics).
 
         Args:
             ugent_surrogate_config: Configuration for the UGent surrogate model
@@ -359,7 +359,7 @@ class PySimBaseEnv(BaseEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step)
 
     # -------------------------
     # Environment data loaders
@@ -749,8 +749,8 @@ class PySimBaseEnv(BaseEnv):
         """
         Build the normalized observation: u, v, r, distances to the current and
         next checkpoint (log-scaled), signed cross-track error, four heading
-        errors, previous rudder angle, LOS heading error, plus wind/current
-        vectors when enabled.
+        errors, previous rudder angle, LOS heading error, plus zero wind/current
+        placeholders when enabled.
         """
 
         norm_velocities = np.array([
@@ -847,11 +847,12 @@ class PySimBaseEnv(BaseEnv):
             los_heading_error / np.pi,
         ])
 
+        # Placeholders: the dynamics models of this env have no wind or current.
         if self.wind:
-            obs = np.hstack([obs, self.phys_sim.environment.wind_direction * self.phys_sim.environment.wind_strength])
+            obs = np.hstack([obs, np.zeros(2, dtype=np.float32)])
 
         if self.current:
-            obs = np.hstack([obs, self.phys_sim.environment.current_direction * self.phys_sim.environment.current_strength])
+            obs = np.hstack([obs, np.zeros(2, dtype=np.float32)])
 
         return obs.astype(np.float32)
 

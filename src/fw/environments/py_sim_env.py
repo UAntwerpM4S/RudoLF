@@ -19,6 +19,7 @@ from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
+from fw.environments.wind_current_obs import WIND_CURRENT_OBS_DIM, normalize_wind_current
 from fw.reward.reward import Reward
 
 from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
@@ -129,6 +130,12 @@ class PySimEnv(BaseEnv):
     interface (ship_model, ship_interface, math_model, initial_vessel_state, reset(),
     dispose()) works, e.g. FhSimBridge (local math model) or SimSyncBridge (realtime
     UDP link to simSync). For other models self._fh_sim is None.
+
+    Wind and current (wind = current = True, both or neither): the observation
+    gets 4 features (fw.environments.wind_current_obs) from
+    dynamics.observed_wind_current: real values for FH (the bridge must load
+    the wind/current exercise, wind_current=True) and the full_env UAntwerp
+    surrogate (which requires the flags), zeros for all other models.
     """
 
     SUPPORTS_MODEL_SCALE_SHIPS: bool = False
@@ -181,8 +188,8 @@ class PySimEnv(BaseEnv):
                 trajectory_points_no_scale.csv).
             dynamics_model: Dynamics model; Model.FH_TABULAR uses the FH Simulator.
             ship_model: Ship model (must be full scale).
-            wind: Enable wind effects.
-            current: Enable current effects.
+            wind: Observe wind and current (must equal `current`).
+            current: Observe wind and current (must equal `wind`).
             ua_surrogate_config: Model.UANTWERP configuration, e.g.
                 {"preset": "tripoli_confined"} (see fw.surrogate.presets).
             ugent_surrogate_config: UGent surrogate configuration, e.g. {"ukc_percent": 363}.
@@ -197,7 +204,13 @@ class PySimEnv(BaseEnv):
 
         Raises:
             RuntimeError: Model.FH_TABULAR without fh_bridge.
+            ValueError: wind != current; an FH bridge whose wind_current differs
+                from the flags; a full_env UAntwerp surrogate with the flags off.
         """
+
+        if bool(wind) != bool(current):
+            raise ValueError(f"wind={wind} and current={current}: wind and current must be enabled "
+                             f"or disabled together.")
 
         # FH bridge check first, so a missing bridge fails before expensive setup.
         self._fh_sim = None
@@ -211,6 +224,13 @@ class PySimEnv(BaseEnv):
                     "simSync connection) before creating PySimEnv, or use a "
                     "non-FH_TABULAR dynamics_model for pure-Python simulation "
                     "without external dependencies."
+                )
+            bridge_wind_current = bool(getattr(fh_bridge, "wind_current", False))
+            if bridge_wind_current != bool(wind):
+                raise ValueError(
+                    f"wind={wind}/current={current}, but the FH bridge {type(fh_bridge).__name__} has "
+                    f"wind_current={bridge_wind_current}: its exercise must match the flags "
+                    f"(FhSimBridge(wind_current=...))."
                 )
             self._fh_sim = fh_bridge
 
@@ -368,10 +388,11 @@ class PySimEnv(BaseEnv):
             ugent_b01_surrogate_config: Configuration for the UGent B01 surrogate model.
 
         Returns:
-            ShipSimulator using this env's ship, time step and wind/current flags.
+            ShipSimulator using this env's ship and time step.
 
         Raises:
-            ValueError: Ship model not supported by the selected dynamics model.
+            ValueError: Ship model not supported by the selected dynamics model,
+                or a full_env UAntwerp surrogate with wind and current disabled.
             RuntimeError: Unknown dynamics model, or FH_TABULAR without a bridge.
         """
 
@@ -405,21 +426,12 @@ class PySimEnv(BaseEnv):
             # Rays are cast against this environment's own river polygon.
             self.dynamics = UAntwerpSurrogate(self.ship.specifications, ua_surrogate_config,
                                               ship_model=self.ship_model, ray_caster=self)
-            # full_env presets take wind/current from their lookup CSV
-            # (models_own_wind_current); other presets get EnvironmentModel's via
-            # ShipSimulator, according to the wind/current flags.
-            if self.dynamics.models_own_wind_current:
-                if not (self.wind and self.current):
-                    logger.warning(
-                        "wind=%s/current=%s, but the UAntwerp surrogate (preset '%s') always takes "
-                        "wind and current from its lookup CSV: these flags have no effect on it.",
-                        self.wind, self.current, self.dynamics.preset.name,
-                    )
-            elif self.wind or self.current:
-                logger.info(
-                    "wind=%s/current=%s: the UAntwerp surrogate (preset '%s') has no wind/current "
-                    "inputs, so ShipSimulator adds EnvironmentModel wind/current for it.",
-                    self.wind, self.current, self.dynamics.preset.name,
+            # full_env presets take wind/current from their lookup CSV; the agent
+            # must observe them.
+            if self.dynamics.models_own_wind_current and not self.wind:
+                raise ValueError(
+                    f"The UAntwerp surrogate preset '{self.dynamics.preset.name}' simulates wind and "
+                    f"current from its lookup CSV, so wind and current must be enabled (observation)."
                 )
         elif self.dynamics_model == Model.FH_TABULAR:
             # Guard for code paths that bypass __init__.
@@ -432,7 +444,7 @@ class PySimEnv(BaseEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step)
 
     def __deepcopy__(self, memo):
         """
@@ -1124,7 +1136,8 @@ class PySimEnv(BaseEnv):
     def _initialize_observation_space(self) -> gym.spaces.Box:
         """
         Box in [-1, 1]: 12 base features (velocities, checkpoint distances, cross-track and
-        heading errors, previous rudder, LOS error) plus 2 each for wind and current if enabled.
+        heading errors, previous rudder, LOS error) plus, with wind and current, the 4
+        features of fw.environments.wind_current_obs.
         """
 
         base_low = np.array(
@@ -1164,12 +1177,8 @@ class PySimEnv(BaseEnv):
         )
 
         if self.wind:
-            base_low = np.hstack([base_low, np.array([-1.0, -1.0], dtype=np.float32)])
-            base_high = np.hstack([base_high, np.array([1.0, 1.0], dtype=np.float32)])
-
-        if self.current:
-            base_low = np.hstack([base_low, np.array([-1.0, -1.0], dtype=np.float32)])
-            base_high = np.hstack([base_high, np.array([1.0, 1.0], dtype=np.float32)])
+            base_low = np.hstack([base_low, -np.ones(WIND_CURRENT_OBS_DIM, dtype=np.float32)])
+            base_high = np.hstack([base_high, np.ones(WIND_CURRENT_OBS_DIM, dtype=np.float32)])
 
         return gym.spaces.Box(low=base_low, high=base_high, dtype=np.float32)
 
@@ -1178,12 +1187,17 @@ class PySimEnv(BaseEnv):
         Reset hook, called by reset() before _initialize_simulation().
 
         With the FH Simulator, rewinds its math model to the initial state (t = 0.25 s,
-        the earliest rewind point); otherwise defers to the base class.
+        the earliest rewind point), with wind and current drawing a new wind field
+        from the env RNG; otherwise defers to the base class.
         """
 
         if self._fh_sim is not None:
-            # noinspection PyUnresolvedReferences
-            self._fh_sim.reset()
+            if self.wind:
+                # noinspection PyUnresolvedReferences
+                self._fh_sim.reset(wind_rng=self._rng)
+            else:
+                # noinspection PyUnresolvedReferences
+                self._fh_sim.reset()
             return
 
         super().env_specific_reset()
@@ -1347,12 +1361,8 @@ class PySimEnv(BaseEnv):
             los_heading_error / np.pi,              # Optimal LOS guidance
         ])
 
-        # Add environmental observations if enabled
         if self.wind:
-            obs = np.hstack([obs, self.phys_sim.environment.wind_direction * self.phys_sim.environment.wind_strength])
-
-        if self.current:
-            obs = np.hstack([obs, self.phys_sim.environment.current_direction * self.phys_sim.environment.current_strength])
+            obs = np.hstack([obs, normalize_wind_current(self.dynamics.observed_wind_current(self.phys_sim.state))])
 
         return obs.astype(np.float32)
 

@@ -36,9 +36,7 @@ Notes:
       below min_straight_running_thrust (computed per UKC).
     - Validity: straight running and small maneuvers; under-predicts rudder effectiveness
       in zigzags (§5.2.2) and does not predict turning circles (§6).
-    - Wind and current are not modeled, and EnvironmentModel's full-scale accelerations
-      are about 9x the B01's maximum thrust acceleration, so ShipSimulator refuses them
-      (supports_environment_model = False).
+    - Wind and current are not modeled (the RL observation gets zeros for them).
 """
 
 import logging
@@ -208,9 +206,6 @@ class UGentB01Surrogate(DynamicsBase):
     a provider queried at every evaluation (set_bank_distance_provider), else from
     the last set_bank_distances() call; without either there are no banks.
     """
-
-    supports_environment_model = False
-    """Model scale: EnvironmentModel's full-scale wind/current must not be added (see DynamicsBase)."""
 
     def __init__(self, ship_spec: ShipSpecifications, ugent_b01_surrogate_config: Optional[Mapping] = None):
         """

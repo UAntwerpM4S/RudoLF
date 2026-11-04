@@ -154,6 +154,10 @@ CONFIG_PARAMETERS = {
                                         # "myzako_pysim_to_fhsim_transfer_profile"
     'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+    # Wind and current, both or neither: the observation gets 4 wind/current
+    # features (real for FH_TABULAR and the UAntwerp *_full presets, zeros
+    # otherwise); FH then loads its wind/current exercise with a random wind
+    # field per episode. The *_full presets require them.
     'wind': False,
     'current': False,
     'enable_ukc_check': True,
@@ -170,8 +174,9 @@ CONFIG_PARAMETERS = {
     # {tripoli,myzako}_{clean,confined,full}: clean = open water, confined = UKC
     # lookup, full = UKC + wind + current lookup (.csv.gz). Optional overrides:
     # "checkpoint", "lookup_csv". The preset's ship must equal 'ship_model' and
-    # the env time step must be a multiple of 0.1 s.
-    'ua_surrogate_config': {"preset": "myzako_confined"},
+    # the env time step must be a multiple of 0.1 s. "env_smoothing_tau" [s]:
+    # moving average of the looked-up UKC/wind/current (None = off).
+    'ua_surrogate_config': {"preset": "myzako_confined", "env_smoothing_tau": 10.0},
     'ugent_surrogate_config': {"ukc_percent": 363},
     # UGent B01 model-scale surrogate (Model.UGENT_B01_SURROGATE, ShipModel.B01).
     # "ukc_percent" required (tested 379, 153, 35; interpolated in between, clamped

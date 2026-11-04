@@ -490,9 +490,11 @@ class FhSimEnvironment(BaseEnvironment):
                 "use %s instead.", dynamics_model, Model.FH_TABULAR
             )
 
+        # The exercise follows the wind/current flags (PySimEnv checks that they match).
         fh_bridge = FhSimBridge(
             ship_model=self.configuration["ship_model"],
             scenario=self.configuration["scenario"],
+            wind_current=self.configuration["wind"],
         )
 
         self.env = PySimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
