@@ -1,7 +1,7 @@
 import numpy as np
 
 from enum import auto, Enum
-from typing import Tuple, Optional
+from typing import Dict, Tuple, Optional
 from fw.ships.vessel_state import VesselState
 
 
@@ -61,9 +61,18 @@ class DynamicsBase:
 
         return np.zeros(4, dtype=np.float64)
 
-    def reset_episode(self) -> None:
+    def episode_conditions(self) -> Dict[str, object]:
         """
-        Clear per-episode state (called by ShipSimulator.reset); no-op by default.
+        Environmental conditions of the current episode for the episode log
+        (e.g. drawn wind and current); empty by default.
+        """
+
+        return {}
+
+    def reset_episode(self, rng: Optional[np.random.Generator] = None) -> None:
+        """
+        Clear per-episode state (called by ShipSimulator.reset); `rng` serves
+        models that draw per-episode values. No-op by default.
         """
 
         return None

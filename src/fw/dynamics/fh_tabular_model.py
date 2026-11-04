@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import Tuple, Optional
+from typing import Dict, Tuple, Optional
 from fw.ships.ship_factory import ShipModel, require_fh_supported
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
@@ -154,6 +154,16 @@ class FhTabularModel(DynamicsBase):
         vel = ship_interface.getShipVelocityOverGround()
         return (float(pos.x), float(pos.y), fh_heading_to_env_rad(ship_interface.getShipHeading()),
                 float(vel.x), float(vel.y), float(np.radians(ship_interface.getShipYawRate())))
+
+    def episode_conditions(self) -> Dict[str, object]:
+        """
+        The episode's FH wind-field transform, if the engine randomizes it.
+        """
+
+        transform = getattr(self._engine, "episode_wind_field_transform", None)
+        if transform is None:
+            return {}
+        return {"wind_rotation_deg": round(float(transform[0]), 1), "wind_scale": round(float(transform[1]), 3)}
 
     def observed_wind_current(self, state: VesselState) -> np.ndarray:
         """

@@ -263,6 +263,9 @@ class PySimEnv(BaseEnv):
         self.previous_heading = None
         self.performed_action = None
         self.previous_action = None
+        # Why the episode terminated (episode log): target_reached, cross_track,
+        # bank_or_ukc or heading_change; max_steps for truncation.
+        self._episode_outcome: Optional[str] = None
         self._boundary_cache = None
         self._bank_lines_cache = None
         self.background = None
@@ -355,6 +358,7 @@ class PySimEnv(BaseEnv):
         self.previous_ship_pos = self.initial_ship_pos.copy()
         self.previous_action = np.zeros(2, dtype=np.float32)
         self.checkpoint_index = 1
+        self._episode_outcome = None
 
         self.previous_heading = 0.0
         self.cross_error = 0.0
@@ -374,7 +378,7 @@ class PySimEnv(BaseEnv):
             x=self.initial_ship_pos[0],
             y=self.initial_ship_pos[1],
             heading=self.ship_heading,
-            u=self.initial_speed, v=0.0, r=0.0))
+            u=self.initial_speed, v=0.0, r=0.0), rng=self._rng)
         self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
 
@@ -437,7 +441,8 @@ class PySimEnv(BaseEnv):
             if self.dynamics.models_own_wind_current and not self.wind:
                 raise ValueError(
                     f"The UAntwerp surrogate preset '{self.dynamics.preset.name}' simulates wind and "
-                    f"current from its lookup CSV, so wind and current must be enabled (observation)."
+                    f"current (lookup CSV or random per episode), so wind and current must be enabled "
+                    f"(observation)."
                 )
         elif self.dynamics_model == Model.FH_TABULAR:
             # Guard for code paths that bypass __init__.
@@ -1432,16 +1437,24 @@ class PySimEnv(BaseEnv):
             # Update ship state
             self.phys_sim.state.terminated = terminated
             self.phys_sim.state.truncated = truncated
+            ended_now = terminated or truncated
         else:
             reward = 0.0
             terminated = self.phys_sim.state.terminated
             truncated = self.phys_sim.state.truncated
+            ended_now = False
 
         info = {
             "rewards": reward,
             "terminations": terminated,
             "truncations": truncated,
         }
+        if ended_now:
+            info["episode_outcome"] = self._episode_outcome if terminated else "max_steps"
+            info["episode_conditions"] = self.dynamics.episode_conditions()
+            logger.info("%s - episode end: outcome=%s, success=%s, conditions=%s", self.env_name,
+                        info["episode_outcome"], info["episode_outcome"] == "target_reached",
+                        info["episode_conditions"])
 
         # Gymnasium: time-limit cut-off is `truncated` (bootstrap V(s')), a real end is
         # `terminated`; mirrored in `info` for the framework's own agents.
@@ -1531,10 +1544,12 @@ class PySimEnv(BaseEnv):
         if any(termination_conditions):
             # reward = -250
             done = True
+            self._episode_outcome = ("cross_track", "bank_or_ukc", "heading_change")[termination_conditions.index(True)]
 
         # Normal completion (reached or passed all checkpoints)
         if self.checkpoint_index >= len(self.checkpoints):
             done = True
+            self._episode_outcome = "target_reached"
 
         return reward, done
 
