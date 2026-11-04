@@ -1,34 +1,31 @@
 """
-FH dataset generator for the surrogate models -- every ship, every configuration.
+FH dataset generator for the surrogate models (all ships, all configurations).
 
-Simulates episodes in FH (simexe) and writes the supervised dataset (one row
-per time step: state + action + rays, then the one-step deltas and the
-episode_id; layout in load_supervised_dataset).
+Simulates episodes in FH (simexe) and writes the supervised dataset: one row
+per time step with state, action and rays, then the one-step deltas and the
+episode_id (layout in load_supervised_dataset).
 
 Ships (SHIP_PROFILES, `ship_model=`):
   TRIPOLI    azipods: setDesiredDirection(+-RUDDER deg) + setEngineLeverValue;
-             rudder scale 35 deg (fixed).
-  MYZAKO_37  classic rudder + propeller: rudder setControlValue(+-1, FH's own
-             maximum) and propeller engage() + setEngineLeverValue; rudder
-             scale = FH's own maximum (getMaximumAngle), probed once before
-             the run (probe_fh_rudder_max_deg) and checked in every episode.
-             It must equal the ship's max_rudder_angle in ship_factory.
-  The framework rudder command (positive = turn to PORT) is converted to FH's
-  sign with fh_tabular_model.fh_rudder_sign, for the initial rudder angle and
-  for every step.
+             fixed rudder scale of 35 deg.
+  MYZAKO_37  rudder + propeller: rudder setControlValue(+-1) and propeller
+             engage() + setEngineLeverValue; rudder scale = FH's
+             getMaximumAngle, probed once per run (probe_fh_rudder_max_deg)
+             and checked per episode. Must equal max_rudder_angle in
+             ship_factory.
+  The framework rudder sign (positive = to PORT) is converted to FH's with
+  fh_tabular_model.fh_rudder_sign.
 
 Configurations (CONFIGURATIONS, `configuration=`):
-  full       ship-bank + UKC + wind + current: random wind-field transform
-             per episode (with WIND_WARMUP_TIME), a random <timeStart> (tidal
+  full       ship-bank + UKC + wind + current: random wind-field transform per
+             episode (with WIND_WARMUP_TIME) and a random <timeStart> (tidal
              offset) per chunk; 37 input columns (scenario full_env).
-  confined   ship-bank + UKC only: the nowindnocurrent exercise, no wind
-             field; FH reads the static tide (STATIC_TIDE_XML_PATH), the
-             tide/current XMLs with <timeStart> are neither read nor written;
-             33 input columns (scenario confined_ukc).
+  confined   ship-bank + UKC only (nowindnocurrent exercise, static tide
+             STATIC_TIDE_XML_PATH; <timeStart> XMLs untouched); 33 input
+             columns (scenario confined_ukc).
 
-"Straight" episodes (STRAIGHT_*) exist for both ships and both
-configurations; only the full configuration has a no-current exercise for
-STRAIGHT_NO_CURRENT_SHARE of them.
+"Straight" episodes (STRAIGHT_*) exist for both ships and configurations;
+in the full configuration STRAIGHT_NO_CURRENT_SHARE of them run without current.
 """
 
 import gc
@@ -48,10 +45,9 @@ import signal
 
 import matplotlib
 
-# Non-interactive backend: TkAgg objects garbage-collected from a worker thread
-# make Tcl abort the process ("Tcl_AsyncDelete: async handler deleted by the
-# wrong thread"). Only plot_xy_points_and_trajectories(show=True) switches to Tk,
-# from the main thread with no workers running.
+# Non-interactive backend: Tk objects collected from a worker thread make Tcl
+# abort the process. Only plot_xy_points_and_trajectories(show=True) switches to
+# Tk, from the main thread with no workers running.
 matplotlib.use("Agg")
 
 from pathlib import Path
@@ -116,9 +112,8 @@ INIT_YAW_RATE_RANGE = (-1.5, 1.5)     # FH units (deg/s)
 # Wind-field transform per episode: draw_wind_field_transform (fh_interface_utils).
 
 # "Straight" episodes: steady straight sailing in open water (rudder ~0,
-# constant forward thrust, near-steady initial speed). Random episodes almost
-# never cover this operating point (0.03 % of the tripoli_wind_current rows).
-# Taken from the uniform starts.
+# constant thrust, near-steady initial speed), an operating point random
+# episodes almost never cover. Taken from the uniform starts.
 STRAIGHT_FRACTION = 0.25              # of ALL episodes (0 disables)
 STRAIGHT_RUDDER_MAX_DEG = 2.0         # rudder uniform in +-this ...
 STRAIGHT_RUDDER_ZERO_SHARE = 0.5      # ... except this share, which gets exactly 0
@@ -141,18 +136,16 @@ STRAIGHT_LOOKAHEAD = 600.0            # m; search range for free water ahead (se
 # current from the side. 0 in the confined configuration.
 STRAIGHT_CURRENT_MARGIN = 1.5         # m/s
 
-# "Bank-straight" episodes: straight sailing parallel to the nearest real bank,
-# otherwise as the straight episodes (STRAIGHT_*). This operating point (the
-# model_comparison ship-bank test) is otherwise almost absent (< 0.1 % of the
-# myzako_confined rows). 0 disables (default; reproduces earlier runs).
+# "Bank-straight" episodes: straight sailing parallel to the nearest real bank
+# (the model_comparison ship-bank test), otherwise as STRAIGHT_*. 0 disables
+# (default).
 BANK_STRAIGHT_FRACTION = 0.0          # of ALL episodes
 BANK_STRAIGHT_BAND = (11.0, 40.0)     # m, from the ship center to the nearest real bank
 BANK_STRAIGHT_HEADING_JITTER_DEG = 3.0  # heading = bank tangent + U(-this, +this)
 
-# Actuator settling before the first recorded row: unrecorded steps until every
-# steering actuator reaches its commanded angle (else the episode fails after
-# ACTUATOR_SETTLE_MAX_SECONDS). Needed for the azipods: FH ignores
-# setInitialRudderAngle for them and they turn at about 36 deg/s.
+# Actuator settling: unrecorded steps until every steering actuator reaches its
+# commanded angle (else the episode fails after ACTUATOR_SETTLE_MAX_SECONDS).
+# Needed for the azipods: FH ignores setInitialRudderAngle for them.
 ACTUATOR_SETTLE_MAX_SECONDS = 3.0
 ACTUATOR_SETTLE_TOL_DEG = 0.1
 
@@ -204,22 +197,21 @@ NBR_Y_FEATURES = 3                           # delta_surge, delta_sway, delta_ya
 @dataclass(frozen=True)
 class ShipProfile:
     """
-    Ship-specific settings of the generator.
+    Ship-specific generator settings.
 
     Attributes:
-        rudder_max_deg: Degrees for rudder_action = +-1 (dataset rudder scale).
-            None = FH's own maximum (getMaximumAngle, see resolve_rudder_max_deg).
-            Must equal max_rudder_angle in fw.ships.ship_factory.
+        rudder_max_deg: Degrees for rudder_action = +-1; None = FH's maximum
+            (resolve_rudder_max_deg). Must equal max_rudder_angle in ship_factory.
         steering: "azipod" (setDesiredDirection in degrees + setEngineLeverValue)
-            or "rudder" (setControlValue normalized to FH's maximum; propeller
-            engage() + setEngineLeverValue).
+            or "rudder" (normalized setControlValue; propeller engage() +
+            setEngineLeverValue).
         exercises: configuration to (exercise, no-current variant or None),
             file names in EXERCISE_DIR.
-        straight_surge_per_thrust: Initial surge of a straight episode per
-            unit thrust action [m/s].
-        reverse_thrust: Whether FH reverses the propeller(s) for a negative
-            lever. If False (Tripoli azipods: they run down to 0 rps), negative
-            thrust_action means no thrust and the initial rps is 0.
+        straight_surge_per_thrust: Initial surge of a straight episode per unit
+            thrust action [m/s].
+        reverse_thrust: Whether FH reverses the propeller(s) for a negative lever.
+            If False (Tripoli azipods), negative thrust means no thrust and the
+            initial rps is 0.
     """
 
     rudder_max_deg: Optional[float]
@@ -265,10 +257,9 @@ class ConfigurationProfile:
 
     Attributes:
         wind_current: Random wind-field transform per episode (with
-            WIND_WARMUP_TIME); wind and current stored per row (11 state values
-            instead of 7).
-        randomize_time_start: New random <timeStart> in TIME_START_XML_PATHS
-            per chunk (XMLs must exist); otherwise they are not touched.
+            WIND_WARMUP_TIME); 11 state values per row instead of 7.
+        randomize_time_start: New random <timeStart> in TIME_START_XML_PATHS per
+            chunk (the XMLs must exist); otherwise they are left untouched.
     """
 
     wind_current: bool
@@ -428,18 +419,16 @@ def randomize_current_time_start(
         rng: Optional[np.random.Generator] = None,
 ) -> int:
     """
-    Write one new random <timeStart> (tidal offset) into all *xml_paths*, so
+    Write one random <timeStart> (tidal offset) into all *xml_paths*, so the
     current field and water levels match.
 
-    Call once per chunk while no simulation runs (simexe reads these files).
-    Only the tag value changes; all files are validated first and each is
-    replaced atomically, though not as one transaction (a failure raises and
-    aborts the run before the next simulation).
+    Call once per chunk while no simulation runs. All files are validated first,
+    then each is replaced atomically (not as one transaction; a failure raises).
 
     Args:
-        xml_paths: One path or several; default TIME_START_XML_PATHS.
+        xml_paths: One or several paths; default TIME_START_XML_PATHS.
         time_range: Inclusive (low, high) range in seconds.
-        rng: Optional numpy Generator (for reproducibility).
+        rng: Optional numpy Generator.
 
     Returns:
         The value written.
@@ -1035,20 +1024,19 @@ def probe_fh_rudder_max_deg(ship_model: Union[ShipModel, str], configuration: st
                             sim_config: Optional[SimConfig] = None,
                             start_xy: Optional[Tuple[float, float]] = None) -> float:
     """
-    FH's own rudder maximum (getMaximumAngle, deg) for the ship's exercise in
+    FH's rudder maximum (getMaximumAngle, deg) for the ship's exercise in
     `configuration`, from a short FH session in a separate process.
 
     Args:
         ship_model: Ship with classic rudder controls (ShipModel or name).
-        configuration: "full" / "confined" (selects the exercise).
+        configuration: "full" or "confined" (selects the exercise).
         sim_config: Default: default_sim_config().
-        start_xy: Initial position; default: a random point in the river.
+        start_xy: Initial position; default a random point in the river.
 
     Raises:
-        FileNotFoundError: SIMEXE_REPO_FOLDER or a simexe input is missing
-            (checked before FH is started).
-        RuntimeError: The probe timed out, or failed at PROBE_ATTEMPTS start
-            points (the last error is chained).
+        FileNotFoundError: SIMEXE_REPO_FOLDER or a simexe input is missing.
+        RuntimeError: Timeout, or failure at PROBE_ATTEMPTS start points (last
+            error chained).
     """
 
     ship_model = _as_ship_model(ship_model)
@@ -1782,24 +1770,23 @@ def collect_supervised_dataset(
     """
     Generate the supervised dataset by simulating episodes in FH.
 
-    Writes a CSV with 41 (full) or 37 (confined) columns, layout in
+    Writes a CSV with 41 (full) or 37 (confined) columns, see
     load_supervised_dataset. Rows of one episode are correlated: split by
     episode_id.
 
     Episodes run in chunks of `workers`; in the full configuration each chunk
-    gets one random tidal offset. An episode stops at the first state outside
-    the stop limits (stop_reason), keeping earlier rows.
+    gets one random tidal offset. An episode stops at the first state outside the
+    stop limits (stop_reason), keeping earlier rows.
 
     Early stop (checked between chunks): create the stop file or press Ctrl+C
-    once; collected data is saved as usual. A second Ctrl+C aborts without
-    writing the CSV (checkpoints are kept).
+    once; collected data is saved. A second Ctrl+C aborts without writing the CSV
+    (checkpoints are kept).
 
     Checkpoints: a shard every `checkpoint_every` episodes in
-    "<output stem>_checkpoints/"; calling again with the same parameters
-    resumes. With the same `seed` and `workers`, a resumed run reproduces the
-    start points, seeds, tidal offsets and shuffle of an uninterrupted run
-    (identical data only if FH is deterministic; input files, not binaries,
-    are fingerprinted). The directory is removed after a complete run.
+    "<output stem>_checkpoints/"; calling again with the same parameters resumes.
+    With the same `seed` and `workers`, a resumed run reproduces start points,
+    seeds, tidal offsets and shuffle (identical data only if FH is deterministic;
+    input files, not binaries, are fingerprinted). Removed after a complete run.
 
     Args:
         nbr_samples: Number of episodes (start points).
@@ -1808,28 +1795,25 @@ def collect_supervised_dataset(
         workers: Parallel workers = chunk size; 0/None = cpu_count()-1.
         output_file: CSV path.
         seed: Base seed for start points, episodes, tidal offsets and shuffle.
-        bank_fraction: Target fraction of near-bank starts (missing ones become uniform).
+        bank_fraction: Target fraction of near-bank starts (shortfall becomes uniform).
         bank_band: (min, max) distance in m from the nearest real bank.
-        straight_fraction: Fraction of all episodes run as "straight" episodes
-            (STRAIGHT_*), taken from the uniform starts.
-        bank_straight_fraction: Fraction of all episodes run as "bank_straight"
-            episodes (BANK_STRAIGHT_*), started bank_straight_band from a real
-            bank instead of uniformly. 0 = none.
+        straight_fraction: Fraction of episodes run as "straight" (STRAIGHT_*),
+            taken from the uniform starts.
+        bank_straight_fraction: Fraction of episodes run as "bank_straight"
+            (BANK_STRAIGHT_*), started bank_straight_band from a real bank. 0 = none.
         bank_straight_band: (min, max) distance in m from the nearest real bank.
-        thrust_range: (low, high) thrust_action range of the random episodes
+        thrust_range: (low, high) thrust_action of the random episodes
             (see THRUST_ACTION_RANGE); straight episodes use STRAIGHT_THRUST_RANGE.
         stop_file: Stop-file path; default "STOP_COLLECTION" next to output_file.
         checkpoint_every: Episodes per checkpoint; 0/None disables checkpoints.
         resume: False deletes an existing checkpoint and starts over.
-        show_plot: Open the trajectory plot window at the end (blocks until
-            closed); the PNG is always saved.
-        ship_model: Ship to simulate (ShipModel or name): a key of SHIP_PROFILES.
-        configuration: "full" (ship-bank + UKC + wind + current) or "confined"
-            (ship-bank + UKC); see CONFIGURATIONS.
+        show_plot: Open the trajectory plot at the end (blocks until closed);
+            the PNG is always saved.
+        ship_model: Ship to simulate, a key of SHIP_PROFILES.
+        configuration: "full" or "confined", see CONFIGURATIONS.
         rudder_max_deg: Degrees for rudder_action = +-1. None =
-            resolve_rudder_max_deg (Myzako: probe FH's getMaximumAngle). A ship
-            with a fixed scale accepts only that value. Checked against
-            ship_factory before the run.
+            resolve_rudder_max_deg (Myzako: probe FH). A ship with a fixed scale
+            accepts only that value. Checked against ship_factory before the run.
 
     Returns:
         (x_inputs, y_outputs, episode_ids, number of episodes with rows)

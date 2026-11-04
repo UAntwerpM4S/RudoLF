@@ -598,10 +598,9 @@ ProfileRegistry.register(VesselProfile(
         ship_model=ShipModel.B01,
         dynamics_model=Model.UGENT_B01_SURROGATE,
     ),
-    # Model-scale start speed [m/s], below the B01 surge limit of 1.0 m/s. Steady speed at
-    # full thrust: ~0.93 m/s at 379 % UKC, ~0.91 at 153 %, ~0.77 at 100 %, ~0.41 at 35 %
-    # (lower it for shallow water). Refused by the full-scale PySim environments
-    # (SUPPORTS_MODEL_SCALE_SHIPS) until a towing-tank environment exists.
+    # Model-scale start speed [m/s], below the B01 surge limit of 1.0 m/s (steady
+    # speed at full thrust drops from ~0.93 m/s at 379 % UKC to ~0.41 at 35 %).
+    # Refused by the full-scale PySim environments (SUPPORTS_MODEL_SCALE_SHIPS).
     scenario=ScenarioConfig(initial_speed=0.8),
     actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
     thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),

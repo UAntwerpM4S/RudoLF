@@ -1,42 +1,38 @@
 """
 UGent 3-DOF confined-water manoeuvring model of the B01 (Myzako), model scale.
 
-Source: Van Damme, Delefortrie & Eloot (2026), DDSHIP WP2 D2.3, FH Reports 23_002_6
-(equations §2.3, eq. 20-26; coefficients Table 3; ship data Table 1), and A. Van Damme's
-draft B01_surrogate_model.py (2026-08-20).
+Source: Van Damme, Delefortrie & Eloot (2026), DDSHIP WP2 D2.3, FH Reports
+23_002_6 (eq. 20-26 in section 2.3; coefficients Table 3; ship data Table 1),
+and A. Van Damme's draft B01_surrogate_model.py (2026-08-20).
 
 Notes:
-    - Model scale (lambda = 25, towing tank): L_pp 4.32 m, m 260.8 kg. Coefficients are
-      used as identified (no Froude conversion, no ITTC correction); all quantities are
-      model scale. Use with ShipModel.B01.
-    - UKC: accelerations are interpolated linearly in T/(h-T) = 100/UKC[%] between the
-      tested 379, 153 and 35 %; outside that range the closest tested set is used.
-    - Bank coefficients at 379 % are missing from Table 3; the draft's Y = -2.74, N = 2.08
-      are used (linear extrapolation from 153/35 % gives Y = -2.757, N = 2.084; the 0.6 %
-      difference in Y is an open question for UGent).
-    - Banks: y' = (d - B/2) / B (eq. 18), unclamped in the data range and without upper
-      cut-off by default (both banks count, confirmed by A. Van Damme). Only y' below
-      min_bank_clearance (default 0.001, ship at or inside the bank) is held at that
-      value. A guard such as 1.0 can be configured: bank terms were identified at
-      y' = 1.25 and 2.0 (Table 17) and validated at 1.0 and 1.5.
-    - Frames: equations use the report frame (y starboard); the framework has y to port,
-      so v and r flip sign at the boundary. The rudder angle does not: a positive angle
-      turns the ship to port in both.
-    - Units: radians throughout (the draft uses degrees for rudder and yaw quantities).
-    - Rudder: limited to 35 deg by ShipModel.B01, below the 45 deg peak of the sin(2 delta)
-      lift model; identified at 20-25 deg only.
-    - Propeller: n_max = DEFAULT_N_MAX_RPM (1700 rpm, the towing-tank setting confirmed
-      by A. Van Damme; self-propulsion about 1 m/s). The draft script uses 1650 rpm.
-    - Low thrust: the wheel-effect terms Y_n n, N_n n do not scale with speed, while rudder
-      force scales with u|u| and yaw damping vanishes as u -> 0 (N_r|r| ~ 0 at 153 and
-      35 %, confirmed by A. Van Damme; more tests may follow). Below a UKC-dependent
-      n/n_max (at 1700 rpm: 0.18 at 379 %, 0.15 at 153 %, 0.26 at 100 %, 0.40 at 60 %,
-      0.59 at 35 %) the ship cannot hold a straight course with |rudder| <= 35 deg.
-      ShipModel.B01 uses min_thrust = 0.2 (lowest tested rate); a warning is logged once
-      below min_straight_running_thrust (computed per UKC).
-    - Validity: straight running and small maneuvers; under-predicts rudder effectiveness
-      in zigzags (§5.2.2) and does not predict turning circles (§6).
-    - Wind and current are not modeled (the RL observation gets zeros for them).
+    - Model scale (lambda = 25): L_pp 4.32 m, m 260.8 kg; coefficients used as
+      identified (no Froude conversion or ITTC correction). Use with
+      ShipModel.B01.
+    - UKC: accelerations interpolated linearly in T/(h-T) = 100/UKC[%] between
+      the tested 379, 153 and 35 %; outside, the closest set is used.
+    - Bank coefficients at 379 % are missing from Table 3; the draft's
+      Y = -2.74, N = 2.08 are used (extrapolation gives Y = -2.757, N = 2.084;
+      the difference in Y is an open question for UGent).
+    - Banks: y' = (d - B/2) / B (eq. 18), both banks, no upper cut-off by
+      default; y' below min_bank_clearance (default 0.001) is held there.
+      Bank terms were identified at y' = 1.25 and 2.0, validated at 1.0 and 1.5.
+    - Frames: the equations use y to starboard, the framework y to port, so v
+      and r flip sign at the boundary; the rudder angle does not (positive
+      turns to port in both).
+    - Units: radians throughout (the draft uses degrees for rudder and yaw).
+    - Rudder: limited to 35 deg by ShipModel.B01 (identified at 20-25 deg only).
+    - Propeller: n_max = DEFAULT_N_MAX_RPM (1700 rpm, the towing-tank setting;
+      the draft uses 1650 rpm).
+    - Low thrust: the wheel-effect terms do not scale with speed while rudder
+      force and yaw damping vanish as u goes to 0, so below a UKC-dependent
+      n/n_max (at 1700 rpm: 0.18 at 379 %, 0.15 at 153 %, 0.26 at 100 %, 0.40
+      at 60 %, 0.59 at 35 %) the ship cannot hold a straight course.
+      ShipModel.B01 uses min_thrust = 0.2; a warning is logged once below
+      min_straight_running_thrust.
+    - Validity: straight running and small manoeuvres; under-predicts rudder
+      effectiveness in zigzags and does not predict turning circles.
+    - Wind and current are not modelled (the RL observation gets zeros).
 """
 
 import logging

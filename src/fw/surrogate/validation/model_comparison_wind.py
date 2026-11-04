@@ -1,66 +1,49 @@
 """
 Wind counterpart of model_comparison.generate_trajectories(): compares all
-dynamics models against FH (ground truth) for a ship sailing straight (rudder
-0, fixed thrust) in open water, over a grid of wind speed x relative wind
-direction.
+dynamics models against FH (ground truth) for a ship sailing straight (rudder 0,
+fixed thrust) in open water, over a grid of wind speed x relative direction.
 
 Models:
-    FH          - simexe engine with the wind field applied.
-    FH_nowind   - same exercise with wind-field Scale = 0: how straight FH
-                  sails without wind (run once, drawn in every subplot).
-    UGent, Fossen, UA_clean, UA_confined - wind-agnostic models.
-    UA_full     - the only non-FH model with wind inputs. Each step it gets
-                  FH's world-frame true wind seen from its own state (heading,
-                  surge, sway), so a diverging UA_full is not steered by FH's
-                  apparent wind. UKC from the lookup CSV at its own position
-                  (UkcSource); current from FH (off). Injected via
-                  _inject_live_environment.
+    FH          simexe engine with the wind field applied.
+    FH_nowind   same exercise with wind-field Scale = 0 (run once, drawn in
+                every subplot).
+    UGent, Fossen, UA_clean, UA_confined: wind-agnostic.
+    UA_full     the only non-FH model with wind inputs: each step FH's true
+                wind seen from its own state (so a diverging UA_full is not
+                steered by FH's apparent wind), UKC at its own position
+                (UkcSource), current from FH (off). Via _inject_live_environment.
 
-A no-wind baseline run (Scale = 0) for all models gives FH_nowind and
-UA_full_nowind; the summary's paired columns compare each model's wind effect
-(model in wind minus the same model in the baseline) with FH's. Every run
-also writes an env_*.csv with FH's true/apparent wind, UKC, sway and yaw rate
-and the inputs each UA_* model got.
+A no-wind baseline (Scale = 0) gives FH_nowind and UA_full_nowind; the summary
+compares each model's wind effect (model in wind minus the same model in the
+baseline) with FH's. Every run also writes an env_*.csv with FH's wind, UKC,
+sway and yaw rate and the inputs of each UA_* model. Non-FH models run in
+their own ShipSimulator, which adds no wind or current.
 
-Non-FH models run in their own ShipSimulator, which adds no wind or current:
-wind-agnostic models stay wind-blind and UA_full gets wind exactly once.
+Layout: one open-water start pose, initial surge WIND_TRAJECTORY_SPEED,
+thrust min(1, v/6), rudder 0; per wind speed one PNG with a subplot per
+direction in REL_WIND_DIRS_DEG plus a lateral-deviation PNG; every model runs
+as many steps as FH needs for TARGET_PATH_LENGTH (at most MAX_STEPS).
 
-Test layout: one open-water start pose; initial surge WIND_TRAJECTORY_SPEED,
-thrust = min(1, v/6), rudder 0 (as model_comparison.py); per wind speed one
-PNG with a subplot per direction in REL_WIND_DIRS_DEG plus a lateral
-deviation PNG; every model runs as many steps as FH needs for
-TARGET_PATH_LENGTH (capped at MAX_STEPS).
+Wind conventions (measured with diagnose_fh_wind_standalone.py): FH's
+WindState is the apparent wind relative to the bow, positive from starboard.
+Grid values are true wind: apparent = true + (u, -v) in (ahead, starboard)
+components, since sway is port positive (TRUE_WIND_SWAY_SIGN = -1). UA_full
+gets apparent wind as in its training data.
 
-Wind conventions (measured with diagnose_fh_wind_standalone.py):
-    FH's WindState is the apparent wind, direction relative to the bow,
-    positive = from starboard (clockwise). Only with this convention does the
-    earth-fixed true wind stay constant in turning generator episodes. Grid
-    speeds and directions are true wind: apparent = true + (u, -v) in (ahead,
-    starboard) components, since sway v is positive to port; hence
-    TRUE_WIND_SWAY_SIGN = -1. UA_full gets apparent wind in the convention of
-    its training data.
+Setting a target wind: FH has no wind setter; the exercise's wind field is
+rotated and scaled via FhSession(wind_field=(rotation, scale)) before reset(),
+so each probe and run is its own FH session, started after WIND_WARMUP_TIME.
+calibrate_wind_field() derives the true wind per unit Scale and the rotation
+sign and checks linearity, zero wind at Scale 0 and steadiness. Labels and
+CSVs use the wind FH actually delivered.
 
-Setting a target wind in FH:
-    FH has no wind speed/direction setter; the exercise's wind field is
-    rotated/scaled via WindFieldTransform, passed as
-    FhSession(wind_field=(rotation, scale)) before reset(), so each probe and
-    run is its own FH session. WindState lags after reset(), so every session
-    first runs WIND_WARMUP_TIME and all models start from FH's state after
-    that. calibrate_wind_field() derives the true wind per unit Scale and the
-    rotation sign, and checks linearity, zero wind at Scale = 0 and
-    steadiness. Labels and CSVs use the wind FH actually delivered.
-
-Open-water and domain checks (diagnostic; trajectories are not cut short):
-    - start pose: all ray features 0, else RuntimeError (REQUIRE_OPEN_WATER_START);
-    - every OPEN_WATER_CHECK_EVERY steps each model's pose is checked the same
-      way; the first hit per model goes to the summary CSV;
-    - FH's state against the generator's stop limits (_training_domain_issue);
-    - FH's current below MAX_CURRENT_SPEED after warm-up and every step,
-      else WindTestSetupError.
-
-Validated against FH for calibration and the full grid; the no-wind
-baseline, paired metrics and own-position UKC were only run with stubbed fw
-modules.
+Checks (diagnostic; trajectories are not cut short):
+    * start pose: all ray features 0, else RuntimeError
+      (REQUIRE_OPEN_WATER_START);
+    * each model's pose every OPEN_WATER_CHECK_EVERY steps (first hit goes
+      to the summary CSV);
+    * FH's state against the generator's stop limits (_training_domain_issue);
+    * FH's current below MAX_CURRENT_SPEED, else WindTestSetupError.
 
 Usage:
     from fw.surrogate.validation.model_comparison_wind import generate_wind_trajectories
@@ -68,8 +51,7 @@ Usage:
         start_x=..., start_y=..., start_heading_deg=...,
         exercise_path=Path(".../DDShip_Tripoli_scenario_windonly.tab"),
     )
-start_heading_deg uses the convention model_comparison.py passes to FhSession
-(degrees of PySimEnv.ship_heading).
+start_heading_deg in degrees of PySimEnv.ship_heading (as model_comparison.py).
 """
 
 import csv
@@ -276,9 +258,9 @@ def _check_current(fh: FhSession, where: str) -> Tuple[float, float]:
 # --------------------------------------------------------------------------
 # Wind-field calibration
 # --------------------------------------------------------------------------
-# Measured: true wind is linear in Scale (~1.11 m/s per unit at the test pose)
-# and Rotation=90 turns it by -90 deg; WindState shows the requested transform
-# by t = 1 s after reset(). True wind = apparent - (u, k*v), k = TRUE_WIND_SWAY_SIGN.
+# Measured: true wind is linear in Scale and Rotation=90 turns it by -90 deg;
+# WindState shows the transform by t = 1 s after reset().
+# True wind = apparent - (u, k*v), k = TRUE_WIND_SWAY_SIGN.
 
 def _vec(speed: float, dir_deg: float) -> np.ndarray:
     """
@@ -715,9 +697,8 @@ def run_case(
                     f"{run_id}: FH current {fh_cs:.3f} m/s at step {step_i} (> MAX_CURRENT_SPEED="
                     f"{MAX_CURRENT_SPEED}) -- the wind-only exercise should have current disabled."
                 )
-            # WindState updates at 1 Hz: on a change, recompute the true wind (FH's
-            # state) and each UA model's apparent wind (its own state) and hold
-            # them, the same timing as in UA_full's training data.
+            # WindState updates at 1 Hz: on a change, recompute the true wind and each UA
+            # model's apparent wind and hold them (as in UA_full's training data).
             raw = fh.get_wind_raw()
             windstate_update = raw != last_raw
             if windstate_update:
@@ -892,11 +873,10 @@ def summary_rows(result: RunResult, base: Optional[RunResult]) -> List[list]:
     """
     One row per model; errors are vs FH of the same run over the common steps.
 
-    Wind runs: the paired wind-effect columns compare (model - model in
-    baseline) with (FH - FH in baseline) at the shortest of the four paths. In
-    wind runs the FH_nowind / UA_full_nowind *_error_vs_fh columns therefore
-    show FH's wind effect, not a model error. Baseline rows (target wind 0)
-    show each model's no-wind error vs FH_nowind.
+    Wind runs: the paired wind-effect columns compare (model - model in baseline)
+    with (FH - FH in baseline), so the FH_nowind / UA_full_nowind *_error_vs_fh
+    columns show FH's wind effect, not a model error. Baseline rows show each
+    model's no-wind error vs FH_nowind.
     """
 
     rows = []

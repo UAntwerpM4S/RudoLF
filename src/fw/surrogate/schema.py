@@ -3,25 +3,20 @@ Scenario schemas for the ship-dynamics surrogate pipeline (numpy only).
 
 Single source of truth for:
   * the raw columns of each scenario and which become model inputs;
-  * raw row to model features (`select_and_encode`, `encoded_feature_names`),
-    including the wind/current encoding (`env_encoding`);
-  * which poorer scenario may be derived from a richer one (`check_projection`,
-    `project_raw_columns`);
-  * the identity every dataset .npz carries (`DatasetIdentity`).
+  * raw row to model features (select_and_encode, encoded_feature_names),
+    including the wind/current encoding (env_encoding);
+  * which poorer scenario may be derived from a richer one (check_projection,
+    project_raw_columns);
+  * the identity every dataset .npz carries (DatasetIdentity).
 
-dataset.py, inference_surrogate.py, train_surrogate.py and
-fw/dynamics/uantwerp_surrogate.py all use these functions, so they cannot
-disagree about a scenario's feature layout.
-
-Scenarios (raw widths 8 / 33 / 37, unique, see `scenario_for_raw_width`):
-  open_water   - dynamics only: no rays, UKC, wind or current.
-  confined_ukc - adds bank rays and under-keel clearance.
-  full_env     - rays, UKC, wind and current (the layout of
+Scenarios (raw widths 8 / 33 / 37, see scenario_for_raw_width):
+  open_water     dynamics only.
+  confined_ukc   adds bank rays and under-keel clearance.
+  full_env       rays, UKC, wind and current (the layout of
                  sim_fh_dataset_generator.collect_supervised_dataset).
-x and y are in every raw row (trajectory logging) but never a model input.
-
-The wind/current encoding is a model-side choice; the raw layout and the .npz
-identity do not depend on it.
+x and y are in every raw row but never a model input. The wind/current
+encoding is a model-side choice; raw layout and .npz identity do not depend
+on it.
 """
 
 from __future__ import annotations
@@ -272,18 +267,16 @@ def scenario_for_raw_width(width: int) -> ScenarioSchema:
 # ----------------------------------------------------------------------
 # Environment encoding (model side only)
 # ----------------------------------------------------------------------
-#   "angles"          - speeds raw, directions sin/cos encoded. Wind is apparent
-#                       (ship-relative, FH WindState), current earth-fixed
-#                       (encoded width 38 for full_env).
-#   "body_components" - ship-frame components replacing the four columns in place:
-#                         wind_from_ahead  =  ws * cos(wd)
-#                         wind_from_stbd   =  ws * sin(wd)   (wd: from bow, + from stbd)
-#                         current_to_ahead =  cs * cos(cd - heading)
-#                         current_to_stbd  = -cs * sin(cd - heading)
-#                       (cd: earth-fixed, 0 = East, CCW, flowing toward). Only the
-#                       heading stays sin/cos encoded (width 36 for full_env), and
-#                       components go smoothly to 0 at low speed.
-# Without wind/current (open_water, confined_ukc) both give identical features.
+# "angles": speeds raw, directions sin/cos encoded; wind apparent (FH
+#     WindState), current earth-fixed (encoded width 38 for full_env).
+# "body_components": ship-frame components in place of the four columns:
+#     wind_from_ahead  =  ws * cos(wd)    (wd: from bow, + from stbd)
+#     wind_from_stbd   =  ws * sin(wd)
+#     current_to_ahead =  cs * cos(cd - heading)
+#     current_to_stbd  = -cs * sin(cd - heading)
+#     (cd: earth-fixed, 0 = East, CCW, flowing toward); only the heading stays
+#     sin/cos encoded (width 36 for full_env).
+# Without wind/current both give identical features.
 ENV_ENCODING_ANGLES = "angles"
 ENV_ENCODING_BODY = "body_components"
 ENV_ENCODINGS = (ENV_ENCODING_ANGLES, ENV_ENCODING_BODY)
@@ -393,13 +386,11 @@ def encoded_input_dim(scenario: ScenarioSchema, env_encoding: str) -> int:
 def select_and_encode(x_raw: np.ndarray, scenario: ScenarioSchema, env_encoding: str) -> np.ndarray:
     """
     Select `scenario.input_columns` from raw X and encode them (angles sin/cos;
-    with "body_components" wind/current as ship-frame components).
-
-    The only place raw columns are selected: the dataset, normalization stats
-    and SurrogatePredictor.predict all call this.
+    with "body_components" wind/current as ship-frame components). The only
+    place raw columns are selected.
 
     Args:
-        x_raw: Raw input array, shape `(N, scenario.raw_input_dim)`.
+        x_raw: Raw input array, shape (N, scenario.raw_input_dim).
         scenario: The scenario schema to apply.
         env_encoding: "angles" or "body_components".
 
@@ -408,7 +399,7 @@ def select_and_encode(x_raw: np.ndarray, scenario: ScenarioSchema, env_encoding:
         non-angle inputs, then sin of each angle column, then cos.
 
     Raises:
-        ValueError: If `x_raw` is not shaped `(N, scenario.raw_input_dim)`.
+        ValueError: If x_raw is not shaped (N, scenario.raw_input_dim).
     """
 
     if x_raw.ndim != 2 or x_raw.shape[1] != scenario.raw_input_dim:
@@ -460,10 +451,8 @@ def check_projection(source: ScenarioSchema, target: ScenarioSchema) -> None:
     Raise if data generated for `source` may not be used for a `target` model.
 
     Allowed: source == target, or target's raw columns are an ordered subset of
-    source's and source has no wind/current that target lacks. So confined_ukc
-    data may feed open_water, but full_env data only full_env: wind and current
-    change the simulated dynamics, not just the logged columns. (confined_ukc
-    targets may still hold some bank/shallow-water influence.)
+    source's and source has no wind/current that target lacks (wind and current
+    change the dynamics, not just the logged columns).
 
     Raises:
         ValueError: If the projection is not allowed.

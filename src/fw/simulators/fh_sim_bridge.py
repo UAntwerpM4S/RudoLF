@@ -28,23 +28,21 @@ except OSError:
 
 class FhSimBridge:
     """
-    Bridge to the FH Simulator math model and ship interface.
+    Bridge to the FH Simulator math model and ship interface: sets initial
+    conditions before init, rewinds between episodes, reads the state after each
+    step and disposes the simulator.
 
-    Manages initialization, per-episode rewind and disposal of the black-box
-    simulator: initial conditions are set before init, the model is rewound
-    between episodes, and the state is read after each step.
-
-    With wind_current, the exercise with wind and current is loaded and every
-    reset() draws a new wind-field transform (draw_wind_field_transform) that
-    holds for the whole episode; the current and tide stay the exercise's.
-    The first rewind verifies once that FH applies a transform set after
-    SimulateRewindTo (WIND_PROBE_SCALE); otherwise reset() raises.
+    With wind_current, the wind/current exercise is loaded and every reset()
+    draws a new wind-field transform (draw_wind_field_transform) for the whole
+    episode; current and tide stay the exercise's. The first rewind verifies
+    once that FH applies a transform set after SimulateRewindTo, else reset()
+    raises.
 
     Attributes:
         initialize_math_model (bool): True when the math model needs (re)initialization.
-        math_model_initialized (bool): True only after a successful Initialize() call.
-        _math_model: MathModel instance. None until successfully initialized.
-        _ship_interface: ShipInterface instance. None until successfully initialized.
+        math_model_initialized (bool): True only after a successful Initialize().
+        _math_model: MathModel instance, None until initialized.
+        _ship_interface: ShipInterface instance, None until initialized.
     """
 
     SNAPSHOT_WINDOW = 100000  # Maximum rewind window [s] (~27 h)

@@ -126,21 +126,15 @@ class PySimEnv(BaseEnv):
     """
     Ship navigation environment on the Western Scheldt map (full scale).
 
-    Supports the Python dynamics models (Fossen, Nomoto, UGentSurrogate,
-    UGentB01Surrogate, UAntwerpSurrogate) and the external FH Simulator
-    (Model.FH_TABULAR). For FH_TABULAR an externally constructed bridge is passed
-    as `fh_bridge` and stored as self._fh_sim; only normalized rudder and thrust
-    commands in [-1, 1] are set through it. Any object with FhSimBridge's duck-typed
-    interface (ship_model, ship_interface, math_model, initial_vessel_state, reset(),
-    dispose()) works, e.g. FhSimBridge (local math model) or SimSyncBridge (realtime
-    UDP link to simSync). For other models self._fh_sim is None. With FH, reset()
-    starts the episode from FH's actual state after the bridge's reset.
+    Dynamics: Fossen, Nomoto, UGentSurrogate, UGentB01Surrogate, UAntwerpSurrogate,
+    or the FH Simulator (Model.FH_TABULAR) through an externally built bridge
+    (`fh_bridge`, kept as self._fh_sim; any object with FhSimBridge's interface,
+    e.g. SimSyncBridge). With FH only normalized rudder and thrust are set, and
+    each episode starts from FH's actual state after its reset.
 
-    Wind and current (wind = current = True, both or neither): the observation
-    gets 4 features (fw.environments.wind_current_obs) from
-    dynamics.observed_wind_current: real values for FH (the bridge must load
-    the wind/current exercise, wind_current=True) and the full_env UAntwerp
-    surrogate (which requires the flags), zeros for all other models.
+    With wind = current = True the observation gets 4 wind/current features
+    (fw.environments.wind_current_obs): real values for FH and the full_env
+    UAntwerp surrogate, zeros for the other models.
     """
 
     SUPPORTS_MODEL_SCALE_SHIPS: bool = False
@@ -185,27 +179,23 @@ class PySimEnv(BaseEnv):
             max_steps: Maximum steps per episode (truncation).
             verbose: Print informational logs.
             start_pos: Initial ship position (2-array).
-            target_pos: Target position. The trajectory is cut to end here and walked
-                forwards or backwards, whichever reaches it from start_pos. If omitted,
-                the trajectory's last point is the target.
-            overall_contour, depth_contour, trajectory: Map CSV file names (defaults:
-                env_Sche_no_scale.csv, env_Sche_250cm_no_scale.csv,
-                trajectory_points_no_scale.csv).
-            dynamics_model: Dynamics model; Model.FH_TABULAR uses the FH Simulator.
-            ship_model: Ship model (must be full scale).
+            target_pos: Target; the trajectory is cut to end here (default: its last point).
+            overall_contour, depth_contour, trajectory: Map CSV file names (default
+            env_Sche_no_scale.csv, env_Sche_250cm_no_scale.csv,
+            trajectory_points_no_scale.csv).
+            dynamics_model: Dynamics model.
+            ship_model: Ship model (full scale).
             wind: Observe wind and current (must equal `current`).
             current: Observe wind and current (must equal `wind`).
-            ua_surrogate_config: Model.UANTWERP configuration, e.g.
-                {"preset": "tripoli_confined"} (see fw.surrogate.presets).
-            ugent_surrogate_config: UGent surrogate configuration, e.g. {"ukc_percent": 363}.
-            ugent_b01_surrogate_config: UGent B01 configuration, e.g. {"ukc_percent": 379}.
+            ua_surrogate_config: Model.UANTWERP config, e.g. {"preset": "tripoli_confined"}.
+            ugent_surrogate_config: UGent config, e.g. {"ukc_percent": 363}.
+            ugent_b01_surrogate_config: UGent B01 config, e.g. {"ukc_percent": 379}.
             enable_bank_collision_check: Terminate on bank collision.
             enable_ukc_check: Terminate on insufficient UKC.
             reward_name: Reward profile name.
             reward_weights: Optional per-component reward weights.
-            scenario: FH scenario name, stored for record-keeping only.
-            fh_bridge: FH engine bridge, required for Model.FH_TABULAR and ignored
-                otherwise.
+            scenario: FH scenario name (record-keeping only).
+            fh_bridge: FH bridge, required for Model.FH_TABULAR.
 
         Raises:
             RuntimeError: Model.FH_TABULAR without fh_bridge.
@@ -406,8 +396,8 @@ class PySimEnv(BaseEnv):
             ShipSimulator using this env's ship and time step.
 
         Raises:
-            ValueError: Ship model not supported by the selected dynamics model,
-                or a full_env UAntwerp surrogate with wind and current disabled.
+            ValueError: Ship not supported by the dynamics model, or a full_env
+                UAntwerp surrogate with wind and current disabled.
             RuntimeError: Unknown dynamics model, or FH_TABULAR without a bridge.
         """
 
@@ -460,9 +450,8 @@ class PySimEnv(BaseEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        # Only models with a real current (over-ground surge) get limits widened
-        # by RANDOM_CURRENT_SPEED_MAX (following current up, head current down);
-        # for the others it would lift their only speed limit.
+        # Only models with a real current get the surge limits widened by
+        # RANDOM_CURRENT_SPEED_MAX; for the others it would lift their only speed limit.
         sim_limits = None
         if self.wind and self.dynamics.models_own_wind_current:
             sim_limits = (float(self.ship.specifications.surge_limits[0]) - RANDOM_CURRENT_SPEED_MAX,
@@ -471,11 +460,10 @@ class PySimEnv(BaseEnv):
 
     def _surge_cap(self) -> float:
         """
-        Scale [m/s] of the observed surge, for every model alike so the
-        observation means the same: the ship's own upper surge limit, raised by
-        RANDOM_CURRENT_SPEED_MAX with wind and current (surge is over ground).
-        Also the simulator's upper surge limit for models with their own
-        wind/current (their lower limit is lowered by the same amount).
+        Scale [m/s] of the observed surge, equal for every model: the ship's upper
+        surge limit, raised by RANDOM_CURRENT_SPEED_MAX with wind and current (surge
+        is over ground). Also the simulator's upper surge limit for models with their
+        own wind/current (their lower limit drops by the same amount).
         """
 
         high = float(self.ship.specifications.surge_limits[1])
@@ -651,11 +639,9 @@ class PySimEnv(BaseEnv):
         """
         Split the river-polygon boundary into real-bank and map cut-off segments.
 
-        Map cut-offs are straight edges where the depth contour is clipped at
-        the map limit; they are not banks. Uses MAP_CUTOFF_LINES when the
-        contour has an entry there; otherwise a cut-off is a run of
-        consecutive segments on one bounding-box side, at least
-        `min_cutoff_length` long (short touches, e.g. a bend crest, are banks).
+        Cut-offs are straight edges where the contour is clipped at the map limit.
+        Uses MAP_CUTOFF_LINES if the contour has an entry; otherwise a cut-off is a
+        run of segments on one bounding-box side of at least `min_cutoff_length`.
         Cut-offs not aligned with the bounding box are not detected.
 
         Args:
@@ -780,11 +766,10 @@ class PySimEnv(BaseEnv):
             max_tries: Optional[int] = None,
     ) -> np.ndarray:
         """
-        Sample river points whose distance to the nearest real bank is in [min_distance, max_distance].
-
-        Steps a random distance perpendicular from a random bank point into the water and
-        keeps candidates inside the polygon within the band; points closer than
-        `max_distance` to a map cut-off edge are rejected. Uses `self._rng`.
+        Sample river points whose distance to the nearest real bank is in
+        [min_distance, max_distance], stepping perpendicular from random bank points
+        into the water. Points closer than max_distance to a map cut-off edge are
+        rejected. Uses self._rng.
 
         Args:
             nbr_samples: Number of points to return.
@@ -924,10 +909,9 @@ class PySimEnv(BaseEnv):
             max_distance: float = 200.0,
     ) -> np.ndarray:
         """
-        Vectorized `ray_cast_distance` for N rays from a common origin.
-
-        Uses Shapely 2 array operations (one GEOS call each); only the rare
-        MultiPoint/GeometryCollection hits are fixed up in Python.
+        Vectorized ray_cast_distance for N rays from a common origin (Shapely 2
+        array operations; only MultiPoint/GeometryCollection hits are fixed up in
+        Python).
 
         Args:
             origin: (x, y) start point shared by all rays (world frame).
@@ -1049,12 +1033,10 @@ class PySimEnv(BaseEnv):
     @staticmethod
     def _reduce_path(path: np.ndarray, start_pos: np.ndarray, target_pos: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        Cut the trajectory to run from just after start_pos to exactly target_pos.
-
-        The trajectory is walked forwards or backwards (reversed point order), whichever
-        direction reaches target_pos. Without target_pos, the path runs forwards to the
-        trajectory's last point, or backwards to its first point if start_pos is closest
-        to the last point.
+        Cut the trajectory to run from just after start_pos to exactly target_pos,
+        walking it forwards or backwards, whichever reaches target_pos. Without
+        target_pos, it runs to the last point, or backwards to the first point if
+        start_pos is closest to the last one.
 
         Args:
             path: Full trajectory, (N, 2).
@@ -1219,11 +1201,9 @@ class PySimEnv(BaseEnv):
 
     def env_specific_reset(self):
         """
-        Reset hook, called by reset() before _initialize_simulation().
-
-        With the FH Simulator, rewinds its math model to the initial state (t = 0.25 s,
-        the earliest rewind point), with wind and current drawing a new wind field
-        from the env RNG; otherwise defers to the base class.
+        Reset hook, called by reset() before _initialize_simulation(). With FH,
+        rewinds its math model to t = 0.25 s (the earliest rewind point), drawing a
+        new wind field from the env RNG when wind and current are on.
         """
 
         if self._fh_sim is not None:
@@ -1239,10 +1219,8 @@ class PySimEnv(BaseEnv):
 
     def randomize(self, randomization_scale: Optional[float] = None) -> None:
         """
-        Perturb the initial position uniformly by up to +-randomization_scale per axis.
-
-        No-op with the FH Simulator, which always rewinds to the initial state set at
-        math model initialization (changing it needs a re-initialization).
+        Perturb the initial position uniformly by up to +-randomization_scale per
+        axis. No-op with FH, which always rewinds to its initialization state.
 
         Args:
             randomization_scale: New scale; None keeps the current one.
@@ -1512,9 +1490,8 @@ class PySimEnv(BaseEnv):
 
         # Ship information
         rudder_change = abs(self.performed_action[0] - self.previous_action[0])
-        # Both in rad (performed_action holds the actuator's rudder angle). The +1e-6 rad
-        # tolerance keeps a move at exactly the maximum slew rate out of the 'exceeded'
-        # penalty branch despite float32 rounding.
+        # Both in rad. The 1e-6 tolerance keeps a move at exactly the maximum slew
+        # rate out of the 'exceeded' branch despite float32 rounding.
         max_rudder_change = self.ship.specifications.max_rudder_rate * self.time_step + 1e-6  # rad
         heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
         distance_traveled = abs(np.linalg.norm(self.ship_pos - self.previous_ship_pos))
@@ -1789,9 +1766,8 @@ class PySimEnv(BaseEnv):
 
         self.initialize_plots = False
 
-        # Screen size via a temporary Tk root. tkinter is imported lazily so the
-        # framework still imports on headless machines without Tk (e.g. HPC nodes).
-        # Any failure (no Tk, no display, Tk off the main thread, ...) falls back.
+        # Screen size via a temporary Tk root, imported lazily so headless machines
+        # work. Any failure falls back to defaults.
         # noinspection PyBroadException
         try:
             import tkinter as tk

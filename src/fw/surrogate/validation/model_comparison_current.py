@@ -1,8 +1,8 @@
 """
 Current counterpart of model_comparison_wind.py: compares all dynamics models
 against FH (ground truth) for a ship sailing straight (rudder 0, fixed thrust)
-in open water in a river current, over a grid of current level x direction
-relative to the ship. Wind is off.
+in open water, over a grid of current level x direction relative to the ship.
+Wind is off.
 
 Models:
     FH: simexe, current exercise, wind-field Scale 0
@@ -10,36 +10,28 @@ Models:
         the paired baseline of every run
     UGent, Fossen, UA_clean, UA_confined: no current input
     UA_full: the only non-FH model with current inputs
-    UA_full_nocurrent: UA_full in the baseline run (current 0)
+    UA_full_nocurrent: UA_full in the baseline run
 
-Setting the current (FH has no setter): current and water level come from the
-area's current and tide XMLs, whose <timeStart> shifts the tidal phase. Before
-each FH session the wanted timeStart is written with the generator's writer;
-the originals are restored at the end (also on errors or Ctrl+C). The baseline
-uses the same timeStart, hence the same water level. If the run is killed hard,
-the originals stay in CURRENT_OUTPUT_DIR/timestart_backup/ and are restored at
-the next start.
+Setting the current: FH has no setter; the <timeStart> of the area's current
+and tide XMLs shifts the tidal phase. It is written before each FH session and
+the originals are restored at the end (also on errors or Ctrl+C; after a hard
+kill, from CURRENT_OUTPUT_DIR/timestart_backup/ at the next start). The
+baseline uses the same timeStart, so the same water level.
 
-Calibration: the current at the start pose (velocity over ground minus through
-water) is scanned over CURRENT_TIME_START_RANGE every CAL_TIME_STEP_S; one
-timeStart per level is picked (CURRENT_LEVEL_FRACTIONS of the strongest current,
-or CURRENT_SPEED_TARGETS). The field cannot be rotated, so the relative direction
-is set with the start heading = (current toward) + 180 deg + relative direction.
+Calibration: the current at the start pose is scanned over
+CURRENT_TIME_START_RANGE; one timeStart per level is picked
+(CURRENT_LEVEL_FRACTIONS of the strongest, or CURRENT_SPEED_TARGETS). The
+field cannot be rotated, so the start heading sets the relative direction:
+heading = (current toward) + 180 deg + relative direction.
 
-Relative direction (as in the wind test): where the current comes FROM, relative
-to the bow, clockwise: 0 = head current, 90 = from starboard (sets the ship to
-port), 180 = following, 270 = from port.
+Relative direction: where the current comes from, relative to the bow,
+clockwise (0 = head current, 90 = from starboard, 180 = following).
 
-UA_* inputs every step: FH's live UKC (timeStart changes the water level), FH's
-current at FH's position (no API to query elsewhere), and the apparent wind for
-the model's own state from FH's true wind (Scale 0), sampled and held at FH's
-1 Hz WindState updates.
-
-Non-FH models run in their own ShipSimulator (which adds no wind or current) and
-start from FH's state after warm-up. Those velocities over ground already contain
-the current, so models without current input still show a small "current effect".
-
-Domain checks as in the wind test; runs coming near a bank are flagged, not skipped.
+UA_* inputs every step: FH's live UKC, FH's current at FH's position, and the
+apparent wind for the model's own state, held between FH's 1 Hz WindState
+updates. Non-FH models start from FH's state after warm-up; those velocities
+over ground already contain the current, so models without current input
+still show a small "current effect". Runs near a bank are flagged, not skipped.
 
 Usage (from src):
     python fw/surrogate/validation/model_comparison_current.py               # full run

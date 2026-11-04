@@ -521,13 +521,10 @@ class PySimBaseEnv(BaseEnv):
     @staticmethod
     def _reduce_path(path: np.ndarray, start_pos: np.ndarray, target_pos: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        Cut the trajectory to run from just after start_pos to target_pos.
-
-        The path is walked forwards or, if target_pos lies earlier in the
-        stored point order, backwards (e.g. sailing north-to-south along a
-        trajectory recorded south-to-north). Its last point is set exactly to
-        target_pos. Without target_pos the path runs forwards to the
-        trajectory's last point.
+        Cut the trajectory to run from just after start_pos to target_pos, walking
+        it backwards if target_pos lies earlier in the stored point order. The last
+        point is set exactly to target_pos; without target_pos the path runs forwards
+        to the last point.
 
         Args:
             path: Full trajectory, (N, 2).
@@ -538,8 +535,8 @@ class PySimBaseEnv(BaseEnv):
             The reduced path.
 
         Raises:
-            ValueError: If the result is empty, or start_pos and target_pos map
-                to the same trajectory point.
+            ValueError: Empty result, or start_pos and target_pos map to the same
+                trajectory point.
         """
 
         if len(path) == 0:
@@ -944,9 +941,8 @@ class PySimBaseEnv(BaseEnv):
         self.ukc = self.get_keel_clearance()
 
         rudder_change = abs(self.performed_action[0] - self.previous_action[0])
-        # Both in rad: performed/previous_action hold the actuator rudder angle.
-        # The +1e-6 rad tolerance keeps a move at exactly the max slew rate
-        # (float32 rounding lands just above it) out of the hard -1 penalty.
+        # Both in rad. The 1e-6 tolerance keeps a move at exactly the maximum slew
+        # rate out of the -1 penalty despite float32 rounding.
         max_rudder_change = self.ship.specifications.max_rudder_rate * self.time_step + 1e-6  # rad
         heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
         distance_traveled = abs(np.linalg.norm(self.ship_pos - self.previous_ship_pos))

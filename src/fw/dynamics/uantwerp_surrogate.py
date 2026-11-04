@@ -8,64 +8,50 @@ The checkpoint's scenario (fw.surrogate.schema) determines the inputs:
     confined_ukc   yes            yes    -
     full_env       yes            yes    yes
 
-Configuration (ua_surrogate_config, see config.py)::
+Configuration (ua_surrogate_config, see config.py):
 
     {"preset": "tripoli_confined",          # required, see fw.surrogate.presets
-     "checkpoint": "x.pth",                 # optional override of the preset's
+     "checkpoint": "x.pth",                 # optional override
      "lookup_csv": "x.csv",                 # optional override (None = no lookup)
-     "env_smoothing_tau": 10.0,             # optional, seconds (None/absent = off)
+     "env_smoothing_tau": 10.0,             # optional, seconds (None = off)
      "wind_current": "random"}              # optional, "lookup" (default) or "random"
 
-Relative checkpoint paths resolve against fw/checkpoints, relative lookup CSVs
-against fw/dynamics, independent of the working directory. The checkpoint must
-match the preset (scenario and ship). The rudder angle is converted to
-rudder_action with the rudder scale stored in the checkpoint.
+Relative checkpoint paths resolve against fw/checkpoints, lookup CSVs against
+fw/dynamics. The checkpoint must match the preset (scenario and ship); its
+stored rudder scale converts the rudder angle to rudder_action.
 
 Hooks used by the model-comparison tests:
-  * get_env(pos, state=None): the only source of UKC/wind/current for the
-    input row; may be replaced by an instance attribute with that signature.
-  * _env: the ray caster (scenarios with rays); may be any PySimEnv-like object.
-  * ukc / get_ukc(None): UKC of the last model input (smoothed if
-    configured); get_ukc(pos): raw lookup UKC at pos.
+  * get_env(pos, state=None): the only source of UKC/wind/current; may be
+    replaced by an instance attribute with that signature.
+  * _env: the ray caster; any PySimEnv-like object.
+  * ukc / get_ukc(None): UKC of the last model input; get_ukc(pos): raw
+    lookup UKC at pos.
   * _compute_accelerations(state, rudder_angle, thrust).
 
-Environment from the lookup CSV (get_env, nearest dataset row):
+Lookup environment (get_env, nearest dataset row):
   * UKC for scenarios with a UKC input.
-  * Current (full_env): the row's earth-fixed current, as stored.
-  * Wind (full_env): the CSV stores the apparent wind of the recording ship
-    (FH WindState: relative to its bow, positive from starboard). It is
-    converted to true wind with that ship's heading, surge and sway, then back
-    to apparent wind for this ship (same conversion as model_comparison_wind).
-  Without a lookup or a row: default UKC, zero wind and current. Rows come
-  from episodes with random tides and wind fields, so values can jump when the
-  nearest row changes. The nearest row is always used; distances beyond
-  LOOKUP_WARN_DISTANCE_M are warned about once and then counted
-  (lookup_far_count, lookup_max_distance) to expose coverage gaps.
+  * Current (full_env): the row's earth-fixed current.
+  * Wind (full_env): the stored apparent wind of the recording ship is
+    converted to true wind with that ship's state, then to apparent wind for
+    this ship.
+  Without a lookup or row: default UKC, zero wind and current. Values can jump
+  when the nearest row changes. Distances beyond LOOKUP_WARN_DISTANCE_M are
+  warned about once and counted (lookup_far_count, lookup_max_distance).
 
-Random wind and current (wind_current = "random", full_env, meant for RL):
-reset_episode(rng) draws per episode a true wind (direction uniform, speed
-|N(0, RANDOM_WIND_SPEED_SIGMA)| clipped to RANDOM_WIND_SPEED_MAX), constant
-earth-fixed and converted to this ship's apparent wind every step, and a
-current speed (uniform in [0, RANDOM_CURRENT_SPEED_MAX]) with a flood/ebb sign
-(50 %). The current flows along the river line (CurrentLineFollower): a
-moving average (time constant env_smoothing_tau, else CURRENT_LINE_TAU) of
-the line of the lookup's current at the ship's position over reliable rows
-(at least CURRENT_AXIS_MIN_SPEED), with flood/ebb rows treated alike. The
-drawn sign orients it at the first reliable row; then the direction moves
-gradually towards the line, the slower the weaker the line, so it neither
-jumps nor flips. Tuned on the real lookups with
-fw.surrogate.check_random_current_lookup. Before the first reliable
-row, and without a lookup, the current is zero. UKC still comes from the
-lookup. episode_conditions() reports the draw. For presets without
-wind/current the setting has no effect.
+Random wind and current (wind_current = "random", full_env, for RL):
+reset_episode(rng) draws per episode a constant earth-fixed true wind
+(direction uniform, speed |N(0, RANDOM_WIND_SPEED_SIGMA)| clipped to
+RANDOM_WIND_SPEED_MAX), converted to apparent wind every step, and a current
+speed (uniform in [0, RANDOM_CURRENT_SPEED_MAX]) with a random flood/ebb sign.
+The current flows along the river line (CurrentLineFollower). It is zero
+before the first reliable lookup row and without a lookup. UKC still comes
+from the lookup; episode_conditions() reports the draw. No effect for presets
+without wind/current.
 
-Smoothing (env_smoothing_tau, meant for RL): the model input then gets an
-exponential moving average (time constant tau) of the UKC and, with "lookup",
-the earth-fixed true wind and the earth-fixed current ("random": the UKC),
-restarted by reset_episode(); the wind is converted back to this ship's
-apparent wind. get_env and get_ukc(pos) stay raw; get_ukc(None) returns the UKC of the last
-model input. observed_wind_current() reports the wind and current of the
-last model input.
+Smoothing (env_smoothing_tau, for RL): the model input gets an exponential
+moving average of the UKC and, with "lookup", of the earth-fixed true wind and
+current, restarted by reset_episode(). get_env and get_ukc(pos) stay raw.
+observed_wind_current() reports the wind and current of the last model input.
 """
 
 import logging
@@ -185,16 +171,14 @@ class CurrentLineFollower:
     """
     Direction of one episode's "random" current along the river line.
 
-    The line is a moving average (time constant `tau`) of the unit vectors
-    of twice the lookup current's direction over reliable rows (speed at
-    least CURRENT_AXIS_MIN_SPEED, finite), so flood and ebb rows reinforce
-    each other and cross-flow rows only weaken it. The first reliable row,
-    oriented by `sign`, gives the first direction. Afterwards the direction
-    moves towards the line's orientation closest to it, as a moving average
-    with time constant `tau` scaled by the line strength to the power
-    CURRENT_LINE_STRENGTH_EXPONENT: a weak line (cross flow, sparse rows)
-    barely moves it, so it neither jumps nor flips. None (zero current)
-    until the first reliable row.
+    The line is a moving average (time constant `tau`) of the unit vectors of
+    twice the lookup current's direction over reliable rows (speed at least
+    CURRENT_AXIS_MIN_SPEED), so flood and ebb rows reinforce each other. The
+    first reliable row, oriented by `sign`, gives the first direction; then the
+    direction moves towards the nearest line orientation with time constant
+    `tau` scaled by line strength ** CURRENT_LINE_STRENGTH_EXPONENT, so a weak
+    line barely moves it and it never jumps or flips. None (zero current) until
+    the first reliable row.
     """
 
     def __init__(self, sign: float, tau: Optional[float] = None):
@@ -254,8 +238,7 @@ def make_scenario_lookup(csv, scenario, preset_name: str = "?") -> WcuLookup:
     """
 
     # Lookup CSVs carry no identity, so the width is the only layout check
-    # (otherwise e.g. a confined_ukc CSV's rudder/ray columns would be read
-    # as wind and current by a full_env preset).
+    # (else a confined_ukc CSV would be read as wind and current).
     sc = scenario
     expected = sc.raw_input_dim + len(TARGET_NAMES) + 1     # raw row + targets + episode_id
     n_cols = len(pd.read_csv(csv, header=None, nrows=1).columns)
@@ -326,16 +309,14 @@ class UAntwerpSurrogate(DynamicsBase):
             ship_spec:           Vessel specifications.
             ua_surrogate_config: {"preset": ..., optional "checkpoint", "lookup_csv",
                                  "env_smoothing_tau", "wind_current"}.
-            ship_model:          Ship the caller simulates; if given, it must be
-                                 the preset's ship.
+            ship_model:          Ship the caller simulates; must be the preset's ship.
             ray_caster:          Object with ray_cast_distances_batch / ray_cast_distance
-                                 (normally a PySimEnv). None: a PySimEnv is created
-                                 on first use (scenarios with rays only).
+                                 (normally a PySimEnv); None creates one on first use.
 
         Raises:
-            ValueError: On a missing/unknown preset, unknown config keys, a
-                checkpoint/ship that does not match the preset, a lookup CSV
-                with the wrong column count, or an invalid env_smoothing_tau or wind_current.
+            ValueError: Missing/unknown preset, unknown config keys, checkpoint or
+                ship not matching the preset, lookup CSV with the wrong width, or an
+                invalid env_smoothing_tau or wind_current.
             FileNotFoundError: If the checkpoint does not exist.
         """
 

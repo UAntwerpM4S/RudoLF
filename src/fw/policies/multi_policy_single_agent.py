@@ -46,16 +46,15 @@ class CollapseWatchdog:
     """
     Per-policy collapse detector with weights-only rollback.
 
-    Tracks a rolling mean of the per-iteration reward per policy and snapshots
-    the network state_dict at every new peak. It triggers when
-    smoothed / peak < ratio_threshold (typically negative: -1.75 means the
-    current mean is at -175 % of the peak) and returns the snapshot. The caller
-    loads it and should also reset the optimizer, otherwise Adam's moment
-    buffers push the weights back along the failure path (rollback ping-pong).
+    Tracks a rolling mean of each policy's per-iteration reward and snapshots its
+    state_dict at every new peak. Triggers when smoothed / peak < ratio_threshold
+    (e.g. -1.75: the mean is at -175 % of the peak) and returns the snapshot. The
+    caller loads it and should also reset the optimizer, else Adam's moments push
+    the weights back along the failure path.
 
-    Safeguards: warmup_iterations (no rollback before), min_gap_between_rollbacks
-    (cooldown), max_rollbacks (cap per policy), min_peak_for_trigger (the ratio
-    test is ill-defined for non-positive peaks).
+    Safeguards: warmup_iterations, min_gap_between_rollbacks, max_rollbacks per
+    policy, and min_peak_for_trigger (the ratio is ill-defined for non-positive
+    peaks).
     """
 
     def __init__(
@@ -197,16 +196,14 @@ class MultiPolicySingleAgent(BasePPOAgent):
             *args, **kwargs: Forwarded to BasePPOAgent.
             num_policies: Number of policies; equals the env's one-hot length.
             policy_labels: Policy names; default ["policy_0", ...].
-            steps_per_policy_update: Segment steps a slot accumulates (over one or
-                more iterations) before its PPO update runs on the buffered
-                segments. No off-policy bias: a slot's networks do not change
-                between its updates.
+            steps_per_policy_update: Segment steps a slot accumulates before its PPO
+                update (its networks do not change in between, so no off-policy bias).
             watchdog_enabled: Use a CollapseWatchdog (per-policy rollback).
             watchdog_kwargs: CollapseWatchdog overrides (ignored if disabled).
 
         Raises:
-            ValueError: If num_policies < 2 or the observation space cannot hold
-                both base features and the one-hot.
+            ValueError: num_policies < 2, or the observation space cannot hold both
+                base features and the one-hot.
             NotImplementedError: If the action space is not a Box.
         """
 

@@ -72,24 +72,21 @@ def class_name_to_filename(class_name: str, style: FilenameStyle) -> str:
 
 def find_existing_filename(class_name: str, directory: str = ".") -> str:
     """
-    Find the file name of a class by trying the naming styles (snake_case,
-    lowercase, kebab-case).
-
-    Per style, it looks in `directory`, `<directory>/fw/` (both cwd-relative,
-    for older layouts) and this module's folder `fw/scheduling/`, where the
-    scheduler modules live (independent of the launch directory).
+    Find the file name of a class by trying snake_case, lowercase and
+    kebab-case, each in `directory`, `<directory>/fw/` and this module's folder
+    fw/scheduling/.
 
     Args:
         class_name (str): The name of the class to search for.
-        directory (str, optional): Directory to search first; defaults to the
+        directory (str, optional): Directory to search first; default the
             current directory.
 
     Returns:
-        str: The matching file name without directory (the caller imports
-            it from `fw.scheduling.`).
+        str: The matching file name without directory (imported from
+            fw.scheduling.).
 
     Raises:
-        FileNotFoundError: If no matching file is found using any style.
+        FileNotFoundError: If no matching file is found.
     """
 
     module_dir = os.path.dirname(os.path.abspath(__file__))
@@ -375,34 +372,21 @@ class Trainer:
         verbose: bool = True,
     ) -> Dict[int, Dict[str, Any]]:
         """
-        Evaluate and compare different reward configurations.
-
-        Trains an independent policy per reward configuration, sequentially.
+        Train an independent policy per reward configuration, sequentially, and
+        compare them.
 
         Args:
-            reward_configs (List[Dict[str, Any]]): List of environment configuration dicts.
-                Each dict should have:
-                    - "type": Environment type (e.g., "PySimEnvironment")
-                    - "reward_name": Reward profile name (e.g., "default", "heading_only")
-                    - "reward_weights": Dict of component weights (optional)
-            training_configuration (Dict[str, Any], optional): Dict of stop conditions
-                keyed by environment type. Example:
-                    {
-                        "PySimEnvironment": StopCondition(...),
-                    }
-            verbose (bool, optional): If True, prints progress information.
+            reward_configs (List[Dict[str, Any]]): Environment configurations with
+                "type" (e.g. "PySimEnvironment"), "reward_name" and optional
+                "reward_weights".
+            training_configuration (Dict[str, Any], optional): StopCondition per
+                environment type, e.g. {"PySimEnvironment": StopCondition(...)}.
+            verbose (bool, optional): Print progress information.
 
         Returns:
-            Dict[int, Dict[str, Any]]: Mapping of config index to results:
-                {
-                    "config": original configuration,
-                    "env_type": environment type,
-                    "reward_name": reward profile name,
-                    "reward_weights": weights used,
-                    "metrics": training metrics dict,
-                    "trajectory_file": saved trajectory image or None,
-                    "status": "success" or "failed: <error>"
-                }
+            Dict[int, Dict[str, Any]]: Per config index: config, env_type,
+            reward_name, reward_weights, metrics, trajectory_file (or None) and
+            status ("success" or "failed: <error>").
         """
 
         # Enforce explicit configs to avoid silent no-op evaluations.
