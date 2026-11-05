@@ -17,10 +17,10 @@ import logging
 import numpy as np
 import gymnasium as gym
 
-from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional, cast
+from datetime import datetime, timezone
 
 # Any import failure (not only ImportError, e.g. an incompatible tornado) falls back.
 # noinspection PyBroadException

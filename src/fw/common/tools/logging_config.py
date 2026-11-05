@@ -16,12 +16,12 @@ SubprocVecEnv workers (spawn mode) do not inherit this configuration and call
 
 from __future__ import annotations
 
-import logging
 import sys
-from datetime import datetime, timezone
+import logging
+
 from pathlib import Path
 from typing import Optional
-
+from datetime import datetime, timezone
 from fw.common.tools.path_utils import resolve_path_relative_to_src
 
 _CONSOLE_FORMAT = "%(levelname)s [%(name)s] %(message)s"

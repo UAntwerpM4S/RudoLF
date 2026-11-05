@@ -16,13 +16,13 @@ Usage (from src):
 
 from __future__ import annotations
 
-import argparse
 import csv
 import sys
+import argparse
+import numpy as np
+
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, TypedDict, cast
-
-import numpy as np
 
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"

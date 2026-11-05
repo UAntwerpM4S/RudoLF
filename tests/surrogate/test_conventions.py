@@ -20,6 +20,8 @@ Run from the repository root:
 """
 
 import sys
+import numpy as np
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,12 +29,10 @@ _SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")   # <repo>/tests/sur
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-import numpy as np
-
+from fw.surrogate import schema
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.fh_tabular_model import FhTabularModel, fh_rudder_sign
 from fw.dynamics.uantwerp_surrogate import _bow_and_starboard, apparent_wind_for_state
-from fw.surrogate import schema
 
 TOL = 1e-9
 

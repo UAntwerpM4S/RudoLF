@@ -7,11 +7,10 @@ only the columns the lookup reads kept, the others 0; .gz output deterministic.
 """
 
 import gzip
-
 import numpy as np
 
-from fw.surrogate import make_ukc_lookup as M
 from fw.surrogate.schema import get_scenario
+from fw.surrogate import make_ukc_lookup as M
 
 CELL = 5.0
 

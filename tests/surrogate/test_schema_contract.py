@@ -7,10 +7,11 @@ UAntwerpSurrogate builds at inference time: a change here changes every
 dataset and checkpoint, so it must be deliberate.
 """
 
-import numpy as np
 import pytest
+import numpy as np
 
 from fw.environments.ray_features import RAY_ANGLES_DEG
+from surrogate_test_helpers import identity
 from fw.surrogate import schema
 from fw.surrogate.schema import (
     ENV_ENCODING_ANGLES,
@@ -21,8 +22,6 @@ from fw.surrogate.schema import (
     project_raw_columns,
     select_and_encode,
 )
-
-from surrogate_test_helpers import identity
 
 RAYS = tuple(f"ray_{int(a)}" for a in RAY_ANGLES_DEG)
 BASE = ("x", "y", "heading", "surge", "sway", "yaw_rate")

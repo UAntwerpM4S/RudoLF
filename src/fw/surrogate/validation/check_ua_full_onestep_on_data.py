@@ -23,19 +23,19 @@ checkpoint. The CSV has no ship identity, so use the dataset of the
 checkpoint's ship (printed).
 """
 
-import argparse
-import math
 import sys
 import time
+import math
+import argparse
+import numpy as np
+import pandas as pd
+
 from pathlib import Path
 
 # Make `import fw...` work when run as a plain script.
 _SRC = Path(__file__).resolve().parents[3]     # src (this file: src/fw/surrogate/validation/)
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
-
-import numpy as np
-import pandas as pd
 
 DT = 0.1
 N_IN = 37

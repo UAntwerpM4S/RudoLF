@@ -12,7 +12,6 @@ Class hierarchy:
 
 import math
 import logging
-from collections import deque
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -20,6 +19,7 @@ import numpy as np
 
 matplotlib.rcParams['figure.raise_window'] = False
 
+from collections import deque
 from shapely.geometry import Point
 from typing import Optional, Tuple, Dict
 from fw.ships.ship_factory import ShipModel

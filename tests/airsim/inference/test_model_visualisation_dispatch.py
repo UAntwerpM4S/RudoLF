@@ -3,7 +3,6 @@ Tests for model-visualization dispatch through fw.main_with_airsim.
 """
 
 import runpy
-
 import pytest
 
 

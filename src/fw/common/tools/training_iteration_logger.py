@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import csv
 import logging
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
 
+from typing import Any
+from pathlib import Path
+from datetime import datetime, timezone
 from fw.common.tools.path_utils import resolve_path_relative_to_src
 
 logger = logging.getLogger(__name__)

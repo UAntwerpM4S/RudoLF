@@ -4,10 +4,9 @@ importability of the FH validation scripts, early pipeline validation of the
 wind/current flags, and the dataset-layout check of the scale tool.
 """
 
-import importlib
-
-import numpy as np
 import pytest
+import importlib
+import numpy as np
 
 
 @pytest.mark.parametrize("module", [
@@ -133,7 +132,7 @@ def test_preflight_rejects_full_preset_without_wind_current(full_preset_config):
 
 def test_preflight_rejects_simsync_with_wind_current():
     """
-    simSync with the flags on fails before any block runs; without them it passes.
+    simSync with the flags on fails before any block runs; without them, it passes.
     """
 
     from fw.scheduling.pipeline_scheduler import PipelineScheduler
@@ -145,7 +144,7 @@ def test_preflight_rejects_simsync_with_wind_current():
 
 def test_preflight_leaves_other_errors_to_the_block(monkeypatch):
     """
-    A block whose configuration cannot be resolved is not rejected up front (unchanged behaviour).
+    A block whose configuration cannot be resolved is not rejected up front (unchanged behavior).
     """
 
     from fw.scheduling import pipeline_scheduler

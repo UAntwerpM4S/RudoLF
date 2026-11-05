@@ -4,13 +4,13 @@ Focused regression tests for SinglePPOAgent training safeguards.
 
 from __future__ import annotations
 
-import gymnasium as gym
-import numpy as np
 import pytest
-from types import SimpleNamespace
+import numpy as np
+import gymnasium as gym
 
-from fw.configuration.stop_condition import StopCondition
+from types import SimpleNamespace
 from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.configuration.stop_condition import StopCondition
 
 
 def test_filter_trainable_episodes_skips_one_step_rollouts():

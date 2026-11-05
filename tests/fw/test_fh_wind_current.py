@@ -5,15 +5,14 @@ selection by the wind/current flag, and the per-episode wind-field transform
 """
 
 import os
-from types import SimpleNamespace
-
-import numpy as np
 import pytest
+import numpy as np
 
-from fw.ships.ship_factory import ShipModel
+from types import SimpleNamespace
 from fw.simulators import fh_sim_bridge
-from fw.simulators.fh_interface_utils import WIND_SCALE_MAX, draw_wind_field_transform
+from fw.ships.ship_factory import ShipModel
 from fw.simulators.fh_sim_bridge import FhSimBridge
+from fw.simulators.fh_interface_utils import WIND_SCALE_MAX, draw_wind_field_transform
 
 EXERCISE_SUBDIR = "database/areas/ScheldeSaeftinge_23_002/invoer/tra"
 

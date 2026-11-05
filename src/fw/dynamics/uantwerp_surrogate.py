@@ -59,9 +59,9 @@ import numpy as np
 import pandas as pd
 
 from typing import Tuple, Optional, Dict
+from fw.ships.ship_factory import ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
-from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.dynamics.wcu_lookup import WcuLookup, EnvironmentData
 # Shared ray implementation, also used by the dataset generator.
@@ -177,7 +177,7 @@ class CurrentLineFollower:
     first reliable row, oriented by `sign`, gives the first direction; then the
     direction moves towards the nearest line orientation with time constant
     `tau` scaled by line strength ** CURRENT_LINE_STRENGTH_EXPONENT, so a weak
-    line barely moves it and it never jumps or flips. None (zero current) until
+    line barely moves it, and it never jumps or flips. None (zero current) until
     the first reliable row.
     """
 

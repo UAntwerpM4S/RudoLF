@@ -4,14 +4,15 @@ unnormalized one-step predictions for any scenario. Scenario, wind/current
 encoding, ship model and rudder scale come from the checkpoint.
 """
 
-import logging
-
-from typing import Optional
 
 import torch
+import logging
 import numpy as np
 
+from typing import Optional
+from fw.surrogate.utils import get_device
 from fw.environments.ray_features import RAY_LAYOUT_VERSION
+from fw.surrogate.models.mlp_surrogate import SurrogateMLP, activation_from_name
 from fw.surrogate.schema import (
     SWAY_CONVENTION,
     TARGET_NAMES,
@@ -20,8 +21,6 @@ from fw.surrogate.schema import (
     get_scenario,
     select_and_encode,
 )
-from fw.surrogate.models.mlp_surrogate import SurrogateMLP, activation_from_name
-from fw.surrogate.utils import get_device
 
 logger = logging.getLogger(__name__)
 

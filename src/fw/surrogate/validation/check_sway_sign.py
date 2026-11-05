@@ -22,19 +22,18 @@ Usage (from src):
     python -m fw.surrogate.validation.check_sway_sign model_comparison_output/current_trajectories
 """
 
-import argparse
 import sys
+import argparse
+import numpy as np
+import pandas as pd
+
 from pathlib import Path
+from fw.environments.ray_features import RAY_ANGLES_DEG, ray_world_angles
 
 # Allow running by file path (src on the import path).
 _SRC_DIR = str(Path(__file__).resolve().parents[3])
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
-
-import numpy as np
-import pandas as pd
-
-from fw.environments.ray_features import RAY_ANGLES_DEG, ray_world_angles
 
 _IDX_BOW = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=float), 0.0))[0])
 _IDX_STBD = int(np.flatnonzero(np.isclose(np.asarray(RAY_ANGLES_DEG, dtype=float), 90.0))[0])

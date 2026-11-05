@@ -5,14 +5,14 @@ Tests for AirSimBridge simulation speed, rendering toggle and output silencing.
 from __future__ import annotations
 
 import sys
+
 from pathlib import Path
 from types import SimpleNamespace
+from airsim.communication.airsim_bridge import AirSimBridge, _silence_library_output
 
 _SRC_DIR = Path(__file__).resolve().parents[3] / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
-
-from airsim.communication.airsim_bridge import AirSimBridge, _silence_library_output
 
 
 def test_prepare_model_visualisation_updates_internal_simulation_speed(monkeypatch):

@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Tuple
 from fw.scheduling.base_scheduler import BaseScheduler
 from fw.configuration.profile_applier import apply_profile
 from fw.configuration.stop_condition import Criterion, StopCondition
+from fw.configuration.config import PolicyStrategy, get_hyperparameters
 from fw.scheduling.run_spec import PipelineBlock, StopConditionSpec, TransferSpec
 from fw.scheduling.pipeline_env import (
     block_framework_config,
@@ -19,7 +20,6 @@ from fw.scheduling.pipeline_env import (
     check_block_wind_current,
     resolve_block_profile,
 )
-from fw.configuration.config import PolicyStrategy, get_hyperparameters
 
 logger = logging.getLogger(__name__)
 

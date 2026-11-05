@@ -10,8 +10,8 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
 import torch
+import pytest
 
 from fw.policies.ppo_policy import PPOPolicy
 from airsim.train.transfer_learning import (

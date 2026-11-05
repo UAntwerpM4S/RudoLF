@@ -17,9 +17,10 @@ Interpretation:
 Usage: set START_* below (wind-test start pose) and SIMEXE_REPO_FOLDER, run with the RudoLF venv.
 """
 
-import multiprocessing
 import os
 import sys
+import multiprocessing
+
 from pathlib import Path
 
 START_X = -1559.0

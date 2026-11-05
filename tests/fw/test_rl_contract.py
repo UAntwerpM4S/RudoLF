@@ -13,14 +13,13 @@ RL-contract regression tests:
 """
 
 import copy
-
-import gymnasium as gym
-import numpy as np
-import pytest
 import torch
+import pytest
+import numpy as np
+import gymnasium as gym
 
-from fw.dynamics.dynamics_model import Model
 from fw.ships.ship_factory import ShipModel
+from fw.dynamics.dynamics_model import Model
 
 START = np.array([2245.0, -47.0], dtype=np.float32)
 TARGET = np.array([-1559.0, 11990.0], dtype=np.float32)

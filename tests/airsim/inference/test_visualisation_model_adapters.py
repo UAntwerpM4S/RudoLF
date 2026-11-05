@@ -4,12 +4,11 @@ Tests for the model-visualisation adapters.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-import numpy as np
 import pytest
-
+import numpy as np
 import airsim.inference.visualisation_models.model_adapters as module
+
+from types import SimpleNamespace
 from airsim.inference.visualisation_models.model_adapters import (
     FhSimVisualisationAdapter,
     PySimVisualisationAdapter,

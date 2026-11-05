@@ -42,31 +42,35 @@ ScheldeSaeftinge_23_002 (see the __main__ block).
 """
 
 import csv
-import dataclasses
 import logging
-
+import dataclasses
 import numpy as np
 
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
-
-from fw.ships.ship_factory import create_ship, ShipModel
-from fw.ships.vessel_state import VesselState
-from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.fossen import Fossen
-from fw.dynamics.fh_tabular_model import FhTabularModel, fh_rudder_sign
-from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
 from fw.surrogate.presets import PRESETS
+from fw.surrogate.schema import SURROGATE_DT
+from typing import Optional, Sequence, Tuple
+from fw.ships.vessel_state import VesselState
 from fw.dynamics.wcu_lookup import EnvironmentData
 from fw.simulators.fh_sim_bridge import FhSimBridge
-from fw.surrogate.schema import SURROGATE_DT
+from fw.dynamics.ugent_surrogate import UGentSurrogate
+from fw.ships.ship_factory import create_ship, ShipModel
+from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
+from fw.dynamics.fh_tabular_model import FhTabularModel, fh_rudder_sign
 from fw.simulators.fh_interface_utils import fh_heading_to_env_rad, get_current_velocity
 from fw.surrogate.sim_fh_dataset_generator import (
     _PROPELLER_RPS_SCALE,
     _cutoff_geometry,
     stop_reason,
 )
+
 from fw.environments.py_sim_env import PySimEnv
+from fw.ships.actuator_command import ActuatorCommand
+# Trajectories of the non-FH models are integrated with the production
+# ShipSimulator (no hand-rolled integration), which adds no wind or current.
+from fw.simulators.ship_simulator import ShipSimulator
+
 # Shared ray implementation (ray_0 = bow, clockwise), as used by the dataset
 # generator and the UA_* surrogates.
 from fw.environments.ray_features import (
@@ -75,11 +79,6 @@ from fw.environments.ray_features import (
     compute_ray_features,
     ray_world_angles,
 )
-
-# Trajectories of the non-FH models are integrated with the production
-# ShipSimulator (no hand-rolled integration), which adds no wind or current.
-from fw.simulators.ship_simulator import ShipSimulator
-from fw.ships.actuator_command import ActuatorCommand
 
 try:
     import matplotlib

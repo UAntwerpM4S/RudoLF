@@ -13,15 +13,15 @@ from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
+from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 
-from fw.simulators.ship_simulator import ShipSimulator
+from fw.dynamics.nomoto import Nomoto
+from fw.dynamics.fossen import Fossen
+from fw.dynamics.dynamics_model import Model
 from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
-from fw.dynamics.dynamics_model import Model
-from fw.dynamics.fossen import Fossen
-from fw.dynamics.nomoto import Nomoto
 
 logger = logging.getLogger(__name__)
 

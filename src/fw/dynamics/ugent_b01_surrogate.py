@@ -30,20 +30,20 @@ Notes:
       at 60 %, 0.59 at 35 %) the ship cannot hold a straight course.
       ShipModel.B01 uses min_thrust = 0.2; a warning is logged once below
       min_straight_running_thrust.
-    - Validity: straight running and small manoeuvres; under-predicts rudder
+    - Validity: straight running and small maneuvers; under-predicts rudder
       effectiveness in zigzags and does not predict turning circles.
-    - Wind and current are not modelled (the RL observation gets zeros).
+    - Wind and current are not modeled (the RL observation gets zeros).
 """
 
-import logging
 import math
 import numbers
-from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, Tuple
+import logging
 
+from dataclasses import dataclass
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
+from typing import Callable, Mapping, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

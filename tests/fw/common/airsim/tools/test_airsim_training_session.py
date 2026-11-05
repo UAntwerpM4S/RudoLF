@@ -5,10 +5,9 @@ Regression tests for the AirSim training session exporter.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
 import numpy as np
 
+from pathlib import Path
 from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 
 

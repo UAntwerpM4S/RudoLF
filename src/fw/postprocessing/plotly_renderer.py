@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import numpy as np
 import logging
+import numpy as np
 
 from fw.postprocessing.ship_episode_data import ShipData
 from fw.postprocessing.metrics_computer import ShipMetrics

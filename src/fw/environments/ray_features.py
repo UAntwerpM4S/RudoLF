@@ -20,9 +20,9 @@ Datasets and checkpoints made with an older ray layout (other than
 RAY_LAYOUT_VERSION) are incompatible and must be regenerated / retrained.
 """
 
-from typing import Sequence
-
 import numpy as np
+
+from typing import Sequence
 
 # Ray layout tag, stored with datasets/checkpoints to prevent mixing layouts.
 RAY_LAYOUT_VERSION = "bow0_clockwise_v2"

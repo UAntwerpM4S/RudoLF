@@ -19,15 +19,14 @@ Usage:
 """
 
 import argparse
-from typing import Dict, List
-
 import numpy as np
 
+from typing import Dict, List
+from fw.surrogate.utils import data_path
 from fw.surrogate.dataset import STD_FLOOR, check_same_identity, load_encoded, read_identity
 from fw.surrogate.schema import (
     DEFAULT_ENV_ENCODING, ENV_ENCODINGS, SCENARIOS, TARGET_NAMES, encoded_feature_names, get_scenario,
 )
-from fw.surrogate.utils import data_path
 
 
 def report(kind: str, names: List[str], tr: np.ndarray, splits: Dict[str, np.ndarray]) -> None:

@@ -21,17 +21,16 @@ Usage (from src, with SIMEXE_REPO_FOLDER set):
 
 from __future__ import annotations
 
-import argparse
 import sys
-
+import argparse
 import numpy as np
 
 from typing import Dict, List, Sequence
-from fw.common.default_positions import DEFAULT_FRAMEWORK_SHIP_POS
 from fw.ships.ship_factory import ShipModel
 from fw.ships.vessel_state import VesselState
-from fw.simulators.fh_interface_utils import fh_true_wind_speed
 from fw.simulators.fh_sim_bridge import FhSimBridge
+from fw.simulators.fh_interface_utils import fh_true_wind_speed
+from fw.common.default_positions import DEFAULT_FRAMEWORK_SHIP_POS
 
 REWIND_TIME = 0.25        # s, as FhSimBridge.reset()
 LOG_STEP = 0.25           # s between readings

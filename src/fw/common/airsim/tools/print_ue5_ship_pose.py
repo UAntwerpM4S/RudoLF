@@ -8,12 +8,12 @@ Usage (from the repository root):
 
 from __future__ import annotations
 
-import argparse
-import json
-import math
 import sys
-from pathlib import Path
+import math
+import json
+import argparse
 
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SRC_DIR = REPO_ROOT / "src"
@@ -21,8 +21,8 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from airsim.communication.airsim_bridge import AirSimBridge
-from airsim.config.airsim_config import AirSimConfig, get_airsim_config
 from fw.common.airsim.tools.angles import yaw_from_quaternion
+from airsim.config.airsim_config import AirSimConfig, get_airsim_config
 
 
 def _build_parser() -> argparse.ArgumentParser:

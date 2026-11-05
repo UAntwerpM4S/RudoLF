@@ -24,19 +24,17 @@ heading along the river.
 
 from __future__ import annotations
 
-import argparse
 import csv
 import sys
 import tempfile
-
+import argparse
 import numpy as np
 
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
-
-from fw.dynamics.fh_tabular_model import fh_rudder_sign
 from fw.ships.ship_factory import ShipModel
+from typing import Dict, List, Optional, Sequence
 import fw.surrogate.sim_fh_dataset_generator as gen
+from fw.dynamics.fh_tabular_model import fh_rudder_sign
 
 
 def _getters(obj) -> List[str]:

@@ -1,5 +1,5 @@
-import numpy as np
 import logging
+import numpy as np
 
 from typing import Optional
 from abc import abstractmethod

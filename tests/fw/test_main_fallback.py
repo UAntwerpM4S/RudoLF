@@ -2,14 +2,13 @@
 Tests for fallback behavior in the generic framework entrypoint.
 """
 
-import runpy
-import sys
 import os
-from pathlib import Path
-
+import sys
+import runpy
 import pytest
-from types import SimpleNamespace
 
+from pathlib import Path
+from types import SimpleNamespace
 
 _SRC_DIR = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC_DIR) not in sys.path:

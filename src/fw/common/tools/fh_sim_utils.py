@@ -1,5 +1,5 @@
-from contextlib import contextmanager
 from typing import Callable
+from contextlib import contextmanager
 
 
 @contextmanager

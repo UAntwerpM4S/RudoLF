@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import csv
 import textwrap
-from types import SimpleNamespace
-
 import numpy as np
 
+from types import SimpleNamespace
 from airsim.train.strict_success_callback import StrictSuccessStoppingCallback
 
 

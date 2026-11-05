@@ -7,17 +7,17 @@ batches to disk, and metadata is written only on save/close.
 
 from __future__ import annotations
 
-import atexit
 import csv
 import json
-import logging
-import queue
-import threading
 import time
-from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+import queue
+import atexit
+import logging
+import threading
 
+from pathlib import Path
 from .util import _timestamp_utc
+from typing import Any, Dict, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 

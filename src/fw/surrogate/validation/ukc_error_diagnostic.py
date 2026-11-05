@@ -26,18 +26,16 @@ Writes ukc_error.png next to --data unless --plot is given.
 
 from __future__ import annotations
 
-import argparse
-import logging
 import sys
-
+import logging
+import argparse
 import numpy as np
 
 from pathlib import Path
 from typing import Optional, Sequence
-
-from fw.environments.ray_features import RAY_MAX_DISTANCE
 from fw.surrogate.dataset import load_raw
 from fw.surrogate.presets import resolve_checkpoint
+from fw.environments.ray_features import RAY_MAX_DISTANCE
 from fw.surrogate.schema import RAY_COLUMN_NAMES, TARGET_NAMES, check_projection, get_scenario, project_raw_columns
 
 logger = logging.getLogger(__name__)

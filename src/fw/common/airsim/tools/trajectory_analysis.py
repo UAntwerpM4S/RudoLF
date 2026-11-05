@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import csv
 import math
-from dataclasses import asdict, dataclass
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
-
 import numpy as np
+
+from pathlib import Path
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 @dataclass(frozen=True)

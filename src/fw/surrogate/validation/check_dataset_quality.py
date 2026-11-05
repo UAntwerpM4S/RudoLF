@@ -26,12 +26,11 @@ Usage (from src):
     python -m fw.surrogate.validation.check_dataset_quality <prefix> --dt 0.1 --horizon 80
 """
 
-import argparse
 import sys
-from pathlib import Path
-
+import argparse
 import numpy as np
 
+from pathlib import Path
 from fw.surrogate.schema import TARGET_NAMES, get_scenario, read_npz_identity
 
 SPLITS = ("train", "val", "test")

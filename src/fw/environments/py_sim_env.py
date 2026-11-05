@@ -13,23 +13,23 @@ matplotlib.rcParams['figure.raise_window'] = False
 
 from shapely import LineString
 from typing import Dict, List, Optional, Tuple
-from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_MAX_DISTANCE, ray_world_angles
-from shapely.geometry import Point, Polygon, MultiPoint, GeometryCollection
 from fw.environments.tools import create_checkpoints_from_simple_path
+from shapely.geometry import Point, Polygon, MultiPoint, GeometryCollection
+from fw.environments.wind_current_obs import WIND_CURRENT_OBS_DIM, normalize_wind_current
+from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_MAX_DISTANCE, ray_world_angles
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
+from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
-from fw.environments.wind_current_obs import WIND_CURRENT_OBS_DIM, normalize_wind_current
 from fw.reward.reward import Reward
 
-from fw.dynamics.uantwerp_surrogate import RANDOM_CURRENT_SPEED_MAX, UAntwerpSurrogate
-from fw.dynamics.fh_tabular_model import FhTabularModel
-from fw.simulators.ship_simulator import ShipSimulator
-from fw.dynamics.ugent_surrogate import UGentSurrogate
-from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
-from fw.dynamics.dynamics_model import Model
-from fw.dynamics.fossen import Fossen
 from fw.dynamics.nomoto import Nomoto
+from fw.dynamics.fossen import Fossen
+from fw.dynamics.dynamics_model import Model
+from fw.dynamics.ugent_surrogate import UGentSurrogate
+from fw.dynamics.fh_tabular_model import FhTabularModel
+from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
+from fw.dynamics.uantwerp_surrogate import RANDOM_CURRENT_SPEED_MAX, UAntwerpSurrogate
 
 logger = logging.getLogger(__name__)
 

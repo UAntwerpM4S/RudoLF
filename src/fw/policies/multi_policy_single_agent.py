@@ -24,20 +24,20 @@ import torch.nn as nn
 import torch.optim as optim
 import gymnasium as gym
 import numpy as np
-import zipfile
 import tempfile
+import zipfile
 import logging
 
 from collections import deque
-from fw.configuration.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
+from fw.common.tools.ppo_utils import reseed_env_rng
 from typing import Optional, Tuple, Union, List, Dict
+from fw.configuration.stop_condition import StopCondition
+from fw.configuration.profile_applier import SimulatorApplier
 from fw.common.tools.logging_utils import dump_metrics_to_csv
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
-from fw.configuration.profile_applier import SimulatorApplier
-from fw.common.tools.ppo_utils import reseed_env_rng
 
 logger = logging.getLogger(__name__)
 

@@ -6,10 +6,9 @@ from __future__ import annotations
 
 import re
 import os
+import numpy as np
 
 from typing import Optional, Union
-
-import numpy as np
 
 WINDOWS_INVALID_FILENAME_CHARS = '<>:"/\\|?*'
 

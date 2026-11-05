@@ -5,9 +5,9 @@ converged agent is frozen (no more updates), and the run ends when all are froze
 
 import numpy as np
 
-from fw.configuration.stop_condition import Criterion, StopCondition
-from fw.dynamics.dynamics_model import Model
 from fw.ships.ship_factory import ShipModel
+from fw.dynamics.dynamics_model import Model
+from fw.configuration.stop_condition import Criterion, StopCondition
 
 START = np.array([2245.0, -47.0], dtype=np.float32)
 TARGET = np.array([-1559.0, 11990.0], dtype=np.float32)

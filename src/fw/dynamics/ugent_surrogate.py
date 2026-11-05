@@ -21,16 +21,16 @@ Notes:
       it). Banks closer than y' = 1.0 act as at y' = 1.0.
 """
 
-import logging
 import math
 import numbers
-from dataclasses import dataclass
-from typing import Callable, Dict, Mapping, Optional, Tuple
+import logging
 
+from dataclasses import dataclass
 from fw.ships.vessel_state import VesselState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.dynamics.dynamics_model import DynamicsBase
 from fw.common.tools.config_utils import get_validated_bool
+from typing import Callable, Dict, Mapping, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

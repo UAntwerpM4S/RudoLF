@@ -7,11 +7,10 @@ folder on sys.path.
 from __future__ import annotations
 
 import dataclasses
-
 import numpy as np
 
-from fw.surrogate.schema import DatasetIdentity, SWAY_CONVENTION, get_scenario, npz_metadata
 from fw.environments.ray_features import RAY_LAYOUT_VERSION
+from fw.surrogate.schema import DatasetIdentity, SWAY_CONVENTION, get_scenario, npz_metadata
 
 
 def make_state(**values):

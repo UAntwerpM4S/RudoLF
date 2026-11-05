@@ -32,10 +32,10 @@ import time
 import socket
 import logging
 
-from contextlib import redirect_stdout, redirect_stderr
-from datetime import datetime, timezone
 from collections import deque
 from typing import Any, Dict, Optional
+from datetime import datetime, timezone
+from contextlib import redirect_stdout, redirect_stderr
 from fw.common.airsim.tools.angles import (
     normalize_angle as _normalize_angle,
     yaw_from_quaternion as _yaw_from_quaternion,

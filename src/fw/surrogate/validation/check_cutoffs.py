@@ -15,21 +15,19 @@ Usage (from the folder you run the generator from, e.g. src):
 import os
 import sys
 import traceback
+import numpy as np
+import matplotlib.pyplot as plt
+
 from pathlib import Path
+from shapely.ops import linemerge
+from fw.environments import py_sim_env
+from shapely.geometry import MultiLineString
+from fw.environments.py_sim_env import PySimEnv
 
 # Put src on the import path when run by file path (not needed with `python -m`).
 _SRC_DIR = str(Path(__file__).resolve().parents[3])
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
-
-import numpy as np
-import matplotlib.pyplot as plt
-
-from shapely.geometry import MultiLineString
-from shapely.ops import linemerge
-
-from fw.environments import py_sim_env
-from fw.environments.py_sim_env import PySimEnv
 
 TOLERANCES = (0.01, 1.0, 10.0, 25.0, 50.0, 100.0)  # m; heuristic only; 0.01 is the default
 

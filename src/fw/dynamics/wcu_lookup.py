@@ -23,9 +23,9 @@ import logging
 import numpy as np
 import pandas as pd
 
+from scipy.spatial import cKDTree
 from dataclasses import dataclass
 from typing import Dict, Optional, Union
-from scipy.spatial import cKDTree
 
 logger = logging.getLogger(__name__)
 

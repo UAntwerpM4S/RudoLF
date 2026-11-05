@@ -1,15 +1,14 @@
 import types
-
-import numpy as np
 import pytest
+import numpy as np
 
+from fw.ships.ship_factory import create_ship
 from airsim.communication.control_mapping import (
     map_direct_policy_action,
     map_framework_actuator_state,
     map_framework_policy_action,
     validate_policy_action,
 )
-from fw.ships.ship_factory import create_ship
 
 
 def _make_airsim_module():

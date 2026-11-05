@@ -5,7 +5,6 @@ Shared path utilities used across AirSim and framework entrypoints.
 from __future__ import annotations
 
 from pathlib import Path
-
 from fw.common.airsim.classes.path_resolution import PathResolutionContext
 
 

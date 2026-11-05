@@ -6,18 +6,17 @@ from __future__ import annotations
 
 import csv
 import sys
-from pathlib import Path
-
 import pytest
 
-_SRC_DIR = Path(__file__).resolve().parents[4] / "src"
-if str(_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(_SRC_DIR))
-
+from pathlib import Path
 from fw.common.airsim.tools.trajectory_analysis import (
     build_run_summary_from_csv,
     format_performance_summary,
 )
+
+_SRC_DIR = Path(__file__).resolve().parents[4] / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
 
 def _write_csv(path: Path, fieldnames, rows) -> None:

@@ -4,8 +4,8 @@ the UAntwerp surrogate's smoothing and observation, and PySimEnv's flag rules
 and observation layout.
 """
 
-import numpy as np
 import pytest
+import numpy as np
 
 from fw.dynamics.dynamics_model import Model
 from fw.dynamics.wcu_lookup import EnvironmentData
@@ -16,6 +16,7 @@ from fw.environments.wind_current_obs import (
     normalize_wind_current,
 )
 from fw.ships.ship_factory import ShipModel, create_ship
+from surrogate_test_helpers import make_state, synthetic_rows, train_tiny
 from fw.surrogate.schema import (
     ENV_ENCODING_BODY,
     SURROGATE_DT,
@@ -24,8 +25,6 @@ from fw.surrogate.schema import (
     get_scenario,
     select_and_encode,
 )
-
-from surrogate_test_helpers import make_state, synthetic_rows, train_tiny
 
 BASE_OBS_DIM = 12
 
@@ -697,7 +696,7 @@ def test_line_ignores_tide_flips_and_cross_flow():
 @pytest.mark.parametrize("case", ["odd_first_row", "slack_over_bend", "eddy"])
 def test_line_never_locks(case):
     """
-    The reviewer's lock-in cases: the current returns to the river line afterwards.
+    The reviewer's lock-in cases: the current returns to the river line afterward.
     """
 
     if case == "odd_first_row":           # first reliable row at 90 deg, then a 0/180 deg river

@@ -11,10 +11,10 @@ from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.configuration.stop_condition import StopCondition
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
-from fw.common.tools.ppo_utils import reseed_env_rng
 from fw.configuration.profile_applier import SimulatorApplier
 from fw.configuration.config_profile import VesselProfile
 from fw.environments.multi_sim_env import MultiSimEnv
+from fw.common.tools.ppo_utils import reseed_env_rng
 from typing import Optional, Tuple, Union, Any
 
 logger = logging.getLogger(__name__)

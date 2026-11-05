@@ -22,18 +22,17 @@ Usage (from src):
     python -m fw.surrogate.validation.check_rudder_sign data/old_myzako.csv --negated
 """
 
-import argparse
 import sys
+import argparse
+import numpy as np
+import pandas as pd
+
 from pathlib import Path
+from fw.surrogate.schema import scenario_for_raw_width
 
 _SRC_DIR = str(Path(__file__).resolve().parents[3])     # src (this file: src/fw/surrogate/validation/)
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
-
-import numpy as np
-import pandas as pd
-
-from fw.surrogate.schema import scenario_for_raw_width
 
 MIN_SURGE = 1.0          # m/s; the rudder has little effect below this
 MIN_ABS_ACTION = 0.1     # rows with a clearly non-zero rudder

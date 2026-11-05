@@ -8,8 +8,9 @@ Usage:
     python -m fw.common.airsim.tools.analyze_telemetry
 """
 
-import csv
 import os
+import csv
+
 from pathlib import Path
 
 _THIS_FILE = Path(__file__).resolve()

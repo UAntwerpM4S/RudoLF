@@ -18,20 +18,19 @@ Usage (from src; position/heading must be in open water of the exercise):
     python -m fw.surrogate.validation.check_initial_rudder_sign --ship TRIPOLI --x -1559 --y 11990 --heading -45
 """
 
-import argparse
 import sys
+import argparse
+import numpy as np
+
 from pathlib import Path
+from fw.ships.ship_factory import ShipModel
+from fw.ships.vessel_state import VesselState
+from fw.simulators.fh_sim_bridge import FhSimBridge
+from fw.dynamics.fh_tabular_model import fh_rudder_sign
 
 _SRC_DIR = str(Path(__file__).resolve().parents[3])     # src (this file: src/fw/surrogate/validation/)
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
-
-import numpy as np
-
-from fw.ships.ship_factory import ShipModel
-from fw.ships.vessel_state import VesselState
-from fw.dynamics.fh_tabular_model import fh_rudder_sign
-from fw.simulators.fh_sim_bridge import FhSimBridge
 
 ANGLE_DEG = 20.0          # initial rudder angle magnitude
 SURGE = 3.0               # m/s initial surge

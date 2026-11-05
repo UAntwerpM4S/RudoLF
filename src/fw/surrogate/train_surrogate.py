@@ -45,19 +45,20 @@ clean model).
 
 import random
 import torch
-import argparse
 import logging
+import argparse
 import numpy as np
 import torch.nn.functional as F
 
-from collections.abc import Sized
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple, Union
+from collections.abc import Sized
+from fw.surrogate.episode_time import T_EPISODE_KEY
 from torch.utils.data import DataLoader, TensorDataset
 from fw.environments.ray_features import RAY_MAX_DISTANCE
-from fw.surrogate.dataset import check_same_identity, load_raw, read_identity, read_provenance, stats_from_arrays
-from fw.surrogate.episode_time import T_EPISODE_KEY
+from typing import List, Optional, Sequence, Tuple, Union
+from fw.surrogate.utils import load_checkpoint, data_path, get_device, save_checkpoint
 from fw.surrogate.models.mlp_surrogate import ACTIVATIONS, SurrogateMLP, activation_from_name
+from fw.surrogate.dataset import check_same_identity, load_raw, read_identity, read_provenance, stats_from_arrays
 from fw.surrogate.schema import (
     DEFAULT_ENV_ENCODING,
     ENV_ENCODINGS,
@@ -70,7 +71,6 @@ from fw.surrogate.schema import (
     project_raw_columns,
     select_and_encode,
 )
-from fw.surrogate.utils import load_checkpoint, data_path, get_device, save_checkpoint
 
 logger = logging.getLogger(__name__)
 

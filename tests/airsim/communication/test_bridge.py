@@ -3,6 +3,7 @@ Unit tests for AirSimConfig and AirSimBridge (cosysairsim mocked).
 """
 
 import pytest
+
 from unittest.mock import patch
 from airsim.config.airsim_config import AirSimConfig
 from airsim.communication.airsim_bridge import AirSimBridge, is_ue5_reachable
