@@ -51,6 +51,12 @@ class FhSimBridge:
     # for the Tripoli exercise, see model_comparison_wind).
     WIND_PROBE_SCALE = 10.0
     WIND_PROBE_MIN_DIFF = 2.0  # m/s
+    # Wind warm-up after SimulateRewindTo. Measured with diagnose_fh_rewind_wind:
+    # the rewind returns to t = 0, FH applies a new transform only at its 1 Hz
+    # environment update (about t = 1.1 s, 2.1 s, ...), and a rewind discards a
+    # transform not applied yet. WIND_WARMUP_TIME (1.0 s) ends just before the
+    # first update, so the rewind uses its own warm-up, well before the second.
+    REWIND_WIND_WARMUP_TIME = 1.5  # s
 
     def __init__(self,
                  ship_model: Optional[ShipModel] = ShipModel.MYZAKO_DEFAULT,
@@ -396,8 +402,9 @@ class FhSimBridge:
 
         The first call initializes the math model from initial_vessel_state;
         later calls rewind to time_point using the snapshots. With wind_current,
-        a new wind-field transform is drawn from wind_rng and WIND_WARMUP_TIME
-        is simulated, so the episode starts WIND_WARMUP_TIME after the reset point.
+        a new wind-field transform is drawn from wind_rng and a wind warm-up is
+        simulated (WIND_WARMUP_TIME after initialization,
+        REWIND_WIND_WARMUP_TIME after a rewind), so the episode starts with it.
 
         Args:
             time_point (float): Simulation time [s] to rewind to, at least
@@ -429,7 +436,7 @@ class FhSimBridge:
             self._initialize_math_model(snapshot_window=self.SNAPSHOT_WINDOW, snapshot_frequency=5000)
             if transform is not None:
                 try:
-                    self._warm_up_wind()
+                    self._warm_up_wind(WIND_WARMUP_TIME)
                 except BaseException:
                     # As for other init failures: the next reset() re-initializes.
                     self._dispose_math_model()
@@ -463,14 +470,15 @@ class FhSimBridge:
         if transform is not None:
             if not self._rewind_wind_verified:
                 self._verify_rewind_wind_transform(time_point)
+            # After the rewind: a transform set before it would be discarded.
             self._apply_wind_field_transform(transform[0], transform[1], 0.0)
-            self._warm_up_wind()
+            self._warm_up_wind(self.REWIND_WIND_WARMUP_TIME)
             self.episode_wind_field_transform = (transform[0], transform[1], 0.0)
 
 
-    def _warm_up_wind(self) -> None:
+    def _warm_up_wind(self, duration: float) -> None:
         """
-        Simulate WIND_WARMUP_TIME after a wind-field transform was set.
+        Simulate `duration` [s] after a wind-field transform was set.
 
         Raises:
             RuntimeError: If WindState is bit-identical before and after (it
@@ -478,11 +486,11 @@ class FhSimBridge:
         """
 
         before = self._wind_state_tuple()
-        self.math_model.simulateSeconds(WIND_WARMUP_TIME)
+        self.math_model.simulateSeconds(duration)
         after = self._wind_state_tuple()
         if after == before:
             raise RuntimeError(
-                f"FH WindState unchanged after WIND_WARMUP_TIME={WIND_WARMUP_TIME} s ({after}): "
+                f"FH WindState unchanged after a wind warm-up of {duration:g} s ({after}): "
                 f"the wind-field transform did not take effect (or needs a longer warm-up)."
             )
 
@@ -512,7 +520,7 @@ class FhSimBridge:
             if i > 0:
                 self._math_model.SimulateRewindTo(time_point)
             self._apply_wind_field_transform(0.0, scale, 0.0)
-            self.math_model.simulateSeconds(WIND_WARMUP_TIME)
+            self.math_model.simulateSeconds(self.REWIND_WIND_WARMUP_TIME)
             speeds.append(fh_true_wind_speed(self.ship_interface))
         self._math_model.SimulateRewindTo(time_point)
 

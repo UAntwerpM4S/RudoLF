@@ -97,6 +97,7 @@ def calculate_perpendicular_lines(
         Unit tangent at a checkpoint, averaging the neighboring segments (x-axis for a single checkpoint).
         """
 
+        # If there's only one checkpoint, fallback to an arbitrary tangent (unit x-axis)
         if len(check_points) == 1:
             tangent = np.array([1.0, 0.0], dtype=np.float32)
         else:
@@ -105,11 +106,13 @@ def calculate_perpendicular_lines(
             elif index == len(check_points) - 1:
                 tangent = check_points[-1]['pos'] - check_points[-2]['pos']
             else:
+                # Average forward and backward differences
                 forward = check_points[index + 1]['pos'] - check_points[index]['pos']
                 backward = check_points[index]['pos'] - check_points[index - 1]['pos']
                 tangent = 0.5 * (forward + backward)
 
         norm = np.linalg.norm(tangent)
+        # Avoid division by zero; if zero, return tangent (will be zeros) cast to float32
         return (tangent / norm if norm != 0.0 else tangent).astype(np.float32)
 
     lines: List[Tuple[np.ndarray, np.ndarray]] = []
@@ -484,9 +487,9 @@ class PySimEnv(BaseEnv):
 
         for key, value in self.__dict__.items():
             if key == '_fh_sim':
-                setattr(new_instance, key, value)
+                setattr(new_instance, key, value)   # Retain the original reference
             else:
-                setattr(new_instance, key, copy.deepcopy(value, memo))
+                setattr(new_instance, key, copy.deepcopy(value, memo))  # Deep copy all other attributes
 
         return new_instance
 
@@ -556,6 +559,7 @@ class PySimEnv(BaseEnv):
 
         # The first checkpoint is the start position.
         if len(path) == 0:
+            # empty path: fallback to a single checkpoint at initial position
             path = [self.initial_ship_pos.copy()]
         else:
             path = np.insert(path, 0, self.initial_ship_pos.copy(), axis=0)
@@ -578,11 +582,13 @@ class PySimEnv(BaseEnv):
         # Perpendicular lines for guidance
         lines = calculate_perpendicular_lines(checkpoints, line_length=PERPENDICULAR_LINE_LENGTH)
 
+        # Add perpendicular lines to checkpoints
         self.checkpoints = []
         for cp, line in zip(checkpoints, lines):
             cp['perpendicular_line'] = line
             self.checkpoints.append(cp)
 
+        # Calculate direction of last path segment
         if len(self.checkpoints) < 2:
             raise ValueError(
                 f"Path reduction from start_pos={self.initial_ship_pos.tolist()} resulted "
@@ -596,9 +602,12 @@ class PySimEnv(BaseEnv):
         p_before_last = self.checkpoints[-2]['pos'].copy()
         self.direction_last_path = p_last - p_before_last
 
+        # Navigation and counters
+        # Safe handling when no checkpoints are present:
         if self.checkpoints:
             self.target_pos = self.checkpoints[-1]['pos']
         else:
+            # If user provided target_pos, use it; otherwise fallback to initial_ship_pos
             if target_pos_arr is not None:
                 self.target_pos = target_pos_arr
             else:
@@ -922,7 +931,7 @@ class PySimEnv(BaseEnv):
             float32 (N,) distances clipped to [0, max_distance].
         """
 
-
+        # Cache the boundary object to avoid re-extracting it every call.
         if self._boundary_cache is None:
             self._boundary_cache = self.polygon_shape.boundary
 
@@ -1051,11 +1060,13 @@ class PySimEnv(BaseEnv):
         if len(path) == 0:
             raise ValueError("Path is empty.")
 
+        # Find index of the point on the path closest to start_pos
         start_distances = np.linalg.norm(path - start_pos, axis=1)
         start_index = int(np.argmin(start_distances))
 
         if target_pos is None:
             if start_index < len(path) - 1:
+                # Slice the path from following point to the end (forward, as before)
                 return path[start_index + 1:]
 
             # Nothing lies ahead of start_pos: walk backwards to the first point.
@@ -1073,6 +1084,8 @@ class PySimEnv(BaseEnv):
 
         target_pos = np.asarray(target_pos)
 
+        # Find index of the point on the path closest to target_pos, over
+        # the full original trajectory (direction-agnostic).
         target_distances = np.linalg.norm(path - target_pos, axis=1)
         target_index = int(np.argmin(target_distances))
 
@@ -1230,7 +1243,7 @@ class PySimEnv(BaseEnv):
         """
 
         if self._fh_sim is not None:
-            return
+            return  # Intentional no-op when driven by the FH Simulator
 
         if randomization_scale is not None:
             if randomization_scale <= 0:
@@ -1258,11 +1271,13 @@ class PySimEnv(BaseEnv):
         Reset the episode (re-seeding the env RNG if `seed` is given); returns (observation, {}).
         """
 
+        # Set RNG seed if provided for reproducibility
         if seed is not None:
             self._rng = np.random.default_rng(seed)
 
         super().reset(seed=seed)
 
+        # Hook for environment-specific reset operations
         self.env_specific_reset()
         self._initialize_simulation()
         if self._fh_sim is not None:
@@ -1273,7 +1288,7 @@ class PySimEnv(BaseEnv):
     def _sync_initial_state_from_fh(self) -> None:
         """
         Start the episode from FH's actual state after its reset (which simulates
-        the initialization step and, with wind and current, WIND_WARMUP_TIME):
+        the initialization step and, with wind and current, the wind warm-up):
         position, heading, surge, sway and yaw rate (FhTabularModel.read_state).
         """
 
@@ -1300,6 +1315,7 @@ class PySimEnv(BaseEnv):
             np.clip(self.phys_sim.state.r / self.ship.specifications.yaw_rate_limits[1], -1, 1)
         ], dtype=np.float32)
 
+        # Clamp checkpoint indices
         current_chkp_idx = self.checkpoint_index
         prev_chkp_idx = max(0, current_chkp_idx - 1)
         next_chkp_idx = current_chkp_idx + 1
@@ -1451,12 +1467,13 @@ class PySimEnv(BaseEnv):
             "terminations": terminated,
             "truncations": truncated,
         }
-        if ended_now:
-            info["episode_outcome"] = self._episode_outcome if terminated else "max_steps"
-            info["episode_conditions"] = self.dynamics.episode_conditions()
-            logger.info("%s - episode end: outcome=%s, success=%s, conditions=%s", self.env_name,
-                        info["episode_outcome"], info["episode_outcome"] in SUCCESS_OUTCOMES,
-                        info["episode_conditions"])
+
+        # if ended_now:
+        #     info["episode_outcome"] = self._episode_outcome if terminated else "max_steps"
+        #     info["episode_conditions"] = self.dynamics.episode_conditions()
+        #     logger.info("%s - episode end: outcome=%s, success=%s, conditions=%s", self.env_name,
+        #                 info["episode_outcome"], info["episode_outcome"] in SUCCESS_OUTCOMES,
+        #                 info["episode_conditions"])
 
         # Gymnasium: time-limit cut-off is `truncated` (bootstrap V(s')), a real end is
         # `terminated`; mirrored in `info` for the framework's own agents.
@@ -1473,6 +1490,7 @@ class PySimEnv(BaseEnv):
             (reward, done)
         """
 
+        # Defensive index checking for checkpoints
         prev_checkpoint_idx = max(0, self.checkpoint_index - 1)
         prev_checkpoint_pos = self.checkpoints[prev_checkpoint_idx]['pos']
 
@@ -1594,9 +1612,11 @@ class PySimEnv(BaseEnv):
         o1 = _orientation(line_start, line_end, prev_point)
         o2 = _orientation(line_start, line_end, curr_point)
 
+        # If either point is on the line -> intersection
         if abs(o1) <= EPSILON or abs(o2) <= EPSILON:
             return True
 
+        # If signs differ -> segment crosses the line
         return (o1 > 0 > o2) or (o1 < 0 < o2)
 
     def _is_near_perpendicular_line(self, checkpoint: dict) -> bool:
@@ -1737,23 +1757,27 @@ class PySimEnv(BaseEnv):
         curve with f(min) = 0, f(max) = 1 and f(half_value) = 0.5.
         """
 
+        # min_value -> 0, max_value -> 1 after scaling
         min_value, max_value = value_range
 
+        # Clamp to range
         clamped = max(min_value, min(value, max_value))
         if clamped != value:
             logger.debug(
                 "Value %s clamped to [%s, %s]", value, min_value, max_value
             )
 
+        # Normalize value and half_value to [0, 1]
         x = (clamped - min_value) / (max_value - min_value)
         m = (half_value - min_value) / (max_value - min_value)
 
         if math.isclose(m, 0.5, abs_tol=1e-9):
             return x
 
-        # Curvature k such that log1p(k*m) / log1p(k) = 0.5.
+        # Compute k: curvature parameter derived from the desired midpoint
         k = (1 - 2 * m) / (m ** 2)
 
+        # Apply log curve: log1p(k*x) / log1p(k) maps [0,1] -> [0,1] with f(m) = 0.5
         return math.log1p(k * x) / math.log1p(k)
 
     # -----------------------
@@ -1816,14 +1840,17 @@ class PySimEnv(BaseEnv):
         if not hasattr(self, 'ax') or not self.checkpoints:
             return
 
+        # Path: start with ship_pos followed by checkpoints and target
         path_points = [self.ship_pos] + [cp['pos'] for cp in self.checkpoints] + [self.target_pos]
 
         for i in range(len(path_points) - 1):
             start_point = path_points[i]
             end_point = path_points[i + 1]
+            # label only the first segment to avoid duplicate legend entries
             self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
                          'g-', label='Path' if i == 0 else "")
 
+        # Draw checkpoint patches and perpendicular lines
         for i, checkpoint in enumerate(self.checkpoints):
             circle = patches.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
                                     10.0, color='black', alpha=0.3)
@@ -1832,6 +1859,7 @@ class PySimEnv(BaseEnv):
             self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
                          'g-', label='PerpLine' if i == 0 else "")
 
+        # Draw polygons for environment outlines
         polygon_patch = patches.Polygon(self.obstacles, closed=True, edgecolor='r',
                                         facecolor='none', lw=2, label='Waterway')
         western_scheldt = patches.Polygon(self.overall, closed=True, edgecolor='brown',
@@ -1839,6 +1867,7 @@ class PySimEnv(BaseEnv):
         self.ax.add_patch(polygon_patch)
         self.ax.add_patch(western_scheldt)
 
+        # Update target plot
         self.target_plot.set_data(self.target_pos[0:1], self.target_pos[1:2])
 
     def _on_draw(self, event) -> None:
@@ -1858,6 +1887,7 @@ class PySimEnv(BaseEnv):
         if self.render_mode != 'human':
             return
 
+        # Initialize plotting objects once
         if self.initialize_plots and not hasattr(self, 'ship_plot'):
             self._initialize_rendering()
             self._draw_fixed_landmarks()
@@ -1880,16 +1910,19 @@ class PySimEnv(BaseEnv):
             except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass
 
+        # Restore background for blit optimization when available
         if hasattr(self, 'background'):
             # noinspection PyUnresolvedReferences
             _safe(lambda: canvas.restore_region(self.background))
 
+        # Update ship and heading graphics
         heading_line_length = 30.0
         self.ship_plot.set_data(self.ship_pos[0:1], self.ship_pos[1:2])
         heading_x = self.ship_pos[0] + np.cos(self.phys_sim.state.heading) * heading_line_length
         heading_y = self.ship_pos[1] + np.sin(self.phys_sim.state.heading) * heading_line_length
         self.heading_line.set_data([self.ship_pos[0], heading_x], [self.ship_pos[1], heading_y])
 
+        # Try blitting for efficient updates; otherwise draw everything
         try:
             if hasattr(self.fig.canvas, 'blit'):
                 self.ax.draw_artist(self.ship_plot)
@@ -1898,6 +1931,7 @@ class PySimEnv(BaseEnv):
             else:
                 self.fig.canvas.draw()
         except (RuntimeError, AttributeError, TypeError, ValueError):
+            # Fallback to safe full redraw
             _safe(self.fig.canvas.draw)
 
         # Flush pending GUI events.

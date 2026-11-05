@@ -78,25 +78,28 @@ def test_wind_draw_matches_the_generator_distribution():
 class _FakeMathModel:
     """
     FH math model stand-in: wind = Scale * BASE_SPEED (ship at rest, so
-    apparent = true). Like FH, WindState shows a new transform only LAG s after
-    it was set; a rewind restores the initialization's transform and WindState.
+    apparent = true). As measured on FH (diagnose_fh_rewind_wind): a transform
+    is applied, and WindState updated, only at the 1 Hz environment update
+    (t = k + UPDATE_OFFSET, k >= 1); a rewind returns to t = 0, discards a
+    transform not applied yet and keeps the applied one.
     """
 
     BASE_SPEED = 1.1
-    LAG = 1.0
+    UPDATE_OFFSET = 0.1
 
     def __init__(self, ignore_after_rewind: bool):
         """
-        ignore_after_rewind: transforms set after a rewind have no effect.
+        ignore_after_rewind: transforms set after a rewind are never applied.
         """
 
         self.ignore_after_rewind = ignore_after_rewind
         self.time = 0.0
-        self.active = (0.0, 1.0)     # transform in effect
+        self.pending = None          # transform set, not applied yet
+        self.active = (0.0, 1.0)     # applied transform
         self.shown = (0.0, 1.0)      # transform WindState reports
-        self.set_time = -np.inf
         self.init_transform = None
         self.rewound = False
+        self.updates_enabled = True  # False: WindState never updates
         self.requested = SimpleNamespace(Rotation=0.0, Scale=1.0, Offset=0.0)
         control = SimpleNamespace(getFieldTransform=lambda: SimpleNamespace(**vars(self.requested)),
                                   setFieldTransform=self._set_transform)
@@ -113,13 +116,12 @@ class _FakeMathModel:
 
     def _set_transform(self, t):
         """
-        setFieldTransform.
+        setFieldTransform: pending until the next environment update.
         """
 
         self.requested = t
         if not (self.rewound and self.ignore_after_rewind):
-            self.active = (t.Rotation, t.Scale)
-            self.set_time = self.time
+            self.pending = (t.Rotation, t.Scale)
 
     def getEnvironmentInterface(self):
         """
@@ -137,21 +139,24 @@ class _FakeMathModel:
 
     def simulateSeconds(self, dt):
         """
-        Advance time; WindState catches up LAG s after a transform was set.
+        Advance time; at an environment update apply the pending transform.
         """
 
-        self.time += dt
-        if self.time - self.set_time >= self.LAG - 1e-9:
+        before, self.time = self.time, self.time + dt
+        n_before, n_after = (np.floor(t - self.UPDATE_OFFSET + 1e-9) for t in (before, self.time))
+        if self.updates_enabled and n_after > n_before and n_after >= 1:
+            if self.pending is not None:
+                self.active, self.pending = self.pending, None
             self.shown = self.active
 
     def SimulateRewindTo(self, t):
         """
-        Back to time t with the initialization's transform and WindState.
+        Back to t = 0 (as FH does for t = 0.25); the pending transform is discarded.
         """
 
-        self.time = t
-        self.active = self.shown = self.init_transform
-        self.set_time = -np.inf
+        self.time = 0.0
+        self.pending = None
+        self.shown = self.active
         self.rewound = True
 
 
@@ -177,7 +182,7 @@ def _bridge(tmp_path, monkeypatch, ignore_after_rewind=False, real_dispose=False
         bridge.math_model_initialized, bridge.initialize_math_model = True, False
         if bridge.initial_wind_field_transform is not None:
             bridge._apply_wind_field_transform(*bridge.initial_wind_field_transform)
-        fake.init_transform = fake.active
+        fake.init_transform = fake.pending
         fake.simulateSeconds(0.125)
 
     monkeypatch.setattr(bridge, "_initialize_math_model", init)
@@ -199,6 +204,21 @@ def test_every_episode_gets_its_own_wind(tmp_path, monkeypatch):
         assert bridge.episode_wind_field_transform == (rot, scale, 0.0)
         assert fake.active == fake.shown == (rot, scale)
     assert bridge._rewind_wind_verified
+    bridge.dispose()
+
+
+def test_rewind_warm_up_reaches_the_environment_update(tmp_path, monkeypatch):
+    """
+    With the 1.0 s warm-up after a rewind the probe saw the previous transform
+    (FH run of 2026-11-05); REWIND_WIND_WARMUP_TIME must pass the first update.
+    """
+
+    monkeypatch.setattr(FhSimBridge, "REWIND_WIND_WARMUP_TIME", 1.0)
+    bridge, _ = _bridge(tmp_path, monkeypatch)
+    rng = np.random.default_rng(3)
+    bridge.reset(wind_rng=rng)
+    with pytest.raises(RuntimeError, match="ignores a wind-field transform"):
+        bridge.reset(wind_rng=rng)
     bridge.dispose()
 
 
@@ -435,7 +455,7 @@ def test_failed_initial_warm_up_disposes_the_model(tmp_path, monkeypatch):
     """
 
     bridge, fake = _bridge(tmp_path, monkeypatch, real_dispose=True)
-    fake.LAG = 1e9                              # WindState never shows the transform
+    fake.updates_enabled = False                # WindState never shows the transform
     with pytest.raises(RuntimeError, match="WindState unchanged"):
         bridge.reset(wind_rng=np.random.default_rng(0))
     assert bridge.initialize_math_model and not bridge.math_model_initialized
