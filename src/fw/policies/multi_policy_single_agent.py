@@ -19,6 +19,7 @@ Usage:
 
 import os
 import copy
+import hashlib
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -258,6 +259,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
             optim.Adam(policy.network.parameters(), lr=self.learning_rate)
             for policy in self.policies
         ]
+        self._frozen_policy_checksums: Dict[int, str] = {}
 
         # Vectorized environment, created lazily
         self._vec_env = None
@@ -333,10 +335,32 @@ class MultiPolicySingleAgent(BasePPOAgent):
         """
 
         base_obs, scenario_id = self._extract_scenario(state)
+        policy_obs = self._policy_observation(base_obs, scenario_id)
         actions, log_probs, values = self.policies[scenario_id].predict(
-            base_obs, deterministic=deterministic,
+            policy_obs, deterministic=deterministic,
         )
         return actions[0], log_probs.item(), values.item()
+
+    def _policy_observation(self, observations: np.ndarray, policy_id: int) -> np.ndarray:
+        """Adapt COLAV observations to a policy's expected input width.
+
+        The frozen path-following policy was trained on the twelve base
+        PySimEnv features.  COLAV policies additionally receive the polar
+        scan and TCPA feature.  The base features are kept first in the
+        observation, so the path policy consumes their strict prefix.
+        """
+
+        observations = np.asarray(observations)
+        expected_dim = self.policies[policy_id].input_dim
+        actual_dim = observations.shape[-1]
+        if actual_dim == expected_dim:
+            return observations
+        if policy_id in self.frozen_pids and expected_dim < actual_dim:
+            return observations[..., :expected_dim]
+        raise ValueError(
+            f"Policy '{self.policy_labels[policy_id]}' expects {expected_dim} "
+            f"observation features, got {actual_dim}."
+        )
 
     def _predict(self, states, deterministic=False):
         """
@@ -376,8 +400,10 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         for pid in np.unique(scenario_ids):
             mask = scenario_ids == pid
-            a, raw, lp, v = self.policies[int(pid)].predict_with_raw(
-                base_obs_all[mask], deterministic=deterministic,
+            policy_id = int(pid)
+            policy_obs = self._policy_observation(base_obs_all[mask], policy_id)
+            a, raw, lp, v = self.policies[policy_id].predict_with_raw(
+                policy_obs, deterministic=deterministic,
             )
             actions[mask] = a
             raw_actions[mask] = raw
@@ -392,8 +418,9 @@ class MultiPolicySingleAgent(BasePPOAgent):
         """
 
         base_obs, scenario_id = self._extract_scenario(next_state)
+        policy_obs = self._policy_observation(base_obs, scenario_id)
         with torch.no_grad():
-            state_t = torch.FloatTensor(base_obs).unsqueeze(0).to(self.device)
+            state_t = torch.FloatTensor(policy_obs).unsqueeze(0).to(self.device)
             _, _, value = self.policies[scenario_id].network(state_t)
             return value.squeeze(0).item()
 
@@ -558,16 +585,19 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     # Truncated: bootstrap from the state after the segment
                     next_state = episode["next_states"][end - 1]
                     base_next = next_state[:-self.num_policies]
+                    policy_next = self._policy_observation(base_next, policy_id)
                     with torch.no_grad():
-                        st = torch.FloatTensor(base_next).unsqueeze(0).to(self.device)
+                        st = torch.FloatTensor(policy_next).unsqueeze(0).to(self.device)
                         _, _, v = self.policies[policy_id].network(st)
                         next_value = v.squeeze(0).item()
             else:
-                # Scenario switch: outgoing policy's value of the next segment's first state
+                # Scenario switch: outgoing policy's value of the next
+                # segment's first state.
                 boundary_state = episode["states"][end]
                 base_boundary = boundary_state[:-self.num_policies]
+                policy_boundary = self._policy_observation(base_boundary, policy_id)
                 with torch.no_grad():
-                    st = torch.FloatTensor(base_boundary).unsqueeze(0).to(self.device)
+                    st = torch.FloatTensor(policy_boundary).unsqueeze(0).to(self.device)
                     _, _, v = self.policies[policy_id].network(st)
                     next_value = v.squeeze(0).item()
 
@@ -917,6 +947,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     last_save_index = iteration
                     break
 
+            self._assert_frozen_policy_integrity()
+
             # Final checkpoint and metrics, only after a normal end.
             self.save_policy(
                 f"multi_policy_checkpoint_"
@@ -1040,8 +1072,36 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         if frozen:
             self.frozen_pids.add(policy_id)
+            for parameter in loaded.network.parameters():
+                parameter.requires_grad_(False)
+            loaded.network.eval()
+            self._frozen_policy_checksums[policy_id] = self._policy_checksum(loaded)
         else:
             self.frozen_pids.discard(policy_id)
+            for parameter in loaded.network.parameters():
+                parameter.requires_grad_(True)
+
+    @staticmethod
+    def _policy_checksum(policy: PPOPolicy) -> str:
+        """Return a stable checksum of all policy parameters and buffers."""
+
+        digest = hashlib.sha256()
+        for name, tensor in sorted(policy.network.state_dict().items()):
+            digest.update(name.encode("utf-8"))
+            digest.update(str(tensor.dtype).encode("ascii"))
+            digest.update(str(tuple(tensor.shape)).encode("ascii"))
+            digest.update(tensor.detach().cpu().contiguous().numpy().tobytes())
+        return digest.hexdigest()
+
+    def _assert_frozen_policy_integrity(self) -> None:
+        """Fail loudly if a frozen policy changed during training."""
+
+        for policy_id, expected in self._frozen_policy_checksums.items():
+            actual = self._policy_checksum(self.policies[policy_id])
+            if actual != expected:
+                raise AssertionError(
+                    f"Frozen policy '{self.policy_labels[policy_id]}' changed during training."
+                )
 
     def load_pretrained_policies(
         self,

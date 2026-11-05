@@ -385,7 +385,7 @@ class PySimColavEnvironment(BaseEnvironment):
         target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
         self.env = PySimColavEnv(
-            time_step=1.0,
+            time_step=2.0,
             max_steps=1500,
             ship_pos=ship_pos,
             target_pos=target_pos,
@@ -432,7 +432,7 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
         target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
         self.env = PySimColavEnv(
-            time_step=1.0,
+            time_step=2.0,
             max_steps=1500,
             ship_pos=ship_pos,
             target_pos=target_pos,
@@ -453,7 +453,7 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
                 "scenario_types", ["path-following", "head-on"]
             ),
             scenario_probs=self.configuration.get(
-                "scenario_probs", [0.5, 0.5]
+                "scenario_probs", [0.01, 0.99]
             ),
             minimal_path_render=True
         )
@@ -834,7 +834,7 @@ def build_multi_policy_colav_config(framework_config: dict, extra: dict | None =
 
     cfg = build_colav_config(framework_config, extra)
     cfg.setdefault("scenario_types", ["path-following", "head-on"])
-    cfg.setdefault("scenario_probs", [0.5, 0.5])
+    cfg.setdefault("scenario_probs", [0.01, 0.99])
     return cfg
 
 

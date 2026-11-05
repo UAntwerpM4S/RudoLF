@@ -161,15 +161,17 @@ class AgentManager:
             **self._hyperparameters,
         )
 
-        # Optional warm start from pretrained per-scenario policies in model_dir
-        # (file names without .zip). Slots follow SCENARIO_LABELS: 0 path-following,
-        # 1 head-on. Empty: all slots start random.
+        # Reuse the PySimEnv path-following policy as a frozen warm start.  Its
+        # twelve-feature input is a strict prefix of the COLAV observation;
+        # MultiPolicySingleAgent maps slot 0 to that prefix before inference.
+        pretrained_path_policy = Path(__file__).resolve().parents[2] / "models" / "PySimEnv_PPO_policy.zip"
+        if not pretrained_path_policy.is_file():
+            raise FileNotFoundError(
+                f"Frozen path-following policy not found: {pretrained_path_policy}"
+            )
         pretrained_dir = agent.model_dir
         pretrained_specs = {
-            #0: {"file": "pretrained_pf", "frozen": False},
-            #1: {"file": "pretrained_ho", "frozen": False},
-            #2: {"file": "pretrained_ot", "frozen": True},
-            #3: {"file": "pretrained_cr", "frozen": True},
+            0: {"file": str(pretrained_path_policy), "frozen": True},
         }
         agent.load_pretrained_policies(pretrained_dir, pretrained_specs)
 
