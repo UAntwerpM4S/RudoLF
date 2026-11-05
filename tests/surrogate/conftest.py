@@ -15,11 +15,12 @@ import sys
 import pytest
 
 from pathlib import Path
-from surrogate_test_helpers import train_tiny  # noqa: E402
 
 # The shared helpers live next to this file; make them importable whatever
 # pytest's import mode or the folder's package layout.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from surrogate_test_helpers import train_tiny  # noqa: E402
 
 
 @pytest.fixture(scope="session")

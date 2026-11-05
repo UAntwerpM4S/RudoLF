@@ -604,6 +604,7 @@ def test_diagnostic_script_on_a_synthetic_lookup(tmp_path):
         assert s["along_share"] == pytest.approx(1.0)
 
 
+@pytest.mark.skip(reason="episode-end logging in PySimEnv.step is disabled (too much info logging)")
 def test_episode_end_is_logged_with_outcome_and_conditions(full_env_model, caplog):
     """
     One log line per finished episode with outcome and drawn conditions; the same in info.

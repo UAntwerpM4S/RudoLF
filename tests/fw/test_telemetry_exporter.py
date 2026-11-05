@@ -9,11 +9,12 @@ import json
 import pytest
 
 from pathlib import Path
-from fw.common.airsim.tools.telemetry_exporter import TelemetryExporter
 
 _SRC_DIR = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
+
+from fw.common.airsim.tools.telemetry_exporter import TelemetryExporter
 
 
 @pytest.fixture

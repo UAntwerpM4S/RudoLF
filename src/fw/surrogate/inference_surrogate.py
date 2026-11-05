@@ -4,7 +4,6 @@ unnormalized one-step predictions for any scenario. Scenario, wind/current
 encoding, ship model and rudder scale come from the checkpoint.
 """
 
-
 import torch
 import logging
 import numpy as np

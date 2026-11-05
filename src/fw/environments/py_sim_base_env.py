@@ -1225,7 +1225,7 @@ class PySimBaseEnv(BaseEnv):
             backend = plt.get_backend()
             if manager is not None:
                 if backend in {'TkAgg'} and hasattr(manager, 'window'):
-                    manager.window.wm_geometry(f"+0+0")
+                    manager.window.wm_geometry("+0+0")
                 elif backend in {'QtAgg', 'Qt5Agg'} and hasattr(manager, 'window'):
                     manager.window.setGeometry(0, 0, fig_width, fig_height)
                 elif backend == 'GTK3Agg' and hasattr(manager, 'window'):

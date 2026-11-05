@@ -17,9 +17,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
+from collections import deque
+
 matplotlib.rcParams['figure.raise_window'] = False
 
-from collections import deque
 from shapely.geometry import Point
 from typing import Optional, Tuple, Dict
 from fw.ships.ship_factory import ShipModel

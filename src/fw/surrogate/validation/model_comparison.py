@@ -64,7 +64,6 @@ from fw.surrogate.sim_fh_dataset_generator import (
     _cutoff_geometry,
     stop_reason,
 )
-
 from fw.environments.py_sim_env import PySimEnv
 from fw.ships.actuator_command import ActuatorCommand
 # Trajectories of the non-FH models are integrated with the production

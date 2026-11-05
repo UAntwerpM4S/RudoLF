@@ -158,7 +158,6 @@ def update_log_file_agent_type(agent_type: str) -> Optional[Path]:
         name already matches, or the update failed.
     """
 
-    global _active_run_context
     if _active_run_context is None:
         return None
 

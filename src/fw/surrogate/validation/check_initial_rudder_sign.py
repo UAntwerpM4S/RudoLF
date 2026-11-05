@@ -23,14 +23,15 @@ import argparse
 import numpy as np
 
 from pathlib import Path
-from fw.ships.ship_factory import ShipModel
-from fw.ships.vessel_state import VesselState
-from fw.simulators.fh_sim_bridge import FhSimBridge
-from fw.dynamics.fh_tabular_model import fh_rudder_sign
 
 _SRC_DIR = str(Path(__file__).resolve().parents[3])     # src (this file: src/fw/surrogate/validation/)
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
+
+from fw.ships.ship_factory import ShipModel
+from fw.ships.vessel_state import VesselState
+from fw.simulators.fh_sim_bridge import FhSimBridge
+from fw.dynamics.fh_tabular_model import fh_rudder_sign
 
 ANGLE_DEG = 20.0          # initial rudder angle magnitude
 SURGE = 3.0               # m/s initial surge

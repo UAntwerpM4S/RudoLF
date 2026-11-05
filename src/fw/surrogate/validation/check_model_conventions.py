@@ -258,7 +258,7 @@ def check_model(runs: Dict[str, Track], is_fh: bool) -> List[str]:
     if not ok_turn:
         fails.append("TURN")
         if max(abs(dp), abs(dm)) < MIN_TURN_DEG:
-            print(f"            (no clear turn within the run: try a longer --duration or a larger --rudder)")
+            print("            (no clear turn within the run: try a longer --duration or a larger --rudder)")
 
     for key in ("+R", "-R"):
         tr = runs[key]
