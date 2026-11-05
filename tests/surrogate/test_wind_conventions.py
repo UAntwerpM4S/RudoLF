@@ -7,8 +7,8 @@ comes FROM, relative to the bow, positive = from starboard. Sway is positive
 to PORT, heading counter-clockwise from East.
 """
 
-import numpy as np
 import pytest
+import numpy as np
 
 from fw.dynamics.uantwerp_surrogate import apparent_wind_for_state
 

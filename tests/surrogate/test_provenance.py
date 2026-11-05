@@ -4,14 +4,12 @@ Dataset provenance: the generator records how a dataset was made (in every
 Informational only: no effect on the data or the model.
 """
 
-import argparse
-import logging
-
-import numpy as np
 import torch
+import logging
+import argparse
+import numpy as np
 
 from fw.surrogate.dataset import read_provenance
-
 from surrogate_test_helpers import identity, synthetic_rows, train_tiny
 
 

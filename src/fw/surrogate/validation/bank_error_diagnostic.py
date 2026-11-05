@@ -42,18 +42,16 @@ A relative --checkpoint is resolved in fw/checkpoints. Writes
 
 from __future__ import annotations
 
-import argparse
-import logging
 import sys
-
+import logging
+import argparse
 import numpy as np
 
 from pathlib import Path
-from typing import Dict, Optional, Sequence
-
-from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_MAX_DISTANCE
 from fw.surrogate.dataset import load_raw
+from typing import Dict, Optional, Sequence
 from fw.surrogate.presets import resolve_checkpoint
+from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_MAX_DISTANCE
 from fw.surrogate.schema import RAY_COLUMN_NAMES, TARGET_NAMES, ScenarioSchema
 
 logger = logging.getLogger(__name__)

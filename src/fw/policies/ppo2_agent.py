@@ -8,8 +8,8 @@ import gymnasium as gym
 from pathlib import Path
 from typing import Optional, Tuple
 from fw.policies.base_agent import BaseAgent
-from fw.configuration.stop_condition import StopCondition
 from fw.common.tools.ppo_utils import reseed_env_rng
+from fw.configuration.stop_condition import StopCondition
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor

@@ -4,11 +4,11 @@ Unit tests for fw.common.airsim.tools.telemetry_exporter.TelemetryExporter.
 
 from __future__ import annotations
 
-import json
 import sys
-from pathlib import Path
-
+import json
 import pytest
+
+from pathlib import Path
 
 _SRC_DIR = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC_DIR) not in sys.path:

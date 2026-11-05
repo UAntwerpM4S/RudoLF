@@ -10,18 +10,18 @@ import numpy as np
 
 from pathlib import Path
 from typing import Optional, Tuple, Union
-from fw.configuration.stop_condition import StopCondition
 from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from stable_baselines3.common.monitor import Monitor
+from fw.configuration.stop_condition import StopCondition
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 # from fw.common.tools.ppo_utils import normalize_policy_zip_path
 from fw.common.tools.logging_utils import dump_metrics_to_csv
 from fw.configuration.profile_applier import SimulatorApplier
-from fw.common.tools.ppo_utils import reseed_env_rng
 from fw.configuration.config_profile import VesselProfile
+from fw.common.tools.ppo_utils import reseed_env_rng
 
 logger = logging.getLogger(__name__)
 

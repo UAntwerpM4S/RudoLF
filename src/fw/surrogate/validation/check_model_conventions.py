@@ -42,10 +42,12 @@ Usage (from src):
     python -m fw.surrogate.validation.check_model_conventions --plot conventions.png
 """
 
+import sys
+import logging
 import argparse
 import dataclasses
-import logging
-import sys
+import numpy as np
+
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -53,12 +55,10 @@ _SRC_DIR = str(Path(__file__).resolve().parents[3])     # src (this file: src/fw
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-import numpy as np
-
-from fw.ships.ship_factory import B01_MODEL_SCALE, MODEL_SCALE_SHIP_MODELS, ShipModel, create_ship
+from fw.surrogate.schema import SURROGATE_DT
 from fw.ships.vessel_state import VesselState
 from fw.ships.actuator_state import ActuatorState
-from fw.surrogate.schema import SURROGATE_DT
+from fw.ships.ship_factory import B01_MODEL_SCALE, MODEL_SCALE_SHIP_MODELS, ShipModel, create_ship
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,7 @@ def check_model(runs: Dict[str, Track], is_fh: bool) -> List[str]:
     if not ok_turn:
         fails.append("TURN")
         if max(abs(dp), abs(dm)) < MIN_TURN_DEG:
-            print(f"            (no clear turn within the run: try a longer --duration or a larger --rudder)")
+            print("            (no clear turn within the run: try a longer --duration or a larger --rudder)")
 
     for key in ("+R", "-R"):
         tr = runs[key]

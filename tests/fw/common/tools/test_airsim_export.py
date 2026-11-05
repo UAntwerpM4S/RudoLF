@@ -4,12 +4,12 @@ Tests for AirSim-specific export helpers.
 
 from __future__ import annotations
 
-import json
 import sys
+import json
+import numpy as np
+
 from pathlib import Path
 from types import SimpleNamespace
-
-import numpy as np
 
 _SRC_DIR = Path(__file__).resolve().parents[4] / "src"
 if str(_SRC_DIR) not in sys.path:

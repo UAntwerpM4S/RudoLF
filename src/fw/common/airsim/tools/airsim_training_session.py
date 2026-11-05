@@ -6,14 +6,13 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
-
 import numpy as np
 
-from fw.common.airsim.tools.telemetry_exporter import TelemetryExporter
+from typing import Any
+from pathlib import Path
+from datetime import datetime, timezone
 from fw.common.tools.path_utils import resolve_path_relative_to_src
+from fw.common.airsim.tools.telemetry_exporter import TelemetryExporter
 from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 
 

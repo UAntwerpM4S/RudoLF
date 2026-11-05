@@ -4,15 +4,13 @@ optional max distance, .csv.gz) and how UAntwerpSurrogate uses it (nearest
 row always used; far lookups reported and counted).
 """
 
-import logging
-
-import numpy as np
 import pytest
+import logging
+import numpy as np
 
-from fw.ships.ship_factory import ShipModel, create_ship
 from fw.surrogate.schema import get_scenario
-
 from surrogate_test_helpers import make_state
+from fw.ships.ship_factory import ShipModel, create_ship
 
 SC = get_scenario("confined_ukc")
 

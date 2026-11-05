@@ -5,10 +5,10 @@ Build pipeline environments without the factory cache and resolve block profiles
 from __future__ import annotations
 
 from typing import Any, Dict
+from fw.surrogate.presets import get_preset
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from fw.scheduling.run_spec import PipelineBlock
-from fw.surrogate.presets import get_preset
 from fw.configuration.config import load_config_parameters
 from fw.configuration.profile_applier import apply_profile
 from fw.configuration.config_profile import ModelConfig, ProfileRegistry, VesselProfile

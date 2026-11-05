@@ -2,12 +2,12 @@ import copy
 import logging
 import numpy as np
 
-from fw.dynamics.fh_tabular_model import fh_rudder_sign
 from fw.ships.ship_factory import ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.ships.actuator_state import ActuatorState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.simulators.base_simulator import BaseSimulator
+from fw.dynamics.fh_tabular_model import fh_rudder_sign
 
 logger = logging.getLogger(__name__)
 

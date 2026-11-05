@@ -6,11 +6,11 @@ Must: order normal, slow and turning episodes exactly; skip (never mis-order)
 episodes whose order is ambiguous, e.g. a fully stopped ship.
 """
 
-import numpy as np
 import pytest
+import numpy as np
 
-from fw.surrogate.episode_time import step_index, step_threshold, steps_from_times
 from fw.surrogate.schema import SURROGATE_DT
+from fw.surrogate.episode_time import step_index, step_threshold, steps_from_times
 
 
 def _episode(n, u0, v0=0.0, r0=0.0, x0=100.0, y0=200.0, h0=0.3, decel=0.0, sub=10):

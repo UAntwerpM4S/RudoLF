@@ -5,11 +5,11 @@ Tests for the AirSimEnv-only inference runner.
 from __future__ import annotations
 
 import sys
-import types
-from pathlib import Path
-
-import numpy as np
 import torch
+import types
+import numpy as np
+
+from pathlib import Path
 
 
 def _install_fake_matplotlib(monkeypatch) -> None:

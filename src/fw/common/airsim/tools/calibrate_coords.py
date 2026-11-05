@@ -9,13 +9,14 @@ Usage:
     python -m fw.common.airsim.tools.calibrate_coords
 """
 
-import json
-import math
 import sys
 import time
+import math
+import json
 import numpy as np
-from pathlib import Path
+
 from typing import cast
+from pathlib import Path
 
 _THIS_FILE = Path(__file__).resolve()
 _SRC_DIR = _THIS_FILE.parents[4]

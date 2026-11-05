@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import csv
 import sys
-from pathlib import Path
-
 import pytest
+
+from pathlib import Path
 
 _SRC_DIR = Path(__file__).resolve().parents[4] / "src"
 if str(_SRC_DIR) not in sys.path:

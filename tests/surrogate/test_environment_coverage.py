@@ -9,13 +9,12 @@ end to end on full and confined CSVs (plain and .gz).
 """
 
 import csv
-
-import numpy as np
 import pytest
+import numpy as np
 
-from fw.dynamics.uantwerp_surrogate import apparent_wind_for_state
 from fw.surrogate.schema import get_scenario
 from fw.surrogate.validation import plot_environment_coverage as M
+from fw.dynamics.uantwerp_surrogate import apparent_wind_for_state
 
 
 def test_true_wind_matches_the_framework_conversion():

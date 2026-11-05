@@ -24,18 +24,16 @@ Usage (from src; rewrites the files in place, other arrays unchanged):
 
 from __future__ import annotations
 
-import argparse
-import logging
 import os
 import sys
-
+import logging
+import argparse
 import numpy as np
 
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
 from scipy.spatial import cKDTree
-
 from fw.surrogate.dataset import load_raw
+from typing import Optional, Sequence, Tuple
 from fw.surrogate.schema import SURROGATE_DT, get_scenario
 
 logger = logging.getLogger(__name__)

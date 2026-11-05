@@ -11,10 +11,9 @@ FhTabularModel), the dataset generator and the model-comparison tests.
   * Exercise names: the scenario base name per wind/current setting.
 """
 
-from typing import Tuple
-
 import numpy as np
 
+from typing import Tuple
 from fw.ships.ship_factory import ShipModel
 from fw.surrogate.schema import apparent_to_true_wind
 

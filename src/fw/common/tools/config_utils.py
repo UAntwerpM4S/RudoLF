@@ -4,8 +4,8 @@ Configuration helper utilities shared by framework modules.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
+from collections.abc import Mapping
 
 
 def normalize_configuration(configuration: Any) -> Any:

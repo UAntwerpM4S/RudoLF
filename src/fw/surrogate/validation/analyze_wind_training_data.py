@@ -24,10 +24,10 @@ Usage:
 """
 
 import argparse
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
+
+from pathlib import Path
 
 COL_HEADING, COL_SURGE, COL_SWAY, COL_WIND_SPEED, COL_WIND_DIR = 2, 3, 4, 7, 8
 COL_CUR_SPEED, COL_CUR_DIR, COL_EPISODE = 9, 10, 40

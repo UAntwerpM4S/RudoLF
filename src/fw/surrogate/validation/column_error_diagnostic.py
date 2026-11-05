@@ -29,15 +29,13 @@ Relative --checkpoint paths are resolved in fw/checkpoints.
 
 from __future__ import annotations
 
-import argparse
-import logging
 import sys
-
+import logging
+import argparse
 import numpy as np
 
 from pathlib import Path
 from typing import Optional, Sequence
-
 from fw.surrogate.dataset import load_raw
 from fw.surrogate.episode_time import T_EPISODE_KEY, step_threshold, steps_from_times
 from fw.surrogate.presets import resolve_checkpoint

@@ -5,6 +5,7 @@ Tests for AirSimBridge simulation speed, rendering toggle and output silencing.
 from __future__ import annotations
 
 import sys
+
 from pathlib import Path
 from types import SimpleNamespace
 

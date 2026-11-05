@@ -5,11 +5,11 @@ import numpy as np
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple, Union
-from fw.configuration.stop_condition import StopCondition
 from fw.environments.base_env import BaseEnv
 from fw.policies.ppo_policy import get_device
-from fw.common.tools.path_utils import resolve_path_relative_to_src
 from fw.common.tools.ppo_utils import resolve_base_seed
+from fw.configuration.stop_condition import StopCondition
+from fw.common.tools.path_utils import resolve_path_relative_to_src
 
 logger = logging.getLogger(__name__)
 

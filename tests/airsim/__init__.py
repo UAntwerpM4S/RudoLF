@@ -6,8 +6,9 @@ forces imports to resolve to the repository's `src/airsim` package so test
 collection does not accidentally mix stale or shadowed module objects.
 """
 
-import importlib.util
 import sys
+import importlib.util
+
 from pathlib import Path
 
 

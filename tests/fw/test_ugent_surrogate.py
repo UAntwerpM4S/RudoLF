@@ -1,15 +1,14 @@
 """
-Bank-distance behaviour and configuration defaults of fw.dynamics.ugent_surrogate (Tripoli, full scale).
+Bank-distance behavior and configuration defaults of fw.dynamics.ugent_surrogate (Tripoli, full scale).
 """
 
 import math
-
 import pytest
 
+from fw.ships.vessel_state import VesselState
+from fw.ships.ship_factory import ShipModel, create_ship
 from fw.dynamics.ugent_surrogate import (
     DEFAULT_MAX_BANK_CLEARANCE, DEFAULT_MIN_BANK_CLEARANCE, DEFAULT_N_MAX_RPM, UGentSurrogate)
-from fw.ships.ship_factory import ShipModel, create_ship
-from fw.ships.vessel_state import VesselState
 
 BEAM = 17.1  # Tripoli beam [m]
 

@@ -4,8 +4,8 @@ Small DTO used by fw common tooling.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

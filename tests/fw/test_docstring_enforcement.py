@@ -5,6 +5,7 @@ Enforce docstring coverage for source and test modules.
 from __future__ import annotations
 
 import ast
+
 from pathlib import Path
 
 

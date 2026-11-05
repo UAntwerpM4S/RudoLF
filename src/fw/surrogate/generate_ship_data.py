@@ -19,15 +19,14 @@ Each .npz carries its schema.DatasetIdentity:
 
 import os
 import json
-import argparse
 import datetime
+import argparse
 import numpy as np
 
 from typing import Optional
-
+from fw.ships.ship_factory import ShipModel
 # schema (numpy only), not dataset.py: data generation must not need torch.
 from fw.environments.ray_features import RAY_LAYOUT_VERSION
-from fw.ships.ship_factory import ShipModel
 from fw.surrogate.schema import (SWAY_CONVENTION, DatasetIdentity, npz_metadata, provenance_metadata,
                                  scenario_for_raw_width)
 from fw.surrogate.sim_fh_dataset_generator import (
@@ -338,6 +337,7 @@ def main():
         provenance = None
         print(f"WARNING: could not record the generation settings ({type(exc).__name__}: {exc}); "
               f"the dataset is written without them.")
+
     if provenance is not None:
         provenance_path = os.path.splitext(args.save)[0] + "_generation.json"
         tmp = f"{provenance_path}.tmp{os.getpid()}"

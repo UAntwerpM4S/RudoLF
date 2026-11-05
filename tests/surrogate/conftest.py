@@ -12,9 +12,9 @@ contracts (column order, signs, file formats, integration), not model quality.
 """
 
 import sys
-from pathlib import Path
-
 import pytest
+
+from pathlib import Path
 
 # The shared helpers live next to this file; make them importable whatever
 # pytest's import mode or the folder's package layout.

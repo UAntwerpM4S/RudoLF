@@ -13,15 +13,15 @@ from shapely.geometry import Point, Polygon
 from typing import Dict, List, Optional, Tuple
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
+from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 
-from fw.simulators.ship_simulator import ShipSimulator
+from fw.dynamics.nomoto import Nomoto
+from fw.dynamics.fossen import Fossen
+from fw.dynamics.dynamics_model import Model
 from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
-from fw.dynamics.dynamics_model import Model
-from fw.dynamics.fossen import Fossen
-from fw.dynamics.nomoto import Nomoto
 
 logger = logging.getLogger(__name__)
 
@@ -1225,7 +1225,7 @@ class PySimBaseEnv(BaseEnv):
             backend = plt.get_backend()
             if manager is not None:
                 if backend in {'TkAgg'} and hasattr(manager, 'window'):
-                    manager.window.wm_geometry(f"+0+0")
+                    manager.window.wm_geometry("+0+0")
                 elif backend in {'QtAgg', 'Qt5Agg'} and hasattr(manager, 'window'):
                     manager.window.setGeometry(0, 0, fig_width, fig_height)
                 elif backend == 'GTK3Agg' and hasattr(manager, 'window'):

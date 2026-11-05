@@ -3,19 +3,18 @@ Unit and wiring tests for fw.dynamics.ugent_b01_surrogate (UGent B01 / Myzako, m
 """
 
 import copy
-import logging
 import math
-
-import numpy as np
 import pytest
+import logging
+import numpy as np
 
 from fw.dynamics.dynamics_model import Model
+from fw.ships.vessel_state import VesselState
 from fw.dynamics.ugent_b01_surrogate import (
     B01_COEFFICIENT_SETS, DEFAULT_N_MAX_RPM, TESTED_UKC_PERCENT, UGentB01Surrogate, interpolation_blend)
 from fw.ships.ship_factory import (
     B01_MIN_THRUST, ShipModel, create_ship, require_fh_supported, require_full_scale_ship,
     require_hull_coefficients)
-from fw.ships.vessel_state import VesselState
 
 START = np.array([2245.0, -47.0], dtype=np.float32)
 TARGET = np.array([-1559.0, 11990.0], dtype=np.float32)

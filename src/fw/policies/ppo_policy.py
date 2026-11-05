@@ -1,6 +1,6 @@
 import os
-import logging
 import torch
+import logging
 import zipfile
 import tempfile
 import numpy as np

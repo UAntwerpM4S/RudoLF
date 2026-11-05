@@ -11,10 +11,10 @@ from typing import Any, Dict, Set
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from fw.configuration.config import PolicyStrategy
-from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.configuration.config_profile import ProfileRegistry
 from fw.common.tools.config_utils import get_validated_bool
 from fw.common.tools.logging_config import resolve_log_level
+from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.configuration.env_factory import resolve_environment_name, EnvironmentRegistryError
 from fw.scheduling.run_spec import PipelineBlock, PipelineSpec, StopConditionSpec, TransferSpec
 

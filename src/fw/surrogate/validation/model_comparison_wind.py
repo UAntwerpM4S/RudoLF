@@ -55,23 +55,21 @@ start_heading_deg in degrees of PySimEnv.ship_heading (as model_comparison.py).
 """
 
 import csv
-import logging
 import sys
 import time
-
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
-
+import logging
 import numpy as np
 
+from pathlib import Path
+from dataclasses import dataclass, field
 from fw.ships.ship_factory import create_ship
 from fw.ships.vessel_state import VesselState
 from fw.environments.py_sim_env import PySimEnv
-from fw.environments.ray_features import RAY_ANGLES_DEG, compute_ray_features, ray_world_angles
 from fw.ships.actuator_command import ActuatorCommand
+from typing import Dict, List, Optional, Sequence, Tuple
 from fw.simulators.fh_interface_utils import WIND_WARMUP_TIME
 from fw.surrogate.sim_fh_dataset_generator import _cutoff_geometry
+from fw.environments.ray_features import RAY_ANGLES_DEG, compute_ray_features, ray_world_angles
 from fw.surrogate.validation.model_comparison import (
     FhSession,
     OUTPUT_DIR,

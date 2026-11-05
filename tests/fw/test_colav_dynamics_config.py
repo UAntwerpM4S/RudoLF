@@ -5,12 +5,12 @@ Tripoli, and avoid np.cross on 2-D vectors (deprecated in NumPy 2.0, an error
 in 2.5).
 """
 
-import numpy as np
 import pytest
+import numpy as np
 
+from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model
 from fw.dynamics.ugent_surrogate import UGentSurrogate
-from fw.ships.ship_factory import ShipModel
 
 START = np.array([2245.0, -47.0], dtype=np.float32)
 TARGET = np.array([-1559.0, 11990.0], dtype=np.float32)

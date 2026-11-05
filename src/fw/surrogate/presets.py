@@ -13,10 +13,9 @@ PRESETS entry; no code changes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
+from dataclasses import dataclass
 from fw.ships.ship_factory import ShipModel
 from fw.surrogate.schema import CONFINED_UKC, FULL_ENV, OPEN_WATER, ScenarioSchema
 

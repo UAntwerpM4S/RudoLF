@@ -39,22 +39,20 @@ Usage (from src):
     python fw/surrogate/validation/model_comparison_current.py --report-only # rebuild the report
 """
 
+import sys
 import csv
 import json
-import logging
-import sys
 import time
-
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
-
+import logging
 import numpy as np
 
+from pathlib import Path
+from dataclasses import dataclass, field
 from fw.ships.ship_factory import create_ship
 from fw.ships.vessel_state import VesselState
 from fw.environments.py_sim_env import PySimEnv
 from fw.ships.actuator_command import ActuatorCommand
+from typing import Dict, List, Optional, Sequence, Tuple
 from fw.surrogate.sim_fh_dataset_generator import (
     CURRENT_TIME_START_RANGE,
     TIME_START_XML_PATHS,

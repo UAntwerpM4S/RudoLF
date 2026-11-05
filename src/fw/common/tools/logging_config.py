@@ -16,12 +16,12 @@ SubprocVecEnv workers (spawn mode) do not inherit this configuration and call
 
 from __future__ import annotations
 
-import logging
 import sys
-from datetime import datetime, timezone
+import logging
+
 from pathlib import Path
 from typing import Optional
-
+from datetime import datetime, timezone
 from fw.common.tools.path_utils import resolve_path_relative_to_src
 
 _CONSOLE_FORMAT = "%(levelname)s [%(name)s] %(message)s"
@@ -158,7 +158,6 @@ def update_log_file_agent_type(agent_type: str) -> Optional[Path]:
         name already matches, or the update failed.
     """
 
-    global _active_run_context
     if _active_run_context is None:
         return None
 

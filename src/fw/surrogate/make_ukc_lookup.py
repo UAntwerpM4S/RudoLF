@@ -36,19 +36,17 @@ Usage (from src):
 
 from __future__ import annotations
 
-import argparse
-import gzip
-import logging
 import sys
 import time
-
+import gzip
+import logging
+import argparse
 import numpy as np
 import pandas as pd
 
 from pathlib import Path
-from typing import Dict, Optional, Sequence, Tuple
 from scipy.spatial import cKDTree
-
+from typing import Dict, Optional, Sequence, Tuple
 from fw.surrogate.schema import TARGET_NAMES, ScenarioSchema, scenario_for_raw_width
 
 logger = logging.getLogger(__name__)

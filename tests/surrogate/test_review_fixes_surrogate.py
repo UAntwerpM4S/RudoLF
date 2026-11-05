@@ -4,13 +4,12 @@ check, position-aware get_ukc, non-finite input guard and the ShipSimulator
 sub-step grid.
 """
 
-import numpy as np
 import pytest
+import numpy as np
 
-from fw.ships.ship_factory import ShipModel, create_ship
 from fw.surrogate.schema import get_scenario
-
 from surrogate_test_helpers import make_state
+from fw.ships.ship_factory import ShipModel, create_ship
 
 CONFINED = get_scenario("confined_ukc")
 FULL = get_scenario("full_env")

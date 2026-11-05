@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import warnings
 import logging
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches

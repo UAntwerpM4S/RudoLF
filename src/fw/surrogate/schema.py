@@ -22,12 +22,10 @@ on it.
 from __future__ import annotations
 
 import json
-
 import numpy as np
 
 from dataclasses import dataclass
 from typing import Optional, Tuple
-
 from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_LAYOUT_VERSION
 
 

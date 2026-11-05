@@ -28,19 +28,18 @@ Usage (from src):
 
 from __future__ import annotations
 
-import argparse
 import sys
-
+import argparse
 import numpy as np
 
 from typing import Dict, List, Optional, Sequence, Tuple
+from fw.surrogate.presets import get_preset, resolve_lookup_csv
 from fw.common.default_positions import DEFAULT_FRAMEWORK_SHIP_POS, DEFAULT_FRAMEWORK_TARGET_POS
 from fw.dynamics.uantwerp_surrogate import (
     CURRENT_AXIS_MIN_SPEED,
     CurrentLineFollower,
     make_scenario_lookup,
 )
-from fw.surrogate.presets import get_preset, resolve_lookup_csv
 
 _ALONG = np.cos(np.radians(45.0))
 WEAK_LINE_STRENGTH = 0.2   # reporting only: line strength below this counts as a weak-line step
@@ -81,7 +80,7 @@ def follow_route(lookup, points: np.ndarray, sign: float, jump_deg: float, tau: 
     Run CurrentLineFollower along `points` for one sign, sailing at `speed`
     [m/s] (time step = point spacing / speed); returns the statistics (see
     module docstring). `tangents`: route direction per point (default: of
-    `points`; pass the centreline's for offset paths, which fold back at
+    `points`; pass the centerline's for offset paths, which fold back at
     inner corners).
     """
 

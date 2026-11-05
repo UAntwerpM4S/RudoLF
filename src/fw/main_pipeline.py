@@ -32,8 +32,8 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
     from fw.configuration.config_profile import ProfileRegistry
     from fw.scheduling.pipeline_scheduler import PipelineScheduler
     from fw.scheduling.run_loader import load_pipeline_spec, PipelineSpecError
-    from fw.configuration.env_factory import initialize_all_environments, resolve_environment_name, airsim_env_name
     from fw.configuration.env_factory import multi_sim_env_name, multi_policy_colav_env_name
+    from fw.configuration.env_factory import initialize_all_environments, resolve_environment_name, airsim_env_name
 
     parser = argparse.ArgumentParser(description="Run a JSON-defined training pipeline.")
     parser.add_argument("--spec", required=True, help="Path to the pipeline JSON file.")

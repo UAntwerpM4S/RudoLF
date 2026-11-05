@@ -11,15 +11,13 @@ Normalization: X and Y use mean/std from the training split only. Near-constant
 features get std = 1.0 (see `safe_std`), so later deviations are not amplified ~1e8.
 """
 
-import logging
-
 import torch
+import logging
 import numpy as np
 
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
 from torch.utils.data import Dataset
-
+from typing import Optional, Sequence, Tuple
 from fw.surrogate.schema import (
     DEFAULT_ENV_ENCODING,
     TARGET_NAMES,

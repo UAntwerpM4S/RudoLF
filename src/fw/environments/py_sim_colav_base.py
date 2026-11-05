@@ -12,11 +12,12 @@ Class hierarchy:
 
 import math
 import logging
-from collections import deque
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
+
+from collections import deque
 
 matplotlib.rcParams['figure.raise_window'] = False
 

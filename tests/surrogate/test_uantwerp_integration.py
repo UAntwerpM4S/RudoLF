@@ -3,17 +3,16 @@ End to end: checkpoint -> SurrogatePredictor -> UAntwerpSurrogate.step().
 
 One step of UAntwerpSurrogate at SURROGATE_DT must give exactly the state
 plus the deltas the predictor returns for the raw row it builds; any other
-time step is refused. Also the raw input row (rudder scaling) and the
+time step is refused. Also, the raw input row (rudder scaling) and the
 preset/checkpoint consistency checks.
 """
 
-import numpy as np
 import pytest
+import numpy as np
 
-from fw.ships.ship_factory import ShipModel, create_ship
 from fw.surrogate.schema import SURROGATE_DT
-
 from surrogate_test_helpers import make_state
+from fw.ships.ship_factory import ShipModel, create_ship
 
 
 def _surrogate(ckpt, preset="myzako_clean", **config):

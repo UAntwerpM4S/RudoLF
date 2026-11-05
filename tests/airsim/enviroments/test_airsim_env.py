@@ -4,11 +4,10 @@ Tests for AirSimEnv (with a fake AirSim bridge).
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-import numpy as np
 import pytest
+import numpy as np
 
+from types import SimpleNamespace
 from airsim.communication.coord_transform import CoordTransform
 
 

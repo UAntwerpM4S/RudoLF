@@ -54,8 +54,8 @@ from pathlib import Path
 from matplotlib import pyplot as plt
 from multiprocessing.pool import Pool
 from dataclasses import dataclass, field
-from shapely.geometry import LineString, MultiLineString, Point
 from fw.dynamics.fh_tabular_model import fh_rudder_sign
+from shapely.geometry import LineString, MultiLineString, Point
 # Shared with the RL bridge (single source: fw.simulators.fh_interface_utils).
 from fw.simulators.fh_interface_utils import (
     FH_HEADING_CONVENTION,
@@ -75,8 +75,8 @@ from fw.environments.ray_features import (
     NBR_RAY_FEATURES,
     compute_ray_features,
 )
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from fw.ships.ship_factory import ShipModel, create_ship
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Dict, Iterable, Optional, Tuple, Union
 
 DEFAULT_MATH_MODEL_FREQUENCY = 10.0  # Hz
