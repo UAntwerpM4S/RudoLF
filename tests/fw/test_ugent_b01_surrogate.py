@@ -404,18 +404,14 @@ def test_deepcopy_rebinds_bound_provider(spec):
 
 # ---------------------------------------------------------------- simulator and environments
 
-def test_ship_simulator_refuses_wind_and_current(spec):
+def test_b01_observes_no_wind_or_current(spec):
     """
-    EnvironmentModel's full-scale wind/current are refused for the B01.
+    The B01 has no wind or current: its observed wind/current is zero.
     """
-
-    from fw.simulators.ship_simulator import ShipSimulator
 
     model = UGentB01Surrogate(spec, {"ukc_percent": 379})
-    ShipSimulator(spec, model, dt=0.1)  # no wind/current: fine
-    for wind, current in ((True, False), (False, True)):
-        with pytest.raises(ValueError, match="wind"):
-            ShipSimulator(spec, model, dt=0.1, wind=wind, current=current)
+    assert not model.models_own_wind_current
+    np.testing.assert_array_equal(model.observed_wind_current(_state()), np.zeros(4))
 
 
 def test_full_scale_guard():

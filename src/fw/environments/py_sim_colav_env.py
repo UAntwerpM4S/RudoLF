@@ -7,7 +7,6 @@ COLREG-aware reward shaping for the polar/rangefinder approach.
 
 import math
 import logging
-import matplotlib
 import numpy as np
 import gymnasium as gym
 
@@ -87,8 +86,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             overall_contour, depth_contour, trajectory: Map/path CSV files.
             dynamics_model: Vessel dynamics model.
             ship_model: Ship model.
-            wind: Enable wind.
-            current: Enable current.
+            wind: Add 2 zero wind observation slots (no model here has wind).
+            current: Add 2 zero current observation slots (as wind).
             ugent_surrogate_config: Config for Model.UGENT_SURROGATE, e.g.
                 {"ukc_percent": 363}.
             ugent_b01_surrogate_config: Config for Model.UGENT_B01_SURROGATE,

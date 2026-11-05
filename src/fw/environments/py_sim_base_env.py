@@ -141,14 +141,14 @@ class PySimBaseEnv(BaseEnv):
             target_pos: Optional target. The trajectory is cut to end here,
                 walked forwards or (if target_pos lies before start_pos)
                 backwards. If omitted, the trajectory's last point is the
-                target and it is walked forwards.
+                target, and it is walked forwards.
             overall_contour: Map outline CSV (default env_Sche_no_scale.csv).
             depth_contour: Navigable-area CSV (default env_Sche_250cm_no_scale.csv).
             trajectory: Path CSV (default trajectory_points_no_scale.csv).
             dynamics_model: Dynamics model to use.
             ship_model: Ship model to use.
-            wind: Enable wind effects.
-            current: Enable current effects.
+            wind: Add 2 wind observation features (zeros: no model here has wind).
+            current: Add 2 current observation features (zeros, as wind).
             minimal_path_render: Draw only a faint path line (no checkpoints).
             ugent_surrogate_config: Config for Model.UGENT_SURROGATE, e.g.
                 {"ukc_percent": 363}; see fw.dynamics.ugent_surrogate.
@@ -310,8 +310,8 @@ class PySimBaseEnv(BaseEnv):
     def create_simulator(self, ugent_surrogate_config: Optional[Dict] = None,
                          ugent_b01_surrogate_config: Optional[Dict] = None):
         """
-        Create the ShipSimulator for the configured ship, dynamics model,
-        wind/current flags and time step (also sets self.dynamics).
+        Create the ShipSimulator for the configured ship, dynamics model and
+        time step (also sets self.dynamics).
 
         Args:
             ugent_surrogate_config: Configuration for the UGent surrogate model
@@ -359,7 +359,7 @@ class PySimBaseEnv(BaseEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step)
 
     # -------------------------
     # Environment data loaders
@@ -521,13 +521,10 @@ class PySimBaseEnv(BaseEnv):
     @staticmethod
     def _reduce_path(path: np.ndarray, start_pos: np.ndarray, target_pos: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        Cut the trajectory to run from just after start_pos to target_pos.
-
-        The path is walked forwards or, if target_pos lies earlier in the
-        stored point order, backwards (e.g. sailing north-to-south along a
-        trajectory recorded south-to-north). Its last point is set exactly to
-        target_pos. Without target_pos the path runs forwards to the
-        trajectory's last point.
+        Cut the trajectory to run from just after start_pos to target_pos, walking
+        it backwards if target_pos lies earlier in the stored point order. The last
+        point is set exactly to target_pos; without target_pos the path runs forwards
+        to the last point.
 
         Args:
             path: Full trajectory, (N, 2).
@@ -538,8 +535,8 @@ class PySimBaseEnv(BaseEnv):
             The reduced path.
 
         Raises:
-            ValueError: If the result is empty, or start_pos and target_pos map
-                to the same trajectory point.
+            ValueError: Empty result, or start_pos and target_pos map to the same
+                trajectory point.
         """
 
         if len(path) == 0:
@@ -749,8 +746,8 @@ class PySimBaseEnv(BaseEnv):
         """
         Build the normalized observation: u, v, r, distances to the current and
         next checkpoint (log-scaled), signed cross-track error, four heading
-        errors, previous rudder angle, LOS heading error, plus wind/current
-        vectors when enabled.
+        errors, previous rudder angle, LOS heading error, plus zero wind/current
+        placeholders when enabled.
         """
 
         norm_velocities = np.array([
@@ -847,11 +844,12 @@ class PySimBaseEnv(BaseEnv):
             los_heading_error / np.pi,
         ])
 
+        # Placeholders: the dynamics models of this env have no wind or current.
         if self.wind:
-            obs = np.hstack([obs, self.phys_sim.environment.wind_direction * self.phys_sim.environment.wind_strength])
+            obs = np.hstack([obs, np.zeros(2, dtype=np.float32)])
 
         if self.current:
-            obs = np.hstack([obs, self.phys_sim.environment.current_direction * self.phys_sim.environment.current_strength])
+            obs = np.hstack([obs, np.zeros(2, dtype=np.float32)])
 
         return obs.astype(np.float32)
 
@@ -943,9 +941,8 @@ class PySimBaseEnv(BaseEnv):
         self.ukc = self.get_keel_clearance()
 
         rudder_change = abs(self.performed_action[0] - self.previous_action[0])
-        # Both in rad: performed/previous_action hold the actuator rudder angle.
-        # The +1e-6 rad tolerance keeps a move at exactly the max slew rate
-        # (float32 rounding lands just above it) out of the hard -1 penalty.
+        # Both in rad. The 1e-6 tolerance keeps a move at exactly the maximum slew
+        # rate out of the -1 penalty despite float32 rounding.
         max_rudder_change = self.ship.specifications.max_rudder_rate * self.time_step + 1e-6  # rad
         heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
         distance_traveled = abs(np.linalg.norm(self.ship_pos - self.previous_ship_pos))

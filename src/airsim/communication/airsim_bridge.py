@@ -1,17 +1,17 @@
 """
 Connection manager for CosysAirSim running inside Unreal Engine 5.
 
-Provides UE5 detection via a TCP port probe, connection retry with exponential
-backoff, periodic health checks and pass-through control: `set_controls()`
-forwards pre-mapped `CarControls` unchanged (no PID). Input mapping is done by
-AirSimEnv and airsim.inference.run_inference.
+UE5 detection via a TCP port probe, connection retry with exponential backoff,
+periodic health checks and pass-through control: set_controls() forwards
+pre-mapped CarControls unchanged. Input mapping is done by AirSimEnv and
+airsim.inference.run_inference.
 
 Coordinate frames:
     * Framework: x = east, y = north, heading from east (CCW+).
     * AirSim (NED): x = north, y = east, yaw from north (CW+).
-    * Transform: AirSim_yaw = pi/2 - ship_heading.
+    * AirSim_yaw = pi/2 - ship_heading.
 
-Example::
+Example:
 
     >>> from airsim.config.airsim_config import AirSimConfig
     >>> bridge = AirSimBridge(AirSimConfig())
@@ -508,19 +508,15 @@ class AirSimBridge:
 
     def set_rendering_enabled(self, is_enabled: bool, force: bool = False) -> bool:
         """
-        Toggle UE5 scene rendering via the `ShowFlag.Rendering` console command.
-
-        AirSim has no rendering API; this lets training disable rendering while
-        physics keeps running.
+        Toggle UE5 scene rendering via the ShowFlag.Rendering console command
+        (AirSim has no rendering API); physics keeps running.
 
         Args:
-            is_enabled: `True` to show rendering, `False` to hide it.
-            force: When `True`, always issue the UE5 console command even if
-                the bridge already believes the rendering state matches.
+            is_enabled: True to show rendering, False to hide it.
+            force: Issue the command even if the state already seems to match.
 
         Returns:
-            bool: `True` when the command was accepted or when rendering was
-            already in the requested state, otherwise `False`.
+            True if the command was accepted or the state already matched.
         """
 
         if not self._ensure_connected():
@@ -790,11 +786,9 @@ class AirSimBridge:
         yaw: float,
     ) -> None:
         """
-        Move a named UE5 actor via simSetObjectPose, without vehicle physics.
-
-        The actor has no Chaos physics body, so the water plugin produces no
-        buoyancy reactions or ripples. Preferred when UE5 is used purely as a
-        renderer for externally simulated motion.
+        Move a named UE5 actor via simSetObjectPose, without vehicle physics (no
+        buoyancy or ripples). Preferred when UE5 only renders externally simulated
+        motion.
 
         Args:
             object_name: Exact actor name as shown in the UE5 Outliner.

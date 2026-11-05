@@ -1,7 +1,7 @@
 """
-Base environment for collision avoidance scenarios: scenario construction,
-entity advancement along checkpoints and collision detection. Subclasses add
-observations (e.g. polar rangefinder, replanner) and reward shaping.
+Base environment for collision avoidance: scenario construction, entity
+advancement along checkpoints and collision detection. Subclasses add
+observations and reward shaping.
 
 Class hierarchy:
     PySimBaseEnv (path following; independent of PySimEnv, not kept in sync)
@@ -74,10 +74,9 @@ class PySimColavBaseEnv(PySimBaseEnv):
     # statistics (oldest dropped first).
     METRIC_HISTORY_MAXLEN: int = 10_000
 
-    # True for envs that track one target ship through the classifier (ts_idx);
-    # only there does the ScenarioBuilder despawn a dynamic TS that has passed.
-    # An explicit flag, because hasattr(env, "ts_idx") depends on whether a
-    # reward call already created the attribute.
+    # True for envs that track one target ship (ts_idx); only there does the
+    # ScenarioBuilder despawn a passed dynamic TS. Explicit, because
+    # hasattr(env, "ts_idx") depends on whether a reward call created it.
     TRACKS_TARGET_SHIP: bool = False
 
 
@@ -129,8 +128,8 @@ class PySimColavBaseEnv(PySimBaseEnv):
             trajectory: Trajectory file.
             dynamics_model: Vessel dynamics model.
             ship_model: Ship specification model.
-            wind: Enables wind disturbances.
-            current: Enables current disturbances.
+            wind: Add 2 zero wind observation slots (no model here has wind).
+            current: Add 2 zero current observation slots (as wind).
             minimal_path_render: Enables simplified path rendering.
             ugent_surrogate_config: Configuration for the UGent surrogate
                 (Model.UGENT_SURROGATE), e.g. {"ukc_percent": 363}.
@@ -208,15 +207,11 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._current_episode_min_dist: float = float("inf")
         self._current_episode_collided: bool = False
 
-        # Per-encounter tracking. Each encounter adds a record to
-        # _episode_encounters / _all_encounters (also used by the confusion
-        # matrix); "min_dist" is the closest center-to-center distance to any
-        # collision entity while the encounter was active. Records are finalized
-        # when tracking ends, or on reset / terminal step mid-encounter.
-        # "resolved": ended by the classifier's tracked -> None transition (TS out
-        # of forget range or despawned) and the OS passed the TS; cut-off
-        # encounters are not resolved. min_dist and CRI statistics only use
-        # "valid" encounters (resolved and not collided).
+        # Per-encounter records (_episode_encounters / _all_encounters, also used by
+        # the confusion matrix). "min_dist": closest center distance to any collision
+        # entity during the encounter. "resolved": the classifier stopped tracking the
+        # TS and the OS passed it. min_dist and CRI statistics use only resolved,
+        # collision-free encounters.
         self._in_encounter: bool = False
         self._current_encounter_min_dist: float = float("inf")
         self._current_encounter_min_dist_bank: float = float("inf")
@@ -245,10 +240,8 @@ class PySimColavBaseEnv(PySimBaseEnv):
         self._prev_os_pos = None
         self._prev_ts_pos = None
 
-        # Classification metrics (GT vs geometric), one record per encounter
-        # (TS tracked until tracked_ts returns to None or the episode ends).
-        # (gt, pred) is captured once at encounter entry, matching the label
-        # locking used for reward shaping.
+        # Classification metrics (GT vs geometric), one record per encounter; (gt,
+        # pred) is captured at encounter entry, like the label locking of the reward.
         self._episode_encounters: list[dict] = []    # encounters in the current episode
         self._all_encounters: deque = deque(maxlen=self.METRIC_HISTORY_MAXLEN)  # across episodes (capped, see above)
         self._prev_tracked_ts: Optional[int] = None  # for None -> tracked transition detection

@@ -224,12 +224,9 @@ class ScenarioBuilder:
                             self._push_scenario_to_classifier(chosen_scenario)
                             self._encounters_this_episode += 1
 
-        # 4. Despawn the TS once its route is finished (e.g. an overtaking TS
-        #    the OS never catches) or once it leaves forget_range after having
-        #    been within encounter_range (_despawn_engaged, the range at which
-        #    the classifier starts tracking it). A TS whose closest approach
-        #    stays between the two ranges is not removed for distance.
-        #    Only dynamic TS, and only in envs with TRACKS_TARGET_SHIP.
+        # 4. Despawn the TS once its route is finished, or once it leaves forget_range
+        #    after having been within encounter_range (_despawn_engaged). Only dynamic
+        #    TS, and only in envs with TRACKS_TARGET_SHIP.
         if (
             env.collision_entities
             and len(env.collision_entities) == 1

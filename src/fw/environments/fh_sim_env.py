@@ -92,9 +92,19 @@ class FhSimEnv(PySimEnv):
         self._fh_sim.initial_vessel_state = self.phys_sim.state
 
 
-    def create_simulator(self, ua_surrogate_config: Optional[Dict]=None):
+    def create_simulator(self, ua_surrogate_config: Optional[Dict]=None,
+                         ugent_surrogate_config: Optional[Dict]=None,
+                         ugent_b01_surrogate_config: Optional[Dict]=None):
         """
         Create the ShipSimulator around FhTabularModel (called by PySimEnv.__init__).
+
+        Args:
+            ua_surrogate_config: Configuration for the UA surrogate model.
+            ugent_surrogate_config: Configuration for the UGent surrogate model.
+            ugent_b01_surrogate_config: Configuration for the UGent B01 surrogate model.
+
+        Returns:
+            ShipSimulator using this env's ship and time step.
 
         Raises:
             RuntimeError: If _fh_sim is None or the dynamics model is not
@@ -112,7 +122,7 @@ class FhSimEnv(PySimEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step)
 
 
     def __deepcopy__(self, memo):

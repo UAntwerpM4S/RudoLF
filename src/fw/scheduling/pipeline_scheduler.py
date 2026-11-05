@@ -13,8 +13,13 @@ from fw.scheduling.base_scheduler import BaseScheduler
 from fw.configuration.profile_applier import apply_profile
 from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.scheduling.run_spec import PipelineBlock, StopConditionSpec, TransferSpec
-from fw.scheduling.pipeline_env import resolve_block_profile, build_block_environment
-from fw.configuration.config import PolicyStrategy, get_hyperparameters, load_config_parameters
+from fw.scheduling.pipeline_env import (
+    block_framework_config,
+    build_block_environment,
+    check_block_wind_current,
+    resolve_block_profile,
+)
+from fw.configuration.config import PolicyStrategy, get_hyperparameters
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +60,14 @@ class PipelineScheduler(BaseScheduler):
 
         Raises:
             RuntimeError: If there are no blocks.
+            ValueError: If a block's wind/current flags do not fit its
+                environment or UAntwerp preset (checked before any block runs).
         """
 
         blocks = blocks if blocks is not None else self._blocks
         if not blocks:
             raise RuntimeError("PipelineScheduler.execute() called with no blocks.")
+        self._preflight(blocks)
 
         metrics: Dict[str, Any] = {}
         completed_block_names = set()
@@ -88,6 +96,25 @@ class PipelineScheduler(BaseScheduler):
         return metrics
 
 
+    @staticmethod
+    def _preflight(blocks: list) -> None:
+        """
+        Check every block's wind/current flags against its resolved
+        configuration before the first block runs (check_block_wind_current).
+        Other resolution errors are left to the block itself, as before.
+
+        Raises:
+            ValueError: From check_block_wind_current.
+        """
+
+        for block in blocks:
+            try:
+                framework_config = block_framework_config(block, resolve_block_profile(block))
+            except Exception:
+                continue        # reported by the block when it runs, as before
+            check_block_wind_current(block, framework_config)
+
+
     def _run_block(
             self, block: PipelineBlock, completed_block_names: set, last_train_block: Optional[str]
     ) -> Dict[str, Any]:
@@ -104,11 +131,7 @@ class PipelineScheduler(BaseScheduler):
         """
 
         profile = resolve_block_profile(block)
-
-        framework_config = load_config_parameters()
-        framework_config["wind"] = block.wind
-        framework_config["current"] = block.current
-        apply_profile(profile, config=framework_config)
+        framework_config = block_framework_config(block, profile)
 
         env, canonical_name = build_block_environment(block, framework_config)
         apply_profile(profile, env=env.gym_env)

@@ -171,6 +171,13 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
     if on_failure is not None:
         _validate_choice("on_failure", on_failure, _VALID_FAILURE_MODES, f"{where} ('{name}')")
 
+    # Checked here, not hours later when PySimEnv is built.
+    wind = get_validated_bool(raw_block, "wind", False)
+    current = get_validated_bool(raw_block, "current", False)
+    if wind != current:
+        raise PipelineSpecError(f"{where} ('{name}'): 'wind' ({wind}) and 'current' ({current}) must be "
+                                f"enabled or disabled together.")
+
     return PipelineBlock(
         name=name,
         env_type=env_type,
@@ -179,8 +186,8 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
         dynamics_model=dynamics_model,
         profile_overrides=raw_block.get("profile_overrides", {}) or {},
         action=action,
-        wind=get_validated_bool(raw_block, "wind", False),
-        current=get_validated_bool(raw_block, "current", False),
+        wind=wind,
+        current=current,
         show_plots=get_validated_bool(raw_block, "show_plots", False),
         stop_condition=stop_condition,
         hyperparameter_overrides=raw_block.get("hyperparameter_overrides", {}) or {},

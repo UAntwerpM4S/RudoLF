@@ -273,9 +273,6 @@ class PySimEnvironment(BaseEnvironment):
         ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
         target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
-        # Wrap the environment in a Monitor and a DummyVecEnv
-        # self.env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
-        #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
         self.env = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
                             overall_contour=self.configuration["overall_contour"],
@@ -320,9 +317,6 @@ class MultiPySimEnvironment(BaseEnvironment):
         ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
         target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
-        # Wrap the environment in a Monitor and a DummyVecEnv
-        # self.env = DummyVecEnv([lambda: Monitor(PySimEnv(render_mode='human', max_steps=2000, verbose=True,
-        #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
         single_pysim_env1 = PySimEnv(time_step=2.0, max_steps=14000, start_pos=ship_pos, target_pos=target_pos,
                              overall_contour=self.configuration["overall_contour"],
@@ -479,9 +473,6 @@ class FhSimEnvironment(BaseEnvironment):
         ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
         target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
 
-        # Wrap the environment in a Monitor and a DummyVecEnv
-        # self.env = DummyVecEnv([lambda: Monitor(FhSimEnv(render_mode='human', max_steps=1200, verbose=True,
-        #                                                   ship_pos=ship_pos, target_pos=target_pos))])
 
         dynamics_model = self.configuration["dynamics_model"]
         if dynamics_model != Model.FH_TABULAR:
@@ -490,9 +481,11 @@ class FhSimEnvironment(BaseEnvironment):
                 "use %s instead.", dynamics_model, Model.FH_TABULAR
             )
 
+        # The exercise follows the wind/current flags (PySimEnv checks that they match).
         fh_bridge = FhSimBridge(
             ship_model=self.configuration["ship_model"],
             scenario=self.configuration["scenario"],
+            wind_current=self.configuration["wind"],
         )
 
         self.env = PySimEnv(time_step=2.0, max_steps=135000, start_pos=ship_pos, target_pos=target_pos,
@@ -737,11 +730,8 @@ class LunarEnvironment(BaseEnvironment):
 
 
 # ---------------------------------------------------------------------------
-# Environment-scoped configuration builders
-#
-# Each builder passes only the keys an environment needs, so environments do
-# not depend on unrelated settings. reward_name/reward_weights are passed
-# through so the evaluate_reward workflow can override them per config.
+# Environment-scoped configuration builders: each passes only the keys its
+# environment needs (plus reward_name/reward_weights for evaluate_reward).
 # ---------------------------------------------------------------------------
 
 def build_pysim_config(framework_config: dict, extra: dict | None = None) -> dict:
@@ -968,24 +958,20 @@ def _pick_airsim_fallback(configuration) -> str:
 
 def get(environment_name: str, configuration=None):
     """
-    Retrieve (or create) an environment instance by name.
-
-    Public entry point; delegates to `_Factory.get`. If AirSim is unavailable
-    (ImportError/ConnectionError), the first other configured environment is
-    built instead.
+    Retrieve (or create) an environment instance by name (delegates to
+    _Factory.get). If AirSim is unavailable (ImportError/ConnectionError), the
+    first other configured environment is built instead.
 
     Args:
         environment_name (str): Canonical or alias environment name.
-        configuration (dict, optional): Configuration forwarded to the
-            environment on first instantiation.
+        configuration (dict, optional): Forwarded on first instantiation.
 
     Returns:
         BaseEnvironment: A fully constructed environment instance.
 
     Raises:
-        EnvironmentRegistryError: Propagated from `_Factory.get` for any
-            non-AirSim environment, or for AirSim when the resolved fallback
-            is also unavailable.
+        EnvironmentRegistryError: From _Factory.get, or for AirSim when the
+            fallback is also unavailable.
     """
 
     if environment_name != airsim_env_name:

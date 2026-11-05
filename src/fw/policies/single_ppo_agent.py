@@ -101,26 +101,20 @@ class SinglePPOAgent(BasePPOAgent):
 
     def train(self, all_episodes_data) -> float:
         """
-        Perform PPO policy optimization on collected trajectories.
+        Perform PPO optimization on collected trajectories: normalized advantages,
+        mini-batch updates over num_epochs with clipping, value loss and entropy
+        bonus. Steps with a non-finite loss or gradient norm are skipped.
 
         Args:
-            all_episodes_data (list[dict]): List of trajectory dictionaries, each containing:
-                - states (np.ndarray)
-                - raw_actions (np.ndarray): pre-tanh actions from the rollout
-                - advantages (np.ndarray)
-                - log_probs (np.ndarray)
-                - returns (np.ndarray)
+            all_episodes_data (list[dict]): Trajectories with states, raw_actions
+                (pre-tanh), advantages, log_probs and returns (np.ndarray each).
 
         Returns:
             float: Mean loss over all updates, or NaN if there is no valid data.
 
         Raises:
             KeyError: If an episode has no "raw_actions" (not produced by
-                `run_parallel_episodes`).
-
-        Advantages are normalized; mini-batch updates over num_epochs with PPO
-        clipping, value loss and entropy bonus. Steps with a non-finite loss or
-        gradient norm are skipped.
+                run_parallel_episodes).
         """
 
         if not all_episodes_data:

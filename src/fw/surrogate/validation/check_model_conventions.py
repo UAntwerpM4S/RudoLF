@@ -172,7 +172,7 @@ def run_sim_model(model, spec, start: VesselState, rudder: float, thrust: float,
 
     from fw.simulators.ship_simulator import ShipSimulator
 
-    sim = ShipSimulator(specs=spec, dynamics=model, dt=SURROGATE_DT, wind=False, current=False)
+    sim = ShipSimulator(specs=spec, dynamics=model, dt=SURROGATE_DT)
     sim.reset(dataclasses.replace(start))
     s = sim.state
     rows = [(0.0, s.x, s.y, s.heading, s.u, s.v, s.r)]

@@ -8,36 +8,50 @@ The checkpoint's scenario (fw.surrogate.schema) determines the inputs:
     confined_ukc   yes            yes    -
     full_env       yes            yes    yes
 
-Configuration (ua_surrogate_config, see config.py)::
+Configuration (ua_surrogate_config, see config.py):
 
     {"preset": "tripoli_confined",          # required, see fw.surrogate.presets
-     "checkpoint": "x.pth",                 # optional override of the preset's
-     "lookup_csv": "x.csv"}                 # optional override (None = no lookup)
+     "checkpoint": "x.pth",                 # optional override
+     "lookup_csv": "x.csv",                 # optional override (None = no lookup)
+     "env_smoothing_tau": 10.0,             # optional, seconds (None = off)
+     "wind_current": "random"}              # optional, "lookup" (default) or "random"
 
-Relative checkpoint paths resolve against fw/checkpoints, relative lookup CSVs
-against fw/dynamics, independent of the working directory. The checkpoint must
-match the preset (scenario and ship). The rudder angle is converted to
-rudder_action with the rudder scale stored in the checkpoint.
+Relative checkpoint paths resolve against fw/checkpoints, lookup CSVs against
+fw/dynamics. The checkpoint must match the preset (scenario and ship); its
+stored rudder scale converts the rudder angle to rudder_action.
 
 Hooks used by the model-comparison tests:
-  * get_env(pos, state=None): the only source of UKC/wind/current for the
-    input row; may be replaced by an instance attribute with that signature.
-  * _env: the ray caster (scenarios with rays); may be any PySimEnv-like object.
-  * ukc / get_ukc(pos): last UKC used.
+  * get_env(pos, state=None): the only source of UKC/wind/current; may be
+    replaced by an instance attribute with that signature.
+  * _env: the ray caster; any PySimEnv-like object.
+  * ukc / get_ukc(None): UKC of the last model input; get_ukc(pos): raw
+    lookup UKC at pos.
   * _compute_accelerations(state, rudder_angle, thrust).
 
-Environment from the lookup CSV (get_env, nearest dataset row):
+Lookup environment (get_env, nearest dataset row):
   * UKC for scenarios with a UKC input.
-  * Current (full_env): the row's earth-fixed current, as stored.
-  * Wind (full_env): the CSV stores the apparent wind of the recording ship
-    (FH WindState: relative to its bow, positive from starboard). It is
-    converted to true wind with that ship's heading, surge and sway, then back
-    to apparent wind for this ship (same conversion as model_comparison_wind).
-  Without a lookup or a row: default UKC, zero wind and current. Rows come
-  from episodes with random tides and wind fields, so values can jump when the
-  nearest row changes. The nearest row is always used; distances beyond
-  LOOKUP_WARN_DISTANCE_M are warned about once and then counted
-  (lookup_far_count, lookup_max_distance) to expose coverage gaps.
+  * Current (full_env): the row's earth-fixed current.
+  * Wind (full_env): the stored apparent wind of the recording ship is
+    converted to true wind with that ship's state, then to apparent wind for
+    this ship.
+  Without a lookup or row: default UKC, zero wind and current. Values can jump
+  when the nearest row changes. Distances beyond LOOKUP_WARN_DISTANCE_M are
+  warned about once and counted (lookup_far_count, lookup_max_distance).
+
+Random wind and current (wind_current = "random", full_env, for RL):
+reset_episode(rng) draws per episode a constant earth-fixed true wind
+(direction uniform, speed |N(0, RANDOM_WIND_SPEED_SIGMA)| clipped to
+RANDOM_WIND_SPEED_MAX), converted to apparent wind every step, and a current
+speed (uniform in [0, RANDOM_CURRENT_SPEED_MAX]) with a random flood/ebb sign.
+The current flows along the river line (CurrentLineFollower). It is zero
+before the first reliable lookup row and without a lookup. UKC still comes
+from the lookup; episode_conditions() reports the draw. No effect for presets
+without wind/current.
+
+Smoothing (env_smoothing_tau, for RL): the model input gets an exponential
+moving average of the UKC and, with "lookup", of the earth-fixed true wind and
+current, restarted by reset_episode(). get_env and get_ukc(pos) stay raw.
+observed_wind_current() reports the wind and current of the last model input.
 """
 
 import logging
@@ -53,7 +67,13 @@ from fw.dynamics.wcu_lookup import WcuLookup, EnvironmentData
 # Shared ray implementation, also used by the dataset generator.
 from fw.environments.ray_features import RAY_ANGLES_DEG, compute_ray_features, ray_world_angles
 from fw.surrogate.presets import CHECKPOINT_DIR, get_preset, resolve_checkpoint, resolve_lookup_csv
-from fw.surrogate.schema import SURROGATE_DT, TARGET_NAMES, scenario_for_raw_width
+from fw.surrogate.schema import (
+    SURROGATE_DT,
+    TARGET_NAMES,
+    apparent_to_true_wind,
+    env_body_components,
+    scenario_for_raw_width,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +89,16 @@ def _finite_position(pos) -> bool:
         return False
 
 # Keys accepted in ua_surrogate_config.
-CONFIG_KEYS = ("preset", "checkpoint", "lookup_csv")
+CONFIG_KEYS = ("preset", "checkpoint", "lookup_csv", "env_smoothing_tau", "wind_current")
+WIND_CURRENT_SOURCES = ("lookup", "random")
+
+# wind_current = "random": per-episode distributions (see module docstring).
+RANDOM_WIND_SPEED_SIGMA = 8.6     # m/s, true wind
+RANDOM_WIND_SPEED_MAX = 25.0      # m/s
+RANDOM_CURRENT_SPEED_MAX = 2.1    # m/s, p99.9 of the full_env datasets
+CURRENT_AXIS_MIN_SPEED = 0.05     # m/s; slower lookup currents give no reliable direction
+CURRENT_LINE_TAU = 10.0           # s; river-line average without env_smoothing_tau
+CURRENT_LINE_STRENGTH_EXPONENT = 2.0  # direction follows the line at a rate ~ strength**this
 
 # Lookup rows farther than this [m] are reported. Lookups are 5 m grids of the
 # dataset positions, so inside covered water the nearest row is a few metres away.
@@ -110,13 +139,142 @@ def apparent_wind_for_state(app_speed: float, app_dir: float,
         the second ship.
     """
 
-    rel = app_speed * np.array([np.cos(app_dir), np.sin(app_dir)]) - np.array([rec_u, -rec_v])
-    bow, stbd = _bow_and_starboard(rec_heading)
-    true_world = rel[0] * bow + rel[1] * stbd
+    return apparent_wind_from_true_world(true_wind_world(app_speed, app_dir, rec_heading, rec_u, rec_v),
+                                         heading, u, v)
+
+
+def true_wind_world(app_speed: float, app_dir: float, heading: float, u: float, v: float) -> np.ndarray:
+    """
+    Earth-fixed true wind (world-frame vector pointing where the wind comes
+    from) from the apparent wind on a ship (convention: apparent_wind_for_state).
+    """
+
+    ahead, stbd_comp = apparent_to_true_wind(app_speed, app_dir, u, v)
+    bow, stbd = _bow_and_starboard(heading)
+    return ahead * bow + stbd_comp * stbd
+
+
+def apparent_wind_from_true_world(true_world: np.ndarray, heading: float, u: float,
+                                  v: float) -> Tuple[float, float]:
+    """
+    Apparent wind (speed [m/s], direction [rad] in [-pi, pi)) on a ship from
+    the earth-fixed true wind of true_wind_world.
+    """
+
     bow, stbd = _bow_and_starboard(heading)
     own = np.array([true_world @ bow + u, true_world @ stbd - v])
     direction = float(np.arctan2(own[1], own[0]))
     return float(np.hypot(own[0], own[1])), float((direction + np.pi) % (2.0 * np.pi) - np.pi)
+
+
+class CurrentLineFollower:
+    """
+    Direction of one episode's "random" current along the river line.
+
+    The line is a moving average (time constant `tau`) of the unit vectors of
+    twice the lookup current's direction over reliable rows (speed at least
+    CURRENT_AXIS_MIN_SPEED), so flood and ebb rows reinforce each other. The
+    first reliable row, oriented by `sign`, gives the first direction; then the
+    direction moves towards the nearest line orientation with time constant
+    `tau` scaled by line strength ** CURRENT_LINE_STRENGTH_EXPONENT, so a weak
+    line barely moves it and it never jumps or flips. None (zero current) until
+    the first reliable row.
+    """
+
+    def __init__(self, sign: float, tau: Optional[float] = None):
+        """
+        Args:
+            sign: +1: flow as the first reliable row's current, -1: opposite.
+            tau: Time constant [s] of the line and direction averages; None for CURRENT_LINE_TAU.
+        """
+
+        self.sign = float(sign)
+        self.tau = float(tau) if tau is not None else CURRENT_LINE_TAU
+        self._line: Optional[np.ndarray] = None
+        self._vec: Optional[np.ndarray] = None
+
+    @property
+    def line_strength(self) -> float:
+        """
+        Length of the averaged doubled-angle vector (1 = all rows on one line, 0 = no line).
+        """
+
+        return 0.0 if self._line is None else float(np.hypot(self._line[0], self._line[1]))
+
+    def step(self, axis: float, axis_speed: float, dt: float) -> Optional[float]:
+        """
+        Direction [rad, flowing toward, in [-pi, pi)] after a step of `dt` [s]
+        at a lookup row with current direction `axis` and speed `axis_speed`;
+        None before the first reliable row.
+        """
+
+        alpha = 1.0 - np.exp(-dt / self.tau)
+        if np.isfinite(axis) and np.isfinite(axis_speed) and axis_speed >= CURRENT_AXIS_MIN_SPEED:
+            doubled = np.array([np.cos(2.0 * axis), np.sin(2.0 * axis)])
+            if self._line is None:
+                self._line = doubled
+                first = axis if self.sign > 0 else axis + np.pi
+                self._vec = np.array([np.cos(first), np.sin(first)])
+                return float((first + np.pi) % (2.0 * np.pi) - np.pi)
+            self._line = self._line + alpha * (doubled - self._line)
+        if self._line is None:
+            return None
+        current = np.arctan2(self._vec[1], self._vec[0])
+        line = 0.5 * np.arctan2(self._line[1], self._line[0])
+        if np.cos(line - current) < 0.0:
+            line += np.pi
+        weight = alpha * self.line_strength ** CURRENT_LINE_STRENGTH_EXPONENT
+        self._vec = self._vec + weight * (np.array([np.cos(line), np.sin(line)]) - self._vec)
+        direction = float(np.arctan2(self._vec[1], self._vec[0]))
+        return float((direction + np.pi) % (2.0 * np.pi) - np.pi)
+
+
+def make_scenario_lookup(csv, scenario, preset_name: str = "?") -> WcuLookup:
+    """
+    WcuLookup on `csv`, reading only the columns `scenario` needs.
+
+    Raises:
+        ValueError: If the CSV width does not match the scenario's dataset layout.
+    """
+
+    # Lookup CSVs carry no identity, so the width is the only layout check
+    # (else a confined_ukc CSV would be read as wind and current).
+    sc = scenario
+    expected = sc.raw_input_dim + len(TARGET_NAMES) + 1     # raw row + targets + episode_id
+    n_cols = len(pd.read_csv(csv, header=None, nrows=1).columns)
+    if n_cols != expected:
+        try:
+            found = scenario_for_raw_width(n_cols - len(TARGET_NAMES) - 1).name
+        except ValueError:
+            found = "no known scenario"
+        raise ValueError(
+            f"Lookup CSV {csv} has {n_cols} columns ({found}); a '{sc.name}' dataset/lookup CSV "
+            f"has {expected} (raw row {sc.raw_input_dim} + {len(TARGET_NAMES)} targets + episode_id). "
+            f"Wrong lookup_csv for preset '{preset_name}'?")
+    cols = dict(x_col=sc.col("x"), y_col=sc.col("y"), ukc_col=sc.col("ukc"),
+                wind_speed_col=None, wind_dir_col=None, current_speed_col=None, current_dir_col=None)
+    if sc.includes_wind_current:
+        cols.update(wind_speed_col=sc.col("wind_speed"), wind_dir_col=sc.col("wind_direction"),
+                    current_speed_col=sc.col("current_speed"), current_dir_col=sc.col("current_direction"),
+                    heading_col=sc.col("heading"), surge_col=sc.col("surge"), sway_col=sc.col("sway"))
+    return WcuLookup(str(csv), **cols)
+
+
+def parse_env_smoothing_tau(value) -> Optional[float]:
+    """
+    Validate ua_surrogate_config["env_smoothing_tau"]: None (off) or a positive
+    finite number of seconds.
+
+    Raises:
+        ValueError: For anything else (including bools).
+    """
+
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value) or value <= 0:
+        raise ValueError(f"ua_surrogate_config['env_smoothing_tau'] must be None or a positive number of "
+                         f"seconds, got {value!r}.")
+    return float(value)
 
 
 class UAntwerpSurrogate(DynamicsBase):
@@ -149,17 +307,16 @@ class UAntwerpSurrogate(DynamicsBase):
         """
         Args:
             ship_spec:           Vessel specifications.
-            ua_surrogate_config: {"preset": ..., optional "checkpoint", "lookup_csv"}.
-            ship_model:          Ship the caller simulates; if given, it must be
-                                 the preset's ship.
+            ua_surrogate_config: {"preset": ..., optional "checkpoint", "lookup_csv",
+                                 "env_smoothing_tau", "wind_current"}.
+            ship_model:          Ship the caller simulates; must be the preset's ship.
             ray_caster:          Object with ray_cast_distances_batch / ray_cast_distance
-                                 (normally a PySimEnv). None: a PySimEnv is created
-                                 on first use (scenarios with rays only).
+                                 (normally a PySimEnv); None creates one on first use.
 
         Raises:
-            ValueError: On a missing/unknown preset, unknown config keys, a
-                checkpoint/ship that does not match the preset, or a lookup CSV
-                with the wrong column count.
+            ValueError: Missing/unknown preset, unknown config keys, checkpoint or
+                ship not matching the preset, lookup CSV with the wrong width, or an
+                invalid env_smoothing_tau or wind_current.
             FileNotFoundError: If the checkpoint does not exist.
         """
 
@@ -173,6 +330,22 @@ class UAntwerpSurrogate(DynamicsBase):
                              "(see fw.surrogate.presets.PRESETS).")
 
         self.preset = get_preset(config["preset"])
+        self.env_smoothing_tau = parse_env_smoothing_tau(config.get("env_smoothing_tau"))
+        self.wind_current_source = config.get("wind_current", "lookup")
+        if self.wind_current_source not in WIND_CURRENT_SOURCES:
+            raise ValueError(f"ua_surrogate_config['wind_current'] must be one of {WIND_CURRENT_SOURCES}, "
+                             f"got {self.wind_current_source!r}.")
+        # Per episode (reset_episode): moving average and last model input,
+        # both as [ukc, true wind x, y, current x, y] (earth-fixed), and the
+        # "random" draw: true wind world vector, current speed and sign, and
+        # the current's direction follower (CurrentLineFollower).
+        self._env_ema: Optional[np.ndarray] = None
+        self._env_world: Optional[np.ndarray] = None
+        self._random_wind_world: Optional[np.ndarray] = None
+        self._random_current_speed = 0.0
+        self._random_current_sign = 1.0
+        self._random_current_applied = False
+        self._random_current: Optional[CurrentLineFollower] = None
         if ship_model is not None and ship_model != self.preset.ship_model:
             raise ValueError(f"UAntwerp surrogate preset '{self.preset.name}' is for "
                              f"{self.preset.ship_model.name}, but ship_model={ship_model.name}.")
@@ -216,16 +389,17 @@ class UAntwerpSurrogate(DynamicsBase):
                 self.wcu_lookup = self._make_lookup(csv)
             else:
                 # Deliberately a warning (lookup CSVs are large and often left out).
-                # For full_env this means no wind/current at all: ShipSimulator does
-                # not fall back to EnvironmentModel for this model.
+                if not self.scenario.includes_wind_current:
+                    consequence = ""
+                elif self._uses_random_wind_current:
+                    consequence = " and ZERO current (the random wind still applies)"
+                else:
+                    consequence = " and ZERO wind/current (the run has no wind or current at all)"
                 logger.warning(
                     "UAntwerp surrogate '%s': %s; falling back to default UKC value of %s%s",
                     self.preset.name,
                     "no lookup CSV configured" if csv is None else f"ship data file {csv} not found",
-                    self.default_ukc,
-                    " and ZERO wind/current (ShipSimulator does not add EnvironmentModel wind/current "
-                    "for this model, so the run has no wind or current at all)"
-                    if self.scenario.includes_wind_current else "")
+                    self.default_ukc, consequence)
 
         if self.scenario.includes_rays:
             self._env = ray_caster
@@ -233,39 +407,18 @@ class UAntwerpSurrogate(DynamicsBase):
     @property
     def models_own_wind_current(self) -> bool:
         """
-        True only for full_env (wind/current from the lookup), so ShipSimulator
-        adds EnvironmentModel accelerations for open_water and confined_ukc only.
+        True only for full_env (wind/current from the lookup or, with
+        wind_current = "random", drawn per episode).
         """
 
         return bool(self.scenario.includes_wind_current)
 
     def _make_lookup(self, csv) -> WcuLookup:
         """
-        WcuLookup on `csv`, reading only the columns this scenario needs.
+        WcuLookup on `csv` for this preset's scenario (make_scenario_lookup).
         """
 
-        sc = self.scenario
-        # Lookup CSVs carry no identity, so the width is the only layout check
-        # (otherwise e.g. a confined_ukc CSV's rudder/ray columns would be read
-        # as wind and current by a full_env preset).
-        expected = sc.raw_input_dim + len(TARGET_NAMES) + 1     # raw row + targets + episode_id
-        n_cols = len(pd.read_csv(csv, header=None, nrows=1).columns)
-        if n_cols != expected:
-            try:
-                found = scenario_for_raw_width(n_cols - len(TARGET_NAMES) - 1).name
-            except ValueError:
-                found = "no known scenario"
-            raise ValueError(
-                f"Lookup CSV {csv} has {n_cols} columns ({found}); a '{sc.name}' dataset/lookup CSV "
-                f"has {expected} (raw row {sc.raw_input_dim} + {len(TARGET_NAMES)} targets + episode_id). "
-                f"Wrong lookup_csv for preset '{self.preset.name}'?")
-        cols = dict(x_col=sc.col("x"), y_col=sc.col("y"), ukc_col=sc.col("ukc"),
-                    wind_speed_col=None, wind_dir_col=None, current_speed_col=None, current_dir_col=None)
-        if sc.includes_wind_current:
-            cols.update(wind_speed_col=sc.col("wind_speed"), wind_dir_col=sc.col("wind_direction"),
-                        current_speed_col=sc.col("current_speed"), current_dir_col=sc.col("current_direction"),
-                        heading_col=sc.col("heading"), surge_col=sc.col("surge"), sway_col=sc.col("sway"))
-        return WcuLookup(str(csv), **cols)
+        return make_scenario_lookup(csv, self.scenario, self.preset.name)
 
     def _ray_caster(self):
         """
@@ -339,6 +492,155 @@ class UAntwerpSurrogate(DynamicsBase):
                                current_speed=sample.env.current_speed,
                                current_direction=sample.env.current_direction)
 
+    def _model_env(self, pos: np.ndarray, state: VesselState) -> EnvironmentData:
+        """
+        Environment for the model input at `pos`: get_env, with this episode's
+        wind and current instead with "random", smoothed with env_smoothing_tau
+        if set (one update per call, i.e. per SURROGATE_DT step; with "random"
+        only the UKC). Remembers it for observed_wind_current; self.ukc becomes
+        the UKC used.
+        """
+
+        env = self.get_env(pos, state)
+        use_random = self._uses_random_wind_current
+        if use_random:
+            env = self._random_wind_current(env, state)
+        world = self._env_to_world(env, state)
+        if self.env_smoothing_tau is not None:
+            if self._env_ema is None:
+                self._env_ema = world
+            else:
+                alpha = 1.0 - np.exp(-SURROGATE_DT / self.env_smoothing_tau)
+                self._env_ema = self._env_ema + alpha * (world - self._env_ema)
+            # "random": wind/current come from the episode draw (current line
+            # averaged by CurrentLineFollower), so only the UKC is averaged here.
+            world = np.concatenate([self._env_ema[:1], world[1:]]) if use_random else self._env_ema
+            env = self._world_to_env(world, state)
+            self.ukc = env.ukc
+        self._env_world = world
+        return env
+
+    @property
+    def _uses_random_wind_current(self) -> bool:
+        """
+        True for "random" wind/current on a scenario with wind and current.
+        """
+
+        return self.wind_current_source == "random" and self.scenario.includes_wind_current
+
+    def _random_wind_current(self, env: EnvironmentData, state: VesselState) -> EnvironmentData:
+        """
+        `env` with this episode's random wind (apparent for `state`) and current
+        (drawn speed and sign along the lookup's current line, see module docstring).
+
+        Raises:
+            RuntimeError: If no wind/current was drawn (reset_episode without rng).
+        """
+
+        if self._random_wind_world is None:
+            raise RuntimeError("UAntwerp surrogate with wind_current='random': no wind/current drawn for this "
+                               "episode; call reset_episode(rng) (ShipSimulator.reset(state, rng)).")
+        ws, wd = apparent_wind_from_true_world(self._random_wind_world, float(state.heading), float(state.u),
+                                               float(state.v))
+        if self.wcu_lookup is None:
+            cs, cd = 0.0, 0.0
+        else:
+            cd = self._random_current.step(float(env.current_direction), float(env.current_speed), SURROGATE_DT)
+            # Zero current until the first reliable row (slack water at the start).
+            cs, cd = (0.0, 0.0) if cd is None else (self._random_current_speed, cd)
+            self._random_current_applied = self._random_current_applied or cs > 0.0
+        return EnvironmentData(ukc=env.ukc, wind_speed=ws, wind_direction=wd, current_speed=cs,
+                               current_direction=cd)
+
+    def episode_conditions(self) -> Dict[str, object]:
+        """
+        This episode's drawn wind and current with "random" (wind as true wind,
+        direction it comes from, 0 = East, CCW; current_applied False while the
+        drawn current was never applied: no lookup, or no reliable row yet);
+        {"wind_current": "lookup"} for full_env with the lookup; empty without
+        wind/current.
+        """
+
+        if not self.scenario.includes_wind_current:
+            return {}
+        if not self._uses_random_wind_current:
+            return {"wind_current": "lookup"}
+        if self._random_wind_world is None:
+            return {"wind_current": "random (not drawn)"}
+        wx, wy = self._random_wind_world
+        return {"wind_speed": round(float(np.hypot(wx, wy)), 2),
+                "wind_from_deg": round(float(np.degrees(np.arctan2(wy, wx)) % 360.0), 1),
+                "current_speed": round(self._random_current_speed, 3),
+                "current_sign": int(self._random_current_sign),
+                "current_applied": self._random_current_applied}
+
+    def _env_to_world(self, env: EnvironmentData, state: VesselState) -> np.ndarray:
+        """
+        [ukc, true wind x, y, current x, y]: `env` with this ship's apparent wind
+        made earth-fixed (true_wind_world) and the current as a world vector.
+        """
+
+        out = np.zeros(5, dtype=np.float64)
+        out[0] = float(env.ukc)
+        if self.scenario.includes_wind_current:
+            out[1:3] = true_wind_world(float(env.wind_speed), float(env.wind_direction),
+                                       float(state.heading), float(state.u), float(state.v))
+            cs, cd = float(env.current_speed), float(env.current_direction)
+            out[3:5] = (cs * np.cos(cd), cs * np.sin(cd))
+        return out
+
+    def _world_to_env(self, world: np.ndarray, state: VesselState) -> EnvironmentData:
+        """
+        Inverse of _env_to_world for this ship's `state`.
+        """
+
+        if not self.scenario.includes_wind_current:
+            return EnvironmentData(ukc=float(world[0]), wind_speed=0.0, wind_direction=0.0,
+                                   current_speed=0.0, current_direction=0.0)
+        ws, wd = apparent_wind_from_true_world(world[1:3], float(state.heading), float(state.u), float(state.v))
+        return EnvironmentData(ukc=float(world[0]), wind_speed=ws, wind_direction=wd,
+                               current_speed=float(np.hypot(world[3], world[4])),
+                               current_direction=float(np.arctan2(world[4], world[3])))
+
+    def observed_wind_current(self, state: VesselState) -> np.ndarray:
+        """
+        Wind and current of the last model input (smoothed if configured), the
+        wind as apparent wind for `state` (see DynamicsBase). Before the first
+        step of an episode, the environment at `state` starts the episode's
+        moving average. Zeros for scenarios without wind and current.
+        """
+
+        if not self.scenario.includes_wind_current:
+            return np.zeros(4, dtype=np.float64)
+        if self._env_world is None:
+            self._model_env(np.array([state.x, state.y]), state)
+        env = self._world_to_env(self._env_world, state)
+        return np.array(env_body_components(env.wind_speed, env.wind_direction, env.current_speed,
+                                            env.current_direction, float(state.heading)), dtype=np.float64)
+
+    def reset_episode(self, rng: Optional[np.random.Generator] = None) -> None:
+        """
+        Restart the environment smoothing and forget the last model input
+        (get_ukc(None) returns the default UKC until the next one). With
+        "random" wind/current, draw this episode's wind and current from `rng`
+        (draw order: wind direction, wind speed, current speed, current sign);
+        without `rng` none is drawn and the next model step raises.
+        """
+
+        self._env_ema = None
+        self._env_world = None
+        self.ukc = self.default_ukc
+        self._random_wind_world = None
+        self._random_current = None
+        self._random_current_applied = False
+        if self._uses_random_wind_current and rng is not None:
+            wind_dir = float(rng.uniform(0.0, 2.0 * np.pi))
+            wind_speed = float(np.clip(np.abs(rng.normal(0.0, RANDOM_WIND_SPEED_SIGMA)), 0.0, RANDOM_WIND_SPEED_MAX))
+            self._random_wind_world = wind_speed * np.array([np.cos(wind_dir), np.sin(wind_dir)])
+            self._random_current_speed = float(rng.uniform(0.0, RANDOM_CURRENT_SPEED_MAX))
+            self._random_current_sign = 1.0 if rng.random() < 0.5 else -1.0
+            self._random_current = CurrentLineFollower(self._random_current_sign, self.env_smoothing_tau)
+
     def _note_lookup_distance(self, pos, distance: float) -> None:
         """
         Track the lookup distance; warn the first time it exceeds LOOKUP_WARN_DISTANCE_M.
@@ -398,7 +700,7 @@ class UAntwerpSurrogate(DynamicsBase):
         """
         Assemble the raw input row in the scenario's column order, exactly as
         the dataset generator stores it (selection, encoding and normalization
-        happen in SurrogatePredictor). UKC/wind/current come from get_env, rays
+        happen in SurrogatePredictor). UKC/wind/current come from _model_env, rays
         from compute_ray_features, each only if the scenario uses them.
 
         Returns:
@@ -419,7 +721,7 @@ class UAntwerpSurrogate(DynamicsBase):
         }
 
         if self.scenario.includes_ukc or self.scenario.includes_wind_current:
-            env = self.get_env(np.array([state.x, state.y]), state)
+            env = self._model_env(np.array([state.x, state.y]), state)
             values.update(ukc=env.ukc,
                           wind_speed=env.wind_speed, wind_direction=env.wind_direction,
                           current_speed=env.current_speed, current_direction=env.current_direction)

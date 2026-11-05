@@ -19,9 +19,10 @@ from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
+from fw.environments.wind_current_obs import WIND_CURRENT_OBS_DIM, normalize_wind_current
 from fw.reward.reward import Reward
 
-from fw.dynamics.uantwerp_surrogate import UAntwerpSurrogate
+from fw.dynamics.uantwerp_surrogate import RANDOM_CURRENT_SPEED_MAX, UAntwerpSurrogate
 from fw.dynamics.fh_tabular_model import FhTabularModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.dynamics.ugent_surrogate import UGentSurrogate
@@ -31,6 +32,10 @@ from fw.dynamics.fossen import Fossen
 from fw.dynamics.nomoto import Nomoto
 
 logger = logging.getLogger(__name__)
+
+# Episode outcomes counted as success: inside the final checkpoint circle, or
+# across its perpendicular guidance line.
+SUCCESS_OUTCOMES = ("target_reached", "target_passed")
 
 
 # Grid limits
@@ -92,6 +97,7 @@ def calculate_perpendicular_lines(
         Unit tangent at a checkpoint, averaging the neighboring segments (x-axis for a single checkpoint).
         """
 
+        # If there's only one checkpoint, fallback to an arbitrary tangent (unit x-axis)
         if len(check_points) == 1:
             tangent = np.array([1.0, 0.0], dtype=np.float32)
         else:
@@ -100,11 +106,13 @@ def calculate_perpendicular_lines(
             elif index == len(check_points) - 1:
                 tangent = check_points[-1]['pos'] - check_points[-2]['pos']
             else:
+                # Average forward and backward differences
                 forward = check_points[index + 1]['pos'] - check_points[index]['pos']
                 backward = check_points[index]['pos'] - check_points[index - 1]['pos']
                 tangent = 0.5 * (forward + backward)
 
         norm = np.linalg.norm(tangent)
+        # Avoid division by zero; if zero, return tangent (will be zeros) cast to float32
         return (tangent / norm if norm != 0.0 else tangent).astype(np.float32)
 
     lines: List[Tuple[np.ndarray, np.ndarray]] = []
@@ -121,14 +129,15 @@ class PySimEnv(BaseEnv):
     """
     Ship navigation environment on the Western Scheldt map (full scale).
 
-    Supports the Python dynamics models (Fossen, Nomoto, UGentSurrogate,
-    UGentB01Surrogate, UAntwerpSurrogate) and the external FH Simulator
-    (Model.FH_TABULAR). For FH_TABULAR an externally constructed bridge is passed
-    as `fh_bridge` and stored as self._fh_sim; only normalized rudder and thrust
-    commands in [-1, 1] are set through it. Any object with FhSimBridge's duck-typed
-    interface (ship_model, ship_interface, math_model, initial_vessel_state, reset(),
-    dispose()) works, e.g. FhSimBridge (local math model) or SimSyncBridge (realtime
-    UDP link to simSync). For other models self._fh_sim is None.
+    Dynamics: Fossen, Nomoto, UGentSurrogate, UGentB01Surrogate, UAntwerpSurrogate,
+    or the FH Simulator (Model.FH_TABULAR) through an externally built bridge
+    (`fh_bridge`, kept as self._fh_sim; any object with FhSimBridge's interface,
+    e.g. SimSyncBridge). With FH only normalized rudder and thrust are set, and
+    each episode starts from FH's actual state after its reset.
+
+    With wind = current = True the observation gets 4 wind/current features
+    (fw.environments.wind_current_obs): real values for FH and the full_env
+    UAntwerp surrogate, zeros for the other models.
     """
 
     SUPPORTS_MODEL_SCALE_SHIPS: bool = False
@@ -173,31 +182,33 @@ class PySimEnv(BaseEnv):
             max_steps: Maximum steps per episode (truncation).
             verbose: Print informational logs.
             start_pos: Initial ship position (2-array).
-            target_pos: Target position. The trajectory is cut to end here and walked
-                forwards or backwards, whichever reaches it from start_pos. If omitted,
-                the trajectory's last point is the target.
-            overall_contour, depth_contour, trajectory: Map CSV file names (defaults:
-                env_Sche_no_scale.csv, env_Sche_250cm_no_scale.csv,
-                trajectory_points_no_scale.csv).
-            dynamics_model: Dynamics model; Model.FH_TABULAR uses the FH Simulator.
-            ship_model: Ship model (must be full scale).
-            wind: Enable wind effects.
-            current: Enable current effects.
-            ua_surrogate_config: Model.UANTWERP configuration, e.g.
-                {"preset": "tripoli_confined"} (see fw.surrogate.presets).
-            ugent_surrogate_config: UGent surrogate configuration, e.g. {"ukc_percent": 363}.
-            ugent_b01_surrogate_config: UGent B01 configuration, e.g. {"ukc_percent": 379}.
+            target_pos: Target; the trajectory is cut to end here (default: its last point).
+            overall_contour, depth_contour, trajectory: Map CSV file names (default
+            env_Sche_no_scale.csv, env_Sche_250cm_no_scale.csv,
+            trajectory_points_no_scale.csv).
+            dynamics_model: Dynamics model.
+            ship_model: Ship model (full scale).
+            wind: Observe wind and current (must equal `current`).
+            current: Observe wind and current (must equal `wind`).
+            ua_surrogate_config: Model.UANTWERP config, e.g. {"preset": "tripoli_confined"}.
+            ugent_surrogate_config: UGent config, e.g. {"ukc_percent": 363}.
+            ugent_b01_surrogate_config: UGent B01 config, e.g. {"ukc_percent": 379}.
             enable_bank_collision_check: Terminate on bank collision.
             enable_ukc_check: Terminate on insufficient UKC.
             reward_name: Reward profile name.
             reward_weights: Optional per-component reward weights.
-            scenario: FH scenario name, stored for record-keeping only.
-            fh_bridge: FH engine bridge, required for Model.FH_TABULAR and ignored
-                otherwise.
+            scenario: FH scenario name (record-keeping only).
+            fh_bridge: FH bridge, required for Model.FH_TABULAR.
 
         Raises:
             RuntimeError: Model.FH_TABULAR without fh_bridge.
+            ValueError: wind != current; an FH bridge whose wind_current differs
+                from the flags; a full_env UAntwerp surrogate with the flags off.
         """
+
+        if bool(wind) != bool(current):
+            raise ValueError(f"wind={wind} and current={current}: wind and current must be enabled "
+                             f"or disabled together.")
 
         # FH bridge check first, so a missing bridge fails before expensive setup.
         self._fh_sim = None
@@ -211,6 +222,18 @@ class PySimEnv(BaseEnv):
                     "simSync connection) before creating PySimEnv, or use a "
                     "non-FH_TABULAR dynamics_model for pure-Python simulation "
                     "without external dependencies."
+                )
+            if not hasattr(fh_bridge, "wind_current"):
+                if wind:
+                    raise ValueError(
+                        f"wind={wind}/current={current}: the FH bridge {type(fh_bridge).__name__} does not "
+                        f"support wind and current (no wind_current setting); disable them."
+                    )
+            elif bool(fh_bridge.wind_current) != bool(wind):
+                raise ValueError(
+                    f"wind={wind}/current={current}, but the FH bridge {type(fh_bridge).__name__} has "
+                    f"wind_current={fh_bridge.wind_current}: its exercise must match the flags "
+                    f"(FhSimBridge(wind_current=...))."
                 )
             self._fh_sim = fh_bridge
 
@@ -237,6 +260,10 @@ class PySimEnv(BaseEnv):
         self.previous_heading = None
         self.performed_action = None
         self.previous_action = None
+        # Why the episode ended (episode log): SUCCESS_OUTCOMES, cross_track,
+        # bank_or_ukc or heading_change (failures take precedence), max_steps
+        # for truncation.
+        self._episode_outcome: Optional[str] = None
         self._boundary_cache = None
         self._bank_lines_cache = None
         self.background = None
@@ -329,6 +356,7 @@ class PySimEnv(BaseEnv):
         self.previous_ship_pos = self.initial_ship_pos.copy()
         self.previous_action = np.zeros(2, dtype=np.float32)
         self.checkpoint_index = 1
+        self._episode_outcome = None
 
         self.previous_heading = 0.0
         self.cross_error = 0.0
@@ -348,7 +376,7 @@ class PySimEnv(BaseEnv):
             x=self.initial_ship_pos[0],
             y=self.initial_ship_pos[1],
             heading=self.ship_heading,
-            u=self.initial_speed, v=0.0, r=0.0))
+            u=self.initial_speed, v=0.0, r=0.0), rng=self._rng)
         self._agent_state = self.phys_sim.state
         self.performed_action = np.zeros(2, dtype=np.float32)
 
@@ -368,10 +396,11 @@ class PySimEnv(BaseEnv):
             ugent_b01_surrogate_config: Configuration for the UGent B01 surrogate model.
 
         Returns:
-            ShipSimulator using this env's ship, time step and wind/current flags.
+            ShipSimulator using this env's ship and time step.
 
         Raises:
-            ValueError: Ship model not supported by the selected dynamics model.
+            ValueError: Ship not supported by the dynamics model, or a full_env
+                UAntwerp surrogate with wind and current disabled.
             RuntimeError: Unknown dynamics model, or FH_TABULAR without a bridge.
         """
 
@@ -405,21 +434,13 @@ class PySimEnv(BaseEnv):
             # Rays are cast against this environment's own river polygon.
             self.dynamics = UAntwerpSurrogate(self.ship.specifications, ua_surrogate_config,
                                               ship_model=self.ship_model, ray_caster=self)
-            # full_env presets take wind/current from their lookup CSV
-            # (models_own_wind_current); other presets get EnvironmentModel's via
-            # ShipSimulator, according to the wind/current flags.
-            if self.dynamics.models_own_wind_current:
-                if not (self.wind and self.current):
-                    logger.warning(
-                        "wind=%s/current=%s, but the UAntwerp surrogate (preset '%s') always takes "
-                        "wind and current from its lookup CSV: these flags have no effect on it.",
-                        self.wind, self.current, self.dynamics.preset.name,
-                    )
-            elif self.wind or self.current:
-                logger.info(
-                    "wind=%s/current=%s: the UAntwerp surrogate (preset '%s') has no wind/current "
-                    "inputs, so ShipSimulator adds EnvironmentModel wind/current for it.",
-                    self.wind, self.current, self.dynamics.preset.name,
+            # full_env presets take wind/current from their lookup CSV; the agent
+            # must observe them.
+            if self.dynamics.models_own_wind_current and not self.wind:
+                raise ValueError(
+                    f"The UAntwerp surrogate preset '{self.dynamics.preset.name}' simulates wind and "
+                    f"current (lookup CSV or random per episode), so wind and current must be enabled "
+                    f"(observation)."
                 )
         elif self.dynamics_model == Model.FH_TABULAR:
             # Guard for code paths that bypass __init__.
@@ -432,7 +453,24 @@ class PySimEnv(BaseEnv):
         else:
             raise RuntimeError(f"Unknown dynamics model {self.dynamics_model} specified.")
 
-        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, self.wind, self.current)
+        # Only models with a real current get the surge limits widened by
+        # RANDOM_CURRENT_SPEED_MAX; for the others it would lift their only speed limit.
+        sim_limits = None
+        if self.wind and self.dynamics.models_own_wind_current:
+            sim_limits = (float(self.ship.specifications.surge_limits[0]) - RANDOM_CURRENT_SPEED_MAX,
+                          self._surge_cap())
+        return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, surge_limits=sim_limits)
+
+    def _surge_cap(self) -> float:
+        """
+        Scale [m/s] of the observed surge, equal for every model: the ship's upper
+        surge limit, raised by RANDOM_CURRENT_SPEED_MAX with wind and current (surge
+        is over ground). Also the simulator's upper surge limit for models with their
+        own wind/current (their lower limit drops by the same amount).
+        """
+
+        high = float(self.ship.specifications.surge_limits[1])
+        return high + RANDOM_CURRENT_SPEED_MAX if self.wind else high
 
     def __deepcopy__(self, memo):
         """
@@ -449,9 +487,9 @@ class PySimEnv(BaseEnv):
 
         for key, value in self.__dict__.items():
             if key == '_fh_sim':
-                setattr(new_instance, key, value)
+                setattr(new_instance, key, value)   # Retain the original reference
             else:
-                setattr(new_instance, key, copy.deepcopy(value, memo))
+                setattr(new_instance, key, copy.deepcopy(value, memo))  # Deep copy all other attributes
 
         return new_instance
 
@@ -521,6 +559,7 @@ class PySimEnv(BaseEnv):
 
         # The first checkpoint is the start position.
         if len(path) == 0:
+            # empty path: fallback to a single checkpoint at initial position
             path = [self.initial_ship_pos.copy()]
         else:
             path = np.insert(path, 0, self.initial_ship_pos.copy(), axis=0)
@@ -543,11 +582,13 @@ class PySimEnv(BaseEnv):
         # Perpendicular lines for guidance
         lines = calculate_perpendicular_lines(checkpoints, line_length=PERPENDICULAR_LINE_LENGTH)
 
+        # Add perpendicular lines to checkpoints
         self.checkpoints = []
         for cp, line in zip(checkpoints, lines):
             cp['perpendicular_line'] = line
             self.checkpoints.append(cp)
 
+        # Calculate direction of last path segment
         if len(self.checkpoints) < 2:
             raise ValueError(
                 f"Path reduction from start_pos={self.initial_ship_pos.tolist()} resulted "
@@ -561,9 +602,12 @@ class PySimEnv(BaseEnv):
         p_before_last = self.checkpoints[-2]['pos'].copy()
         self.direction_last_path = p_last - p_before_last
 
+        # Navigation and counters
+        # Safe handling when no checkpoints are present:
         if self.checkpoints:
             self.target_pos = self.checkpoints[-1]['pos']
         else:
+            # If user provided target_pos, use it; otherwise fallback to initial_ship_pos
             if target_pos_arr is not None:
                 self.target_pos = target_pos_arr
             else:
@@ -604,11 +648,9 @@ class PySimEnv(BaseEnv):
         """
         Split the river-polygon boundary into real-bank and map cut-off segments.
 
-        Map cut-offs are straight edges where the depth contour is clipped at
-        the map limit; they are not banks. Uses MAP_CUTOFF_LINES when the
-        contour has an entry there; otherwise a cut-off is a run of
-        consecutive segments on one bounding-box side, at least
-        `min_cutoff_length` long (short touches, e.g. a bend crest, are banks).
+        Cut-offs are straight edges where the contour is clipped at the map limit.
+        Uses MAP_CUTOFF_LINES if the contour has an entry; otherwise a cut-off is a
+        run of segments on one bounding-box side of at least `min_cutoff_length`.
         Cut-offs not aligned with the bounding box are not detected.
 
         Args:
@@ -733,11 +775,10 @@ class PySimEnv(BaseEnv):
             max_tries: Optional[int] = None,
     ) -> np.ndarray:
         """
-        Sample river points whose distance to the nearest real bank is in [min_distance, max_distance].
-
-        Steps a random distance perpendicular from a random bank point into the water and
-        keeps candidates inside the polygon within the band; points closer than
-        `max_distance` to a map cut-off edge are rejected. Uses `self._rng`.
+        Sample river points whose distance to the nearest real bank is in
+        [min_distance, max_distance], stepping perpendicular from random bank points
+        into the water. Points closer than max_distance to a map cut-off edge are
+        rejected. Uses self._rng.
 
         Args:
             nbr_samples: Number of points to return.
@@ -877,10 +918,9 @@ class PySimEnv(BaseEnv):
             max_distance: float = 200.0,
     ) -> np.ndarray:
         """
-        Vectorized `ray_cast_distance` for N rays from a common origin.
-
-        Uses Shapely 2 array operations (one GEOS call each); only the rare
-        MultiPoint/GeometryCollection hits are fixed up in Python.
+        Vectorized ray_cast_distance for N rays from a common origin (Shapely 2
+        array operations; only MultiPoint/GeometryCollection hits are fixed up in
+        Python).
 
         Args:
             origin: (x, y) start point shared by all rays (world frame).
@@ -891,7 +931,7 @@ class PySimEnv(BaseEnv):
             float32 (N,) distances clipped to [0, max_distance].
         """
 
-
+        # Cache the boundary object to avoid re-extracting it every call.
         if self._boundary_cache is None:
             self._boundary_cache = self.polygon_shape.boundary
 
@@ -1002,12 +1042,10 @@ class PySimEnv(BaseEnv):
     @staticmethod
     def _reduce_path(path: np.ndarray, start_pos: np.ndarray, target_pos: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        Cut the trajectory to run from just after start_pos to exactly target_pos.
-
-        The trajectory is walked forwards or backwards (reversed point order), whichever
-        direction reaches target_pos. Without target_pos, the path runs forwards to the
-        trajectory's last point, or backwards to its first point if start_pos is closest
-        to the last point.
+        Cut the trajectory to run from just after start_pos to exactly target_pos,
+        walking it forwards or backwards, whichever reaches target_pos. Without
+        target_pos, it runs to the last point, or backwards to the first point if
+        start_pos is closest to the last one.
 
         Args:
             path: Full trajectory, (N, 2).
@@ -1022,11 +1060,13 @@ class PySimEnv(BaseEnv):
         if len(path) == 0:
             raise ValueError("Path is empty.")
 
+        # Find index of the point on the path closest to start_pos
         start_distances = np.linalg.norm(path - start_pos, axis=1)
         start_index = int(np.argmin(start_distances))
 
         if target_pos is None:
             if start_index < len(path) - 1:
+                # Slice the path from following point to the end (forward, as before)
                 return path[start_index + 1:]
 
             # Nothing lies ahead of start_pos: walk backwards to the first point.
@@ -1044,6 +1084,8 @@ class PySimEnv(BaseEnv):
 
         target_pos = np.asarray(target_pos)
 
+        # Find index of the point on the path closest to target_pos, over
+        # the full original trajectory (direction-agnostic).
         target_distances = np.linalg.norm(path - target_pos, axis=1)
         target_index = int(np.argmin(target_distances))
 
@@ -1124,7 +1166,8 @@ class PySimEnv(BaseEnv):
     def _initialize_observation_space(self) -> gym.spaces.Box:
         """
         Box in [-1, 1]: 12 base features (velocities, checkpoint distances, cross-track and
-        heading errors, previous rudder, LOS error) plus 2 each for wind and current if enabled.
+        heading errors, previous rudder, LOS error) plus, with wind and current, the 4
+        features of fw.environments.wind_current_obs. Surge is scaled by _surge_cap().
         """
 
         base_low = np.array(
@@ -1164,36 +1207,33 @@ class PySimEnv(BaseEnv):
         )
 
         if self.wind:
-            base_low = np.hstack([base_low, np.array([-1.0, -1.0], dtype=np.float32)])
-            base_high = np.hstack([base_high, np.array([1.0, 1.0], dtype=np.float32)])
-
-        if self.current:
-            base_low = np.hstack([base_low, np.array([-1.0, -1.0], dtype=np.float32)])
-            base_high = np.hstack([base_high, np.array([1.0, 1.0], dtype=np.float32)])
+            base_low = np.hstack([base_low, -np.ones(WIND_CURRENT_OBS_DIM, dtype=np.float32)])
+            base_high = np.hstack([base_high, np.ones(WIND_CURRENT_OBS_DIM, dtype=np.float32)])
 
         return gym.spaces.Box(low=base_low, high=base_high, dtype=np.float32)
 
     def env_specific_reset(self):
         """
-        Reset hook, called by reset() before _initialize_simulation().
-
-        With the FH Simulator, rewinds its math model to the initial state (t = 0.25 s,
-        the earliest rewind point); otherwise defers to the base class.
+        Reset hook, called by reset() before _initialize_simulation(). With FH,
+        rewinds its math model to t = 0.25 s (the earliest rewind point), drawing a
+        new wind field from the env RNG when wind and current are on.
         """
 
         if self._fh_sim is not None:
-            # noinspection PyUnresolvedReferences
-            self._fh_sim.reset()
+            if self.wind:
+                # noinspection PyUnresolvedReferences
+                self._fh_sim.reset(wind_rng=self._rng)
+            else:
+                # noinspection PyUnresolvedReferences
+                self._fh_sim.reset()
             return
 
         super().env_specific_reset()
 
     def randomize(self, randomization_scale: Optional[float] = None) -> None:
         """
-        Perturb the initial position uniformly by up to +-randomization_scale per axis.
-
-        No-op with the FH Simulator, which always rewinds to the initial state set at
-        math model initialization (changing it needs a re-initialization).
+        Perturb the initial position uniformly by up to +-randomization_scale per
+        axis. No-op with FH, which always rewinds to its initialization state.
 
         Args:
             randomization_scale: New scale; None keeps the current one.
@@ -1203,7 +1243,7 @@ class PySimEnv(BaseEnv):
         """
 
         if self._fh_sim is not None:
-            return
+            return  # Intentional no-op when driven by the FH Simulator
 
         if randomization_scale is not None:
             if randomization_scale <= 0:
@@ -1231,15 +1271,35 @@ class PySimEnv(BaseEnv):
         Reset the episode (re-seeding the env RNG if `seed` is given); returns (observation, {}).
         """
 
+        # Set RNG seed if provided for reproducibility
         if seed is not None:
             self._rng = np.random.default_rng(seed)
 
         super().reset(seed=seed)
 
+        # Hook for environment-specific reset operations
         self.env_specific_reset()
         self._initialize_simulation()
+        if self._fh_sim is not None:
+            self._sync_initial_state_from_fh()
 
         return self._get_obs(), {}
+
+    def _sync_initial_state_from_fh(self) -> None:
+        """
+        Start the episode from FH's actual state after its reset (which simulates
+        the initialization step and, with wind and current, the wind warm-up):
+        position, heading, surge, sway and yaw rate (FhTabularModel.read_state).
+        """
+
+        x, y, heading, u, v, r = self.dynamics.read_state()
+        self.phys_sim.reset(VesselState(terminated=False, truncated=False, x=x, y=y, heading=heading, u=u, v=v, r=r))
+        self._agent_state = self.phys_sim.state
+        self.ship_pos = np.array([self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32)
+        self.previous_ship_pos = self.ship_pos.copy()
+        self.ship_heading = self.phys_sim.state.heading
+        self.heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
+        self.velocities = self.phys_sim.state.u
 
     def _get_obs(self) -> np.ndarray:
         """
@@ -1250,11 +1310,12 @@ class PySimEnv(BaseEnv):
 
         # Normalize velocities
         norm_velocities = np.array([
-            np.clip(self.phys_sim.state.u / self.ship.specifications.surge_limits[1], -1, 1),
+            np.clip(self.phys_sim.state.u / self._surge_cap(), -1, 1),
             np.clip(self.phys_sim.state.v / self.ship.specifications.sway_limits[1], -1, 1),
             np.clip(self.phys_sim.state.r / self.ship.specifications.yaw_rate_limits[1], -1, 1)
         ], dtype=np.float32)
 
+        # Clamp checkpoint indices
         current_chkp_idx = self.checkpoint_index
         prev_chkp_idx = max(0, current_chkp_idx - 1)
         next_chkp_idx = current_chkp_idx + 1
@@ -1347,12 +1408,8 @@ class PySimEnv(BaseEnv):
             los_heading_error / np.pi,              # Optimal LOS guidance
         ])
 
-        # Add environmental observations if enabled
         if self.wind:
-            obs = np.hstack([obs, self.phys_sim.environment.wind_direction * self.phys_sim.environment.wind_strength])
-
-        if self.current:
-            obs = np.hstack([obs, self.phys_sim.environment.current_direction * self.phys_sim.environment.current_strength])
+            obs = np.hstack([obs, normalize_wind_current(self.dynamics.observed_wind_current(self.phys_sim.state))])
 
         return obs.astype(np.float32)
 
@@ -1398,16 +1455,25 @@ class PySimEnv(BaseEnv):
             # Update ship state
             self.phys_sim.state.terminated = terminated
             self.phys_sim.state.truncated = truncated
+            ended_now = terminated or truncated
         else:
             reward = 0.0
             terminated = self.phys_sim.state.terminated
             truncated = self.phys_sim.state.truncated
+            ended_now = False
 
         info = {
             "rewards": reward,
             "terminations": terminated,
             "truncations": truncated,
         }
+
+        # if ended_now:
+        #     info["episode_outcome"] = self._episode_outcome if terminated else "max_steps"
+        #     info["episode_conditions"] = self.dynamics.episode_conditions()
+        #     logger.info("%s - episode end: outcome=%s, success=%s, conditions=%s", self.env_name,
+        #                 info["episode_outcome"], info["episode_outcome"] in SUCCESS_OUTCOMES,
+        #                 info["episode_conditions"])
 
         # Gymnasium: time-limit cut-off is `truncated` (bootstrap V(s')), a real end is
         # `terminated`; mirrored in `info` for the framework's own agents.
@@ -1424,6 +1490,7 @@ class PySimEnv(BaseEnv):
             (reward, done)
         """
 
+        # Defensive index checking for checkpoints
         prev_checkpoint_idx = max(0, self.checkpoint_index - 1)
         prev_checkpoint_pos = self.checkpoints[prev_checkpoint_idx]['pos']
 
@@ -1441,9 +1508,8 @@ class PySimEnv(BaseEnv):
 
         # Ship information
         rudder_change = abs(self.performed_action[0] - self.previous_action[0])
-        # Both in rad (performed_action holds the actuator's rudder angle). The +1e-6 rad
-        # tolerance keeps a move at exactly the maximum slew rate out of the 'exceeded'
-        # penalty branch despite float32 rounding.
+        # Both in rad. The 1e-6 tolerance keeps a move at exactly the maximum slew
+        # rate out of the 'exceeded' branch despite float32 rounding.
         max_rudder_change = self.ship.specifications.max_rudder_rate * self.time_step + 1e-6  # rad
         heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
         distance_traveled = abs(np.linalg.norm(self.ship_pos - self.previous_ship_pos))
@@ -1471,9 +1537,11 @@ class PySimEnv(BaseEnv):
         checkpoint_distance = float(np.linalg.norm(self.ship_pos - current_checkpoint["pos"]))
 
         # Reached checkpoint circle
+        final_label = None      # how the last checkpoint was completed in this step
         if self.segment_point_distance(self.previous_ship_pos, self.ship_pos, current_checkpoint["pos"]) <= current_checkpoint['radius']:
             if self.checkpoint_index == len(self.checkpoints) - 1:
                 logger.info("%s - target REACHED at distance %.2f", self.env_name, checkpoint_distance)
+                final_label = "target_reached"
             self.checkpoint_index += 1
             self.step_count = 0
 
@@ -1481,6 +1549,8 @@ class PySimEnv(BaseEnv):
         elif self._is_near_perpendicular_line(current_checkpoint):
             # if self.checkpoint_index == len(self.checkpoints) - 1:
             #     print(f"Target passed at distance {checkpoint_distance:.2f}")
+            if self.checkpoint_index == len(self.checkpoints) - 1:
+                final_label = "target_passed"
             self.checkpoint_index += 1
             self.step_count = 0
 
@@ -1497,9 +1567,13 @@ class PySimEnv(BaseEnv):
         if any(termination_conditions):
             # reward = -250
             done = True
+            self._episode_outcome = ("cross_track", "bank_or_ukc", "heading_change")[termination_conditions.index(True)]
 
-        # Normal completion (reached or passed all checkpoints)
+        # Normal completion (reached or passed all checkpoints); a failure in
+        # the same step takes precedence in the episode outcome.
         if self.checkpoint_index >= len(self.checkpoints):
+            if not done:
+                self._episode_outcome = final_label or "target_passed"
             done = True
 
         return reward, done
@@ -1538,9 +1612,11 @@ class PySimEnv(BaseEnv):
         o1 = _orientation(line_start, line_end, prev_point)
         o2 = _orientation(line_start, line_end, curr_point)
 
+        # If either point is on the line -> intersection
         if abs(o1) <= EPSILON or abs(o2) <= EPSILON:
             return True
 
+        # If signs differ -> segment crosses the line
         return (o1 > 0 > o2) or (o1 < 0 < o2)
 
     def _is_near_perpendicular_line(self, checkpoint: dict) -> bool:
@@ -1681,23 +1757,27 @@ class PySimEnv(BaseEnv):
         curve with f(min) = 0, f(max) = 1 and f(half_value) = 0.5.
         """
 
+        # min_value -> 0, max_value -> 1 after scaling
         min_value, max_value = value_range
 
+        # Clamp to range
         clamped = max(min_value, min(value, max_value))
         if clamped != value:
             logger.debug(
                 "Value %s clamped to [%s, %s]", value, min_value, max_value
             )
 
+        # Normalize value and half_value to [0, 1]
         x = (clamped - min_value) / (max_value - min_value)
         m = (half_value - min_value) / (max_value - min_value)
 
         if math.isclose(m, 0.5, abs_tol=1e-9):
             return x
 
-        # Curvature k such that log1p(k*m) / log1p(k) = 0.5.
+        # Compute k: curvature parameter derived from the desired midpoint
         k = (1 - 2 * m) / (m ** 2)
 
+        # Apply log curve: log1p(k*x) / log1p(k) maps [0,1] -> [0,1] with f(m) = 0.5
         return math.log1p(k * x) / math.log1p(k)
 
     # -----------------------
@@ -1710,9 +1790,8 @@ class PySimEnv(BaseEnv):
 
         self.initialize_plots = False
 
-        # Screen size via a temporary Tk root. tkinter is imported lazily so the
-        # framework still imports on headless machines without Tk (e.g. HPC nodes).
-        # Any failure (no Tk, no display, Tk off the main thread, ...) falls back.
+        # Screen size via a temporary Tk root, imported lazily so headless machines
+        # work. Any failure falls back to defaults.
         # noinspection PyBroadException
         try:
             import tkinter as tk
@@ -1761,14 +1840,17 @@ class PySimEnv(BaseEnv):
         if not hasattr(self, 'ax') or not self.checkpoints:
             return
 
+        # Path: start with ship_pos followed by checkpoints and target
         path_points = [self.ship_pos] + [cp['pos'] for cp in self.checkpoints] + [self.target_pos]
 
         for i in range(len(path_points) - 1):
             start_point = path_points[i]
             end_point = path_points[i + 1]
+            # label only the first segment to avoid duplicate legend entries
             self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
                          'g-', label='Path' if i == 0 else "")
 
+        # Draw checkpoint patches and perpendicular lines
         for i, checkpoint in enumerate(self.checkpoints):
             circle = patches.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
                                     10.0, color='black', alpha=0.3)
@@ -1777,6 +1859,7 @@ class PySimEnv(BaseEnv):
             self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
                          'g-', label='PerpLine' if i == 0 else "")
 
+        # Draw polygons for environment outlines
         polygon_patch = patches.Polygon(self.obstacles, closed=True, edgecolor='r',
                                         facecolor='none', lw=2, label='Waterway')
         western_scheldt = patches.Polygon(self.overall, closed=True, edgecolor='brown',
@@ -1784,6 +1867,7 @@ class PySimEnv(BaseEnv):
         self.ax.add_patch(polygon_patch)
         self.ax.add_patch(western_scheldt)
 
+        # Update target plot
         self.target_plot.set_data(self.target_pos[0:1], self.target_pos[1:2])
 
     def _on_draw(self, event) -> None:
@@ -1803,6 +1887,7 @@ class PySimEnv(BaseEnv):
         if self.render_mode != 'human':
             return
 
+        # Initialize plotting objects once
         if self.initialize_plots and not hasattr(self, 'ship_plot'):
             self._initialize_rendering()
             self._draw_fixed_landmarks()
@@ -1825,16 +1910,19 @@ class PySimEnv(BaseEnv):
             except (RuntimeError, AttributeError, TypeError, ValueError):
                 pass
 
+        # Restore background for blit optimization when available
         if hasattr(self, 'background'):
             # noinspection PyUnresolvedReferences
             _safe(lambda: canvas.restore_region(self.background))
 
+        # Update ship and heading graphics
         heading_line_length = 30.0
         self.ship_plot.set_data(self.ship_pos[0:1], self.ship_pos[1:2])
         heading_x = self.ship_pos[0] + np.cos(self.phys_sim.state.heading) * heading_line_length
         heading_y = self.ship_pos[1] + np.sin(self.phys_sim.state.heading) * heading_line_length
         self.heading_line.set_data([self.ship_pos[0], heading_x], [self.ship_pos[1], heading_y])
 
+        # Try blitting for efficient updates; otherwise draw everything
         try:
             if hasattr(self.fig.canvas, 'blit'):
                 self.ax.draw_artist(self.ship_plot)
@@ -1843,6 +1931,7 @@ class PySimEnv(BaseEnv):
             else:
                 self.fig.canvas.draw()
         except (RuntimeError, AttributeError, TypeError, ValueError):
+            # Fallback to safe full redraw
             _safe(self.fig.canvas.draw)
 
         # Flush pending GUI events.

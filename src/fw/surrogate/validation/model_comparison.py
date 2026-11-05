@@ -1,59 +1,44 @@
 """
 Ship-bank test: compares dynamics models against FH (ground truth) for one ship
 (SHIP_MODEL: TRIPOLI or MYZAKO_37) sailing parallel to a river bank, over a grid
-of (initial surge speed, perpendicular distance to the bank).
+of (initial surge, distance to the bank).
 
 Models:
-    FH          the real simexe engine (FhSession, stepped via FhTabularModel.step())
-    UGent       fw.dynamics.ugent_surrogate.UGentSurrogate (Tripoli only)
-    Fossen      fw.dynamics.fossen.Fossen
+    FH          the simexe engine (FhSession, stepped via FhTabularModel.step())
+    UGent       UGentSurrogate (Tripoli only)
+    Fossen      Fossen
     UA_clean, UA_confined, UA_full
-                fw.dynamics.uantwerp_surrogate.UAntwerpSurrogate, one preset per
-                slot (UA_PRESETS_BY_SHIP); a slot without a preset or checkpoint
-                is left out.
+                UAntwerpSurrogate, one preset per slot (UA_PRESETS_BY_SHIP);
+                slots without a preset or checkpoint are left out.
 
-Method per grid point: the ship is placed at the given distance from the (port)
-bank, heading parallel to it, with rudder 0 and thrust min(1, v/6). FH settles
-(FhSimBridge's 0.125 s), then the "before" state and FH's live UKC, wind and
-current are read. FH is advanced by SURROGATE_DT and its (du, dv, dr) is
-finite-differenced from the states before and after. FhTabularModel itself reads
-velocities instead of differentiating, but a common footing for all models is
-needed here. Every other model is evaluated once, instantaneously, at the
-"before" state via _compute_accelerations().
+Per grid point the ship is placed at the given distance from the port bank,
+parallel to it, with rudder 0 and thrust min(1, v/6). After FH settles, the
+"before" state and FH's live UKC, wind and current are read; FH is advanced by
+SURROGATE_DT and its (du, dv, dr) is finite-differenced. All other models are
+evaluated once at the "before" state (_compute_accelerations()).
 
-The UA_* models get FH's live UKC/wind/current and rays cast with the same
-PySimEnv used for this script's bank geometry (_inject_live_environment), instead
-of their own WcuLookup and PySimEnv. The test therefore asks whether a surrogate
-predicts correctly given identical ground-truth inputs; a bad result points at its
-learned dynamics, not at a stale lookup or a different polygon. UA_clean (no UKC,
-no rays) is unaffected. The rudder scale comes from each checkpoint (35 deg
-Tripoli, 75 deg Myzako); RUDDER_ANGLE_RAD is 0 throughout.
+The UA_* models get FH's live UKC/wind/current and rays cast on the same
+PySimEnv polygon (_inject_live_environment), so a bad result points at their
+learned dynamics, not at a lookup or geometry mismatch. The rudder scale comes
+from each checkpoint; the rudder angle is 0 throughout. States outside the
+dataset generator's stop limits are flagged as extrapolation
+(_training_domain_issue, diagnostic only).
 
-Rays use the shared fw.environments.ray_features (ray_0 = bow, clockwise). Grid
-points and trajectory starts that violate the dataset generator's stop limits are
-flagged as extrapolation for the UA_* models (diagnostic only, see
-_training_domain_issue). Only surrogates trained on datasets from the current
-generator (current ray layout) are supported.
+This module is also the shared base of model_comparison_wind.py and
+model_comparison_current.py (FhSession, _inject_live_environment, ...).
 
-Also the shared base of the wind and current tests (model_comparison_wind.py,
-model_comparison_current.py import FhSession, _inject_live_environment, ...);
-FhSession's optional arguments default to the ship-bank behaviour.
-
-FhSession replicates the FH construction that runs successfully via fw.main
-(env_factory.FhSimEnvironment and PySimEnv) step by step. Earlier, differing
-constructions failed with a native "Cannot open input file: .../os2_body" error in
-MathModel.Initialize(); as of 2026-09-30 it was not yet confirmed that the exact
-replication resolves this. If it recurs, look outside FhSession (working
-directory, environment variables, imports done by fw.main).
+FhSession builds FH exactly as fw.main does (env_factory.FhSimEnvironment and
+PySimEnv). If MathModel.Initialize() fails with "Cannot open input file:
+.../os2_body", look outside FhSession (working directory, environment
+variables, imports); see the diagnose_* functions.
 
 Caveats:
-    1. FH's (x, y) frame and the PySimEnv polygon (config.py overall_contour /
-       depth_contour) are assumed to be the same coordinate system. All geometry
-       rests on this; on a first run, plot the located points against the polygon.
-    2. Run on a small grid first before trusting the full output.
+    1. FH's (x, y) frame is assumed to equal that of the PySimEnv polygon. On a
+       first run, plot the located points against the polygon.
+    2. Run a small grid first.
 
-Usage: run_comparison(seed_point) needs an (x, y) point near the port bank in area
-ScheldeSaeftinge_23_002 (no default; see the __main__ block).
+Usage: run_comparison(seed_point) with an (x, y) point near the port bank in
+ScheldeSaeftinge_23_002 (see the __main__ block).
 """
 
 import csv
@@ -75,11 +60,10 @@ from fw.surrogate.presets import PRESETS
 from fw.dynamics.wcu_lookup import EnvironmentData
 from fw.simulators.fh_sim_bridge import FhSimBridge
 from fw.surrogate.schema import SURROGATE_DT
+from fw.simulators.fh_interface_utils import fh_heading_to_env_rad, get_current_velocity
 from fw.surrogate.sim_fh_dataset_generator import (
     _PROPELLER_RPS_SCALE,
     _cutoff_geometry,
-    fh_heading_to_env_rad,
-    get_current_velocity,
     stop_reason,
 )
 from fw.environments.py_sim_env import PySimEnv
@@ -93,8 +77,7 @@ from fw.environments.ray_features import (
 )
 
 # Trajectories of the non-FH models are integrated with the production
-# ShipSimulator (no hand-rolled integration). It runs with wind=False and
-# current=False here, so EnvironmentModel adds nothing.
+# ShipSimulator (no hand-rolled integration), which adds no wind or current.
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.actuator_command import ActuatorCommand
 
@@ -129,10 +112,9 @@ INITIALIZATION_TIME = 0.125          # informational: FhSimBridge's hardcoded se
 # default output_path). Resolved against the working directory at import time.
 OUTPUT_DIR = Path("model_comparison_output").resolve()
 
-# Ship simulated by FH (also used for ship_spec and ray_env). FhSimBridge picks the
-# exercise: TRIPOLI uses DDShip_Tripoli_scenario_nowindnocurrent.tab, MYZAKO_37
-# DDShip_scenario1_nowindnocurrent_myzako_37.tab. UGent runs for the Tripoli
-# only; UA_* slots run for every ship with a preset (UA_PRESETS_BY_SHIP).
+# Ship simulated by FH (also used for ship_spec and ray_env). FhSimBridge picks
+# the nowindnocurrent exercise. UGent runs for the Tripoli only; UA_* slots for
+# every ship with a preset.
 SHIP_MODEL = ShipModel.MYZAKO_37
 
 # All UA_* model slots, in report order.
@@ -162,10 +144,9 @@ def ua_presets() -> dict:
     return UA_PRESETS_BY_SHIP.get(SHIP_MODEL, {})
 
 
-# Surge limits [m/s] of the ShipSimulator integrating the non-FH models in all
-# three tests; None = the ship's own surge_limits (Tripoli: 0-5 m/s). FH is never
-# clipped and the training data reaches ~6 m/s, so tight limits would clip the
-# models but not FH. Steps at the upper limit are reported per run.
+# Surge limits [m/s] of the ShipSimulator for the non-FH models in all three
+# tests; None = the ship's own limits. FH is never clipped; steps at the upper
+# limit are reported.
 SIM_SURGE_LIMITS: Optional[Tuple[float, float]] = (0.0, 8.0)
 
 
@@ -188,7 +169,7 @@ def make_model_simulator(ship_spec, model) -> ShipSimulator:
     """
 
     specs = dataclasses.replace(ship_spec, surge_limits=sim_surge_limits(ship_spec))
-    return ShipSimulator(specs=specs, dynamics=model, dt=SURROGATE_DT, wind=False, current=False)
+    return ShipSimulator(specs=specs, dynamics=model, dt=SURROGATE_DT)
 
 
 class SurgeClipCounter:
@@ -420,16 +401,10 @@ def locate_point_at_distance(
 ) -> np.ndarray:
     """
     Bisect along perp_into_water for the point whose ray-cast distance back to
-    the bank (along -perp_into_water) equals target_distance.
-
-    Ray casting is used, not a Euclidean offset, so the distance matches what
-    the ray features measure. Bisection assumes the measured distance grows
-    monotonically with the offset (true for straight or gently curved banks);
-    a spot-check warns if it does not.
-
-    Targets beyond RAY_MAX_DISTANCE are located with a longer measuring ray (up
-    to 2 * target_distance, never past the opposite boundary); the UA rays then
-    no longer see this bank.
+    the bank equals target_distance (ray casting, so it matches the ray
+    features). Assumes the distance grows monotonically with the offset; a
+    spot-check warns otherwise. Targets beyond RAY_MAX_DISTANCE use a longer
+    measuring ray (the UA rays then no longer see this bank).
 
     Args:
         env: PySimEnv (see find_bank_reference).
@@ -443,8 +418,8 @@ def locate_point_at_distance(
         (2,) point at about target_distance from the bank.
 
     Raises:
-        RuntimeError: If the target is not bracketed (e.g. the opposite bank is
-            closer) or bisection does not converge. Callers skip that distance.
+        RuntimeError: Target not bracketed or no convergence; callers skip that
+            distance.
     """
 
     to_bank = -perp_into_water
@@ -529,15 +504,13 @@ def _print_bank_ray_diagnostics(
         log_prefix: str,
 ) -> None:
     """
-    Print the ray features closest to the bank and to open water, converted to
-    metres, for comparison with expected_distance (pure geometry check).
+    Print the ray features closest to the bank and to open water in metres, for
+    comparison with expected_distance (pure geometry check).
 
-    Rays come from the shared compute_ray_features with ray_env; ray_k points k
-    degrees clockwise from the bow (ray_90 starboard, ray_270 port). With the
-    ship parallel to the bank, the "toward bank" ray should be ray_90 or ray_270
-    with an offset near 0. The 24 rays are 15 deg apart, so the closest ray is
-    printed with its angular offset, next to a ray cast along the exact normal.
-    Nothing is printed if no model uses rays (only UA_clean).
+    ray_k points k degrees clockwise from the bow; with the ship parallel to the
+    bank, ray_90 or ray_270 should face it. The closest ray is printed with its
+    angular offset, next to a ray cast along the exact normal. Nothing is
+    printed if no model uses rays.
     """
 
     if not any(hasattr(model, "_env") for model in ua_models.values()):
@@ -654,16 +627,10 @@ class FhSession:
                 disposed before the exception is re-raised.
         """
 
-        # Construction mirrors env_factory.FhSimEnvironment + PySimEnv (confirmed to
-        # run via fw.main): FhSimBridge(ship_model, scenario) with defaults for all
-        # paths; FhTabularModel built before the first reset(); initial_vessel_state
-        # set before reset(). scenario only matters for non-Tripoli ships.
-        # Optional arguments (for the wind/current tests):
-        #   rewind_enabled: None keeps FhSimBridge's default. A session never
-        #       rewinds, so False is safe (as in sim_fh_dataset_generator).
-        #   wind_field: (rotation_deg, scale), set before reset(): FH ignores a
-        #       transform set after its first simulateSeconds().
-        #   exercise_path: overrides FhSimBridge's default exercise.
+        # Construction mirrors env_factory.FhSimEnvironment + PySimEnv. Optional
+        # arguments (wind/current tests): rewind_enabled (a session never rewinds, so
+        # False is safe), wind_field (must be set before the first simulateSeconds()),
+        # exercise_path.
         bridge_kwargs = {}
         if rewind_enabled is not None:
             bridge_kwargs["rewind_enabled"] = bool(rewind_enabled)
@@ -686,11 +653,9 @@ class FhSession:
             x=float(x), y=float(y), heading=float(np.radians(heading_deg)),
             u=float(v_init), v=0.0, r=0.0,
         )
-        # Initial propeller RPS consistent with thrust (as in the dataset generator),
-        # so the start speed and the propeller agree.
-        # Fail fast if FhSimBridge does not support the initial-condition hooks
-        # set below: assigning them to an older bridge just creates unused
-        # attributes, and FH silently keeps the exercise defaults.
+        # Initial propeller RPS consistent with thrust (as in the dataset generator).
+        # Fail fast if FhSimBridge lacks the initial-condition hooks: FH would silently
+        # keep the exercise defaults.
         for hook in ("initial_propeller_rps", "initial_rudder_angle", "initial_wind_field_transform"):
             if not hasattr(self._bridge, hook):
                 raise RuntimeError(
@@ -841,16 +806,13 @@ def _inject_live_environment(
     """
     Make a UAntwerpSurrogate use live FH values and the shared ray_env.
 
-    Patches instance attributes only: get_env becomes a function of
-    (pos, state=None) returning the given values unconverted, the UKC lookup is
-    dropped, and _env (used only for ray casting) becomes ray_env, so rays and
-    this script's bank geometry use the same polygon. A harmless no-op for
-    UA_clean, which uses neither.
+    Patches instance attributes only: get_env returns the given values, the UKC
+    lookup is dropped, and _env (ray casting) becomes ray_env. No effect on
+    UA_clean.
 
     Args:
         model: UAntwerpSurrogate instance.
-        ukc, wind_speed, wind_dir, current_speed, current_dir: Live FH values at
-            this grid point.
+        ukc, wind_speed, wind_dir, current_speed, current_dir: Live FH values.
         ray_env: Shared PySimEnv used for the bank geometry.
     """
 
@@ -918,8 +880,7 @@ def _setup_geometry(seed_point: Tuple[float, float], log_prefix: str = "run_comp
             )
 
     # Heading as in PySimEnv._initialize_simulation(): toward the second
-    # trajectory checkpoint, i.e. along the channel, not the bank tangent
-    # (reproduces the known-good 55.287 deg for the default seed point).
+    # checkpoint, i.e. along the channel, not the bank tangent.
     heading_deg = float(np.degrees(ray_env.ship_heading))
     if heading_deg < 0:
         heading_deg += 360.0
@@ -1118,20 +1079,14 @@ def generate_trajectories(
         max_steps: int = TRAJECTORY_MAX_STEPS,
 ) -> None:
     """
-    Roll out multi-step trajectories of all models at a fixed speed for each
-    distance to the bank, from the same start as run_comparison, and plot them.
+    Roll out trajectories of all models at a fixed speed for each distance to
+    the bank, from the same start as run_comparison, and plot them.
 
-    FH is stepped with FhSession.advance(SURROGATE_DT). Every other model has
-    its own ShipSimulator, stepped with integrate() directly (fixed physical
-    rudder and thrust, no action mapping), so the trajectories can diverge.
-
-    The UA_* models get FH's live UKC/wind/current at FH's position every step,
-    while their rays are cast from their own position. For long rollouts where
-    the paths diverge, this environment may differ from the one at the model's
-    own position.
-
-    All models run as many steps as FH needs to cover target_distance (capped
-    at max_steps), so they span the same elapsed time.
+    FH is stepped with FhSession.advance(SURROGATE_DT); every other model has its
+    own ShipSimulator stepped with integrate() (fixed rudder and thrust). The
+    UA_* models get FH's live environment at FH's position each step, but cast
+    rays from their own position. All models run as many steps as FH needs for
+    target_distance (capped at max_steps).
 
     Writes one CSV (model, step, x, y) per distance to TRAJECTORY_OUTPUT_DIR and,
     if matplotlib is available, OUTPUT_DIR/trajectories_overview.png.
@@ -1416,13 +1371,10 @@ def _plot_trajectories(trajectories_by_distance, ray_env: PySimEnv, seed_point: 
 
 def diagnose_fh_initialization() -> None:
     """
-    Run the known-working FH path (env_factory + PySimEnv, FH_TABULAR with wind
-    and current) in this process, to tell whether an "os2_body" /
-    MathModel.Initialize() failure comes from this script or from the process
-    environment (working directory, environment variables, antivirus, imports).
-
-    If this also fails, the cause lies outside this script; if it succeeds,
-    something in FhSession's setup still differs.
+    Run the known-working FH path (env_factory + PySimEnv, FH_TABULAR without
+    wind and current) in this process. If it also fails with an "os2_body" error,
+    the cause lies outside this script (process environment); if it succeeds,
+    FhSession's setup still differs.
     """
 
     from fw.dynamics.dynamics_model import Model
@@ -1433,8 +1385,8 @@ def diagnose_fh_initialization() -> None:
     # Explicit overrides, independent of config.py's current defaults.
     framework_config["ship_model"] = SHIP_MODEL
     framework_config["dynamics_model"] = Model.FH_TABULAR
-    framework_config["wind"] = True
-    framework_config["current"] = True
+    framework_config["wind"] = False
+    framework_config["current"] = False
 
     env_factory.initialize_all_environments()
     env_wrapper = env_factory.build_default_environment(
@@ -1443,7 +1395,7 @@ def diagnose_fh_initialization() -> None:
 
     print(
         "diagnose_fh_initialization: calling PySimEnv.reset() "
-        "(FH_TABULAR / Tripoli / wind+current) via the exact construction "
+        "(FH_TABULAR / Tripoli / no wind or current) via the exact construction "
         "fw.main.py uses, in THIS process...",
         flush=True,
     )
@@ -1464,13 +1416,10 @@ def diagnose_fh_session_at_known_good_position(
         heading_deg: float = 0.0, v_init: float = 1.0, thrust: float = 0.5,
 ) -> None:
     """
-    Create an FhSession at DEFAULT_FRAMEWORK_SHIP_POS (2245.0, -47.0), a
-    position known to work, instead of a bank-derived grid point.
+    Create an FhSession at DEFAULT_FRAMEWORK_SHIP_POS, a known-good position.
 
-    run_comparison only uses seed_point to find the bank; FH is started at
-    derived points. If this succeeds, the derived position/heading is the
-    problem, not FhSession's construction; if it fails, FhSession or the
-    heading/speed arguments are implicated.
+    Success means the bank-derived position or heading is the problem; failure
+    points at FhSession or its heading/speed arguments.
     """
 
     from fw.common.default_positions import DEFAULT_FRAMEWORK_SHIP_POS
@@ -1510,15 +1459,11 @@ def diagnose_fh_position_sweep(
         n_steps: int = 6,
 ) -> None:
     """
-    Tell apart position and heading as the cause of an FH initialization
-    failure, by trying FhSession along two sweeps (failures are reported, not
-    raised):
+    Separate position from heading as the cause of an FH initialization failure
+    by sweeping FhSession (failures are reported, not raised):
 
-      1. Position: from good_pos (default DEFAULT_FRAMEWORK_SHIP_POS) to bad_pos
-         at heading 0.
+      1. Position: from good_pos to bad_pos at heading 0.
       2. Heading: at bad_pos, from 0 to bad_heading_deg.
-
-    The defaults are the first failing grid point of an earlier run.
     """
 
     from fw.common.default_positions import DEFAULT_FRAMEWORK_SHIP_POS
