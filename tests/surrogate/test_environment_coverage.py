@@ -171,3 +171,42 @@ def test_compare_slide_from_two_coverage_folders(tmp_path):
     assert C.main([str(tmp_path / "a_coverage"), str(tmp_path / "b_coverage"),
                    "--labels", "A", "B", "--out", str(out), "--dpi", "40"]) == 0
     assert out.is_file() and out.stat().st_size > 0
+
+
+def test_depth_classes_with_draft(tmp_path):
+    """
+    --draft writes the shares per water-depth class h/T; the classes add up to 100 %.
+    """
+
+    sc = get_scenario("confined_ukc")
+    draft = 3.65
+    ukc = np.array([0.5, 0.9, 1.5, 1.9, 3.0, 7.0, 8.0, 12.0])      # h/T: 1.14 1.25 1.41 1.52 1.82 2.92 3.19 4.29
+    data = np.zeros((len(ukc), sc.raw_input_dim + 4))
+    data[:, sc.col("ukc")] = ukc
+    data[:, -1] = np.arange(len(ukc))
+    np.savetxt(tmp_path / "d.csv", data, delimiter=",", fmt="%.6g")
+    assert M.main([str(tmp_path / "d.csv"), "--no-figures", "--draft", str(draft)]) == 0
+    rows = {r["class"]: float(r["share_of_time_pct"]) for r in _read(tmp_path / "d_coverage" / "depth_classes.csv")}
+    assert rows == pytest.approx({"very shallow": 12.5, "shallow": 25.0, "medium deep": 37.5, "deep": 25.0})
+    with pytest.raises(SystemExit):
+        M.main([str(tmp_path / "d.csv"), "--no-figures", "--draft", "0"])
+
+
+def test_compare_slide_with_depth_classes(tmp_path):
+    """
+    With depth_classes.csv in both folders the threshold panel shows the water-depth classes.
+    """
+
+    pytest.importorskip("matplotlib")
+    from fw.surrogate.validation import compare_environment_coverage as C
+
+    rng = np.random.default_rng(4)
+    for name in ("a", "b"):
+        _write_full_csv(tmp_path / f"{name}.csv", rng, n_episodes=10, rows=20)
+        assert M.main([str(tmp_path / f"{name}.csv"), "--no-figures", "--draft", "3.65"]) == 0
+    data = [C.load(tmp_path / f"{n}_coverage") for n in ("a", "b")]
+    labels = [label for label, _ in C.threshold_items(data)]
+    assert labels[0].startswith("h/T < 1.2") and not any(l.startswith("UKC") for l in labels)
+    out = tmp_path / "cmp.png"
+    assert C.main([str(tmp_path / "a_coverage"), str(tmp_path / "b_coverage"), "--labels", "A", "B",
+                   "--out", str(out), "--dpi", "40"]) == 0

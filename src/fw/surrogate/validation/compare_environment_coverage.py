@@ -48,6 +48,7 @@ class CoverageData(TypedDict):
     summary: Dict[str, Dict[str, str]]                # quantity -> summary.csv row
     thresholds: Dict[Tuple[str, float], float]        # (quantity, below) -> share of time [%]
     directions: Dict[str, Dict[str, str]]             # quantity -> directions.csv row
+    depth: Dict[str, float]                           # share_of_time_pct -> depth_classes.csv row
 
 
 def _read(path: Path) -> List[Dict[str, str]]:
@@ -72,7 +73,29 @@ def load(folder: Path) -> CoverageData:
     thresholds = {(r["quantity"], float(r["below"])): float(r["share_of_time_pct"])
                   for r in _read(folder / "thresholds.csv")}
     directions = {r["quantity"]: r for r in _read(folder / "directions.csv")}
-    return CoverageData(summary=summary, thresholds=thresholds, directions=directions)
+    depth = {r["class"]: float(r["share_of_time_pct"]) for r in _read(folder / "depth_classes.csv")}
+    return CoverageData(summary=summary, thresholds=thresholds, directions=directions, depth=depth)
+
+
+# With depth_classes.csv (plot_environment_coverage --draft) in every folder, the
+# UKC rows of the threshold panel become water-depth classes (h/T).
+DEPTH_ROWS = (("very shallow", "h/T < 1.2 (very shallow)"), ("shallow", "h/T 1.2-1.5 (shallow)"))
+
+
+def threshold_items(datasets: Sequence[CoverageData]) -> List[Tuple[str, List[float]]]:
+    """
+    (label, value per dataset) rows of the threshold panel.
+    """
+
+    use_depth = all(d["depth"] for d in datasets)
+    items: List[Tuple[str, List[float]]] = []
+    for q, t, label in THRESHOLDS:
+        if q == "UKC" and use_depth:
+            continue
+        items.append((label, [d["thresholds"].get((q, t), np.nan) for d in datasets]))
+    if use_depth:
+        items = [(label, [d["depth"].get(c, np.nan) for d in datasets]) for c, label in DEPTH_ROWS] + items
+    return items
 
 
 def _style(ax, polar: bool = False) -> None:
@@ -138,20 +161,21 @@ def plot(datasets: Sequence[CoverageData], labels: Sequence[str], out: Path,
     ax = fig.add_subplot(grid[1, 0:2])
     _style(ax)
     ax.grid(axis="y", visible=False)
-    y = np.arange(len(THRESHOLDS))[::-1].astype(float)
+    items = threshold_items(datasets)
+    y = np.arange(len(items))[::-1].astype(float)
     height = 0.8 / n
     for i, (data, color, label) in enumerate(zip(datasets, colors, labels)):
-        values = [data["thresholds"].get((q, t), np.nan) for q, t, _ in THRESHOLDS]
+        values = [vals[i] for _, vals in items]
         bars = ax.barh(y + ((n - 1) / 2 - i) * height, values, height=height * 0.9, color=color, label=label)
         for bar, v in zip(bars, values):
             if np.isfinite(v):
                 ax.text(v + 1.0, bar.get_y() + bar.get_height() / 2, f"{v:.1f}%", ha="left",
                         va="center", fontsize=9, color=INK_2)
     ax.set_yticks(y)
-    ax.set_yticklabels([t[2] for t in THRESHOLDS], fontsize=11, color=INK)
+    ax.set_yticklabels([label for label, _ in items], fontsize=11, color=INK)
     ax.set_xlabel("share of time [%]", fontsize=12, color=INK)
     ax.set_xlim(0, 100)
-    ax.set_title("Share of time below thresholds", fontsize=14, color=INK, loc="left")
+    ax.set_title("Share of time per condition", fontsize=14, color=INK, loc="left")
     ax.legend(frameon=False, fontsize=11, labelcolor=INK, loc="upper right")
 
     # Bottom right: 30-deg sector shares as closed lines.
