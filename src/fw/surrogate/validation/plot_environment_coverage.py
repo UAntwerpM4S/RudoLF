@@ -34,12 +34,20 @@ Outputs in <out> (default <csv folder>/<csv stem>_coverage/):
     summary.csv                 min, percentiles, max, mean, std per quantity
     thresholds.csv              share of time below thresholds (e.g. UKC < 2 m)
     directions.csv              share of time per 30-deg sector (full datasets)
+    depth_classes.csv           share of time per water-depth class h/T (only with --draft)
 The summary is also printed. Needs numpy, pandas and matplotlib only.
 
 Usage (from src):
     python -m fw.surrogate.validation.plot_environment_coverage data/tripoli_full/ship_dynamics_dataset.csv
     python -m fw.surrogate.validation.plot_environment_coverage a.csv b.csv --dpi 200
     python -m fw.surrogate.validation.plot_environment_coverage big.csv --max-rows 2000000   # quick look
+    python -m fw.surrogate.validation.plot_environment_coverage myzako.csv --draft 3.65 --title "DD_full_Myzako"
+
+--draft T [m] adds the water-depth classes of DEPTH_CLASSES: with water depth
+h = UKC + T, the share of time with h/T below 1.2 (very shallow), 1.2-1.5
+(shallow), 1.5-3.0 (medium deep) and above 3.0 (deep). The UKC limits of the
+classes (0.2 T, 0.5 T and 2.0 T) are counted exactly. T is the static draft;
+the UKC is the value recorded in the dataset (FH's keel clearance).
 """
 
 from __future__ import annotations
@@ -74,6 +82,10 @@ PERCENTILES = (1, 5, 25, 50, 75, 95, 99)
 UKC_BELOW = (1.0, 2.0, 3.0, 5.0)                          # m
 WIND_BELOW = (1.0, 2.0, 5.0, 10.0)                        # m/s
 CURRENT_BELOW = (0.1, 0.25, 0.5, 1.0)                     # m/s
+
+# Water-depth classes (h = water depth, T = draft), as (name, h/T from, h/T to).
+DEPTH_CLASSES = (("very shallow", 1.0, 1.2), ("shallow", 1.2, 1.5),
+                 ("medium deep", 1.5, 3.0), ("deep", 3.0, np.inf))
 
 # Speed classes of the roses. Wind: Beaufort 0-1, 2, 3, 4, 5, 6+.
 WIND_CLASSES = (0.0, 1.6, 3.4, 5.5, 8.0, 10.8, np.inf)
@@ -302,6 +314,7 @@ class Coverage:
     scenario: ScenarioSchema
     rows: int = 0
     episodes: set = field(default_factory=set)
+    draft: Optional[float] = None
     ukc: Scalar = field(default_factory=lambda: Scalar("UKC", "m", UKC_EDGES, UKC_BELOW))
     wind_true: Scalar = field(default_factory=lambda: Scalar("true wind speed", "m/s", WIND_EDGES, WIND_BELOW))
     wind_app: Scalar = field(default_factory=lambda: Scalar("apparent wind speed", "m/s", WIND_EDGES, WIND_BELOW))
@@ -324,9 +337,21 @@ class Coverage:
         return self.scenario.includes_wind_current
 
 
-def read_coverage(csv_file: Path, chunk_rows: int = CHUNK_ROWS, max_rows: Optional[int] = None) -> Coverage:
+def depth_class_limits(draft: float) -> Tuple[float, ...]:
     """
-    Stream `csv_file` and accumulate the coverage statistics.
+    UKC [m] at the inner class boundaries of DEPTH_CLASSES: (h/T - 1) * T.
+    """
+
+    if not (np.isfinite(draft) and draft > 0):
+        raise ValueError(f"draft must be a positive number of metres, got {draft!r}")
+    return tuple(round((lo - 1.0) * draft, 6) for _, lo, _ in DEPTH_CLASSES[1:])
+
+
+def read_coverage(csv_file: Path, chunk_rows: int = CHUNK_ROWS, max_rows: Optional[int] = None,
+                  draft: Optional[float] = None) -> Coverage:
+    """
+    Stream `csv_file` and accumulate the coverage statistics. With `draft`
+    [m], the UKC limits of the water-depth classes are counted as well.
 
     Raises:
         ValueError: For a dataset without UKC (open water), or a width that
@@ -344,6 +369,9 @@ def read_coverage(csv_file: Path, chunk_rows: int = CHUNK_ROWS, max_rows: Option
     usecols = sorted(set(cols.values()))
 
     cov = Coverage(scenario)
+    if draft is not None:
+        cov.draft = float(draft)
+        cov.ukc = Scalar("UKC", "m", UKC_EDGES, tuple(sorted(set(UKC_BELOW) | set(depth_class_limits(draft)))))
     reader = pd.read_csv(csv_file, header=None, usecols=usecols, dtype=np.float64,
                          chunksize=chunk_rows, nrows=max_rows)
     for chunk in reader:
@@ -415,6 +443,27 @@ def threshold_rows(cov: Coverage) -> List[Dict[str, object]]:
             for s in quantities for t in s.below]
 
 
+def depth_class_rows(cov: Coverage) -> List[Dict[str, object]]:
+    """
+    Share of time [%] per water-depth class (needs `cov.draft`); [] without a draft.
+    """
+
+    if cov.draft is None:
+        return []
+    t = cov.draft
+    rows = []
+    for name, lo, hi in DEPTH_CLASSES:
+        ukc_lo, ukc_hi = (lo - 1.0) * t, (hi - 1.0) * t
+        below_hi = 100.0 if not np.isfinite(hi) else cov.ukc.share_below(round(ukc_hi, 6))
+        below_lo = 0.0 if lo <= 1.0 else cov.ukc.share_below(round(ukc_lo, 6))
+        rows.append({"class": name, "h_over_T_from": lo, "h_over_T_to": hi,
+                     "ukc_from_m": round(ukc_lo, 3), "ukc_to_m": round(ukc_hi, 3) if np.isfinite(hi) else np.inf,
+                     "ukc_from_pct_of_draft": round(100.0 * (lo - 1.0), 1),
+                     "ukc_to_pct_of_draft": round(100.0 * (hi - 1.0), 1) if np.isfinite(hi) else np.inf,
+                     "draft_m": t, "share_of_time_pct": below_hi - below_lo})
+    return rows
+
+
 def direction_rows(cov: Coverage) -> List[Dict[str, object]]:
     """
     Share of time per TABLE_SECTOR_DEG sector for every direction quantity.
@@ -464,6 +513,9 @@ def print_summary(title: str, cov: Coverage) -> None:
                           for t in shares if t["quantity"] == r["quantity"])
         print(f"  {r['quantity']:<20} [{r['unit']}]  min {r['min']:.2f}  {pct}  max {r['max']:.2f}"
               f"  mean {r['mean']:.2f}  |  {below}")
+    for r in depth_class_rows(cov):
+        print(f"  water depth {r['class']:<13} h/T {r['h_over_T_from']:g}-{r['h_over_T_to']:g}"
+              f"  (UKC {r['ukc_from_m']:.2f}-{r['ukc_to_m']:.2f} m):  {r['share_of_time_pct']:.1f}%")
     for r in direction_rows(cov):
         print(f"  {r['quantity']:<29} 30-deg sectors: min {r['min_sector_share']:.1f}%  "
               f"max {r['max_sector_share']:.1f}%  ({r['convention']})")
@@ -672,26 +724,33 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--max-rows", type=int, default=None, help="read only the first N rows (quick look)")
     parser.add_argument("--dpi", type=int, default=150, help="PNG resolution")
     parser.add_argument("--no-figures", action="store_true", help="tables only")
+    parser.add_argument("--draft", type=float, default=None,
+                        help="ship draft T [m]: adds the water-depth classes h/T (depth_classes.csv)")
     args = parser.parse_args(argv)
+    if args.draft is not None and not args.draft > 0:
+        parser.error("--draft must be positive")
     if len(args.csv) > 1 and (args.out or args.title):
         parser.error("--out and --title need a single CSV")
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
     for csv_file in args.csv:
-        cov = read_coverage(csv_file, args.chunk_rows, args.max_rows)
+        cov = read_coverage(csv_file, args.chunk_rows, args.max_rows, args.draft)
         title = dataset_title(csv_file, cov, args.title)
         out_dir = args.out or default_out_dir(csv_file)
         out_dir.mkdir(parents=True, exist_ok=True)
         write_csv(out_dir / "summary.csv", summary_rows(cov))
         write_csv(out_dir / "thresholds.csv", threshold_rows(cov))
         write_csv(out_dir / "directions.csv", direction_rows(cov))
+        if cov.draft is not None:
+            write_csv(out_dir / "depth_classes.csv", depth_class_rows(cov))
         print_summary(title, cov)
         if args.max_rows is not None:
             print(f"  (first {args.max_rows:,} rows only: the rows are shuffled, so this is a random sample)")
         if not args.no_figures:
             for p in save_figures(cov, title, out_dir, args.dpi):
                 print(f"  wrote {p}")
-        tables = ["summary.csv", "thresholds.csv"] + (["directions.csv"] if cov.has_env else [])
+        tables = (["summary.csv", "thresholds.csv"] + (["directions.csv"] if cov.has_env else [])
+                  + (["depth_classes.csv"] if cov.draft is not None else []))
         print("  wrote " + ", ".join(str(out_dir / t) for t in tables))
     return 0
 
