@@ -125,14 +125,14 @@ DEFAULT_HYPERPARAMETERS = {
         'max_grad_norm': 0.5,
         'clip_range': 0.2,
         'eval_frequency': 10,
-        'num_envs': 12,
+        'num_envs': 1,
         'num_epochs': 8,
         'normalize': False,
         'max_nbr_iterations': 5000,
         'batch_size': 2048,
         'device': "cpu",
         'model_dir': "models",
-        'steps_per_policy_update': 8192,
+        'steps_per_policy_update': '4096',
         'seed': None,       # base seed of the worker env RNGs; None = random, logged
     },
 }
@@ -152,7 +152,7 @@ CONFIG_PARAMETERS = {
     'env_type': ["MultiPolicyColavEnv"],
     'profile': "default_profile",       # see ProfileRegistry, e.g.
                                         # "myzako_pysim_to_fhsim_transfer_profile"
-    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'action': "visualize",  # Valid action values: "train", "visualize", "evaluate_reward"
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     'wind': False,
     'current': False,

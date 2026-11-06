@@ -102,12 +102,12 @@ class PySimColavBaseEnv(PySimBaseEnv):
             # COLAV configuration
             enable_obstacles: bool = True,
             enable_variable_ship_size: bool = False,
-            encounter_range: float = 500.0,
+            encounter_range: float = 1000.0,
             evaluate: bool = False,
             # Scenario type configuration
-            scenario_types: Optional[list] = None,
-            scenario_probs: Optional[list] = None,
-            scenario_obstacle_level: Optional[str] = None,
+            scenario_types: Optional[list] = ["head-on"],
+            scenario_probs: Optional[list] = [1.0],
+            scenario_obstacle_level: Optional[str] = "episode",
             # Obstacle population configuration
             obstacle_population: Optional[list] = None,
             obstacle_weights: Optional[list] = None,

@@ -124,9 +124,11 @@ def _plot_min_distance_pdf(
     ax.hist(distances, bins=n_bins, density=True, alpha=0.6, color="steelblue",
             edgecolor="white", label="Histogram (density)")
 
-    kde = gaussian_kde(distances)
-    x_grid = np.linspace(max(0, distances.min() - 5), distances.max() + 10, 300)
-    ax.plot(x_grid, kde(x_grid), color="darkblue", linewidth=2, label="KDE")
+    print(f"distances = {distances}")
+    print(f"len(distances) = {len(distances)}")
+    #kde = gaussian_kde(distances)
+    #x_grid = np.linspace(max(0, distances.min() - 5), distances.max() + 10, 300)
+    #ax.plot(x_grid, kde(x_grid), color="darkblue", linewidth=2, label="KDE")
 
     arrow_coords = ("data", "axes fraction")
     arrow_kwargs = dict(arrowstyle="<->", lw=1.5)

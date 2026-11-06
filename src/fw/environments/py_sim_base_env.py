@@ -952,9 +952,9 @@ class PySimBaseEnv(BaseEnv):
         velocity = distance_traveled / self.time_step
         target_velocity = 4
 
-        r_forward = - 0.25 * abs(target_velocity - velocity) / target_velocity
+        r_forward = - 1.25 * abs(target_velocity - velocity) / target_velocity
         r_heading_alignment = - 0.5 * abs(heading_error)
-        r_cte = - 0.0 * cross_track_error # TODO: 0.05
+        r_cte = - 0.05 * cross_track_error # TODO: 0.05
         r_rudder_angle_change = - 0.4 * (rudder_change / max_rudder_change) ** 1 if rudder_change < max_rudder_change else -1
         r_rudder_angle = - 0.05 * (abs(self.performed_action[0]) / 0.2) ** (2 if abs(self.performed_action[0]) < 0.2 else 4)
         r_thrust_change = 0  # - 0.5 * thrust_change
@@ -967,7 +967,7 @@ class PySimBaseEnv(BaseEnv):
                 r_rudder_angle +
                 r_thrust_change
         )
-        reward = 0.9 + reward
+        reward = 1 + (reward/5)
 
         # Checkpoint handling (may increment checkpoint_index)
         checkpoint_distance = np.linalg.norm(self.ship_pos - current_checkpoint["pos"])

@@ -450,10 +450,10 @@ class MultiPolicyColavEnvironment(BaseEnvironment):
             # eval_scenario/eval_obstacle_count are not PySimColavEnv parameters yet.
             include_scenario_one_hot=True,
             scenario_types=self.configuration.get(
-                "scenario_types", ["path-following", "head-on"]
+                "scenario_types", ["head-on"]
             ),
             scenario_probs=self.configuration.get(
-                "scenario_probs", [0.01, 0.99]
+                "scenario_probs", [1.0]
             ),
             minimal_path_render=True
         )
@@ -833,8 +833,8 @@ def build_multi_policy_colav_config(framework_config: dict, extra: dict | None =
     """
 
     cfg = build_colav_config(framework_config, extra)
-    cfg.setdefault("scenario_types", ["path-following", "head-on"])
-    cfg.setdefault("scenario_probs", [0.01, 0.99])
+    cfg.setdefault("scenario_types", ["head-on"])
+    cfg.setdefault("scenario_probs", [1.0])
     return cfg
 
 

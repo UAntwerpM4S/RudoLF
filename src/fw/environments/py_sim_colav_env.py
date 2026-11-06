@@ -57,11 +57,11 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             evaluate: bool = False,
             include_scenario_one_hot: bool = False,
             # Scenario configuration (passed to base)
-            scenario_types: Optional[list] = None,
-            scenario_probs: Optional[list] = None,
-            obstacle_population: Optional[list] = None,
-            obstacle_weights: Optional[list] = None,
-            scenario_obstacle_level: Optional[str] = None,
+            scenario_types: Optional[list] = ["head-on"],
+            scenario_probs: Optional[list] = [1.0],
+            obstacle_population: Optional[list] = [1],
+            obstacle_weights: Optional[list] = [1.0],
+            scenario_obstacle_level: Optional[str] = "episode",
             ground_truth_classification: bool = True,
             # Focused-encounter training configuration
             focused_encounter_mode: bool = True,
@@ -523,6 +523,7 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
         COLREG shaping per scenario, weighted by g_tcpa (fades out after CPA).
         """
 
+        
         base_reward, done = super()._calculate_colav_reward()
         reward = base_reward
 
@@ -531,6 +532,8 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
 
         g_tcpa = 1.0
         cri = 0.0
+        tcpa = None
+
         if (
             self.ts_idx is not None
             and self.ts_idx < len(self.collision_entities)
@@ -539,19 +542,26 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             ts = self.collision_entities[self.ts_idx]
             os_u = float(self.phys_sim.state.u)
             os_v = float(self.phys_sim.state.v)
+
             cri, tcpa, _ = self._compute_cri(
                 self.ship_pos, self.phys_sim.state.heading, os_u, os_v, ts,
             )
+
             k_tcpa = 0.15
             g_tcpa = 0.5 * (1.0 + math.tanh(k_tcpa * tcpa))
 
         _step_polar = 0.0
+        min_dist = None
+        max_close = None
+
         if (
             self.polar_scan_cached is not None
             and clf.label != "path-following"
         ):
             max_close = float(np.max(self.polar_scan_cached))
-            min_dist_n = 1.0 - (max_close / max(float(self.polar_obs_max), 1e-6))
+            min_dist_n = 1.0 - (
+                max_close / max(float(self.polar_obs_max), 1e-6)
+            )
 
             d_ramp_start = self.distance_penalty_start
             ramp_max_penalty = self.distance_penalty_max
@@ -560,16 +570,27 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
             if min_dist < d_ramp_start:
                 distance_penalty_peak = self.distance_penalty_peak
                 a = -2.6
-                ramp_t = ((min_dist - distance_penalty_peak) /
-                          max(float(d_ramp_start - distance_penalty_peak), EPSILON))
+
+                ramp_t = (
+                    (min_dist - distance_penalty_peak)
+                    / max(float(d_ramp_start - distance_penalty_peak), EPSILON)
+                )
                 ramp_t = float(np.clip(ramp_t, 0.0, 1.0))
+
                 exp_t = (np.exp(a * ramp_t) - 1.0) / (np.exp(a) - 1.0)
                 ramp_penalty = ramp_max_penalty * (1.0 - exp_t)
-                polar_weight = float(self.reward_weights["polar_distance_colreg"])
+
+                polar_weight = float(
+                    self.reward_weights["polar_distance_colreg"]
+                )
+
                 _step_polar = polar_weight * ramp_penalty
                 reward -= _step_polar
 
         _headon_term = 0.0
+        beta = None
+        beta_deg = None
+
         if self.ts_idx is not None and self.ts_idx < len(self.collision_entities):
             ts_idx = self.ts_idx
             ts = self.collision_entities[ts_idx]
@@ -581,64 +602,145 @@ class PySimColavPolarEnv(PySimColavBaseEnv):
                 ts_pos = ts.get_position()
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
+
                 beta = (
                     math.atan2(dy, dx) - os_heading + math.pi
                 ) % (2.0 * math.pi) - math.pi
-                # (1 + (1 - cri)) boosts the signal while the risk is still
-                # low, so early turning pays more than late turning.
+
+                beta_deg = math.degrees(beta)
+
                 k = 1
+                headon_weight = float(self.reward_weights["head-on"])
+
                 _headon_term = (
-                    self.reward_weights["head-on"]
+                    headon_weight
                     * math.tanh(k * beta)
                     * (1 + (1 - cri))
                     * g_tcpa
                 )
+
                 reward += _headon_term
 
             elif scenario == "crossing-right":
                 ts_pos = ts.get_position()
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
+
                 beta = (
                     math.atan2(dy, dx) - os_heading + math.pi
                 ) % (2.0 * math.pi) - math.pi
 
-                # A * tanh(k * (beta - beta_start)): zero crossing at beta_start
                 k = 1
-                beta_start = -0.34906585 # -20deg
+                beta_start = -0.34906585
 
                 crossing_right_signal = (
                     self.reward_weights["crossing-right"]
                     * math.tanh(k * (beta - beta_start))
                     * g_tcpa
                 )
+
                 reward += crossing_right_signal
 
             elif scenario == "overtaking":
                 ts_pos = ts.get_position()
                 dx = float(ts_pos[0] - os_pos[0])
                 dy = float(ts_pos[1] - os_pos[1])
+
                 beta = (
-                               math.atan2(dy, dx) - os_heading + math.pi
-                       ) % (2.0 * math.pi) - math.pi
+                    math.atan2(dy, dx) - os_heading + math.pi
+                ) % (2.0 * math.pi) - math.pi
 
                 k = 1
                 _overtaking_term = (
-                        self.reward_weights["overtaking"]
-                        * math.tanh(k * beta)
-                        * g_tcpa
+                    self.reward_weights["overtaking"]
+                    * math.tanh(k * beta)
+                    * g_tcpa
                 )
+
                 reward += _overtaking_term
 
+        # Post-CPA compensation
+        phase2_multiplier = 1.0
+        compensation = 0.0
 
-        # After CPA, boost the base reward so it matches the pre-CPA reward
-        # (base + scenario signal) in magnitude at saturation.
         if clf.label != "path-following":
             base_peak = float(self._base_reward_peak_est)
             cr_w = float(self.reward_weights[clf.label])
-            phase2_multiplier = 1.0 + cr_w / max(base_peak, 1e-6)
-            reward+= (phase2_multiplier - 1.0) * (1.0 - g_tcpa) * base_reward
 
+            phase2_multiplier = (
+                1.0 + cr_w / max(base_peak, 1e-6)
+            )
+
+            compensation = (
+                (phase2_multiplier - 1.0)
+                * (1.0 - g_tcpa)
+                * base_reward
+            )
+
+            reward += compensation
+
+        # ============================================================
+        # DEBUG PRINTS: HEAD-ON ONLY
+        # ============================================================
+        if False:
+
+            print("\n" + "=" * 65)
+            print("                 HEAD-ON REWARD DEBUG")
+            print("=" * 65)
+
+            print("\n[SCENARIO]")
+            print(f"Scenario             : {clf.label}")
+            print(f"Tracked target index : {self.ts_idx}")
+            print(f"Number of entities   : {len(self.collision_entities)}")
+
+            if self.ts_idx is None or self.ts_idx >= len(self.collision_entities):
+
+                print("\n[WARNING]")
+                print("Head-on scenario detected, but no valid target ship is tracked.")
+                print("Scenario-based head-on reward was NOT calculated.")
+
+                print("\n[REWARD COMPONENTS]")
+                print(f"Base reward          : {base_reward:.5f}")
+                print(f"Polar penalty        : {_step_polar:.5f}")
+                print(f"Head-on contribution : {_headon_term:.5f}")
+                print(f"Compensation         : {compensation:.5f}")
+                print(f"Final reward         : {reward:.5f}")
+
+            else:
+                print("\n[COLLISION RISK]")
+                print(f"CRI                  : {cri:.5f}")
+                print(f"TCPA                 : {tcpa:.3f} s")
+                print(f"g_TCPA               : {g_tcpa:.5f}")
+
+                print("\n[BEARING]")
+                print(f"Relative bearing     : {beta:.5f} rad")
+                print(f"Relative bearing     : {beta_deg:.3f} deg")
+
+                print("\n[HEAD-ON REWARD]")
+                print(f"Head-on weight       : {headon_weight:.5f}")
+                print(f"tanh(beta)           : {math.tanh(beta):.5f}")
+                print(f"CRI amplification   : {2.0 - cri:.5f}")
+                print(f"TCPA weighting       : {g_tcpa:.5f}")
+                print(f"Head-on contribution : {_headon_term:.5f}")
+
+                print("\n[POLAR DISTANCE PENALTY]")
+                print(f"Estimated distance   : {min_dist:.3f} m" if min_dist is not None else "Estimated distance: N/A")
+                print(f"Polar penalty        : {_step_polar:.5f}")
+
+                print("\n[POST-CPA COMPENSATION]")
+                print(f"Base reward peak     : {base_peak:.5f}")
+                print(f"Phase-2 multiplier   : {phase2_multiplier:.5f}")
+                print(f"Compensation         : {compensation:.5f}")
+
+                print("\n[FINAL REWARD]")
+                print(f"Base reward          : {base_reward:.5f}")
+                print(f"- Polar penalty      : {-_step_polar:.5f}")
+                print(f"+ Head-on contribution: {_headon_term:.5f}")
+                print(f"+ Compensation       : {compensation:.5f}")
+                print(f"FINAL REWARD         : {reward:.5f}")
+
+            print(f"Done                 : {done}")
+            print("=" * 65 + "\n")
         return reward, done
 
     # -----------------------
