@@ -277,7 +277,7 @@ class MatplotlibRenderer:
                 ax.plot(cp_pos[:, 0], cp_pos[:, 1], "g--", alpha=0.5, label="Ideal path")
                 for cp in env.checkpoints:
                     ax.add_patch(plt.Circle(
-                        cp["pos"], radius=10, color="gray", alpha=0.5, fill=True,
+                        cp["pos"], radius=1, color="gray", alpha=0.5, fill=True, #I changed the radius from 10 to 1 for visualization in the towing tank environment
                     ))
 
         for i, ep in enumerate(episodes):

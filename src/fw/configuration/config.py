@@ -149,8 +149,8 @@ AIRSIM_HYPERPARAMETER_OVERRIDES = {
 CONFIG_PARAMETERS = {
     # One or a list of: "PySimEnv", "FhSimEnv", "MultiSimEnv",
     # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander".
-    'env_type': ["MultiPolicyColavEnv"],
-    'profile': "default_profile",       # see ProfileRegistry, e.g.
+    'env_type': ["PySimEnv"],
+    'profile': "ugent_b01_surrogate_profile",       # see ProfileRegistry, e.g.
                                         # "myzako_pysim_to_fhsim_transfer_profile"
     'action': "visualize",  # Valid action values: "train", "visualize", "evaluate_reward"
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
@@ -160,11 +160,11 @@ CONFIG_PARAMETERS = {
     'enable_bank_collision_check': True,
     'visualize_best_trained': False,
     'viz_mode': VisualizationMode.COMPLEX,
-    'start_pos': DEFAULT_FRAMEWORK_SHIP_POS,    # (2245.0, -47.0)
-    'target_pos': DEFAULT_FRAMEWORK_TARGET_POS, # (-1559.0, 11990.0)
-    'overall_contour': "env_Sche_no_scale.csv",
-    'depth_contour': "env_Sche_250cm_no_scale.csv",
-    'trajectory': "trajectory_points_no_scale.csv",
+    'start_pos': TOWING_TANK_SHIP_POS,    # (2245.0, -47.0)
+    'target_pos': TOWING_TANK_TARGET_POS, # (-1559.0, 11990.0)
+    'overall_contour': "env_towing_tank.csv",
+    'depth_contour': "env_towing_tank_depth.csv",
+    'trajectory': "trajectory_checkpoints_towing_tank.csv",
     'scenario': "DDShip_scenario1_nowindnocurrent",
     # UAntwerp surrogate (Model.UANTWERP). "preset" (fw/surrogate/presets.py) is
     # {tripoli,myzako}_{clean,confined,full}: clean = open water, confined = UKC

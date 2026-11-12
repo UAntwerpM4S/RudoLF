@@ -1,0 +1,872 @@
+"""
+Polar rangefinder collision avoidance environment.
+
+Extends PySimColavBaseEnv with a polar rangefinder observation and
+COLREG-aware reward shaping for the polar/rangefinder approach.
+"""
+
+import math
+import logging
+import matplotlib
+import numpy as np
+import gymnasium as gym
+
+from typing import Optional, Tuple
+from fw.environments.py_sim_towing_tank_colav_base import PySimTowingTankColavBaseEnv
+from fw.ships.ship_factory import ShipModel
+from fw.dynamics.dynamics_model import Model
+from fw.environments.py_sim_colav_base import PySimColavBaseEnv
+from fw.collision_avoidance.scenario_classifier import NUM_SCENARIOS
+
+logger = logging.getLogger(__name__)
+
+EPSILON = 1e-9
+
+
+
+class PySimTowingTankMultiAgentEnv(PySimTowingTankColavBaseEnv):
+    """
+    Collision avoidance environment with polar rangefinder observations.
+
+    Adds a polar scan (ray-cast sectors) and a TCPA phase scalar,
+    tanh(TCPA / cri_T), to the observation, and applies COLREG-aware reward
+    shaping based on relative bearings.
+    """
+
+    # Tracks one target ship (ts_idx) via the scenario classifier; the
+    # ScenarioBuilder may despawn it once it has passed.
+    TRACKS_TARGET_SHIP: bool = True
+
+    def __init__(
+            self,
+            render_mode: Optional[str] = None,
+            time_step: float = 1,
+            max_steps: int = 1500,
+            verbose: Optional[bool] = None,
+            ship_pos: Optional[np.ndarray] = None,
+            target_pos: Optional[np.ndarray] = None,
+            overall_contour: Optional[str] = None,
+            depth_contour: Optional[str] = None,
+            trajectory: Optional[str] = None,
+            dynamics_model: Optional[Model] = Model.FOSSEN,
+            ship_model: Optional[ShipModel] = ShipModel.MYZAKO_37,
+            wind: bool = False,
+            current: bool = False,
+            ugent_surrogate_config: Optional[dict] = None,
+            ugent_b01_surrogate_config: Optional[dict] = None,
+            enable_obstacles: bool = True,
+            enable_variable_ship_size: bool = False,
+            evaluate: bool = False,
+            include_scenario_one_hot: bool = False,
+            # Scenario configuration (passed to base)
+            scenario_types: Optional[list] = ["head-on"],
+            scenario_probs: Optional[list] = [1.0],
+            obstacle_population: Optional[list] = [1],
+            obstacle_weights: Optional[list] = [1.0],
+            scenario_obstacle_level: Optional[str] = "episode",
+            ground_truth_classification: bool = True,
+            # Focused-encounter training configuration
+            focused_encounter_mode: bool = True,
+            train_encounter_prob: float = 1.0,
+            train_encounter_cooldown: int = 150,
+            eval_encounter_prob: float = 0.004,
+            eval_encounter_cooldown: int = 500,
+            post_encounter_steps: int = 150,
+            pathfollowing_encounter_steps: int = 50,
+            skip_tail_segments: int = 5,
+            random_segment_start: bool = True,
+            minimal_path_render: bool = False,
+            **kwargs,
+    ) -> None:
+        """
+        Args:
+            render_mode: Rendering mode.
+            time_step: Simulation time step (s).
+            max_steps: Maximum steps per episode.
+            verbose: Verbose logging.
+            ship_pos: Initial own-ship position.
+            target_pos: Target position.
+            overall_contour, depth_contour, trajectory: Map/path CSV files.
+            dynamics_model: Vessel dynamics model.
+            ship_model: Ship model.
+            wind: Enable wind.
+            current: Enable current.
+            ugent_surrogate_config: Config for Model.UGENT_SURROGATE, e.g.
+                {"ukc_percent": 363}.
+            ugent_b01_surrogate_config: Config for Model.UGENT_B01_SURROGATE,
+                e.g. {"ukc_percent": 379}.
+            enable_obstacles: Spawn obstacles / target ships.
+            enable_variable_ship_size: Randomize ship sizes.
+            evaluate: Evaluation mode.
+            include_scenario_one_hot: Append a one-hot scenario encoding to the
+                observation.
+            scenario_types: Encounter scenario types.
+            scenario_probs: Sampling probabilities per scenario type.
+            obstacle_population: Possible obstacle counts.
+            obstacle_weights: Sampling weights for obstacle_population.
+            scenario_obstacle_level: "episode" or "step" level spawning
+                (default "step").
+            ground_truth_classification: Lock the classifier to the spawned
+                scenario instead of geometric classification.
+            focused_encounter_mode: One encounter per training episode, then
+                truncate (shorter episodes, more balanced PF/encounter steps).
+            train_encounter_prob: Per-step spawn probability in training.
+            train_encounter_cooldown: Steps before an encounter may spawn
+                (training).
+            eval_encounter_prob: Per-step spawn probability in evaluation.
+            eval_encounter_cooldown: Steps before an encounter may spawn
+                (evaluation).
+            post_encounter_steps: Path-following steps after an encounter before
+                truncation (focused mode).
+            pathfollowing_encounter_steps: Length of a sampled "path-following"
+                encounter (focused mode).
+            skip_tail_segments: Final path segments excluded as random start.
+            random_segment_start: Start at a random path segment.
+            minimal_path_render: Simplified path rendering.
+            **kwargs: Not used; any keys are logged as ignored.
+        """
+
+        if kwargs:
+            logger.warning(
+                "%s: ignoring unsupported argument(s) %s (not implemented yet).",
+                type(self).__name__, sorted(kwargs),
+            )
+
+        # Tracked target ship index (set from the classifier in the reward).
+        self.ts_idx = None
+
+        # Polar scan configuration
+        self.polar_scan_cached = None
+        self.polar_n_sectors = 54
+        self.polar_fov = np.radians(270)
+        self.polar_max_range = 750.0
+        self.polar_obs_max = 0.1 * self.polar_max_range / 250
+        self.distance_penalty_start = 100
+        self.distance_penalty_peak = 40
+        self.distance_penalty_max = 5.0
+
+        # Overtaking TS speed range (m/s)
+        self.overtaking_ts_v_min = 1.0
+        self.overtaking_ts_v_max = 1.7
+
+        self.include_scenario_one_hot = bool(include_scenario_one_hot)
+
+        # Focused encounter: path following, encounter, path following, truncate
+        self.focused_encounter_mode = bool(focused_encounter_mode)
+        self.train_encounter_prob = float(train_encounter_prob)
+        self.train_encounter_cooldown = int(train_encounter_cooldown)
+        self.eval_encounter_prob = float(eval_encounter_prob)
+        self.eval_encounter_cooldown = int(eval_encounter_cooldown)
+        self.post_encounter_steps = int(post_encounter_steps)
+        self.pathfollowing_encounter_steps = int(pathfollowing_encounter_steps)
+        self.skip_tail_segments = int(skip_tail_segments)
+        self.random_segment_start = bool(random_segment_start)
+
+
+        # Polar ray directions relative to the heading (sector centres)
+        bin_width = float(self.polar_fov) / float(self.polar_n_sectors)
+        self._polar_rel_angles = (
+                -(self.polar_fov / 2.0) + (np.arange(self.polar_n_sectors, dtype=np.float32) + 0.5) * bin_width
+        ).astype(np.float32)
+        self._polar_rel_dirs = np.stack(
+            (np.cos(self._polar_rel_angles), np.sin(self._polar_rel_angles)), axis=1
+        ).astype(np.float32)
+
+        scenario_obstacle_level = str(scenario_obstacle_level) if scenario_obstacle_level is not None else "step"
+        scenario_probs = scenario_probs if scenario_probs is not None else [
+            0.0, 0.0, 0.33, 0.33, 0.34, 0.0 # "path-following", "static", "overtaking", "head-on", "crossing-right", "crossing-left"
+        ]
+
+        # encounter_range = polar_max_range
+        super().__init__(
+            render_mode=render_mode,
+            time_step=time_step,
+            max_steps=max_steps,
+            verbose=verbose,
+            ship_pos=ship_pos,
+            target_pos=target_pos,
+            overall_contour=overall_contour,
+            depth_contour=depth_contour,
+            trajectory=trajectory,
+            dynamics_model=dynamics_model,
+            ship_model=ship_model,
+            wind=wind,
+            current=current,
+            ugent_surrogate_config=ugent_surrogate_config,
+            ugent_b01_surrogate_config=ugent_b01_surrogate_config,
+            enable_obstacles=enable_obstacles,
+            enable_variable_ship_size=enable_variable_ship_size,
+            encounter_range=self.polar_max_range,
+            evaluate=evaluate,
+            scenario_types=scenario_types,
+            scenario_probs=scenario_probs,
+            obstacle_population=obstacle_population,
+            obstacle_weights=obstacle_weights,
+            scenario_obstacle_level=scenario_obstacle_level,
+            ground_truth_classification=ground_truth_classification,
+            minimal_path_render=minimal_path_render,
+        )
+
+        self.polar_scan_cached = None
+        self.enable_reward_diag = False
+
+        self.reward_weights = {
+            "polar_distance_colreg": 0.65,
+            "colreg_bearing": 1.5,
+            "crossing-right": 0.53125,
+            "head-on": 0.75,
+            "overtaking": 0.53125,
+        }
+
+        # Estimated peak of base_reward
+        self._base_reward_peak_est = 0.9
+
+    # -------------------------
+    # Evaluation-mode overrides
+    # -------------------------
+    def set_evaluation_parameters(self) -> None:
+        """
+        Switch on evaluation settings (fixed TS speeds, fixed start segment).
+
+        Called by AgentManager.visualize_trained_agent before running episodes;
+        takes effect on the next reset/spawn. Training is unaffected.
+        """
+
+        self.eval = True
+
+        self.overtaking_ts_v_min = 1.0
+        self.overtaking_ts_v_max = 1.0
+
+        self.headon_ts_v_min = self.os_nominal_speed
+        self.headon_ts_v_max = self.os_nominal_speed
+
+        # OS always starts from the route start
+        self.random_segment_start = False
+
+        # Single-encounter mode wiring (read by scenario_builder).
+        # self.single_encounter_per_episode = True
+        # self.single_encounter_target_segment_index = 15
+        # self.single_encounter_zoom_halfwidth = 1450
+
+    # -------------------------
+    # Polar scan geometry
+    # -------------------------
+    def _intersect_rays_with_segments(self, origins, ray_ends, seg_starts, seg_ends):
+        """
+        Distance along each ray (origins to ray_ends) to the nearest segment hit,
+        or polar_max_range if none.
+        """
+
+        r = ray_ends - origins
+        s = seg_ends - seg_starts
+        origin_to_starts = seg_starts - origins
+
+        denom = r[:, np.newaxis, 0] * s[np.newaxis, :, 1] - r[:, np.newaxis, 1] * s[np.newaxis, :, 0]
+        denom[np.abs(denom) < 1e-10] = np.nan
+
+        t = (origin_to_starts[np.newaxis, :, 0] * s[np.newaxis, :, 1] -
+             origin_to_starts[np.newaxis, :, 1] * s[np.newaxis, :, 0]) / denom
+        u = (origin_to_starts[np.newaxis, :, 0] * r[:, np.newaxis, 1] -
+             origin_to_starts[np.newaxis, :, 1] * r[:, np.newaxis, 0]) / denom
+
+        valid = (t >= 0) & (t <= 1) & (u >= 0) & (u <= 1)
+        dist_matrix = np.where(valid, t * self.polar_max_range, self.polar_max_range)
+        return np.min(dist_matrix, axis=1)
+
+    def _rebuild_polar_scan_geometries(self) -> None:
+        """
+        Cache boundary segments and inflated entity circles for ray casting.
+        """
+
+        coords = np.array(self.obstacles, dtype=np.float32)
+        if not np.allclose(coords[0], coords[-1]):
+            coords = np.vstack([coords, coords[0]])
+
+        self._boundary_starts = coords[:-1]
+        self._boundary_ends = coords[1:]
+
+        entities = getattr(self, "collision_entities", []) or []
+        if entities:
+            centers = np.array([entity.get_position() for entity in entities], dtype=np.float32)
+            radii = np.array([float(entity.radius) for entity in entities], dtype=np.float32)
+            self._collision_entity_centers = centers.reshape(-1, 2)
+            self._collision_entity_radii_sq = np.square(radii + float(self.own_ship_radius))
+        else:
+            self._collision_entity_centers = None
+            self._collision_entity_radii_sq = None
+
+    def _get_polar_scan(self) -> np.ndarray:
+        """
+        Ray-cast against boundaries and collision entities.
+
+        Returns:
+            Closeness per sector, (1 - distance / polar_max_range) scaled to
+            [0, polar_obs_max].
+        """
+
+        ship_pos = self.ship_pos
+        x0, y0 = ship_pos
+        heading = self.phys_sim.state.heading
+
+        ch, sh = np.cos(heading), np.sin(heading)
+        dx = ch * self._polar_rel_dirs[:, 0] - sh * self._polar_rel_dirs[:, 1]
+        dy = sh * self._polar_rel_dirs[:, 0] + ch * self._polar_rel_dirs[:, 1]
+
+        ray_ends = np.stack([x0 + self.polar_max_range * dx,
+                             y0 + self.polar_max_range * dy], axis=1)
+
+        buffer = 50.0
+        limit_sq = (self.polar_max_range + buffer) ** 2
+        d0 = (self._boundary_starts[:, 0] - x0) ** 2 + (self._boundary_starts[:, 1] - y0) ** 2
+        d1 = (self._boundary_ends[:, 0] - x0) ** 2 + (self._boundary_ends[:, 1] - y0) ** 2
+
+        mask = (d0 < limit_sq) | (d1 < limit_sq)
+        local_starts = self._boundary_starts[mask]
+        local_ends = self._boundary_ends[mask]
+
+        distances = np.full(self.polar_n_sectors, self.polar_max_range, dtype=np.float32)
+
+        if len(local_starts) > 0:
+            distances = self._intersect_rays_with_segments(
+                ship_pos, ray_ends, local_starts, local_ends
+            )
+
+        if self._collision_entity_centers is not None and len(self._collision_entity_centers) > 0:
+            d = ray_ends - ship_pos
+            f = ship_pos - self._collision_entity_centers
+
+            a = np.sum(d ** 2, axis=1)[:, np.newaxis]
+            b = 2 * (d @ f.T)
+            c = (np.sum(f ** 2, axis=1) - self._collision_entity_radii_sq)[np.newaxis, :]
+
+            discriminant = b ** 2 - 4 * a * c
+            hits = (discriminant >= 0)
+            t = np.where(hits, (-b - np.sqrt(np.maximum(0, discriminant))) / (2 * a), 1.0)
+            valid_t = np.where((t >= 0) & (t <= 1), t * self.polar_max_range, self.polar_max_range)
+            circle_distances = np.min(valid_t, axis=1)
+            distances = np.minimum(distances, circle_distances)
+
+        dist = np.clip(distances / self.polar_max_range, 0.0, 1.0).astype(np.float32)
+        closeness = 1.0 - dist
+        scan = closeness * float(self.polar_obs_max)
+        return np.clip(scan, 0.0, float(self.polar_obs_max)).astype(np.float32)
+
+    # -----------------------
+    # Hooks from base
+    # -----------------------
+    def _on_entities_stepped(self) -> None:
+        """
+        Refresh the polar scan after entities move, then update passing detection.
+        """
+
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            self._rebuild_polar_scan_geometries()
+            self.polar_scan_cached = self._get_polar_scan()
+
+        self._update_passing_detection()
+
+    def _update_passing_detection(self) -> None:
+        """
+        Detect the OS passing the tracked TS and record encounter snapshots.
+
+        A pass is a sign flip of CollisionEntity.passing_signal; the pass point
+        is interpolated within the step so the snapshot lies on the TS track.
+        Passing the TS on the OS's port side counts as COLREG-correct,
+        starboard as a violation.
+        """
+
+        clf = self.scenario_classifier
+        ts_idx = clf.tracked_ts
+
+        if (
+            ts_idx is None
+            or ts_idx >= len(self.collision_entities)
+            or clf.label not in ("head-on", "crossing-right", "overtaking")
+        ):
+            self._prev_passing_signal = None
+            self._prev_passing_ts_idx = None
+            return
+
+        ts = self.collision_entities[ts_idx]
+        os_pos_now = self.ship_pos
+        ts_pos_now = ts.get_position()
+        signal = ts.passing_signal(os_pos_now, clf.label)
+
+        # Encounter-start snapshot (first step this TS is tracked)
+        if self._prev_passing_ts_idx != ts_idx:
+            self._passing_snapshots.append({
+                "os_pos": np.asarray(os_pos_now, dtype=np.float32),
+                "ts_pos": np.asarray(ts_pos_now, dtype=np.float32),
+                "dist": float(np.linalg.norm(os_pos_now - ts_pos_now)),
+                "scenario": clf.label,
+                "kind": "start",
+            })
+
+        prev = self._prev_passing_signal
+        if (
+            prev is not None
+            and self._prev_passing_ts_idx == ts_idx
+            and prev * signal < 0.0
+            and self.ts_passed != ts_idx
+        ):
+            t = prev / (prev - signal)
+            os_at = self._prev_os_pos + t * (os_pos_now - self._prev_os_pos)
+            ts_at = self._prev_ts_pos + t * (ts_pos_now - self._prev_ts_pos)
+            self.ts_passed = ts_idx
+            self._current_encounter_passed = True
+            side = ts.ts_side_from_os_perspective(os_pos_now, self.phys_sim.state.heading)
+            if side == "port":
+                self._colreg_correct += 1
+            elif side == "starboard":
+                self._colreg_violations += 1
+            self._passing_snapshots.append({
+                "os_pos": np.asarray(os_at, dtype=np.float32),
+                "ts_pos": np.asarray(ts_at, dtype=np.float32),
+                "dist": float(np.linalg.norm(os_at - ts_at)),
+                "scenario": clf.label,
+                "kind": "passed",
+            })
+        self._prev_passing_signal = signal
+        self._prev_passing_ts_idx = ts_idx
+        self._prev_os_pos = np.copy(os_pos_now)
+        self._prev_ts_pos = np.copy(ts_pos_now)
+
+    def _on_episode_reset(self) -> None:
+        """
+        Reset polar-specific state for a new episode.
+        """
+
+        self.polar_scan_cached = None
+        self._rebuild_polar_scan_geometries()
+
+        self._overtaking_pass_reported = False
+        self._os_speed_samples = []
+
+    # -----------------------
+    # Observation
+    # -----------------------
+    def _initialize_observation_space(self) -> gym.spaces.Box:
+        """
+        Base space plus polar scan sectors, the tanh-TCPA scalar and optional one-hot.
+        """
+
+        base_space = super()._initialize_observation_space()
+
+        polar_low = np.zeros(self.polar_n_sectors, dtype=np.float32)
+        polar_high = np.full(self.polar_n_sectors, self.polar_obs_max, dtype=np.float32)
+
+        tcpa_low = -np.ones(1, dtype=np.float32)
+        tcpa_high = np.ones(1, dtype=np.float32)
+
+        extended_low = np.hstack([base_space.low, polar_low, tcpa_low])
+        extended_high = np.hstack([base_space.high, polar_high, tcpa_high])
+
+        if getattr(self, "include_scenario_one_hot", False):
+            one_hot_low = np.zeros(NUM_SCENARIOS, dtype=np.float32)
+            one_hot_high = np.ones(NUM_SCENARIOS, dtype=np.float32)
+            extended_low = np.hstack([extended_low, one_hot_low])
+            extended_high = np.hstack([extended_high, one_hot_high])
+
+        return gym.spaces.Box(low=extended_low, high=extended_high, dtype=np.float32)
+
+    def _get_obs(self) -> np.ndarray:
+        """
+        Base observation plus polar scan, TCPA phase scalar and optional one-hot.
+        """
+
+        base_obs = super()._get_obs()
+
+        clf = self.scenario_classifier
+
+        if not self.phys_sim.state.terminated and not self.phys_sim.state.truncated:
+            clf.classify_path_projected(
+                self.ship_pos,
+                self.phys_sim.state.heading,
+                self.collision_entities,
+            )
+
+        scan = self.polar_scan_cached
+        if scan is None:
+            scan = self._get_polar_scan()
+            self.polar_scan_cached = scan
+
+        # No scan during pure path following
+        if clf.label == "path-following":
+            scan = np.zeros(self.polar_n_sectors, dtype=np.float32)
+
+        # Encounter phase: about +1 before CPA, 0 at CPA, about -1 after CPA
+        tcpa_norm = 0.0
+        if clf.tracked_ts is not None and clf.tracked_ts < len(self.collision_entities):
+            ts = self.collision_entities[clf.tracked_ts]
+            os_pos = self.ship_pos
+            os_heading = self.phys_sim.state.heading
+            os_u = float(self.phys_sim.state.u)
+            os_v = float(self.phys_sim.state.v)
+            _, tcpa, _ = self._compute_cri(os_pos, os_heading, os_u, os_v, ts)
+            tcpa_norm = float(math.tanh(tcpa / max(self.cri_T, 1e-6)))
+
+        obs = np.hstack([
+            base_obs,
+            scan.astype(np.float32),
+            np.array([tcpa_norm], dtype=np.float32),
+        ]).astype(np.float32)
+
+        if getattr(self, "include_scenario_one_hot", False):
+            obs = np.hstack([obs, self.scenario_classifier.get_one_hot()]).astype(np.float32)
+
+        return obs
+
+    # -------------------
+    # Reward
+    # -------------------
+    def _calculate_colav_reward(self) -> Tuple[float, bool]:
+        """
+        Base COLAV reward plus a polar proximity penalty and bearing-based
+        COLREG shaping per scenario, weighted by g_tcpa (fades out after CPA).
+        """
+
+        
+        base_reward, done = super()._calculate_colav_reward()
+        reward = base_reward
+
+        clf = self.scenario_classifier
+        self.ts_idx = clf.tracked_ts
+
+        g_tcpa = 1.0
+        cri = 0.0
+        tcpa = None
+
+        if (
+            self.ts_idx is not None
+            and self.ts_idx < len(self.collision_entities)
+            and clf.label in ("crossing-right", "head-on", "overtaking")
+        ):
+            ts = self.collision_entities[self.ts_idx]
+            os_u = float(self.phys_sim.state.u)
+            os_v = float(self.phys_sim.state.v)
+
+            cri, tcpa, _ = self._compute_cri(
+                self.ship_pos, self.phys_sim.state.heading, os_u, os_v, ts,
+            )
+
+            k_tcpa = 0.15
+            g_tcpa = 0.5 * (1.0 + math.tanh(k_tcpa * tcpa))
+
+        _step_polar = 0.0
+        min_dist = None
+        max_close = None
+
+        if (
+            self.polar_scan_cached is not None
+            and clf.label != "path-following"
+        ):
+            max_close = float(np.max(self.polar_scan_cached))
+            min_dist_n = 1.0 - (
+                max_close / max(float(self.polar_obs_max), 1e-6)
+            )
+
+            d_ramp_start = self.distance_penalty_start
+            ramp_max_penalty = self.distance_penalty_max
+            min_dist = min_dist_n * self.polar_max_range
+
+            if min_dist < d_ramp_start:
+                distance_penalty_peak = self.distance_penalty_peak
+                a = -2.6
+
+                ramp_t = (
+                    (min_dist - distance_penalty_peak)
+                    / max(float(d_ramp_start - distance_penalty_peak), EPSILON)
+                )
+                ramp_t = float(np.clip(ramp_t, 0.0, 1.0))
+
+                exp_t = (np.exp(a * ramp_t) - 1.0) / (np.exp(a) - 1.0)
+                ramp_penalty = ramp_max_penalty * (1.0 - exp_t)
+
+                polar_weight = float(
+                    self.reward_weights["polar_distance_colreg"]
+                )
+
+                _step_polar = polar_weight * ramp_penalty
+                reward -= _step_polar
+
+        _headon_term = 0.0
+        beta = None
+        beta_deg = None
+
+        if self.ts_idx is not None and self.ts_idx < len(self.collision_entities):
+            ts_idx = self.ts_idx
+            ts = self.collision_entities[ts_idx]
+            os_pos = self.ship_pos
+            os_heading = self.phys_sim.state.heading
+            scenario = clf.label
+
+            if scenario == "head-on":
+                ts_pos = ts.get_position()
+                dx = float(ts_pos[0] - os_pos[0])
+                dy = float(ts_pos[1] - os_pos[1])
+
+                beta = (
+                    math.atan2(dy, dx) - os_heading + math.pi
+                ) % (2.0 * math.pi) - math.pi
+
+                beta_deg = math.degrees(beta)
+
+                k = 1
+                headon_weight = float(self.reward_weights["head-on"])
+
+                _headon_term = (
+                    headon_weight
+                    * math.tanh(k * beta)
+                    * (1 + (1 - cri))
+                    * g_tcpa
+                )
+
+                reward += _headon_term
+
+            elif scenario == "crossing-right":
+                ts_pos = ts.get_position()
+                dx = float(ts_pos[0] - os_pos[0])
+                dy = float(ts_pos[1] - os_pos[1])
+
+                beta = (
+                    math.atan2(dy, dx) - os_heading + math.pi
+                ) % (2.0 * math.pi) - math.pi
+
+                k = 1
+                beta_start = -0.34906585
+
+                crossing_right_signal = (
+                    self.reward_weights["crossing-right"]
+                    * math.tanh(k * (beta - beta_start))
+                    * g_tcpa
+                )
+
+                reward += crossing_right_signal
+
+            elif scenario == "overtaking":
+                ts_pos = ts.get_position()
+                dx = float(ts_pos[0] - os_pos[0])
+                dy = float(ts_pos[1] - os_pos[1])
+
+                beta = (
+                    math.atan2(dy, dx) - os_heading + math.pi
+                ) % (2.0 * math.pi) - math.pi
+
+                k = 1
+                _overtaking_term = (
+                    self.reward_weights["overtaking"]
+                    * math.tanh(k * beta)
+                    * g_tcpa
+                )
+
+                reward += _overtaking_term
+
+        # Post-CPA compensation
+        phase2_multiplier = 1.0
+        compensation = 0.0
+
+        if clf.label != "path-following":
+            base_peak = float(self._base_reward_peak_est)
+            cr_w = float(self.reward_weights[clf.label])
+
+            phase2_multiplier = (
+                1.0 + cr_w / max(base_peak, 1e-6)
+            )
+
+            compensation = (
+                (phase2_multiplier - 1.0)
+                * (1.0 - g_tcpa)
+                * base_reward
+            )
+
+            reward += compensation
+
+        # ============================================================
+        # DEBUG PRINTS: HEAD-ON ONLY
+        # ============================================================
+        if False:
+
+            print("\n" + "=" * 65)
+            print("                 HEAD-ON REWARD DEBUG")
+            print("=" * 65)
+
+            print("\n[SCENARIO]")
+            print(f"Scenario             : {clf.label}")
+            print(f"Tracked target index : {self.ts_idx}")
+            print(f"Number of entities   : {len(self.collision_entities)}")
+
+            if self.ts_idx is None or self.ts_idx >= len(self.collision_entities):
+
+                print("\n[WARNING]")
+                print("Head-on scenario detected, but no valid target ship is tracked.")
+                print("Scenario-based head-on reward was NOT calculated.")
+
+                print("\n[REWARD COMPONENTS]")
+                print(f"Base reward          : {base_reward:.5f}")
+                print(f"Polar penalty        : {_step_polar:.5f}")
+                print(f"Head-on contribution : {_headon_term:.5f}")
+                print(f"Compensation         : {compensation:.5f}")
+                print(f"Final reward         : {reward:.5f}")
+
+            else:
+                print("\n[COLLISION RISK]")
+                print(f"CRI                  : {cri:.5f}")
+                print(f"TCPA                 : {tcpa:.3f} s")
+                print(f"g_TCPA               : {g_tcpa:.5f}")
+
+                print("\n[BEARING]")
+                print(f"Relative bearing     : {beta:.5f} rad")
+                print(f"Relative bearing     : {beta_deg:.3f} deg")
+
+                print("\n[HEAD-ON REWARD]")
+                print(f"Head-on weight       : {headon_weight:.5f}")
+                print(f"tanh(beta)           : {math.tanh(beta):.5f}")
+                print(f"CRI amplification   : {2.0 - cri:.5f}")
+                print(f"TCPA weighting       : {g_tcpa:.5f}")
+                print(f"Head-on contribution : {_headon_term:.5f}")
+
+                print("\n[POLAR DISTANCE PENALTY]")
+                print(f"Estimated distance   : {min_dist:.3f} m" if min_dist is not None else "Estimated distance: N/A")
+                print(f"Polar penalty        : {_step_polar:.5f}")
+
+                print("\n[POST-CPA COMPENSATION]")
+                print(f"Base reward peak     : {base_peak:.5f}")
+                print(f"Phase-2 multiplier   : {phase2_multiplier:.5f}")
+                print(f"Compensation         : {compensation:.5f}")
+
+                print("\n[FINAL REWARD]")
+                print(f"Base reward          : {base_reward:.5f}")
+                print(f"- Polar penalty      : {-_step_polar:.5f}")
+                print(f"+ Head-on contribution: {_headon_term:.5f}")
+                print(f"+ Compensation       : {compensation:.5f}")
+                print(f"FINAL REWARD         : {reward:.5f}")
+
+            print(f"Done                 : {done}")
+            print("=" * 65 + "\n")
+        return reward, done
+
+    # -----------------------
+    # Rendering (polar-specific)
+    # -----------------------
+    def _initialize_rendering(self) -> None:
+        """
+        Add polar beam artists, paper-style axes and the single-encounter camera.
+        """
+
+        super()._initialize_rendering()
+
+        self.polar_beams = []
+        for _ in range(self.polar_n_sectors):
+            beam_line, = self.ax.plot(
+                [], [], color='orange', alpha=0.3, linewidth=1,
+            )
+            beam_line.set_animated(True)
+            self.polar_beams.append(beam_line)
+
+        # Fixed legend from proxy artists
+        from matplotlib.lines import Line2D
+        legend_handles = [
+            Line2D([0], [0], marker='o', color='none', markerfacecolor='blue',
+                   markersize=8, label='Own ship'),
+            Line2D([0], [0], marker='o', color='none', markerfacecolor='red',
+                   markersize=8, label='Target ship'),
+            Line2D([0], [0], color='green', alpha=0.2, linewidth=1.0,
+                   label='Path'),
+            Line2D([0], [0], color='blue', linewidth=1.5, label='OS trajectory'),
+            Line2D([0], [0], color='red', linewidth=1.5, linestyle='--',
+                   label='TS trajectory'),
+        ]
+        self.ax.legend(handles=legend_handles, loc='best', fontsize=14)
+
+        # Paper-ready styling: larger fonts, km on both axes
+        from matplotlib.ticker import FuncFormatter
+        self.ax.set_title(
+            "Ship Trajectory",
+            fontsize=22,
+        )
+        self.ax.set_xlabel("X position [km]", fontsize=18)
+        self.ax.set_ylabel("Y position [km]", fontsize=18)
+        km_formatter = FuncFormatter(lambda v, _pos: f"{v / 1000:g}")
+        self.ax.xaxis.set_major_formatter(km_formatter)
+        self.ax.yaxis.set_major_formatter(km_formatter)
+        self.ax.tick_params(axis="both", which="major", labelsize=16)
+
+        # Single-encounter eval: fixed camera centred on the TS spawn point, so
+        # runs of different agents can be overlaid. Half-width (m) from
+        # single_encounter_zoom_halfwidth.
+        if (
+            getattr(self, "single_encounter_per_episode", False)
+            and getattr(self, "_single_encounter_ts_spawn_pos", None) is not None
+        ):
+            ts_pos = self._single_encounter_ts_spawn_pos
+            half_x = float(getattr(self, "single_encounter_zoom_halfwidth", 600.0))
+            half_y = half_x * (9.0 / 16.0)
+            self.ax.set_xlim(float(ts_pos[0]) - half_x, float(ts_pos[0]) + half_x)
+            self.ax.set_ylim(float(ts_pos[1]) - half_y, float(ts_pos[1]) + half_y)
+            self.ax.set_aspect("equal", adjustable="box")
+            self.ax.autoscale(False)
+
+    def _render_subclass(self, heading: float) -> None:
+        """
+        Update the polar beam lines.
+        """
+
+        if getattr(self, "polar_beams", None):
+            scan = self.polar_scan_cached
+            if scan is None:
+                scan = self._get_polar_scan()
+
+            sx = float(self.ship_pos[0])
+            sy = float(self.ship_pos[1])
+
+            for j, beam in enumerate(self.polar_beams):
+                rel_angle = float(self._polar_rel_angles[j])
+                angle = heading + rel_angle
+                closeness01 = float(scan[j]) / max(float(self.polar_obs_max), 1e-6)
+                length = (1.0 - closeness01) * float(self.polar_max_range)
+                beam.set_data(
+                    [sx, sx + length * np.cos(angle)],
+                    [sy, sy + length * np.sin(angle)]
+                )
+
+    def _blit_subclass(self) -> None:
+        """
+        Draw the polar beam artists.
+        """
+
+        if getattr(self, "polar_beams", None):
+            for beam in self.polar_beams:
+                self.ax.draw_artist(beam)
+
+    # -----------------------
+    # Evaluation
+    # -----------------------
+    def plot_min_distance_stats(
+        self,
+        pdf_save_path: str = "min_distance_PDF.png",
+        boxplot_save_path: str = "min_distance_boxplots.png",
+        include_banks: bool = True,
+    ) -> None:
+        """
+        Plot minimum-distance statistics (PDF and boxplots); see colav_statistics.
+        """
+
+        from fw.collision_avoidance.colav_statistics import plot_min_distance_stats
+        plot_min_distance_stats(
+            self, pdf_save_path, boxplot_save_path, include_banks=include_banks
+        )
+
+    def plot_scenario_confusion_matrix(
+        self,
+        save_path: str = "scenario_confusion_matrix.png",
+    ) -> None:
+        """
+        Plot the scenario confusion matrix; see colav_statistics.
+        """
+
+        from fw.collision_avoidance.colav_statistics import plot_scenario_confusion_matrix
+        plot_scenario_confusion_matrix(self, save_path)
+
+
+# Backwards-compatible alias
+PySimColavEnv = PySimColavPolarEnv

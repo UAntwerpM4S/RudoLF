@@ -35,7 +35,7 @@ def _load_trajectory_endpoints() -> tuple:
     First and last trajectory waypoints, each a (2,) array [x_east, y_north].
     """
 
-    csv_path = _ENVIRONMENTS_DIR / "trajectory_points_no_scale.csv"
+    csv_path = _ENVIRONMENTS_DIR / "trajectory_points_towing_tank.csv" #Changed from "trajectory_points_no_scale.csv" to "trajectory_points_towing_tank.csv" for training in the towing tank environment
     data = np.loadtxt(csv_path, delimiter=",", skiprows=1)
     start = data[0]
     end = data[-1]
