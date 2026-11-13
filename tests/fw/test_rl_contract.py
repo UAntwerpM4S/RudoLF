@@ -337,9 +337,9 @@ def test_observation_stays_in_its_space(ship_model, smoothing):
     assert float(obs[2]) == pytest.approx(float(np.clip(env.phys_sim.state.r / YAW_RATE_OBS_SCALE, -1.0, 1.0)), abs=1e-6)
 
 
-def test_next_segment_heading_error_uses_the_next_segment():
+def test_observation_9_is_parallel_to_the_previous_to_next_line():
     """
-    Observation 9 is the heading error to the direction current checkpoint -> next checkpoint.
+    Observation 9 is the heading error to the direction previous checkpoint -> next checkpoint.
     """
 
     from fw.environments.py_sim_env import PySimEnv
@@ -347,10 +347,10 @@ def test_next_segment_heading_error_uses_the_next_segment():
     env = PySimEnv(time_step=2.0, max_steps=50, start_pos=START, target_pos=TARGET,
                    dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
     obs, _ = env.reset(seed=0)
-    current_cp = env.checkpoints[env.checkpoint_index]["pos"]
+    previous_cp = env.checkpoints[env.checkpoint_index - 1]["pos"]
     next_cp = env.checkpoints[env.checkpoint_index + 1]["pos"]
-    segment = next_cp - current_cp
-    expected = env.normalize_angle(np.arctan2(segment[1], segment[0]) - env.phys_sim.state.heading) / np.pi
+    line = next_cp - previous_cp
+    expected = env.normalize_angle(np.arctan2(line[1], line[0]) - env.phys_sim.state.heading) / np.pi
     assert float(obs[9]) == pytest.approx(float(expected), abs=1e-6)
 
 

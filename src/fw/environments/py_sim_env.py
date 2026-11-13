@@ -1187,7 +1187,7 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Heading error to current checkpoint
                 -1.0,   # Heading error to next checkpoint
                 -1.0,   # Heading error, parallel to current checkpoint segment
-                -1.0,   # Heading error, parallel to next checkpoint segment
+                -1.0,   # Heading error, parallel to previous-to-next checkpoint line
                 -1.0,   # Previous rudder angle
                 -1.0,   # Optimal LOS guidance
                 -1.0,   # Previous thrust
@@ -1206,7 +1206,7 @@ class PySimEnv(BaseEnv):
                 1.0,    # Heading error to current checkpoint
                 1.0,    # Heading error to next checkpoint
                 1.0,    # Heading error, parallel to current checkpoint segment
-                1.0,    # Heading error, parallel to next checkpoint segment
+                1.0,    # Heading error, parallel to previous-to-next checkpoint line
                 1.0,    # Previous rudder angle
                 1.0,    # Optimal LOS guidance
                 1.0,    # Previous thrust
@@ -1388,7 +1388,7 @@ class PySimEnv(BaseEnv):
             0.0
         )
 
-        # Parallel to next checkpoint segment
+        # Parallel to the line from the previous to the next checkpoint
         heading_error_parallel2 = self._calculate_heading_error(
             self._safe_heading_from_vector(next_chkp_pos - prev_chkp_pos),
             self.phys_sim.state.heading,
@@ -1418,7 +1418,7 @@ class PySimEnv(BaseEnv):
             [heading_error / np.pi],                # Heading error to current checkpoint
             [heading_error2 / np.pi],               # Heading error to next checkpoint
             [heading_error_parallel / np.pi],       # Heading error, parallel to current segment
-            [heading_error_parallel2 / np.pi],      # Heading error, parallel to next segment
+            [heading_error_parallel2 / np.pi],      # Heading error, parallel to previous-to-next line
             norm_rudder,                            # Previous rudder angle
             los_heading_error / np.pi,              # Optimal LOS guidance
             norm_thrust,                            # Previous thrust
