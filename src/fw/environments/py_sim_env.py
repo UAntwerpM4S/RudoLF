@@ -50,6 +50,11 @@ CHECKPOINT_AREA_SIZE = 5.0
 TARGET_AREA_SIZE = 7.0
 TARGET_SURGE_VELOCITY_MS = 4.0  # m/s, target for velocity reward shaping
 
+# Scale [rad/s] of the observed yaw rate: just above the largest |yaw_rate| of the
+# myzako_full dataset (0.0365; p99.9 = 0.0304, fw.surrogate.compute_wind_current_obs_scales).
+# The simulator's own limit (yaw_rate_limits) is far wider.
+YAW_RATE_OBS_SCALE = 0.04
+
 # Rendering constants
 MAX_FIG_WIDTH = 1200
 MAX_FIG_HEIGHT = 900
@@ -1165,9 +1170,10 @@ class PySimEnv(BaseEnv):
     # -----------------------
     def _initialize_observation_space(self) -> gym.spaces.Box:
         """
-        Box in [-1, 1]: 12 base features (velocities, checkpoint distances, cross-track and
-        heading errors, previous rudder, LOS error) plus, with wind and current, the 4
-        features of fw.environments.wind_current_obs. Surge is scaled by _surge_cap().
+        Box in [-1, 1]: 13 base features (velocities, checkpoint distances, cross-track and
+        heading errors, actual rudder, LOS error, actual thrust) plus, with wind and
+        current, the 4 features of fw.environments.wind_current_obs. Surge is scaled by
+        _surge_cap(), yaw rate by YAW_RATE_OBS_SCALE; rudder and thrust are on the scale of the policy action.
         """
 
         base_low = np.array(
@@ -1184,6 +1190,7 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Heading error, parallel to next checkpoint segment
                 -1.0,   # Previous rudder angle
                 -1.0,   # Optimal LOS guidance
+                -1.0,   # Previous thrust
             ],
             dtype=np.float32,
         )
@@ -1202,6 +1209,7 @@ class PySimEnv(BaseEnv):
                 1.0,    # Heading error, parallel to next checkpoint segment
                 1.0,    # Previous rudder angle
                 1.0,    # Optimal LOS guidance
+                1.0,    # Previous thrust
             ],
             dtype=np.float32,
         )
@@ -1312,7 +1320,7 @@ class PySimEnv(BaseEnv):
         norm_velocities = np.array([
             np.clip(self.phys_sim.state.u / self._surge_cap(), -1, 1),
             np.clip(self.phys_sim.state.v / self.ship.specifications.sway_limits[1], -1, 1),
-            np.clip(self.phys_sim.state.r / self.ship.specifications.yaw_rate_limits[1], -1, 1)
+            np.clip(self.phys_sim.state.r / YAW_RATE_OBS_SCALE, -1, 1)
         ], dtype=np.float32)
 
         # Clamp checkpoint indices
@@ -1394,6 +1402,13 @@ class PySimEnv(BaseEnv):
             0.0
         )
 
+        # Actual rudder angle [rad] and thrust on the scale of the policy action
+        # (inverse of ActionMapper); thrust is -1 before the first step.
+        specs = self.ship.specifications
+        norm_rudder = float(np.clip(self.performed_action[0] / specs.max_rudder_angle, -1.0, 1.0))
+        norm_thrust = float(np.clip(2.0 * (self.performed_action[1] - specs.min_thrust)
+                                    / (specs.max_thrust - specs.min_thrust) - 1.0, -1.0, 1.0))
+
         # Build observation
         obs = np.hstack([
             norm_velocities,                        # Normalized velocities
@@ -1404,8 +1419,9 @@ class PySimEnv(BaseEnv):
             [heading_error2 / np.pi],               # Heading error to next checkpoint
             [heading_error_parallel / np.pi],       # Heading error, parallel to current segment
             [heading_error_parallel2 / np.pi],      # Heading error, parallel to next segment
-            self.performed_action[0],               # Previous rudder angle
+            norm_rudder,                            # Previous rudder angle
             los_heading_error / np.pi,              # Optimal LOS guidance
+            norm_thrust,                            # Previous thrust
         ])
 
         if self.wind:

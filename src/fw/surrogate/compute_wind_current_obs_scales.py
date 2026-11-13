@@ -6,7 +6,8 @@ The CSVs have the generator's raw full_env row (no header). For every row the
 four observation features are computed with env_body_components, exactly as
 the RL observation does; per quantity the given percentile of the larger
 absolute component (|ahead|, |stbd|) is printed, plus the share of rows that
-the suggested scale would clip.
+the suggested scale would clip. The same percentile of |yaw_rate| is printed
+as well (a candidate scale for the observed yaw rate).
 
 Usage (from src):
 
@@ -25,12 +26,12 @@ from pathlib import Path
 from typing import Dict, Sequence
 from fw.surrogate.schema import FULL_ENV, TARGET_NAMES, env_body_components
 
-_COLUMNS = ("heading", "wind_speed", "wind_direction", "current_speed", "current_direction")
+_COLUMNS = ("heading", "yaw_rate", "wind_speed", "wind_direction", "current_speed", "current_direction")
 
 
 def load_env_columns(csv_file: Path, chunk_rows: int = 1_000_000) -> Dict[str, np.ndarray]:
     """
-    Read only the heading and wind/current columns of a full_env CSV.
+    Read only the heading, yaw-rate and wind/current columns of a full_env CSV.
 
     Raises:
         ValueError: If the CSV does not have the full_env dataset layout
@@ -100,6 +101,11 @@ def main(argv: Sequence[str] = None) -> int:
         print(f"{name}: p{args.percentile:g} of max(|ahead|, |stbd|) = {r['percentile']:.3f} m/s, "
               f"max = {r['max']:.3f} m/s, clipped at that scale: {100 * r['clipped_share']:.3f} % "
               f"of {r['rows']} rows")
+    yaw = np.abs(columns["yaw_rate"])
+    yaw = yaw[np.isfinite(yaw)]
+    if yaw.size:
+        print(f"yaw rate: p{args.percentile:g} of |yaw_rate| = {np.percentile(yaw, args.percentile):.4f} rad/s, "
+              f"max = {yaw.max():.4f} rad/s, of {yaw.size} rows")
     print(f"Suggested: WIND_OBS_SCALE = {result['wind']['percentile']:.1f}, "
           f"CURRENT_OBS_SCALE = {result['current']['percentile']:.2f}")
     return 0

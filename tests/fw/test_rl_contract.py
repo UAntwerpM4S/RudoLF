@@ -303,6 +303,57 @@ def test_full_rate_rudder_move_is_not_a_violation(ship_model):
     assert max(ratios) == pytest.approx(1.0, abs=1e-4)          # really at the top rate
 
 
+@pytest.mark.parametrize("ship_model", [ShipModel.MYZAKO_37, ShipModel.TRIPOLI])
+@pytest.mark.parametrize("smoothing", [False, True])
+def test_observation_stays_in_its_space(ship_model, smoothing):
+    """
+    Every observation lies in the Box; rudder and thrust are observed on the action scale.
+    """
+
+    from fw.environments.py_sim_env import PySimEnv
+
+    env = PySimEnv(time_step=2.0, max_steps=50, start_pos=START, target_pos=TARGET,
+                   dynamics_model=Model.FOSSEN, ship_model=ship_model, wind=True, current=True)
+    env.enable_smoothing = smoothing
+    obs, _ = env.reset(seed=0)
+    assert env.observation_space.contains(obs)
+    rudder_obs = []
+    for k in range(40):                                         # hard over to port, then to starboard
+        obs, _, terminated, truncated, _ = env.step(np.array([1.0 if k < 20 else -1.0, 0.5], dtype=np.float32))
+        assert env.observation_space.contains(obs)
+        rudder_obs.append(float(obs[10]))
+        if terminated or truncated:
+            break
+    spec = env.ship.specifications
+    # With smoothing the rudder stops within the jitter threshold of its command.
+    assert 1.0 - spec.rudder_jitter_threshold / spec.max_rudder_angle - 1e-5 <= max(rudder_obs) <= 1.0
+    assert rudder_obs[-1] == pytest.approx(float(env.performed_action[0]) / spec.max_rudder_angle, abs=1e-6)
+    # Thrust: inverse of ActionMapper (action 0.5 once the actuator has arrived).
+    thrust = spec.min_thrust + 0.5 * (float(obs[12]) + 1.0) * (spec.max_thrust - spec.min_thrust)
+    assert thrust == pytest.approx(float(env.performed_action[1]), abs=1e-6)
+    if not smoothing:
+        assert float(obs[12]) == pytest.approx(0.5, abs=1e-6)
+    from fw.environments.py_sim_env import YAW_RATE_OBS_SCALE
+    assert float(obs[2]) == pytest.approx(float(np.clip(env.phys_sim.state.r / YAW_RATE_OBS_SCALE, -1.0, 1.0)), abs=1e-6)
+
+
+def test_next_segment_heading_error_uses_the_next_segment():
+    """
+    Observation 9 is the heading error to the direction current checkpoint -> next checkpoint.
+    """
+
+    from fw.environments.py_sim_env import PySimEnv
+
+    env = PySimEnv(time_step=2.0, max_steps=50, start_pos=START, target_pos=TARGET,
+                   dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
+    obs, _ = env.reset(seed=0)
+    current_cp = env.checkpoints[env.checkpoint_index]["pos"]
+    next_cp = env.checkpoints[env.checkpoint_index + 1]["pos"]
+    segment = next_cp - current_cp
+    expected = env.normalize_angle(np.arctan2(segment[1], segment[0]) - env.phys_sim.state.heading) / np.pi
+    assert float(obs[9]) == pytest.approx(float(expected), abs=1e-6)
+
+
 def test_vec_env_factory_reseeds_each_worker(tmp_path):
     """
     SinglePPOAgent.make_env gives every worker copy its own RNG (not a copy of the template's).

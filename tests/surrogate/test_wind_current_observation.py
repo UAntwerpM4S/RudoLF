@@ -26,7 +26,7 @@ from fw.surrogate.schema import (
     select_and_encode,
 )
 
-BASE_OBS_DIM = 12
+BASE_OBS_DIM = 13
 
 
 @pytest.fixture(scope="module")
