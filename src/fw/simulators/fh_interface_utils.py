@@ -20,6 +20,10 @@ from fw.surrogate.schema import apparent_to_true_wind
 # FH heading convention: "math" (0 = East, CCW) or "compass" (0 = North, CW).
 FH_HEADING_CONVENTION = "math"
 
+# FH's initial propeller rate [rps] per unit of thrust (engine lever), as set with
+# setInitialPropellerRps by the dataset generator and the RL env.
+FH_PROPELLER_RPS_PER_THRUST = 5.5
+
 # FH's WindState lags the wind-field transform by about 1 s (it first reports
 # the exercise's default wind), so this warm-up is simulated after setting it.
 WIND_WARMUP_TIME = 1.0  # s

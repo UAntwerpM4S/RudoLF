@@ -10,7 +10,7 @@ import numpy as np
 
 from pathlib import Path
 from typing import Optional, Tuple, Union
-from fw.policies.ppo_policy import PPOPolicy
+from fw.policies.ppo_policy import PPOPolicy, require_policy_dims
 from fw.policies.base_ppo_agent import BasePPOAgent
 from stable_baselines3.common.monitor import Monitor
 from fw.configuration.stop_condition import StopCondition
@@ -710,30 +710,35 @@ class SinglePPOAgent(BasePPOAgent):
 
         Raises:
             RuntimeError: If loading fails.
+            ValueError: If the policy's observation/action size differs from the env's.
         """
 
         try:
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-            self.policy = PPOPolicy.load(policy_file_name, self.device)
-            # load() returns a new network: rebind the optimizer to its parameters.
-            self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
-
-            # Disabled: restore Adam momentum from a companion optimizer file.
-            # opt_path = normalize_policy_zip_path(policy_file_name).replace(".zip", "_optimizer.pth")
-            # if os.path.isfile(opt_path):
-            #     try:
-            #         self.optimizer.load_state_dict(
-            #             torch.load(opt_path, map_location=self.device, weights_only=True)
-            #         )
-            #     except Exception as opt_exc:  # shape mismatch on arch change, not fatal
-            #         import logging as _logging
-            #         _logging.getLogger(__name__).warning(
-            #             "Could not restore optimizer state from '%s': %s", opt_path, opt_exc
-            #         )
+            policy = PPOPolicy.load(policy_file_name, self.device)
         except Exception as e:
             raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
+
+        require_policy_dims(policy, self.input_dim, self.output_dim, policy_file_name)
+
+        self.policy = policy
+        # load() returns a new network: rebind the optimizer to its parameters.
+        self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
+
+        # Disabled: restore Adam momentum from a companion optimizer file.
+        # opt_path = normalize_policy_zip_path(policy_file_name).replace(".zip", "_optimizer.pth")
+        # if os.path.isfile(opt_path):
+        #     try:
+        #         self.optimizer.load_state_dict(
+        #             torch.load(opt_path, map_location=self.device, weights_only=True)
+        #         )
+        #     except Exception as opt_exc:  # shape mismatch on arch change, not fatal
+        #         import logging as _logging
+        #         _logging.getLogger(__name__).warning(
+        #             "Could not restore optimizer state from '%s': %s", opt_path, opt_exc
+        #         )
 
 
     def save_policy(self, policy_file_name: str) -> None:

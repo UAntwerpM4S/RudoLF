@@ -90,6 +90,10 @@ class FhSimBridge:
         the exercise's value):
             initial_propeller_rps (float): Initial propeller rps.
             initial_rudder_angle (float): Initial rudder angle [deg].
+            initial_engine_lever (float): Engine lever (thrust) set on all
+                propulsion controls before FH simulates anything in reset()
+                (initialization step and wind warm-up, also after a rewind),
+                so the propeller keeps the rate of initial_propeller_rps.
             initial_wind_field_transform (tuple): (rotation_deg, scale, offset)
                 of the exercise's wind field, applied after enableBridge() and
                 before the first simulateSeconds() (FH ignores it later).
@@ -122,6 +126,10 @@ class FhSimBridge:
         # Initial-condition hooks (see __init__ docstring); None = exercise default.
         self.initial_propeller_rps: Optional[float] = None
         self.initial_rudder_angle: Optional[float] = None          # degrees
+        self.initial_engine_lever: Optional[float] = None
+        # Propeller rps the math model was initialized with (a rewind keeps it).
+        self._initialized_propeller_rps: Optional[float] = None
+        self._propeller_rps_change_warned = False
         self.initial_wind_field_transform: Optional[tuple] = None  # (rotation_deg, scale, offset)
         # Wind-field transform of the current episode (wind_current only) and
         # whether a transform set after a rewind was verified to take effect.
@@ -276,6 +284,8 @@ class FhSimBridge:
             ship_config.setInitialYawVelocity(float(np.degrees(self._initial_vessel_state.r)))
             if self.initial_propeller_rps is not None:
                 ship_config.setInitialPropellerRps(float(self.initial_propeller_rps))
+            self._initialized_propeller_rps = self.initial_propeller_rps
+            self._propeller_rps_change_warned = False
             if self.initial_rudder_angle is not None:
                 ship_config.setInitialRudderAngle(float(self.initial_rudder_angle))
 
@@ -307,6 +317,7 @@ class FhSimBridge:
                 if self.initial_wind_field_transform is not None:
                     self._apply_wind_field_transform(*self.initial_wind_field_transform)
 
+                self._apply_initial_engine_lever()
                 self.math_model.simulateSeconds(0.125)  # initialize velocities
             except BaseException:
                 # Keep the log handlers, so the error and a retry are still logged.
@@ -466,6 +477,15 @@ class FhSimBridge:
                 )
 
             self._math_model.SimulateRewindTo(time_point)
+            # The rewind keeps the rps the model was initialized with.
+            if self.initial_propeller_rps != self._initialized_propeller_rps \
+                    and not self._propeller_rps_change_warned:
+                self._propeller_rps_change_warned = True
+                self._logger.warning(
+                    "initial_propeller_rps changed from %s to %s after the math model was initialized; "
+                    "FH keeps %s until the bridge is disposed and re-initialized.",
+                    self._initialized_propeller_rps, self.initial_propeller_rps, self._initialized_propeller_rps)
+            self._apply_initial_engine_lever()
 
         if transform is not None:
             if not self._rewind_wind_verified:
@@ -474,6 +494,25 @@ class FhSimBridge:
             self._apply_wind_field_transform(transform[0], transform[1], 0.0)
             self._warm_up_wind(self.REWIND_WIND_WARMUP_TIME)
             self.episode_wind_field_transform = (transform[0], transform[1], 0.0)
+
+
+    def _apply_initial_engine_lever(self) -> None:
+        """
+        Set initial_engine_lever (if any) on all propulsion controls, as
+        FhTabularModel.step does for the thrust: azipods for the Tripoli,
+        engaged propellers otherwise. Steering is left as it is.
+        """
+
+        if self.initial_engine_lever is None:
+            return
+        lever = float(self.initial_engine_lever)
+        if self._ship_model == ShipModel.TRIPOLI:
+            for azipod in self._ship_interface.getAzipodControls():
+                azipod.setEngineLeverValue(lever)
+        else:
+            for propeller in self._ship_interface.getPropellerControls():
+                propeller.engage()
+                propeller.setEngineLeverValue(lever)
 
 
     def _warm_up_wind(self, duration: float) -> None:
