@@ -52,6 +52,7 @@ TARGET_SURGE_VELOCITY_MS = 4.0  # m/s, target for velocity reward shaping
 
 # Scale [rad/s] of the observed yaw rate per dynamics model, covering the largest
 # |yaw_rate| measured with that model (the simulator's yaw_rate_limits are far wider).
+# A loaded policy brings the scale it was trained with (set_yaw_rate_obs_scale).
 # FH and UA: myzako_full dataset, max 0.0365, p99.9 0.0304
 # (fw.surrogate.compute_wind_current_obs_scales). Fossen and Nomoto: rudder and
 # thrust sweeps over all their ship presets (max 0.060 and 0.144).
@@ -350,7 +351,10 @@ class PySimEnv(BaseEnv):
         # State and control placeholders
         self.ship = create_ship(self.ship_model)
         self.phys_sim = self.create_simulator(ua_surrogate_config, ugent_surrogate_config, ugent_b01_surrogate_config)
-        self.yaw_rate_obs_scale = yaw_rate_obs_scale(self.dynamics, self.dynamics_model, self.ship.specifications)
+        # Own scale of this env's dynamics model; a loaded policy may bring its own
+        # (set_yaw_rate_obs_scale).
+        self.own_yaw_rate_obs_scale = yaw_rate_obs_scale(self.dynamics, self.dynamics_model, self.ship.specifications)
+        self.yaw_rate_obs_scale = self.own_yaw_rate_obs_scale
 
         self._initialize_simulation()
 
@@ -513,6 +517,27 @@ class PySimEnv(BaseEnv):
             sim_limits = (float(self.ship.specifications.surge_limits[0]) - RANDOM_CURRENT_SPEED_MAX,
                           self._surge_cap())
         return ShipSimulator(self.ship.specifications, self.dynamics, self.time_step, surge_limits=sim_limits)
+
+    def set_yaw_rate_obs_scale(self, scale: Optional[float] = None) -> None:
+        """
+        Set the scale [rad/s] the observed yaw rate is divided by.
+
+        A policy trained with another dynamics model brings the scale it was
+        trained with, so a yaw rate gives the same observation as in training
+        (e.g. validating a Fossen policy in FH). None restores this env's own
+        scale (own_yaw_rate_obs_scale).
+
+        Raises:
+            ValueError: If scale is not positive and finite.
+        """
+
+        if scale is None:
+            self.yaw_rate_obs_scale = self.own_yaw_rate_obs_scale
+            return
+        scale = float(scale)
+        if not (np.isfinite(scale) and scale > 0.0):
+            raise ValueError(f"yaw-rate observation scale must be positive and finite, got {scale}.")
+        self.yaw_rate_obs_scale = scale
 
     def _surge_cap(self) -> float:
         """

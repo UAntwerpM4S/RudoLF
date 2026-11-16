@@ -29,7 +29,9 @@ import zipfile
 import logging
 
 from collections import deque
-from fw.policies.ppo_policy import PPOPolicy, require_policy_dims
+from fw.policies.ppo_policy import (PPOPolicy, apply_policy_yaw_rate_obs_scale, env_yaw_rate_obs_scale,
+                                    policy_yaw_rate_obs_scale, require_policy_dims, start_fresh_policy,
+                                    yaw_rate_obs_scale_changes)
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.common.tools.ppo_utils import reseed_env_rng
 from typing import Optional, Tuple, Union, List, Dict
@@ -250,6 +252,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
             PPOPolicy(self.policy_obs_dim, self.output_dim, str(self.device))
             for _ in range(num_policies)
         ]
+        for policy in self.policies:
+            start_fresh_policy(policy, self.env)
 
         self.optimizers: List[optim.Adam] = [
             optim.Adam(policy.network.parameters(), lr=self.learning_rate)
@@ -970,13 +974,15 @@ class MultiPolicySingleAgent(BasePPOAgent):
     def load_policy(self, policy_file_name: str) -> None:
         """
         Load N policies from a ZIP archive (".zip" added if missing) and rebuild
-        the optimizers.
+        the optimizers. The env takes over the policies' yaw-rate observation scale.
 
         Raises:
             FileNotFoundError: If the archive is missing.
             RuntimeError: If loading fails or required files are absent.
             ValueError: If a policy's observation/action size differs from the
-                agent's; policies and optimizers are left unchanged then.
+                agent's, a stored yaw-rate scale is invalid, or the policies were
+                trained with different yaw-rate scales; policies and optimizers
+                are left unchanged then.
         """
 
         if not policy_file_name.endswith(".zip"):
@@ -1008,6 +1014,15 @@ class MultiPolicySingleAgent(BasePPOAgent):
                                         f"{policy_file_name}:policy_{i}.pth")
                     policies.append(policy)
 
+                # All policies share one env, so they must have been trained with one yaw-rate scale.
+                scales = {policy_yaw_rate_obs_scale(p) for p in policies}
+                if len(scales) > 1:
+                    raise ValueError(f"The policies in '{policy_file_name}' were trained with different "
+                                     f"yaw-rate observation scales {sorted(scales)}, but share one env.")
+                self._close_workers_if_scale_changes(policies[0])
+                for i, policy in enumerate(policies):
+                    apply_policy_yaw_rate_obs_scale(policy, self.env, f"{policy_file_name}:policy_{i}.pth")
+
                 self.policies[:] = policies
                 self.optimizers = [
                     optim.Adam(p.network.parameters(), lr=self.learning_rate)
@@ -1020,6 +1035,17 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 raise RuntimeError(
                     f"Failed to load multi-policy archive: {e}"
                 ) from e
+
+    def _close_workers_if_scale_changes(self, policy: PPOPolicy) -> None:
+        """
+        Close the worker copies (rebuilt on the next rollout) if loading `policy`
+        changes the env's yaw-rate scale; done before the change, so a failing
+        close leaves the env as it was.
+        """
+
+        if self._vec_env is not None and yaw_rate_obs_scale_changes(policy, self.env):
+            self._vec_env.close()
+            self._vec_env = None
 
     def load_individual_policy(
         self,
@@ -1034,7 +1060,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
         Raises:
             IndexError: If policy_id is out of range.
             ValueError: If the policy's observation/action size differs from the
-                agent's; the slot is left unchanged then.
+                agent's, or it was trained with another yaw-rate observation scale
+                than the env uses; the slot is left unchanged then.
         """
 
         if not 0 <= policy_id < self.num_policies:
@@ -1044,6 +1071,11 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         loaded = PPOPolicy.load(policy_file_name, str(self.device))
         require_policy_dims(loaded, self.policy_obs_dim, self.output_dim, policy_file_name)
+        env_scale, policy_scale = env_yaw_rate_obs_scale(self.env), policy_yaw_rate_obs_scale(loaded)
+        if env_scale is not None and policy_scale != env_scale:
+            raise ValueError(f"Policy '{policy_file_name}' was trained with yaw-rate observation scale "
+                             f"{policy_scale}, but the env (shared by all slots) uses {env_scale}.")
+        apply_policy_yaw_rate_obs_scale(loaded, self.env, policy_file_name)
         self.policies[policy_id] = loaded
         self.optimizers[policy_id] = optim.Adam(
             loaded.network.parameters(), lr=self.learning_rate,

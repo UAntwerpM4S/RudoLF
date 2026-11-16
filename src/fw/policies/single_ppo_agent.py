@@ -10,7 +10,8 @@ import numpy as np
 
 from pathlib import Path
 from typing import Optional, Tuple, Union
-from fw.policies.ppo_policy import PPOPolicy, require_policy_dims
+from fw.policies.ppo_policy import (PPOPolicy, apply_policy_yaw_rate_obs_scale, require_policy_dims,
+                                    start_fresh_policy, yaw_rate_obs_scale_changes)
 from fw.policies.base_ppo_agent import BasePPOAgent
 from stable_baselines3.common.monitor import Monitor
 from fw.configuration.stop_condition import StopCondition
@@ -69,6 +70,7 @@ class SinglePPOAgent(BasePPOAgent):
 
         self.input_dim = self.observation_space.shape[0]
         self.policy = PPOPolicy(self.input_dim, self.output_dim, str(self.device))
+        start_fresh_policy(self.policy, self.env)
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         self._vec_env = None
 
@@ -708,6 +710,9 @@ class SinglePPOAgent(BasePPOAgent):
         Args:
             policy_file_name (str): Name or path of the policy file.
 
+        The env takes over the yaw-rate observation scale the policy was trained
+        with (apply_policy_yaw_rate_obs_scale).
+
         Raises:
             RuntimeError: If loading fails.
             ValueError: If the policy's observation/action size differs from the env's.
@@ -723,6 +728,11 @@ class SinglePPOAgent(BasePPOAgent):
 
         require_policy_dims(policy, self.input_dim, self.output_dim, policy_file_name)
 
+        if self._vec_env is not None and yaw_rate_obs_scale_changes(policy, self.env):
+            # Worker copies were made with the old scale: rebuild them on the next rollout.
+            self._vec_env.close()
+            self._vec_env = None
+        apply_policy_yaw_rate_obs_scale(policy, self.env, policy_file_name)
         self.policy = policy
         # load() returns a new network: rebind the optimizer to its parameters.
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)

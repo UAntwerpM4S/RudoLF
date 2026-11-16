@@ -6,7 +6,7 @@ import tempfile
 import logging
 import numpy as np
 
-from fw.policies.ppo_policy import PPOPolicy, require_policy_dims
+from fw.policies.ppo_policy import PPOPolicy, apply_policy_yaw_rate_obs_scale, require_policy_dims
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.configuration.stop_condition import StopCondition
@@ -410,11 +410,15 @@ class MultiPPOAgent(BasePPOAgent):
         The archive holds one serialized policy per agent: policy_0.pth,
         policy_1.pth, ...
 
+        Each agent's sub-environment takes over the yaw-rate observation scale its
+        policy was trained with (apply_policy_yaw_rate_obs_scale).
+
         Raises:
             FileNotFoundError: If the archive does not exist.
             RuntimeError: If loading fails or required files are missing.
             ValueError: If a policy's observation/action size differs from its
-                agent's; no agent is changed then.
+                agent's, or its stored yaw-rate scale is invalid; no agent is
+                changed then.
         """
 
         if not policy_file_name.endswith(".zip"):
@@ -456,7 +460,9 @@ class MultiPPOAgent(BasePPOAgent):
                                         f"{policy_file_name}:policy_{i}.pth")
                     policies.append(policy)
 
-                for agent, policy in zip(self.agents, policies):
+                for i, (agent, policy) in enumerate(zip(self.agents, policies)):
+                    # Each agent's sub-environment takes over its policy's yaw-rate scale.
+                    apply_policy_yaw_rate_obs_scale(policy, agent.env, f"{policy_file_name}:policy_{i}.pth")
                     agent.policy = policy
                     # Rebind the optimizer to the loaded network; otherwise train()
                     # would update the old, discarded parameters.

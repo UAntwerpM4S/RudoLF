@@ -43,6 +43,7 @@ from fw.common.airsim.tools.trajectory_analysis import (  # noqa: E402
 )
 from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 from fw.configuration.config import AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME  # noqa: E402
+from fw.policies.ppo_policy import apply_policy_yaw_rate_obs_scale  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +329,8 @@ class VisualiseModelsRunner:
                     )
 
                 env = self._build_environment(selected_env, max_steps=max_steps)
+                # Observe the yaw rate with the scale the policy was trained with.
+                apply_policy_yaw_rate_obs_scale(policy, env, resolved_model_path.name)
                 max_yaw_step_rad = np.deg2rad(max_yaw_step_deg)
                 bridge_telemetry_interval_s = 1.0 / max(float(bridge_telemetry_hz), 1.0)
                 target_step_interval_s = env.time_step / max(float(simulation_speed), 1e-6)

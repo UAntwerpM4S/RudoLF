@@ -10,7 +10,9 @@ Review fixes of PR 431:
 - compute_wind_current_obs_scales suggests a yaw-rate scale;
 - observed yaw-rate scale per dynamics model (UGent per UKC), in PySimEnv and,
   in separate tables, in the COLAV envs (FH and UA keep 0.04);
-- COLAV observation: rudder and thrust on the action scale (13 base features).
+- COLAV observation: rudder and thrust on the action scale (13 base features);
+- a saved policy carries its yaw-rate scale, and the env it is loaded into takes
+  it over (e.g. a Fossen policy validated in FH).
 """
 
 import dataclasses
@@ -276,6 +278,8 @@ def test_multi_policy_agent_size_mismatch_changes_nothing(tmp_path):
     agent = MultiPolicySingleAgent.__new__(MultiPolicySingleAgent)
     agent.num_policies, agent.policy_obs_dim, agent.output_dim = 2, 13, 2
     agent.device, agent.model_dir, agent.learning_rate = torch.device("cpu"), str(tmp_path), 1e-3
+    agent.env = None                                            # no env: no yaw-rate scale to apply
+    agent._vec_env = None
     agent.policies = [PPOPolicy(13, 2, "cpu") for _ in range(2)]
     agent.optimizers = [torch.optim.Adam(p.network.parameters()) for p in agent.policies]
     policies, optimizers = list(agent.policies), list(agent.optimizers)
@@ -419,3 +423,362 @@ def test_colav_rudder_and_thrust_are_on_the_action_scale(ship_model):
         base = PySimBaseEnv._get_obs(env)
         assert base[10] == pytest.approx(rudder, abs=1e-6)
         assert base[12] == pytest.approx(0.5, abs=1e-6)
+
+
+def _saved_scale(path):
+    """
+    The yaw-rate scale stored in a saved single policy (.zip with policy.pth), or None.
+    """
+
+    import io
+    import torch
+    import zipfile
+
+    with zipfile.ZipFile(path) as archive:
+        state = torch.load(io.BytesIO(archive.read("policy.pth")), weights_only=False)
+    return (state.get("obs_scales") or {}).get("yaw_rate")
+
+
+def test_saved_policy_carries_the_yaw_scale_it_was_trained_with(tmp_path):
+    """
+    A policy built for a Fossen env records 0.07 and saves it; reloading restores it.
+    """
+
+    from fw.policies.ppo_policy import PPOPolicy
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    agent = SinglePPOAgent(environment=_fossen_env(), model_dir=str(tmp_path))
+    assert agent.policy.yaw_rate_obs_scale == 0.07
+    agent.save_policy("fossen_policy")
+    assert _saved_scale(tmp_path / "fossen_policy.zip") == 0.07
+    assert PPOPolicy.load(str(tmp_path / "fossen_policy"), "cpu").yaw_rate_obs_scale == 0.07
+
+
+def test_fossen_policy_in_fh_observes_yaw_with_the_fossen_scale(tmp_path):
+    """
+    Validation in FH: the FH env takes over the scale the Fossen policy was trained
+    with, so the same yaw rate gives the same observation as in training.
+    """
+
+    from fw.environments.py_sim_env import PySimEnv
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+    from tests.fw.test_fh_wind_current import _FakeEnvBridge
+
+    fossen = PySimEnv(time_step=2.0, max_steps=5, start_pos=START, target_pos=TARGET, dynamics_model=Model.FOSSEN,
+                      ship_model=ShipModel.MYZAKO_37, wind=True, current=True)
+    SinglePPOAgent(environment=fossen, model_dir=str(tmp_path)).save_policy("fossen_policy")
+    fh_env = PySimEnv(dynamics_model=Model.FH_TABULAR, ship_model=ShipModel.MYZAKO_37, fh_bridge=_FakeEnvBridge(),
+                      wind=True, current=True)
+    assert fh_env.yaw_rate_obs_scale == fh_env.own_yaw_rate_obs_scale == 0.04
+    agent = SinglePPOAgent(environment=fh_env, model_dir=str(tmp_path))
+    agent.load_policy("fossen_policy")
+    assert fh_env.yaw_rate_obs_scale == 0.07 and fh_env.own_yaw_rate_obs_scale == 0.04
+    obs, _ = fh_env.reset(seed=0)
+    np.testing.assert_allclose(obs[2], fh_env.phys_sim.state.r / 0.07, rtol=1e-6)
+
+
+def test_fresh_agent_restores_the_env_own_scale(tmp_path):
+    """
+    After a loaded policy changed the env's scale, a new (untrained) agent on the
+    same env trains with the env's own scale again.
+    """
+
+    from fw.environments.py_sim_env import PySimEnv
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    SinglePPOAgent(environment=_fossen_env(), model_dir=str(tmp_path)).save_policy("fossen_policy")
+    nomoto = PySimEnv(time_step=2.0, max_steps=5, start_pos=START, target_pos=TARGET,
+                      dynamics_model=Model.NOMOTO, ship_model=ShipModel.MYZAKO_37)
+    SinglePPOAgent(environment=nomoto, model_dir=str(tmp_path)).load_policy("fossen_policy")
+    assert nomoto.yaw_rate_obs_scale == 0.07
+    fresh = SinglePPOAgent(environment=nomoto, model_dir=str(tmp_path))
+    assert nomoto.yaw_rate_obs_scale == 0.15 and fresh.policy.yaw_rate_obs_scale == 0.15
+
+
+def test_policy_without_a_stored_scale_was_trained_with_0_04(tmp_path, caplog):
+    """
+    A policy saved before scales were stored was trained with PR 431's single
+    scale 0.04: the env takes it over (logged) and the next save stores it.
+    """
+
+    import logging
+    from fw.policies.ppo_policy import LEGACY_YAW_RATE_OBS_SCALE, PPOPolicy
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    assert LEGACY_YAW_RATE_OBS_SCALE == 0.04
+    PPOPolicy(13, 2, "cpu").save(str(tmp_path / "old_policy"))
+    assert _saved_scale(tmp_path / "old_policy.zip") is None
+    env = _fossen_env()
+    agent = SinglePPOAgent(environment=env, model_dir=str(tmp_path))
+    with caplog.at_level(logging.INFO):
+        agent.load_policy("old_policy")
+    assert env.yaw_rate_obs_scale == 0.04 and env.own_yaw_rate_obs_scale == 0.07
+    assert agent.policy.yaw_rate_obs_scale == 0.04
+    assert any("no stored yaw-rate observation scale" in r.getMessage() for r in caplog.records)
+    agent.save_policy("resaved_policy")
+    assert _saved_scale(tmp_path / "resaved_policy.zip") == 0.04
+
+
+def test_invalid_stored_scale_is_refused_before_anything_changes(tmp_path):
+    """
+    A corrupt stored scale (0.0) is refused when the file is read, so a multi-agent
+    archive whose second policy has it leaves every agent and sub-environment as it was.
+    """
+
+    import torch
+    import zipfile
+    from fw.environments.multi_sim_env import MultiSimEnv
+    from fw.policies.multi_ppo_agent import MultiPPOAgent
+    from fw.policies.ppo_policy import PPOPolicy
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    with zipfile.ZipFile(tmp_path / "corrupt.zip", "w") as archive:
+        for i, scale in enumerate((0.15, 0.0)):
+            state = PPOPolicy(13, 2, "cpu").serialize_policy()
+            state["obs_scales"] = {"yaw_rate": scale}
+            torch.save(state, tmp_path / f"policy_{i}.pth")
+            archive.write(tmp_path / f"policy_{i}.pth", f"policy_{i}.pth")
+    env = MultiSimEnv([_fossen_env(), _fossen_env()])
+    agents = [SinglePPOAgent(environment=sub, model_dir=str(tmp_path)) for sub in env.sub_environments.values()]
+    before = [a.policy for a in agents]
+    with pytest.raises(ValueError, match="positive and finite"):
+        MultiPPOAgent(None, environment=env, agents=agents, model_dir=str(tmp_path)).load_policy("corrupt")
+    assert [a.policy for a in agents] == before
+    assert [sub.yaw_rate_obs_scale for sub in env.sub_environments.values()] == [0.07, 0.07]
+
+
+def test_scale_related_load_failure_falls_back_for_training_and_raises_for_visualization(tmp_path, monkeypatch):
+    """
+    A policy file with an invalid stored scale: training falls back to a fresh
+    policy at the env's own scale, visualization raises.
+    """
+
+    from fw.configuration.config import PolicyStrategy
+    from fw.policies.ppo_policy import PPOPolicy
+    import fw.scheduling.agent_manager_simple as module
+
+    corrupt = PPOPolicy(13, 2, "cpu")
+    corrupt.yaw_rate_obs_scale = -1.0
+    corrupt.save(str(tmp_path / "bad_PPO_policy"))
+    monkeypatch.setattr(module, "apply_profile", lambda *a, **k: None)
+    mgr = module.AgentManagerSimple.__new__(module.AgentManagerSimple)
+    mgr._agent, mgr._agent_type, mgr._profile = None, "PPO", None
+    mgr._hyperparameters = {"model_dir": str(tmp_path)}
+    env = _fossen_env()
+    mgr.set_environment(env, PolicyStrategy.REUSE_OTHER_POLICY, "bad")
+    assert env.yaw_rate_obs_scale == 0.07 and mgr._agent.policy.yaw_rate_obs_scale == 0.07
+    with pytest.raises((ValueError, RuntimeError)):
+        mgr.set_environment(env, PolicyStrategy.REUSE_OTHER_POLICY, "bad", require_policy=True)
+
+
+def test_failing_worker_close_changes_nothing(tmp_path):
+    """
+    The worker copies are closed before the scale changes: if closing fails, env
+    scale and policy stay as they were.
+    """
+
+    from fw.environments.py_sim_env import PySimEnv
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    SinglePPOAgent(environment=_fossen_env(), model_dir=str(tmp_path)).save_policy("fossen_policy")
+    nomoto = PySimEnv(time_step=2.0, max_steps=5, start_pos=START, target_pos=TARGET,
+                      dynamics_model=Model.NOMOTO, ship_model=ShipModel.MYZAKO_37)
+    agent = SinglePPOAgent(environment=nomoto, model_dir=str(tmp_path))
+    before = agent.policy
+
+    class _Workers:
+        """
+        VecEnv stand-in whose close() fails.
+        """
+
+        def close(self):
+            """
+            Fail.
+            """
+
+            raise OSError("worker did not stop")
+
+    agent._vec_env = _Workers()
+    with pytest.raises(OSError):
+        agent.load_policy("fossen_policy")
+    assert nomoto.yaw_rate_obs_scale == 0.15 and agent.policy is before
+
+
+def test_changed_scale_rebuilds_existing_worker_copies(tmp_path):
+    """
+    Worker copies made before a policy with another scale was loaded are rebuilt,
+    so they observe with the new scale too.
+    """
+
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+    from fw.environments.py_sim_env import PySimEnv
+
+    SinglePPOAgent(environment=_fossen_env(), model_dir=str(tmp_path)).save_policy("fossen_policy")
+    nomoto = PySimEnv(time_step=2.0, max_steps=5, start_pos=START, target_pos=TARGET,
+                      dynamics_model=Model.NOMOTO, ship_model=ShipModel.MYZAKO_37)
+    agent = SinglePPOAgent(environment=nomoto, model_dir=str(tmp_path))
+    agent._reset_envs(1)
+    old_workers = agent._vec_env
+    agent.load_policy("fossen_policy")
+    assert agent._vec_env is None
+    agent._reset_envs(1)
+    assert agent._vec_env is not old_workers
+    assert agent._vec_env.get_attr("yaw_rate_obs_scale") == [0.07]
+
+
+def test_multi_agent_sub_environments_take_their_policy_scale(tmp_path):
+    """
+    MultiPPOAgent: each sub-environment takes over the scale of its own policy.
+    """
+
+    import torch
+    import zipfile
+    from fw.environments.multi_sim_env import MultiSimEnv
+    from fw.environments.py_sim_env import PySimEnv
+    from fw.policies.multi_ppo_agent import MultiPPOAgent
+    from fw.policies.ppo_policy import PPOPolicy
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    path = tmp_path / "pair.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        for i, scale in enumerate((0.07, 0.15)):
+            policy = PPOPolicy(13, 2, "cpu")
+            policy.yaw_rate_obs_scale = scale
+            torch.save(policy.serialize_policy(), tmp_path / f"policy_{i}.pth")
+            archive.write(tmp_path / f"policy_{i}.pth", f"policy_{i}.pth")
+    subs = [PySimEnv(time_step=2.0, max_steps=5, start_pos=START, target_pos=TARGET,
+                     dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37) for _ in range(2)]
+    env = MultiSimEnv(subs)
+    agents = [SinglePPOAgent(environment=sub, model_dir=str(tmp_path)) for sub in env.sub_environments.values()]
+    MultiPPOAgent(None, environment=env, agents=agents, model_dir=str(tmp_path)).load_policy("pair")
+    assert [sub.yaw_rate_obs_scale for sub in env.sub_environments.values()] == [0.07, 0.15]
+
+
+def test_multi_policy_agent_refuses_mixed_or_foreign_scales(tmp_path):
+    """
+    MultiPolicySingleAgent shares one env: an archive with different scales, or a
+    pretrained slot policy with another scale than the env, is refused.
+    """
+
+    import torch
+    import zipfile
+    from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
+    from fw.policies.ppo_policy import PPOPolicy
+
+    env = _fossen_env()
+    agent = MultiPolicySingleAgent.__new__(MultiPolicySingleAgent)
+    agent.num_policies, agent.policy_obs_dim, agent.output_dim = 2, 13, 2
+    agent.device, agent.model_dir, agent.learning_rate = torch.device("cpu"), str(tmp_path), 1e-3
+    agent.env = env
+    agent.policies = [PPOPolicy(13, 2, "cpu") for _ in range(2)]
+    agent.optimizers = [torch.optim.Adam(p.network.parameters()) for p in agent.policies]
+    agent.frozen_pids = set()
+    agent._vec_env = None
+
+    with zipfile.ZipFile(tmp_path / "mixed.zip", "w") as archive:
+        for i, scale in enumerate((0.07, 0.15)):
+            policy = PPOPolicy(13, 2, "cpu")
+            policy.yaw_rate_obs_scale = scale
+            torch.save(policy.serialize_policy(), tmp_path / f"policy_{i}.pth")
+            archive.write(tmp_path / f"policy_{i}.pth", f"policy_{i}.pth")
+    with pytest.raises(ValueError, match="different yaw-rate observation scales"):
+        agent.load_policy("mixed")
+
+    with zipfile.ZipFile(tmp_path / "legacy_and_new.zip", "w") as archive:
+        for i, scale in enumerate((None, 0.15)):                # no stored scale counts as 0.04
+            policy = PPOPolicy(13, 2, "cpu")
+            policy.yaw_rate_obs_scale = scale
+            torch.save(policy.serialize_policy(), tmp_path / f"policy_{i}.pth")
+            archive.write(tmp_path / f"policy_{i}.pth", f"policy_{i}.pth")
+    with pytest.raises(ValueError, match=r"different yaw-rate observation scales \[0.04, 0.15\]"):
+        agent.load_policy("legacy_and_new")
+
+    foreign = PPOPolicy(13, 2, "cpu")
+    foreign.yaw_rate_obs_scale = 0.15
+    foreign.save(str(tmp_path / "nomoto_policy"))
+    with pytest.raises(ValueError, match="shared by all slots"):
+        agent.load_individual_policy(0, str(tmp_path / "nomoto_policy"))
+    assert env.yaw_rate_obs_scale == 0.07
+
+
+def test_multi_policy_agent_takes_over_a_common_scale(tmp_path):
+    """
+    MultiPolicySingleAgent: an archive with one common scale is taken over by the
+    shared env, the worker copies are closed for rebuilding, and the optimizers
+    are bound to the new policies.
+    """
+
+    import torch
+    import zipfile
+    from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
+    from fw.policies.ppo_policy import PPOPolicy
+
+    env = _fossen_env()
+    agent = MultiPolicySingleAgent.__new__(MultiPolicySingleAgent)
+    agent.num_policies, agent.policy_obs_dim, agent.output_dim = 2, 13, 2
+    agent.device, agent.model_dir, agent.learning_rate = torch.device("cpu"), str(tmp_path), 1e-3
+    agent.env = env
+    agent.policies = [PPOPolicy(13, 2, "cpu") for _ in range(2)]
+    agent.optimizers = [torch.optim.Adam(p.network.parameters()) for p in agent.policies]
+    closed = []
+    agent._vec_env = type("Workers", (), {"close": lambda self: closed.append(True)})()
+
+    with zipfile.ZipFile(tmp_path / "nomoto.zip", "w") as archive:
+        for i in range(2):
+            policy = PPOPolicy(13, 2, "cpu")
+            policy.yaw_rate_obs_scale = 0.15
+            torch.save(policy.serialize_policy(), tmp_path / f"policy_{i}.pth")
+            archive.write(tmp_path / f"policy_{i}.pth", f"policy_{i}.pth")
+    agent.load_policy("nomoto")
+    assert env.yaw_rate_obs_scale == 0.15 and closed == [True] and agent._vec_env is None
+    for policy, optimizer in zip(agent.policies, agent.optimizers):
+        assert policy.yaw_rate_obs_scale == 0.15
+        assert optimizer.param_groups[0]["params"][0] is next(policy.network.parameters())
+
+
+def test_colav_env_yaw_scale_setter():
+    """
+    The COLAV env's setter validates, and None restores its own scale.
+    """
+
+    from fw.environments.py_sim_colav_env import PySimColavEnv
+
+    env = PySimColavEnv(time_step=1.0, max_steps=5, ship_pos=START, target_pos=TARGET,
+                        dynamics_model=Model.NOMOTO, ship_model=ShipModel.MYZAKO_37)
+    assert env.yaw_rate_obs_scale == env.own_yaw_rate_obs_scale == 0.15
+    for bad in (0.0, float("nan")):
+        with pytest.raises(ValueError):
+            env.set_yaw_rate_obs_scale(bad)
+    env.set_yaw_rate_obs_scale(0.07)
+    obs, *_ = env.step(np.array([1.0, 1.0], dtype=np.float32))
+    assert obs[2] == pytest.approx(np.clip(env.phys_sim.state.r / 0.07, -1, 1), abs=1e-6)
+    env.set_yaw_rate_obs_scale(None)
+    assert env.yaw_rate_obs_scale == 0.15
+
+
+def test_ue5_visualisation_applies_the_policy_scale():
+    """
+    run_visualise_models applies the policy's yaw-rate scale to the env it builds.
+    """
+
+    import inspect
+    from airsim.inference import run_visualise_models
+
+    source = inspect.getsource(run_visualise_models)
+    built = source.index("env = self._build_environment(selected_env")
+    assert source.index("apply_policy_yaw_rate_obs_scale(policy, env", built) - built < 200
+
+
+def test_env_scale_setter_validates():
+    """
+    set_yaw_rate_obs_scale refuses non-positive or non-finite scales and None restores the own scale.
+    """
+
+    env = _fossen_env()
+    for bad in (0.0, -0.1, float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            env.set_yaw_rate_obs_scale(bad)
+    env.set_yaw_rate_obs_scale(0.2)
+    assert env.yaw_rate_obs_scale == 0.2
+    env.set_yaw_rate_obs_scale(None)
+    assert env.yaw_rate_obs_scale == env.own_yaw_rate_obs_scale == 0.07
