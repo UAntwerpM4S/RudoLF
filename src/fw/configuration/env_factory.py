@@ -14,6 +14,7 @@ from fw.environments.multi_sim_env import MultiSimEnv
 from fw.environments.py_sim_colav_env import PySimColavEnv
 from fw.environments.action_repeat_wrapper import ActionRepeatWrapper
 from fw.common.tools.config_utils import normalize_configuration, get_validated_bool
+from fw.environments.py_sim_towing_tank import PySimTowingTankEnv
 from fw.simulators.sync_sim_bridge import SimSyncBridge
 from fw.simulators.fh_sim_bridge import FhSimBridge
 
@@ -741,6 +742,51 @@ class LunarEnvironment(BaseEnvironment):
 
         self.env = LunarLander(continuous=True)
 
+class PySimTowingTankEnvironment(BaseEnvironment):
+    """
+    Wrapper for the PySim Towing Tank environment.
+    """
+
+    ENVIRONMENT_NAME = "PySimTowingTankEnv"
+
+    def __init__(self, name, configuration):
+        """
+        Create the PySim Towing Tank environment wrapper.
+
+        Args:
+            name: Registered environment name.
+            configuration: Scoped configuration dict (see `build_pysim_config`).
+        """
+
+        super().__init__(name, configuration)
+
+        # Empty configuration: registry placeholder only, nothing to build.
+        if not self.configuration:
+            return
+
+        ship_pos = np.array(self.configuration["start_pos"], dtype=np.float32)
+        target_pos = np.array(self.configuration["target_pos"], dtype=np.float32)
+
+        self.env = PySimTowingTankEnv(
+            time_step=1.0,
+            max_steps=14000,
+            start_pos=ship_pos,
+            target_pos=target_pos,
+            overall_contour=self.configuration["overall_contour"],
+            depth_contour=self.configuration["depth_contour"],
+            trajectory=self.configuration["trajectory"],
+            dynamics_model=self.configuration["dynamics_model"],
+            ship_model=self.configuration["ship_model"],
+            enable_bank_collision_check=self.configuration["enable_bank_collision_check"],
+            enable_ukc_check=self.configuration["enable_ukc_check"],
+            wind=self.configuration["wind"],
+            current=self.configuration["current"],
+            ua_surrogate_config=self.configuration.get("ua_surrogate_config", {}),
+            ugent_surrogate_config=self.configuration.get("ugent_surrogate_config", {}),
+            ugent_b01_surrogate_config=self.configuration.get("ugent_b01_surrogate_config", {}),
+            reward_name=self.configuration.get("reward_name", "default"),
+            reward_weights=self.configuration.get("reward_weights", None),
+        )
 
 # ---------------------------------------------------------------------------
 # Environment-scoped configuration builders
@@ -1021,6 +1067,8 @@ multi_sim_env_name = "MultiSimEnv"
 py_sim_colav_env_name = "PySimColavEnv"
 multi_policy_colav_env_name = "MultiPolicyColavEnv"
 
+py_sim_env_towingtank_name = "PySimTowingTankEnv"
+
 _ENVIRONMENT_NAME_ALIASES = {
     py_sim_env_name.lower(): py_sim_env_name,
     "pysim": py_sim_env_name,
@@ -1040,6 +1088,10 @@ _ENVIRONMENT_NAME_ALIASES = {
     multi_policy_colav_env_name.lower(): multi_policy_colav_env_name,
     "multipolicycolav": multi_policy_colav_env_name,
     "mpcolav": multi_policy_colav_env_name,
+
+    py_sim_env_towingtank_name.lower(): py_sim_env_towingtank_name,
+    "pysimtowingtank": py_sim_env_towingtank_name,
+    "towingtank": py_sim_env_towingtank_name,
 }
 
 
@@ -1137,6 +1189,10 @@ def build_default_environment(environment_name, framework_config=None):
         cfg = build_multi_policy_colav_config(framework_config) if framework_config else {}
         return get(environment_name, configuration=cfg)
 
+    if environment_name == py_sim_env_towingtank_name:
+        cfg = build_pysim_config(framework_config) if framework_config else {}
+        return get(environment_name, configuration=cfg)
+
     # LunarLander needs no framework-level config keys.
     return get(environment_name, configuration={})
 
@@ -1156,6 +1212,7 @@ def initialize_all_environments():
     expected = {
         py_sim_env_name, fh_sim_env_name, sync_sim_env_name, lunar_env_name,
         multi_sim_env_name, py_sim_colav_env_name, multi_policy_colav_env_name,
+        py_sim_env_towingtank_name,
     }
     missing = expected - set(_Factory._environment_classes)
     if missing:

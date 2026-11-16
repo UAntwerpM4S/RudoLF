@@ -177,7 +177,7 @@ class Reward:
             component_fn = self._component_functions[component_name]
             weight = self.reward_weights.get(component_name, 1.0)
             component_value = component_fn(**component_inputs)
-            #print(f"Component '{component_name}': value={component_value:.4f}, weight={weight:.4f}, contribution={weight * component_value:.4f}")
+            print(f"Component '{component_name}': value={component_value:.4f}, weight={weight:.4f}, contribution={weight * component_value:.4f}")
             reward += weight * component_value
 
         return reward

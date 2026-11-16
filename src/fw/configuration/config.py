@@ -7,6 +7,8 @@ from fw.configuration.config_profile import ProfileRegistry
 from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_SHIP_POS,
     DEFAULT_FRAMEWORK_TARGET_POS,
+    TOWING_TANK_SHIP_POS,
+    TOWING_TANK_TARGET_POS
 )
 
 
@@ -149,10 +151,10 @@ AIRSIM_HYPERPARAMETER_OVERRIDES = {
 CONFIG_PARAMETERS = {
     # One or a list of: "PySimEnv", "FhSimEnv", "MultiSimEnv",
     # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander".
-    'env_type': ["PySimEnv"],
+    'env_type': ["PySimTowingTankEnv"],
     'profile': "ugent_b01_surrogate_profile",       # see ProfileRegistry, e.g.
                                         # "myzako_pysim_to_fhsim_transfer_profile"
-    'action': "visualize",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     'wind': False,
     'current': False,
@@ -160,11 +162,11 @@ CONFIG_PARAMETERS = {
     'enable_bank_collision_check': True,
     'visualize_best_trained': False,
     'viz_mode': VisualizationMode.COMPLEX,
-    'start_pos': TOWING_TANK_SHIP_POS,    # (2245.0, -47.0)
-    'target_pos': TOWING_TANK_TARGET_POS, # (-1559.0, 11990.0)
-    'overall_contour': "env_towing_tank.csv",
-    'depth_contour': "env_towing_tank_depth.csv",
-    'trajectory': "trajectory_checkpoints_towing_tank.csv",
+    'start_pos': TOWING_TANK_SHIP_POS,    #Changed for the towing tank env
+    'target_pos': TOWING_TANK_TARGET_POS, #Changed for the towing tank env
+    'overall_contour': "env_towing_tank.csv", #Changed for the towing tank env
+    'depth_contour': "env_towing_tank_depth.csv", #Changed for the towing tank env
+    'trajectory': "trajectory_checkpoints_towing_tank.csv", #Changed for the towing tank env
     'scenario': "DDShip_scenario1_nowindnocurrent",
     # UAntwerp surrogate (Model.UANTWERP). "preset" (fw/surrogate/presets.py) is
     # {tripoli,myzako}_{clean,confined,full}: clean = open water, confined = UKC

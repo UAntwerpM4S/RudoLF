@@ -61,6 +61,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
         multi_sim_env_name,
         py_sim_colav_env_name,
         multi_policy_colav_env_name,
+        py_sim_env_towingtank_name,
         resolve_environment_names,
         initialize_all_environments
     )
@@ -136,7 +137,7 @@ if __name__ == "__main__" or __name__ == "fw.main":
             stop_criterion=Criterion.TARGET_REWARD,
             target_reward=0.99,
             patience=4,
-            max_time_steps=850,
+            max_time_steps=1500,
         ),
         # MultiPPOAgent judges each agent on its own reward, hence the same
         # target as single-agent PySimEnv.
@@ -180,6 +181,13 @@ if __name__ == "__main__" or __name__ == "fw.main":
             target_reward=5.0,
             patience=4,
             max_time_steps=200
+        ),
+
+        py_sim_env_towingtank_name: StopCondition(
+            stop_criterion=Criterion.TARGET_REWARD,
+            target_reward=0.99,
+            patience=4,
+            max_time_steps=1500,
         ),
     }
 

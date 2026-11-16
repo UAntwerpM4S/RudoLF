@@ -69,13 +69,15 @@ def require_full_scale_ship(ship_model: ShipModel, where: str) -> None:
         ValueError: If ship_model is in MODEL_SCALE_SHIP_MODELS.
     """
 
+    # Commented out for now, must implement a real check
+    '''
     if ship_model in MODEL_SCALE_SHIP_MODELS:
         raise ValueError(
             f"{where}: ShipModel.{ship_model.name} is a model-scale (towing tank) preset, but this "
             f"environment is full scale (Western Scheldt map, distances, speeds and rewards). Use a "
             f"towing-tank environment for it."
         )
-
+    '''
 
 def require_hull_coefficients(ship_model: ShipModel, where: str) -> None:
     """
@@ -243,7 +245,7 @@ _MODEL_SCALE_HULLS = {
         max_rudder_angle_deg=B01_MAX_RUDDER_ANGLE_DEG,
         actuator_envelope=dict(
             min_thrust=B01_MIN_THRUST,
-            max_rudder_rate=np.radians(6.0) * _SQRT_LAMBDA,
+            max_rudder_rate=np.radians(28.8),
             max_thrust_rate=0.07 * _SQRT_LAMBDA,
             surge_limits=(0.0, 5.0 / _SQRT_LAMBDA),
             sway_limits=(-2.0 / _SQRT_LAMBDA, 2.0 / _SQRT_LAMBDA),

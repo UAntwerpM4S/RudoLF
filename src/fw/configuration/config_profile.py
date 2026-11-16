@@ -604,7 +604,7 @@ ProfileRegistry.register(VesselProfile(
     # (SUPPORTS_MODEL_SCALE_SHIPS) until a towing-tank environment exists.
     scenario=ScenarioConfig(initial_speed=0.8),
     actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
-    thrust=ThrustConfig(mode=ThrustMode.FIXED, fixed_value=1.0),
+    thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))
 
 ProfileRegistry.register(VesselProfile(

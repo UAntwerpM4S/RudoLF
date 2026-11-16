@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 # Grid limits
 MAX_CHECKPOINTS_DISTANCE = 2000
 CHECKPOINTS_DISTANCE = 350
-MIN_GRID_POS = -11700
-MAX_GRID_POS = 14500
+MIN_GRID_POS = -10
+MAX_GRID_POS = 150
 
 # Reward / shaping
 SUCCESS_REWARD = 50.0
@@ -51,7 +51,7 @@ MAX_FIG_HEIGHT = 900
 DPI = 100
 
 # Guidance and termination
-PERPENDICULAR_LINE_LENGTH = 50.0
+PERPENDICULAR_LINE_LENGTH = 10.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
 
@@ -1410,6 +1410,8 @@ class PySimTowingTankEnv(BaseEnv):
             "truncations": truncated,
         }
 
+        #self.render()
+
         # Gymnasium: time-limit cut-off is `truncated` (bootstrap V(s')), a real end is
         # `terminated`; mirrored in `info` for the framework's own agents.
         return self._get_obs(), float(reward), bool(terminated), bool(truncated), info
@@ -1772,7 +1774,7 @@ class PySimTowingTankEnv(BaseEnv):
 
         for i, checkpoint in enumerate(self.checkpoints):
             circle = patches.Circle((checkpoint['pos'][0], checkpoint['pos'][1]),
-                                    10.0, color='black', alpha=0.3)
+                                    1.0, color='black', alpha=0.3)
             self.ax.add_patch(circle)
             start_point, end_point = checkpoint['perpendicular_line']
             self.ax.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]],
@@ -1801,8 +1803,8 @@ class PySimTowingTankEnv(BaseEnv):
         Draw the ship and heading (human render mode only), using blitting where possible.
         """
 
-        if self.render_mode != 'human':
-            return
+        #if self.render_mode != 'human':
+        #    return
 
         if self.initialize_plots and not hasattr(self, 'ship_plot'):
             self._initialize_rendering()
