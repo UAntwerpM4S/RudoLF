@@ -27,7 +27,10 @@ from fw.common.airsim.tools.path_utils import resolve_model_path
 from fw.common.default_positions import (
     DEFAULT_FRAMEWORK_SHIP_POS,
     DEFAULT_FRAMEWORK_TARGET_POS,
+    TOWING_TANK_SHIP_POS,
+    TOWING_TANK_TARGET_POS
 )
+from fw.environments.py_sim_towing_tank import PySimTowingTankEnv
 from fw.policies.ppo_policy import PPOPolicy
 from fw.environments.fh_sim_env import FhSimEnv
 from fw.environments.py_sim_env import PySimEnv
@@ -681,6 +684,28 @@ class PySimVisualisationAdapter(ModelVisualisationAdapter):
             ),
         }
 
+class PySimTowingTankVisualisationAdapter(ModelVisualisationAdapter):
+    """
+    Adapter for PySimTowingTankEnv models.
+    """
+    family = "pysimtowingtank"
+    model_origin = "pysimtowingtank"
+    supported_environment_names = ("PySimTowingTankEnv",)
+    filename_keywords = ("pysimtowingtank", "py_sim_towing_tank", "framework")
+
+    def environment_builders(self) -> dict[str, Callable[[int], object]]:
+        """
+        PySimTowingTankEnv factory with the default start and target positions.
+        """
+
+        return {
+            "PySimTowingTankEnv": lambda max_steps: PySimTowingTankEnv(
+                max_steps=max_steps,
+                start_pos=TOWING_TANK_SHIP_POS,
+                target_pos=TOWING_TANK_TARGET_POS,
+            ),
+        }
+
 
 class FhSimVisualisationAdapter(ModelVisualisationAdapter):
     """
@@ -709,8 +734,9 @@ class FhSimVisualisationAdapter(ModelVisualisationAdapter):
 _VISUALISATION_ADAPTERS: dict[str, ModelVisualisationAdapter] = {
     "pysim": PySimVisualisationAdapter(),
     "fhsim": FhSimVisualisationAdapter(),
+    "pysimtowingtank": PySimTowingTankVisualisationAdapter(),
 }
-_AUTO_DETECTION_ORDER = ("fhsim", "pysim")
+_AUTO_DETECTION_ORDER = ("fhsim", "pysim", "pysimtowingtank")
 
 
 def get_supported_model_families() -> tuple[str, ...]:

@@ -12,10 +12,12 @@ from typing import Dict, List, Any, Optional
 from fw.configuration.env_factory import (
     resolve_environment_name,
     py_sim_env_name,
+    py_sim_env_towingtank_name,
     fh_sim_env_name,
     airsim_env_name,
     lunar_env_name,
     PySimEnvironment,
+    PySimTowingTankEnvironment,
     FhSimEnvironment,
     AirSimEnvironment,
     LunarEnvironment,
@@ -357,6 +359,8 @@ class Trainer:
 
         if canonical_name == py_sim_env_name:
             return PySimEnvironment(canonical_name, config)
+        if canonical_name == py_sim_env_towingtank_name:
+            return PySimTowingTankEnvironment(canonical_name, config)
         if canonical_name == fh_sim_env_name:
             return FhSimEnvironment(canonical_name, config)
         if canonical_name == sync_sim_env_name:
@@ -444,7 +448,12 @@ class Trainer:
                             print(f"      - {key}: {value}")
                     print("    Starting training...")
 
-                env = self._build_eval_environment(canonical_name, config)
+                # Reward configs contain only the fields that vary between
+                # evaluations. Merge them over the resolved framework config
+                # so the fresh wrapper receives its complete environment setup.
+                environment_config = copy.deepcopy(self._config)
+                environment_config.update(config)
+                env = self._build_eval_environment(canonical_name, environment_config)
 
                 trainer = Trainer(self._agent_type, [env], self._profile, "SimpleScheduler")
 

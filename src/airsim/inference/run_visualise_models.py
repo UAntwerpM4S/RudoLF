@@ -655,6 +655,10 @@ def run_visualise_models(model_path: str, model_family: str = "auto", **kwargs) 
         model_path=model_path,
         env_name=env_name,
     )
+
+    print(type(adapter))
+    print(adapter.family)
+    print(adapter.supported_environment_names)
     resolved_env_name = "FhSimEnv" if adapter.family == "fhsim" else env_name
     runner = VisualiseModelsRunner(adapter=adapter, env_name=resolved_env_name)
     runner.run(model_path=model_path, **kwargs)

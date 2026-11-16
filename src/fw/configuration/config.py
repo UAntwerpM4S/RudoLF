@@ -154,7 +154,7 @@ CONFIG_PARAMETERS = {
     'env_type': ["PySimTowingTankEnv"],
     'profile': "ugent_b01_surrogate_profile",       # see ProfileRegistry, e.g.
                                         # "myzako_pysim_to_fhsim_transfer_profile"
-    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'action': "evaluate_reward",  # Valid action values: "train", "visualize", "evaluate_reward"
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     'wind': False,
     'current': False,
@@ -186,8 +186,9 @@ CONFIG_PARAMETERS = {
 
     # Evaluate reward configurations
     'reward_configs': [
-        {
-            "type": "PySimEnv",
+        # Config A: original baseline (control)
+{
+            "type": "PySimTowingTankEnv",
             "reward_name": "default",
             "reward_weights": {
                 "forward": -1.25,
@@ -198,15 +199,114 @@ CONFIG_PARAMETERS = {
                 "thrust_change": 0.0,
             },
         },
-        {
-            "type": "PySimEnv",
+
+# Config B: cross-track scaled to towing metres (1 m error = -1.0 raw)
+{
+            "type": "PySimTowingTankEnv",
             "reward_name": "default",
             "reward_weights": {
                 "forward": -1.25,
                 "heading_alignment": -0.5,
-                "cross_track": -0.05,
+                "cross_track": -1.0,
                 "rudder_change": -0.4,
                 "rudder_angle": -0.05,
+                "thrust_change": 0.0,
+            },
+        },
+
+# Config C: B plus softer rudder-angle penalty (removes rudder dominance)
+{
+            "type": "PySimTowingTankEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -1.25,
+                "heading_alignment": -0.5,
+                "cross_track": -1.0,
+                "rudder_change": -0.4,
+                "rudder_angle": -0.01,
+                "thrust_change": 0.0,
+            },
+        },
+
+# Config E: balanced, lower speed penalty, softer rudder
+{
+            "type": "PySimTowingTankEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -1.0,
+                "heading_alignment": -0.5,
+                "cross_track": -1.0,
+                "rudder_change": -0.5,
+                "rudder_angle": -0.02,
+                "thrust_change": 0.0,
+            },
+        },
+
+# Config H: stall-proof (speed and heading weights make stalling and backwards motion clearly worse)
+{
+            "type": "PySimTowingTankEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -3.0,
+                "heading_alignment": -1.5,
+                "cross_track": -1.0,
+                "rudder_change": -0.5,
+                "rudder_angle": -0.02,
+                "thrust_change": 0.0,
+            },
+        },
+# Config I: mid-stall. Stall still beats backwards motion, with stronger cross-track than E
+{
+            "type": "PySimTowingTankEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -2.0,
+                "heading_alignment": -1.0,
+                "cross_track": -1.5,
+                "rudder_change": -0.5,
+                "rudder_angle": -0.02,
+                "thrust_change": 0.0,
+            },
+        },
+
+# Config K: H with a softer heading weight (heading correction is less penalised)
+{
+            "type": "PySimTowingTankEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -3.0,
+                "heading_alignment": -1.0,
+                "cross_track": -1.0,
+                "rudder_change": -0.5,
+                "rudder_angle": -0.02,
+                "thrust_change": 0.0,
+            },
+        },
+
+# Config L: H with stronger rudder-slew smoothing
+{
+            "type": "PySimTowingTankEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -3.0,
+                "heading_alignment": -1.5,
+                "cross_track": -1.0,
+                "rudder_change": -1.0,
+                "rudder_angle": -0.02,
+                "thrust_change": 0.0,
+            },
+        },
+
+# Config M: H with a moderate rudder-angle penalty (between C and H)
+{
+            "type": "PySimTowingTankEnv",
+            "reward_name": "default",
+            "reward_weights": {
+                "forward": -3.0,
+                "heading_alignment": -1.5,
+                "cross_track": -1.0,
+                "rudder_change": -0.5,
+                "rudder_angle": -0.03,
                 "thrust_change": 0.0,
             },
         },
