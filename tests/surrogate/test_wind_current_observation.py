@@ -697,7 +697,8 @@ def test_line_ignores_tide_flips_and_cross_flow():
 @pytest.mark.parametrize("case", ["odd_first_row", "slack_over_bend", "eddy"])
 def test_line_never_locks(case):
     """
-    The reviewer's lock-in cases: the current returns to the river line afterward.
+    Lock-in cases (odd first row, slack over a bend, eddy): the current returns to
+    the river line afterward.
     """
 
     if case == "odd_first_row":           # first reliable row at 90 deg, then a 0/180 deg river
