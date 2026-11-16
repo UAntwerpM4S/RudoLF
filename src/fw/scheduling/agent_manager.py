@@ -182,7 +182,6 @@ class AgentManager:
         other_env_name: str = None,
         profile: VesselProfile = None,
         hyperparameters: dict = None,
-        require_policy: bool = False,
     ) -> None:
         """
         Assign an environment to the agent and configure the policy strategy.
@@ -196,17 +195,12 @@ class AgentManager:
                 (used by the pipeline scheduler per block); None keeps it.
             hyperparameters (dict, optional): Replace the active hyperparameters;
                 None keeps them.
-            require_policy (bool, optional): Raise instead of falling back when the
-                policy to reuse is missing or incompatible (visualization).
 
-        Without require_policy, a missing or incompatible policy file to reuse is
-        logged as a warning and the fresh (reset) policy is kept.
+        If a policy file to reuse is missing or incompatible, a warning is
+        logged and the fresh (reset) policy is kept.
 
         Raises:
-            RuntimeError: If an unknown policy type is specified, or (require_policy)
-                if the policy cannot be loaded.
-            ValueError: require_policy and the policy does not fit the env.
-            FileNotFoundError: require_policy and the policy file does not exist.
+            RuntimeError: If an unknown policy type is specified.
         """
 
         if profile is not None:
@@ -254,12 +248,8 @@ class AgentManager:
                 try:
                     self._agent.load_policy(policy_file_name)
                 except (ValueError, RuntimeError) as e:
-                    if require_policy:
-                        raise
                     logger.warning("[Fallback] Incompatible model: %s", e)
                     logger.warning("[Fallback] Reverting to RESET_POLICY for %s.", self._agent_type)
-            elif require_policy:
-                raise FileNotFoundError(f"The policy file {full_policy_file_name} does not exist.")
             else:
                 logger.warning("[Fallback] The policy file %s does not exist.", policy_file_name)
                 logger.warning("[Fallback] Reverting to RESET_POLICY for %s.", self._agent_type)

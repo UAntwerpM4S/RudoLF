@@ -29,7 +29,7 @@ import zipfile
 import logging
 
 from collections import deque
-from fw.policies.ppo_policy import PPOPolicy, require_policy_dims
+from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.common.tools.ppo_utils import reseed_env_rng
 from typing import Optional, Tuple, Union, List, Dict
@@ -975,8 +975,6 @@ class MultiPolicySingleAgent(BasePPOAgent):
         Raises:
             FileNotFoundError: If the archive is missing.
             RuntimeError: If loading fails or required files are absent.
-            ValueError: If a policy's observation/action size differs from the
-                agent's; policies and optimizers are left unchanged then.
         """
 
         if not policy_file_name.endswith(".zip"):
@@ -997,25 +995,16 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         raise RuntimeError(f"Archive missing files: {missing}")
                     zf.extractall(tmp_dir)
 
-                # Load and check every policy before assigning any, so a failure
-                # leaves policies and optimizers as they were.
-                policies = []
                 for i in range(self.num_policies):
                     agent_path = os.path.join(tmp_dir, f"policy_{i}.pth")
                     saved = torch.load(agent_path, map_location=self.device, weights_only=False)
-                    policy = PPOPolicy.build_policy_from_state(saved, self.device)
-                    require_policy_dims(policy, self.policy_obs_dim, self.output_dim,
-                                        f"{policy_file_name}:policy_{i}.pth")
-                    policies.append(policy)
+                    self.policies[i] = PPOPolicy.build_policy_from_state(saved, self.device)
 
-                self.policies[:] = policies
                 self.optimizers = [
                     optim.Adam(p.network.parameters(), lr=self.learning_rate)
                     for p in self.policies
                 ]
 
-            except ValueError:
-                raise   # policy size mismatch (require_policy_dims)
             except Exception as e:
                 raise RuntimeError(
                     f"Failed to load multi-policy archive: {e}"
@@ -1033,8 +1022,6 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         Raises:
             IndexError: If policy_id is out of range.
-            ValueError: If the policy's observation/action size differs from the
-                agent's; the slot is left unchanged then.
         """
 
         if not 0 <= policy_id < self.num_policies:
@@ -1043,7 +1030,6 @@ class MultiPolicySingleAgent(BasePPOAgent):
             )
 
         loaded = PPOPolicy.load(policy_file_name, str(self.device))
-        require_policy_dims(loaded, self.policy_obs_dim, self.output_dim, policy_file_name)
         self.policies[policy_id] = loaded
         self.optimizers[policy_id] = optim.Adam(
             loaded.network.parameters(), lr=self.learning_rate,

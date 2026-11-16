@@ -59,7 +59,6 @@ from shapely.geometry import LineString, MultiLineString, Point
 # Shared with the RL bridge (single source: fw.simulators.fh_interface_utils).
 from fw.simulators.fh_interface_utils import (
     FH_HEADING_CONVENTION,
-    FH_PROPELLER_RPS_PER_THRUST,
     WIND_SCALE_MAX,
     WIND_SCALE_SIGMA,
     WIND_WARMUP_TIME,
@@ -102,7 +101,7 @@ BANK_START_BAND = (20.0, 135.0)  # m, from the ship center
 
 # Episode initial conditions and controls (all part of the run signature).
 # The rudder scale (action[0] = +-1 <-> +-rudder_max_deg) is per ship: SHIP_PROFILES.
-_PROPELLER_RPS_SCALE = FH_PROPELLER_RPS_PER_THRUST   # action[1] = +-1 -> initial propeller rps
+_PROPELLER_RPS_SCALE = 5.5            # action[1] = +-1 -> initial propeller rps
 INIT_SURGE_RANGE = (0.0, 6.0)         # m/s
 # Uniform thrust_action range of the random episodes. The RL framework only
 # sends [min_thrust, max_thrust] (ship_factory: 0.1-1.0), so e.g. (0, 1) avoids

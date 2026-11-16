@@ -156,7 +156,6 @@ class PipelineScheduler(BaseScheduler):
             other_env_name=other_env_name,
             profile=profile,
             hyperparameters=hyperparameters,
-            require_policy=block.action == "visualize",
         )
 
         start = time.time()

@@ -91,14 +91,9 @@ class ScenarioConfig:
         initial_speed: Initial surge velocity override [m/s], applied via the
             env's `initial_speed` setter after each reset. None keeps the
             environment default.
-        initial_thrust: Thrust the actuators start an episode with, on the scale
-            of the policy action ([-1, 1]). None = the fixed thrust value in
-            ThrustMode.FIXED, else -1 (min_thrust). Set it when a free-thrust
-            profile starts at speed.
     """
 
     initial_speed: Optional[float] = None
-    initial_thrust: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -148,9 +143,7 @@ class ThrustConfig:
 
     Attributes:
         mode: ThrustMode.FREE or ThrustMode.FIXED.
-        fixed_value: Thrust action that replaces the policy's in FIXED mode, on the
-            action scale (1.0 = max_thrust; mapped like any thrust action, so 0.1 is
-            not min_thrust). Must be in [0.1, 1.0].
+        fixed_value: Normalized thrust in [0.1, 1.0], used only in FIXED mode.
     """
 
     mode: ThrustMode = ThrustMode.FREE
@@ -262,20 +255,6 @@ class VesselProfile:
 
         return dataclasses.replace(self, **kwargs)
 
-    def initial_thrust_action(self) -> float:
-        """
-        Thrust the actuators start an episode with, on the scale of the policy
-        action: scenario.initial_thrust if set, else the fixed thrust value in
-        ThrustMode.FIXED (the thrust held for the whole episode), else -1
-        (min_thrust).
-        """
-
-        if self.scenario.initial_thrust is not None:
-            return float(self.scenario.initial_thrust)
-        if self.thrust.mode == ThrustMode.FIXED:
-            return float(self.thrust.fixed_value)
-        return -1.0
-
     # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
@@ -302,13 +281,6 @@ class VesselProfile:
             errors.append(
                 f"scenario.initial_speed must be non-negative, "
                 f"got {self.scenario.initial_speed}."
-            )
-
-        if (self.scenario.initial_thrust is not None
-                and not -1.0 <= self.scenario.initial_thrust <= 1.0):
-            errors.append(
-                f"scenario.initial_thrust must be in [-1, 1] (action scale), "
-                f"got {self.scenario.initial_thrust}."
             )
 
         if (self.actuator.max_rudder_angle_deg is not None
@@ -356,7 +328,6 @@ class VesselProfile:
             "run_mode": self.run_mode.name,
             "scenario": {
                 "initial_speed": self.scenario.initial_speed,
-                "initial_thrust": self.scenario.initial_thrust,
             },
             "actuator": {
                 "max_rudder_angle_deg": self.actuator.max_rudder_angle_deg,
@@ -387,7 +358,6 @@ class VesselProfile:
 
         scenario_d = d.get("scenario", {})
         initial_speed = scenario_d.get("initial_speed") if scenario_d else None
-        initial_thrust = scenario_d.get("initial_thrust") if scenario_d else None
 
         thrust_d = d.get("thrust", {})
         model_d = d.get("model", {})
@@ -400,10 +370,7 @@ class VesselProfile:
             scenario=ScenarioConfig(
                 initial_speed=(
                     float(initial_speed) if initial_speed is not None else None
-                ),
-                initial_thrust=(
-                    float(initial_thrust) if initial_thrust is not None else None
-                ),
+                )
             ),
             actuator=ActuatorConfig(
                 **_filter_fields(ActuatorConfig, d.get("actuator", {}))
@@ -473,7 +440,6 @@ class VesselProfile:
             lines.append(f"  initial_speed: {self.scenario.initial_speed} m/s")
         else:
             lines.append("  initial_speed: (environment default)")
-        lines.append(f"  initial_thrust: {self.initial_thrust_action():+.2f} (action scale)")
 
         lines.append(f"  smoothing    : {self.actuator.enable_smoothing}")
         if self.actuator.max_rudder_angle_deg is not None:

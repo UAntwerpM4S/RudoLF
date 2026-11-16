@@ -1,7 +1,5 @@
 import numpy as np
 
-from typing import Optional
-
 from fw.ships.actuator_state import ActuatorState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.ships.actuator_command import ActuatorCommand
@@ -33,7 +31,7 @@ class ActuatorModel:
         self.specifications: ShipSpecifications = specifications
 
         self._rudder = 0.0  # Current rudder angle [rad]
-        self._thrust = specifications.min_thrust  # Current thrust [-]
+        self._thrust = 0.0  # Current thrust [-]
 
     @property
     def current_actuator_state(self):
@@ -43,27 +41,13 @@ class ActuatorModel:
 
         return np.array([self._rudder, self._thrust], dtype=np.float32)
 
-    def reset(self, thrust: Optional[float] = None) -> None:
+    def reset(self) -> None:
         """
-        Reset the rudder to zero and the thrust to its episode start value.
-
-        Args:
-            thrust: Start thrust within [min_thrust, max_thrust]; None = min_thrust
-                (the lowest value the actuator can hold).
-
-        Raises:
-            ValueError: If thrust is outside [min_thrust, max_thrust] (or NaN).
+        Reset rudder and thrust to zero.
         """
-
-        spec = self.specifications
-        if thrust is None:
-            thrust = spec.min_thrust
-        # "not (a <= x <= b)" also rejects NaN
-        if not spec.min_thrust <= thrust <= spec.max_thrust:
-            raise ValueError(f"Start thrust {thrust} is outside [{spec.min_thrust}, {spec.max_thrust}].")
 
         self._rudder = 0.0
-        self._thrust = float(thrust)
+        self._thrust = 0.0
 
     def step(self, action: ActuatorCommand, dt: float, enable_smoothing: bool) -> ActuatorState:
         """

@@ -36,26 +36,6 @@ def get_device(device: str = "auto") -> torch.device:
     return device
 
 
-def require_policy_dims(policy: "PPOPolicy", input_dim: int, output_dim: int, source: str) -> None:
-    """
-    Check that a loaded policy fits the observation and action sizes of its env.
-
-    Args:
-        policy: The loaded policy.
-        input_dim: Observation size the env provides.
-        output_dim: Action size the env expects.
-        source: Policy file or slot, named in the error.
-
-    Raises:
-        ValueError: If a size differs (e.g. a policy saved before an observation change).
-    """
-
-    if policy.input_dim != input_dim or policy.output_dim != output_dim:
-        raise ValueError(
-            f"Policy '{source}' has observation/action size {policy.input_dim}/{policy.output_dim}, "
-            f"but the environment provides {input_dim}/{output_dim}.")
-
-
 class PPOPolicy:
     """
     PPO actor-critic policy: network, save/load and (tanh-squashed) prediction.

@@ -368,7 +368,7 @@ def test_env_reset_starts_from_fh_state():
     """
 
     from fw.dynamics.dynamics_model import Model
-    from fw.environments.py_sim_env import PySimEnv, YAW_RATE_OBS_SCALES
+    from fw.environments.py_sim_env import PySimEnv, YAW_RATE_OBS_SCALE
 
     env = PySimEnv(dynamics_model=Model.FH_TABULAR, ship_model=ShipModel.MYZAKO_37, fh_bridge=_FakeEnvBridge(),
                    wind=True, current=True)
@@ -381,7 +381,7 @@ def test_env_reset_starts_from_fh_state():
     np.testing.assert_array_equal(env.previous_ship_pos, env.ship_pos)
     spec = env.ship.specifications
     np.testing.assert_allclose(obs[:3], [2.0 / env._surge_cap(), 0.5 / spec.sway_limits[1],
-                                         np.radians(0.5) / YAW_RATE_OBS_SCALES[Model.FH_TABULAR]], rtol=1e-6)
+                                         np.radians(0.5) / YAW_RATE_OBS_SCALE], rtol=1e-6)
 
 
 def test_bridge_without_wind_current_support_is_named_in_the_error():

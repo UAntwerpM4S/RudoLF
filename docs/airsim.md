@@ -428,7 +428,7 @@ The file has four top-level sections:
 | Key                    | JSON default                       | Description                                                                                                                                                                                                                                                                                                                         |
 |------------------------|------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `enabled`              | `true`                             | Initialise the AirSimEnv policy from a pretrained 2D checkpoint instead of random weights.                                                                                                                                                                                                                                          |
-| `source_policy_path`   | `"models/FhSimEnv_PPO_policy.zip"` | Path to the 2D `.zip` policy (relative to repo root or absolute). Either `FhSimEnv_PPO_policy.zip` or `PySimEnv_PPO_policy.zip` — both are 13-dim observation (17-dim with wind and current), 2-dim action.                                                                                                                                                        |
+| `source_policy_path`   | `"models/FhSimEnv_PPO_policy.zip"` | Path to the 2D `.zip` policy (relative to repo root or absolute). Either `FhSimEnv_PPO_policy.zip` or `PySimEnv_PPO_policy.zip` — both are 12-dim observation, 2-dim action.                                                                                                                                                        |
 | `freeze_shared_layers` | `true`                             | When `true`, freeze **only** `shared_network[2]` (the 256→128 backbone hidden layer). The mapping layer (`shared_network[0]`) and the actor/critic heads remain trainable so the policy distribution can adapt to AirSim's 3D physics and reward structure. When `false`, no parameters are frozen and the full network fine-tunes. |
 
 > **Important behavior change (sprint 11–12 fix):** Earlier revisions froze every transferred layer — including the actor and critic heads — when `freeze_shared_layers = true`. That locked the policy distribution and prevented the agent from getting past the first significant route bend (~checkpoint 33). The current implementation freezes only the backbone hidden layer; the actor head, critic head, and mapping layer all keep `requires_grad = True`. This matches the long-standing docstring intent in `transfer_learning.py` and is what makes Phase 1 (freeze ON) usable as a learning phase rather than a hard ceiling.
@@ -605,10 +605,10 @@ Transfer learning initializes the AirSimEnv policy from a pretrained 2D checkpoi
 
 Both supported 2D checkpoints (`PySimEnv_PPO_policy.zip`, `FhSimEnv_PPO_policy.zip`) have:
 
-- **input_dim = 13** (2D observation space; 17 with wind and current)
+- **input_dim = 12** (2D observation space)
 - **output_dim = 2** (steering, throttle)
 
-AirSimEnv has **input_dim = 18** and **output_dim = 2**. Action dimensions match (transfer allowed) and the target input space is strictly larger than the source (`extra_input_dims = 5`, or 1 for a wind/current policy).
+AirSimEnv has **input_dim = 18** and **output_dim = 2**. Action dimensions match (transfer allowed) and the target input space is strictly larger than the source (`extra_input_dims = 6`).
 
 #### Recommended 3-Phase Training Strategy
 
@@ -671,7 +671,7 @@ The `ActorCriticNetwork` first layer `shared_network[0]: Linear(input_dim → 25
 
 | Source → Target                                     | `shared_network[0]` behavior                                                                                                                                                                                                                                                                                                  |
 |-----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 13-dim → 18-dim (PySim/FhSim → AirSim)              | Shape mismatch (`13×256` vs `18×256`). Layer is **not** transferred. It remains randomly initialised by `PPOPolicy.__init__()` and is always trainable. This is the implicit mapping layer that learns to project the extra 5 AirSim observation dimensions into the feature space that the deeper layers already understand. |
+| 12-dim → 18-dim (PySim/FhSim → AirSim)              | Shape mismatch (`12×256` vs `18×256`). Layer is **not** transferred. It remains randomly initialised by `PPOPolicy.__init__()` and is always trainable. This is the implicit mapping layer that learns to project the extra 6 AirSim observation dimensions into the feature space that the deeper layers already understand. |
 | 18-dim → 18-dim (AirSim Phase 1 → AirSim Phase 2/3) | Shapes match. The layer **is** transferred from source. Whether it stays trainable depends on `freeze_shared_layers`: when `false` (typical for Phase 2/3) it is trainable; when `true` it is still trainable because only the backbone is frozen.                                                                            |
 
 There is **no** orthogonal re-init step for the mapping layer — earlier revisions had a `mapping_layer_init_gain` parameter, but that has been removed in favor of relying on `PPOPolicy`'s own initialization. If a future regression reintroduces gradient explosion at training start, dampening the mapping layer init is the first place to look.
@@ -680,9 +680,9 @@ There is **no** orthogonal re-init step for the mapping layer — earlier revisi
 
 The following layers are candidates for transfer (in order). Each is transferred only if both source and target have identical tensor shapes:
 
-| Key                       | Transfer condition (13→18 case)                                                      | Transfer condition (18→18 case)                                                      |
+| Key                       | Transfer condition (12→18 case)                                                      | Transfer condition (18→18 case)                                                      |
 |---------------------------|--------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
-| `shared_network.0.weight` | Skipped (shape mismatch `13×256` vs `18×256`)                                        | Transferred                                                                          |
+| `shared_network.0.weight` | Skipped (shape mismatch `12×256` vs `18×256`)                                        | Transferred                                                                          |
 | `shared_network.0.bias`   | Skipped (paired with weight)                                                         | Transferred                                                                          |
 | `shared_network.2.weight` | Transferred (256→128 shape is invariant)                                             | Transferred                                                                          |
 | `shared_network.2.bias`   | Transferred                                                                          | Transferred                                                                          |
@@ -697,7 +697,7 @@ The following layers are candidates for transfer (in order). Each is transferred
 #### Compatibility Requirements
 
 - Action dimensions must match between source and target. PySim, FhSim, and AirSim all use a 2-dim action space (steering, throttle).
-- `target_input_dim >= source_input_dim`. PySim/FhSim (13, or 17 with wind and current) → AirSim (18) satisfies this.
+- `target_input_dim >= source_input_dim`. PySim/FhSim (12) → AirSim (18) satisfies this.
 - A `TransferIncompatibilityError` (subclass of `ValueError`) is raised with a descriptive message — including the actual source and target dimensions — if either condition fails.
 
 #### Freezing Behavior
@@ -731,15 +731,15 @@ This bypass is necessary because `Trainer.train()` creates a fresh agent interna
 
 #### Terminal Output
 
-Transfer learning prints a topology report and a transfer summary on startup. Example for the typical Phase 1 case (13→18, freeze ON):
+Transfer learning prints a topology report and a transfer summary on startup. Example for the typical Phase 1 case (12→18, freeze ON):
 
 ```
 ==========================================================
   Transfer Learning — Network Topology Comparison
 ==========================================================
-  Source input dim   : 13  (2D policy)
+  Source input dim   : 12  (2D policy)
   Target input dim   : 18  (AirSimEnv)
-  Extra input dims   : 5  (handled by mapping layer)
+  Extra input dims   : 6  (handled by mapping layer)
   Source output dim  : 2
   Target output dim  : 2
   Output compatible  : True
@@ -1511,7 +1511,7 @@ tests/
 | `config/test_runtime_settings_validation`             | Default key contract, merge semantics, `AirSimConfig` error message quality (R8, R10)                                                                                                                                                                                                                                                                                                                                                 |
 | `enviroments/test_airsim_env`                         | 18-field observation shape, reward event values, termination conditions, 40-step stability (R13)                                                                                                                                                                                                                                                                                                                                      |
 | `train/test_train_airsim`                             | Full training path with mocked bridge, stop condition, episode logging (R12)                                                                                                                                                                                                                                                                                                                                                          |
-| `train/test_transfer_learning`                        | Source/target topology compatibility, weight tensor mapping, conditional mapping-layer re-init (18→18 preserved, 13→18 re-initialized), freeze behavior, Trainer bypass path (R4, R14, T-054–T-057)                                                                                                                                                                                                                                   |
+| `train/test_transfer_learning`                        | Source/target topology compatibility, weight tensor mapping, conditional mapping-layer re-init (18→18 preserved, 12→18 re-initialized), freeze behavior, Trainer bypass path (R4, R14, T-054–T-057)                                                                                                                                                                                                                                   |
 | `train/test_stability`                                | Observation and reward values stay in expected bounds over many steps (BI-3.3.2, R13)                                                                                                                                                                                                                                                                                                                                                 |
 | `train/test_model_load_errors`                        | `TransferIncompatibilityError` type contract, dimension values in error messages (R4, R10)                                                                                                                                                                                                                                                                                                                                            |
 | `inference/test_model_visualisation_dispatch`         | `model_visualise` / `inference_visualise` flag routing, UE5 unreachable clean exit (R9)                                                                                                                                                                                                                                                                                                                                               |

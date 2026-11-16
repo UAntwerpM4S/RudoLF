@@ -6,8 +6,8 @@ The CSVs have the generator's raw full_env row (no header). For every row the
 four observation features are computed with env_body_components, exactly as
 the RL observation does; per quantity the given percentile of the larger
 absolute component (|ahead|, |stbd|) is printed, plus the share of rows that
-the suggested scale would clip. The percentile and maximum of |yaw_rate| are
-printed as well, for the FH and UA entries of PySimEnv's YAW_RATE_OBS_SCALES.
+the suggested scale would clip. The same percentile of |yaw_rate| is printed
+as well (a candidate scale for the observed yaw rate).
 
 Usage (from src):
 
@@ -78,24 +78,6 @@ def suggest_scales(columns: Dict[str, np.ndarray], percentile: float) -> Dict[st
     return out
 
 
-def suggest_yaw_scale(columns: Dict[str, np.ndarray], percentile: float) -> Dict[str, float]:
-    """
-    The percentile and the maximum of the finite |yaw_rate| values [rad/s].
-
-    Raises:
-        ValueError: If `percentile` is outside [0, 100] or there are no finite rows.
-    """
-
-    if not 0.0 <= percentile <= 100.0:
-        raise ValueError(f"percentile must be in [0, 100], got {percentile}.")
-
-    yaw = np.abs(columns["yaw_rate"])
-    yaw = yaw[np.isfinite(yaw)]
-    if yaw.size == 0:
-        raise ValueError("No finite yaw_rate rows in the given CSV(s).")
-    return {"percentile": float(np.percentile(yaw, percentile)), "max": float(yaw.max()), "rows": int(yaw.size)}
-
-
 def main(argv: Sequence[str] = None) -> int:
     """
     Command-line entry point; prints the suggestions.
@@ -119,12 +101,13 @@ def main(argv: Sequence[str] = None) -> int:
         print(f"{name}: p{args.percentile:g} of max(|ahead|, |stbd|) = {r['percentile']:.3f} m/s, "
               f"max = {r['max']:.3f} m/s, clipped at that scale: {100 * r['clipped_share']:.3f} % "
               f"of {r['rows']} rows")
-    yaw = suggest_yaw_scale(columns, args.percentile)
-    print(f"yaw rate: p{args.percentile:g} of |yaw_rate| = {yaw['percentile']:.4f} rad/s, "
-          f"max = {yaw['max']:.4f} rad/s, of {yaw['rows']} rows")
+    yaw = np.abs(columns["yaw_rate"])
+    yaw = yaw[np.isfinite(yaw)]
+    if yaw.size:
+        print(f"yaw rate: p{args.percentile:g} of |yaw_rate| = {np.percentile(yaw, args.percentile):.4f} rad/s, "
+              f"max = {yaw.max():.4f} rad/s, of {yaw.size} rows")
     print(f"Suggested: WIND_OBS_SCALE = {result['wind']['percentile']:.1f}, "
-          f"CURRENT_OBS_SCALE = {result['current']['percentile']:.2f}, "
-          f"yaw-rate scale (YAW_RATE_OBS_SCALES, FH and UA) just above max = {yaw['max']:.4f}")
+          f"CURRENT_OBS_SCALE = {result['current']['percentile']:.2f}")
     return 0
 
 

@@ -20,16 +20,14 @@ from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_MAX_DISTANCE, ray_w
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.vessel_state import VesselState
-from fw.ships.action_mapper import ActionMapper
 from fw.environments.base_env import BaseEnv
 from fw.reward.reward import Reward
 
 from fw.dynamics.nomoto import Nomoto
 from fw.dynamics.fossen import Fossen
-from fw.dynamics.dynamics_model import DynamicsBase, Model
+from fw.dynamics.dynamics_model import Model
 from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.fh_tabular_model import FhTabularModel
-from fw.simulators.fh_interface_utils import FH_PROPELLER_RPS_PER_THRUST
 from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
 from fw.dynamics.uantwerp_surrogate import RANDOM_CURRENT_SPEED_MAX, UAntwerpSurrogate
 
@@ -52,56 +50,10 @@ CHECKPOINT_AREA_SIZE = 5.0
 TARGET_AREA_SIZE = 7.0
 TARGET_SURGE_VELOCITY_MS = 4.0  # m/s, target for velocity reward shaping
 
-# Scale [rad/s] of the observed yaw rate per dynamics model, covering the largest
-# |yaw_rate| measured with that model (the simulator's yaw_rate_limits are far wider).
-# FH and UA: myzako_full dataset, max 0.0365, p99.9 0.0304
-# (fw.surrogate.compute_wind_current_obs_scales). Fossen and Nomoto: rudder and
-# thrust sweeps over all their ship presets (max 0.060 and 0.144).
-YAW_RATE_OBS_SCALES = {
-    Model.FH_TABULAR: 0.04,
-    Model.UANTWERP: 0.04,
-    Model.FOSSEN: 0.07,
-    Model.NOMOTO: 0.15,
-}
-
-# UGent surrogate: per towing-tank UKC [%], from the same sweeps (max 0.054 at
-# 363 %, 0.131 at 125 % where the ship turns on the spot at near-zero surge, and
-# 0.053 at 43 %).
-UGENT_YAW_RATE_OBS_SCALES = {
-    363: 0.06,
-    125: 0.14,
-    43: 0.06,
-}
-
-
-def yaw_rate_obs_scale(dynamics: DynamicsBase, dynamics_model: Model, specs) -> float:
-    """
-    Observed yaw-rate scale [rad/s] of a PySimEnv.
-
-    UGent surrogate: by its UKC. UGent B01 surrogate (model scale, only in an env
-    that accepts model-scale ships): the simulator's yaw-rate limit, since no
-    scale has been measured for a towing-tank env.
-
-    Args:
-        dynamics: The env's dynamics model instance.
-        dynamics_model: Its Model family.
-        specs: The ship's ShipSpecifications.
-
-    Raises:
-        ValueError: If there is no scale for the model (or the UGent UKC).
-    """
-
-    if dynamics_model == Model.UGENT_B01_SURROGATE:
-        return float(specs.yaw_rate_limits[1])
-    if dynamics_model == Model.UGENT_SURROGATE:
-        ukc_percent = dynamics.coefficients.ukc_percent
-        if ukc_percent not in UGENT_YAW_RATE_OBS_SCALES:
-            raise ValueError(f"PySimEnv has no observed yaw-rate scale for the UGent surrogate at {ukc_percent} % UKC.")
-        return UGENT_YAW_RATE_OBS_SCALES[ukc_percent]
-    if dynamics_model not in YAW_RATE_OBS_SCALES:
-        raise ValueError(f"PySimEnv has no observed yaw-rate scale for {dynamics_model}.")
-    return YAW_RATE_OBS_SCALES[dynamics_model]
-
+# Scale [rad/s] of the observed yaw rate: just above the largest |yaw_rate| of the
+# myzako_full dataset (0.0365; p99.9 = 0.0304, fw.surrogate.compute_wind_current_obs_scales).
+# The simulator's own limit (yaw_rate_limits) is far wider.
+YAW_RATE_OBS_SCALE = 0.04
 
 # Rendering constants
 MAX_FIG_WIDTH = 1200
@@ -352,7 +304,6 @@ class PySimEnv(BaseEnv):
         # State and control placeholders
         self.ship = create_ship(self.ship_model)
         self.phys_sim = self.create_simulator(ua_surrogate_config, ugent_surrogate_config, ugent_b01_surrogate_config)
-        self.yaw_rate_obs_scale = yaw_rate_obs_scale(self.dynamics, self.dynamics_model, self.ship.specifications)
 
         self._initialize_simulation()
 
@@ -373,8 +324,7 @@ class PySimEnv(BaseEnv):
 
     def neutral_action(self):
         """
-        Neutral action: zero rudder and thrust action (rudder amidships, thrust midway
-        between min_thrust and max_thrust), float32 array of shape (2,).
+        Neutral action: zero rudder and thrust, float32 array of shape (2,).
         """
 
         return np.zeros(2, dtype=np.float32)
@@ -409,6 +359,7 @@ class PySimEnv(BaseEnv):
 
         self.ship_pos = self.initial_ship_pos.copy()
         self.previous_ship_pos = self.initial_ship_pos.copy()
+        self.previous_action = np.zeros(2, dtype=np.float32)
         self.checkpoint_index = 1
         self._episode_outcome = None
 
@@ -430,23 +381,13 @@ class PySimEnv(BaseEnv):
             x=self.initial_ship_pos[0],
             y=self.initial_ship_pos[1],
             heading=self.ship_heading,
-            u=self.initial_speed, v=0.0, r=0.0), rng=self._rng, initial_thrust=self._start_thrust())
+            u=self.initial_speed, v=0.0, r=0.0), rng=self._rng)
         self._agent_state = self.phys_sim.state
-        # Rudder at zero, thrust at initial_thrust.
-        self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
-        self.previous_action = self.performed_action.copy()
+        self.performed_action = np.zeros(2, dtype=np.float32)
 
         # Must follow phys_sim.reset(), else these describe the previous episode.
         self.heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
         self.velocities = self.phys_sim.state.u
-
-    def _start_thrust(self) -> float:
-        """
-        Thrust [min_thrust, max_thrust] the actuators start the episode with
-        (initial_thrust, which is on the action scale).
-        """
-
-        return ActionMapper.map_thrust(self.initial_thrust, self.ship.specifications)
 
     def create_simulator(self, ua_surrogate_config: Optional[Dict]=None,
                          ugent_surrogate_config: Optional[Dict]=None,
@@ -1229,11 +1170,10 @@ class PySimEnv(BaseEnv):
     # -----------------------
     def _initialize_observation_space(self) -> gym.spaces.Box:
         """
-        Box in [-1, 1]: 13 base features (velocities, checkpoint distances, cross-track
-        and heading errors, actual rudder, LOS error, actual thrust) plus, with wind and
+        Box in [-1, 1]: 13 base features (velocities, checkpoint distances, cross-track and
+        heading errors, actual rudder, LOS error, actual thrust) plus, with wind and
         current, the 4 features of fw.environments.wind_current_obs. Surge is scaled by
-        _surge_cap(), yaw rate by yaw_rate_obs_scale; rudder and thrust are on the
-        scale of the policy action.
+        _surge_cap(), yaw rate by YAW_RATE_OBS_SCALE; rudder and thrust are on the scale of the policy action.
         """
 
         base_low = np.array(
@@ -1248,9 +1188,9 @@ class PySimEnv(BaseEnv):
                 -1.0,   # Heading error to next checkpoint
                 -1.0,   # Heading error, parallel to current checkpoint segment
                 -1.0,   # Heading error, parallel to previous-to-next checkpoint line
-                -1.0,   # Actual rudder angle
+                -1.0,   # Previous rudder angle
                 -1.0,   # Optimal LOS guidance
-                -1.0,   # Actual thrust
+                -1.0,   # Previous thrust
             ],
             dtype=np.float32,
         )
@@ -1267,9 +1207,9 @@ class PySimEnv(BaseEnv):
                 1.0,    # Heading error to next checkpoint
                 1.0,    # Heading error, parallel to current checkpoint segment
                 1.0,    # Heading error, parallel to previous-to-next checkpoint line
-                1.0,    # Actual rudder angle
+                1.0,    # Previous rudder angle
                 1.0,    # Optimal LOS guidance
-                1.0,    # Actual thrust
+                1.0,    # Previous thrust
             ],
             dtype=np.float32,
         )
@@ -1288,14 +1228,6 @@ class PySimEnv(BaseEnv):
         """
 
         if self._fh_sim is not None:
-            # Start thrust as engine lever and matching propeller rate, as in the dataset
-            # generator. FH takes the rate only when the bridge initializes its math model.
-            if hasattr(self._fh_sim, "initial_propeller_rps") and hasattr(self._fh_sim, "initial_engine_lever"):
-                self._fh_sim.initial_engine_lever = self._start_thrust()
-                self._fh_sim.initial_propeller_rps = FH_PROPELLER_RPS_PER_THRUST * self._start_thrust()
-            else:
-                logger.debug("%s has no initial_propeller_rps / initial_engine_lever hooks: "
-                             "the start thrust is not sent to it.", type(self._fh_sim).__name__)
             if self.wind:
                 # noinspection PyUnresolvedReferences
                 self._fh_sim.reset(wind_rng=self._rng)
@@ -1369,8 +1301,7 @@ class PySimEnv(BaseEnv):
         """
 
         x, y, heading, u, v, r = self.dynamics.read_state()
-        self.phys_sim.reset(VesselState(terminated=False, truncated=False, x=x, y=y, heading=heading, u=u, v=v, r=r),
-                            initial_thrust=self._start_thrust())
+        self.phys_sim.reset(VesselState(terminated=False, truncated=False, x=x, y=y, heading=heading, u=u, v=v, r=r))
         self._agent_state = self.phys_sim.state
         self.ship_pos = np.array([self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32)
         self.previous_ship_pos = self.ship_pos.copy()
@@ -1389,7 +1320,7 @@ class PySimEnv(BaseEnv):
         norm_velocities = np.array([
             np.clip(self.phys_sim.state.u / self._surge_cap(), -1, 1),
             np.clip(self.phys_sim.state.v / self.ship.specifications.sway_limits[1], -1, 1),
-            np.clip(self.phys_sim.state.r / self.yaw_rate_obs_scale, -1, 1)
+            np.clip(self.phys_sim.state.r / YAW_RATE_OBS_SCALE, -1, 1)
         ], dtype=np.float32)
 
         # Clamp checkpoint indices
@@ -1471,8 +1402,8 @@ class PySimEnv(BaseEnv):
             0.0
         )
 
-        # Actual rudder angle and thrust on the scale of the policy action (inverse of
-        # ActionMapper); after reset the thrust is initial_thrust.
+        # Actual rudder angle [rad] and thrust on the scale of the policy action
+        # (inverse of ActionMapper); thrust is -1 before the first step.
         specs = self.ship.specifications
         norm_rudder = float(np.clip(self.performed_action[0] / specs.max_rudder_angle, -1.0, 1.0))
         norm_thrust = float(np.clip(2.0 * (self.performed_action[1] - specs.min_thrust)
@@ -1488,9 +1419,9 @@ class PySimEnv(BaseEnv):
             [heading_error2 / np.pi],               # Heading error to next checkpoint
             [heading_error_parallel / np.pi],       # Heading error, parallel to current segment
             [heading_error_parallel2 / np.pi],      # Heading error, parallel to previous-to-next line
-            norm_rudder,                            # Actual rudder angle
+            norm_rudder,                            # Previous rudder angle
             los_heading_error / np.pi,              # Optimal LOS guidance
-            norm_thrust,                            # Actual thrust
+            norm_thrust,                            # Previous thrust
         ])
 
         if self.wind:

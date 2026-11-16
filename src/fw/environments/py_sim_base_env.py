@@ -15,12 +15,11 @@ from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
 from fw.ships.vessel_state import VesselState
-from fw.ships.action_mapper import ActionMapper
 from fw.environments.base_env import BaseEnv
 
 from fw.dynamics.nomoto import Nomoto
 from fw.dynamics.fossen import Fossen
-from fw.dynamics.dynamics_model import DynamicsBase, Model
+from fw.dynamics.dynamics_model import Model
 from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
 
@@ -51,55 +50,6 @@ PERPENDICULAR_LINE_LENGTH = 50.0
 HEADING_CHANGE_THRESHOLD = np.pi / 2.0
 CROSS_TRACK_TERMINATION_MULTIPLIER = 2.0
 EPSILON = 1e-9
-
-# Scale [rad/s] of the observed yaw rate per dynamics model, covering the largest
-# |yaw_rate| measured in the COLAV env with rudder and thrust sweeps over all ship
-# presets of the model (Fossen 0.060, Nomoto 0.144). Kept apart from
-# PySimEnv's scales on purpose: the COLAV observation may still change for
-# COLAV-specific scenarios.
-YAW_RATE_OBS_SCALES = {
-    Model.FOSSEN: 0.07,
-    Model.NOMOTO: 0.15,
-}
-
-# UGent surrogate: per towing-tank UKC [%], from the same sweeps (max 0.054 at
-# 363 %, 0.131 at 125 % where the ship turns on the spot at near-zero surge, and
-# 0.053 at 43 %).
-UGENT_YAW_RATE_OBS_SCALES = {
-    363: 0.06,
-    125: 0.14,
-    43: 0.06,
-}
-
-
-def yaw_rate_obs_scale(dynamics: DynamicsBase, dynamics_model: Model, specs) -> float:
-    """
-    Observed yaw-rate scale [rad/s] of a PySimBaseEnv (COLAV envs).
-
-    UGent surrogate: by its UKC. UGent B01 surrogate (model scale, only in an env
-    that accepts model-scale ships): the simulator's yaw-rate limit, since no
-    scale has been measured for a towing-tank env.
-
-    Args:
-        dynamics: The env's dynamics model instance.
-        dynamics_model: Its Model family.
-        specs: The ship's ShipSpecifications.
-
-    Raises:
-        ValueError: If there is no scale for the model (or the UGent UKC).
-    """
-
-    if dynamics_model == Model.UGENT_B01_SURROGATE:
-        return float(specs.yaw_rate_limits[1])
-    if dynamics_model == Model.UGENT_SURROGATE:
-        ukc_percent = dynamics.coefficients.ukc_percent
-        if ukc_percent not in UGENT_YAW_RATE_OBS_SCALES:
-            raise ValueError(f"The COLAV envs have no observed yaw-rate scale for the UGent surrogate "
-                             f"at {ukc_percent} % UKC.")
-        return UGENT_YAW_RATE_OBS_SCALES[ukc_percent]
-    if dynamics_model not in YAW_RATE_OBS_SCALES:
-        raise ValueError(f"The COLAV envs have no observed yaw-rate scale for {dynamics_model}.")
-    return YAW_RATE_OBS_SCALES[dynamics_model]
 
 
 def calculate_perpendicular_lines(
@@ -249,7 +199,6 @@ class PySimBaseEnv(BaseEnv):
 
         self.ship = create_ship(self.ship_model)
         self.phys_sim = self.create_simulator(ugent_surrogate_config, ugent_b01_surrogate_config)
-        self.yaw_rate_obs_scale = yaw_rate_obs_scale(self.dynamics, self.dynamics_model, self.ship.specifications)
 
         self._initialize_simulation()
 
@@ -293,14 +242,6 @@ class PySimBaseEnv(BaseEnv):
     # -----------------------
     # Initialization helpers
     # -----------------------
-    def _start_thrust(self) -> float:
-        """
-        Thrust [min_thrust, max_thrust] the actuators start the episode with
-        (initial_thrust, which is on the action scale).
-        """
-
-        return ActionMapper.map_thrust(self.initial_thrust, self.ship.specifications)
-
     def _initialize_simulation(self) -> None:
         """
         Reset the ship to its start state and reset the simulator.
@@ -308,6 +249,7 @@ class PySimBaseEnv(BaseEnv):
 
         self.ship_pos = self.initial_ship_pos.copy()
         self.previous_ship_pos = self.initial_ship_pos.copy()
+        self.previous_action = np.zeros(2, dtype=np.float32)
         self.checkpoint_index = 1
 
         # Focused-encounter training: optionally start at a random mid-path
@@ -336,11 +278,9 @@ class PySimBaseEnv(BaseEnv):
             x=self.ship_pos[0],
             y=self.ship_pos[1],
             heading=self.ship_heading,
-            u=0.0, v=0.0, r=0.0), initial_thrust=self._start_thrust())
+            u=0.0, v=0.0, r=0.0))
         self._agent_state = self.phys_sim.state
-        # Rudder at zero, thrust at initial_thrust.
-        self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
-        self.previous_action = self.performed_action.copy()
+        self.performed_action = np.zeros(2, dtype=np.float32)
 
         # Must follow phys_sim.reset() to reflect the new episode.
         self.heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
@@ -701,7 +641,7 @@ class PySimBaseEnv(BaseEnv):
     # -----------------------
     def _initialize_observation_space(self) -> gym.spaces.Box:
         """
-        Observation space: 13 base features in [-1, 1] (see _get_obs), plus 2
+        Observation space: 12 base features in [-1, 1] (see _get_obs), plus 2
         each for wind and current when enabled.
         """
 
@@ -717,9 +657,8 @@ class PySimBaseEnv(BaseEnv):
                 -1.0,   # Heading error to next checkpoint
                 -1.0,   # Heading error vs current segment
                 -1.0,   # Heading error vs next segment
-                -1.0,   # Actual rudder angle
+                -1.0,   # Previous rudder angle
                 -1.0,   # LOS heading error
-                -1.0,   # Actual thrust
             ],
             dtype=np.float32,
         )
@@ -736,9 +675,8 @@ class PySimBaseEnv(BaseEnv):
                 1.0,    # Heading error to next checkpoint
                 1.0,    # Heading error vs current segment
                 1.0,    # Heading error vs next segment
-                1.0,    # Actual rudder angle
+                1.0,    # Previous rudder angle
                 1.0,    # LOS heading error
-                1.0,    # Actual thrust
             ],
             dtype=np.float32,
         )
@@ -808,15 +746,14 @@ class PySimBaseEnv(BaseEnv):
         """
         Build the normalized observation: u, v, r, distances to the current and
         next checkpoint (log-scaled), signed cross-track error, four heading
-        errors, actual rudder angle, LOS heading error, actual thrust, plus zero
-        wind/current placeholders when enabled. Yaw rate is scaled by
-        yaw_rate_obs_scale; rudder and thrust are on the scale of the policy action.
+        errors, previous rudder angle, LOS heading error, plus zero wind/current
+        placeholders when enabled.
         """
 
         norm_velocities = np.array([
             np.clip(self.phys_sim.state.u / self.ship.specifications.surge_limits[1], -1, 1),
             np.clip(self.phys_sim.state.v / self.ship.specifications.sway_limits[1], -1, 1),
-            np.clip(self.phys_sim.state.r / self.yaw_rate_obs_scale, -1, 1)
+            np.clip(self.phys_sim.state.r / self.ship.specifications.yaw_rate_limits[1], -1, 1)
         ], dtype=np.float32)
 
         current_chkp_idx = self.checkpoint_index
@@ -894,13 +831,6 @@ class PySimBaseEnv(BaseEnv):
             0.0
         )
 
-        # Actual rudder angle and thrust on the scale of the policy action (inverse of
-        # ActionMapper); after reset the thrust is initial_thrust.
-        specs = self.ship.specifications
-        norm_rudder = float(np.clip(self.performed_action[0] / specs.max_rudder_angle, -1.0, 1.0))
-        norm_thrust = float(np.clip(2.0 * (self.performed_action[1] - specs.min_thrust)
-                                    / (specs.max_thrust - specs.min_thrust) - 1.0, -1.0, 1.0))
-
         obs = np.hstack([
             norm_velocities,
             [2 * norm_distance - 1],
@@ -910,9 +840,8 @@ class PySimBaseEnv(BaseEnv):
             [heading_error2 / np.pi],
             [heading_error_parallel / np.pi],
             [heading_error_parallel2 / np.pi],
-            norm_rudder,                            # Actual rudder angle
+            self.performed_action[0],               # Previous rudder angle
             los_heading_error / np.pi,
-            norm_thrust,                            # Actual thrust
         ])
 
         # Placeholders: the dynamics models of this env have no wind or current.
