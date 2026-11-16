@@ -1,5 +1,5 @@
 """
-Review fixes kept on top of PR 431 (no change to observation or dynamics):
+Review fixes of PR 431:
 
 - a saved policy that does not fit the env is refused at load time, without
   changing any agent;
@@ -7,7 +7,10 @@ Review fixes kept on top of PR 431 (no change to observation or dynamics):
   and the evaluation after training keeps the training metrics;
 - ShipSpecifications refuses actuator ranges the observation cannot normalize by;
 - evaluation series start at the env's actuator state;
-- compute_wind_current_obs_scales suggests a yaw-rate scale.
+- compute_wind_current_obs_scales suggests a yaw-rate scale;
+- observed yaw-rate scale per dynamics model (UGent per UKC), in PySimEnv and,
+  in separate tables, in the COLAV envs (FH and UA keep 0.04);
+- COLAV observation: rudder and thrust on the action scale (13 base features).
 """
 
 import dataclasses
