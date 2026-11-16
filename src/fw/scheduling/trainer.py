@@ -242,10 +242,10 @@ class Trainer:
                         )
             except AttributeError as e:
                 logger.warning(e)
-            except (ValueError, FileNotFoundError, RuntimeError) as e:
+            except Exception:
                 # The training is done and its policy saved: keep the metrics.
-                logger.error("Evaluation after training '%s' failed, metrics kept without an "
-                             "evaluation summary: %s", env_type, e)
+                logger.exception("Evaluation after training '%s' failed, metrics kept without an "
+                                 "evaluation summary.", env_type)
         else:
             logger.warning("No successful training found for environment '%s' to visualize.", env_type)
 

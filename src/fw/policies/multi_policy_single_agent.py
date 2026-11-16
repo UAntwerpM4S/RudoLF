@@ -1015,7 +1015,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     policies.append(policy)
 
                 # All policies share one env, so they must have been trained with one yaw-rate scale.
-                scales = {policy_yaw_rate_obs_scale(p) for p in policies}
+                scales = {policy_yaw_rate_obs_scale(p, self.env) for p in policies}
                 if len(scales) > 1:
                     raise ValueError(f"The policies in '{policy_file_name}' were trained with different "
                                      f"yaw-rate observation scales {sorted(scales)}, but share one env.")
@@ -1030,7 +1030,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 ]
 
             except ValueError:
-                raise   # policy size mismatch (require_policy_dims)
+                raise   # size, stored-scale or mixed-scale check above
             except Exception as e:
                 raise RuntimeError(
                     f"Failed to load multi-policy archive: {e}"
@@ -1044,7 +1044,10 @@ class MultiPolicySingleAgent(BasePPOAgent):
         """
 
         if self._vec_env is not None and yaw_rate_obs_scale_changes(policy, self.env):
-            self._vec_env.close()
+            try:
+                self._vec_env.close()
+            except Exception as e:
+                raise RuntimeError("Failed to close the worker copies before a yaw-rate scale change.") from e
             self._vec_env = None
 
     def load_individual_policy(
@@ -1059,9 +1062,11 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         Raises:
             IndexError: If policy_id is out of range.
+            RuntimeError: If the file or its policy.pth entry is missing.
             ValueError: If the policy's observation/action size differs from the
-                agent's, or it was trained with another yaw-rate observation scale
-                than the env uses; the slot is left unchanged then.
+                agent's, its stored yaw-rate scale is invalid, or it was trained
+                with another yaw-rate observation scale than the env uses; the
+                slot is left unchanged then.
         """
 
         if not 0 <= policy_id < self.num_policies:
@@ -1071,7 +1076,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         loaded = PPOPolicy.load(policy_file_name, str(self.device))
         require_policy_dims(loaded, self.policy_obs_dim, self.output_dim, policy_file_name)
-        env_scale, policy_scale = env_yaw_rate_obs_scale(self.env), policy_yaw_rate_obs_scale(loaded)
+        env_scale, policy_scale = env_yaw_rate_obs_scale(self.env), policy_yaw_rate_obs_scale(loaded, self.env)
         if env_scale is not None and policy_scale != env_scale:
             raise ValueError(f"Policy '{policy_file_name}' was trained with yaw-rate observation scale "
                              f"{policy_scale}, but the env (shared by all slots) uses {env_scale}.")

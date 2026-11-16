@@ -254,6 +254,9 @@ class PySimBaseEnv(BaseEnv):
         # (set_yaw_rate_obs_scale).
         self.own_yaw_rate_obs_scale = yaw_rate_obs_scale(self.dynamics, self.dynamics_model, self.ship.specifications)
         self.yaw_rate_obs_scale = self.own_yaw_rate_obs_scale
+        # Yaw-rate scale [rad/s] of policy files without a stored scale: COLAV
+        # observations of that size used this env's own scale.
+        self.unstored_policy_yaw_rate_obs_scale = self.own_yaw_rate_obs_scale
 
         self._initialize_simulation()
 

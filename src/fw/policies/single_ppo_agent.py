@@ -730,7 +730,10 @@ class SinglePPOAgent(BasePPOAgent):
 
         if self._vec_env is not None and yaw_rate_obs_scale_changes(policy, self.env):
             # Worker copies were made with the old scale: rebuild them on the next rollout.
-            self._vec_env.close()
+            try:
+                self._vec_env.close()
+            except Exception as e:
+                raise RuntimeError(f"Failed to close the worker copies before loading '{policy_file_name}'.") from e
             self._vec_env = None
         apply_policy_yaw_rate_obs_scale(policy, self.env, policy_file_name)
         self.policy = policy

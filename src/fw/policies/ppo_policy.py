@@ -56,12 +56,6 @@ def require_policy_dims(policy: "PPOPolicy", input_dim: int, output_dim: int, so
             f"but the environment provides {input_dim}/{output_dim}.")
 
 
-# Yaw-rate observation scale [rad/s] of policies saved before scales were stored
-# with them: PR 431 first used this one scale for every dynamics model (earlier
-# observations had another size and are refused by require_policy_dims).
-LEGACY_YAW_RATE_OBS_SCALE = 0.04
-
-
 def _yaw_scale_envs(env) -> list:
     """
     The (unwrapped) envs whose observed yaw-rate scale follows a policy: the
@@ -98,15 +92,17 @@ def start_fresh_policy(policy: "PPOPolicy", env) -> None:
     policy.yaw_rate_obs_scale = env_yaw_rate_obs_scale(env)
 
 
-def policy_yaw_rate_obs_scale(policy: "PPOPolicy") -> float:
+def policy_yaw_rate_obs_scale(policy: "PPOPolicy", env) -> Optional[float]:
     """
     The yaw-rate observation scale [rad/s] a policy was trained with: its stored
-    scale, or LEGACY_YAW_RATE_OBS_SCALE for a policy saved before scales were stored.
+    scale, or for a file without one the env's unstored_policy_yaw_rate_obs_scale
+    (multi-ship env: its first sub-environment's). None if env has no yaw-rate scale.
     """
 
-    if policy.yaw_rate_obs_scale is None:
-        return LEGACY_YAW_RATE_OBS_SCALE
-    return float(policy.yaw_rate_obs_scale)
+    if policy.yaw_rate_obs_scale is not None:
+        return float(policy.yaw_rate_obs_scale)
+    envs = _yaw_scale_envs(env)
+    return float(envs[0].unstored_policy_yaw_rate_obs_scale) if envs else None
 
 
 def yaw_rate_obs_scale_changes(policy: "PPOPolicy", env) -> bool:
@@ -114,7 +110,7 @@ def yaw_rate_obs_scale_changes(policy: "PPOPolicy", env) -> bool:
     Whether loading the policy into env changes the yaw-rate scale of any of its envs.
     """
 
-    scale = policy_yaw_rate_obs_scale(policy)
+    scale = policy_yaw_rate_obs_scale(policy, env)
     return any(e.yaw_rate_obs_scale != scale for e in _yaw_scale_envs(env))
 
 
@@ -124,8 +120,9 @@ def apply_policy_yaw_rate_obs_scale(policy: "PPOPolicy", env, source: str) -> No
     with, so a policy trained with another dynamics model (e.g. Fossen) sees the
     same observation for the same yaw rate when it runs in this env (e.g. FH).
 
-    A policy without a stored scale gets LEGACY_YAW_RATE_OBS_SCALE (logged), which
-    is then saved with it. Envs without a yaw-rate scale are left alone.
+    A policy file without a stored scale gets the env's
+    unstored_policy_yaw_rate_obs_scale (logged), which is then saved with it.
+    Envs without a yaw-rate scale are left alone.
 
     Args:
         policy: The loaded policy.
@@ -137,9 +134,10 @@ def apply_policy_yaw_rate_obs_scale(policy: "PPOPolicy", env, source: str) -> No
     if not envs:
         return
     if policy.yaw_rate_obs_scale is None:
-        logger.info("Policy '%s' has no stored yaw-rate observation scale (saved before scales were "
-                    "stored): using %g, the scale it was trained with.", source, LEGACY_YAW_RATE_OBS_SCALE)
-        policy.yaw_rate_obs_scale = LEGACY_YAW_RATE_OBS_SCALE
+        policy.yaw_rate_obs_scale = policy_yaw_rate_obs_scale(policy, env)
+        logger.info("Policy '%s' has no stored yaw-rate observation scale: using %g, the scale %s "
+                    "policies without one were trained with.", source, policy.yaw_rate_obs_scale,
+                    type(envs[0]).__name__)
     for e in envs:
         if e.yaw_rate_obs_scale != policy.yaw_rate_obs_scale:
             logger.info("%s observes the yaw rate with scale %g, the scale policy '%s' was trained with "
@@ -319,6 +317,7 @@ class PPOPolicy:
 
         Raises:
             RuntimeError: If the file or its policy.pth entry is missing.
+            ValueError: If its stored yaw-rate observation scale is not positive and finite.
         """
 
         device = get_device(device)

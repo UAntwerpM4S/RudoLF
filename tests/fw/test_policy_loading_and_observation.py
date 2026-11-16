@@ -1,10 +1,11 @@
 """
-Review fixes of PR 431:
+Policy loading and the ship observation:
 
 - a saved policy that does not fit the env is refused at load time, without
   changing any agent;
 - visualization raises on a missing or incompatible policy, training falls back,
-  and the evaluation after training keeps the training metrics;
+  and a failing evaluation after training keeps the training metrics (Trainer
+  and pipeline);
 - ShipSpecifications refuses actuator ranges the observation cannot normalize by;
 - evaluation series start at the env's actuator state;
 - compute_wind_current_obs_scales suggests a yaw-rate scale;
@@ -12,7 +13,9 @@ Review fixes of PR 431:
   in separate tables, in the COLAV envs (FH and UA keep 0.04);
 - COLAV observation: rudder and thrust on the action scale (13 base features);
 - a saved policy carries its yaw-rate scale, and the env it is loaded into takes
-  it over (e.g. a Fossen policy validated in FH).
+  it over (e.g. a Fossen policy validated in FH); files without one get the env's
+  unstored_policy_yaw_rate_obs_scale;
+- the UE5 replay checks the policy size and applies its yaw-rate scale.
 """
 
 import dataclasses
@@ -175,18 +178,90 @@ def test_multi_agent_size_mismatch_is_a_value_error_and_changes_nothing(tmp_path
     assert all(a.policy is not p for a, (p, _) in zip(agents, before))
 
 
-def test_trainer_and_scheduler_require_the_policy_for_visualization():
+def test_trainer_and_scheduler_require_the_policy_for_visualization(monkeypatch):
     """
     Trainer.visualize and "visualize" pipeline blocks ask set_environment to raise
     on a missing or unfitting policy; "train" blocks do not.
     """
 
-    import inspect
-    from fw.scheduling.pipeline_scheduler import PipelineScheduler
+    from types import SimpleNamespace
+    import fw.scheduling.pipeline_scheduler as scheduler_module
     from fw.scheduling.trainer import Trainer
 
-    assert "require_policy=True" in inspect.getsource(Trainer.visualize)
-    assert 'require_policy=block.action == "visualize"' in inspect.getsource(PipelineScheduler)
+    calls = []
+
+    def set_environment(**kwargs):
+        """
+        Record the call.
+        """
+
+        calls.append(kwargs)
+
+    trainer = Trainer.__new__(Trainer)
+    trainer._config = {"visualize_best_trained": False, "live_animation": False}
+    trainer._agent_mgr = SimpleNamespace(set_environment=set_environment,
+                                         visualize_trained_agent=lambda **_k: None)
+    trainer.visualize([SimpleNamespace(gym_env=SimpleNamespace(training_name="run", type_name="PySimEnv"))])
+    assert calls[-1]["require_policy"] is True
+
+    gym_env = SimpleNamespace(training_name="block", phys_sim=None)
+    monkeypatch.setattr(scheduler_module, "resolve_block_profile",
+                        lambda _b: SimpleNamespace(model=SimpleNamespace(ship_model=None, dynamics_model=None)))
+    monkeypatch.setattr(scheduler_module, "block_framework_config", lambda _b, _p: {})
+    monkeypatch.setattr(scheduler_module, "build_block_environment",
+                        lambda _b, _c: (SimpleNamespace(gym_env=gym_env), "PySimEnv"))
+    monkeypatch.setattr(scheduler_module, "apply_profile", lambda *a, **k: None)
+    scheduler = scheduler_module.PipelineScheduler.__new__(scheduler_module.PipelineScheduler)
+    scheduler.agent_mgr = SimpleNamespace(set_environment=set_environment, visualize_trained_agent=lambda **_k: None,
+                                          train=lambda **_k: None, agent_type="PPO",
+                                          agent=SimpleNamespace(save_policy=lambda _n: None))
+    monkeypatch.setattr(scheduler, "_resolve_transfer", lambda *a: (None, None), raising=False)
+    monkeypatch.setattr(scheduler, "_resolve_hyperparameters", lambda *a: {}, raising=False)
+    monkeypatch.setattr(scheduler, "_build_stop_condition", lambda _s: SimpleNamespace(reset=lambda: None),
+                        raising=False)
+    monkeypatch.setattr(scheduler, "_save_checkpoint", lambda *a: None, raising=False)
+    for action, expected in (("visualize", True), ("train", False)):
+        block = SimpleNamespace(name=action, env_type="PySimEnv", action=action, show_plots=False,
+                                stop_condition=None)
+        scheduler._run_block(block, set(), None)
+        assert calls[-1]["require_policy"] is expected
+
+
+def test_failed_evaluation_after_a_pipeline_train_block_keeps_the_block(monkeypatch):
+    """
+    A train block whose evaluation (show_plots) fails still succeeds, with an
+    "evaluation_error" instead of an evaluation summary.
+    """
+
+    from types import SimpleNamespace
+    import fw.scheduling.pipeline_scheduler as scheduler_module
+
+    def failing_evaluation(**_kwargs):
+        """
+        visualize_trained_agent stand-in: the evaluation fails.
+        """
+
+        raise KeyError("summary")
+
+    gym_env = SimpleNamespace(training_name="block", phys_sim=None)
+    monkeypatch.setattr(scheduler_module, "resolve_block_profile",
+                        lambda _b: SimpleNamespace(model=SimpleNamespace(ship_model=None, dynamics_model=None)))
+    monkeypatch.setattr(scheduler_module, "block_framework_config", lambda _b, _p: {})
+    monkeypatch.setattr(scheduler_module, "build_block_environment",
+                        lambda _b, _c: (SimpleNamespace(gym_env=gym_env), "PySimEnv"))
+    monkeypatch.setattr(scheduler_module, "apply_profile", lambda *a, **k: None)
+    scheduler = scheduler_module.PipelineScheduler.__new__(scheduler_module.PipelineScheduler)
+    scheduler.agent_mgr = SimpleNamespace(set_environment=lambda **_k: None, visualize_trained_agent=failing_evaluation,
+                                          train=lambda **_k: None)
+    monkeypatch.setattr(scheduler, "_resolve_transfer", lambda *a: (None, None), raising=False)
+    monkeypatch.setattr(scheduler, "_resolve_hyperparameters", lambda *a: {}, raising=False)
+    monkeypatch.setattr(scheduler, "_build_stop_condition", lambda _s: SimpleNamespace(reset=lambda: None),
+                        raising=False)
+    monkeypatch.setattr(scheduler, "_save_checkpoint", lambda *a: None, raising=False)
+    block = SimpleNamespace(name="train_block", env_type="PySimEnv", action="train", show_plots=True,
+                            stop_condition=None)
+    result = scheduler._run_block(block, set(), None)
+    assert "evaluation_summary" not in result and "summary" in result["evaluation_error"]
 
 
 def test_trainer_visualize_raises_when_the_policy_cannot_be_loaded():
@@ -224,7 +299,8 @@ def test_trainer_visualize_raises_when_the_policy_cannot_be_loaded():
     trainer.visualize([SimpleNamespace(gym_env=gym_env)])       # logged, not raised
 
 
-@pytest.mark.parametrize("error", [FileNotFoundError("no Best_ policy"), ValueError("size"), RuntimeError("load")])
+@pytest.mark.parametrize("error", [FileNotFoundError("no Best_ policy"), ValueError("size"), RuntimeError("load"),
+                                   KeyError("summary")])
 def test_failed_evaluation_after_training_keeps_the_metrics(error, caplog):
     """
     If the evaluation after a successful training cannot load its policy, the
@@ -328,9 +404,9 @@ def test_pysimenv_yaw_rate_is_scaled_per_dynamics_model(model):
     assert float(obs[2]) == pytest.approx(float(np.clip(env.phys_sim.state.r / YAW_RATE_OBS_SCALES[model], -1, 1)))
 
 
-def test_fh_and_ua_keep_the_yaw_scale_of_pr431():
+def test_fh_and_ua_yaw_scale_is_0_04():
     """
-    FH and UA keep 0.04; the per-model scales only concern the other models.
+    FH and UA use 0.04; the other models have their own scales.
     """
 
     from fw.dynamics.ugent_surrogate import SUPPORTED_UKC_PERCENT
@@ -401,9 +477,9 @@ def test_colav_without_a_yaw_scale_raises(monkeypatch):
 @pytest.mark.parametrize("ship_model", [ShipModel.MYZAKO_37, ShipModel.TRIPOLI])
 def test_colav_rudder_and_thrust_are_on_the_action_scale(ship_model):
     """
-    Myzako's 75 deg rudder used to be observed in rad (up to 1.309), outside the
-    Box; rudder and thrust are now observed on the action scale, as in PySimEnv
-    (13 base features, thrust -1 before the first step).
+    Rudder and thrust are observed on the action scale, as in PySimEnv (13 base
+    features, thrust -1 before the first step), so Myzako's 75 deg rudder stays
+    inside the Box.
     """
 
     from fw.environments.py_sim_colav_env import PySimColavEnv
@@ -495,28 +571,50 @@ def test_fresh_agent_restores_the_env_own_scale(tmp_path):
     assert nomoto.yaw_rate_obs_scale == 0.15 and fresh.policy.yaw_rate_obs_scale == 0.15
 
 
-def test_policy_without_a_stored_scale_was_trained_with_0_04(tmp_path, caplog):
+def test_policy_file_without_a_scale_gets_0_04_in_pysimenv(tmp_path, caplog):
     """
-    A policy saved before scales were stored was trained with PR 431's single
-    scale 0.04: the env takes it over (logged) and the next save stores it.
+    PySimEnv: a policy file without a stored scale gets 0.04 (the scale such
+    files were trained with); the env takes it over (logged) and the next save
+    stores it.
     """
 
     import logging
-    from fw.policies.ppo_policy import LEGACY_YAW_RATE_OBS_SCALE, PPOPolicy
+    from fw.environments.py_sim_env import UNSTORED_POLICY_YAW_RATE_OBS_SCALE
+    from fw.policies.ppo_policy import PPOPolicy
     from fw.policies.single_ppo_agent import SinglePPOAgent
 
-    assert LEGACY_YAW_RATE_OBS_SCALE == 0.04
-    PPOPolicy(13, 2, "cpu").save(str(tmp_path / "old_policy"))
-    assert _saved_scale(tmp_path / "old_policy.zip") is None
+    assert UNSTORED_POLICY_YAW_RATE_OBS_SCALE == 0.04
+    PPOPolicy(13, 2, "cpu").save(str(tmp_path / "unstored_policy"))
+    assert _saved_scale(tmp_path / "unstored_policy.zip") is None
     env = _fossen_env()
     agent = SinglePPOAgent(environment=env, model_dir=str(tmp_path))
     with caplog.at_level(logging.INFO):
-        agent.load_policy("old_policy")
+        agent.load_policy("unstored_policy")
     assert env.yaw_rate_obs_scale == 0.04 and env.own_yaw_rate_obs_scale == 0.07
     assert agent.policy.yaw_rate_obs_scale == 0.04
     assert any("no stored yaw-rate observation scale" in r.getMessage() for r in caplog.records)
     agent.save_policy("resaved_policy")
     assert _saved_scale(tmp_path / "resaved_policy.zip") == 0.04
+
+
+def test_policy_file_without_a_scale_gets_the_own_scale_in_colav(tmp_path):
+    """
+    COLAV envs: a policy file without a stored scale gets the env's own scale
+    (COLAV observations of that size used it), so nothing changes.
+    """
+
+    from fw.environments.py_sim_colav_env import PySimColavEnv
+    from fw.policies.ppo_policy import PPOPolicy
+    from fw.policies.single_ppo_agent import SinglePPOAgent
+
+    env = PySimColavEnv(time_step=1.0, max_steps=5, ship_pos=START, target_pos=TARGET,
+                        dynamics_model=Model.NOMOTO, ship_model=ShipModel.MYZAKO_37)
+    dim = env.observation_space.shape[0]
+    PPOPolicy(dim, 2, "cpu").save(str(tmp_path / "unstored_colav_policy"))
+    agent = SinglePPOAgent(environment=env, model_dir=str(tmp_path))
+    agent.load_policy("unstored_colav_policy")
+    assert env.yaw_rate_obs_scale == env.own_yaw_rate_obs_scale == 0.15
+    assert agent.policy.yaw_rate_obs_scale == 0.15
 
 
 def test_invalid_stored_scale_is_refused_before_anything_changes(tmp_path):
@@ -573,8 +671,9 @@ def test_scale_related_load_failure_falls_back_for_training_and_raises_for_visua
 
 def test_failing_worker_close_changes_nothing(tmp_path):
     """
-    The worker copies are closed before the scale changes: if closing fails, env
-    scale and policy stay as they were.
+    The worker copies are closed before the scale changes: if closing fails, the
+    load fails (RuntimeError, caught by the agent managers) and env scale and
+    policy stay as they were.
     """
 
     from fw.environments.py_sim_env import PySimEnv
@@ -599,7 +698,7 @@ def test_failing_worker_close_changes_nothing(tmp_path):
             raise OSError("worker did not stop")
 
     agent._vec_env = _Workers()
-    with pytest.raises(OSError):
+    with pytest.raises(RuntimeError, match="close the worker copies"):
         agent.load_policy("fossen_policy")
     assert nomoto.yaw_rate_obs_scale == 0.15 and agent.policy is before
 
@@ -756,17 +855,84 @@ def test_colav_env_yaw_scale_setter():
     assert env.yaw_rate_obs_scale == 0.15
 
 
-def test_ue5_visualisation_applies_the_policy_scale():
+def test_ue5_replay_checks_the_policy_and_applies_its_scale(tmp_path, monkeypatch):
     """
-    run_visualise_models applies the policy's yaw-rate scale to the env it builds.
+    The UE5 replay refuses a policy of another size right after building its env
+    (clear size error, no stepping) and otherwise applies the policy's yaw-rate scale.
     """
 
-    import inspect
-    from airsim.inference import run_visualise_models
+    from types import SimpleNamespace
+    import airsim.inference.run_visualise_models as module
+    from fw.policies.ppo_policy import PPOPolicy
 
-    source = inspect.getsource(run_visualise_models)
-    built = source.index("env = self._build_environment(selected_env")
-    assert source.index("apply_policy_yaw_rate_obs_scale(policy, env", built) - built < 200
+    env = _fossen_env()
+    fitting = PPOPolicy(13, 2, "cpu")
+    fitting.yaw_rate_obs_scale = 0.15
+    module._prepare_policy_for_env(fitting, env, "fitting")
+    assert env.yaw_rate_obs_scale == 0.15
+    with pytest.raises(ValueError, match="observation/action size"):
+        module._prepare_policy_for_env(PPOPolicy(12, 2, "cpu"), _fossen_env(), "old")
+
+    class _Exporter:
+        """
+        AirSimSessionExporter stand-in writing nothing.
+        """
+
+        def __init__(self, *args, **kwargs):
+            """
+            Paths under tmp_path.
+            """
+
+            self.bridge_log_path = tmp_path / "bridge.csv"
+            self.export_dir = tmp_path
+
+        def __enter__(self):
+            """
+            Enter.
+            """
+
+            return self
+
+        def __exit__(self, *exc):
+            """
+            Do not swallow exceptions.
+            """
+
+            return False
+
+        def update_metadata(self, *_args, **_kwargs):
+            """
+            Ignore.
+            """
+
+    class _Bridge:
+        """
+        Connected AirSimBridge stand-in; every other call is a no-op.
+        """
+
+        is_connected = True
+
+        def __init__(self, *_args, **_kwargs):
+            """
+            Nothing to connect.
+            """
+
+        def __getattr__(self, _name):
+            """
+            Any bridge method: no-op.
+            """
+
+            return lambda *a, **k: None
+
+    adapter = SimpleNamespace(family="pysim", model_origin="test", cleanup_environment=lambda *_a, **_k: None,
+                              resolve_environment_name=lambda _p, _n: "PySimEnv",
+                              load_policy=lambda _p, device="cpu": PPOPolicy(12, 2, "cpu"),
+                              build_environment=lambda _n, max_steps: _fossen_env())
+    monkeypatch.setattr(module, "AirSimSessionExporter", _Exporter)
+    monkeypatch.setattr(module, "AirSimBridge", _Bridge)
+    monkeypatch.setattr(module, "resolve_model_path", lambda p, _d: tmp_path / "old.zip")
+    with pytest.raises(ValueError, match="observation/action size"):
+        module.VisualiseModelsRunner(adapter).run("old.zip")
 
 
 def test_env_scale_setter_validates():

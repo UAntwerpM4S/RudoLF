@@ -127,7 +127,8 @@ class PipelineScheduler(BaseScheduler):
             last_train_block: Most recent completed "train" block, or None (implicit chaining).
 
         Returns:
-            Dict with "duration", plus "evaluation_summary" if a post-train rollout ran.
+            Dict with "duration", plus "evaluation_summary" if a post-train rollout ran
+            ("evaluation_error" instead if it failed).
         """
 
         profile = resolve_block_profile(block)
@@ -177,12 +178,18 @@ class PipelineScheduler(BaseScheduler):
             if not block.show_plots:
                 return {"duration": time.time() - start}
 
-            summary = self.agent_mgr.visualize_trained_agent(
-                num_episodes=1,
-                live_animation=framework_config.get("live_animation", False),
-                return_summary=True,
-                show_plots=block.show_plots,
-            )
+            try:
+                summary = self.agent_mgr.visualize_trained_agent(
+                    num_episodes=1,
+                    live_animation=framework_config.get("live_animation", False),
+                    return_summary=True,
+                    show_plots=block.show_plots,
+                )
+            except Exception as exc:
+                # The training is done and its policy saved: the block succeeded.
+                logger.exception("Evaluation after training block '%s' failed; the block keeps its "
+                                 "trained policy, without an evaluation summary.", block.name)
+                return {"duration": time.time() - start, "evaluation_error": str(exc)}
             duration = time.time() - start
             return {"duration": duration, "evaluation_summary": summary}
 

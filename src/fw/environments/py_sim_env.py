@@ -56,6 +56,10 @@ TARGET_SURGE_VELOCITY_MS = 4.0  # m/s, target for velocity reward shaping
 # FH and UA: myzako_full dataset, max 0.0365, p99.9 0.0304
 # (fw.surrogate.compute_wind_current_obs_scales). Fossen and Nomoto: rudder and
 # thrust sweeps over all their ship presets (max 0.060 and 0.144).
+# Yaw-rate scale [rad/s] of policy files without a stored scale (see
+# unstored_policy_yaw_rate_obs_scale).
+UNSTORED_POLICY_YAW_RATE_OBS_SCALE = 0.04
+
 YAW_RATE_OBS_SCALES = {
     Model.FH_TABULAR: 0.04,
     Model.UANTWERP: 0.04,
@@ -355,6 +359,9 @@ class PySimEnv(BaseEnv):
         # (set_yaw_rate_obs_scale).
         self.own_yaw_rate_obs_scale = yaw_rate_obs_scale(self.dynamics, self.dynamics_model, self.ship.specifications)
         self.yaw_rate_obs_scale = self.own_yaw_rate_obs_scale
+        # Yaw-rate scale [rad/s] of policy files without a stored scale: PySimEnv
+        # observations of that size divided the yaw rate by 0.04 for every model.
+        self.unstored_policy_yaw_rate_obs_scale = UNSTORED_POLICY_YAW_RATE_OBS_SCALE
 
         self._initialize_simulation()
 

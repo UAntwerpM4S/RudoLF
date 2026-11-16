@@ -481,7 +481,7 @@ class MultiPPOAgent(BasePPOAgent):
                     raise RuntimeError("Some agents failed to load policies")
 
             except ValueError:
-                raise   # policy size mismatch (require_policy_dims)
+                raise   # size or stored-scale check above
             except Exception as e:
                 raise RuntimeError(f"Failed to load multi-agent policy: {e}") from e
 
