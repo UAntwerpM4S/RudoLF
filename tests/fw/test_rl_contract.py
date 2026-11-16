@@ -307,34 +307,37 @@ def test_full_rate_rudder_move_is_not_a_violation(ship_model):
 @pytest.mark.parametrize("smoothing", [False, True])
 def test_observation_stays_in_its_space(ship_model, smoothing):
     """
-    Every observation lies in the Box; rudder and thrust are observed on the action scale.
+    Every observation lies in the Box (13 base features plus 4 for wind and
+    current); hard-over rudder is observed as +1 and -1 (within the jitter
+    threshold), thrust as -1 after reset (zero thrust, clipped) and 0.5 once
+    commanded, and the yaw rate on the Fossen scale without saturating.
     """
 
-    from fw.environments.py_sim_env import PySimEnv
+    from fw.environments.py_sim_env import PySimEnv, YAW_RATE_OBS_SCALES
 
     env = PySimEnv(time_step=2.0, max_steps=50, start_pos=START, target_pos=TARGET,
                    dynamics_model=Model.FOSSEN, ship_model=ship_model, wind=True, current=True)
     env.enable_smoothing = smoothing
     obs, _ = env.reset(seed=0)
+    assert obs.shape == env.observation_space.shape == (17,)
     assert env.observation_space.contains(obs)
-    rudder_obs = []
+    assert float(obs[12]) == -1.0                               # zero thrust after reset, clipped
+    rudder_obs, yaw_obs = [], []
     for k in range(40):                                         # hard over to port, then to starboard
         obs, _, terminated, truncated, _ = env.step(np.array([1.0 if k < 20 else -1.0, 0.5], dtype=np.float32))
         assert env.observation_space.contains(obs)
         rudder_obs.append(float(obs[10]))
-        if terminated or truncated:
-            break
+        yaw_obs.append(float(obs[2]))
+        assert float(obs[2]) == pytest.approx(env.phys_sim.state.r / YAW_RATE_OBS_SCALES[Model.FOSSEN], abs=1e-6)
+        assert not (terminated or truncated)
     spec = env.ship.specifications
-    # With smoothing the rudder stops within the jitter threshold of its command.
-    assert 1.0 - spec.rudder_jitter_threshold / spec.max_rudder_angle - 1e-5 <= max(rudder_obs) <= 1.0
-    assert rudder_obs[-1] == pytest.approx(float(env.performed_action[0]) / spec.max_rudder_angle, abs=1e-6)
-    # Thrust: inverse of ActionMapper (action 0.5 once the actuator has arrived).
-    thrust = spec.min_thrust + 0.5 * (float(obs[12]) + 1.0) * (spec.max_thrust - spec.min_thrust)
-    assert thrust == pytest.approx(float(env.performed_action[1]), abs=1e-6)
-    if not smoothing:
-        assert float(obs[12]) == pytest.approx(0.5, abs=1e-6)
-    from fw.environments.py_sim_env import YAW_RATE_OBS_SCALE
-    assert float(obs[2]) == pytest.approx(float(np.clip(env.phys_sim.state.r / YAW_RATE_OBS_SCALE, -1.0, 1.0)), abs=1e-6)
+    tol = spec.rudder_jitter_threshold / spec.max_rudder_angle + 1e-5
+    assert 1.0 - tol <= max(rudder_obs) <= 1.0
+    assert -1.0 <= min(rudder_obs) <= -1.0 + tol
+    assert max(abs(y) for y in yaw_obs) < 1.0                   # the Fossen scale covers hard-over turns
+    # With smoothing the thrust stops within the jitter threshold of its command.
+    thrust_tol = 2.0 * spec.thrust_jitter_threshold / (spec.max_thrust - spec.min_thrust) if smoothing else 0.0
+    assert float(obs[12]) == pytest.approx(0.5, abs=thrust_tol + 1e-5)
 
 
 def test_observation_9_is_parallel_to_the_previous_to_next_line():

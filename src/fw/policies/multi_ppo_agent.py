@@ -6,7 +6,7 @@ import tempfile
 import logging
 import numpy as np
 
-from fw.policies.ppo_policy import PPOPolicy
+from fw.policies.ppo_policy import PPOPolicy, require_policy_dims
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.configuration.stop_condition import StopCondition
@@ -413,6 +413,8 @@ class MultiPPOAgent(BasePPOAgent):
         Raises:
             FileNotFoundError: If the archive does not exist.
             RuntimeError: If loading fails or required files are missing.
+            ValueError: If a policy's observation/action size differs from its
+                agent's; no agent is changed then.
         """
 
         if not policy_file_name.endswith(".zip"):
@@ -435,6 +437,9 @@ class MultiPPOAgent(BasePPOAgent):
 
                     main_zip.extractall(tmp_dir)
 
+                # Load and check every policy before assigning any, so a failure
+                # leaves all agents as they were.
+                policies = []
                 for i, agent in enumerate(self.agents):
                     agent_path = os.path.join(tmp_dir, f"policy_{i}.pth")
 
@@ -446,7 +451,13 @@ class MultiPPOAgent(BasePPOAgent):
                     if agent.policy is None:
                         raise RuntimeError(f"Agent {i} has no initialized policy.")
 
-                    agent.policy = PPOPolicy.build_policy_from_state(saved_variables, self.device)
+                    policy = PPOPolicy.build_policy_from_state(saved_variables, self.device)
+                    require_policy_dims(policy, agent.policy.input_dim, agent.policy.output_dim,
+                                        f"{policy_file_name}:policy_{i}.pth")
+                    policies.append(policy)
+
+                for agent, policy in zip(self.agents, policies):
+                    agent.policy = policy
                     # Rebind the optimizer to the loaded network; otherwise train()
                     # would update the old, discarded parameters.
                     agent.optimizer = torch.optim.Adam(
@@ -463,6 +474,8 @@ class MultiPPOAgent(BasePPOAgent):
                 if any(agent.policy is None for agent in self.agents):
                     raise RuntimeError("Some agents failed to load policies")
 
+            except ValueError:
+                raise   # policy size mismatch (require_policy_dims)
             except Exception as e:
                 raise RuntimeError(f"Failed to load multi-agent policy: {e}") from e
 

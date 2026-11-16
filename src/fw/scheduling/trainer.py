@@ -242,6 +242,10 @@ class Trainer:
                         )
             except AttributeError as e:
                 logger.warning(e)
+            except (ValueError, FileNotFoundError, RuntimeError) as e:
+                # The training is done and its policy saved: keep the metrics.
+                logger.error("Evaluation after training '%s' failed, metrics kept without an "
+                             "evaluation summary: %s", env_type, e)
         else:
             logger.warning("No successful training found for environment '%s' to visualize.", env_type)
 
@@ -266,6 +270,10 @@ class Trainer:
                   mirror ship pose into UE5 during evaluation; ignored if None.
             collect_evaluation_summary: Whether to return final evaluation metrics.
             show_plots: Whether to show interactive matplotlib windows.
+
+        Raises:
+            FileNotFoundError, ValueError, RuntimeError: If the policy to visualize
+                is missing, does not fit the env or cannot be loaded.
         """
 
         summaries = {} if collect_evaluation_summary else None
@@ -273,6 +281,7 @@ class Trainer:
         if envs is not None:
             for env_idx, env in enumerate(envs):
                 gym_env = env.gym_env
+                policy_loaded = False
                 try:
                     sim = getattr(gym_env, "phys_sim", None)
                     if sim is not None:
@@ -292,7 +301,9 @@ class Trainer:
                         env=gym_env,
                         policy_strategy=PolicyStrategy.REUSE_OTHER_POLICY,
                         other_env_name=policy_name,
+                        require_policy=True,
                     )
+                    policy_loaded = True
 
                     env_summary = self._agent_mgr.visualize_trained_agent(
                         num_episodes=1,
@@ -335,6 +346,8 @@ class Trainer:
                         else:
                             summaries[gym_env.training_name] = env_summary
                 except RuntimeError as e:
+                    if not policy_loaded:
+                        raise   # the policy could not be loaded
                     logger.warning("Could not visualize %s. %s", gym_env.training_name, e)
         else:
             logger.warning("No data found to visualize.")
