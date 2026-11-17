@@ -43,6 +43,7 @@ from fw.common.airsim.tools.trajectory_analysis import (  # noqa: E402
 )
 from fw.common.airsim.tools.path_utils import resolve_model_path  # noqa: E402
 from fw.configuration.config import AIRSIM_COMPARISON_TRAJECTORY_PLOT_FILENAME  # noqa: E402
+from fw.policies.ppo_policy import apply_policy_yaw_rate_obs_scale, require_policy_dims  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,21 @@ def _normalise_policy_action(action, expected_dim: int | None = None) -> np.ndar
     if expected_dim is None or arr.size <= int(expected_dim):
         return arr
     return arr[: int(expected_dim)]
+
+
+def _prepare_policy_for_env(policy, env, source: str) -> None:
+    """
+    Refuse a policy whose observation/action size does not fit the replay env, and
+    make the env observe the yaw rate with the scale the policy was trained with.
+
+    Raises:
+        ValueError: If the policy does not fit the env.
+    """
+
+    obs_space, act_space = getattr(env, "observation_space", None), getattr(env, "action_space", None)
+    if hasattr(policy, "input_dim") and getattr(obs_space, "shape", None) and getattr(act_space, "shape", None):
+        require_policy_dims(policy, int(obs_space.shape[0]), int(act_space.shape[0]), source)
+    apply_policy_yaw_rate_obs_scale(policy, env, source)
 
 
 class VisualiseModelsRunner:
@@ -328,6 +344,7 @@ class VisualiseModelsRunner:
                     )
 
                 env = self._build_environment(selected_env, max_steps=max_steps)
+                _prepare_policy_for_env(policy, env, resolved_model_path.name)
                 max_yaw_step_rad = np.deg2rad(max_yaw_step_deg)
                 bridge_telemetry_interval_s = 1.0 / max(float(bridge_telemetry_hz), 1.0)
                 target_step_interval_s = env.time_step / max(float(simulation_speed), 1e-6)

@@ -5,7 +5,7 @@ import zipfile
 import tempfile
 import numpy as np
 
-from typing import Tuple, Dict, Any, Union
+from typing import Tuple, Dict, Any, Optional, Union
 from fw.policies.actor_critic_network import ActorCriticNetwork
 from fw.common.tools.ppo_utils import normalize_policy_zip_path
 
@@ -36,6 +36,116 @@ def get_device(device: str = "auto") -> torch.device:
     return device
 
 
+def require_policy_dims(policy: "PPOPolicy", input_dim: int, output_dim: int, source: str) -> None:
+    """
+    Check that a loaded policy fits the observation and action sizes of its env.
+
+    Args:
+        policy: The loaded policy.
+        input_dim: Observation size the env provides.
+        output_dim: Action size the env expects.
+        source: Policy file or slot, named in the error.
+
+    Raises:
+        ValueError: If a size differs (e.g. a policy saved before an observation change).
+    """
+
+    if policy.input_dim != input_dim or policy.output_dim != output_dim:
+        raise ValueError(
+            f"Policy '{source}' has observation/action size {policy.input_dim}/{policy.output_dim}, "
+            f"but the environment provides {input_dim}/{output_dim}.")
+
+
+def _yaw_scale_envs(env) -> list:
+    """
+    The (unwrapped) envs whose observed yaw-rate scale follows a policy: the
+    sub-environments of a multi-ship env, else the env itself; envs without
+    set_yaw_rate_obs_scale are left out.
+    """
+
+    if env is None:
+        return []
+    subs = getattr(env, "sub_environments", None)
+    candidates = list(subs.values() if isinstance(subs, dict) else subs) if subs else [env]
+    envs = [getattr(e, "unwrapped", e) for e in candidates]
+    return [e for e in envs if hasattr(e, "set_yaw_rate_obs_scale")]
+
+
+def env_yaw_rate_obs_scale(env) -> Optional[float]:
+    """
+    The yaw-rate observation scale an env currently uses (the first sub-environment's
+    for a multi-ship env), or None if it has none.
+    """
+
+    envs = _yaw_scale_envs(env)
+    return float(envs[0].yaw_rate_obs_scale) if envs else None
+
+
+def start_fresh_policy(policy: "PPOPolicy", env) -> None:
+    """
+    For a newly built (untrained) policy: restore the env's own yaw-rate scale (a
+    policy loaded earlier may have set another) and record it in the policy.
+    """
+
+    for e in _yaw_scale_envs(env):
+        e.set_yaw_rate_obs_scale(None)
+    policy.yaw_rate_obs_scale = env_yaw_rate_obs_scale(env)
+
+
+def policy_yaw_rate_obs_scale(policy: "PPOPolicy", env) -> Optional[float]:
+    """
+    The yaw-rate observation scale [rad/s] a policy was trained with: its stored
+    scale, or for a file without one the env's unstored_policy_yaw_rate_obs_scale
+    (multi-ship env: its first sub-environment's). None if env has no yaw-rate scale.
+    """
+
+    if policy.yaw_rate_obs_scale is not None:
+        return float(policy.yaw_rate_obs_scale)
+    envs = _yaw_scale_envs(env)
+    return float(envs[0].unstored_policy_yaw_rate_obs_scale) if envs else None
+
+
+def yaw_rate_obs_scale_changes(policy: "PPOPolicy", env) -> bool:
+    """
+    Whether loading the policy into env changes the yaw-rate scale of any of its envs.
+    """
+
+    scale = policy_yaw_rate_obs_scale(policy, env)
+    return any(e.yaw_rate_obs_scale != scale for e in _yaw_scale_envs(env))
+
+
+def apply_policy_yaw_rate_obs_scale(policy: "PPOPolicy", env, source: str) -> None:
+    """
+    Make the env observe the yaw rate with the scale the loaded policy was trained
+    with, so a policy trained with another dynamics model (e.g. Fossen) sees the
+    same observation for the same yaw rate when it runs in this env (e.g. FH).
+
+    A policy file without a stored scale gets the env's
+    unstored_policy_yaw_rate_obs_scale (logged), which is then saved with it.
+    Envs without a yaw-rate scale are left alone.
+
+    Args:
+        policy: The loaded policy.
+        env: The env it will run in (multi-ship: all sub-environments).
+        source: Policy file or slot, named in the log.
+    """
+
+    envs = _yaw_scale_envs(env)
+    if not envs:
+        return
+    if policy.yaw_rate_obs_scale is None:
+        policy.yaw_rate_obs_scale = policy_yaw_rate_obs_scale(policy, env)
+        logger.info("Policy '%s' has no stored yaw-rate observation scale: using %g, the scale %s "
+                    "policies without one were trained with.", source, policy.yaw_rate_obs_scale,
+                    type(envs[0]).__name__)
+    for e in envs:
+        if e.yaw_rate_obs_scale != policy.yaw_rate_obs_scale:
+            logger.info("%s observes the yaw rate with scale %g, the scale policy '%s' was trained with "
+                        "(own scale %g).", type(e).__name__, policy.yaw_rate_obs_scale, source,
+                        e.own_yaw_rate_obs_scale)
+            e.set_yaw_rate_obs_scale(policy.yaw_rate_obs_scale)
+
+
 class PPOPolicy:
     """
     PPO actor-critic policy: network, save/load and (tanh-squashed) prediction.
@@ -45,6 +155,9 @@ class PPOPolicy:
         output_dim (int): Action dimension.
         device (torch.device): Device the network runs on.
         network (ActorCriticNetwork): The actor-critic network.
+        yaw_rate_obs_scale (Optional[float]): Yaw-rate observation scale [rad/s]
+            the policy is trained with; saved with it and applied to the env it is
+            loaded into (apply_policy_yaw_rate_obs_scale). None if not stored.
     """
 
     def __init__(self, input_dim: int, output_dim: int, device: str = "cpu"):
@@ -59,6 +172,7 @@ class PPOPolicy:
         self.output_dim = output_dim
         self.device = get_device(device)
         self.network = ActorCriticNetwork(input_dim, output_dim).to(self.device)
+        self.yaw_rate_obs_scale: Optional[float] = None
 
 
     def _get_constructor_parameters(self) -> dict:
@@ -78,14 +192,18 @@ class PPOPolicy:
         Serialize the policy.
 
         Returns:
-            Dict[str, Any]: "model_state_dict" (network weights) and "data"
-                (constructor arguments).
+            Dict[str, Any]: "model_state_dict" (network weights), "data"
+                (constructor arguments) and, if known, "obs_scales" with the
+                yaw-rate observation scale.
         """
 
-        return {
+        state = {
             "model_state_dict": self.network.state_dict(),
             "data": self._get_constructor_parameters(),
         }
+        if self.yaw_rate_obs_scale is not None:
+            state["obs_scales"] = {"yaw_rate": float(self.yaw_rate_obs_scale)}
+        return state
 
 
     @staticmethod
@@ -134,6 +252,9 @@ class PPOPolicy:
 
         Returns:
             PPOPolicy: Policy with the loaded weights.
+
+        Raises:
+            ValueError: If a stored yaw-rate observation scale is not positive and finite.
         """
 
         data = dict(cls.infer_constructor_data(saved_variables, device))
@@ -148,6 +269,12 @@ class PPOPolicy:
         model = cls(**data)
         model.network.load_state_dict(saved_variables["model_state_dict"])
         model.network.to(device)
+        yaw_scale = (saved_variables.get("obs_scales") or {}).get("yaw_rate")
+        if yaw_scale is not None:
+            yaw_scale = float(yaw_scale)
+            if not (np.isfinite(yaw_scale) and yaw_scale > 0.0):
+                raise ValueError(f"Stored yaw-rate observation scale must be positive and finite, got {yaw_scale}.")
+        model.yaw_rate_obs_scale = yaw_scale
         return model
 
 
@@ -190,6 +317,7 @@ class PPOPolicy:
 
         Raises:
             RuntimeError: If the file or its policy.pth entry is missing.
+            ValueError: If its stored yaw-rate observation scale is not positive and finite.
         """
 
         device = get_device(device)

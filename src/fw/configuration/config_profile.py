@@ -143,7 +143,9 @@ class ThrustConfig:
 
     Attributes:
         mode: ThrustMode.FREE or ThrustMode.FIXED.
-        fixed_value: Normalized thrust in [0.1, 1.0], used only in FIXED mode.
+        fixed_value: Thrust action that replaces the policy's in FIXED mode, on the
+            action scale (1.0 = max_thrust; mapped like any thrust action, so 0.1 is
+            not min_thrust). Must be in [0.1, 1.0].
     """
 
     mode: ThrustMode = ThrustMode.FREE

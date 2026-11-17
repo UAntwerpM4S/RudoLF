@@ -1,7 +1,6 @@
 """
-Regression tests for review findings on the wind/current pull request:
-importability of the FH validation scripts, early pipeline validation of the
-wind/current flags, and the dataset-layout check of the scale tool.
+Wind/current tooling: importability of the FH validation scripts, early pipeline
+validation of the wind/current flags, and the dataset-layout check of the scale tool.
 """
 
 import pytest

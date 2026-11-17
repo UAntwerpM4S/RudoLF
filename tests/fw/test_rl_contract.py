@@ -303,6 +303,60 @@ def test_full_rate_rudder_move_is_not_a_violation(ship_model):
     assert max(ratios) == pytest.approx(1.0, abs=1e-4)          # really at the top rate
 
 
+@pytest.mark.parametrize("ship_model", [ShipModel.MYZAKO_37, ShipModel.TRIPOLI])
+@pytest.mark.parametrize("smoothing", [False, True])
+def test_observation_stays_in_its_space(ship_model, smoothing):
+    """
+    Every observation lies in the Box (13 base features plus 4 for wind and
+    current); hard-over rudder is observed as +1 and -1 (within the jitter
+    threshold), thrust as -1 after reset (zero thrust, clipped) and 0.5 once
+    commanded, and the yaw rate on the Fossen scale without saturating.
+    """
+
+    from fw.environments.py_sim_env import PySimEnv, YAW_RATE_OBS_SCALES
+
+    env = PySimEnv(time_step=2.0, max_steps=50, start_pos=START, target_pos=TARGET,
+                   dynamics_model=Model.FOSSEN, ship_model=ship_model, wind=True, current=True)
+    env.enable_smoothing = smoothing
+    obs, _ = env.reset(seed=0)
+    assert obs.shape == env.observation_space.shape == (17,)
+    assert env.observation_space.contains(obs)
+    assert float(obs[12]) == -1.0                               # zero thrust after reset, clipped
+    rudder_obs, yaw_obs = [], []
+    for k in range(40):                                         # hard over to port, then to starboard
+        obs, _, terminated, truncated, _ = env.step(np.array([1.0 if k < 20 else -1.0, 0.5], dtype=np.float32))
+        assert env.observation_space.contains(obs)
+        rudder_obs.append(float(obs[10]))
+        yaw_obs.append(float(obs[2]))
+        assert float(obs[2]) == pytest.approx(env.phys_sim.state.r / YAW_RATE_OBS_SCALES[Model.FOSSEN], abs=1e-6)
+        assert not (terminated or truncated)
+    spec = env.ship.specifications
+    tol = spec.rudder_jitter_threshold / spec.max_rudder_angle + 1e-5
+    assert 1.0 - tol <= max(rudder_obs) <= 1.0
+    assert -1.0 <= min(rudder_obs) <= -1.0 + tol
+    assert max(abs(y) for y in yaw_obs) < 1.0                   # the Fossen scale covers hard-over turns
+    # With smoothing the thrust stops within the jitter threshold of its command.
+    thrust_tol = 2.0 * spec.thrust_jitter_threshold / (spec.max_thrust - spec.min_thrust) if smoothing else 0.0
+    assert float(obs[12]) == pytest.approx(0.5, abs=thrust_tol + 1e-5)
+
+
+def test_observation_9_is_parallel_to_the_previous_to_next_line():
+    """
+    Observation 9 is the heading error to the direction previous checkpoint -> next checkpoint.
+    """
+
+    from fw.environments.py_sim_env import PySimEnv
+
+    env = PySimEnv(time_step=2.0, max_steps=50, start_pos=START, target_pos=TARGET,
+                   dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
+    obs, _ = env.reset(seed=0)
+    previous_cp = env.checkpoints[env.checkpoint_index - 1]["pos"]
+    next_cp = env.checkpoints[env.checkpoint_index + 1]["pos"]
+    line = next_cp - previous_cp
+    expected = env.normalize_angle(np.arctan2(line[1], line[0]) - env.phys_sim.state.heading) / np.pi
+    assert float(obs[9]) == pytest.approx(float(expected), abs=1e-6)
+
+
 def test_vec_env_factory_reseeds_each_worker(tmp_path):
     """
     SinglePPOAgent.make_env gives every worker copy its own RNG (not a copy of the template's).

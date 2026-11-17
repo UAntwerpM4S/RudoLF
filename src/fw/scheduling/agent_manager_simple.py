@@ -217,21 +217,26 @@ class AgentManagerSimple:
 
 
     def set_environment(self, env: BaseEnv, policy_strategy: PolicyStrategy = PolicyStrategy.RESET_POLICY,
-                        other_env_name: str = None) -> None:
+                        other_env_name: str = None, require_policy: bool = False) -> None:
         """
         Build a new agent for env and optionally load an existing policy.
 
-        Falls back to a fresh policy (with a warning) if the policy file is
-        missing or incompatible.
+        Without require_policy, falls back to a fresh policy (with a warning) if
+        the policy file is missing or incompatible.
 
         Args:
             env (BaseEnv): Environment to train on.
             policy_strategy (PolicyStrategy): Reset, reuse the current policy, or
                 reuse another environment's policy.
             other_env_name (str, optional): Environment whose policy to reuse.
+            require_policy (bool, optional): Raise instead of falling back
+                (visualization).
 
         Raises:
-            RuntimeError: For an unknown agent type.
+            RuntimeError: For an unknown agent type, or (require_policy) if the
+                policy cannot be loaded.
+            ValueError: require_policy and the policy does not fit the env.
+            FileNotFoundError: require_policy and the policy file does not exist.
         """
 
         policy_file_name = None
@@ -271,8 +276,12 @@ class AgentManagerSimple:
                 try:
                     self._agent.load_policy(policy_file_name)
                 except (ValueError, RuntimeError) as e:
+                    if require_policy:
+                        raise
                     logger.warning("[Fallback] Incompatible model: %s", e)
                     logger.warning("[Fallback] Reverting to RESET_POLICY for %s.", self._agent_type)
+            elif require_policy:
+                raise FileNotFoundError(f"The policy file {full_policy_file_name} does not exist.")
             else:
                 logger.warning("[Fallback] The policy file %s does not exist.", policy_file_name)
                 logger.warning("[Fallback] Reverting to RESET_POLICY for %s.", self._agent_type)

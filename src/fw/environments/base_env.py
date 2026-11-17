@@ -132,7 +132,7 @@ class BaseEnv(gym.Env):
 
     def neutral_action(self):
         """
-        Return a neutral (no-op) action, e.g. zero thrust and centred rudder.
+        Return a neutral (no-op) action, e.g. zero thrust action and centred rudder.
 
         Used to keep stepping environments whose episode has already ended.
 

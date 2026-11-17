@@ -166,9 +166,17 @@ class ShipSpecifications:
 
     def __post_init__(self):
         """
-        Validate I_z: positive or None (raises ValueError otherwise).
+        Validate I_z (positive or None) and the actuator ranges the observation
+        normalizes by (max_rudder_angle > 0, max_thrust > min_thrust).
+
+        Raises:
+            ValueError: If a check fails.
         """
 
         # "not > 0" also rejects NaN
         if self.I_z is not None and not self.I_z > 0.0:
             raise ValueError(f"I_z must be positive or None, got {self.I_z}")
+        if not self.max_rudder_angle > 0.0:
+            raise ValueError(f"max_rudder_angle must be positive, got {self.max_rudder_angle}")
+        if not self.max_thrust > self.min_thrust:
+            raise ValueError(f"max_thrust must exceed min_thrust, got min {self.min_thrust}, max {self.max_thrust}")

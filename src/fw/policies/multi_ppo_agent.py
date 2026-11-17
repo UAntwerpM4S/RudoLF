@@ -10,6 +10,7 @@ from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.configuration.stop_condition import StopCondition
+from fw.policies.ppo_policy import apply_policy_yaw_rate_obs_scale, require_policy_dims
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
 from fw.configuration.profile_applier import SimulatorApplier
 from fw.configuration.config_profile import VesselProfile
@@ -410,9 +411,15 @@ class MultiPPOAgent(BasePPOAgent):
         The archive holds one serialized policy per agent: policy_0.pth,
         policy_1.pth, ...
 
+        Each agent's sub-environment takes over the yaw-rate observation scale its
+        policy was trained with (apply_policy_yaw_rate_obs_scale).
+
         Raises:
             FileNotFoundError: If the archive does not exist.
             RuntimeError: If loading fails or required files are missing.
+            ValueError: If a policy's observation/action size differs from its
+                agent's, or its stored yaw-rate scale is invalid; no agent is
+                changed then.
         """
 
         if not policy_file_name.endswith(".zip"):
@@ -435,6 +442,9 @@ class MultiPPOAgent(BasePPOAgent):
 
                     main_zip.extractall(tmp_dir)
 
+                # Load and check every policy before assigning any, so a failure
+                # leaves all agents as they were.
+                policies = []
                 for i, agent in enumerate(self.agents):
                     agent_path = os.path.join(tmp_dir, f"policy_{i}.pth")
 
@@ -446,7 +456,15 @@ class MultiPPOAgent(BasePPOAgent):
                     if agent.policy is None:
                         raise RuntimeError(f"Agent {i} has no initialized policy.")
 
-                    agent.policy = PPOPolicy.build_policy_from_state(saved_variables, self.device)
+                    policy = PPOPolicy.build_policy_from_state(saved_variables, self.device)
+                    require_policy_dims(policy, agent.policy.input_dim, agent.policy.output_dim,
+                                        f"{policy_file_name}:policy_{i}.pth")
+                    policies.append(policy)
+
+                for i, (agent, policy) in enumerate(zip(self.agents, policies)):
+                    # Each agent's sub-environment takes over its policy's yaw-rate scale.
+                    apply_policy_yaw_rate_obs_scale(policy, agent.env, f"{policy_file_name}:policy_{i}.pth")
+                    agent.policy = policy
                     # Rebind the optimizer to the loaded network; otherwise train()
                     # would update the old, discarded parameters.
                     agent.optimizer = torch.optim.Adam(
@@ -463,6 +481,8 @@ class MultiPPOAgent(BasePPOAgent):
                 if any(agent.policy is None for agent in self.agents):
                     raise RuntimeError("Some agents failed to load policies")
 
+            except ValueError:
+                raise   # size or stored-scale check above
             except Exception as e:
                 raise RuntimeError(f"Failed to load multi-agent policy: {e}") from e
 
