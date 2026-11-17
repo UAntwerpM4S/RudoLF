@@ -10,12 +10,13 @@ import numpy as np
 
 from pathlib import Path
 from typing import Optional, Tuple, Union
-from fw.policies.ppo_policy import (PPOPolicy, apply_policy_yaw_rate_obs_scale, require_policy_dims,
-                                    start_fresh_policy, yaw_rate_obs_scale_changes)
+from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from stable_baselines3.common.monitor import Monitor
 from fw.configuration.stop_condition import StopCondition
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+from fw.policies.ppo_policy import (apply_policy_yaw_rate_obs_scale, require_policy_dims,
+                                    start_fresh_policy, yaw_rate_obs_scale_changes)
 from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 # from fw.common.tools.ppo_utils import normalize_policy_zip_path

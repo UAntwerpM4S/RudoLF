@@ -28,10 +28,10 @@ import tempfile
 import zipfile
 import logging
 
-from collections import deque
 from fw.policies.ppo_policy import (PPOPolicy, apply_policy_yaw_rate_obs_scale, env_yaw_rate_obs_scale,
                                     policy_yaw_rate_obs_scale, require_policy_dims, start_fresh_policy,
                                     yaw_rate_obs_scale_changes)
+
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.common.tools.ppo_utils import reseed_env_rng
 from typing import Optional, Tuple, Union, List, Dict
@@ -40,6 +40,7 @@ from fw.configuration.profile_applier import SimulatorApplier
 from fw.common.tools.logging_utils import dump_metrics_to_csv
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
+from collections import deque
 
 logger = logging.getLogger(__name__)
 

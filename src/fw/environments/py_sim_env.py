@@ -12,7 +12,7 @@ import numpy as np
 matplotlib.rcParams['figure.raise_window'] = False
 
 from shapely import LineString
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, cast
 from fw.environments.tools import create_checkpoints_from_simple_path
 from shapely.geometry import Point, Polygon, MultiPoint, GeometryCollection
 from fw.environments.wind_current_obs import WIND_CURRENT_OBS_DIM, normalize_wind_current
@@ -26,10 +26,10 @@ from fw.reward.reward import Reward
 from fw.dynamics.nomoto import Nomoto
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.dynamics_model import DynamicsBase, Model
-from fw.dynamics.ugent_surrogate import UGentSurrogate
-from fw.dynamics.fh_tabular_model import FhTabularModel
-from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
 from fw.dynamics.uantwerp_surrogate import RANDOM_CURRENT_SPEED_MAX, UAntwerpSurrogate
+from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
+from fw.dynamics.fh_tabular_model import FhTabularModel
+from fw.dynamics.ugent_surrogate import UGentSurrogate
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,8 @@ def yaw_rate_obs_scale(dynamics: DynamicsBase, dynamics_model: Model, specs) -> 
     if dynamics_model == Model.UGENT_B01_SURROGATE:
         return float(specs.yaw_rate_limits[1])
     if dynamics_model == Model.UGENT_SURROGATE:
-        ukc_percent = dynamics.coefficients.ukc_percent
+        ugent = cast(UGentSurrogate, dynamics)
+        ukc_percent = ugent.coefficients.ukc_percent
         if ukc_percent not in UGENT_YAW_RATE_OBS_SCALES:
             raise ValueError(f"PySimEnv has no observed yaw-rate scale for the UGent surrogate at {ukc_percent} % UKC.")
         return UGENT_YAW_RATE_OBS_SCALES[ukc_percent]
@@ -323,10 +324,8 @@ class PySimEnv(BaseEnv):
         self._boundary_cache = None
         self._bank_lines_cache = None
         self.background = None
-        self.dynamics = None
-        
+        self.dynamics: Optional[DynamicsBase] = None
         self.ship_pos = None
-
         self._agent_state = None
         self.other_agent_states = {}
 
@@ -550,7 +549,7 @@ class PySimEnv(BaseEnv):
         """
         Scale [m/s] of the observed surge, equal for every model: the ship's upper
         surge limit, raised by RANDOM_CURRENT_SPEED_MAX with wind and current (surge
-        is over ground). Also the simulator's upper surge limit for models with their
+        is over ground). Also, the simulator's upper surge limit for models with their
         own wind/current (their lower limit drops by the same amount).
         """
 

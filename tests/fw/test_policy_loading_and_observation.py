@@ -18,9 +18,9 @@ Policy loading and the ship observation:
 - the UE5 replay checks the policy size and applies its yaw-rate scale.
 """
 
+import pytest
 import dataclasses
 import numpy as np
-import pytest
 
 from fw.ships.ship_factory import ShipModel
 from fw.dynamics.dynamics_model import Model

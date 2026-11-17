@@ -10,7 +10,7 @@ import numpy as np
 matplotlib.rcParams['figure.raise_window'] = False
 
 from shapely.geometry import Point, Polygon
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, cast
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
@@ -20,8 +20,8 @@ from fw.environments.base_env import BaseEnv
 from fw.dynamics.nomoto import Nomoto
 from fw.dynamics.fossen import Fossen
 from fw.dynamics.dynamics_model import DynamicsBase, Model
-from fw.dynamics.ugent_surrogate import UGentSurrogate
 from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
+from fw.dynamics.ugent_surrogate import UGentSurrogate
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,8 @@ def yaw_rate_obs_scale(dynamics: DynamicsBase, dynamics_model: Model, specs) -> 
     if dynamics_model == Model.UGENT_B01_SURROGATE:
         return float(specs.yaw_rate_limits[1])
     if dynamics_model == Model.UGENT_SURROGATE:
-        ukc_percent = dynamics.coefficients.ukc_percent
+        ugent = cast(UGentSurrogate, dynamics)
+        ukc_percent = ugent.coefficients.ukc_percent
         if ukc_percent not in UGENT_YAW_RATE_OBS_SCALES:
             raise ValueError(f"The COLAV envs have no observed yaw-rate scale for the UGent surrogate "
                              f"at {ukc_percent} % UKC.")
@@ -229,7 +230,7 @@ class PySimBaseEnv(BaseEnv):
         self.performed_action = None
         self.previous_action = None
         self.background = None
-        self.dynamics = None
+        self.dynamics: Optional[DynamicsBase] = None
         self.ship_pos = None
 
         self._agent_state = None
