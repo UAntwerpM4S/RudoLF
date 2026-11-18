@@ -58,15 +58,13 @@ FH_UNSUPPORTED_SHIP_MODELS = FOSSEN_ONLY_SHIP_MODELS | MODEL_SCALE_SHIP_MODELS
 
 def require_full_scale_ship(ship_model: ShipModel, where: str) -> None:
     """
-    Fail fast if a model-scale preset (towing tank) is used in a full-scale
-    (Western Scheldt) environment.
+    Check that a ship preset may be used in a full-scale (Western Scheldt)
+    environment. The check is disabled: every preset, also the model-scale B01,
+    is accepted.
 
     Args:
         ship_model: The ship model about to be used.
-        where:      Name of the caller, for the error message.
-
-    Raises:
-        ValueError: If ship_model is in MODEL_SCALE_SHIP_MODELS.
+        where:      Name of the caller.
     """
 
     # Commented out for now, must implement a real check
@@ -234,9 +232,10 @@ _HEURISTIC_HULLS = {
 # Model-scale presets: hull data plus an actuator/kinematic envelope (hydrodynamics
 # live in UGentB01Surrogate; the Fossen coefficients are unused placeholders).
 # Envelope = full-scale defaults Froude-scaled with sqrt(lambda) = 5: velocities
-# divided (surge 5 to 1.0 m/s, sway 2 to 0.4 m/s), rudder/thrust/yaw rates
-# multiplied. Assumption: derived, not from the DDSHIP report. Jitter thresholds
-# and max_thrust are scale-free; min_thrust is B01_MIN_THRUST.
+# divided (surge 5 to 1.0 m/s, sway 2 to 0.4 m/s), thrust and yaw rates
+# multiplied. Assumption: derived, not from the DDSHIP report. Rudder rate
+# 28.8 deg/s; jitter thresholds and max_thrust are scale-free; min_thrust is
+# B01_MIN_THRUST.
 _SQRT_LAMBDA = B01_MODEL_SCALE ** 0.5
 _MODEL_SCALE_HULLS = {
     # B01 (Myzako model), Table 1 of the DDSHIP WP2.2 SI report.

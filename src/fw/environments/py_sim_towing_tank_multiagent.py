@@ -868,5 +868,5 @@ class PySimTowingTankMultiAgentEnv(PySimTowingTankColavBaseEnv):
         plot_scenario_confusion_matrix(self, save_path)
 
 
-# Backwards-compatible alias
-PySimColavEnv = PySimColavPolarEnv
+# Short name for this module's env
+PySimColavEnv = PySimTowingTankMultiAgentEnv

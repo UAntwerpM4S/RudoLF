@@ -58,8 +58,8 @@ def apply_profile(
     Args:
         profile: The VesselProfile to apply.
         config: CONFIG_PARAMETERS dict (from get_config_parameters()).
-        env: A BaseEnv; smoothing, rudder-angle scaling and initial speed are
-            also set on its sub-environments.
+        env: A BaseEnv; smoothing, rudder-angle scaling, initial speed and
+            initial thrust are also set on its sub-environments.
         simulator: A BaseSimulator; actuator limits are patched if overridden.
         action: [rudder, thrust] array in [-1, 1].
 
@@ -127,6 +127,7 @@ class EnvApplier:
         EnvApplier._set_smoothing(env, profile.actuator.enable_smoothing)
         EnvApplier._set_rudder_angle_scaling(env, profile.transfer.enable_rudder_angle_scaling)
         EnvApplier._set_initial_speed(env, profile.scenario.initial_speed)
+        EnvApplier._set_initial_thrust(env, profile.initial_thrust_action())
 
         sub_envs = getattr(env, "sub_environments", None)
         if sub_envs is None or not sub_envs:
@@ -137,6 +138,7 @@ class EnvApplier:
             EnvApplier._set_smoothing(sub, profile.actuator.enable_smoothing)
             EnvApplier._set_rudder_angle_scaling(sub, profile.transfer.enable_rudder_angle_scaling)
             EnvApplier._set_initial_speed(sub, profile.scenario.initial_speed)
+            EnvApplier._set_initial_thrust(sub, profile.initial_thrust_action())
 
     @staticmethod
     def _set_smoothing(env, value: bool) -> None:
@@ -183,6 +185,20 @@ class EnvApplier:
             logger.debug(
                 "EnvApplier: %s has no 'initial_speed' attribute - skipped.",
                 type(env).__name__,
+            )
+
+    @staticmethod
+    def _set_initial_thrust(env, value: float) -> None:
+        """
+        Set the thrust the actuators start an episode with (action scale), applied
+        on the next reset(); envs without an initial_thrust attribute are skipped.
+        """
+
+        if hasattr(env, "initial_thrust"):
+            env.initial_thrust = value
+            logger.debug(
+                "EnvApplier: set initial_thrust=%+.3f (action scale) on %s",
+                value, type(env).__name__,
             )
 
 

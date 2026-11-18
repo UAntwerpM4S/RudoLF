@@ -18,6 +18,7 @@ from shapely.geometry import Point, Polygon, MultiPoint, GeometryCollection
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.ships.vessel_state import VesselState
+from fw.ships.action_mapper import ActionMapper
 from fw.environments.base_env import BaseEnv
 from fw.reward.reward import Reward
 
@@ -133,9 +134,8 @@ class PySimEnv(BaseEnv):
 
     SUPPORTS_MODEL_SCALE_SHIPS: bool = False
     """
-    False: the map, distances, speeds and rewards are full scale (Western
-    Scheldt), so model-scale presets (ShipModel.B01) are refused at
-    construction. A towing-tank environment sets this to True.
+    False: the env runs require_full_scale_ship at construction. That check is
+    disabled and accepts every preset, also ShipModel.B01.
     """
 
 
@@ -320,6 +320,14 @@ class PySimEnv(BaseEnv):
     # -----------------------
     # Initialization helpers
     # -----------------------
+    def _start_thrust(self) -> float:
+        """
+        Thrust [min_thrust, max_thrust] the actuators start the episode with
+        (initial_thrust, which is on the action scale).
+        """
+
+        return ActionMapper.map_thrust(self.initial_thrust, self.ship.specifications)
+
     def _initialize_simulation(self) -> None:
         """
         Reset the episode state and place the ship at the start, heading toward the first checkpoint.
@@ -327,7 +335,6 @@ class PySimEnv(BaseEnv):
 
         self.ship_pos = self.initial_ship_pos.copy()
         self.previous_ship_pos = self.initial_ship_pos.copy()
-        self.previous_action = np.zeros(2, dtype=np.float32)
         self.checkpoint_index = 1
 
         self.previous_heading = 0.0
@@ -348,9 +355,11 @@ class PySimEnv(BaseEnv):
             x=self.initial_ship_pos[0],
             y=self.initial_ship_pos[1],
             heading=self.ship_heading,
-            u=self.initial_speed, v=0.0, r=0.0))
+            u=self.initial_speed, v=0.0, r=0.0), initial_thrust=self._start_thrust())
         self._agent_state = self.phys_sim.state
-        self.performed_action = np.zeros(2, dtype=np.float32)
+        # Rudder at zero, thrust at initial_thrust.
+        self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
+        self.previous_action = self.performed_action.copy()
 
         # Must follow phys_sim.reset(), else these describe the previous episode.
         self.heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)

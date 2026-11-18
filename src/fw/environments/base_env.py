@@ -18,6 +18,7 @@ class BaseEnv(gym.Env):
         super().__init__()
 
         self._initial_speed = 0.0
+        self._initial_thrust = -1.0
         self._render_mode = render_mode
         self._smoothing_enabled = False
         self._rudder_angle_scaling_enabled = False
@@ -60,6 +61,32 @@ class BaseEnv(gym.Env):
         """
 
         self._initial_speed = value
+
+
+    @property
+    def initial_thrust(self):
+        """
+        float: Thrust the actuators start an episode with, on the scale of the
+        policy action ([-1, 1]; -1 = min_thrust, the default). Only the PySim
+        environments use it; AirSimEnv ignores it.
+        """
+
+        return self._initial_thrust
+
+
+    @initial_thrust.setter
+    def initial_thrust(self, value):
+        """
+        Set the start thrust (action scale), applied on the next reset().
+
+        Raises:
+            ValueError: If value is outside [-1, 1] (or NaN).
+        """
+
+        # "not (a <= x <= b)" also rejects NaN
+        if not -1.0 <= value <= 1.0:
+            raise ValueError(f"initial_thrust must be in [-1, 1] (action scale), got {value}.")
+        self._initial_thrust = float(value)
 
 
     @property

@@ -867,8 +867,7 @@ def build_multi_policy_colav_config(framework_config: dict, extra: dict | None =
     """
     Extract MultiPolicyColav-relevant keys from *framework_config*.
 
-    The multi-policy environment defaults to path-following and head-on
-    scenarios, with equal sampling probability.
+    The multi-policy environment defaults to head-on scenarios only.
 
     Args:
         framework_config: Full resolved framework configuration dict.

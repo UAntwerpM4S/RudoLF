@@ -1,6 +1,7 @@
 import numpy as np
 
 from abc import ABC, abstractmethod
+from typing import Optional
 from fw.ships.vessel_state import VesselState
 from fw.ships.actuator_model import ActuatorModel
 from fw.ships.ship_specs import ShipSpecifications
@@ -67,19 +68,22 @@ class BaseSimulator(ABC):
 
         return self._actuators
 
-    def reset(self, state: VesselState) -> None:
+    def reset(self, state: VesselState, initial_thrust: Optional[float] = None) -> None:
         """
         Reset the simulator to a specific vessel state.
 
-        This also resets the actuator model to neutral positions.
+        This also resets the actuator model: rudder at zero, thrust at
+        initial_thrust (see ActuatorModel.reset).
 
         Args:
             state: VesselState object defining the initial state
                 (position, heading, velocities).
+            initial_thrust: Start thrust within [min_thrust, max_thrust];
+                None = min_thrust.
         """
 
         self._state = state
-        self._actuators.reset()
+        self._actuators.reset(initial_thrust)
 
     @abstractmethod
     def step(self, action: np.ndarray, enable_smoothing: bool = False, enable_rudder_angle_scaling: bool = False) -> None:

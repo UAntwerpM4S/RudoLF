@@ -106,7 +106,7 @@ def test_supported_model_families_are_exposed():
     The registry should expose the public adapter families.
     """
 
-    assert get_supported_model_families() == ("pysim", "fhsim")
+    assert get_supported_model_families() == ("pysim", "fhsim", "pysimtowingtank")
 
 
 def test_supported_environment_names_are_exposed():
@@ -114,7 +114,7 @@ def test_supported_environment_names_are_exposed():
     The registry should expose the registered framework environments.
     """
 
-    assert get_supported_environment_names() == ("FhSimEnv", "PySimEnv")
+    assert get_supported_environment_names() == ("FhSimEnv", "PySimEnv", "PySimTowingTankEnv")
 
 
 def test_auto_detects_fhsim_adapter_from_model_name():
