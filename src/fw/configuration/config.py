@@ -149,17 +149,17 @@ AIRSIM_HYPERPARAMETER_OVERRIDES = {
 CONFIG_PARAMETERS = {
     # One or a list of: "PySimEnv", "FhSimEnv", "MultiSimEnv",
     # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander".
-    'env_type': ["PySimEnv"],
-    'profile': "default_profile",       # see ProfileRegistry, e.g.
+    'env_type': ["FhSimSyncEnv"],
+    'profile': "fh_simulator_profile",       # see ProfileRegistry, e.g.
                                         # "myzako_pysim_to_fhsim_transfer_profile"
-    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'action': "visualize",  # Valid action values: "train", "visualize", "evaluate_reward"
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     # Wind and current, both or neither: the observation gets 4 wind/current
     # features (real for FH_TABULAR and the UAntwerp *_full presets, zeros
     # otherwise); FH then loads its wind/current exercise with a random wind
     # field per episode. The *_full presets require them.
-    'wind': False,
-    'current': False,
+    'wind': True,
+    'current': True,
     'enable_ukc_check': True,
     'enable_bank_collision_check': True,
     'visualize_best_trained': False,
@@ -169,7 +169,7 @@ CONFIG_PARAMETERS = {
     'overall_contour': "env_Sche_no_scale.csv",
     'depth_contour': "env_Sche_250cm_no_scale.csv",
     'trajectory': "trajectory_points_no_scale.csv",
-    'scenario': "DDShip_scenario1_nowindnocurrent",
+    'scenario': "DDShip_scenario3_windcurrent",
     # UAntwerp surrogate (Model.UANTWERP). "preset" (fw/surrogate/presets.py) is
     # {tripoli,myzako}_{clean,confined,full}: clean = open water, confined = UKC
     # lookup, full = UKC + wind + current lookup (.csv.gz). Optional overrides:
@@ -189,7 +189,7 @@ CONFIG_PARAMETERS = {
     # see fw.dynamics.ugent_b01_surrogate.
     'ugent_b01_surrogate_config': {"ukc_percent": 379},
     'ship_model': ShipModel.MYZAKO_37,
-    'dynamics_model': Model.FOSSEN,
+    'dynamics_model': Model.FH_TABULAR,
     'live_animation': False,
 
     # Evaluate reward configurations
