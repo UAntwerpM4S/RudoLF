@@ -85,7 +85,7 @@ DEFAULT_HYPERPARAMETERS = {
         'clip_range': 0.2,
         'eval_frequency': 10000,
         'num_envs': 1,
-        'total_time_steps': 200000,
+        'total_time_steps': 175000,
         'log_interval': 10,
         'n_steps': 2048,
         'batch_size': 64,
@@ -152,7 +152,7 @@ CONFIG_PARAMETERS = {
     'env_type': ["PySimEnv"],
     'profile': "default_profile",       # see ProfileRegistry, e.g.
                                         # "myzako_pysim_to_fhsim_transfer_profile"
-    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'action': "visualize",  # Valid action values: "train", "visualize", "evaluate_reward"
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     # Wind and current, both or neither: the observation gets 4 wind/current
     # features (real for FH_TABULAR and the UAntwerp *_full presets, zeros
