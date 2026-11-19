@@ -107,8 +107,8 @@ class PySimBaseEnv(BaseEnv):
 
     SUPPORTS_MODEL_SCALE_SHIPS: bool = False
     """
-    False: the env runs require_full_scale_ship at construction. That check is
-    disabled and accepts every preset, also ShipModel.B01.
+    False: map, distances, speeds and rewards are full scale (Western Scheldt),
+    so model-scale ships (ShipModel.B01) are refused. A towing-tank env sets True.
     """
 
 
@@ -242,16 +242,6 @@ class PySimBaseEnv(BaseEnv):
     # -----------------------
     # Initialization helpers
     # -----------------------
-    def _start_thrust(self) -> float:
-        """
-        Thrust the actuators start the episode with: initial_thrust if set, else
-        min_thrust (the episode starts at 0 m/s).
-        """
-
-        if self.initial_thrust is not None:
-            return self.initial_thrust
-        return self.ship.specifications.min_thrust
-
     def _initialize_simulation(self) -> None:
         """
         Reset the ship to its start state and reset the simulator.
@@ -259,6 +249,7 @@ class PySimBaseEnv(BaseEnv):
 
         self.ship_pos = self.initial_ship_pos.copy()
         self.previous_ship_pos = self.initial_ship_pos.copy()
+        self.previous_action = np.zeros(2, dtype=np.float32)
         self.checkpoint_index = 1
 
         # Focused-encounter training: optionally start at a random mid-path
@@ -287,11 +278,9 @@ class PySimBaseEnv(BaseEnv):
             x=self.ship_pos[0],
             y=self.ship_pos[1],
             heading=self.ship_heading,
-            u=0.0, v=0.0, r=0.0), initial_thrust=self._start_thrust())
+            u=0.0, v=0.0, r=0.0))
         self._agent_state = self.phys_sim.state
-        # Rudder at zero, thrust at the start thrust.
-        self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
-        self.previous_action = self.performed_action.copy()
+        self.performed_action = np.zeros(2, dtype=np.float32)
 
         # Must follow phys_sim.reset() to reflect the new episode.
         self.heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
