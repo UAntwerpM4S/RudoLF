@@ -18,7 +18,7 @@ class BaseEnv(gym.Env):
         super().__init__()
 
         self._initial_speed = 0.0
-        self._initial_thrust = -1.0
+        self._initial_thrust = None
         self._render_mode = render_mode
         self._smoothing_enabled = False
         self._rudder_angle_scaling_enabled = False
@@ -66,8 +66,9 @@ class BaseEnv(gym.Env):
     @property
     def initial_thrust(self):
         """
-        float: Thrust the actuators start an episode with, on the scale of the
-        policy action ([-1, 1]; -1 = min_thrust, the default). Only the PySim
+        float | None: Thrust the actuators start an episode with, in thrust
+        units ([min_thrust, max_thrust], checked at reset). None (the default):
+        the thrust that holds initial_speed, else min_thrust. Only the PySim
         environments use it; AirSimEnv ignores it.
         """
 
@@ -77,16 +78,15 @@ class BaseEnv(gym.Env):
     @initial_thrust.setter
     def initial_thrust(self, value):
         """
-        Set the start thrust (action scale), applied on the next reset().
+        Set the start thrust (thrust units) or None, applied on the next reset().
 
         Raises:
-            ValueError: If value is outside [-1, 1] (or NaN).
+            ValueError: If value is not None and not a finite number.
         """
 
-        # "not (a <= x <= b)" also rejects NaN
-        if not -1.0 <= value <= 1.0:
-            raise ValueError(f"initial_thrust must be in [-1, 1] (action scale), got {value}.")
-        self._initial_thrust = float(value)
+        if value is not None and not np.isfinite(value):
+            raise ValueError(f"initial_thrust must be a finite thrust or None, got {value}.")
+        self._initial_thrust = None if value is None else float(value)
 
 
     @property

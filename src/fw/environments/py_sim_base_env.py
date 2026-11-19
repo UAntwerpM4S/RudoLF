@@ -14,7 +14,6 @@ from typing import Dict, List, Optional, Tuple
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.ships.vessel_state import VesselState
-from fw.ships.action_mapper import ActionMapper
 from fw.environments.base_env import BaseEnv
 
 from fw.simulators.ship_simulator import ShipSimulator
@@ -245,11 +244,13 @@ class PySimBaseEnv(BaseEnv):
     # -----------------------
     def _start_thrust(self) -> float:
         """
-        Thrust [min_thrust, max_thrust] the actuators start the episode with
-        (initial_thrust, which is on the action scale).
+        Thrust the actuators start the episode with: initial_thrust if set, else
+        min_thrust (the episode starts at 0 m/s).
         """
 
-        return ActionMapper.map_thrust(self.initial_thrust, self.ship.specifications)
+        if self.initial_thrust is not None:
+            return self.initial_thrust
+        return self.ship.specifications.min_thrust
 
     def _initialize_simulation(self) -> None:
         """
@@ -288,7 +289,7 @@ class PySimBaseEnv(BaseEnv):
             heading=self.ship_heading,
             u=0.0, v=0.0, r=0.0), initial_thrust=self._start_thrust())
         self._agent_state = self.phys_sim.state
-        # Rudder at zero, thrust at initial_thrust.
+        # Rudder at zero, thrust at the start thrust.
         self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
         self.previous_action = self.performed_action.copy()
 

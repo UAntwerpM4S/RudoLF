@@ -368,6 +368,17 @@ class UGentB01Surrogate(DynamicsBase):
             state.u, -state.v, -state.r, rudder_angle, thrust)
         return du, -dv_report, -dr_report
 
+    def _surge_acceleration(self, state: VesselState, thrust: float) -> float:
+        """
+        Surge acceleration with the rudder at zero, without the low-thrust
+        warning of _compute_accelerations.
+        """
+
+        if self._bank_distance_provider is not None:
+            self.set_bank_distances(*self._bank_distance_provider(state))
+        return float(self._blended_accelerations_report_frame(
+            state.u, -state.v, -state.r, 0.0, thrust)[0])
+
     def _blended_accelerations_report_frame(
         self, u: float, v: float, r: float, delta: float, thrust_cmd: float,
     ) -> Tuple[float, float, float]:

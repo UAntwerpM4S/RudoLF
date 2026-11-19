@@ -33,6 +33,7 @@ import numpy as np
 
 from typing import Any, Dict, Optional
 from fw.configuration.config_profile import ThrustMode, VesselProfile
+from fw.ships.action_mapper import ActionMapper
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ class EnvApplier:
         EnvApplier._set_smoothing(env, profile.actuator.enable_smoothing)
         EnvApplier._set_rudder_angle_scaling(env, profile.transfer.enable_rudder_angle_scaling)
         EnvApplier._set_initial_speed(env, profile.scenario.initial_speed)
-        EnvApplier._set_initial_thrust(env, profile.initial_thrust_action())
+        EnvApplier._set_initial_thrust(env, profile)
 
         sub_envs = getattr(env, "sub_environments", None)
         if sub_envs is None or not sub_envs:
@@ -138,7 +139,7 @@ class EnvApplier:
             EnvApplier._set_smoothing(sub, profile.actuator.enable_smoothing)
             EnvApplier._set_rudder_angle_scaling(sub, profile.transfer.enable_rudder_angle_scaling)
             EnvApplier._set_initial_speed(sub, profile.scenario.initial_speed)
-            EnvApplier._set_initial_thrust(sub, profile.initial_thrust_action())
+            EnvApplier._set_initial_thrust(sub, profile)
 
     @staticmethod
     def _set_smoothing(env, value: bool) -> None:
@@ -188,18 +189,22 @@ class EnvApplier:
             )
 
     @staticmethod
-    def _set_initial_thrust(env, value: float) -> None:
+    def _set_initial_thrust(env, profile: VesselProfile) -> None:
         """
-        Set the thrust the actuators start an episode with (action scale), applied
-        on the next reset(); envs without an initial_thrust attribute are skipped.
+        Set the thrust the actuators start an episode with (thrust units), applied
+        on the next reset(): scenario.initial_thrust if set, else in ThrustMode.FIXED
+        the fixed thrust mapped with the env's ship, else None (the env derives it
+        from initial_speed). Envs without an initial_thrust attribute are skipped.
         """
 
-        if hasattr(env, "initial_thrust"):
-            env.initial_thrust = value
-            logger.debug(
-                "EnvApplier: set initial_thrust=%+.3f (action scale) on %s",
-                value, type(env).__name__,
-            )
+        if not hasattr(env, "initial_thrust"):
+            return
+        value = profile.scenario.initial_thrust
+        ship = getattr(env, "ship", None)
+        if value is None and profile.thrust.mode == ThrustMode.FIXED and ship is not None:
+            value = ActionMapper.map_thrust(profile.thrust.fixed_value, ship.specifications)
+        env.initial_thrust = value
+        logger.debug("EnvApplier: set initial_thrust=%s on %s", value, type(env).__name__)
 
 
 # ---------------------------------------------------------------------------
