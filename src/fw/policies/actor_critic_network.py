@@ -5,6 +5,30 @@ import numpy as np
 from typing import Tuple
 
 
+class _StraightThroughClamp(torch.autograd.Function):
+    """
+    Clamp whose backward passes the gradient through unchanged (torch.clamp
+    passes none at or beyond a bound). The forward value equals torch.clamp
+    for every input, including +-inf.
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, low: float, high: float) -> torch.Tensor:
+        """
+        Clamp x into [low, high].
+        """
+
+        return torch.clamp(x, low, high)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs: torch.Tensor) -> Tuple[torch.Tensor, None, None]:
+        """
+        Identity gradient for x; none for the bounds.
+        """
+
+        return grad_outputs[0], None, None
+
+
 class ActorCriticNetwork(nn.Module):
     """
     Actor-critic network: a shared trunk with an actor head (Gaussian action
@@ -16,6 +40,11 @@ class ActorCriticNetwork(nn.Module):
         actor_log_std (nn.Parameter): Learnable parameter for the log standard deviation of actions.
         critic (nn.Linear): Linear layer producing the value estimate of the input state.
     """
+
+    # Bounds of actor_log_std, enforced on the value in action_std() and on the
+    # parameter itself by clamp_log_std_().
+    LOG_STD_MIN = -20.0
+    LOG_STD_MAX = 2.0
 
     def __init__(self, input_dim: int, output_dim: int):
         """
@@ -69,11 +98,36 @@ class ActorCriticNetwork(nn.Module):
 
         action_mean = self.actor_mean(shared_features)
 
-        # Clamp log_std before exponentiation for numerical stability.
-        log_std = torch.clamp(self.actor_log_std, -20, 2)
-        action_std = torch.exp(log_std)
+        action_std = self.action_std()
 
         state_value = self.critic(shared_features)
 
         return action_mean, action_std, state_value
+
+
+    def action_std(self) -> torch.Tensor:
+        """
+        Standard deviation of the (pre-tanh) action distribution, shape (output_dim,).
+
+        log_std is clamped before exponentiation for numerical stability, with
+        the value of torch.clamp but a straight-through gradient: torch.clamp
+        passes none at or beyond a bound, which would leave the std stuck there.
+        Inside the bounds this equals a plain clamp.
+        """
+
+        log_std = _StraightThroughClamp.apply(self.actor_log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
+        return torch.exp(log_std)
+
+
+    def clamp_log_std_(self) -> None:
+        """
+        Clamp the actor_log_std parameter itself into [LOG_STD_MIN, LOG_STD_MAX].
+
+        Call after every optimizer step, so the parameter cannot drift beyond a
+        bound (where the std no longer changes) and would first have to travel
+        back before the std responds again.
+        """
+
+        with torch.no_grad():
+            self.actor_log_std.clamp_(self.LOG_STD_MIN, self.LOG_STD_MAX)
 

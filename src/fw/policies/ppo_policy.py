@@ -13,6 +13,35 @@ logger = logging.getLogger(__name__)
 
 POLICY_FILE_NAME = 'policy.pth'
 
+# Per-update PPO diagnostics, averaged over the minibatches of one update.
+# entropy is that of the pre-tanh Gaussian (the term the entropy bonus uses);
+# approx_kl is the k3 estimator mean((r - 1) - log r), with log r capped at
+# PPOPolicy.MAX_LOG_RATIO as in the loss; clip_frac is the fraction of samples
+# with |r - 1| > clip_range; action_std is the mean std after the update.
+PPO_UPDATE_STAT_KEYS = ("policy_loss", "value_loss", "entropy", "approx_kl", "clip_frac", "action_std")
+
+
+def empty_update_stats(network: Optional[torch.nn.Module] = None) -> Dict[str, float]:
+    """
+    Update stats for an update that did not happen: all NaN, except action_std,
+    which is the network's current mean std if a network is given.
+    """
+
+    stats = {key: float("nan") for key in PPO_UPDATE_STAT_KEYS}
+    if network is not None:
+        stats["action_std"] = mean_action_std(network)
+    return stats
+
+
+def mean_action_std(network: torch.nn.Module) -> float:
+    """
+    Mean over the action dimensions of the network's current action std.
+    """
+
+    with torch.no_grad():
+        return float(network.action_std().mean().item())
+
+
 def get_device(device: str = "auto") -> torch.device:
     """
     Return the torch device; 'auto' and 'cuda' fall back to CPU without CUDA.
