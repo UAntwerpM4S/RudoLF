@@ -164,8 +164,8 @@ CONFIG_PARAMETERS = {
     'enable_bank_collision_check': True,
     'visualize_best_trained': False,
     'viz_mode': VisualizationMode.COMPLEX,
-    'start_pos': DEFAULT_FRAMEWORK_SHIP_POS,    # (2245.0, -47.0)
-    'target_pos': DEFAULT_FRAMEWORK_TARGET_POS, # (-1559.0, 11990.0)
+    'start_pos': (2245.0, -47.0),
+    'target_pos': (-1559.0, 11990.0),
     'overall_contour': "env_Sche_no_scale.csv",
     'depth_contour': "env_Sche_250cm_no_scale.csv",
     'trajectory': "trajectory_points_no_scale.csv",
