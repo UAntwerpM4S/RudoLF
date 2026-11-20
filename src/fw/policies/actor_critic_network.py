@@ -21,12 +21,12 @@ class _StraightThroughClamp(torch.autograd.Function):
         return torch.clamp(x, low, high)
 
     @staticmethod
-    def backward(ctx, grad_output: torch.Tensor):
+    def backward(ctx, *grad_outputs: torch.Tensor) -> Tuple[torch.Tensor, None, None]:
         """
         Identity gradient for x; none for the bounds.
         """
 
-        return grad_output, None, None
+        return grad_outputs[0], None, None
 
 
 class ActorCriticNetwork(nn.Module):
