@@ -10,7 +10,7 @@ from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
 from fw.configuration.stop_condition import StopCondition
-from fw.policies.ppo_policy import apply_policy_yaw_rate_obs_scale, require_policy_dims
+from fw.policies.ppo_policy import apply_policy_yaw_rate_obs_scale, empty_update_stats, require_policy_dims
 from fw.common.tools.logging_utils import dump_multi_agent_metrics
 from fw.configuration.profile_applier import SimulatorApplier
 from fw.configuration.config_profile import VesselProfile
@@ -261,7 +261,8 @@ class MultiPPOAgent(BasePPOAgent):
         Each iteration collects one trajectory per sub-environment and trains
         each agent on its own (matched by env_id tag). A missing trajectory is
         skipped with a warning and logged as NaN. Saves best policies per agent,
-        periodic checkpoints and per-agent metrics.
+        periodic checkpoints and per-agent metrics, including the PPO update
+        diagnostics (NaN without an update, see PPO_UPDATE_STAT_KEYS).
 
         Early stopping is per agent: each has its own copy of the stop
         condition, judged on its own reward. An agent that meets it is frozen
@@ -320,6 +321,7 @@ class MultiPPOAgent(BasePPOAgent):
                             'advantage': float('nan'),
                             'reward': float('nan'),
                             'frozen': frozen[agent_id],
+                            **empty_update_stats(agent.policy.network),
                         })
                         continue
 
@@ -334,6 +336,7 @@ class MultiPPOAgent(BasePPOAgent):
                             'advantage': mean_advantage,
                             'reward': mean_reward,
                             'frozen': True,
+                            **empty_update_stats(agent.policy.network),
                         })
                         continue
 
@@ -345,6 +348,7 @@ class MultiPPOAgent(BasePPOAgent):
                         'advantage': mean_advantage,
                         'reward': mean_reward,
                         'frozen': False,
+                        **agent.last_update_stats,
                     })
 
                     if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_rewards[agent_id]:

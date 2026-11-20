@@ -10,13 +10,13 @@ import numpy as np
 
 from pathlib import Path
 from typing import Optional, Tuple, Union
-from fw.policies.ppo_policy import PPOPolicy
 from fw.policies.base_ppo_agent import BasePPOAgent
 from stable_baselines3.common.monitor import Monitor
 from fw.configuration.stop_condition import StopCondition
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
-from fw.policies.ppo_policy import (apply_policy_yaw_rate_obs_scale, require_policy_dims,
-                                    start_fresh_policy, yaw_rate_obs_scale_changes)
+from fw.policies.ppo_policy import (PPOPolicy, apply_policy_yaw_rate_obs_scale, require_policy_dims,
+                                    start_fresh_policy, yaw_rate_obs_scale_changes, PPO_UPDATE_STAT_KEYS,
+									empty_update_stats, mean_action_std)
 from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 # from fw.common.tools.ppo_utils import normalize_policy_zip_path
@@ -74,6 +74,8 @@ class SinglePPOAgent(BasePPOAgent):
         start_fresh_policy(self.policy, self.env)
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         self._vec_env = None
+        # Diagnostics of the last train() call (see PPO_UPDATE_STAT_KEYS).
+        self.last_update_stats = empty_update_stats(self.policy.network)
 
     def _is_airsim_env(self) -> bool:
         """
@@ -106,7 +108,8 @@ class SinglePPOAgent(BasePPOAgent):
         """
         Perform PPO optimization on collected trajectories: normalized advantages,
         mini-batch updates over num_epochs with clipping, value loss and entropy
-        bonus. Steps with a non-finite loss or gradient norm are skipped.
+        bonus. Steps with a non-finite loss or gradient norm are skipped. The
+        update diagnostics are stored in `last_update_stats`.
 
         Args:
             all_episodes_data (list[dict]): Trajectories with states, raw_actions
@@ -119,6 +122,8 @@ class SinglePPOAgent(BasePPOAgent):
             KeyError: If an episode has no "raw_actions" (not produced by
                 run_parallel_episodes).
         """
+
+        self.last_update_stats = empty_update_stats(self.policy.network)
 
         if not all_episodes_data:
             return float('nan')
@@ -161,6 +166,7 @@ class SinglePPOAgent(BasePPOAgent):
 
         batch_size = all_states.shape[0]
         loss_per_epoch = []
+        stats_per_mb = {key: [] for key in PPO_UPDATE_STAT_KEYS if key != "action_std"}
 
         for _ in range(self.num_epochs):
             indices = torch.randperm(batch_size)
@@ -213,8 +219,19 @@ class SinglePPOAgent(BasePPOAgent):
                     logger.warning("[Alert] Exploding gradient: norm=%.2f "
                                    "(clip=%.2f). Clipping applied.", float(grad_norm), self.max_grad_norm)
                 self.optimizer.step()
+                self.policy.network.clamp_log_std_()
 
                 loss_per_epoch.append(loss.item())
+                with torch.no_grad():
+                    stats_per_mb["policy_loss"].append(policy_loss.item())
+                    stats_per_mb["value_loss"].append(value_loss.item())
+                    stats_per_mb["entropy"].append(entropy_loss.item())
+                    stats_per_mb["approx_kl"].append(((ratios - 1.0) - log_ratios).mean().item())
+                    stats_per_mb["clip_frac"].append(((ratios - 1.0).abs() > self.clip_range).float().mean().item())
+
+        if loss_per_epoch:
+            self.last_update_stats = {key: float(np.mean(values)) for key, values in stats_per_mb.items()}
+        self.last_update_stats["action_std"] = mean_action_std(self.policy.network)
 
         return float(np.mean(loss_per_epoch)) if loss_per_epoch else float('nan')
 
@@ -583,6 +600,7 @@ class SinglePPOAgent(BasePPOAgent):
                     loss=loss,
                     num_episode_batches=len(batch_data),
                     elapsed_seconds=time.perf_counter() - learn_started,
+                    **self.last_update_stats,
                 )
 
                 if iteration >= self.MINIMUM_ITERATIONS_FOR_BEST_SAVE and mean_reward > best_mean_reward:

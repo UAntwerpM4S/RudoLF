@@ -28,7 +28,8 @@ import tempfile
 import zipfile
 import logging
 
-from fw.policies.ppo_policy import (PPOPolicy, apply_policy_yaw_rate_obs_scale, env_yaw_rate_obs_scale,
+from fw.policies.ppo_policy import (PPOPolicy, apply_policy_yaw_rate_obs_scale,
+                                    empty_update_stats, env_yaw_rate_obs_scale, mean_action_std,
                                     policy_yaw_rate_obs_scale, require_policy_dims, start_fresh_policy,
                                     yaw_rate_obs_scale_changes)
 
@@ -264,13 +265,16 @@ class MultiPolicySingleAgent(BasePPOAgent):
         # Vectorized environment, created lazily
         self._vec_env = None
 
-        # Reward normalization, shared across policies
-        self.reward_mean = 0.0
-        self.reward_var = 1.0
-        self.reward_count = 1e-4
+        # Reward normalization statistics, shared across policies
+        self.return_mean = 0.0
+        self.return_var = 1.0
+        self.return_count = 1e-4
 
         # Per-policy pending segments until steps_per_policy_update is reached
         self.steps_per_policy_update = int(steps_per_policy_update)
+
+        # Diagnostics of each slot's last _train_policy() call (see PPO_UPDATE_STAT_KEYS).
+        self._last_update_stats: Dict[int, Dict[str, float]] = {}
         self._pending_segments: Dict[int, List[dict]] = {
             k: [] for k in range(num_policies)
         }
@@ -607,7 +611,10 @@ class MultiPolicySingleAgent(BasePPOAgent):
         Returns:
             Mean total loss, policy loss, value loss and entropy bonus over all
             minibatches; all NaN if the slot is frozen or has no usable data.
+            The update diagnostics are returned by `_update_stats`.
         """
+
+        self._last_update_stats[policy_id] = empty_update_stats(self.policies[policy_id].network)
 
         if policy_id in self.frozen_pids:
             return float("nan"), float("nan"), float("nan"), float("nan")
@@ -669,6 +676,9 @@ class MultiPolicySingleAgent(BasePPOAgent):
         policy_loss_per_mb = []
         value_loss_per_mb = []
         entropy_bonus_per_mb = []
+        entropy_per_mb = []
+        approx_kl_per_mb = []
+        clip_frac_per_mb = []
 
         for _ in range(self.num_epochs):
             indices = torch.randperm(batch_size)
@@ -721,14 +731,29 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     optimizer.zero_grad()
                     continue
                 optimizer.step()
+                policy.network.clamp_log_std_()
 
                 loss_per_epoch.append(loss.item())
                 policy_loss_per_mb.append(policy_loss.item())
                 value_loss_per_mb.append(value_loss.item())
                 entropy_bonus_per_mb.append(entropy_bonus.item())
+                with torch.no_grad():
+                    entropy_per_mb.append(entropy_loss.item())
+                    approx_kl_per_mb.append(((ratios - 1.0) - log_ratios).mean().item())
+                    clip_frac_per_mb.append(((ratios - 1.0).abs() > self.clip_range).float().mean().item())
+
+        self._last_update_stats[policy_id]["action_std"] = mean_action_std(policy.network)
 
         if not loss_per_epoch:
             return float("nan"), float("nan"), float("nan"), float("nan")
+
+        self._last_update_stats[policy_id].update({
+            "policy_loss": float(np.mean(policy_loss_per_mb)),
+            "value_loss": float(np.mean(value_loss_per_mb)),
+            "entropy": float(np.mean(entropy_per_mb)),
+            "approx_kl": float(np.mean(approx_kl_per_mb)),
+            "clip_frac": float(np.mean(clip_frac_per_mb)),
+        })
 
         return (
             float(np.mean(loss_per_epoch)),
@@ -736,6 +761,15 @@ class MultiPolicySingleAgent(BasePPOAgent):
             float(np.mean(value_loss_per_mb)),
             float(np.mean(entropy_bonus_per_mb)),
         )
+
+    def _update_stats(self, policy_id: int) -> Dict[str, float]:
+        """
+        Diagnostics of the last _train_policy() call for policy_id (see
+        PPO_UPDATE_STAT_KEYS); NaN, with the current action_std, if it never ran.
+        """
+
+        stats = self._last_update_stats.get(policy_id)
+        return dict(stats) if stats is not None else empty_update_stats(self.policies[policy_id].network)
 
     # ------------------------------------------------------------------
     # Main training loop
@@ -802,11 +836,13 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         loss, policy_loss, value_loss, entropy_bonus = self._train_policy(
                             pid, update_segs,
                         )
+                        update_stats = self._update_stats(pid)
                         flushed_steps = self._pending_steps[pid]
                         self._pending_segments[pid] = []
                         self._pending_steps[pid] = 0
                     else:
                         loss = policy_loss = value_loss = entropy_bonus = float("nan")
+                        update_stats = empty_update_stats(self.policies[pid].network)
                         flushed_steps = 0
 
                     iter_losses[pid] = loss
@@ -827,6 +863,10 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         "policy_loss": policy_loss,
                         "value_loss": value_loss,
                         "entropy_bonus": entropy_bonus,
+                        "entropy": update_stats["entropy"],
+                        "approx_kl": update_stats["approx_kl"],
+                        "clip_frac": update_stats["clip_frac"],
+                        "action_std": update_stats["action_std"],
                         "reward": iter_rewards[pid],
                         "n_steps": sum(len(s["rewards"]) for s in segs),
                         "pending_steps": self._pending_steps[pid],

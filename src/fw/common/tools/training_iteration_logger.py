@@ -41,6 +41,12 @@ class TrainingIterationLogger:
         "num_episode_batches",
         "elapsed_seconds",
         "rss_mb",
+        "policy_loss",
+        "value_loss",
+        "entropy",
+        "approx_kl",
+        "clip_frac",
+        "action_std",
     )
 
     def __init__(
@@ -90,9 +96,18 @@ class TrainingIterationLogger:
         loss: float,
         num_episode_batches: int,
         elapsed_seconds: float,
+        policy_loss: float = float("nan"),
+        value_loss: float = float("nan"),
+        entropy: float = float("nan"),
+        approx_kl: float = float("nan"),
+        clip_frac: float = float("nan"),
+        action_std: float = float("nan"),
     ) -> None:
         """
         Buffer one training-iteration row; save() writes the buffer to CSV.
+
+        The PPO update diagnostics (policy_loss ... action_std, see
+        fw.policies.ppo_policy.PPO_UPDATE_STAT_KEYS) are NaN when not given.
         """
 
         rss_mb = self._sample_rss_mb()
@@ -116,6 +131,12 @@ class TrainingIterationLogger:
             "num_episode_batches": int(num_episode_batches),
             "elapsed_seconds": float(elapsed_seconds),
             "rss_mb": round(rss_mb, 2),
+            "policy_loss": float(policy_loss),
+            "value_loss": float(value_loss),
+            "entropy": float(entropy),
+            "approx_kl": float(approx_kl),
+            "clip_frac": float(clip_frac),
+            "action_std": float(action_std),
         }
         self._rows.append(row)
 
