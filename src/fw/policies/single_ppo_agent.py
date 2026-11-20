@@ -16,7 +16,7 @@ from fw.configuration.stop_condition import StopCondition
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from fw.policies.ppo_policy import (PPOPolicy, apply_policy_yaw_rate_obs_scale, require_policy_dims,
                                     start_fresh_policy, yaw_rate_obs_scale_changes, PPO_UPDATE_STAT_KEYS,
-									empty_update_stats, mean_action_std)
+                                    empty_update_stats, mean_action_std)
 from fw.common.airsim.tools.airsim_training_session import AirSimTrainingSession
 from fw.common.tools.training_iteration_logger import TrainingIterationLogger
 # from fw.common.tools.ppo_utils import normalize_policy_zip_path

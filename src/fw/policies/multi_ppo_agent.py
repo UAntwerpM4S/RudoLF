@@ -33,7 +33,8 @@ class MultiPPOAgent(BasePPOAgent):
         agents (list[SinglePPOAgent]): List of PPO agents (one per environment).
         num_envs (int): Number of sub-environments.
         max_nbr_iterations (int): Maximum rollout length.
-        normalize (bool): Whether to normalize rewards per trajectory.
+        normalize (bool): Whether to scale rewards by the running std of the
+            discounted return, shared by all agents.
     """
 
     MINIMUM_ITERATIONS_FOR_BEST_SAVE = 20

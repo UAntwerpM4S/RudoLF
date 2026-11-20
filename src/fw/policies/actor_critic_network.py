@@ -5,6 +5,30 @@ import numpy as np
 from typing import Tuple
 
 
+class _StraightThroughClamp(torch.autograd.Function):
+    """
+    Clamp whose backward passes the gradient through unchanged (torch.clamp
+    passes none at or beyond a bound). The forward value equals torch.clamp
+    for every input, including +-inf.
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, low: float, high: float) -> torch.Tensor:
+        """
+        Clamp x into [low, high].
+        """
+
+        return torch.clamp(x, low, high)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        """
+        Identity gradient for x; none for the bounds.
+        """
+
+        return grad_output, None, None
+
+
 class ActorCriticNetwork(nn.Module):
     """
     Actor-critic network: a shared trunk with an actor head (Gaussian action
@@ -85,15 +109,14 @@ class ActorCriticNetwork(nn.Module):
         """
         Standard deviation of the (pre-tanh) action distribution, shape (output_dim,).
 
-        log_std is clamped before exponentiation for numerical stability. The
-        clamp is straight-through: torch.clamp passes no gradient at or beyond
-        a bound, which would leave the std stuck there; here the gradient always
-        reaches actor_log_std. Inside the bounds this equals a plain clamp.
+        log_std is clamped before exponentiation for numerical stability, with
+        the value of torch.clamp but a straight-through gradient: torch.clamp
+        passes none at or beyond a bound, which would leave the std stuck there.
+        Inside the bounds this equals a plain clamp.
         """
 
-        log_std = self.actor_log_std
-        clamped = torch.clamp(log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
-        return torch.exp(log_std + (clamped - log_std).detach())
+        log_std = _StraightThroughClamp.apply(self.actor_log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
+        return torch.exp(log_std)
 
 
     def clamp_log_std_(self) -> None:

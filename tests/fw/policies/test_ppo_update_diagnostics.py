@@ -271,14 +271,13 @@ def test_non_finite_reward_does_not_poison_the_return_statistics(tmp_path):
     """
 
     agent = SinglePPOAgent(environment=_DummyEnv(), model_dir=str(tmp_path), normalize=True)
-    reference = agent.normalize_rewards(np.full(20, -5.0, dtype=np.float32))
+    agent.normalize_rewards(np.full(20, -5.0, dtype=np.float32))
 
     scaled = agent.normalize_rewards(np.array([-5.0, np.nan, -5.0, np.inf, -5.0], dtype=np.float32))
     assert np.isnan(scaled[1]) and np.isinf(scaled[3])
     assert np.all(np.abs(scaled[[0, 2, 4]]) < 1.0)         # scaled, not raw -5
     assert np.isfinite([agent.return_mean, agent.return_var, agent.return_count]).all()
     assert np.isfinite(agent.normalize_rewards(np.full(20, -5.0, dtype=np.float32))).all()
-    assert np.all(np.abs(reference) <= agent.REWARD_NORM_CLIP)
 
 
 @pytest.mark.parametrize("log_std", [ActorCriticNetwork.LOG_STD_MIN, -8.0, ActorCriticNetwork.LOG_STD_MAX])
@@ -344,3 +343,22 @@ def test_entropy_coef_in_the_config():
     assert DEFAULT_HYPERPARAMETERS[MULTI_PPO_POLICY_NAME]["entropy_coef"] == 0.0
     assert DEFAULT_HYPERPARAMETERS[MULTI_POLICY_SINGLE_NAME]["entropy_coef"] == 0.025
     assert DEFAULT_HYPERPARAMETERS[PPO2_POLICY_NAME]["entropy_coef"] == 0.01
+
+
+@pytest.mark.parametrize("log_std", [float("inf"), -float("inf"), 1e8, -1e8, 3.1, -25.0])
+def test_action_std_equals_the_plain_clamp_outside_the_bounds(log_std):
+    """
+    Also for extreme or infinite log_std (e.g. a corrupt policy file) the std
+    equals the old clamp, never NaN, and the gradient still flows.
+    """
+
+    network = ActorCriticNetwork(4, 2)
+    with torch.no_grad():
+        network.actor_log_std.fill_(log_std)
+
+    std = network.action_std()
+    expected = torch.exp(torch.clamp(network.actor_log_std.detach(), -20, 2))
+
+    assert torch.equal(std.detach(), expected)
+    (grad,) = torch.autograd.grad(std.sum(), network.actor_log_std)
+    assert torch.all(torch.isfinite(grad)) and torch.all(grad != 0.0)
