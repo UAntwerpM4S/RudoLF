@@ -31,7 +31,7 @@ class BaseAgent(ABC):
         max_grad_norm: float = 0.5,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
-        entropy_coef: float = 0.0,
+        entropy_coef: float = 0.01,
         num_epochs: int = 10,
         batch_size: int = 64,
         device: str = "cpu",
@@ -51,7 +51,7 @@ class BaseAgent(ABC):
             max_grad_norm (float, optional): Maximum gradient norm for gradient clipping. Default is 0.5.
             gamma (float, optional): Discount factor for future rewards. Default is 0.99.
             gae_lambda (float, optional): Lambda for Generalized Advantage Estimation. Default is 0.95.
-            entropy_coef (float, optional): Coefficient for entropy bonus. Default is 0.0.
+            entropy_coef (float, optional): Coefficient for entropy bonus. Default is 0.01.
             num_epochs (int, optional): Number of training epochs per update. Default is 10.
             batch_size (int, optional): Mini-batch size. Default is 64.
             device (str, optional): Device for training. One of 'cpu', 'cuda',
@@ -99,11 +99,9 @@ class BaseAgent(ABC):
             self.model_dir = str(model_dir_path)
             os.makedirs(self.model_dir, exist_ok=True)
 
-        # Running statistics of the discounted return, used to scale rewards
-        # when normalizing (as SB3's VecNormalize).
-        self.return_mean = 0.0
-        self.return_var = 1.0
-        self.return_count = 1e-4  # avoid division by zero
+        self.reward_mean = 0.0
+        self.reward_var = 1.0
+        self.reward_count = 1e-4  # avoid division by zero
 
         # Worker seeding: SeedSequence.spawn() is deterministic in call order,
         # so recreated workers get new but reproducible seeds.
