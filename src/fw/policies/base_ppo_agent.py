@@ -85,7 +85,7 @@ class BasePPOAgent(BaseAgent):
         max_grad_norm: float = 0.5,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
-        entropy_coef: float = 0.0,
+        entropy_coef: float = 0.01,
         num_epochs: int = 10,
         batch_size: int = 64,
         device: str = "cpu",
@@ -115,8 +115,7 @@ class BasePPOAgent(BaseAgent):
             model_dir (str): Directory for saving models.
             max_nbr_iterations (int): Maximum steps per rollout (safeguard
                 against endless episodes).
-            normalize (bool): Whether to scale rewards by the running std of the
-                discounted return (see normalize_rewards).
+            normalize (bool): Whether to normalize rewards.
             seed (int, optional): Base seed for the worker env RNGs (see BaseAgent).
         """
 
@@ -251,78 +250,35 @@ class BasePPOAgent(BaseAgent):
         )
 
 
-    # As SB3's VecNormalize defaults (clip_reward, epsilon).
-    REWARD_NORM_CLIP = 10.0
-    REWARD_NORM_EPSILON = 1e-8
-
     def normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
         """
-        Scale the rewards of one episode (see normalize_episode_rewards).
-        """
-
-        return self.normalize_episode_rewards([rewards])[0]
-
-
-    def normalize_episode_rewards(self, rewards_per_env: list) -> list:
-        """
-        Scale the rewards of episodes collected in parallel as SB3's VecNormalize
-        does. Per time step, the discounted returns (gamma, starting at 0) of the
-        envs still running update the running return statistics in one batch,
-        and each reward is divided by the running return std and clipped to
-        +-REWARD_NORM_CLIP. No mean is subtracted, so the sign of rewards and the
-        incentive of the episode length are kept.
-
-        A non-finite reward passes through unscaled (the PPO update then skips
-        the batch, as without normalization) and is left out of the return and
-        the statistics, so it cannot poison later steps or episodes.
+        Normalize rewards with running mean/variance (parallel Welford update).
 
         Args:
-            rewards_per_env: Raw rewards of one episode per env, shape (T_i,) each.
+            rewards: Raw rewards array of shape (batch_size,).
 
         Returns:
-            list[np.ndarray]: Scaled rewards (float32), same shapes.
+            Rewards standardized with the updated running statistics.
         """
 
-        rewards_per_env = [np.asarray(rewards, dtype=np.float64) for rewards in rewards_per_env]
-        scaled_per_env = [np.empty(len(rewards), dtype=np.float32) for rewards in rewards_per_env]
-        discounted_returns = np.zeros(len(rewards_per_env))
-        max_len = max((len(rewards) for rewards in rewards_per_env), default=0)
+        batch_mean = float(np.mean(rewards))
+        batch_var = np.var(rewards)
+        batch_count = len(rewards)
 
-        for t in range(max_len):
-            active = [i for i, rewards in enumerate(rewards_per_env) if t < len(rewards)]
-            finite = [i for i in active if np.isfinite(rewards_per_env[i][t])]
+        delta = batch_mean - self.reward_mean
+        tot_count = self.reward_count + batch_count
 
-            for i in finite:
-                discounted_returns[i] = discounted_returns[i] * self.gamma + rewards_per_env[i][t]
-            if finite:
-                self._update_return_statistics(discounted_returns[finite])
+        new_mean = self.reward_mean + delta * batch_count / tot_count
+        m_a = self.reward_var * self.reward_count
+        m_b = batch_var * batch_count
+        m2 = m_a + m_b + delta ** 2 * self.reward_count * batch_count / tot_count
+        new_var = m2 / tot_count
 
-            std = np.sqrt(self.return_var + self.REWARD_NORM_EPSILON)
-            for i in active:
-                reward = rewards_per_env[i][t]
-                scaled_per_env[i][t] = (np.clip(reward / std, -self.REWARD_NORM_CLIP, self.REWARD_NORM_CLIP)
-                                        if np.isfinite(reward) else reward)
+        self.reward_mean = new_mean
+        self.reward_var = new_var
+        self.reward_count = tot_count
 
-        return scaled_per_env
-
-
-    def _update_return_statistics(self, returns: np.ndarray) -> None:
-        """
-        Batch update of the running return mean/variance (SB3 RunningMeanStd).
-        """
-
-        batch_mean = float(np.mean(returns))
-        batch_var = float(np.var(returns))
-        batch_count = len(returns)
-
-        delta = batch_mean - self.return_mean
-        tot_count = self.return_count + batch_count
-        m2 = (self.return_var * self.return_count + batch_var * batch_count
-              + delta ** 2 * self.return_count * batch_count / tot_count)
-
-        self.return_mean += delta * batch_count / tot_count
-        self.return_var = m2 / tot_count
-        self.return_count = tot_count
+        return (rewards - new_mean) / (np.sqrt(new_var) + 1e-8)
 
 
     def run_parallel_episodes(self, num_envs: int) -> list:
@@ -465,18 +421,8 @@ class BasePPOAgent(BaseAgent):
                 else:
                     episode[key] = np.asarray(relevant_steps, dtype=np.float32)
 
-            episode["next_value"] = next_value
-            episode["env_id"] = env_id
-            episode_data.append(episode)
-
-        if self.normalize and episode_data:
-            # All envs together, step by step, as they were stepped.
-            scaled = self.normalize_episode_rewards([episode["rewards"] for episode in episode_data])
-            for episode, rewards in zip(episode_data, scaled):
-                episode["rewards"] = rewards
-
-        for episode in episode_data:
-            next_value = episode.pop("next_value")
+            if self.normalize:
+                episode["rewards"] = self.normalize_rewards(episode["rewards"])
 
             # Only true terminations zero the bootstrap.
             episode["advantages"] = self.compute_gae(
@@ -489,5 +435,7 @@ class BasePPOAgent(BaseAgent):
             )
 
             episode["returns"] = episode["advantages"] + episode["values"]
+            episode["env_id"] = env_id
+            episode_data.append(episode)
 
         return episode_data
