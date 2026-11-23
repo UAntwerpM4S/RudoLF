@@ -629,7 +629,7 @@ ProfileRegistry.register(VesselProfile(
     # full thrust: ~0.96 m/s at 379 % UKC, ~0.94 at 153 %, ~0.80 at 100 %, ~0.43 at 35 %
     # (lower it for shallow water). 0.4 m/s can be held at every tested UKC. No
     # initial_thrust: episodes start at the thrust that holds this speed.
-    scenario=ScenarioConfig(initial_speed=0.4),
+    scenario=ScenarioConfig(initial_speed=0.8),
     actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
     thrust=ThrustConfig(mode=ThrustMode.FREE),
 ))

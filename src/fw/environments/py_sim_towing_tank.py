@@ -43,7 +43,7 @@ MAX_GRID_POS = 150
 SUCCESS_REWARD = 50.0
 CHECKPOINT_AREA_SIZE = 1.0
 TARGET_AREA_SIZE = 1.0
-TARGET_SURGE_VELOCITY_MS = 1.0  # m/s, target for velocity reward shaping
+TARGET_SURGE_VELOCITY_MS = 0.8  # m/s, target for velocity reward shaping
 
 # Rendering constants
 MAX_FIG_WIDTH = 1200
