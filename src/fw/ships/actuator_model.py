@@ -55,15 +55,26 @@ class ActuatorModel:
             ValueError: If thrust is outside [min_thrust, max_thrust] (or NaN).
         """
 
-        spec = self.specifications
         if thrust is None:
-            thrust = spec.min_thrust
-        # "not (a <= x <= b)" also rejects NaN
-        if not spec.min_thrust <= thrust <= spec.max_thrust:
-            raise ValueError(f"Start thrust {thrust} is outside [{spec.min_thrust}, {spec.max_thrust}].")
+            thrust = self.specifications.min_thrust
+        self.require_start_thrust(thrust, self.specifications)
 
         self._rudder = 0.0
         self._thrust = float(thrust)
+
+    @staticmethod
+    def require_start_thrust(thrust: float, specifications: ShipSpecifications) -> None:
+        """
+        Check that a start thrust lies within [min_thrust, max_thrust].
+
+        Raises:
+            ValueError: If thrust is outside [min_thrust, max_thrust] (or NaN).
+        """
+
+        # "not (a <= x <= b)" also rejects NaN
+        if not specifications.min_thrust <= thrust <= specifications.max_thrust:
+            raise ValueError(f"Start thrust {thrust} is outside "
+                             f"[{specifications.min_thrust}, {specifications.max_thrust}].")
 
     def step(self, action: ActuatorCommand, dt: float, enable_smoothing: bool) -> ActuatorState:
         """

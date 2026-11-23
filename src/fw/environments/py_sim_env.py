@@ -19,6 +19,7 @@ from fw.environments.wind_current_obs import WIND_CURRENT_OBS_DIM, normalize_win
 from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_MAX_DISTANCE, ray_world_angles
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
+from fw.ships.actuator_model import ActuatorModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 from fw.reward.reward import Reward
@@ -410,6 +411,23 @@ class PySimEnv(BaseEnv):
     # -----------------------
     # Initialization helpers
     # -----------------------
+    def _check_initial_speed(self, value: float) -> None:
+        """
+        Refuse an initial_speed outside the ship's surge limits.
+        """
+
+        low, high = self.ship.specifications.surge_limits
+        if not low <= value <= high:
+            raise ValueError(f"{type(self).__name__}: initial_speed {value} m/s is outside the surge limits "
+                             f"[{low}, {high}] m/s of ShipModel.{self.ship_model.name}.")
+
+    def _check_initial_thrust(self, value: float) -> None:
+        """
+        Refuse an initial_thrust outside the ship's thrust limits.
+        """
+
+        ActuatorModel.require_start_thrust(value, self.ship.specifications)
+
     def _start_thrust(self, state: VesselState) -> float:
         """
         Thrust the actuators start the episode with: initial_thrust if set, else

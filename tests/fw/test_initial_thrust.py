@@ -200,11 +200,31 @@ def test_fh_actuator_starts_at_the_start_thrust_and_nothing_is_sent_to_fh():
     assert bridge.reset_calls == [((), {})]
     assert {k: v for k, v in vars(bridge).items() if k != "reset_calls"} == before
     assert float(env.performed_action[1]) == pytest.approx(env.ship.specifications.max_thrust)
+    assert float(env.phys_sim.actuators.current_actuator_state[1]) == pytest.approx(env.ship.specifications.max_thrust)
+
+
+def test_fh_state_sync_keeps_the_exact_start_thrust():
+    """
+    The second reset after reading FH's state keeps the start thrust in double
+    precision, also at a limit whose float32 value lies above it (0.8597).
+    """
+
+    from fw.environments.py_sim_env import PySimEnv
+
+    env = PySimEnv(dynamics_model=Model.FH_TABULAR, ship_model=ShipModel.MYZAKO_37, fh_bridge=_FakeFhBridge())
+    spec = dataclasses.replace(env.ship.specifications, max_thrust=0.8597)
+    assert float(np.float32(spec.max_thrust)) > spec.max_thrust
+    env.ship.specifications = spec
+    env.phys_sim.actuators.specifications = spec
+    env.initial_thrust = spec.max_thrust
+    env.reset(seed=0)
+    assert env.phys_sim.actuators._thrust == spec.max_thrust
 
 
 def test_start_thrust_outside_its_range_is_refused():
     """
-    initial_thrust must be finite; a thrust outside the ship's limits is refused at reset.
+    initial_thrust must be finite; a thrust outside the ship's limits is refused
+    when set, by the env and by the actuator model.
     """
 
     from fw.ships.actuator_model import ActuatorModel
@@ -216,9 +236,9 @@ def test_start_thrust_outside_its_range_is_refused():
     env.initial_thrust = None
     assert env.initial_thrust is None
     for bad in (0.05, 1.5):
-        env.initial_thrust = bad
-        with pytest.raises(ValueError):
-            env.reset(seed=0)
+        with pytest.raises(ValueError, match="outside"):
+            env.initial_thrust = bad
+        assert env.initial_thrust is None
     actuators = ActuatorModel(env.ship.specifications)
     for bad in (0.0, 1.5, float("nan")):
         with pytest.raises(ValueError):
@@ -234,7 +254,7 @@ def test_start_thrust_never_leaves_the_limits_by_rounding():
     from fw.ships.actuator_model import ActuatorModel
     from fw.ships.ship_factory import create_ship
 
-    for lo, hi in ((0.0, 0.3), (0.1, 1.0), (0.2, 0.7), (0.05, 0.35)):
+    for lo, hi in ((0.0, 0.3), (0.1, 1.0), (0.2, 0.7), (0.05, 0.35), (0.3, 0.8597)):
         spec = dataclasses.replace(create_ship(ShipModel.MYZAKO_37).specifications, min_thrust=lo, max_thrust=hi)
         actuators = ActuatorModel(spec)
         for action in (-1.0, np.float32(-1.0), 1.0, np.float32(1.0), 0.3, np.float32(0.1)):
@@ -546,3 +566,57 @@ def test_b01_steady_thrust_keeps_the_low_thrust_warning():
     assert model.min_straight_running_thrust > spec.min_thrust
     model.steady_thrust(_straight(0.2), spec.min_thrust, spec.max_thrust)
     assert model._warned_low_thrust is False
+
+
+def test_initial_speed_must_be_finite_and_non_negative():
+    """
+    NaN, inf and negative start speeds are refused by the env and by profile validation.
+    """
+
+    from fw.configuration.config_profile import ScenarioConfig, VesselProfile
+
+    env = _fossen_env()
+    for bad in (float("nan"), float("inf"), -0.1):
+        with pytest.raises(ValueError, match="initial_speed"):
+            env.initial_speed = bad
+        with pytest.raises(ValueError, match="initial_speed"):
+            VesselProfile(name="bad", scenario=ScenarioConfig(initial_speed=bad)).validate()
+    assert env.initial_speed == 0.0
+
+
+def test_initial_speed_outside_the_surge_limits_is_refused():
+    """
+    PySimEnv refuses a start speed above the ship's surge limit, also via a profile;
+    the limit itself is accepted.
+    """
+
+    from fw.configuration.config_profile import ScenarioConfig, VesselProfile
+    from fw.configuration.profile_applier import apply_profile
+
+    env = _fossen_env()
+    high = env.ship.specifications.surge_limits[1]
+    with pytest.raises(ValueError, match="surge limits"):
+        env.initial_speed = high + 0.1
+    with pytest.raises(ValueError, match="surge limits"):
+        apply_profile(VesselProfile(name="fast", scenario=ScenarioConfig(initial_speed=high + 2.0)), env=env)
+    env.initial_speed = high
+    assert env.initial_speed == high
+
+
+def test_profile_initial_thrust_outside_the_limits_is_refused_when_applied():
+    """
+    A profile initial_thrust outside the ship's thrust limits fails in apply_profile,
+    before any reset, for the env and for MultiSimEnv sub-environments.
+    """
+
+    from fw.configuration.config_profile import ScenarioConfig, VesselProfile
+    from fw.configuration.profile_applier import apply_profile
+    from fw.environments.multi_sim_env import MultiSimEnv
+    from fw.environments.py_sim_colav_env import PySimColavEnv
+
+    colav = PySimColavEnv(time_step=1.0, max_steps=5, ship_pos=START, target_pos=TARGET,
+                          dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
+    profile = VesselProfile(name="hot", scenario=ScenarioConfig(initial_thrust=1.5))
+    for env in (_fossen_env(), colav, MultiSimEnv([_fossen_env(), _fossen_env()])):
+        with pytest.raises(ValueError, match="outside"):
+            apply_profile(profile, env=env)

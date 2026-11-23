@@ -57,17 +57,26 @@ class BaseEnv(gym.Env):
     @initial_speed.setter
     def initial_speed(self, value):
         """
-        Set the initial vessel speed.
+        Set the initial surge speed [m/s], applied on the next reset().
+
+        Raises:
+            ValueError: If value is not a finite, non-negative speed, or the env
+                refuses it (_check_initial_speed).
         """
 
-        self._initial_speed = value
+        # "not (a <= x < b)" also rejects NaN
+        if not 0.0 <= value < float("inf"):
+            raise ValueError(f"initial_speed must be a finite, non-negative speed, got {value}.")
+        self._check_initial_speed(float(value))
+        self._initial_speed = float(value)
 
 
     @property
     def initial_thrust(self):
         """
         float | None: Thrust the actuators start an episode with, in thrust
-        units ([min_thrust, max_thrust], checked at reset). None (the default):
+        units ([min_thrust, max_thrust], checked by the PySim envs when set and at
+        reset). None (the default):
         the thrust that holds initial_speed, else min_thrust. Only the PySim
         environments use it; AirSimEnv ignores it.
         """
@@ -81,12 +90,27 @@ class BaseEnv(gym.Env):
         Set the start thrust (thrust units) or None, applied on the next reset().
 
         Raises:
-            ValueError: If value is not None and not a finite number.
+            ValueError: If value is not None and not a finite number, or the env
+                refuses it (_check_initial_thrust).
         """
 
         if value is not None and not np.isfinite(value):
             raise ValueError(f"initial_thrust must be a finite thrust or None, got {value}.")
+        if value is not None:
+            self._check_initial_thrust(float(value))
         self._initial_thrust = None if value is None else float(value)
+
+
+    def _check_initial_speed(self, value: float) -> None:
+        """
+        Env-specific check of a new initial_speed [m/s]; accepts every value by default.
+        """
+
+
+    def _check_initial_thrust(self, value: float) -> None:
+        """
+        Env-specific check of a new initial_thrust; accepts every value by default.
+        """
 
 
     @property

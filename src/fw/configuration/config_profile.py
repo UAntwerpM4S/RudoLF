@@ -284,10 +284,11 @@ class VesselProfile:
                     f"got {self.thrust.fixed_value}."
                 )
 
+        # "not (a <= x < b)" also rejects NaN
         if (self.scenario.initial_speed is not None
-                and self.scenario.initial_speed < 0.0):
+                and not (0.0 <= self.scenario.initial_speed < float("inf"))):
             errors.append(
-                f"scenario.initial_speed must be non-negative, "
+                f"scenario.initial_speed must be a finite, non-negative speed, "
                 f"got {self.scenario.initial_speed}."
             )
 

@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple, cast
 from fw.environments.tools import create_checkpoints_from_simple_path
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
+from fw.ships.actuator_model import ActuatorModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 
@@ -242,6 +243,13 @@ class PySimBaseEnv(BaseEnv):
     # -----------------------
     # Initialization helpers
     # -----------------------
+    def _check_initial_thrust(self, value: float) -> None:
+        """
+        Refuse an initial_thrust outside the ship's thrust limits.
+        """
+
+        ActuatorModel.require_start_thrust(value, self.ship.specifications)
+
     def _start_thrust(self) -> float:
         """
         Thrust the actuators start the episode with: initial_thrust if set, else
