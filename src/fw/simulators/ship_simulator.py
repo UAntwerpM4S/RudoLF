@@ -78,13 +78,15 @@ class ShipSimulator(BaseSimulator):
         self._dynamics = dynamics
         self._mapper = ActionMapper()
 
-    def reset(self, state: VesselState, rng: Optional[np.random.Generator] = None) -> None:
+    def reset(self, state: VesselState, rng: Optional[np.random.Generator] = None, *,
+              initial_thrust: Optional[float] = None) -> None:
         """
-        Reset to `state` (see BaseSimulator.reset) and start a new episode of
-        the dynamics model (DynamicsBase.reset_episode, with `rng`).
+        Reset to `state` with the actuators at `initial_thrust` (see
+        BaseSimulator.reset) and start a new episode of the dynamics model
+        (DynamicsBase.reset_episode, with `rng`).
         """
 
-        super().reset(state)
+        super().reset(state, initial_thrust)
         self._dynamics.reset_episode(rng)
 
     def integrate(self, actuator,
