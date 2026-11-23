@@ -432,54 +432,22 @@ def test_pysimenv_without_a_yaw_scale_raises(monkeypatch):
 
 def test_ugent_yaw_scale_follows_the_ukc():
     """
-    The UGent surrogate's yaw-rate scale is per UKC, in PySimEnv and in the COLAV envs.
+    The UGent surrogate's yaw-rate scale in PySimEnv is per UKC.
     """
 
-    from fw.environments.py_sim_colav_env import PySimColavEnv
     from fw.environments.py_sim_env import PySimEnv
 
     for ukc, scale in ((363, 0.06), (125, 0.14), (43, 0.06)):
         kwargs = dict(dynamics_model=Model.UGENT_SURROGATE, ship_model=ShipModel.TRIPOLI,
                       ugent_surrogate_config={"ukc_percent": ukc}, target_pos=TARGET, max_steps=5)
         assert PySimEnv(time_step=2.0, start_pos=START, **kwargs).yaw_rate_obs_scale == scale
-        assert PySimColavEnv(time_step=1.0, ship_pos=START, **kwargs).yaw_rate_obs_scale == scale
-
-
-def test_colav_yaw_scales_are_separate_from_pysimenv():
-    """
-    The COLAV envs keep their own scale tables.
-    """
-
-    import fw.environments.py_sim_base_env as colav_base
-    import fw.environments.py_sim_env as py_sim_env
-    from fw.dynamics.ugent_surrogate import SUPPORTED_UKC_PERCENT
-
-    assert colav_base.YAW_RATE_OBS_SCALES is not py_sim_env.YAW_RATE_OBS_SCALES
-    assert colav_base.UGENT_YAW_RATE_OBS_SCALES is not py_sim_env.UGENT_YAW_RATE_OBS_SCALES
-    assert set(colav_base.YAW_RATE_OBS_SCALES) == {Model.FOSSEN, Model.NOMOTO}
-    assert set(colav_base.UGENT_YAW_RATE_OBS_SCALES) == set(SUPPORTED_UKC_PERCENT)
-
-
-def test_colav_without_a_yaw_scale_raises(monkeypatch):
-    """
-    A COLAV env with a dynamics model without a scale is refused at construction.
-    """
-
-    import fw.environments.py_sim_base_env as module
-    from fw.environments.py_sim_colav_env import PySimColavEnv
-
-    monkeypatch.delitem(module.YAW_RATE_OBS_SCALES, Model.FOSSEN)
-    with pytest.raises(ValueError, match="yaw-rate scale"):
-        PySimColavEnv(time_step=1.0, max_steps=5, ship_pos=START, target_pos=TARGET,
-                      dynamics_model=Model.FOSSEN, ship_model=ShipModel.MYZAKO_37)
 
 
 @pytest.mark.parametrize("ship_model", [ShipModel.MYZAKO_37, ShipModel.TRIPOLI])
-def test_colav_rudder_and_thrust_are_on_the_action_scale(ship_model):
+def test_colav_observes_the_previous_rudder_angle_and_no_thrust(ship_model):
     """
-    Rudder and thrust are observed on the action scale, as in PySimEnv (13 base
-    features, thrust -1 before the first step), so Myzako's 75 deg rudder stays
-    inside the Box.
+    COLAV envs: 12 base features; feature 10 is the previous rudder angle [rad]
+    and there is no thrust feature.
     """
 
     from fw.environments.py_sim_colav_env import PySimColavEnv
@@ -489,16 +457,31 @@ def test_colav_rudder_and_thrust_are_on_the_action_scale(ship_model):
                         dynamics_model=Model.FOSSEN, ship_model=ship_model)
     env.enable_smoothing = False
     obs, _ = env.reset(seed=0)
-    base = PySimBaseEnv._get_obs(env)
-    assert base.shape == (13,)
-    assert base[12] == -1.0                                     # zero thrust after reset, clipped
+    assert PySimBaseEnv._get_obs(env).shape == (12,)
     assert env.observation_space.contains(obs)
     for rudder in (1.0, -1.0):
-        obs, *_ = env.step(np.array([rudder, 0.5], dtype=np.float32))
-        assert env.observation_space.contains(obs)
+        env.step(np.array([rudder, 0.5], dtype=np.float32))
         base = PySimBaseEnv._get_obs(env)
-        assert base[10] == pytest.approx(rudder, abs=1e-6)
-        assert base[12] == pytest.approx(0.5, abs=1e-6)
+        assert base[10] == pytest.approx(rudder * env.ship.specifications.max_rudder_angle, abs=1e-6)
+
+
+def test_colav_yaw_rate_is_scaled_by_the_ship_limit():
+    """
+    COLAV envs have no yaw-rate scale of their own: the observed yaw rate is
+    divided by the ship's yaw-rate limit.
+    """
+
+    import fw.environments.py_sim_base_env as colav_base
+    from fw.environments.py_sim_colav_env import PySimColavEnv
+
+    assert not hasattr(colav_base, "YAW_RATE_OBS_SCALES")
+    env = PySimColavEnv(time_step=1.0, max_steps=5, ship_pos=START, target_pos=TARGET,
+                        dynamics_model=Model.NOMOTO, ship_model=ShipModel.MYZAKO_37)
+    assert not hasattr(env, "set_yaw_rate_obs_scale")
+    env.reset(seed=0)
+    obs, *_ = env.step(np.array([1.0, 1.0], dtype=np.float32))
+    limit = env.ship.specifications.yaw_rate_limits[1]
+    assert obs[2] == pytest.approx(np.clip(env.phys_sim.state.r / limit, -1, 1), abs=1e-6)
 
 
 def _saved_scale(path):
@@ -597,10 +580,10 @@ def test_policy_file_without_a_scale_gets_0_04_in_pysimenv(tmp_path, caplog):
     assert _saved_scale(tmp_path / "resaved_policy.zip") == 0.04
 
 
-def test_policy_file_without_a_scale_gets_the_own_scale_in_colav(tmp_path):
+def test_policy_file_without_a_scale_loads_in_colav(tmp_path):
     """
-    COLAV envs: a policy file without a stored scale gets the env's own scale
-    (COLAV observations of that size used it), so nothing changes.
+    COLAV envs have no yaw-rate scale: a policy file without a stored scale
+    loads, and no scale is applied to the env or stored with the policy.
     """
 
     from fw.environments.py_sim_colav_env import PySimColavEnv
@@ -613,8 +596,8 @@ def test_policy_file_without_a_scale_gets_the_own_scale_in_colav(tmp_path):
     PPOPolicy(dim, 2, "cpu").save(str(tmp_path / "unstored_colav_policy"))
     agent = SinglePPOAgent(environment=env, model_dir=str(tmp_path))
     agent.load_policy("unstored_colav_policy")
-    assert env.yaw_rate_obs_scale == env.own_yaw_rate_obs_scale == 0.15
-    assert agent.policy.yaw_rate_obs_scale == 0.15
+    assert not hasattr(env, "yaw_rate_obs_scale")
+    assert agent.policy.yaw_rate_obs_scale is None
 
 
 def test_invalid_stored_scale_is_refused_before_anything_changes(tmp_path):
@@ -833,26 +816,6 @@ def test_multi_policy_agent_takes_over_a_common_scale(tmp_path):
     for policy, optimizer in zip(agent.policies, agent.optimizers):
         assert policy.yaw_rate_obs_scale == 0.15
         assert optimizer.param_groups[0]["params"][0] is next(policy.network.parameters())
-
-
-def test_colav_env_yaw_scale_setter():
-    """
-    The COLAV env's setter validates, and None restores its own scale.
-    """
-
-    from fw.environments.py_sim_colav_env import PySimColavEnv
-
-    env = PySimColavEnv(time_step=1.0, max_steps=5, ship_pos=START, target_pos=TARGET,
-                        dynamics_model=Model.NOMOTO, ship_model=ShipModel.MYZAKO_37)
-    assert env.yaw_rate_obs_scale == env.own_yaw_rate_obs_scale == 0.15
-    for bad in (0.0, float("nan")):
-        with pytest.raises(ValueError):
-            env.set_yaw_rate_obs_scale(bad)
-    env.set_yaw_rate_obs_scale(0.07)
-    obs, *_ = env.step(np.array([1.0, 1.0], dtype=np.float32))
-    assert obs[2] == pytest.approx(np.clip(env.phys_sim.state.r / 0.07, -1, 1), abs=1e-6)
-    env.set_yaw_rate_obs_scale(None)
-    assert env.yaw_rate_obs_scale == 0.15
 
 
 def test_ue5_replay_checks_the_policy_and_applies_its_scale(tmp_path, monkeypatch):

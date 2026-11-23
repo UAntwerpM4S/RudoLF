@@ -299,6 +299,11 @@ class UAntwerpSurrogate(DynamicsBase):
             none was given.
     """
 
+    supports_steady_thrust = False
+    """
+    The start thrust is not derived from the surrogate; envs start at min_thrust.
+    """
+
     def __init__(self,
                  ship_spec: ShipSpecifications,
                  ua_surrogate_config: Optional[Dict] = None,

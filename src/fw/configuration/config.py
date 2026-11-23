@@ -150,7 +150,7 @@ CONFIG_PARAMETERS = {
     # One or a list of: "PySimEnv", "FhSimEnv", "MultiSimEnv",
     # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander".
     'env_type': ["PySimEnv"],
-    'profile': "default_profile",       # see ProfileRegistry, e.g.
+    'profile': "ugent_surrogate_profile",       # see ProfileRegistry, e.g.
                                         # "myzako_pysim_to_fhsim_transfer_profile"
     'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"

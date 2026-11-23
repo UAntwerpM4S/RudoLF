@@ -309,7 +309,7 @@ def test_observation_stays_in_its_space(ship_model, smoothing):
     """
     Every observation lies in the Box (13 base features plus 4 for wind and
     current); hard-over rudder is observed as +1 and -1 (within the jitter
-    threshold), thrust as -1 after reset (zero thrust, clipped) and 0.5 once
+    threshold), thrust as -1 after reset (min_thrust start at 0 m/s) and 0.5 once
     commanded, and the yaw rate on the Fossen scale without saturating.
     """
 
@@ -321,7 +321,7 @@ def test_observation_stays_in_its_space(ship_model, smoothing):
     obs, _ = env.reset(seed=0)
     assert obs.shape == env.observation_space.shape == (17,)
     assert env.observation_space.contains(obs)
-    assert float(obs[12]) == -1.0                               # zero thrust after reset, clipped
+    assert float(obs[12]) == -1.0                               # min_thrust start at 0 m/s
     rudder_obs, yaw_obs = [], []
     for k in range(40):                                         # hard over to port, then to starboard
         obs, _, terminated, truncated, _ = env.step(np.array([1.0 if k < 20 else -1.0, 0.5], dtype=np.float32))

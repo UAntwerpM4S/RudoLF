@@ -36,3 +36,18 @@ class ActionMapper:
         thrust = (specs.min_thrust + 0.5 * (action[1] + 1.0) * (specs.max_thrust - specs.min_thrust))
 
         return ActuatorCommand(rudder_angle=rudder, thrust=thrust)
+
+    @staticmethod
+    def map_thrust(thrust_action: float, specs: ShipSpecifications) -> float:
+        """
+        Thrust for a normalized thrust action, as in map(), but in double
+        precision and clipped to [min_thrust, max_thrust] (so rounding cannot
+        leave the limits).
+
+        Args:
+            thrust_action: Thrust action in [-1, 1].
+            specs: Ship specifications with the thrust limits.
+        """
+
+        thrust = specs.min_thrust + 0.5 * (float(thrust_action) + 1.0) * (specs.max_thrust - specs.min_thrust)
+        return float(min(max(thrust, specs.min_thrust), specs.max_thrust))
