@@ -149,10 +149,10 @@ AIRSIM_HYPERPARAMETER_OVERRIDES = {
 CONFIG_PARAMETERS = {
     # One or a list of: "PySimEnv", "FhSimEnv", "MultiSimEnv",
     # "MultiPolicyColavEnv", "AirSimEnv", "LunarLander".
-    'env_type': ["PySimEnv"],
-    'profile': "ugent_surrogate_profile",       # see ProfileRegistry, e.g.
+    'env_type': ["FhSimEnv"],
+    'profile': "fh_simulator_profile",       # see ProfileRegistry, e.g.
                                         # "myzako_pysim_to_fhsim_transfer_profile"
-    'action': "train",  # Valid action values: "train", "visualize", "evaluate_reward"
+    'action': "visualize",  # Valid action values: "train", "visualize", "evaluate_reward"
     'log_level': "INFO",  # Valid: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     # Wind and current, both or neither: the observation gets 4 wind/current
     # features (real for FH_TABULAR and the UAntwerp *_full presets, zeros
