@@ -20,6 +20,7 @@ from fw.environments.base_env import BaseEnv
 
 from fw.dynamics.nomoto import Nomoto
 from fw.dynamics.fossen import Fossen
+from fw.dynamics.fossen_sway_flip import FossenSwayFlip
 from fw.dynamics.dynamics_model import DynamicsBase, Model
 from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
 from fw.dynamics.ugent_surrogate import UGentSurrogate
@@ -349,6 +350,9 @@ class PySimBaseEnv(BaseEnv):
         if self.dynamics_model == Model.FOSSEN:
             require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.FOSSEN")
             self.dynamics = Fossen(self.ship.specifications)
+        elif self.dynamics_model == Model.FOSSEN_SWAY_FLIP:
+            require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.FOSSEN_SWAY_FLIP")
+            self.dynamics = FossenSwayFlip(self.ship.specifications)
         elif self.dynamics_model == Model.NOMOTO:
             require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.NOMOTO")
             self.dynamics = Nomoto(self.ship.specifications)

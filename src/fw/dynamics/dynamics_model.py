@@ -16,6 +16,7 @@ class Model(Enum):
 
     NOMOTO = auto()
     FOSSEN = auto()
+    FOSSEN_SWAY_FLIP = auto()
     UGENT_SURROGATE = auto()
     UANTWERP = auto()
     FH_TABULAR = auto()
