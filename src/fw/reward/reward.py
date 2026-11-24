@@ -9,9 +9,9 @@ class Reward:
 
     # Default per-component weights (negative values act as penalties).
     DEFAULT_WEIGHTS: Dict[str, float] = {
-        "forward": -1.25,
+        "forward": -1.75,
         "heading_alignment": -0.5,
-        "cross_track": -0.05,
+        "cross_track": -0.5,
         "rudder_change": -0.4,
         "rudder_angle": -0.05,
         "thrust_change": 0.0,

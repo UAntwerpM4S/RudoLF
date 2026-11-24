@@ -26,8 +26,9 @@ class ShipDataExtractor:
     @staticmethod
     def record_initial(ship_env, acc: dict) -> None:
         """
-        Record the initial position, cross-track error, velocity and heading error;
-        rudder/thrust actions and changes start at 0.0.
+        Record the initial position, cross-track error, velocity and heading error.
+        Rudder and thrust start at the env's actuator state after reset
+        (performed_action; 0.0 if it has none yet), their changes at 0.0.
         """
 
         if hasattr(ship_env, "ship_pos"):
@@ -39,9 +40,10 @@ class ShipDataExtractor:
         if hasattr(ship_env, "phys_sim"):
             acc["heading_errors"].append(compute_heading_error(ship_env))
         if hasattr(ship_env, "performed_action"):
-            acc["rudder_actions"].append(0.0)
+            start = ship_env.performed_action
+            acc["rudder_actions"].append(0.0 if start is None else start[0])
             acc["rudder_changes"].append(0.0)
-            acc["thrust_actions"].append(0.0)
+            acc["thrust_actions"].append(0.0 if start is None else start[1])
             acc["thrust_changes"].append(0.0)
 
     @staticmethod

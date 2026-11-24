@@ -91,9 +91,15 @@ class ScenarioConfig:
         initial_speed: Initial surge velocity override [m/s], applied via the
             env's `initial_speed` setter after each reset. None keeps the
             environment default.
+        initial_thrust: Thrust the actuators start an episode with, in thrust
+            units ([min_thrust, max_thrust] of the ship, checked at reset). None:
+            the fixed thrust in ThrustMode.FIXED, else the thrust that holds
+            initial_speed (Fossen, Nomoto, UGent and B01 surrogates; calm water),
+            else min_thrust.
     """
 
     initial_speed: Optional[float] = None
+    initial_thrust: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -143,7 +149,8 @@ class ThrustConfig:
 
     Attributes:
         mode: ThrustMode.FREE or ThrustMode.FIXED.
-        fixed_value: Normalized thrust in [0.1, 1.0], used only in FIXED mode.
+        fixed_value: Thrust action that replaces the policy's in FIXED mode, on the
+            action scale (-1 = min_thrust, 1 = max_thrust). Must be in [-1, 1].
     """
 
     mode: ThrustMode = ThrustMode.FREE
@@ -270,9 +277,10 @@ class VesselProfile:
         errors: List[str] = []
 
         if self.thrust.mode == ThrustMode.FIXED:
-            if not (0.1 <= self.thrust.fixed_value <= 1.0):
+            # "not (a <= x <= b)" also rejects NaN
+            if not -1.0 <= self.thrust.fixed_value <= 1.0:
                 errors.append(
-                    f"thrust.fixed_value must be in [0.1, 1.0], "
+                    f"thrust.fixed_value must be in [-1, 1] (action scale), "
                     f"got {self.thrust.fixed_value}."
                 )
 
@@ -281,6 +289,14 @@ class VesselProfile:
             errors.append(
                 f"scenario.initial_speed must be non-negative, "
                 f"got {self.scenario.initial_speed}."
+            )
+
+        # "not (x >= 0)" also rejects NaN
+        if (self.scenario.initial_thrust is not None
+                and not (0.0 <= self.scenario.initial_thrust < float("inf"))):
+            errors.append(
+                f"scenario.initial_thrust must be a finite, non-negative thrust, "
+                f"got {self.scenario.initial_thrust}."
             )
 
         if (self.actuator.max_rudder_angle_deg is not None
@@ -328,6 +344,7 @@ class VesselProfile:
             "run_mode": self.run_mode.name,
             "scenario": {
                 "initial_speed": self.scenario.initial_speed,
+                "initial_thrust": self.scenario.initial_thrust,
             },
             "actuator": {
                 "max_rudder_angle_deg": self.actuator.max_rudder_angle_deg,
@@ -358,6 +375,7 @@ class VesselProfile:
 
         scenario_d = d.get("scenario", {})
         initial_speed = scenario_d.get("initial_speed") if scenario_d else None
+        initial_thrust = scenario_d.get("initial_thrust") if scenario_d else None
 
         thrust_d = d.get("thrust", {})
         model_d = d.get("model", {})
@@ -370,7 +388,10 @@ class VesselProfile:
             scenario=ScenarioConfig(
                 initial_speed=(
                     float(initial_speed) if initial_speed is not None else None
-                )
+                ),
+                initial_thrust=(
+                    float(initial_thrust) if initial_thrust is not None else None
+                ),
             ),
             actuator=ActuatorConfig(
                 **_filter_fields(ActuatorConfig, d.get("actuator", {}))
@@ -440,6 +461,12 @@ class VesselProfile:
             lines.append(f"  initial_speed: {self.scenario.initial_speed} m/s")
         else:
             lines.append("  initial_speed: (environment default)")
+        if self.scenario.initial_thrust is not None:
+            lines.append(f"  initial_thrust: {self.scenario.initial_thrust} (thrust)")
+        elif self.thrust.mode == ThrustMode.FIXED:
+            lines.append("  initial_thrust: (fixed thrust)")
+        else:
+            lines.append("  initial_thrust: (holds initial_speed, else min_thrust)")
 
         lines.append(f"  smoothing    : {self.actuator.enable_smoothing}")
         if self.actuator.max_rudder_angle_deg is not None:
@@ -599,9 +626,9 @@ ProfileRegistry.register(VesselProfile(
         dynamics_model=Model.UGENT_B01_SURROGATE,
     ),
     # Model-scale start speed [m/s], below the B01 surge limit of 1.0 m/s. Steady speed at
-    # full thrust: ~0.93 m/s at 379 % UKC, ~0.91 at 153 %, ~0.77 at 100 %, ~0.41 at 35 %
-    # (lower it for shallow water). Refused by the full-scale PySim environments
-    # (SUPPORTS_MODEL_SCALE_SHIPS) until a towing-tank environment exists.
+    # full thrust: ~0.96 m/s at 379 % UKC, ~0.94 at 153 %, ~0.80 at 100 %, ~0.43 at 35 %
+    # (lower it for shallow water). 0.4 m/s can be held at every tested UKC. No
+    # initial_thrust: episodes start at the thrust that holds this speed.
     scenario=ScenarioConfig(initial_speed=0.8),
     actuator=ActuatorConfig(max_rudder_angle_deg=35.0, enable_smoothing=True),
     thrust=ThrustConfig(mode=ThrustMode.FREE),

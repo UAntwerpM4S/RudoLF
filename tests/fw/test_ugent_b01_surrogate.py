@@ -42,14 +42,15 @@ def _state(u=0.8, v=0.0, r=0.0):
 
 def test_b01_preset_is_model_scale_with_froude_scaled_envelope(spec):
     """
-    ShipModel.B01: model-scale hull, 35 deg rudder, limits Froude-scaled with sqrt(25).
+    ShipModel.B01: model-scale hull, 35 deg rudder, rudder rate 28.8 deg/s, other
+    limits Froude-scaled with sqrt(25).
     """
 
     assert spec.length == pytest.approx(4.32)
     assert spec.mass == pytest.approx(260.8)
     assert spec.I_z == pytest.approx(307.4)
     assert math.degrees(spec.max_rudder_angle) == pytest.approx(35.0)
-    assert math.degrees(spec.max_rudder_rate) == pytest.approx(30.0)
+    assert math.degrees(spec.max_rudder_rate) == pytest.approx(28.8)
     assert spec.min_thrust == B01_MIN_THRUST == 0.2
     assert spec.surge_limits == pytest.approx((0.0, 1.0))
     assert spec.sway_limits == pytest.approx((-0.4, 0.4))
@@ -418,15 +419,13 @@ def test_ship_simulator_refuses_wind_and_current(spec):
             ShipSimulator(spec, model, dt=0.1, wind=wind, current=current)
 
 
-def test_full_scale_guard():
+def test_full_scale_guard_accepts_every_preset():
     """
-    require_full_scale_ship refuses only model-scale presets.
+    require_full_scale_ship accepts every preset, also the model-scale B01.
     """
 
-    with pytest.raises(ValueError, match="model-scale"):
-        require_full_scale_ship(ShipModel.B01, "test")
-    for other in set(ShipModel) - {ShipModel.B01}:
-        require_full_scale_ship(other, "test")
+    for ship_model in ShipModel:
+        require_full_scale_ship(ship_model, "test")
 
 
 def _colav(**kwargs):
@@ -439,19 +438,19 @@ def _colav(**kwargs):
     return PySimColavEnv(time_step=1.0, max_steps=20, ship_pos=START, target_pos=TARGET, **kwargs)
 
 
-def test_full_scale_envs_refuse_b01():
+def test_envs_accept_b01():
     """
-    PySimEnv and the COLAV envs (Western Scheldt, full scale) refuse ShipModel.B01.
+    PySimEnv and the COLAV envs accept ShipModel.B01 with its surrogate.
     """
 
     from fw.environments.py_sim_env import PySimEnv
+    from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
 
-    with pytest.raises(ValueError, match="model-scale"):
-        _colav(dynamics_model=Model.UGENT_B01_SURROGATE, ship_model=ShipModel.B01,
-               ugent_b01_surrogate_config={"ukc_percent": 153})
-    with pytest.raises(ValueError, match="model-scale"):
-        PySimEnv(dynamics_model=Model.UGENT_B01_SURROGATE, ship_model=ShipModel.B01,
-                 ugent_b01_surrogate_config={"ukc_percent": 153})
+    colav = _colav(dynamics_model=Model.UGENT_B01_SURROGATE, ship_model=ShipModel.B01,
+                   ugent_b01_surrogate_config={"ukc_percent": 153})
+    env = PySimEnv(dynamics_model=Model.UGENT_B01_SURROGATE, ship_model=ShipModel.B01,
+                   ugent_b01_surrogate_config={"ukc_percent": 153})
+    assert isinstance(colav.dynamics, UGentB01Surrogate) and isinstance(env.dynamics, UGentB01Surrogate)
 
 
 def test_b01_surrogate_refuses_other_ships():
@@ -466,20 +465,13 @@ def test_b01_surrogate_refuses_other_ships():
 
 def test_model_scale_env_wiring():
     """
-    With SUPPORTS_MODEL_SCALE_SHIPS (as a towing-tank env will set), PySimEnv wires the B01 surrogate.
+    PySimEnv accepts the B01 and wires the B01 surrogate.
     """
 
     from fw.environments.py_sim_env import PySimEnv
 
-    class _ModelScalePySimEnv(PySimEnv):
-        """
-        PySimEnv that accepts model-scale ships (stand-in for the towing-tank env).
-        """
-
-        SUPPORTS_MODEL_SCALE_SHIPS = True
-
-    env = _ModelScalePySimEnv(dynamics_model=Model.UGENT_B01_SURROGATE, ship_model=ShipModel.B01,
-                              ugent_b01_surrogate_config={"ukc_percent": 153})
+    env = PySimEnv(dynamics_model=Model.UGENT_B01_SURROGATE, ship_model=ShipModel.B01,
+                   ugent_b01_surrogate_config={"ukc_percent": 153})
     assert isinstance(env.dynamics, UGentB01Surrogate)
     assert env.dynamics._bank_distance_provider.__self__ is env
     assert env.get_keel_clearance() == pytest.approx(1.53 * 0.146)
@@ -517,21 +509,14 @@ def test_hull_coefficient_guard():
 @pytest.mark.parametrize("base", ["pysim", "colav"])
 def test_model_scale_envs_refuse_fossen_and_nomoto(dynamics_model, base):
     """
-    Even where model-scale ships are accepted, Fossen/Nomoto refuse B01 (full-scale placeholder coefficients).
+    The envs accept the B01, but Fossen/Nomoto refuse it (full-scale placeholder coefficients).
     """
 
     if base == "pysim":
-        from fw.environments.py_sim_env import PySimEnv as Base
+        from fw.environments.py_sim_env import PySimEnv as Env
     else:
-        from fw.environments.py_sim_colav_env import PySimColavEnv as Base
-
-    class _ModelScaleEnv(Base):
-        """
-        Env that accepts model-scale ships (stand-in for the towing-tank env).
-        """
-
-        SUPPORTS_MODEL_SCALE_SHIPS = True
+        from fw.environments.py_sim_colav_env import PySimColavEnv as Env
 
     kwargs = {} if base == "pysim" else dict(time_step=1.0, max_steps=20, ship_pos=START, target_pos=TARGET)
     with pytest.raises(ValueError, match=dynamics_model.name):
-        _ModelScaleEnv(dynamics_model=dynamics_model, ship_model=ShipModel.B01, **kwargs)
+        Env(dynamics_model=dynamics_model, ship_model=ShipModel.B01, **kwargs)

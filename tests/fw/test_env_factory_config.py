@@ -24,9 +24,9 @@ def test_resolve_environment_name_defaults_to_pysim():
     assert resolve_environment_name("") == py_sim_env_name
 
 
-def test_multi_policy_colav_config_uses_two_training_scenarios():
+def test_multi_policy_colav_config_uses_head_on_only():
     """
-    MultiPolicyColavEnv samples only path-following and head-on encounters.
+    MultiPolicyColavEnv samples only head-on encounters by default.
     """
 
     config = build_multi_policy_colav_config({
@@ -41,8 +41,8 @@ def test_multi_policy_colav_config_uses_two_training_scenarios():
         "trajectory": "trajectory.csv",
     })
 
-    assert config["scenario_types"] == ["path-following", "head-on"]
-    assert config["scenario_probs"] == [0.5, 0.5]
+    assert config["scenario_types"] == ["head-on"]
+    assert config["scenario_probs"] == [1.0]
 
 
 def test_resolve_environment_name_accepts_aliases():

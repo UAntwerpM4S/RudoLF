@@ -96,7 +96,7 @@ Lookup CSVs carry **no** identity. Regenerate them together with the datasets.
 
 ## Adding a ship
 
-Steps 1-3 and the FH part of step 4 are for full-scale ships with an FH model. Model-scale presets (`MODEL_SCALE_SHIP_MODELS`, e.g. `ShipModel.B01`) have no FH model: `require_fh_supported` refuses them, the full-scale PySim environments refuse them (`SUPPORTS_MODEL_SCALE_SHIPS`), and `check_model_conventions` skips FH for them.
+Steps 1-3 and the FH part of step 4 are for full-scale ships with an FH model. Model-scale presets (`MODEL_SCALE_SHIP_MODELS`, e.g. `ShipModel.B01`) have no FH model: `require_fh_supported` refuses them, the PySim environments accept them (`require_full_scale_ship` accepts every preset), and `check_model_conventions` skips FH for them.
 
 1. Measure FH's rudder sign with a short dataset and `check_rudder_sign.py` (add `--negated` if the generator flips the sign). Then add the ship to `_FH_RUDDER_SIGNS` in `fh_tabular_model.py`; `fh_rudder_sign` refuses ships that are not listed.
 2. Check that FH's sway is still port positive with `check_sway_sign.py` (expected slope about −1 after the 2026-10-19 fix).

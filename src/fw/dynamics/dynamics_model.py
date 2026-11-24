@@ -1,8 +1,12 @@
+import math
 import numpy as np
 
 from enum import auto, Enum
 from typing import Tuple, Optional
 from fw.ships.vessel_state import VesselState
+
+
+_STEADY_THRUST_ITERATIONS = 60
 
 
 class Model(Enum):
@@ -60,6 +64,13 @@ class DynamicsBase:
     wind or current is enabled. Default True.
     """
 
+    supports_steady_thrust: bool = True
+    """
+    False if steady_thrust() must not be derived from _compute_accelerations
+    (UAntwerpSurrogate); steady_thrust() then returns None. Models that do not
+    implement _compute_accelerations (FhTabularModel) also return None.
+    """
+
     def _compute_accelerations(
         self,
         state: VesselState,
@@ -81,6 +92,62 @@ class DynamicsBase:
         """
 
         raise NotImplementedError
+
+    def _surge_acceleration(self, state: VesselState, thrust: float) -> float:
+        """
+        Surge acceleration [m/s²] at *state* with the rudder at zero; used by
+        steady_thrust(). Subclasses may override it, e.g. to leave out a warning
+        that _compute_accelerations logs.
+        """
+
+        return float(self._compute_accelerations(state, 0.0, thrust)[0])
+
+    @property
+    def derives_steady_thrust(self) -> bool:
+        """
+        True if steady_thrust() can solve for a thrust: supports_steady_thrust
+        and the model implements _compute_accelerations.
+        """
+
+        return (self.supports_steady_thrust
+                and type(self)._compute_accelerations is not DynamicsBase._compute_accelerations)
+
+    def steady_thrust(self, state: VesselState, min_thrust: float, max_thrust: float) -> Optional[float]:
+        """
+        Thrust in [min_thrust, max_thrust] that holds the surge speed state.u:
+        zero surge acceleration with the rudder at zero, no sway and no yaw rate,
+        at the position and heading of *state*. Calm water: EnvironmentModel wind
+        and current are not included. Solved by bisection between min_thrust and
+        max_thrust: unique if the surge acceleration increases with thrust.
+
+        Args:
+            state: Start state; only x, y, heading and u are used.
+            min_thrust: Lower thrust limit.
+            max_thrust: Upper thrust limit.
+
+        Returns:
+            The thrust, or None if not derives_steady_thrust or no thrust in
+            [min_thrust, max_thrust] holds state.u.
+        """
+
+        if not self.derives_steady_thrust:
+            return None
+
+        straight = VesselState(terminated=False, truncated=False, x=state.x, y=state.y,
+                               heading=state.heading, u=state.u, v=0.0, r=0.0)
+        low, high = float(min_thrust), float(max_thrust)
+        du_low = self._surge_acceleration(straight, low)
+        du_high = self._surge_acceleration(straight, high)
+        if not (math.isfinite(du_low) and math.isfinite(du_high)) or du_low > 0.0 or du_high < 0.0:
+            return None
+
+        for _ in range(_STEADY_THRUST_ITERATIONS):
+            mid = 0.5 * (low + high)
+            if self._surge_acceleration(straight, mid) < 0.0:
+                low = mid
+            else:
+                high = mid
+        return min(max(0.5 * (low + high), float(min_thrust)), float(max_thrust))
 
     def get_ukc(self, pos: Optional[np.ndarray]):
         """
