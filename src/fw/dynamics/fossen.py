@@ -127,19 +127,19 @@ class Fossen(DynamicsBase):
         # Fossen (2011) has -(m22 - m11) * u * v (Munk moment). The + sign is
         # deliberate: FH identified the Myzako/Tripoli coefficients with these
         # equations. Do not flip it without re-identifying the coefficients.
-        coriolis_surge = self.m22 * state.v * state.r
+        coriolis_surge = self.m22 * (-state.v) * state.r
         coriolis_sway = -self.m11 * state.u * state.r
-        coriolis_yaw = (self.m22 - self.m11) * state.u * state.v
+        coriolis_yaw = (self.m22 - self.m11) * state.u * (-state.v)
 
         # --- HYDRODYNAMIC DAMPING FORCES: -D(nu) = [X_D, Y_D, N_D] ---
         # X_D, Y_D, N_D are the damping forces acting on the ship.
         d_surge = self.X_u * state.u + self.X_uu * state.u * abs(state.u)
-        d_sway = (self.Y_v * state.v +
-                  self.Y_vv * state.v * abs(state.v) +
-                  self.Y_uv * state.u * state.v)
+        d_sway = (self.Y_v * (-state.v) +
+                  self.Y_vv * (-state.v) * abs(state.v) +
+                  self.Y_uv * state.u * (-state.v))
         d_yaw = (self.N_r * state.r +
                  self.N_rr * state.r * abs(state.r) +
-                 self.N_uv * state.u * state.v)
+                 self.N_uv * state.u * (-state.v))
 
         # --- CONTROL FORCES: tau = [X_T, Y_R, N_R] ---
         # Speed-dependent rudder effectiveness kappa(u) = max(u / U_ref, kappa_min).
@@ -154,7 +154,7 @@ class Fossen(DynamicsBase):
 
         # --- CALCULATE ACCELERATIONS ---
         du = (f_thrust + d_surge + coriolis_surge) / self.m11
-        dv = (f_rudder_sway + d_sway + coriolis_sway) / self.m22
+        dv = -(f_rudder_sway + d_sway + coriolis_sway) / self.m22
         dr = (m_rudder_yaw + d_yaw + coriolis_yaw) / self.m33
 
         return du, dv, dr
