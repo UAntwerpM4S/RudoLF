@@ -26,6 +26,7 @@ from fw.reward.reward import Reward
 
 from fw.dynamics.nomoto import Nomoto
 from fw.dynamics.fossen import Fossen
+from fw.dynamics.fossen_sway_flip import FossenSwayFlip
 from fw.dynamics.dynamics_model import DynamicsBase, Model
 from fw.dynamics.uantwerp_surrogate import RANDOM_CURRENT_SPEED_MAX, UAntwerpSurrogate
 from fw.dynamics.ugent_b01_surrogate import UGentB01Surrogate
@@ -65,6 +66,7 @@ YAW_RATE_OBS_SCALES = {
     Model.FH_TABULAR: 0.04,
     Model.UANTWERP: 0.04,
     Model.FOSSEN: 0.07,
+    Model.FOSSEN_SWAY_FLIP: 0.07,
     Model.NOMOTO: 0.15,
 }
 
@@ -516,6 +518,9 @@ class PySimEnv(BaseEnv):
         if self.dynamics_model == Model.FOSSEN:
             require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.FOSSEN")
             self.dynamics = Fossen(self.ship.specifications)
+        elif self.dynamics_model == Model.FOSSEN_SWAY_FLIP:
+            require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.FOSSEN_SWAY_FLIP")
+            self.dynamics = FossenSwayFlip(self.ship.specifications)
         elif self.dynamics_model == Model.NOMOTO:
             require_hull_coefficients(self.ship_model, f"{type(self).__name__} with Model.NOMOTO")
             self.dynamics = Nomoto(self.ship.specifications)
