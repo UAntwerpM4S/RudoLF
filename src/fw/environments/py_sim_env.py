@@ -19,6 +19,7 @@ from fw.environments.wind_current_obs import WIND_CURRENT_OBS_DIM, normalize_win
 from fw.environments.ray_features import RAY_ANGLES_DEG, RAY_MAX_DISTANCE, ray_world_angles
 from fw.ships.ship_factory import create_ship, require_full_scale_ship, require_hull_coefficients, ShipModel
 from fw.simulators.ship_simulator import ShipSimulator
+from fw.ships.actuator_model import ActuatorModel
 from fw.ships.vessel_state import VesselState
 from fw.environments.base_env import BaseEnv
 from fw.reward.reward import Reward
@@ -410,6 +411,47 @@ class PySimEnv(BaseEnv):
     # -----------------------
     # Initialization helpers
     # -----------------------
+    def _check_initial_speed(self, value: float) -> None:
+        """
+        Refuse an initial_speed outside the ship's surge limits.
+        """
+
+        low, high = self.ship.specifications.surge_limits
+        if not low <= value <= high:
+            raise ValueError(f"{type(self).__name__}: initial_speed {value} m/s is outside the surge limits "
+                             f"[{low}, {high}] m/s of ShipModel.{self.ship_model.name}.")
+
+    def _check_initial_thrust(self, value: float) -> None:
+        """
+        Refuse an initial_thrust outside the ship's thrust limits.
+        """
+
+        ActuatorModel.require_start_thrust(value, self.ship.specifications)
+
+    def _start_thrust(self, state: VesselState) -> float:
+        """
+        Thrust the actuators start the episode with: initial_thrust if set, else
+        the thrust that holds the start speed (DynamicsBase.steady_thrust), else
+        min_thrust. A start speed no thrust can hold is logged once.
+        """
+
+        if self.initial_thrust is not None:
+            return self.initial_thrust
+        specs = self.ship.specifications
+        if state.u <= 0.0:
+            return specs.min_thrust
+        thrust = self.dynamics.steady_thrust(state, specs.min_thrust, specs.max_thrust)
+        if thrust is not None:
+            return thrust
+        if self.dynamics.derives_steady_thrust and not getattr(self, "_warned_start_thrust", False):
+            logger.warning(
+                "%s: no thrust in [%.3f, %.3f] holds the initial speed %.3f m/s with %s; "
+                "starting at min_thrust. Further occurrences are not logged.",
+                type(self).__name__, specs.min_thrust, specs.max_thrust, state.u,
+                type(self.dynamics).__name__)
+            self._warned_start_thrust = True
+        return specs.min_thrust
+
     def _initialize_simulation(self) -> None:
         """
         Reset the episode state and place the ship at the start, heading toward the first checkpoint.
@@ -417,7 +459,6 @@ class PySimEnv(BaseEnv):
 
         self.ship_pos = self.initial_ship_pos.copy()
         self.previous_ship_pos = self.initial_ship_pos.copy()
-        self.previous_action = np.zeros(2, dtype=np.float32)
         self.checkpoint_index = 1
         self._episode_outcome = None
 
@@ -433,15 +474,20 @@ class PySimEnv(BaseEnv):
         else:
             self.ship_heading = 0.0
 
-        self.phys_sim.reset(VesselState(
+        start_state = VesselState(
             terminated=False,
             truncated=False,
             x=self.initial_ship_pos[0],
             y=self.initial_ship_pos[1],
             heading=self.ship_heading,
-            u=self.initial_speed, v=0.0, r=0.0), rng=self._rng)
+            u=self.initial_speed, v=0.0, r=0.0)
+        # Kept in double precision for the FH state sync's second reset.
+        self._episode_start_thrust = self._start_thrust(start_state)
+        self.phys_sim.reset(start_state, rng=self._rng, initial_thrust=self._episode_start_thrust)
         self._agent_state = self.phys_sim.state
-        self.performed_action = np.zeros(2, dtype=np.float32)
+        # Rudder at zero, thrust at the start thrust.
+        self.performed_action = self.phys_sim.actuators.current_actuator_state.copy()
+        self.previous_action = self.performed_action.copy()
 
         # Must follow phys_sim.reset(), else these describe the previous episode.
         self.heading_error = self._calculate_heading_error(self.los_guidance_heading(), self.phys_sim.state.heading)
@@ -1381,7 +1427,8 @@ class PySimEnv(BaseEnv):
         """
 
         x, y, heading, u, v, r = self.dynamics.read_state()
-        self.phys_sim.reset(VesselState(terminated=False, truncated=False, x=x, y=y, heading=heading, u=u, v=v, r=r))
+        self.phys_sim.reset(VesselState(terminated=False, truncated=False, x=x, y=y, heading=heading, u=u, v=v, r=r),
+                            initial_thrust=self._episode_start_thrust)
         self._agent_state = self.phys_sim.state
         self.ship_pos = np.array([self.phys_sim.state.x, self.phys_sim.state.y], dtype=np.float32)
         self.previous_ship_pos = self.ship_pos.copy()
@@ -1483,7 +1530,7 @@ class PySimEnv(BaseEnv):
         )
 
         # Actual rudder angle [rad] and thrust on the scale of the policy action
-        # (inverse of ActionMapper); thrust is -1 before the first step.
+        # (inverse of ActionMapper); before the first step, thrust shows the start thrust.
         specs = self.ship.specifications
         norm_rudder = float(np.clip(self.performed_action[0] / specs.max_rudder_angle, -1.0, 1.0))
         norm_thrust = float(np.clip(2.0 * (self.performed_action[1] - specs.min_thrust)

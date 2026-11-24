@@ -1,5 +1,7 @@
 import numpy as np
 
+from typing import Optional
+
 from fw.ships.actuator_state import ActuatorState
 from fw.ships.ship_specs import ShipSpecifications
 from fw.ships.actuator_command import ActuatorCommand
@@ -31,7 +33,7 @@ class ActuatorModel:
         self.specifications: ShipSpecifications = specifications
 
         self._rudder = 0.0  # Current rudder angle [rad]
-        self._thrust = 0.0  # Current thrust [-]
+        self._thrust = specifications.min_thrust  # Current thrust [-]
 
     @property
     def current_actuator_state(self):
@@ -41,13 +43,38 @@ class ActuatorModel:
 
         return np.array([self._rudder, self._thrust], dtype=np.float32)
 
-    def reset(self) -> None:
+    def reset(self, thrust: Optional[float] = None) -> None:
         """
-        Reset rudder and thrust to zero.
+        Reset the rudder to zero and the thrust to its episode start value.
+
+        Args:
+            thrust: Start thrust within [min_thrust, max_thrust]; None = min_thrust
+                (the lowest value the actuator can hold).
+
+        Raises:
+            ValueError: If thrust is outside [min_thrust, max_thrust] (or NaN).
         """
 
+        if thrust is None:
+            thrust = self.specifications.min_thrust
+        self.require_start_thrust(thrust, self.specifications)
+
         self._rudder = 0.0
-        self._thrust = 0.0
+        self._thrust = float(thrust)
+
+    @staticmethod
+    def require_start_thrust(thrust: float, specifications: ShipSpecifications) -> None:
+        """
+        Check that a start thrust lies within [min_thrust, max_thrust].
+
+        Raises:
+            ValueError: If thrust is outside [min_thrust, max_thrust] (or NaN).
+        """
+
+        # "not (a <= x <= b)" also rejects NaN
+        if not specifications.min_thrust <= thrust <= specifications.max_thrust:
+            raise ValueError(f"Start thrust {thrust} is outside "
+                             f"[{specifications.min_thrust}, {specifications.max_thrust}].")
 
     def step(self, action: ActuatorCommand, dt: float, enable_smoothing: bool) -> ActuatorState:
         """
