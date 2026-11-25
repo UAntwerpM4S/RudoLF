@@ -599,7 +599,7 @@ ProfileRegistry.register(VesselProfile(
     run_mode=RunMode.TRAIN,
     model=ModelConfig(
         ship_model=ShipModel.MYZAKO_37,
-        dynamics_model=Model.FOSSEN,
+        dynamics_model=Model.FOSSEN_SWAY_FLIP,
     ),
     actuator=ActuatorConfig(max_rudder_angle_deg=46.5, enable_smoothing=False),
     thrust=ThrustConfig(mode=ThrustMode.FREE),

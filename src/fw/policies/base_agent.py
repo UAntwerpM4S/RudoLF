@@ -99,6 +99,9 @@ class BaseAgent(ABC):
             self.model_dir = str(model_dir_path)
             os.makedirs(self.model_dir, exist_ok=True)
 
+        # Subfolder of model_dir for run-specific outputs (set_output_subdir).
+        self._output_subdir: Optional[str] = None
+
         self.reward_mean = 0.0
         self.reward_var = 1.0
         self.reward_count = 1e-4  # avoid division by zero
@@ -114,6 +117,48 @@ class BaseAgent(ABC):
             type(self).__name__, self.seed,
             "" if seed is not None else " (randomly drawn; set the 'seed' hyperparameter to get the same env streams again)",
         )
+
+
+    def set_output_subdir(self, subdir: Optional[str]) -> None:
+        """
+        Write run-specific outputs to model_dir/<subdir> instead of model_dir:
+        evaluation plots (AgentManager) and, in SinglePPOAgent, checkpoints and
+        training_metrics.csv. Transfer policies (save_policy/load_policy with
+        plain names) stay in model_dir.
+
+        Args:
+            subdir: A single folder name, or None for model_dir itself.
+
+        Raises:
+            ValueError: If subdir is empty or not a single plain folder name.
+        """
+
+        if subdir is not None:
+            if not isinstance(subdir, str) or not subdir.strip() or subdir in (".", "..") \
+                    or Path(subdir).name != subdir or "/" in subdir or "\\" in subdir:
+                raise ValueError(f"Output subfolder must be a single plain folder name, got {subdir!r}.")
+            os.makedirs(os.path.join(self.model_dir or "", subdir), exist_ok=True)
+        self._output_subdir = subdir
+
+    @property
+    def output_dir(self) -> str:
+        """
+        Folder for run-specific outputs: model_dir, or model_dir/<subdir>.
+        """
+
+        subdir = getattr(self, "_output_subdir", None)
+        if not subdir:
+            return self.model_dir
+        return os.path.join(self.model_dir or "", subdir)
+
+    def output_file_name(self, file_name: str) -> str:
+        """
+        `file_name` relative to model_dir, placed in the output subfolder if one
+        is set (for save_policy, which joins model_dir itself).
+        """
+
+        subdir = getattr(self, "_output_subdir", None)
+        return os.path.join(subdir, file_name) if subdir else file_name
 
 
     def _spawn_worker_seeds(self, n: int) -> list[np.random.SeedSequence]:
