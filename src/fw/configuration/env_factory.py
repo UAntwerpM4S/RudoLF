@@ -549,6 +549,7 @@ class FhSimSyncEnvironment(BaseEnvironment):
             local_port=self.configuration.get("local_port", 5001),
             connect_timeout=self.configuration.get("connect_timeout", 10.0),
             step_timeout_per_tick=self.configuration.get("step_timeout_per_tick", 1.0),
+            wind_current=self.configuration["wind"],
         )
 
         self.env = PySimEnv(
