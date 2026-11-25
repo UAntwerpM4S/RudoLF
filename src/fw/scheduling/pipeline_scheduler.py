@@ -14,6 +14,7 @@ from fw.configuration.profile_applier import apply_profile
 from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.configuration.config import PolicyStrategy, get_hyperparameters
 from fw.scheduling.run_spec import PipelineBlock, StopConditionSpec, TransferSpec
+from fw.scheduling.run_spec import block_output_subdir, validate_block_names
 from fw.scheduling.pipeline_env import (
     block_framework_config,
     build_block_environment,
@@ -28,6 +29,13 @@ class PipelineScheduler(BaseScheduler):
     """
     Execute ordered pipeline blocks with one shared AgentManager, so policies
     can transfer between blocks.
+
+    Files shared between blocks (<block>_<agent>_policy.zip, Best_<block>_<agent>_policy.zip,
+    <block>_profile.json) are written to model_dir; the block's own outputs
+    (checkpoints, training_metrics.csv, evaluation plots) to model_dir/<block>,
+    or model_dir/<block>_visualize for a visualize block that loads the policy
+    named after itself (block_output_subdir). evaluate_reward blocks keep their
+    own output locations.
     """
 
     def __init__(
@@ -60,8 +68,9 @@ class PipelineScheduler(BaseScheduler):
 
         Raises:
             RuntimeError: If there are no blocks.
-            ValueError: If a block's wind/current flags do not fit its
-                environment or UAntwerp preset (checked before any block runs).
+            ValueError: If block names are invalid or clash (ignoring case), or a
+                block's wind/current flags do not fit its environment or
+                UAntwerp preset (both checked before any block runs).
         """
 
         blocks = blocks if blocks is not None else self._blocks
@@ -99,14 +108,16 @@ class PipelineScheduler(BaseScheduler):
     @staticmethod
     def _preflight(blocks: list) -> None:
         """
-        Check every block's wind/current flags against its resolved
-        configuration before the first block runs (check_block_wind_current).
-        Other resolution errors are left to the block itself, as before.
+        Check the block names and output folders (validate_block_names, also for
+        blocks built in Python) and every block's wind/current flags against
+        its resolved configuration (check_block_wind_current) before the first
+        block runs. Other resolution errors are left to the block itself.
 
         Raises:
-            ValueError: From check_block_wind_current.
+            ValueError: From validate_block_names or check_block_wind_current.
         """
 
+        validate_block_names(blocks)
         for block in blocks:
             try:
                 framework_config = block_framework_config(block, resolve_block_profile(block))
@@ -158,6 +169,7 @@ class PipelineScheduler(BaseScheduler):
             profile=profile,
             hyperparameters=hyperparameters,
             require_policy=block.action == "visualize",
+            output_subdir=block_output_subdir(block),
         )
 
         start = time.time()

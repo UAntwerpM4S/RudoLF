@@ -220,11 +220,12 @@ def test_trainer_and_scheduler_require_the_policy_for_visualization(monkeypatch)
     monkeypatch.setattr(scheduler, "_build_stop_condition", lambda _s: SimpleNamespace(reset=lambda: None),
                         raising=False)
     monkeypatch.setattr(scheduler, "_save_checkpoint", lambda *a: None, raising=False)
-    for action, expected in (("visualize", True), ("train", False)):
+    for action, expected, subdir in (("visualize", True, "visualize_visualize"), ("train", False, "train")):
         block = SimpleNamespace(name=action, env_type="PySimEnv", action=action, show_plots=False,
                                 stop_condition=None)
         scheduler._run_block(block, set(), None)
         assert calls[-1]["require_policy"] is expected
+        assert calls[-1]["output_subdir"] == subdir
 
 
 def test_failed_evaluation_after_a_pipeline_train_block_keeps_the_block(monkeypatch):
