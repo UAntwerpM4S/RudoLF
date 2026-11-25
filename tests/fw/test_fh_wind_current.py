@@ -386,7 +386,7 @@ def test_env_reset_starts_from_fh_state():
 
 def test_bridge_without_wind_current_support_is_named_in_the_error():
     """
-    A bridge without wind_current (as SimSyncBridge) is refused with wind on, accepted without.
+    A bridge without wind_current is refused with wind on, accepted without.
     """
 
     from fw.dynamics.dynamics_model import Model
@@ -403,6 +403,66 @@ def test_bridge_without_wind_current_support_is_named_in_the_error():
         PySimEnv(dynamics_model=Model.FH_TABULAR, ship_model=ShipModel.MYZAKO_37, fh_bridge=_NoWindBridge(),
                  wind=True, current=True)
     PySimEnv(dynamics_model=Model.FH_TABULAR, ship_model=ShipModel.MYZAKO_37, fh_bridge=_NoWindBridge())
+
+
+@pytest.mark.parametrize("wind_current", [True, False])
+def test_sim_sync_bridge_follows_the_wind_current_flag(monkeypatch, wind_current):
+    """
+    SimSyncBridge takes wind and current from the live simulation: PySimEnv
+    accepts it when the flags match, refuses it when they differ, and reset()
+    takes (and ignores) the wind_rng PySimEnv passes with wind on.
+    """
+
+    from fw.dynamics.dynamics_model import Model
+    from fw.environments.py_sim_env import PySimEnv
+    from fw.simulators.sync_sim_bridge import SimSyncBridge
+
+    bridge = SimSyncBridge(ship_model=ShipModel.MYZAKO_37, wind_current=wind_current)
+    assert bridge.wind_current is wind_current
+    assert bridge.episode_wind_field_transform is None
+
+    PySimEnv(dynamics_model=Model.FH_TABULAR, ship_model=ShipModel.MYZAKO_37, fh_bridge=bridge,
+             wind=wind_current, current=wind_current)
+    with pytest.raises(ValueError, match="its exercise must match the flags"):
+        PySimEnv(dynamics_model=Model.FH_TABULAR, ship_model=ShipModel.MYZAKO_37, fh_bridge=bridge,
+                 wind=not wind_current, current=not wind_current)
+
+    connects = []
+    monkeypatch.setattr(bridge, "_connect", lambda: connects.append(True))
+    bridge.reset(wind_rng=np.random.default_rng(0))
+    assert connects == [True]
+
+
+def test_fh_sim_sync_environment_passes_the_wind_flag(monkeypatch):
+    """
+    FhSimSyncEnvironment builds its SimSyncBridge with wind_current = the 'wind' setting.
+    """
+
+    from fw.configuration import env_factory
+
+    created = []
+
+    class _RecordingBridge(_FakeEnvBridge):
+        """
+        Records the SimSyncBridge keyword arguments.
+        """
+
+        def __init__(self, **kwargs):
+            """
+            Record kwargs and take wind_current from them.
+            """
+
+            super().__init__()
+            created.append(kwargs)
+            self.wind_current = kwargs["wind_current"]
+
+    monkeypatch.setattr(env_factory, "SimSyncBridge", _RecordingBridge)
+    from fw.configuration.config import get_config_parameters
+
+    for wind in (True, False):
+        config = dict(get_config_parameters(), env_type=["FhSimSyncEnv"], wind=wind, current=wind)
+        env_factory.FhSimSyncEnvironment("FhSimSyncEnv", env_factory.build_fhsimsync_config(config))
+        assert created[-1]["wind_current"] is wind
 
 
 def test_non_finite_rewind_probe_fails(tmp_path, monkeypatch):

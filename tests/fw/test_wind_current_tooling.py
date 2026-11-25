@@ -129,15 +129,14 @@ def test_preflight_rejects_full_preset_without_wind_current(full_preset_config):
                                                   wind=True, current=True))
 
 
-def test_preflight_rejects_simsync_with_wind_current():
+def test_preflight_accepts_simsync_with_and_without_wind_current():
     """
-    simSync with the flags on fails before any block runs; without them, it passes.
+    simSync reads wind and current from the live simulation: both flag settings pass the preflight.
     """
 
     from fw.scheduling.pipeline_scheduler import PipelineScheduler
 
-    with pytest.raises(ValueError, match="does not support wind and current"):
-        PipelineScheduler._preflight(_pipeline_blocks(env_type="FhSimSyncEnv", wind=True, current=True))
+    PipelineScheduler._preflight(_pipeline_blocks(env_type="FhSimSyncEnv", wind=True, current=True))
     PipelineScheduler._preflight(_pipeline_blocks(env_type="FhSimSyncEnv"))
 
 
