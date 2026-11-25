@@ -4,8 +4,15 @@ Dataclasses describing JSON-driven pipeline runs (validated by run_loader).
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+# Block names become file and folder names (model_dir/<block>), so they follow
+# the Windows rules: no reserved characters, control characters or device names.
+_INVALID_NAME_CHARS = set('/\\:*?"<>|')
+_RESERVED_NAME_RE = re.compile(r"(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]|CONIN\$|CONOUT\$)(\..*)?", re.IGNORECASE)
 
 
 @dataclass
@@ -65,3 +72,67 @@ class PipelineSpec:
     blocks: List[PipelineBlock] = field(default_factory=list)
     on_block_failure: str = "continue"
     log_level: str = "INFO"
+
+
+def block_name_error(name: Any) -> Optional[str]:
+    """
+    Why `name` cannot be used as a block (file and folder) name, or None if it can.
+    """
+
+    if not isinstance(name, str) or not name:
+        return "it must be a non-empty string"
+    if name != name.strip() or name.endswith("."):
+        return "it must not have leading/trailing spaces or end with a dot"
+    if set(name) & _INVALID_NAME_CHARS or any(ord(c) < 32 for c in name):
+        return f"it must not contain control characters or any of {''.join(sorted(_INVALID_NAME_CHARS))}"
+    if _RESERVED_NAME_RE.fullmatch(name):
+        return "it is a reserved device name on Windows"
+    return None
+
+
+def block_output_subdir(block: PipelineBlock) -> str:
+    """
+    Folder (under model_dir) for the block's own outputs: the block name, or
+    <name>_visualize for a visualize block that loads the policy named after
+    itself, so it does not overwrite the outputs of the training it shows.
+    """
+
+    transfer = getattr(block, "transfer", None) or TransferSpec()
+    reuses_own_name = (
+        not transfer.from_block
+        and transfer.external_training_name in (None, block.name)
+        and transfer.policy_strategy in (None, "REUSE_OTHER_POLICY")
+    )
+    if block.action == "visualize" and reuses_own_name:
+        return f"{block.name}_visualize"
+    return block.name
+
+
+def validate_block_names(blocks: List[PipelineBlock]) -> None:
+    """
+    Check that every block name is a valid file/folder name and that block
+    names and output folders are unique, ignoring case (macOS and Windows
+    file systems are case-insensitive).
+
+    Raises:
+        ValueError: On the first invalid or clashing name.
+    """
+
+    seen_names: Dict[str, str] = {}
+    seen_dirs: Dict[str, str] = {}
+    for block in blocks:
+        error = block_name_error(block.name)
+        if error:
+            raise ValueError(f"Block name {block.name!r} is used as a file and folder name, so {error}.")
+        key = block.name.casefold()
+        if key in seen_names:
+            raise ValueError(f"Block names '{seen_names[key]}' and '{block.name}' clash: "
+                             f"block names must be unique, ignoring case.")
+        seen_names[key] = block.name
+    for block in blocks:
+        subdir = block_output_subdir(block)
+        key = subdir.casefold()
+        if key in seen_dirs:
+            raise ValueError(f"Blocks '{seen_dirs[key]}' and '{block.name}' would both write to the output "
+                             f"folder '{subdir}' (ignoring case); rename one of them.")
+        seen_dirs[key] = block.name

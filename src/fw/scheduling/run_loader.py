@@ -17,6 +17,7 @@ from fw.common.tools.logging_config import resolve_log_level
 from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.configuration.env_factory import resolve_environment_name, EnvironmentRegistryError
 from fw.scheduling.run_spec import PipelineBlock, PipelineSpec, StopConditionSpec, TransferSpec
+from fw.scheduling.run_spec import block_name_error, validate_block_names
 
 _VALID_ACTIONS = {"train", "visualize", "evaluate_reward"}
 _VALID_FAILURE_MODES = {"continue", "abort"}
@@ -77,8 +78,13 @@ def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
     blocks = []
     for i, raw_block in enumerate(raw_blocks):
         block = _parse_block(raw_block, index=i, seen_names=seen_names, source=source)
-        seen_names.add(block.name)
+        seen_names.add(block.name.casefold())
         blocks.append(block)
+
+    try:
+        validate_block_names(blocks)
+    except ValueError as exc:
+        raise PipelineSpecError(f"[{source}] {exc}") from exc
 
     for i, block in enumerate(blocks):
         ref = block.transfer.from_block
@@ -112,7 +118,7 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
     Args:
         raw_block: The raw block dict.
         index: Position in `blocks` (for error messages).
-        seen_names: Names of earlier blocks, used to reject duplicates.
+        seen_names: Case-folded names of earlier blocks, used to reject duplicates.
         source: Path string for error messages.
 
     Raises:
@@ -124,8 +130,12 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
     name = raw_block.get("name")
     if not name or not isinstance(name, str):
         raise PipelineSpecError(f"{where}: 'name' is required and must be a non-empty string.")
-    if name in seen_names:
-        raise PipelineSpecError(f"{where}: duplicate block name '{name}'. Block names must be unique.")
+    if name.casefold() in seen_names:
+        raise PipelineSpecError(f"{where}: duplicate block name '{name}'. Block names must be unique, "
+                                f"ignoring case.")
+    name_error = block_name_error(name)
+    if name_error:
+        raise PipelineSpecError(f"{where}: block name {name!r} is used as a file and folder name, so {name_error}.")
 
     env_type = raw_block.get("env_type")
     if not env_type:

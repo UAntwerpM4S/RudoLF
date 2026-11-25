@@ -607,7 +607,7 @@ class SinglePPOAgent(BasePPOAgent):
                     logger.info("Iteration %d, Average Reward: %.3f, Loss: %.3f", iteration, mean_reward, loss)
 
                     if iteration > 0:
-                        self.save_policy(f"ppo_checkpoint_{iteration}")
+                        self.save_policy(self.output_file_name(f"ppo_checkpoint_{iteration}"))
 
                 last_completed_iteration = iteration
                 iteration += 1
@@ -621,7 +621,7 @@ class SinglePPOAgent(BasePPOAgent):
             logger.warning("Training interrupted by user. Saving logs and plots...")
 
             try:
-                _interrupt_checkpoint = f"ppo_interrupt_{max(last_completed_iteration, 0)}"
+                _interrupt_checkpoint = self.output_file_name(f"ppo_interrupt_{max(last_completed_iteration, 0)}")
                 self.save_policy(_interrupt_checkpoint)
                 logger.info("Interrupt checkpoint saved: %s", _interrupt_checkpoint)
             except Exception as _save_err:
@@ -662,9 +662,9 @@ class SinglePPOAgent(BasePPOAgent):
                     )
                     if final_checkpoint_iteration < 0:
                         final_checkpoint_iteration = 0
-                    _safe("final checkpoint", self.save_policy, f'ppo_checkpoint_{final_checkpoint_iteration}', critical=True)
+                    _safe("final checkpoint", self.save_policy, self.output_file_name(f'ppo_checkpoint_{final_checkpoint_iteration}'), critical=True)
                     _safe("iteration log", iteration_logger.save, critical=True)
-                    _safe("training metrics CSV", dump_metrics_to_csv, self.model_dir, "training_metrics.csv", training_metrics, critical=True)
+                    _safe("training metrics CSV", dump_metrics_to_csv, self.output_dir, "training_metrics.csv", training_metrics, critical=True)
 
                 if training_session is not None:
                     _safe(

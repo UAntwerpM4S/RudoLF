@@ -183,6 +183,7 @@ class AgentManager:
         profile: VesselProfile = None,
         hyperparameters: dict = None,
         require_policy: bool = False,
+        output_subdir: str = None,
     ) -> None:
         """
         Assign an environment to the agent and configure the policy strategy.
@@ -198,6 +199,10 @@ class AgentManager:
                 None keeps them.
             require_policy (bool, optional): Raise instead of falling back when the
                 policy to reuse is missing or incompatible (visualization).
+            output_subdir (str, optional): Subfolder of model_dir for the new
+                agent's evaluation plots and, for SinglePPOAgent, its checkpoints
+                and training_metrics.csv (the pipeline passes the block's folder);
+                None writes them to model_dir.
 
         Without require_policy, a missing or incompatible policy file to reuse is
         logged as a warning and the fresh (reset) policy is kept.
@@ -205,7 +210,8 @@ class AgentManager:
         Raises:
             RuntimeError: If an unknown policy type is specified, or (require_policy)
                 if the policy cannot be loaded.
-            ValueError: require_policy and the policy does not fit the env.
+            ValueError: require_policy and the policy does not fit the env, or
+                output_subdir is not a plain folder name.
             FileNotFoundError: require_policy and the policy file does not exist.
         """
 
@@ -263,6 +269,9 @@ class AgentManager:
             else:
                 logger.warning("[Fallback] The policy file %s does not exist.", policy_file_name)
                 logger.warning("[Fallback] Reverting to RESET_POLICY for %s.", self._agent_type)
+
+        # After the policy check, so a failing visualize block leaves no empty folder.
+        self._agent.set_output_subdir(output_subdir)
 
     def train(self, stop_condition: StopCondition, dispose_env: bool = True) -> None:
         """
@@ -518,9 +527,7 @@ class AgentManager:
                             tag = "" if gt == pred else "  [MISMATCH]"
                             logger.info(f"  {gt} -> {pred}: {cnt}{tag}")
 
-                save_dir = self.agent.model_dir or "."
-                if not save_dir:
-                    save_dir = "models"
+                save_dir = self.agent.output_dir or "."
                 os.makedirs(save_dir, exist_ok=True)
 
                 for sid in metrics.keys():
