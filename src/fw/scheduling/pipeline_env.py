@@ -115,23 +115,19 @@ def block_framework_config(block: PipelineBlock, profile: VesselProfile) -> Dict
 
 def check_block_wind_current(block: PipelineBlock, framework_config: Dict[str, Any]) -> None:
     """
-    Wind/current combinations that PySimEnv would only refuse when the block's
+    Wind/current combination that PySimEnv would only refuse when the block's
     environment is built: a full_env UAntwerp preset with the flags off (only
-    for the PySimEnv-based environments, which use ua_surrogate_config), or the
-    realtime simSync environment (no wind/current support) with them on. Any
+    for the PySimEnv-based environments, which use ua_surrogate_config). Any
     other problem (unknown environment or preset) is left to the block.
 
     Raises:
-        ValueError: For either combination.
+        ValueError: For that combination.
     """
 
     try:
         canonical_name = resolve_environment_name(block.env_type)
     except Exception:
         return
-    if canonical_name == sync_sim_env_name and block.wind:
-        raise ValueError(f"Block '{block.name}': {sync_sim_env_name} does not support wind and current; "
-                         f"disable them.")
     if canonical_name not in _UA_CONFIG_ENVS:
         return
     ua_config = framework_config.get("ua_surrogate_config") or {}

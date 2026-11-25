@@ -113,7 +113,8 @@ class SimSyncBridge:
                  remote_ip: str = "127.0.0.1", remote_port: int = 5000,
                  local_ip: str = "127.0.0.1",  local_port: int = 5001,
                  connect_timeout: float = 10.0,
-                 step_timeout_per_tick: float = 1.0):
+                 step_timeout_per_tick: float = 1.0,
+                 wind_current: bool = False):
         """
         Args:
             ship_model: Ship already loaded in the remote simSync instance. Must
@@ -125,9 +126,15 @@ class SimSyncBridge:
             local_port: Local UDP port.
             connect_timeout: Maximum wait [s] for the first state after connecting.
             step_timeout_per_tick: Maximum wait [s] per state update while advancing.
+            wind_current: The running exercise has wind and current. They are
+                read from the live simulation (FhTabularModel.observed_wind_current),
+                which owns them: unlike FhSimBridge, nothing is randomized per episode.
         """
 
         self._ship_model = ship_model
+        self.wind_current = bool(wind_current)
+        # API parity with FhSimBridge: no per-episode wind-field transform in realtime mode.
+        self.episode_wind_field_transform = None
         self._remote = (remote_ip, remote_port)
         self._local  = (local_ip, local_port)
         self._connect_timeout = connect_timeout
@@ -202,12 +209,14 @@ class SimSyncBridge:
 
         return self._require_state().OwnShipItf
 
-    def reset(self, time_point: float = 0.25) -> None:
+    def reset(self, time_point: float = 0.25, wind_rng=None) -> None:
         """
         Connect on first call and block until the first state arrives.
 
         Args:
             time_point: Ignored (rewind is not supported in realtime mode).
+            wind_rng: Ignored (the live simulation owns the wind); accepted
+                because PySimEnv passes it when wind is enabled.
 
         Raises:
             RuntimeError: If connecting fails or no state arrives in time.
