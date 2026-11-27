@@ -37,6 +37,7 @@ class BaseAgent(ABC):
         device: str = "cpu",
         model_dir: str = "models",
         seed: Optional[int] = None,
+        rollout_device: Optional[str] = None,
     ):
         """
         Initialize the base agent with environment and hyperparameters.
@@ -61,15 +62,20 @@ class BaseAgent(ABC):
             seed (int, optional): Base seed for the worker environment RNGs
                 ('seed' hyperparameter); each worker gets an independent child
                 seed. None draws a random base seed, which is logged.
+            rollout_device (str, optional): Device of the policy forward passes
+                during rollouts and bootstrapping ('cpu', 'cuda' or 'auto'; see
+                PPOPolicy); the PPO update runs on `device`. None means `device`.
 
         Raises:
-            ValueError: If `device` is not 'cpu', 'cuda' or 'auto', if
+            ValueError: If `device` or `rollout_device` is not 'cpu', 'cuda' or 'auto', if
                 `num_envs` is not positive, or if `seed` is not None or a
                 non-negative integer.
         """
 
         if device not in ("cpu", "cuda", "auto"):
             raise ValueError("device must be 'cpu', 'cuda', or 'auto'")
+        if rollout_device not in (None, "cpu", "cuda", "auto"):
+            raise ValueError("rollout_device must be None, 'cpu', 'cuda', or 'auto'")
 
         if num_envs <= 0:
             raise ValueError("num_envs must be positive")
@@ -90,6 +96,7 @@ class BaseAgent(ABC):
         self.batch_size = batch_size
 
         self.device = get_device(device)
+        self.rollout_device = self.device if rollout_device is None else get_device(rollout_device)
         self.model_dir = model_dir
 
         # Resolve relative model paths against src/ (independent of the cwd).

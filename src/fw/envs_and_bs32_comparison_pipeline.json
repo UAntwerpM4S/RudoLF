@@ -1,0 +1,137 @@
+{
+  "_comment": "Follow-up of batch_size_comparison_pipeline.json (same env, ship and stop condition: target 0.93, patience 4): batch_size 32 with 1 env, and batch_size 64 with 4 and 8 parallel envs, each with env seeds 1 and 2. Compare against the earlier batch-64 runs with: python compare_training_runs.py --spec fw/batch_size_comparison_pipeline.json fw/envs_and_bs32_comparison_pipeline.json --blocks \"bs64_*\" \"bs32_*\" \"envs*\"",
+  "on_block_failure": "continue",
+  "log_level": "INFO",
+  "blocks": [
+    {
+      "name": "bs32_seed1",
+      "env_type": "PySimEnv",
+      "ship_model": "MYZAKO_37",
+      "dynamics_model": "FOSSEN",
+      "profile": "default_profile",
+      "action": "train",
+      "stop_condition": {
+        "criterion": "TARGET_REWARD",
+        "target_reward": 0.93,
+        "patience": 4,
+        "max_time_steps": 1000
+      },
+      "hyperparameter_overrides": {
+        "batch_size": 32,
+        "seed": 1
+      },
+      "transfer": {
+        "independent": true
+      }
+    },
+    {
+      "name": "envs4_seed1",
+      "env_type": "PySimEnv",
+      "ship_model": "MYZAKO_37",
+      "dynamics_model": "FOSSEN",
+      "profile": "default_profile",
+      "action": "train",
+      "stop_condition": {
+        "criterion": "TARGET_REWARD",
+        "target_reward": 0.93,
+        "patience": 4,
+        "max_time_steps": 1000
+      },
+      "hyperparameter_overrides": {
+        "batch_size": 64,
+        "num_envs": 4,
+        "seed": 1
+      },
+      "transfer": {
+        "independent": true
+      }
+    },
+    {
+      "name": "envs8_seed1",
+      "env_type": "PySimEnv",
+      "ship_model": "MYZAKO_37",
+      "dynamics_model": "FOSSEN",
+      "profile": "default_profile",
+      "action": "train",
+      "stop_condition": {
+        "criterion": "TARGET_REWARD",
+        "target_reward": 0.93,
+        "patience": 4,
+        "max_time_steps": 1000
+      },
+      "hyperparameter_overrides": {
+        "batch_size": 64,
+        "num_envs": 8,
+        "seed": 1
+      },
+      "transfer": {
+        "independent": true
+      }
+    },
+    {
+      "name": "bs32_seed2",
+      "env_type": "PySimEnv",
+      "ship_model": "MYZAKO_37",
+      "dynamics_model": "FOSSEN",
+      "profile": "default_profile",
+      "action": "train",
+      "stop_condition": {
+        "criterion": "TARGET_REWARD",
+        "target_reward": 0.93,
+        "patience": 4,
+        "max_time_steps": 1000
+      },
+      "hyperparameter_overrides": {
+        "batch_size": 32,
+        "seed": 2
+      },
+      "transfer": {
+        "independent": true
+      }
+    },
+    {
+      "name": "envs4_seed2",
+      "env_type": "PySimEnv",
+      "ship_model": "MYZAKO_37",
+      "dynamics_model": "FOSSEN",
+      "profile": "default_profile",
+      "action": "train",
+      "stop_condition": {
+        "criterion": "TARGET_REWARD",
+        "target_reward": 0.93,
+        "patience": 4,
+        "max_time_steps": 1000
+      },
+      "hyperparameter_overrides": {
+        "batch_size": 64,
+        "num_envs": 4,
+        "seed": 2
+      },
+      "transfer": {
+        "independent": true
+      }
+    },
+    {
+      "name": "envs8_seed2",
+      "env_type": "PySimEnv",
+      "ship_model": "MYZAKO_37",
+      "dynamics_model": "FOSSEN",
+      "profile": "default_profile",
+      "action": "train",
+      "stop_condition": {
+        "criterion": "TARGET_REWARD",
+        "target_reward": 0.93,
+        "patience": 4,
+        "max_time_steps": 1000
+      },
+      "hyperparameter_overrides": {
+        "batch_size": 64,
+        "num_envs": 8,
+        "seed": 2
+      },
+      "transfer": {
+        "independent": true
+      }
+    }
+  ]
+}

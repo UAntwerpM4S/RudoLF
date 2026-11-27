@@ -363,7 +363,11 @@ class UAntwerpSurrogate(DynamicsBase):
             raise FileNotFoundError(f"Checkpoint of UAntwerp surrogate preset '{self.preset.name}' not found: "
                                     f"{checkpoint} (relative checkpoint paths are resolved against "
                                     f"{CHECKPOINT_DIR}).")
-        self.surrogate = SurrogatePredictor(str(checkpoint))
+        # Always CPU, whatever the PPO device: step() predicts one row per
+        # SURROGATE_DT, where a GPU only adds launch and copy latency, and every
+        # SubprocVecEnv worker would need its own CUDA context (GPU memory).
+        from fw.surrogate.utils import get_device
+        self.surrogate = SurrogatePredictor(str(checkpoint), device=get_device(prefer_gpu=False))
         if self.surrogate.scenario != self.preset.scenario:
             raise ValueError(f"Checkpoint {checkpoint} is a '{self.surrogate.scenario.name}' model, but preset "
                              f"'{self.preset.name}' expects '{self.preset.scenario.name}'.")

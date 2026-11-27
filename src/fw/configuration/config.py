@@ -72,6 +72,7 @@ DEFAULT_HYPERPARAMETERS = {
         'max_nbr_iterations': 200000,
         'batch_size': 64,
         'device': "cpu",
+        'rollout_device': "cpu",  # policy forward passes in rollouts; the update runs on 'device'
         'model_dir': "models",
         'seed': None,       # base seed of the worker env RNGs; None = random, logged
     },
@@ -113,6 +114,7 @@ DEFAULT_HYPERPARAMETERS = {
         'max_nbr_iterations': 200000,
         'batch_size': 64,
         'device': "cpu",
+        'rollout_device': "cpu",  # policy forward passes in rollouts; the update runs on 'device'
         'model_dir': "models",
         'seed': None,       # base seed of the worker env RNGs; None = random, logged
     },
@@ -131,6 +133,7 @@ DEFAULT_HYPERPARAMETERS = {
         'max_nbr_iterations': 5000,
         'batch_size': 2048,
         'device': "cpu",
+        'rollout_device': "cpu",  # policy forward passes in rollouts; the update runs on 'device'
         'model_dir': "models",
         'steps_per_policy_update': 8192,
         'seed': None,       # base seed of the worker env RNGs; None = random, logged
