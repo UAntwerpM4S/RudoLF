@@ -61,6 +61,9 @@ class PipelineBlock:
     reward_configs: Optional[List[Dict[str, Any]]] = None
     transfer: TransferSpec = field(default_factory=TransferSpec)
     on_failure: Optional[str] = None
+    # Block-level replacements for config.py entries (scenario and the surrogate
+    # configs, see run_loader.BLOCK_CONFIG_KEYS); a key absent here keeps config.py.
+    config_overrides: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

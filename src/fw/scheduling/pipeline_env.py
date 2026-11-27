@@ -102,11 +102,14 @@ _UA_CONFIG_ENVS = frozenset({py_sim_env_name, multi_sim_env_name, fh_sim_env_nam
 
 def block_framework_config(block: PipelineBlock, profile: VesselProfile) -> Dict[str, Any]:
     """
-    The block's framework configuration: config.py, the block's wind/current
-    flags, then the profile.
+    The block's framework configuration: config.py, the block's config
+    overrides (scenario, surrogate configs), its wind/current flags, then the
+    profile.
     """
 
     framework_config = load_config_parameters()
+    for key, value in block.config_overrides.items():
+        framework_config[key] = dict(value) if isinstance(value, dict) else value
     framework_config["wind"] = block.wind
     framework_config["current"] = block.current
     apply_profile(profile, config=framework_config)

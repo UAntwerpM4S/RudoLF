@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Set
 from fw.ships.ship_factory import ShipModel
+from fw.surrogate.presets import get_preset
 from fw.dynamics.dynamics_model import Model
 from fw.configuration.config import PolicyStrategy
 from fw.configuration.config_profile import ProfileRegistry
@@ -20,6 +21,17 @@ from fw.scheduling.run_spec import PipelineBlock, PipelineSpec, StopConditionSpe
 from fw.scheduling.run_spec import block_name_error, validate_block_names
 
 _VALID_ACTIONS = {"train", "visualize", "evaluate_reward"}
+
+# Block keys that replace the config.py entry of the same name for that block.
+# The surrogate configs replace the config.py dict as a whole (no key merge), so
+# a block's preset never inherits a checkpoint/lookup_csv meant for another one.
+BLOCK_CONFIG_KEYS = ("scenario", "ua_surrogate_config", "ugent_surrogate_config", "ugent_b01_surrogate_config")
+
+_KNOWN_BLOCK_KEYS = {
+    "name", "env_type", "profile", "ship_model", "dynamics_model", "profile_overrides", "action",
+    "reward_configs", "stop_condition", "transfer", "on_failure", "wind", "current", "show_plots",
+    "hyperparameter_overrides", *BLOCK_CONFIG_KEYS,
+}
 _VALID_FAILURE_MODES = {"continue", "abort"}
 
 # Rejected up front because they would fail later during execution.
@@ -127,6 +139,12 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
 
     where = f"[{source}] block[{index}]"
 
+    # A misspelt or unsupported key would otherwise be dropped silently.
+    unknown_keys = sorted(set(raw_block) - _KNOWN_BLOCK_KEYS)
+    if unknown_keys:
+        raise PipelineSpecError(f"{where} ('{raw_block.get('name')}'): unknown key(s) {unknown_keys}; "
+                                f"accepted: {sorted(_KNOWN_BLOCK_KEYS)}.")
+
     name = raw_block.get("name")
     if not name or not isinstance(name, str):
         raise PipelineSpecError(f"{where}: 'name' is required and must be a non-empty string.")
@@ -188,6 +206,8 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
         raise PipelineSpecError(f"{where} ('{name}'): 'wind' ({wind}) and 'current' ({current}) must be "
                                 f"enabled or disabled together.")
 
+    config_overrides = _parse_config_overrides(raw_block, where, name)
+
     return PipelineBlock(
         name=name,
         env_type=env_type,
@@ -204,7 +224,38 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
         reward_configs=reward_configs,
         transfer=transfer,
         on_failure=on_failure,
+        config_overrides=config_overrides,
     )
+
+
+def _parse_config_overrides(raw_block: Dict[str, Any], where: str, name: str) -> Dict[str, Any]:
+    """
+    Collect the block's BLOCK_CONFIG_KEYS entries.
+
+    Raises:
+        PipelineSpecError: A non-string scenario, a non-dict surrogate config,
+            or an unknown UAntwerp preset.
+    """
+
+    overrides: Dict[str, Any] = {}
+    for key in BLOCK_CONFIG_KEYS:
+        if key not in raw_block:
+            continue
+        value = raw_block[key]
+        if key == "scenario":
+            if not isinstance(value, str) or not value:
+                raise PipelineSpecError(f"{where} ('{name}'): 'scenario' must be a non-empty string.")
+        elif not isinstance(value, dict):
+            raise PipelineSpecError(f"{where} ('{name}'): '{key}' must be an object, got {type(value).__name__}.")
+        overrides[key] = dict(value) if isinstance(value, dict) else value
+
+    ua_config = overrides.get("ua_surrogate_config")
+    if ua_config is not None and "preset" in ua_config:
+        try:
+            get_preset(ua_config["preset"])
+        except ValueError as exc:
+            raise PipelineSpecError(f"{where} ('{name}'): ua_surrogate_config: {exc}") from exc
+    return overrides
 
 
 def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopConditionSpec:
