@@ -9,7 +9,7 @@
       "dynamics_model": "FOSSEN",
       "profile": "default_profile",
       "action": "train",
-      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.94, "patience":  4, "max_time_steps": 1000}
+      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.94, "patience": 4, "max_time_steps": 1000}
     },
     {
       "name": "chained_train",
@@ -18,7 +18,7 @@
       "dynamics_model": "FH_TABULAR",
       "profile": "fh_simulator_profile",
       "action": "train",
-      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.94, "patience":  4, "max_time_steps": 1000},
+      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.94, "patience": 4, "max_time_steps": 1000},
       "transfer": {"from_block": "base_train"}
     },
     {

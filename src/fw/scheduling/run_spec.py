@@ -40,6 +40,18 @@ class TransferSpec:
     independent: bool = False
 
 
+# Block keys overriding the config.py entry of the same name for that block
+# (pipeline_env.merge_config_override): "scenario" replaces it, the surrogate
+# configs are merged over config.py's dict key by key.
+BLOCK_CONFIG_KEYS = ("scenario", "ua_surrogate_config", "ugent_surrogate_config", "ugent_b01_surrogate_config")
+
+# Accepted keys of a reward_configs entry (Trainer.evaluate_reward).
+REWARD_CONFIG_KEYS = frozenset({"type", "reward_name", "reward_weights"})
+
+# Spec keys starting with this prefix are comments, ignored by the key checks.
+COMMENT_KEY_PREFIX = "_"
+
+
 @dataclass
 class PipelineBlock:
     """
@@ -61,6 +73,9 @@ class PipelineBlock:
     reward_configs: Optional[List[Dict[str, Any]]] = None
     transfer: TransferSpec = field(default_factory=TransferSpec)
     on_failure: Optional[str] = None
+    # Block-level overrides of config.py entries (BLOCK_CONFIG_KEYS); a key
+    # absent here keeps config.py.
+    config_overrides: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

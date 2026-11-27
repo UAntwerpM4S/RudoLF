@@ -30,6 +30,7 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
 
     from fw.scheduling.agent_manager import AgentManager
     from fw.configuration.config_profile import ProfileRegistry
+    from fw.scheduling.pipeline_env import resolved_block_configs
     from fw.scheduling.pipeline_scheduler import PipelineScheduler
     from fw.scheduling.run_loader import load_pipeline_spec, PipelineSpecError
     from fw.configuration.env_factory import multi_sim_env_name, multi_policy_colav_env_name
@@ -117,6 +118,9 @@ if __name__ == "__main__" or __name__ == "fw.main_pipeline":
                         )
 
             resolved_config_snapshot = dataclasses.asdict(spec)
+            # Per block, the scenario and surrogate configs actually used
+            # (config.py merged with the block's overrides).
+            resolved_config_snapshot["resolved_block_config"] = resolved_block_configs(spec.blocks)
         except Exception as exc:
             logger.warning("Could not prepare bundle metadata for this pipeline run: %s", exc)
             pipeline_model_dirs, pipeline_policy_files, resolved_config_snapshot = ["models"], [], None

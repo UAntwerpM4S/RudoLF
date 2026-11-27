@@ -13,12 +13,14 @@ from fw.scheduling.base_scheduler import BaseScheduler
 from fw.configuration.profile_applier import apply_profile
 from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.configuration.config import PolicyStrategy, get_hyperparameters
-from fw.scheduling.run_spec import PipelineBlock, StopConditionSpec, TransferSpec
 from fw.scheduling.run_spec import block_output_subdir, validate_block_names
+from fw.scheduling.run_spec import PipelineBlock, StopConditionSpec, TransferSpec
 from fw.scheduling.pipeline_env import (
     block_framework_config,
+    describe_block_config,
     build_block_environment,
     check_block_wind_current,
+    check_block_dynamics_config,
     resolve_block_profile,
 )
 
@@ -109,21 +111,25 @@ class PipelineScheduler(BaseScheduler):
     def _preflight(blocks: list) -> None:
         """
         Check the block names and output folders (validate_block_names, also for
-        blocks built in Python) and every block's wind/current flags against
-        its resolved configuration (check_block_wind_current) before the first
-        block runs. Other resolution errors are left to the block itself.
+        blocks built in Python), and every block's wind/current flags and
+        dynamics/surrogate configuration against its resolved configuration
+        (check_block_wind_current, check_block_dynamics_config) before the
+        first block runs. Other resolution errors are left to the block itself.
 
         Raises:
-            ValueError: From validate_block_names or check_block_wind_current.
+            ValueError: From validate_block_names, check_block_wind_current or
+                check_block_dynamics_config.
         """
 
         validate_block_names(blocks)
         for block in blocks:
             try:
-                framework_config = block_framework_config(block, resolve_block_profile(block))
+                profile = resolve_block_profile(block)
+                framework_config = block_framework_config(block, profile)
             except Exception:
                 continue        # reported by the block when it runs, as before
             check_block_wind_current(block, framework_config)
+            check_block_dynamics_config(block, framework_config, profile.model)
 
 
     def _run_block(
@@ -155,6 +161,7 @@ class PipelineScheduler(BaseScheduler):
             "ship=%s dynamics=%s action=%s",
             profile.model.ship_model, profile.model.dynamics_model, block.action
         )
+        logger.info("Block '%s' config: %s", block.name, describe_block_config(block, framework_config))
 
         if block.action == "evaluate_reward":
             return self._run_evaluate_reward(block, env, profile, framework_config)

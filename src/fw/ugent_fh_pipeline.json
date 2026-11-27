@@ -1,0 +1,38 @@
+{
+  "on_block_failure": "abort",
+  "log_level": "INFO",
+  "blocks": [
+    {
+      "name": "base_train",
+      "env_type": "PySimEnv",
+      "ship_model": "TRIPOLI",
+      "dynamics_model": "UGENT_SURROGATE",
+      "profile": "ugent_surrogate_profile",
+      "action": "train",
+      "ugent_surrogate_config": {"ukc_percent": 363},
+      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.93, "patience": 4, "max_time_steps": 1500}
+    },
+    {
+      "name": "chained_train",
+      "env_type": "FhSimEnv",
+      "ship_model": "TRIPOLI",
+      "dynamics_model": "FH_TABULAR",
+      "profile": "fh_simulator_profile",
+      "action": "train",
+      "scenario": "DDShip_Tripoli_scenario_nowindnocurrent",
+      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.92, "patience": 4, "max_time_steps": 1000},
+      "transfer": {"from_block": "base_train"}
+    },
+    {
+      "name": "check_visualize",
+      "env_type": "FhSimEnv",
+      "ship_model": "TRIPOLI",
+      "dynamics_model": "FH_TABULAR",
+      "profile": "fh_simulator_profile",
+      "action": "visualize",
+      "scenario": "DDShip_Tripoli_scenario_nowindnocurrent",
+      "show_plots": true,
+      "transfer": {"from_block": "chained_train"}
+    }
+  ]
+}

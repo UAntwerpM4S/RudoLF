@@ -15,18 +15,20 @@ from fw.configuration.env_factory import (
     fh_sim_env_name,
     airsim_env_name,
     lunar_env_name,
-    PySimEnvironment,
-    FhSimEnvironment,
-    AirSimEnvironment,
-    LunarEnvironment,
-    FhSimSyncEnvironment, sync_sim_env_name,
+    sync_sim_env_name,
+    ENVIRONMENT_CLASSES,
+    ENVIRONMENT_CONFIG_BUILDERS,
 )
 from fw.scheduling.agent_manager import AgentManager
 from fw.scheduling.agent_manager_simple import AgentManagerSimple
+from fw.scheduling.run_spec import COMMENT_KEY_PREFIX, REWARD_CONFIG_KEYS
 from fw.configuration.config import get_config_parameters, get_hyperparameters, VisualizationMode, PolicyStrategy
 from fw.configuration.config_profile import VesselProfile
 
 logger = logging.getLogger(__name__)
+
+# Environments reward evaluation can build (_build_eval_config, _build_eval_environment).
+_EVAL_ENVS = frozenset({py_sim_env_name, fh_sim_env_name, sync_sim_env_name, airsim_env_name, lunar_env_name})
 
 
 class FilenameStyle(Enum):
@@ -358,6 +360,27 @@ class Trainer:
         return None
 
     @staticmethod
+    def _build_eval_config(canonical_name: str, framework_config: Dict[str, Any], reward_name: str,
+                           reward_weights: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Environment configuration for one reward configuration: the
+        environment's keys from the framework config (as for training), with
+        reward_name and reward_weights on top.
+
+        Raises:
+            ValueError: For an environment reward evaluation does not support.
+        """
+
+        if canonical_name not in _EVAL_ENVS:
+            raise ValueError(f"Unsupported environment '{canonical_name}' for reward evaluation")
+        cfg = ENVIRONMENT_CONFIG_BUILDERS[canonical_name](framework_config)
+        if canonical_name == lunar_env_name:
+            return cfg
+        cfg["reward_name"] = reward_name
+        cfg["reward_weights"] = reward_weights
+        return cfg
+
+    @staticmethod
     def _build_eval_environment(canonical_name: str, config: Dict[str, Any]):
         """
         Build a fresh environment wrapper for reward evaluation.
@@ -365,17 +388,9 @@ class Trainer:
         Bypasses the factory cache so each reward configuration is isolated.
         """
 
-        if canonical_name == py_sim_env_name:
-            return PySimEnvironment(canonical_name, config)
-        if canonical_name == fh_sim_env_name:
-            return FhSimEnvironment(canonical_name, config)
-        if canonical_name == sync_sim_env_name:
-            return FhSimSyncEnvironment(canonical_name, config)
-        if canonical_name == airsim_env_name:
-            return AirSimEnvironment(canonical_name, config)
-        if canonical_name == lunar_env_name:
-            return LunarEnvironment(canonical_name, config)
-        raise ValueError(f"Unsupported environment '{canonical_name}' for reward evaluation")
+        if canonical_name not in _EVAL_ENVS:
+            raise ValueError(f"Unsupported environment '{canonical_name}' for reward evaluation")
+        return ENVIRONMENT_CLASSES[canonical_name](canonical_name, config)
     
 
     def evaluate_reward(
@@ -405,6 +420,16 @@ class Trainer:
         # Enforce explicit configs to avoid silent no-op evaluations.
         if not reward_configs:
             raise ValueError("reward_configs must not be empty")
+        # Checked before the first training: unknown keys would be dropped silently.
+        for config_idx, config in enumerate(reward_configs):
+            if not isinstance(config, dict):
+                raise ValueError(f"reward_configs[{config_idx}] must be a dict, got {type(config).__name__}")
+            unknown = sorted(key for key in set(config) - REWARD_CONFIG_KEYS
+                             if not str(key).startswith(COMMENT_KEY_PREFIX))
+            if unknown:
+                raise ValueError(f"reward_configs[{config_idx}]: unknown key(s) {unknown}; accepted: "
+                                 f"{sorted(REWARD_CONFIG_KEYS)} (keys starting with '{COMMENT_KEY_PREFIX}' "
+                                 f"are comments)")
 
         # Allow caller to pass only reward configs and use default stop conditions.
         if training_configuration is None:
@@ -441,9 +466,12 @@ class Trainer:
                             print(f"      - {key}: {value}")
                     print("    Starting training...")
 
-                env = self._build_eval_environment(canonical_name, config)
+                # The env gets the full framework config (start/target, contours,
+                # surrogate configs, ...), not the bare reward entry.
+                env_config = self._build_eval_config(canonical_name, self._config, reward_name, reward_weights)
+                env = self._build_eval_environment(canonical_name, env_config)
 
-                trainer = Trainer(self._agent_type, [env], self._profile, "SimpleScheduler")
+                trainer = Trainer(self._agent_type, [env], self._profile, "SimpleScheduler", config=self._config)
 
                 # Deep copy, so StopCondition counters do not carry over to later configs.
                 isolated_configuration = copy.deepcopy(training_configuration)
