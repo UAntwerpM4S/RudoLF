@@ -100,16 +100,66 @@ def resolve_block_profile(block: PipelineBlock) -> VesselProfile:
 _UA_CONFIG_ENVS = frozenset({py_sim_env_name, multi_sim_env_name, fh_sim_env_name, sync_sim_env_name})
 
 
+# ua_surrogate_config keys that belong to one preset: not inherited from
+# config.py when the block selects another preset.
+_PRESET_SPECIFIC_UA_KEYS = ("checkpoint", "lookup_csv")
+
+
+def merge_config_override(key: str, base: Any, override: Any) -> Any:
+    """
+    A block's config override applied to config.py's value for `key`.
+
+    A dict (surrogate config) is merged over config.py's dict key by key, so
+    unset keys such as wind_current keep config.py's value. For
+    ua_surrogate_config, config.py's checkpoint and lookup_csv are dropped when
+    the block selects another preset. Any other value replaces config.py's.
+    """
+
+    if not isinstance(override, dict):
+        return override
+    merged = dict(base) if isinstance(base, dict) else {}
+    if key == "ua_surrogate_config" and override.get("preset", merged.get("preset")) != merged.get("preset"):
+        for preset_key in _PRESET_SPECIFIC_UA_KEYS:
+            merged.pop(preset_key, None)
+    merged.update(override)
+    return merged
+
+
+def describe_block_config(framework_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The block-relevant part of a resolved framework config (scenario and the
+    surrogate configs), for logging and the run record.
+    """
+
+    return {key: framework_config.get(key) for key in
+            ("scenario", "ua_surrogate_config", "ugent_surrogate_config", "ugent_b01_surrogate_config")}
+
+
+def resolved_block_configs(blocks) -> Dict[str, Any]:
+    """
+    Per block name, describe_block_config of its resolved framework config, or
+    {"error": ...} if the block cannot be resolved.
+    """
+
+    resolved: Dict[str, Any] = {}
+    for block in blocks:
+        try:
+            resolved[block.name] = describe_block_config(block_framework_config(block, resolve_block_profile(block)))
+        except Exception as exc:
+            resolved[block.name] = {"error": str(exc)}
+    return resolved
+
+
 def block_framework_config(block: PipelineBlock, profile: VesselProfile) -> Dict[str, Any]:
     """
     The block's framework configuration: config.py, the block's config
-    overrides (scenario, surrogate configs), its wind/current flags, then the
+    overrides (merge_config_override), its wind/current flags, then the
     profile.
     """
 
     framework_config = load_config_parameters()
     for key, value in block.config_overrides.items():
-        framework_config[key] = dict(value) if isinstance(value, dict) else value
+        framework_config[key] = merge_config_override(key, framework_config.get(key), value)
     framework_config["wind"] = block.wind
     framework_config["current"] = block.current
     apply_profile(profile, config=framework_config)

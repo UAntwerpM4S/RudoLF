@@ -13,10 +13,11 @@ from fw.scheduling.base_scheduler import BaseScheduler
 from fw.configuration.profile_applier import apply_profile
 from fw.configuration.stop_condition import Criterion, StopCondition
 from fw.configuration.config import PolicyStrategy, get_hyperparameters
-from fw.scheduling.run_spec import PipelineBlock, StopConditionSpec, TransferSpec
 from fw.scheduling.run_spec import block_output_subdir, validate_block_names
+from fw.scheduling.run_spec import PipelineBlock, StopConditionSpec, TransferSpec
 from fw.scheduling.pipeline_env import (
     block_framework_config,
+    describe_block_config,
     build_block_environment,
     check_block_wind_current,
     resolve_block_profile,
@@ -155,6 +156,7 @@ class PipelineScheduler(BaseScheduler):
             "ship=%s dynamics=%s action=%s",
             profile.model.ship_model, profile.model.dynamics_model, block.action
         )
+        logger.info("Block '%s' config: %s", block.name, describe_block_config(framework_config))
 
         if block.action == "evaluate_reward":
             return self._run_evaluate_reward(block, env, profile, framework_config)

@@ -20,6 +20,10 @@ from fw.configuration.env_factory import (
     AirSimEnvironment,
     LunarEnvironment,
     FhSimSyncEnvironment, sync_sim_env_name,
+    build_pysim_config,
+    build_fhsim_config,
+    build_fhsimsync_config,
+    build_airsim_config,
 )
 from fw.scheduling.agent_manager import AgentManager
 from fw.scheduling.agent_manager_simple import AgentManagerSimple
@@ -358,6 +362,33 @@ class Trainer:
         return None
 
     @staticmethod
+    def _build_eval_config(canonical_name: str, framework_config: Dict[str, Any], reward_name: str,
+                           reward_weights: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Environment configuration for one reward configuration: the
+        environment's keys from the framework config (as for training), with
+        reward_name and reward_weights on top.
+
+        Raises:
+            ValueError: For an environment reward evaluation does not support.
+        """
+
+        if canonical_name == lunar_env_name:
+            return {}
+        builders = {
+            py_sim_env_name: build_pysim_config,
+            fh_sim_env_name: build_fhsim_config,
+            sync_sim_env_name: build_fhsimsync_config,
+            airsim_env_name: build_airsim_config,
+        }
+        if canonical_name not in builders:
+            raise ValueError(f"Unsupported environment '{canonical_name}' for reward evaluation")
+        cfg = builders[canonical_name](framework_config)
+        cfg["reward_name"] = reward_name
+        cfg["reward_weights"] = reward_weights
+        return cfg
+
+    @staticmethod
     def _build_eval_environment(canonical_name: str, config: Dict[str, Any]):
         """
         Build a fresh environment wrapper for reward evaluation.
@@ -441,9 +472,12 @@ class Trainer:
                             print(f"      - {key}: {value}")
                     print("    Starting training...")
 
-                env = self._build_eval_environment(canonical_name, config)
+                # The env gets the full framework config (start/target, contours,
+                # surrogate configs, ...), not the bare reward entry.
+                env_config = self._build_eval_config(canonical_name, self._config, reward_name, reward_weights)
+                env = self._build_eval_environment(canonical_name, env_config)
 
-                trainer = Trainer(self._agent_type, [env], self._profile, "SimpleScheduler")
+                trainer = Trainer(self._agent_type, [env], self._profile, "SimpleScheduler", config=self._config)
 
                 # Deep copy, so StopCondition counters do not carry over to later configs.
                 isolated_configuration = copy.deepcopy(training_configuration)

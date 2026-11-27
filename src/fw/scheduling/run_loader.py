@@ -5,6 +5,7 @@ Load a JSON pipeline specification and validate it against framework enums and r
 from __future__ import annotations
 
 import json
+import logging
 
 from pathlib import Path
 from typing import Any, Dict, Set
@@ -15,23 +16,46 @@ from fw.configuration.config import PolicyStrategy
 from fw.configuration.config_profile import ProfileRegistry
 from fw.common.tools.config_utils import get_validated_bool
 from fw.common.tools.logging_config import resolve_log_level
+from fw.dynamics import ugent_surrogate, ugent_b01_surrogate
 from fw.configuration.stop_condition import Criterion, StopCondition
+from fw.dynamics.uantwerp_surrogate import CONFIG_KEYS as UA_CONFIG_KEYS
+from fw.scheduling.run_spec import block_name_error, validate_block_names
+from fw.configuration.env_factory import fh_sim_env_name, sync_sim_env_name
 from fw.configuration.env_factory import resolve_environment_name, EnvironmentRegistryError
 from fw.scheduling.run_spec import PipelineBlock, PipelineSpec, StopConditionSpec, TransferSpec
-from fw.scheduling.run_spec import block_name_error, validate_block_names
+
+logger = logging.getLogger(__name__)
 
 _VALID_ACTIONS = {"train", "visualize", "evaluate_reward"}
 
-# Block keys that replace the config.py entry of the same name for that block.
-# The surrogate configs replace the config.py dict as a whole (no key merge), so
-# a block's preset never inherits a checkpoint/lookup_csv meant for another one.
+# Block keys overriding the config.py entry of the same name for that block
+# (applied by pipeline_env.block_framework_config): "scenario" replaces it, the
+# surrogate configs are merged over config.py's dict key by key.
 BLOCK_CONFIG_KEYS = ("scenario", "ua_surrogate_config", "ugent_surrogate_config", "ugent_b01_surrogate_config")
 
+# Accepted keys of each surrogate config, and the dynamics model that reads it.
+_SURROGATE_CONFIG_KEYS = {
+    "ua_surrogate_config": frozenset(UA_CONFIG_KEYS),
+    "ugent_surrogate_config": ugent_surrogate._REQUIRED_CONFIG_KEYS | ugent_surrogate._OPTIONAL_CONFIG_KEYS,
+    "ugent_b01_surrogate_config": ugent_b01_surrogate._REQUIRED_CONFIG_KEYS | ugent_b01_surrogate._OPTIONAL_CONFIG_KEYS,
+}
+_SURROGATE_CONFIG_MODEL = {
+    "ua_surrogate_config": Model.UANTWERP,
+    "ugent_surrogate_config": Model.UGENT_SURROGATE,
+    "ugent_b01_surrogate_config": Model.UGENT_B01_SURROGATE,
+}
+
+# Environments that read "scenario" (build_fhsim_config / build_fhsimsync_config).
+_SCENARIO_ENVS = frozenset({fh_sim_env_name, sync_sim_env_name})
+
+_KNOWN_SPEC_KEYS = {"on_block_failure", "log_level", "blocks"}
 _KNOWN_BLOCK_KEYS = {
     "name", "env_type", "profile", "ship_model", "dynamics_model", "profile_overrides", "action",
     "reward_configs", "stop_condition", "transfer", "on_failure", "wind", "current", "show_plots",
     "hyperparameter_overrides", *BLOCK_CONFIG_KEYS,
 }
+_KNOWN_STOP_CONDITION_KEYS = {"criterion", "max_time_steps", "target_reward", "target_loss", "patience"}
+_KNOWN_TRANSFER_KEYS = {"policy_strategy", "from_block", "external_training_name", "independent"}
 _VALID_FAILURE_MODES = {"continue", "abort"}
 
 # Rejected up front because they would fail later during execution.
@@ -73,6 +97,10 @@ def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
             not name an earlier 'train' block.
     """
 
+    if not isinstance(raw, dict):
+        raise PipelineSpecError(f"[{source}] The specification must be a JSON object, got {type(raw).__name__}.")
+    _reject_unknown_keys(raw, _KNOWN_SPEC_KEYS, f"[{source}]", "the specification")
+
     on_block_failure = raw.get("on_block_failure", "continue")
     _validate_choice("on_block_failure", on_block_failure, _VALID_FAILURE_MODES, f"[{source}]")
 
@@ -83,7 +111,7 @@ def _parse_spec(raw: Dict[str, Any], source: str) -> PipelineSpec:
         raise PipelineSpecError(str(exc)) from exc
 
     raw_blocks = raw.get("blocks")
-    if not raw_blocks:
+    if not raw_blocks or not isinstance(raw_blocks, list):
         raise PipelineSpecError(f"[{source}] 'blocks' must be a non-empty list.")
 
     seen_names: Set[str] = set()
@@ -139,11 +167,10 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
 
     where = f"[{source}] block[{index}]"
 
+    if not isinstance(raw_block, dict):
+        raise PipelineSpecError(f"{where}: a block must be a JSON object, got {type(raw_block).__name__}.")
     # A misspelt or unsupported key would otherwise be dropped silently.
-    unknown_keys = sorted(set(raw_block) - _KNOWN_BLOCK_KEYS)
-    if unknown_keys:
-        raise PipelineSpecError(f"{where} ('{raw_block.get('name')}'): unknown key(s) {unknown_keys}; "
-                                f"accepted: {sorted(_KNOWN_BLOCK_KEYS)}.")
+    _reject_unknown_keys(raw_block, _KNOWN_BLOCK_KEYS, where, f"block '{raw_block.get('name')}'")
 
     name = raw_block.get("name")
     if not name or not isinstance(name, str):
@@ -192,8 +219,12 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
             f"leftover from changing this block's action."
         )
 
-    stop_condition = _parse_stop_condition(raw_block.get("stop_condition", {}), where, name)
-    transfer = _parse_transfer(raw_block.get("transfer", {}), action, where, name)
+    raw_stop_condition = _get_dict(raw_block, "stop_condition", where, name)
+    _reject_unknown_keys(raw_stop_condition, _KNOWN_STOP_CONDITION_KEYS, f"{where} ('{name}')", "stop_condition")
+    stop_condition = _parse_stop_condition(raw_stop_condition, where, name)
+    raw_transfer = _get_dict(raw_block, "transfer", where, name)
+    _reject_unknown_keys(raw_transfer, _KNOWN_TRANSFER_KEYS, f"{where} ('{name}')", "transfer")
+    transfer = _parse_transfer(raw_transfer, action, where, name)
 
     on_failure = raw_block.get("on_failure")
     if on_failure is not None:
@@ -208,7 +239,7 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
 
     config_overrides = _parse_config_overrides(raw_block, where, name)
 
-    return PipelineBlock(
+    block = PipelineBlock(
         name=name,
         env_type=env_type,
         profile=profile_name,
@@ -226,15 +257,18 @@ def _parse_block(raw_block: Dict[str, Any], index: int, seen_names: Set[str], so
         on_failure=on_failure,
         config_overrides=config_overrides,
     )
+    _check_config_overrides(block, where)
+    return block
 
 
 def _parse_config_overrides(raw_block: Dict[str, Any], where: str, name: str) -> Dict[str, Any]:
     """
-    Collect the block's BLOCK_CONFIG_KEYS entries.
+    Collect the block's BLOCK_CONFIG_KEYS entries (checked by
+    _check_config_overrides once the block is built).
 
     Raises:
         PipelineSpecError: A non-string scenario, a non-dict surrogate config,
-            or an unknown UAntwerp preset.
+            an unknown key in a surrogate config, or an unknown UAntwerp preset.
     """
 
     overrides: Dict[str, Any] = {}
@@ -245,9 +279,12 @@ def _parse_config_overrides(raw_block: Dict[str, Any], where: str, name: str) ->
         if key == "scenario":
             if not isinstance(value, str) or not value:
                 raise PipelineSpecError(f"{where} ('{name}'): 'scenario' must be a non-empty string.")
-        elif not isinstance(value, dict):
+            overrides[key] = value
+            continue
+        if not isinstance(value, dict):
             raise PipelineSpecError(f"{where} ('{name}'): '{key}' must be an object, got {type(value).__name__}.")
-        overrides[key] = dict(value) if isinstance(value, dict) else value
+        _reject_unknown_keys(value, _SURROGATE_CONFIG_KEYS[key], f"{where} ('{name}')", key)
+        overrides[key] = dict(value)
 
     ua_config = overrides.get("ua_surrogate_config")
     if ua_config is not None and "preset" in ua_config:
@@ -256,6 +293,84 @@ def _parse_config_overrides(raw_block: Dict[str, Any], where: str, name: str) ->
         except ValueError as exc:
             raise PipelineSpecError(f"{where} ('{name}'): ua_surrogate_config: {exc}") from exc
     return overrides
+
+
+def _check_config_overrides(block: PipelineBlock, where: str) -> None:
+    """
+    Check the block's config overrides against its resolved ship, dynamics
+    model and environment: a surrogate config for a dynamics model the block
+    does not use, or a UAntwerp preset for another ship, is an error; a
+    scenario on an environment that does not read it is logged as a warning.
+    If the block's profile cannot be resolved, the model checks are left to
+    the block itself (as PipelineScheduler._preflight does).
+
+    Raises:
+        PipelineSpecError: For a surrogate config / dynamics model or preset /
+            ship mismatch.
+    """
+
+    if not block.config_overrides:
+        return
+
+    # Imported here: pipeline_env imports the environment factories.
+    from fw.scheduling import pipeline_env
+
+    if "scenario" in block.config_overrides and resolve_environment_name(block.env_type) not in _SCENARIO_ENVS:
+        logger.warning("%s ('%s'): 'scenario' has no effect on env_type '%s'; only %s read it.",
+                       where, block.name, block.env_type, sorted(_SCENARIO_ENVS))
+
+    try:
+        model = pipeline_env.resolve_block_profile(block).model
+    except Exception:
+        return
+
+    for key, dynamics_model in _SURROGATE_CONFIG_MODEL.items():
+        if key in block.config_overrides and model.dynamics_model != dynamics_model:
+            raise PipelineSpecError(f"{where} ('{block.name}'): '{key}' is only read by dynamics model "
+                                    f"{dynamics_model.name}, but this block uses {model.dynamics_model.name}.")
+
+    if "ua_surrogate_config" not in block.config_overrides:
+        return
+    # The preset in effect: the block's, else config.py's (merged as at run time).
+    config_py_ua = pipeline_env.load_config_parameters().get("ua_surrogate_config")
+    ua_config = pipeline_env.merge_config_override("ua_surrogate_config", config_py_ua,
+                                                   block.config_overrides["ua_surrogate_config"])
+    preset_name = ua_config.get("preset")
+    if preset_name is None:
+        raise PipelineSpecError(f"{where} ('{block.name}'): ua_surrogate_config has no 'preset', and config.py "
+                                f"sets none either.")
+    try:
+        preset = get_preset(preset_name)
+    except ValueError as exc:
+        raise PipelineSpecError(f"{where} ('{block.name}'): ua_surrogate_config: {exc}") from exc
+    if preset.ship_model != model.ship_model:
+        raise PipelineSpecError(f"{where} ('{block.name}'): ua_surrogate_config preset '{preset.name}' is "
+                                f"for {preset.ship_model.name}, but this block uses {model.ship_model.name}.")
+
+
+def _get_dict(raw_block: Dict[str, Any], key: str, where: str, name: str) -> Dict[str, Any]:
+    """
+    The block's `key` entry as a dict ({} when absent or null).
+
+    Raises:
+        PipelineSpecError: If the entry is present but not an object.
+    """
+
+    value = raw_block.get(key) or {}
+    if not isinstance(value, dict):
+        raise PipelineSpecError(f"{where} ('{name}'): '{key}' must be an object, got {type(value).__name__}.")
+    return value
+
+
+def _reject_unknown_keys(raw: Dict[str, Any], known: Set[str], where: str, what: str) -> None:
+    """
+    Raise PipelineSpecError if `raw` has keys outside `known` (`what` names the
+    object in the message).
+    """
+
+    unknown = sorted(set(raw) - set(known))
+    if unknown:
+        raise PipelineSpecError(f"{where}: unknown key(s) {unknown} in {what}; accepted: {sorted(known)}.")
 
 
 def _parse_stop_condition(raw: Dict[str, Any], where: str, name: str) -> StopConditionSpec:
