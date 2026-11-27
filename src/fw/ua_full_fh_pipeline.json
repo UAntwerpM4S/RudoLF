@@ -6,14 +6,13 @@
       "name": "base_train",
       "wind": true,
       "current": true,
-      "scenario": "DDShip_scenario3_windcurrent",
       "ua_surrogate_config": {"preset": "myzako_full", "wind_current": "random"},
       "env_type": "PySimEnv",
       "ship_model": "MYZAKO_37",
       "dynamics_model": "UANTWERP",
       "profile": "uantwerp_surrogate_profile",
       "action": "train",
-      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.94, "patience":  4, "max_time_steps": 1000}
+      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.94, "patience": 4, "max_time_steps": 1000}
     },
     {
       "name": "chained_train",
@@ -25,7 +24,7 @@
       "dynamics_model": "FH_TABULAR",
       "profile": "fh_simulator_profile",
       "action": "train",
-      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.94, "patience":  4, "max_time_steps": 1000},
+      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.94, "patience": 4, "max_time_steps": 1000},
       "transfer": {"from_block": "base_train"}
     },
     {

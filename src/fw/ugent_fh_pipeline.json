@@ -10,7 +10,7 @@
       "profile": "ugent_surrogate_profile",
       "action": "train",
       "ugent_surrogate_config": {"ukc_percent": 363},
-      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.93, "patience":  4, "max_time_steps": 1500}
+      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.93, "patience": 4, "max_time_steps": 1500}
     },
     {
       "name": "chained_train",
@@ -20,7 +20,7 @@
       "profile": "fh_simulator_profile",
       "action": "train",
       "scenario": "DDShip_Tripoli_scenario_nowindnocurrent",
-      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.92, "patience":  4, "max_time_steps": 1000},
+      "stop_condition": {"criterion": "TARGET_REWARD", "target_reward": 0.92, "patience": 4, "max_time_steps": 1000},
       "transfer": {"from_block": "base_train"}
     },
     {

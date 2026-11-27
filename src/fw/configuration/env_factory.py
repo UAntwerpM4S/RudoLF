@@ -1021,6 +1021,45 @@ _ENVIRONMENT_NAME_ALIASES = {
 }
 
 
+def build_lunar_config(framework_config: dict) -> dict:
+    """
+    LunarLander needs no framework-level config keys: always {}.
+    """
+
+    return {}
+
+
+# Wrapper class and config builder per canonical environment name, shared by
+# the JSON pipeline (pipeline_env) and reward evaluation (Trainer). Each builder
+# takes the full framework config and returns the environment's config.
+ENVIRONMENT_CLASSES = {
+    py_sim_env_name: PySimEnvironment,
+    multi_sim_env_name: MultiPySimEnvironment,
+    fh_sim_env_name: FhSimEnvironment,
+    sync_sim_env_name: FhSimSyncEnvironment,
+    airsim_env_name: AirSimEnvironment,
+    lunar_env_name: LunarEnvironment,
+    py_sim_colav_env_name: PySimColavEnvironment,
+    multi_policy_colav_env_name: MultiPolicyColavEnvironment,
+}
+ENVIRONMENT_CONFIG_BUILDERS = {
+    py_sim_env_name: build_pysim_config,
+    multi_sim_env_name: build_pysim_config,
+    fh_sim_env_name: build_fhsim_config,
+    sync_sim_env_name: build_fhsimsync_config,
+    airsim_env_name: build_airsim_config,
+    lunar_env_name: build_lunar_config,
+    py_sim_colav_env_name: build_colav_config,
+    multi_policy_colav_env_name: build_multi_policy_colav_config,
+}
+
+# Environments that read "ua_surrogate_config" and "scenario" from the framework config.
+UA_SURROGATE_ENVS = frozenset({py_sim_env_name, multi_sim_env_name, fh_sim_env_name, sync_sim_env_name})
+SCENARIO_ENVS = frozenset({fh_sim_env_name, sync_sim_env_name})
+# COLAV environments: Model.UANTWERP is not supported there (no ua_surrogate_config).
+COLAV_ENVS = frozenset({py_sim_colav_env_name, multi_policy_colav_env_name})
+
+
 def resolve_environment_name(env_type):
     """
     Resolve a configured environment selector (alias or name, case-insensitive).

@@ -47,6 +47,8 @@ DEFAULT_MAX_BANK_CLEARANCE = None      # None: no cut-off
 _REQUIRED_CONFIG_KEYS = frozenset({"ukc_percent"})
 _OPTIONAL_CONFIG_KEYS = frozenset({"ittc_correction", "n_max_rpm", "min_bank_clearance",
                                    "max_bank_clearance"})
+# Every accepted config key (e.g. for validating pipeline specs).
+CONFIG_KEYS = _REQUIRED_CONFIG_KEYS | _OPTIONAL_CONFIG_KEYS
 
 
 @dataclass(frozen=True)

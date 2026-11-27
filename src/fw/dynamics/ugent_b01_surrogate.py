@@ -53,6 +53,8 @@ BankDistanceProvider = Callable[[VesselState], Tuple[Optional[float], Optional[f
 _CONFIG_NAME = "ugent_b01_surrogate_config"
 _REQUIRED_CONFIG_KEYS = frozenset({"ukc_percent"})
 _OPTIONAL_CONFIG_KEYS = frozenset({"n_max_rpm", "min_bank_clearance", "max_bank_clearance"})
+# Every accepted config key (e.g. for validating pipeline specs).
+CONFIG_KEYS = _REQUIRED_CONFIG_KEYS | _OPTIONAL_CONFIG_KEYS
 
 # Propeller rate [rpm] at thrust command 1.0 (towing-tank setting, A. Van Damme).
 DEFAULT_N_MAX_RPM = 1700.0

@@ -10,7 +10,9 @@ import logging
 
 from pathlib import Path
 from fw.scheduling import pipeline_env
+from fw.scheduling.pipeline_scheduler import PipelineScheduler
 from fw.scheduling.run_loader import PipelineSpecError, load_pipeline_spec
+from fw.configuration.env_factory import fh_sim_env_name, multi_sim_env_name, py_sim_env_name
 
 SPEC_DIR = Path(pipeline_env.__file__).resolve().parents[1]
 
@@ -67,15 +69,18 @@ def config_py_ua(monkeypatch):
 
 
 @pytest.mark.parametrize("spec_file", sorted(p.name for p in SPEC_DIR.glob("*.json")))
-def test_every_shipped_spec_loads(spec_file):
+def test_every_shipped_spec_loads(spec_file, caplog):
     """
-    All pipeline JSON files in src/fw pass the stricter key checks.
+    All pipeline JSON files in src/fw pass the load-time checks, without a
+    block key that has no effect (e.g. a scenario on a PySimEnv block).
     """
 
     raw = json.loads((SPEC_DIR / spec_file).read_text(encoding="utf-8"))
     if "blocks" not in raw:
         pytest.skip("not a pipeline spec")
-    load_pipeline_spec(str(SPEC_DIR / spec_file))
+    with caplog.at_level(logging.WARNING, logger="fw.scheduling.run_loader"):
+        load_pipeline_spec(str(SPEC_DIR / spec_file))
+    assert "has no effect" not in caplog.text
 
 
 def test_ua_full_spec_resolves_myzako_full():
@@ -138,7 +143,7 @@ def test_override_reaches_env_config_builder(tmp_path):
     """
 
     cfg = _resolved(_write_spec(tmp_path, ua_surrogate_config={"preset": "myzako_full"}))
-    env_cfg = pipeline_env._CONFIG_BUILDERS[pipeline_env.py_sim_env_name](cfg)
+    env_cfg = pipeline_env._CONFIG_BUILDERS[py_sim_env_name](cfg)
     assert env_cfg["ua_surrogate_config"]["preset"] == "myzako_full"
 
 
@@ -161,7 +166,7 @@ def test_scenario_override_reaches_fh_config(tmp_path):
     block = {"name": "b0", "env_type": "FhSimEnv", "ship_model": "MYZAKO_37", "dynamics_model": "FH_TABULAR",
              "profile": "fh_simulator_profile"}
     cfg = _resolved(_write_spec(tmp_path, block=block, scenario="my_scenario"))
-    assert pipeline_env._CONFIG_BUILDERS[pipeline_env.fh_sim_env_name](cfg)["scenario"] == "my_scenario"
+    assert pipeline_env._CONFIG_BUILDERS[fh_sim_env_name](cfg)["scenario"] == "my_scenario"
 
 
 def test_scenario_on_pysim_block_warns(tmp_path, caplog):
@@ -194,6 +199,18 @@ def test_resolved_block_configs_records_preset(tmp_path):
     ({"transfer": {"from": "x"}}, r"unknown key\(s\) \['from'\] in transfer"),
     ({"stop_condition": {"max_steps": 5}}, r"unknown key\(s\) \['max_steps'\] in stop_condition"),
     ({"transfer": "x"}, "'transfer' must be an object"),
+    ({"transfer": []}, "'transfer' must be an object, got list"),
+    ({"stop_condition": False}, "'stop_condition' must be an object, got bool"),
+    ({"profile_overrides": "x"}, "'profile_overrides' must be an object"),
+    ({"ship_model": "TRIPOLI"}, "preset 'myzako_confined' is for MYZAKO_37, but this block uses TRIPOLI"),
+    ({"action": "evaluate_reward", "reward_configs": [{"type": "PySimEnv", "wind": True}]},
+     r"unknown key\(s\) \['wind'\] in the reward config"),
+    ({"action": "evaluate_reward", "reward_configs": [{"type": "FhSimEnv"}]}, "they must match"),
+    ({"action": "evaluate_reward", "reward_configs": [{"reward_name": "r1"}]}, "'type' is required"),
+    ({"action": "evaluate_reward", "reward_configs": ["r1"]}, r"reward_configs\[0\]: must be an object"),
+    ({"action": "evaluate_reward", "reward_configs": {"type": "PySimEnv"}}, "'reward_configs' must be a list"),
+    ({"action": "evaluate_reward", "reward_configs": [{"type": "PySimEnv", "reward_weights": 1}]},
+     "'reward_weights' must be an object"),
 ])
 def test_invalid_block_fails_at_load(tmp_path, block_keys, match):
     """
@@ -238,7 +255,7 @@ def test_eval_config_uses_framework_config():
 
     framework_config = load_config_parameters()
     framework_config["ua_surrogate_config"] = {"preset": "myzako_full"}
-    cfg = Trainer._build_eval_config(pipeline_env.py_sim_env_name, framework_config, "r1", {"w": 1.0})
+    cfg = Trainer._build_eval_config(py_sim_env_name, framework_config, "r1", {"w": 1.0})
     assert cfg["start_pos"] == framework_config["start_pos"]
     assert cfg["ua_surrogate_config"] == {"preset": "myzako_full"}
     assert (cfg["reward_name"], cfg["reward_weights"]) == ("r1", {"w": 1.0})
@@ -275,3 +292,155 @@ def test_eval_inner_trainer_gets_config(monkeypatch):
     results = real_trainer.evaluate_reward(outer, [{"type": "PySimEnv"}], verbose=False)
     assert seen == [{"marker": True}]
     assert results[0]["status"] == "failed: stop"
+
+
+def test_uantwerp_on_colav_fails(tmp_path):
+    """
+    Model.UANTWERP is not supported on the COLAV environments.
+    """
+
+    with pytest.raises(PipelineSpecError, match="UANTWERP is not supported on PySimColavEnv"):
+        load_pipeline_spec(_write_spec(tmp_path, env_type="PySimColavEnv"))
+
+
+def test_comment_keys_are_allowed(tmp_path):
+    """
+    Keys starting with "_" are comments, at every level; they are not passed to
+    the surrogate.
+    """
+
+    spec = load_pipeline_spec(_write_spec(
+        tmp_path, top={"_comment": "x"}, _note="x", stop_condition={"_c": 1},
+        ua_surrogate_config={"preset": "myzako_full", "_why": "full env"},
+        action="evaluate_reward", reward_configs=[{"type": "PySimEnv", "_c": 1}]))
+    assert spec.blocks[0].config_overrides["ua_surrogate_config"] == {"preset": "myzako_full"}
+
+
+def test_multisim_override_reaches_env_config_builder(tmp_path):
+    """
+    The override also reaches the MultiSimEnv config.
+    """
+
+    cfg = _resolved(_write_spec(tmp_path, env_type="MultiSimEnv", ua_surrogate_config={"preset": "myzako_full"}))
+    assert pipeline_env._CONFIG_BUILDERS[multi_sim_env_name](cfg)["ua_surrogate_config"]["preset"] == "myzako_full"
+
+
+def test_ugent_b01_override_merges(tmp_path):
+    """
+    ugent_b01_surrogate_config is merged over config.py's like the others.
+    """
+
+    block = {"name": "b0", "env_type": "PySimEnv", "profile": "ugent_b01_surrogate_profile"}
+    cfg = _resolved(_write_spec(tmp_path, block=block, ugent_b01_surrogate_config={"ukc_percent": 200}))
+    assert cfg["ugent_b01_surrogate_config"]["ukc_percent"] == 200
+
+
+def test_resolved_block_configs_is_json_serializable(tmp_path):
+    """
+    The run record (spec plus resolved_block_config, as main_pipeline builds it) is JSON.
+    """
+
+    import dataclasses
+
+    spec = load_pipeline_spec(_write_spec(tmp_path, ua_surrogate_config={"preset": "myzako_full"}))
+    snapshot = dataclasses.asdict(spec)
+    snapshot["resolved_block_config"] = pipeline_env.resolved_block_configs(spec.blocks)
+    assert json.loads(json.dumps(snapshot))["resolved_block_config"]["b0"]["ua_surrogate_config"]["preset"] == \
+        "myzako_full"
+
+
+def test_preflight_rejects_full_override_without_wind_current(tmp_path):
+    """
+    A block's myzako_full override with wind/current off fails before any block runs.
+    """
+
+    spec = load_pipeline_spec(_write_spec(tmp_path, wind=False, current=False,
+                                          ua_surrogate_config={"preset": "myzako_full"}))
+    with pytest.raises(ValueError, match="must be enabled"):
+        PipelineScheduler._preflight(spec.blocks)
+
+
+def test_preflight_rejects_preset_ship_mismatch_without_override():
+    """
+    Blocks built in Python get the preset/ship check in _preflight, also
+    without a ua_surrogate_config override (config.py's preset).
+    """
+
+    from fw.scheduling.run_spec import PipelineBlock
+
+    block = PipelineBlock(name="b0", env_type="PySimEnv", profile="uantwerp_surrogate_profile",
+                          ship_model="TRIPOLI", dynamics_model="UANTWERP")
+    with pytest.raises(ValueError, match="but this block uses TRIPOLI"):
+        PipelineScheduler._preflight([block])
+
+
+def test_run_evaluate_reward_uses_block_override(tmp_path, monkeypatch):
+    """
+    End to end through PipelineScheduler._run_evaluate_reward: the reward
+    evaluation env gets the block's merged ua_surrogate_config.
+    """
+
+    from types import SimpleNamespace
+    from fw.scheduling import trainer as trainer_module
+
+    spec = load_pipeline_spec(_write_spec(
+        tmp_path, action="evaluate_reward", ua_surrogate_config={"preset": "myzako_full"},
+        reward_configs=[{"type": "PySimEnv", "reward_name": "r1", "reward_weights": {"forward": -1.0}}]))
+    block = spec.blocks[0]
+    profile = pipeline_env.resolve_block_profile(block)
+    framework_config = pipeline_env.block_framework_config(block, profile)
+
+    def init(self, agent_type, envs, profile_, scheduler_type, config=None):
+        """
+        Minimal Trainer: no agent manager or scheduler.
+        """
+
+        self._agent_type, self._envs, self._profile, self._config = agent_type, envs, profile_, config
+
+    seen = []
+
+    def build_env(canonical_name, config):
+        """
+        Record the eval env config, then stop this reward config.
+        """
+
+        seen.append((canonical_name, config))
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(trainer_module.Trainer, "__init__", init)
+    monkeypatch.setattr(trainer_module.Trainer, "_build_eval_environment", staticmethod(build_env))
+    monkeypatch.setattr(trainer_module.Trainer, "export_evaluation_results", staticmethod(lambda *a: None))
+    scheduler = SimpleNamespace(agent_mgr=SimpleNamespace(agent_type="PPO"),
+                                _build_stop_condition=PipelineScheduler._build_stop_condition)
+
+    PipelineScheduler._run_evaluate_reward(scheduler, block, object(), profile, framework_config)
+    [(canonical_name, env_config)] = seen
+    assert canonical_name == py_sim_env_name
+    assert env_config["ua_surrogate_config"]["preset"] == "myzako_full"
+    assert env_config["ua_surrogate_config"]["wind_current"] == framework_config["ua_surrogate_config"]["wind_current"]
+    assert (env_config["reward_name"], env_config["reward_weights"]) == ("r1", {"forward": -1.0})
+
+
+def test_evaluate_reward_rejects_unknown_reward_key():
+    """
+    Trainer.evaluate_reward (also used by main.py) rejects unknown keys
+    before any training starts.
+    """
+
+    from fw.scheduling.trainer import Trainer
+
+    trainer = Trainer.__new__(Trainer)
+    with pytest.raises(ValueError, match=r"unknown key\(s\) \['wind'\]"):
+        trainer.evaluate_reward([{"type": "PySimEnv", "wind": True}], verbose=False)
+
+
+def test_config_py_preset_typo_is_left_to_the_block(tmp_path, config_py_ua):
+    """
+    A preset typo in config.py does not stop the spec from loading (the block
+    fails when it runs); a typo in the block's own preset does.
+    """
+
+    config_py_ua({"preset": "myzako_confinedd"})
+    load_pipeline_spec(_write_spec(tmp_path))
+    with pytest.raises(PipelineSpecError, match="Unknown UAntwerp surrogate preset 'myzako_fulll'"):
+        load_pipeline_spec(_write_spec(tmp_path, ua_surrogate_config={"preset": "myzako_fulll"}))
