@@ -55,3 +55,22 @@ def test_training_iteration_logger_writes_one_row_per_iteration(tmp_path):
     assert rows[0]["device"] == "cuda"
     assert rows[0]["iteration"] == "0"
     assert rows[1]["iteration"] == "1"
+
+
+def test_training_iteration_logger_records_the_rollout_device(tmp_path):
+    """
+    The rollout_device column holds the given rollout device, or the device without one.
+    """
+
+    from fw.common.tools.training_iteration_logger import TrainingIterationLogger
+
+    for rollout_device, expected in (("cpu", "cpu"), (None, "cuda")):
+        logger = TrainingIterationLogger(env_name="AirSimEnv", agent_type="PPO", device="cuda",
+                                         src_dir=tmp_path, log_dir=f"logs_{expected}_{rollout_device}",
+                                         rollout_device=rollout_device)
+        logger.log_iteration(iteration=0, mean_reward=0.0, mean_advantage=0.0, loss=0.0,
+                             num_episode_batches=1, elapsed_seconds=1.0)
+        logger.save()
+        with logger.path.open("r", newline="", encoding="utf-8") as file:
+            row = next(csv.DictReader(file))
+        assert row["device"] == "cuda" and row["rollout_device"] == expected

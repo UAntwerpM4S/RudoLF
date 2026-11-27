@@ -486,6 +486,7 @@ class SinglePPOAgent(BasePPOAgent):
                 device=str(self.device),
                 src_dir=project_src_dir,
                 model_dir=self.model_dir,
+                rollout_device=str(getattr(self, "rollout_device", self.device)),
             )
             if is_airsim_env
             else None
@@ -498,6 +499,7 @@ class SinglePPOAgent(BasePPOAgent):
                 agent_type="PPO",
                 device=str(self.device),
                 src_dir=project_src_dir,
+                rollout_device=str(getattr(self, "rollout_device", self.device)),
             )
         )
         logger.info("Iteration log: %s", iteration_logger.path)

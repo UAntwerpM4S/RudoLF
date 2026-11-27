@@ -141,3 +141,23 @@ def test_auto_normalize_series_keeps_constant_series_centered():
     assert np.isnan(normalized[3])
     assert value_min == 5.0
     assert value_max == 5.0
+
+
+def test_airsim_training_session_records_the_rollout_device(tmp_path):
+    """
+    The session's metadata and iteration log name the rollout device next to the device.
+    """
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    session = AirSimTrainingSession(env_name="AirSimEnv", agent_type="PPO", device="cuda", src_dir=src_dir,
+                                    model_dir=tmp_path / "models", rollout_device="cpu")
+    session.iteration_logger.log_iteration(iteration=0, mean_reward=0.0, mean_advantage=0.0, loss=0.0,
+                                           num_episode_batches=1, elapsed_seconds=1.0)
+    session.finalize(training_metrics=[{"loss": 0.0, "advantage": 0.0, "reward": 0.0}], interrupted=False,
+                     skipped_short_rollouts=0, last_completed_iteration=0, best_mean_reward=0.0,
+                     stop_rule="1 policy update")
+
+    metadata = json.loads(session.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["config"]["device"] == "cuda" and metadata["config"]["rollout_device"] == "cpu"
+    assert "rollout_device,iteration" in session.iteration_logger.path.read_text(encoding="utf-8").splitlines()[0]

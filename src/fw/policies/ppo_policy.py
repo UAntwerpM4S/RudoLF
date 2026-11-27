@@ -477,7 +477,7 @@ class PPOPolicy:
             Tuple: (action in [-1, 1], raw pre-tanh action, log_prob, value).
         """
 
-        action_mean, action_std, value = (network or self.network)(state)
+        action_mean, action_std, value = (network if network is not None else self.network)(state)
 
         dist = torch.distributions.Normal(action_mean, action_std)
 
