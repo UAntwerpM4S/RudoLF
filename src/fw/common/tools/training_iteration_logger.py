@@ -7,8 +7,8 @@ from __future__ import annotations
 import csv
 import logging
 
-from typing import Any
 from pathlib import Path
+from typing import Any, Optional
 from datetime import datetime, timezone
 from fw.common.tools.path_utils import resolve_path_relative_to_src
 
@@ -41,6 +41,7 @@ class TrainingIterationLogger:
         "num_episode_batches",
         "elapsed_seconds",
         "rss_mb",
+        "rollout_device",   # last, so readers by column position keep working
     )
 
     def __init__(
@@ -51,9 +52,12 @@ class TrainingIterationLogger:
         device: str,
         src_dir: Path,
         log_dir: str = "logs",
+        rollout_device: Optional[str] = None,
     ) -> None:
         """
         Create a new timestamped iteration log under the requested log dir.
+        rollout_device is the device of the rollout forward passes (column
+        "rollout_device"); None means the same as device.
         """
 
         self._run_started = datetime.now(timezone.utc)
@@ -65,6 +69,8 @@ class TrainingIterationLogger:
         self._env_name = str(env_name)
         self._agent_type = str(agent_type)
         self._device = str(device)
+        # Device of the rollout forward passes (PPOPolicy); the same as device without a split.
+        self._rollout_device = str(device) if rollout_device is None else str(rollout_device)
         self._rows: list[dict[str, Any]] = []
         self._prev_rss_mb: float = 0.0
         self._psutil_proc = _psutil.Process() if _PSUTIL_AVAILABLE else None
@@ -109,6 +115,7 @@ class TrainingIterationLogger:
             "env_name": self._env_name,
             "agent_type": self._agent_type,
             "device": self._device,
+            "rollout_device": self._rollout_device,
             "iteration": int(iteration),
             "mean_reward": float(mean_reward),
             "mean_advantage": float(mean_advantage),

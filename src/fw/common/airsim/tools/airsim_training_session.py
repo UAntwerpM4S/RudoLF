@@ -8,8 +8,8 @@ import csv
 import json
 import numpy as np
 
-from typing import Any
 from pathlib import Path
+from typing import Any, Optional
 from datetime import datetime, timezone
 from fw.common.tools.path_utils import resolve_path_relative_to_src
 from fw.common.airsim.tools.telemetry_exporter import TelemetryExporter
@@ -82,9 +82,12 @@ class AirSimTrainingSession:
         src_dir: Path,
         model_dir: str | Path | None = None,
         log_dir: str = "logs/airsim_training_sessions",
+        rollout_device: Optional[str] = None,
     ) -> None:
         """
-        Create a timestamped AirSim training session directory.
+        Create a timestamped AirSim training session directory. rollout_device
+        (device of the rollout forward passes) goes into the iteration log and
+        the metadata; None means the same as device.
         """
 
         self._run_started = datetime.now(timezone.utc)
@@ -107,6 +110,7 @@ class AirSimTrainingSession:
             device=device,
             src_dir=src_dir,
             log_dir=str(self.session_dir),
+            rollout_device=rollout_device,
         )
 
         self._run_log_exporter = TelemetryExporter(
@@ -116,6 +120,7 @@ class AirSimTrainingSession:
             config_dict={
                 "agent_type": agent_type,
                 "device": device,
+                "rollout_device": device if rollout_device is None else rollout_device,
             },
             export_dir=self.session_dir,
             flush_interval=25,

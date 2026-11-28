@@ -1,4 +1,5 @@
 import os
+import copy
 import torch
 import logging
 import zipfile
@@ -150,29 +151,98 @@ class PPOPolicy:
     """
     PPO actor-critic policy: network, save/load and (tanh-squashed) prediction.
 
+    Two devices: `network` lives on `device` and is the one trained, saved and
+    loaded; the public NumPy calls (predict, predict_with_raw, predict_value) run
+    on `rollout_device`. If they differ (e.g. training on 'cuda', rollouts on
+    'cpu'), those calls use a gradient-free copy of `network` on rollout_device.
+    The private tensor methods (_predict, _predict_with_raw) always use `network`.
+
+    Keeping the copy current: code that changes the weights calls
+    mark_weights_changed() (the PPO updates, loading, the MPSA rollback and the
+    AirSim transfer do). As a safety net the copy is also refreshed when `network`
+    is replaced or torch's in-place version counter of a parameter changed (e.g.
+    optimizer.step() of non-fused optimizers, load_state_dict, copy_ under no_grad).
+    Writes the counter does not see (fused optimizers, `p.data = ...`,
+    `p.data.copy_(...)`, NumPy views) need the explicit call.
+
     Attributes:
         input_dim (int): Observation dimension.
         output_dim (int): Action dimension.
-        device (torch.device): Device the network runs on.
+        device (torch.device): Device the network is trained on.
+        rollout_device (torch.device): Device of the public prediction calls.
         network (ActorCriticNetwork): The actor-critic network.
         yaw_rate_obs_scale (Optional[float]): Yaw-rate observation scale [rad/s]
             the policy is trained with; saved with it and applied to the env it is
             loaded into (apply_policy_yaw_rate_obs_scale). None if not stored.
     """
 
-    def __init__(self, input_dim: int, output_dim: int, device: str = "cpu"):
+    def __init__(self, input_dim: int, output_dim: int, device: str = "cpu",
+                 rollout_device: Optional[str] = None):
         """
         Args:
             input_dim (int): Observation dimension.
             output_dim (int): Action dimension.
-            device (str, optional): Device to run on (see get_device).
+            device (str, optional): Device to train on (see get_device).
+            rollout_device (str, optional): Device of the public prediction calls
+                (see get_device); None means `device`.
         """
 
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.device = get_device(device)
         self.network = ActorCriticNetwork(input_dim, output_dim).to(self.device)
+        self.rollout_device = self.device if rollout_device is None else get_device(str(rollout_device))
+        # Separate copy only if the devices differ; deepcopy, so creating it does
+        # not draw from the torch RNG (initial weights stay as without a split).
+        self._rollout_network: Optional[ActorCriticNetwork] = None
+        self._rollout_weights_key: Optional[tuple] = None
+        # The network object the copy was last taken from (identity check; the
+        # reference also keeps its tensor ids from being reused).
+        self._rollout_source: Optional[ActorCriticNetwork] = None
+        if self.rollout_device != self.device:
+            self._rollout_network = copy.deepcopy(self.network).to(self.rollout_device)
+            self._rollout_network.requires_grad_(False)
+            self._rollout_network.eval()
         self.yaw_rate_obs_scale: Optional[float] = None
+
+
+    def _weights_key(self) -> tuple:
+        """
+        Identity and in-place version counter of every parameter and buffer of
+        `network`. Torch bumps a tensor's version on every in-place change
+        (optimizer.step, load_state_dict, copy_), so the key changes exactly when
+        the weights may have changed; replacing `network` changes the ids.
+        """
+
+        return tuple((id(t), t._version) for t in (*self.network.parameters(), *self.network.buffers()))
+
+
+    def mark_weights_changed(self) -> None:
+        """
+        Refresh the rollout copy before its next use. Call after changing the
+        weights of `network` (see the class docstring); without a separate rollout
+        copy this does nothing.
+        """
+
+        self._rollout_weights_key = None
+
+
+    def rollout_network(self) -> ActorCriticNetwork:
+        """
+        The network the public prediction calls use: `network` itself, or its copy
+        on rollout_device, refreshed first if marked changed, if `network` was
+        replaced, or if a parameter's in-place version counter changed.
+        """
+
+        if self._rollout_network is None:
+            return self.network
+        key = self._weights_key()
+        if (self._rollout_weights_key is None or key != self._rollout_weights_key
+                or self._rollout_source is not self.network):
+            self._rollout_network.load_state_dict(self.network.state_dict())
+            self._rollout_weights_key = key
+            self._rollout_source = self.network
+        return self._rollout_network
 
 
     def _get_constructor_parameters(self) -> dict:
@@ -242,13 +312,16 @@ class PPOPolicy:
 
 
     @classmethod
-    def build_policy_from_state(cls, saved_variables: Dict[str, Any], device: torch.device):
+    def build_policy_from_state(cls, saved_variables: Dict[str, Any], device: torch.device,
+                                rollout_device: Optional[Union[str, torch.device]] = None):
         """
         Rebuild a policy on `device` from serialized state.
 
         Args:
             saved_variables (Dict[str, Any]): Serialized policy (see serialize_policy).
             device (torch.device): Target device.
+            rollout_device (optional): Device of the public prediction calls; None
+                means `device` (see PPOPolicy).
 
         Returns:
             PPOPolicy: Policy with the loaded weights.
@@ -266,9 +339,10 @@ class PPOPolicy:
             logger.info("Loading a policy trained on '%s' onto '%s'.", trained_on, device)
         data["device"] = str(device)
 
-        model = cls(**data)
+        model = cls(**data, rollout_device=None if rollout_device is None else str(rollout_device))
         model.network.load_state_dict(saved_variables["model_state_dict"])
         model.network.to(device)
+        model.mark_weights_changed()
         yaw_scale = (saved_variables.get("obs_scales") or {}).get("yaw_rate")
         if yaw_scale is not None:
             yaw_scale = float(yaw_scale)
@@ -304,13 +378,16 @@ class PPOPolicy:
 
 
     @classmethod
-    def load(cls, filename: str, device: str = "cpu") -> "PPOPolicy":
+    def load(cls, filename: str, device: str = "cpu",
+             rollout_device: Optional[Union[str, torch.device]] = None) -> "PPOPolicy":
         """
         Load a policy saved with `save`.
 
         Args:
             filename (str): Policy path (".zip" is added if missing).
             device (str, optional): Device to load onto ('cpu', 'cuda' or 'auto').
+            rollout_device (optional): Device of the public prediction calls; None
+                means `device` (see PPOPolicy).
 
         Returns:
             PPOPolicy: The loaded policy.
@@ -330,7 +407,7 @@ class PPOPolicy:
         except (FileNotFoundError, KeyError) as e:
             raise RuntimeError(f"Failed to load model: {e}")
 
-        return cls.build_policy_from_state(saved_variables, device)
+        return cls.build_policy_from_state(saved_variables, device, rollout_device)
 
 
     # Upper bound on log(new_prob / old_prob) in the PPO update. Without it,
@@ -386,19 +463,21 @@ class PPOPolicy:
         return cls.calc_log_probs(dist, raw_actions, torch.tanh(raw_actions))
 
 
-    def _predict_with_raw(self, state: torch.Tensor, deterministic: bool = False) -> Tuple:
+    def _predict_with_raw(self, state: torch.Tensor, deterministic: bool = False,
+                          network: Optional[ActorCriticNetwork] = None) -> Tuple:
         """
         Predict squashed action, raw action, log-probability and value (tensors).
 
         Args:
-            state (torch.Tensor): Batched observations.
+            state (torch.Tensor): Batched observations, on the network's device.
             deterministic (bool): Use the mean instead of sampling.
+            network (ActorCriticNetwork, optional): Network to evaluate; default `network`.
 
         Returns:
             Tuple: (action in [-1, 1], raw pre-tanh action, log_prob, value).
         """
 
-        action_mean, action_std, value = self.network(state)
+        action_mean, action_std, value = (network if network is not None else self.network)(state)
 
         dist = torch.distributions.Normal(action_mean, action_std)
 
@@ -415,10 +494,10 @@ class PPOPolicy:
 
     def _predict(self, state: torch.Tensor, deterministic: bool = False) -> Tuple:
         """
-        Predict squashed action, log-probability and value (tensors).
+        Predict squashed action, log-probability and value (tensors), with `network`.
 
         Args:
-            state (torch.Tensor): Batched observations.
+            state (torch.Tensor): Batched observations, on `device`.
             deterministic (bool): Use the mean instead of sampling.
 
         Returns:
@@ -431,12 +510,13 @@ class PPOPolicy:
 
     def _as_batched_tensor(self, state: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
         """
-        Convert a state to a float tensor on the policy device; a 1-D state gets
-        a batch dimension.
+        Convert a state to a float tensor on rollout_device; a 1-D state gets a
+        batch dimension.
         """
 
-        if not isinstance(state, torch.Tensor):
-            state = torch.FloatTensor(state).to(self.device)
+        # as_tensor also moves a tensor given on another device and builds NumPy
+        # input directly on the target device.
+        state = torch.as_tensor(state, dtype=torch.float32, device=self.rollout_device)
 
         if state.ndim == 1:
             state = state.unsqueeze(0)
@@ -446,7 +526,7 @@ class PPOPolicy:
 
     def predict(self, state: Union[np.ndarray, torch.Tensor], deterministic: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Predict without gradients; a 1-D state gets a batch dimension.
+        Predict without gradients on rollout_device; a 1-D state gets a batch dimension.
 
         Args:
             state (np.ndarray | torch.Tensor): Observation(s).
@@ -456,12 +536,8 @@ class PPOPolicy:
             Tuple: (action, log_prob, value) as NumPy arrays.
         """
 
-        state = self._as_batched_tensor(state)
-
-        with torch.no_grad():
-            action, log_prob, value = self._predict(state, deterministic)
-
-        return action.cpu().numpy(), log_prob.cpu().numpy(), value.cpu().numpy()
+        action, _, log_prob, value = self.predict_with_raw(state, deterministic)
+        return action, log_prob, value
 
 
     def predict_with_raw(
@@ -484,7 +560,8 @@ class PPOPolicy:
         state = self._as_batched_tensor(state)
 
         with torch.no_grad():
-            action, raw_action, log_prob, value = self._predict_with_raw(state, deterministic)
+            action, raw_action, log_prob, value = self._predict_with_raw(
+                state, deterministic, network=self.rollout_network())
 
         return (
             action.cpu().numpy(),
@@ -492,3 +569,23 @@ class PPOPolicy:
             log_prob.cpu().numpy(),
             value.cpu().numpy(),
         )
+
+
+    def predict_value(self, state: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+        """
+        State value(s) without gradients on rollout_device (critic only, no
+        sampling); a 1-D state gets a batch dimension. Used for GAE bootstrapping.
+
+        Args:
+            state (np.ndarray | torch.Tensor): Observation(s).
+
+        Returns:
+            np.ndarray: Values, shape (batch,).
+        """
+
+        state = self._as_batched_tensor(state)
+
+        with torch.no_grad():
+            _, _, value = self.rollout_network()(state)
+
+        return value.squeeze(-1).cpu().numpy()

@@ -241,10 +241,7 @@ class MultiPPOAgent(BasePPOAgent):
                 "Pass the index of the agent whose value function should be queried."
             )
 
-        with torch.no_grad():
-            last_state = torch.FloatTensor(next_state).unsqueeze(0).to(self.device)
-            _, _, next_values = self.agents[env_id].policy.network(last_state)
-            return next_values.squeeze(0).item()
+        return float(self.agents[env_id].policy.predict_value(next_state)[0])
 
 
     def learn(
@@ -269,7 +266,8 @@ class MultiPPOAgent(BasePPOAgent):
         ends when all agents are frozen or after `max_time_steps` iterations.
         """
 
-        logger.info("Starting training with %d parallel environments on a '%s' device", self.num_envs, self.device)
+        logger.info("Starting training with %d parallel environments on a '%s' device (rollouts on '%s')",
+                    self.num_envs, self.device, getattr(self, "rollout_device", self.device))
 
         last_save_index = 0
         best_rewards = [float('-inf')] * len(self.agents)
@@ -456,7 +454,8 @@ class MultiPPOAgent(BasePPOAgent):
                     if agent.policy is None:
                         raise RuntimeError(f"Agent {i} has no initialized policy.")
 
-                    policy = PPOPolicy.build_policy_from_state(saved_variables, self.device)
+                    policy = PPOPolicy.build_policy_from_state(saved_variables, self.device,
+                                                               rollout_device=getattr(agent, "rollout_device", None))
                     require_policy_dims(policy, agent.policy.input_dim, agent.policy.output_dim,
                                         f"{policy_file_name}:policy_{i}.pth")
                     policies.append(policy)

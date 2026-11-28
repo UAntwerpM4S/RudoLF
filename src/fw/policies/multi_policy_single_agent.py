@@ -19,6 +19,7 @@ Usage:
 
 import os
 import copy
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -250,7 +251,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         # N independent policies and optimizers
         self.policies: List[PPOPolicy] = [
-            PPOPolicy(self.policy_obs_dim, self.output_dim, str(self.device))
+            PPOPolicy(self.policy_obs_dim, self.output_dim, str(self.device),
+                      rollout_device=str(self.rollout_device))
             for _ in range(num_policies)
         ]
         for policy in self.policies:
@@ -394,10 +396,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
         """
 
         base_obs, scenario_id = self._extract_scenario(next_state)
-        with torch.no_grad():
-            state_t = torch.FloatTensor(base_obs).unsqueeze(0).to(self.device)
-            _, _, value = self.policies[scenario_id].network(state_t)
-            return value.squeeze(0).item()
+        return float(self.policies[scenario_id].predict_value(base_obs)[0])
 
     # ------------------------------------------------------------------
     # Vectorized environments (as in SinglePPOAgent)
@@ -560,18 +559,12 @@ class MultiPolicySingleAgent(BasePPOAgent):
                     # Truncated: bootstrap from the state after the segment
                     next_state = episode["next_states"][end - 1]
                     base_next = next_state[:-self.num_policies]
-                    with torch.no_grad():
-                        st = torch.FloatTensor(base_next).unsqueeze(0).to(self.device)
-                        _, _, v = self.policies[policy_id].network(st)
-                        next_value = v.squeeze(0).item()
+                    next_value = float(self.policies[policy_id].predict_value(base_next)[0])
             else:
                 # Scenario switch: outgoing policy's value of the next segment's first state
                 boundary_state = episode["states"][end]
                 base_boundary = boundary_state[:-self.num_policies]
-                with torch.no_grad():
-                    st = torch.FloatTensor(base_boundary).unsqueeze(0).to(self.device)
-                    _, _, v = self.policies[policy_id].network(st)
-                    next_value = v.squeeze(0).item()
+                next_value = float(self.policies[policy_id].predict_value(base_boundary)[0])
 
             advantages = self.compute_gae(
                 seg_rewards,
@@ -666,12 +659,13 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         batch_size = all_states.shape[0]
         loss_per_epoch = []
-        policy_loss_per_mb = []
-        value_loss_per_mb = []
-        entropy_bonus_per_mb = []
+        # Per minibatch [policy loss, value loss, entropy bonus], kept on the
+        # device and read back once after the update (no per-minibatch sync).
+        loss_terms_per_mb = []
 
         for _ in range(self.num_epochs):
-            indices = torch.randperm(batch_size)
+            # On the data's device: CPU indices would be copied to the GPU per minibatch.
+            indices = torch.randperm(batch_size, device=self.device)
 
             for mb_start in range(0, batch_size, self.batch_size):
                 mb_end = mb_start + self.batch_size
@@ -702,39 +696,46 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 entropy_bonus = self.entropy_coef * entropy_loss
                 loss = policy_loss + (self.value_loss_coef * value_loss) - entropy_bonus
 
-                if torch.isnan(loss) or torch.isinf(loss):
+                optimizer.zero_grad()
+                loss.backward()
+                grad_norm = nn.utils.clip_grad_norm_(policy.network.parameters(), self.max_grad_norm)
+
+                # One host sync per minibatch (loss and gradient norm together);
+                # on CUDA every .item()/float()/tensor-in-if waits for the GPU.
+                loss_value, grad_norm_value = torch.stack([loss.detach(), grad_norm.detach()]).tolist()
+
+                if not math.isfinite(loss_value):
+                    # Its gradients are non-finite too: discard them, no step.
                     logger.warning(
                         "[Alert] NaN/Inf loss for policy '%s' (policy=%.4f, value=%.4f) - skipping update step.",
                         self.policy_labels[policy_id], policy_loss.item(), value_loss.item(),
                     )
+                    optimizer.zero_grad()
                     continue
-
-                optimizer.zero_grad()
-                loss.backward()
-                grad_norm = nn.utils.clip_grad_norm_(policy.network.parameters(), self.max_grad_norm)
-                if not torch.isfinite(grad_norm):
+                if not math.isfinite(grad_norm_value):
                     # A non-finite norm would turn every weight of the slot into NaN.
                     logger.warning(
                         "[Alert] Non-finite gradient norm (%s) for policy '%s' - skipping update step.",
-                        float(grad_norm), self.policy_labels[policy_id],
+                        grad_norm_value, self.policy_labels[policy_id],
                     )
                     optimizer.zero_grad()
                     continue
                 optimizer.step()
 
-                loss_per_epoch.append(loss.item())
-                policy_loss_per_mb.append(policy_loss.item())
-                value_loss_per_mb.append(value_loss.item())
-                entropy_bonus_per_mb.append(entropy_bonus.item())
+                loss_per_epoch.append(loss_value)
+                loss_terms_per_mb.append(torch.stack([policy_loss.detach(), value_loss.detach(), entropy_bonus.detach()]))
 
+        # The weights changed (also with optimizers the version check misses).
+        policy.mark_weights_changed()
         if not loss_per_epoch:
             return float("nan"), float("nan"), float("nan"), float("nan")
 
+        mean_policy_loss, mean_value_loss, mean_entropy_bonus = torch.stack(loss_terms_per_mb).double().mean(dim=0).tolist()
         return (
             float(np.mean(loss_per_epoch)),
-            float(np.mean(policy_loss_per_mb)),
-            float(np.mean(value_loss_per_mb)),
-            float(np.mean(entropy_bonus_per_mb)),
+            mean_policy_loss,
+            mean_value_loss,
+            mean_entropy_bonus,
         )
 
     # ------------------------------------------------------------------
@@ -749,8 +750,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
         """
 
         logger.info(
-            "Starting multi-policy training with %d policies, %d parallel env(s) on '%s'",
-            self.num_policies, self.num_envs, self.device
+            "Starting multi-policy training with %d policies, %d parallel env(s) on '%s' (rollouts on '%s')",
+            self.num_policies, self.num_envs, self.device, getattr(self, "rollout_device", self.device)
         )
 
         last_save_index = 0
@@ -854,6 +855,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                         )
                         if rollback_state is not None:
                             self.policies[pid].network.load_state_dict(rollback_state)
+                            self.policies[pid].mark_weights_changed()
                             # Fresh optimizer: Adam's moments from the collapse
                             # would push the weights straight back (ping-pong).
                             self.optimizers[pid] = optim.Adam(
@@ -1010,7 +1012,8 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 for i in range(self.num_policies):
                     agent_path = os.path.join(tmp_dir, f"policy_{i}.pth")
                     saved = torch.load(agent_path, map_location=self.device, weights_only=False)
-                    policy = PPOPolicy.build_policy_from_state(saved, self.device)
+                    policy = PPOPolicy.build_policy_from_state(saved, self.device,
+                                                               rollout_device=getattr(self, "rollout_device", None))
                     require_policy_dims(policy, self.policy_obs_dim, self.output_dim,
                                         f"{policy_file_name}:policy_{i}.pth")
                     policies.append(policy)
@@ -1075,7 +1078,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
                 f"policy_id {policy_id} out of range [0, {self.num_policies})"
             )
 
-        loaded = PPOPolicy.load(policy_file_name, str(self.device))
+        loaded = PPOPolicy.load(policy_file_name, str(self.device), rollout_device=getattr(self, "rollout_device", None))
         require_policy_dims(loaded, self.policy_obs_dim, self.output_dim, policy_file_name)
         env_scale, policy_scale = env_yaw_rate_obs_scale(self.env), policy_yaw_rate_obs_scale(loaded, self.env)
         if env_scale is not None and policy_scale != env_scale:

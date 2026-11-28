@@ -1,5 +1,6 @@
 import os
 import copy
+import math
 import time
 import logging
 import torch
@@ -70,7 +71,8 @@ class SinglePPOAgent(BasePPOAgent):
         self.output_dim = self.action_space.shape[0]
 
         self.input_dim = self.observation_space.shape[0]
-        self.policy = PPOPolicy(self.input_dim, self.output_dim, str(self.device))
+        self.policy = PPOPolicy(self.input_dim, self.output_dim, str(self.device),
+                                rollout_device=str(self.rollout_device))
         start_fresh_policy(self.policy, self.env)
         self.optimizer = optim.Adam(self.policy.network.parameters(), lr=self.learning_rate)
         self._vec_env = None
@@ -163,7 +165,8 @@ class SinglePPOAgent(BasePPOAgent):
         loss_per_epoch = []
 
         for _ in range(self.num_epochs):
-            indices = torch.randperm(batch_size)
+            # On the data's device: CPU indices would be copied to the GPU per minibatch.
+            indices = torch.randperm(batch_size, device=self.device)
 
             for start in range(0, batch_size, self.batch_size):
                 end = start + self.batch_size
@@ -194,28 +197,36 @@ class SinglePPOAgent(BasePPOAgent):
 
                 loss = policy_loss + (self.value_loss_coef * value_loss) - (self.entropy_coef * entropy_loss)
 
-                if torch.isnan(loss) or torch.isinf(loss):
-                    logger.warning("[Alert] NaN/Inf loss detected (policy=%.4f, "
-                                   "value=%.4f) - skipping update step.", policy_loss.item(), value_loss.item())
-                    continue
-
                 self.optimizer.zero_grad()
                 loss.backward()
                 grad_norm = nn.utils.clip_grad_norm_(
                     self.policy.network.parameters(), self.max_grad_norm
                 )
-                if not torch.isfinite(grad_norm):
-                    # A non-finite norm would turn every weight into NaN.
-                    logger.warning("[Alert] Non-finite gradient norm (%s) - skipping update step.", float(grad_norm))
+
+                # One host sync per minibatch (loss and gradient norm together);
+                # on CUDA every .item()/float()/tensor-in-if waits for the GPU.
+                loss_value, grad_norm_value = torch.stack([loss.detach(), grad_norm.detach()]).tolist()
+
+                if not math.isfinite(loss_value):
+                    # Its gradients are non-finite too: discard them, no step.
+                    logger.warning("[Alert] NaN/Inf loss detected (policy=%.4f, "
+                                   "value=%.4f) - skipping update step.", policy_loss.item(), value_loss.item())
                     self.optimizer.zero_grad()
                     continue
-                if float(grad_norm) > 1000.0:
+                if not math.isfinite(grad_norm_value):
+                    # A non-finite norm would turn every weight into NaN.
+                    logger.warning("[Alert] Non-finite gradient norm (%s) - skipping update step.", grad_norm_value)
+                    self.optimizer.zero_grad()
+                    continue
+                if grad_norm_value > 1000.0:
                     logger.warning("[Alert] Exploding gradient: norm=%.2f "
-                                   "(clip=%.2f). Clipping applied.", float(grad_norm), self.max_grad_norm)
+                                   "(clip=%.2f). Clipping applied.", grad_norm_value, self.max_grad_norm)
                 self.optimizer.step()
 
-                loss_per_epoch.append(loss.item())
+                loss_per_epoch.append(loss_value)
 
+        # The weights changed (also with optimizers the version check misses).
+        self.policy.mark_weights_changed()
         return float(np.mean(loss_per_epoch)) if loss_per_epoch else float('nan')
 
     @classmethod
@@ -254,8 +265,13 @@ class SinglePPOAgent(BasePPOAgent):
         Returns:
             Callable[[], gym.Env]: Creates a Monitor-wrapped deep copy of the
             environment, with the profile pose applied and its own RNG seed.
+
+        The factory captures only the env and profile, not the agent: SubprocVecEnv
+        pickles it into every worker, and capturing `self` would send the policy
+        network and optimizer along (on CUDA: a CUDA context per worker).
         """
 
+        env = self.env
         profile = self._profile  # bound now, not at call time
         if worker_seed is None:
             worker_seed = self._spawn_worker_seeds(1)[0]
@@ -265,7 +281,7 @@ class SinglePPOAgent(BasePPOAgent):
             Create one monitored deep copy of the environment.
             """
 
-            env_copy = copy.deepcopy(self.env)
+            env_copy = copy.deepcopy(env)
 
             # Apply the profile pose to this worker's simulator (not only to self.env).
             if profile is not None:
@@ -393,10 +409,7 @@ class SinglePPOAgent(BasePPOAgent):
             float: Estimated state value.
         """
 
-        with torch.no_grad():
-            last_state = torch.FloatTensor(next_state).unsqueeze(0).to(self.device)
-            _, _, next_values = self.policy.network(last_state)
-            return next_values.squeeze(0).item()
+        return float(self.policy.predict_value(next_state)[0])
 
 
     def _drain_env_run_events(self) -> list[dict]:
@@ -460,7 +473,8 @@ class SinglePPOAgent(BasePPOAgent):
                 final checkpoint/metrics cannot be saved.
         """
 
-        logger.info("Starting training with %d parallel environments on a '%s' device", self.num_envs, self.device)
+        logger.info("Starting training with %d parallel environments on a '%s' device (rollouts on '%s')",
+                    self.num_envs, self.device, getattr(self, "rollout_device", self.device))
 
         project_src_dir = Path(__file__).resolve().parents[2]
         is_airsim_env = self._is_airsim_env()
@@ -472,6 +486,7 @@ class SinglePPOAgent(BasePPOAgent):
                 device=str(self.device),
                 src_dir=project_src_dir,
                 model_dir=self.model_dir,
+                rollout_device=str(getattr(self, "rollout_device", self.device)),
             )
             if is_airsim_env
             else None
@@ -484,6 +499,7 @@ class SinglePPOAgent(BasePPOAgent):
                 agent_type="PPO",
                 device=str(self.device),
                 src_dir=project_src_dir,
+                rollout_device=str(getattr(self, "rollout_device", self.device)),
             )
         )
         logger.info("Iteration log: %s", iteration_logger.path)
@@ -723,7 +739,7 @@ class SinglePPOAgent(BasePPOAgent):
             if self.model_dir:
                 policy_file_name = os.path.join(self.model_dir, policy_file_name)
 
-            policy = PPOPolicy.load(policy_file_name, self.device)
+            policy = PPOPolicy.load(policy_file_name, str(self.device), rollout_device=getattr(self, "rollout_device", None))
         except Exception as e:
             raise RuntimeError(f"Failed to load the policy '{policy_file_name}'.") from e
 

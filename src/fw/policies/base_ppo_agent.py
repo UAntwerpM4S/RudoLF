@@ -93,6 +93,7 @@ class BasePPOAgent(BaseAgent):
         max_nbr_iterations: int = 200000,
         normalize: bool = False,
         seed: Optional[int] = None,
+        rollout_device: Optional[str] = None,
     ):
         """
         Initialize the PPO agent with environment and training hyperparameters.
@@ -117,6 +118,8 @@ class BasePPOAgent(BaseAgent):
                 against endless episodes).
             normalize (bool): Whether to normalize rewards.
             seed (int, optional): Base seed for the worker env RNGs (see BaseAgent).
+            rollout_device (str, optional): Device of the rollout forward passes
+                (see BaseAgent); None means `device`.
         """
 
         super().__init__(
@@ -135,6 +138,7 @@ class BasePPOAgent(BaseAgent):
             device=device,
             model_dir=model_dir,
             seed=seed,
+            rollout_device=rollout_device,
         )
 
         self._profile = profile

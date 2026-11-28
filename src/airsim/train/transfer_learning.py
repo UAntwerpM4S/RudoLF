@@ -249,6 +249,7 @@ def build_transfer_policy(
     target_output_dim: int,
     target_device: torch.device | None = None,
     freeze_shared: bool = True,
+    target_rollout_device: torch.device | str | None = None,
 ) -> PPOPolicy:
     """
     Build an AirSimEnv policy initialized from a pretrained 2D checkpoint.
@@ -265,6 +266,8 @@ def build_transfer_policy(
             (CUDA if available) via `fw.policies.ppo_policy.get_device`.
         freeze_shared: Freeze the backbone `shared_network[2]`; the mapping
             layer and the heads stay trainable.
+        target_rollout_device: Device of the target policy's rollout forward
+            passes (see PPOPolicy); None means target_device.
 
     Returns:
         `PPOPolicy` on *target_device*, configured for AirSimEnv fine-tuning.
@@ -281,8 +284,10 @@ def build_transfer_policy(
     logger.info("\n%s", report.format())
     validate_transfer_compatibility(report)
 
-    target_policy = PPOPolicy(target_input_dim, target_output_dim, device=resolved_device.type)
+    target_policy = PPOPolicy(target_input_dim, target_output_dim, device=resolved_device.type,
+                              rollout_device=None if target_rollout_device is None else str(target_rollout_device))
     transferred = apply_transfer_weights(source_policy, target_policy, freeze_shared=freeze_shared)
+    target_policy.mark_weights_changed()
 
     n_trainable = sum(p.numel() for p in target_policy.network.parameters() if p.requires_grad)
     n_total = sum(p.numel() for p in target_policy.network.parameters())

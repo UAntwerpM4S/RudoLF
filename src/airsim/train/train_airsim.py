@@ -360,6 +360,7 @@ def _run_training_with_transfer(
             target_output_dim=act_dim,
             target_device=agent.device,
             freeze_shared=freeze,
+            target_rollout_device=getattr(agent, "rollout_device", None),
         )
         agent.policy = transfer_policy
         agent.optimizer = optim.Adam(
