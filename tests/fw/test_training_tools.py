@@ -6,15 +6,14 @@ Both are scripts, not package modules, so they are loaded from their file.
 
 from __future__ import annotations
 
-import importlib.util
-import json
 import sys
-from pathlib import Path
-
+import json
+import pytest
 import numpy as np
 import pandas as pd
-import pytest
+import importlib.util
 
+from pathlib import Path
 from fw.configuration.stop_condition import Criterion, StopCondition
 
 SRC = Path(__file__).resolve().parents[2] / "src"

@@ -10,20 +10,18 @@ Without CUDA the split is exercised by forcing a separate rollout copy on the CP
 from __future__ import annotations
 
 import copy
+import torch
+import pytest
+import cloudpickle
+import numpy as np
+import gymnasium as gym
+import fw.policies.base_agent as base_agent_module
 
 from types import SimpleNamespace
-
-import cloudpickle
-import gymnasium as gym
-import numpy as np
-import pytest
-import torch
-
-import fw.policies.base_agent as base_agent_module
-from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
-from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.ppo_policy import PPOPolicy
+from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
 

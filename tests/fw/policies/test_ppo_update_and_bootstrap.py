@@ -10,20 +10,19 @@ switch) must come from the right critic, evaluated at the right state.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-import gymnasium as gym
-import numpy as np
-import pytest
 import torch
-
-import fw.policies.multi_policy_single_agent as mpsa_module
+import pytest
+import numpy as np
+import gymnasium as gym
 import fw.policies.single_ppo_agent as single_module
-from fw.policies.base_ppo_agent import BasePPOAgent
-from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
-from fw.policies.multi_ppo_agent import MultiPPOAgent
+import fw.policies.multi_policy_single_agent as mpsa_module
+
+from types import SimpleNamespace
 from fw.policies.ppo_policy import PPOPolicy
+from fw.policies.base_ppo_agent import BasePPOAgent
+from fw.policies.multi_ppo_agent import MultiPPOAgent
 from fw.policies.single_ppo_agent import SinglePPOAgent
+from fw.policies.multi_policy_single_agent import MultiPolicySingleAgent
 
 OBS_DIM, ACT_DIM, NUM_POLICIES = 6, 2, 2
 
