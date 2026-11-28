@@ -160,4 +160,4 @@ def test_airsim_training_session_records_the_rollout_device(tmp_path):
 
     metadata = json.loads(session.metadata_path.read_text(encoding="utf-8"))
     assert metadata["config"]["device"] == "cuda" and metadata["config"]["rollout_device"] == "cpu"
-    assert "rollout_device,iteration" in session.iteration_logger.path.read_text(encoding="utf-8").splitlines()[0]
+    assert session.iteration_logger.path.read_text(encoding="utf-8").splitlines()[0].endswith(",rss_mb,rollout_device")

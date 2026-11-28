@@ -396,3 +396,16 @@ def test_mark_weights_changed_covers_writes_torch_does_not_track():
     policy.network = PPOPolicy(4, 2, "cpu").network
     _follows(policy, 4)
 
+
+
+def test_learn_runs_for_an_agent_without_rollout_device(tmp_path):
+    """
+    An agent built without rollout_device (e.g. via __new__ in older code) still gets
+    through learn()'s logging; it falls back to device.
+    """
+
+    agent = SinglePPOAgent(None, environment=_space_env(6), model_dir=str(tmp_path), seed=0)
+    agent.env.training_name = "no_rollout_device"
+    del agent.rollout_device
+    from fw.configuration.stop_condition import StopCondition
+    agent.learn(StopCondition(max_time_steps=0))

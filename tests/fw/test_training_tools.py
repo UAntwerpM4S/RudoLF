@@ -158,3 +158,23 @@ def test_benchmark_functions_run_on_cpu():
     bench = _load("benchmark_ppo_device")
     assert bench.time_rollout_inference("cpu", 5, 2, 3, 5) > 0
     assert bench.time_ppo_update("cpu", 5, 2, 64, 32, 1, repeats=2) > 0
+
+
+def test_block_hyperparameters_use_the_agent_defaults_under_the_overrides():
+    """
+    batch_size / num_envs come from the agent's config defaults (with env-specific
+    overrides) unless the block overrides them; the agent type comes from the log name.
+    """
+
+    from fw.configuration.config import MULTI_POLICY_SINGLE_NAME, PPO_POLICY_NAME, get_hyperparameters
+
+    assert compare.log_agent_type(Path("envs4_seed1_MPSA_iterations_20261127_120000.csv"), "envs4_seed1") == "MPSA"
+    mpsa_defaults = get_hyperparameters(MULTI_POLICY_SINGLE_NAME)
+    params = compare.block_hyperparameters({"env_type": "MultiPolicyColavEnv"}, MULTI_POLICY_SINGLE_NAME)
+    assert params["num_envs"] == mpsa_defaults["num_envs"] and params["batch_size"] == mpsa_defaults["batch_size"]
+    params = compare.block_hyperparameters({"env_type": "PySimEnv", "hyperparameter_overrides": {"num_envs": 8}},
+                                           PPO_POLICY_NAME)
+    assert params["num_envs"] == 8 and params["batch_size"] == get_hyperparameters(PPO_POLICY_NAME)["batch_size"]
+    assert compare.block_hyperparameters({"env_type": "AirSimEnv"}, PPO_POLICY_NAME)["device"] == \
+        get_hyperparameters(PPO_POLICY_NAME, env_name="AirSimEnv")["device"]
+    assert compare.block_hyperparameters({"hyperparameter_overrides": {"num_envs": 2}}, "UNKNOWN") == {"num_envs": 2}

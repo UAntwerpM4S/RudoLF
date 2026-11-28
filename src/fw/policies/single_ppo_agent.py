@@ -474,7 +474,7 @@ class SinglePPOAgent(BasePPOAgent):
         """
 
         logger.info("Starting training with %d parallel environments on a '%s' device (rollouts on '%s')",
-                    self.num_envs, self.device, self.rollout_device)
+                    self.num_envs, self.device, getattr(self, "rollout_device", self.device))
 
         project_src_dir = Path(__file__).resolve().parents[2]
         is_airsim_env = self._is_airsim_env()

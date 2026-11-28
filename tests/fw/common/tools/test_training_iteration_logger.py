@@ -74,3 +74,4 @@ def test_training_iteration_logger_records_the_rollout_device(tmp_path):
         with logger.path.open("r", newline="", encoding="utf-8") as file:
             row = next(csv.DictReader(file))
         assert row["device"] == "cuda" and row["rollout_device"] == expected
+        assert list(row)[-1] == "rollout_device"   # appended last: readers by position are unaffected

@@ -751,7 +751,7 @@ class MultiPolicySingleAgent(BasePPOAgent):
 
         logger.info(
             "Starting multi-policy training with %d policies, %d parallel env(s) on '%s' (rollouts on '%s')",
-            self.num_policies, self.num_envs, self.device, self.rollout_device
+            self.num_policies, self.num_envs, self.device, getattr(self, "rollout_device", self.device)
         )
 
         last_save_index = 0

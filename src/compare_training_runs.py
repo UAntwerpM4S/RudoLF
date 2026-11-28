@@ -2,8 +2,9 @@
 Compare the train blocks of one or more pipeline specs from their iteration logs
 (logs/<block>_<agent>_iterations_<timestamp>.csv, the latest one per block).
 
-Per block: batch_size, num_envs and seed (from hyperparameter_overrides; num_envs
-1 if not overridden), iterations and episodes run,
+Per block: batch_size, num_envs and seed (the block's hyperparameter_overrides on
+top of the config defaults of the agent named in its iteration log, as the
+pipeline resolves them), iterations and episodes run,
 training time, time per iteration, whether and when the block's stop condition
 was reached, and the best rolling-mean reward. The stop condition follows
 StopCondition: TARGET_REWARD means mean_reward >= target_reward for `patience`
@@ -53,6 +54,30 @@ def latest_iteration_log(log_dir: Path, block_name: str) -> Optional[Path]:
     pattern = re.compile(rf"^{re.escape(block_name)}_[A-Za-z0-9]+_iterations_\d{{8}}_\d{{6}}\.csv$")
     candidates = [p for p in log_dir.glob(f"{block_name}_*_iterations_*.csv") if pattern.match(p.name)]
     return max(candidates, key=lambda p: p.name) if candidates else None
+
+
+def log_agent_type(log: Path, block_name: str) -> str:
+    """
+    Agent type in an iteration log's name: <block>_<agent>_iterations_<timestamp>.csv.
+    """
+
+    return log.name[len(block_name) + 1:].split("_iterations_")[0]
+
+
+def block_hyperparameters(block: dict, agent_type: str) -> dict:
+    """
+    Hyperparameters a block trained with: the config defaults of agent_type (with the
+    env-specific overrides, as get_hyperparameters applies them) and the block's
+    hyperparameter_overrides on top. Unknown agent type or no fw package: the
+    overrides only.
+    """
+
+    try:
+        from fw.configuration.config import get_hyperparameters
+        defaults = get_hyperparameters(agent_type, env_name=block.get("env_type"))
+    except (ImportError, ValueError):
+        defaults = {}
+    return {**defaults, **block.get("hyperparameter_overrides", {})}
 
 
 def normalized_patience(patience) -> int:
@@ -132,9 +157,10 @@ def main() -> None:
         log = latest_iteration_log(Path(args.log_dir), name)
         if log is None:
             rows.append({"block": name, "batch_size": overrides.get("batch_size"),
-                         "num_envs": overrides.get("num_envs", 1), "seed": overrides.get("seed"),
+                         "num_envs": overrides.get("num_envs"), "seed": overrides.get("seed"),
                          "iterations": 0, "note": "no iteration log"})
             continue
+        params = block_hyperparameters(block, log_agent_type(log, name))
 
         df = pd.read_csv(log)
         reward = df["mean_reward"].astype(float)
@@ -145,9 +171,9 @@ def main() -> None:
         episodes = df["num_episode_batches"].astype(int).cumsum()
         rows.append({
             "block": name,
-            "batch_size": overrides.get("batch_size"),
-            "num_envs": overrides.get("num_envs", 1),
-            "seed": overrides.get("seed"),
+            "batch_size": params.get("batch_size"),
+            "num_envs": params.get("num_envs"),
+            "seed": params.get("seed"),
             "target": target,
             "iterations": len(df),
             "episodes": int(episodes.iloc[-1]),
@@ -161,7 +187,7 @@ def main() -> None:
             "log": log.name,
         })
         curves.append((name, df["iteration"], episodes, df["elapsed_seconds"] / 60, rolling, target,
-                       (overrides.get("batch_size"), overrides.get("num_envs", 1)), overrides.get("seed")))
+                       (params.get("batch_size"), params.get("num_envs")), params.get("seed")))
 
     table = pd.DataFrame(rows)
     with pd.option_context("display.width", 200, "display.max_columns", None):

@@ -267,7 +267,7 @@ class MultiPPOAgent(BasePPOAgent):
         """
 
         logger.info("Starting training with %d parallel environments on a '%s' device (rollouts on '%s')",
-                    self.num_envs, self.device, self.rollout_device)
+                    self.num_envs, self.device, getattr(self, "rollout_device", self.device))
 
         last_save_index = 0
         best_rewards = [float('-inf')] * len(self.agents)

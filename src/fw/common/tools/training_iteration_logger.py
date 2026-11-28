@@ -34,7 +34,6 @@ class TrainingIterationLogger:
         "env_name",
         "agent_type",
         "device",
-        "rollout_device",
         "iteration",
         "mean_reward",
         "mean_advantage",
@@ -42,6 +41,7 @@ class TrainingIterationLogger:
         "num_episode_batches",
         "elapsed_seconds",
         "rss_mb",
+        "rollout_device",   # last, so readers by column position keep working
     )
 
     def __init__(
